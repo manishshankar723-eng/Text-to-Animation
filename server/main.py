@@ -12,7 +12,7 @@ Job-based, asynchronous API:
     GET  /health              Liveness check
 
 Run locally:
-    uvicorn api.main:app --reload
+    uvicorn server.main:app --reload
 """
 
 import logging

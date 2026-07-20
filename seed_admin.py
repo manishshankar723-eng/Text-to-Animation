@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from api import security, users  # noqa: E402
+from server import security, users  # noqa: E402
 
 MIN_PASSWORD_LEN = 8
 

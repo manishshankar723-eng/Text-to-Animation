@@ -62,28 +62,28 @@ Pipeline stages (see `pipeline.py`):
 | `meshy.py` | Meshy multi-image-to-3D submit + poll. |
 | `prompts.yaml` | Prompt templates (`default`, `saree`) + `parts_order`. |
 
-### API (Phase 2 — FastAPI backend)
+### Server (Phase 2 — FastAPI backend, in `server/`)
 | File | Responsibility |
 |------|----------------|
-| `api/main.py` | FastAPI app, all endpoints, provider validation. |
-| `api/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
-| `api/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
-| `api/jobs.py` | Job store: Firestore (default) + in-memory fallback. |
-| `api/worker.py` | ThreadPoolExecutor running the pipeline off-request. |
-| `api/security.py` | bcrypt password hashing + JWT create/verify. |
-| `api/users.py` | MongoDB-backed user store (`users` collection). |
-| `api/auth.py` | `/auth/register`, `/auth/login`, `/auth/me`, `get_current_user`. |
+| `server/main.py` | FastAPI app, all endpoints, provider validation. |
+| `server/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
+| `server/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
+| `server/jobs.py` | Job store: Firestore (default) + in-memory fallback. |
+| `server/worker.py` | ThreadPoolExecutor running the pipeline off-request. |
+| `server/security.py` | bcrypt password hashing + JWT create/verify. |
+| `server/users.py` | MongoDB-backed user store (`users` collection). |
+| `server/auth.py` | `/auth/register`, `/auth/login`, `/auth/me`, `get_current_user`. |
 
-### Frontend (Phase 3 — React + Vite, in `frontend/`)
+### Client (Phase 3 — React + Vite, in `client/`)
 | File | Responsibility |
 |------|----------------|
-| `frontend/src/api.js` | Fetch client, JWT in localStorage, auth'd blob download. |
-| `frontend/src/App.jsx` | Auth gate + two-column dashboard layout. |
-| `frontend/src/components/Login.jsx` | Login / register. |
-| `frontend/src/components/GenerateForm.jsx` | Upload + template/provider/options. |
-| `frontend/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
-| `frontend/src/components/JobDetail.jsx` | Poll, gallery, download zip, Meshy 3D. |
-| `frontend/src/styles.css` | Dark theme. |
+| `client/src/api.js` | Fetch client, JWT in localStorage, auth'd blob download. |
+| `client/src/App.jsx` | Auth gate + two-column dashboard layout. |
+| `client/src/components/Login.jsx` | Login / register. |
+| `client/src/components/GenerateForm.jsx` | Upload + template/provider/options. |
+| `client/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
+| `client/src/components/JobDetail.jsx` | Poll, gallery, download zip, Meshy 3D. |
+| `client/src/styles.css` | Dark theme. |
 
 ### API endpoints
 - `POST /auth/register` · `POST /auth/login` · `GET /auth/me`
@@ -114,9 +114,9 @@ python smoke_test_providers.py                 # both backends
 python smoke_test_providers.py --provider gemini --save
 ```
 
-### API
+### Server
 ```powershell
-python -m uvicorn api.main:app --reload
+python -m uvicorn server.main:app --reload
 # Swagger UI: http://127.0.0.1:8000/docs
 ```
 Auth flow: `POST /auth/register` → copy `access_token` → click **Authorize** in
@@ -132,12 +132,12 @@ Check dependencies: `GET /health` reports MongoDB connectivity (status flips to
 
 Requirements: `pip install -r requirements.txt`
 
-### Frontend (Phase 3)
+### Client (Phase 3)
 ```powershell
-cd frontend
+cd client
 npm install        # first time only
 npm run dev        # dev server at http://localhost:5173
-npm run build      # production build to frontend/dist/
+npm run build      # production build to client/dist/
 ```
 Point it at a non-default API host by copying `.env.example` → `.env.local` and
 setting `VITE_API_BASE`. The backend must be running (see API section). Gallery
@@ -193,14 +193,14 @@ in `.env` — no code change needed.
 
 ## ✅ Work Log (newest first)
 
-### 2026-07-20 — Per-user Meshy API key in frontend
-- `frontend/src/components/JobDetail.jsx`: added `meshyKey` state and a
+### 2026-07-20 — Per-user Meshy API key in client
+- `client/src/components/JobDetail.jsx`: added `meshyKey` state and a
   `type="password"` input field in the Meshy bar. Button is disabled until both
   parts are selected AND an API key is entered. Key is NOT persisted to
   localStorage (session-only for security).
-- `frontend/src/api.js`: `submitMeshy()` now accepts optional `meshyApiKey`
+- `client/src/api.js`: `submitMeshy()` now accepts optional `meshyApiKey`
   param, sends it as `api_key` in the request body.
-- `frontend/src/styles.css`: added `.meshy-key-input` styling.
+- `client/src/styles.css`: added `.meshy-key-input` styling.
 - Backend already supported `api_key` in `MeshyRequest` schema — no backend
   changes needed.
 - Verified: `npm run build` passes cleanly (36 modules, 0 errors).
@@ -216,8 +216,8 @@ in `.env` — no code change needed.
 - Gotcha learned: `uvicorn --reload` does NOT reload on `.env` changes (only code)
   — the backend must be fully restarted after editing `.env`.
 
-### 2026-07-20 — Phase 3 frontend (React + Vite)
-- New `frontend/` app (React 18 + Vite 5, no router — view state in `App.jsx`).
+### 2026-07-20 — Phase 3 client (React + Vite)
+- New `client/` app (React 18 + Vite 5, no router — view state in `App.jsx`).
   Full flow: login/register → upload + template/provider/options → start job →
   live poll → gallery of views → download zip → select parts → trigger Meshy 3D.
 - Files: `src/api.js` (fetch client, JWT in localStorage, authenticated blob
@@ -317,7 +317,7 @@ All non-network paths verified via TestClient.
 - [x] Per-job **asset-listing endpoint** — `GET /jobs/{id}/assets` (done 2026-07-20).
 - [x] **Provider smoke-test script** — `smoke_test_providers.py` (done 2026-07-20).
 - [x] **MongoDB health + seed-admin** — `/health` mongodb status + `seed_admin.py` (done 2026-07-20).
-- [x] **Phase 3 frontend** — React + Vite app in `frontend/`, full flow (done 2026-07-20).
+- [x] **Phase 3 client** — React + Vite app in `client/`, full flow (done 2026-07-20).
 - [x] **Live E2E test** — login → generate → gallery → download verified in browser
       against MongoDB Atlas + Vertex AI + GCS (done 2026-07-20). Meshy path not yet
       exercised live.
