@@ -1,0 +1,186 @@
+# =============================================================================
+# CHARACTER ASSET GENERATION — GEMINI PROMPTS
+# =============================================================================
+# HOW TO USE:
+#   - {age}, {gender}, {skin_tone} placeholders are used in fullbody, hair, face only.
+#   - These are filled at runtime from the character template config below.
+#   - All other part prompts are generic (no character-specific placeholders).
+#
+# HOW TO CUSTOMIZE:
+#   - Replace the prompt text below with your own tuned prompts.
+#   - Keep the YAML key names exactly as they are.
+#   - The pipeline reads these keys to decide which Gemini calls to make.
+#
+# PROMPT RULES (applied in every prompt below):
+#   1. Position = priority. The MOST important instruction is the FIRST sentence.
+#   2. "COPY, not create" — preserves identity from the reference image.
+#   3. Positive phrasing — describe what you WANT, not long NO-lists.
+#   4. Every prompt states: 2×2 grid, four views, pure white background.
+#   5. Age and gender stated clearly (in character-specific prompts).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# DEFAULT PROMPTS — used when no template override exists for a part.
+# These are DRAFT prompts based on the prompt rules. Replace with your
+# own tuned prompts. The pipeline will use these as-is until you do.
+# ---------------------------------------------------------------------------
+defaults:
+
+  fullbody: >
+    COPY this exact {gender} character (age {age}, {skin_tone} skin) from the reference image onto
+    a 2×2 grid showing the FULL BODY in four views: top-left = front, top-right = left side,
+    bottom-left = three-quarter angle, bottom-right = back view. Sample the skin tone and all
+    colors directly from the reference image. Pure white background in every panel. Same character,
+    same outfit, same proportions in all four panels. {gender}, age {age}. Do not change the
+    character's appearance — COPY, not create.
+
+  hair: >
+    COPY the exact hairstyle from the reference image as an isolated hairpiece on an invisible head,
+    like a helmet made of hair. {gender} character, age {age}. Show it on a 2×2 grid in four views:
+    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
+    The hollow inside of the hair is PURE WHITE — no black area, no dark shadow. Pure white
+    background in every panel. Sample the hair color directly from the reference image.
+    {gender}, age {age}. NOT a tight buzzcut afro. No sunglasses, no headphones, no accessories
+    on the hair. COPY, not create.
+
+  face: >
+    COPY the exact face of this {gender} character (age {age}, {skin_tone} skin) from the reference
+    image. Show the face and head only (no body, no shoulders) on a 2×2 grid in four views:
+    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
+    Sample the skin tone directly from the reference image. Pure white background in every panel.
+    Same face in all four panels. {gender}, age {age}. Remove any sunglasses. COPY, not create.
+
+  body: >
+    COPY the exact body and skin tone from the reference image. Show the body wearing a modest
+    athletic t-shirt and knee-length shorts, fully covered, on a 2×2 grid in four views:
+    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
+    Pure white background in every panel. Same body in all four panels. Modest clothing, fully
+    covered. COPY the skin tone directly from the reference image — do not change it.
+
+  jacket: >
+    Sleeves stretched straight out horizontally forming a letter T, NOT hanging down. COPY the exact
+    jacket/top garment from the reference image as a ghost mannequin flat lay — IGNORE the person,
+    reproduce ONLY the jacket. Show on a 2×2 grid in four views: top-left = front, top-right = left
+    side, bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
+    panel. Same garment in all four panels. Ignore any pants in the reference. COPY, not create.
+
+  pants: >
+    COPY the exact pants/lower garment from the reference image as a ghost mannequin flat lay —
+    IGNORE the person, reproduce ONLY the pants. Show on a 2×2 grid in four views: top-left = front,
+    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Pure white
+    background in every panel. Same garment in all four panels. Ignore any top/jacket in the
+    reference. COPY, not create.
+
+  shoe: >
+    COPY the exact shoes/footwear from the reference image. Show a single pair on a 2×2 grid in
+    four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
+    bottom-right = back. Pure white background in every panel. Same footwear in all four panels.
+    COPY, not create.
+
+  goggles: >
+    COPY the exact sunglasses/goggles from the reference image. Show on a 2×2 grid in four views:
+    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
+    Pure white background in every panel. Same eyewear in all four panels. NO reflections of a face
+    in the lenses. COPY, not create.
+
+  headphone: >
+    COPY the exact headphones from the reference image. Show on a 2×2 grid in four views:
+    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
+    Pure white background in every panel. Same headphones in all four panels. COPY, not create.
+
+
+# ---------------------------------------------------------------------------
+# CHARACTER TEMPLATES — override specific parts for different character types.
+# Only fullbody, hair, and face use {age}, {gender}, {skin_tone} placeholders.
+# Other parts use slot_renames to change output filenames.
+# ---------------------------------------------------------------------------
+templates:
+
+  # --- DEFAULT template (no overrides needed, uses all defaults above) ---
+  default:
+    character_defaults:
+      age: "25"
+      gender: "male"
+      skin_tone: "medium brown"
+    slot_renames: {}
+    prompts: {}
+
+  # --- SAREE template ---
+  saree:
+    character_defaults:
+      age: "30"
+      gender: "female"
+      skin_tone: "medium brown"
+
+    # Renames: the "jacket" slot outputs as "saree", "pants" slot outputs as "blouse"
+    slot_renames:
+      jacket: saree
+      pants: blouse
+
+    # Override prompts for saree-specific parts
+    prompts:
+
+      fullbody: >
+        COPY this exact {gender} character (age {age}, {skin_tone} skin) wearing a traditional
+        saree from the reference image onto a 2×2 grid showing the FULL BODY in four views:
+        top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right =
+        back view. Sample the skin tone, saree color, and all details directly from the reference
+        image. Pure white background in every panel. Same character, same saree, same proportions
+        in all four panels. {gender}, age {age}. COPY, not create.
+
+      hair: >
+        COPY the exact hairstyle from the reference image as an isolated hairpiece on an invisible
+        head, like a helmet made of hair. {gender} character, age {age}. Show on a 2×2 grid in
+        four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
+        bottom-right = back. The hollow inside of the hair is PURE WHITE — no black area, no dark
+        shadow. Pure white background in every panel. Sample the hair color directly from the
+        reference image. {gender}, age {age}. No sunglasses, no headphones, no accessories on
+        the hair. COPY, not create.
+
+      face: >
+        COPY the exact face of this {gender} character (age {age}, {skin_tone} skin) from the
+        reference image. Show the face and head only on a 2×2 grid in four views: top-left = front,
+        top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Include the
+        bindi if present in the reference. Sample the skin tone directly from the reference image.
+        Pure white background in every panel. {gender}, age {age}. Remove any sunglasses.
+        COPY, not create.
+
+      jacket: >
+        COMPLETE FULL-LENGTH saree, shoulder to ankles, zoom OUT so the ENTIRE saree fits
+        top-to-bottom in each panel, nothing cut off. COPY the exact saree from the reference image
+        as a ghost mannequin display — IGNORE the person, reproduce ONLY the draped saree fabric.
+        Show on a 2×2 grid in four views: top-left = front, top-right = left side, bottom-left =
+        three-quarter angle, bottom-right = back. Pure white background in every panel. Same saree
+        in all four panels. Sample colors directly from the reference image. COPY, not create.
+
+      pants: >
+        SAREE BLOUSE / choli, short cropped, HALF SLEEVES ending mid-upper-arm (not full sleeves,
+        not sleeveless). COPY the exact saree blouse from the reference image as a ghost mannequin
+        display. Show on a 2×2 grid in four views: top-left = front, top-right = left side,
+        bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
+        panel. Same blouse in all four panels. Sample colors directly from the reference image.
+        COPY, not create.
+
+      shoe: >
+        COPY the exact footwear from the reference image. V-strap flip-flop, single strap between
+        big toe and second toe, Hawaii chappal / thong slipper style, NOT strappy, NOT buckled,
+        NOT closed shoes. Show on a 2×2 grid in four views: top-left = front, top-right = left side,
+        bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
+        panel. Same footwear in all four panels. COPY, not create.
+
+
+# ---------------------------------------------------------------------------
+# PARTS LIST — the standard ordered list of parts to generate.
+# The pipeline iterates this list. "fullbody" is always first (Stage 1).
+# The rest are Stage 2 (each uses the fullbody sheet as reference).
+# ---------------------------------------------------------------------------
+parts_order:
+  - fullbody
+  - hair
+  - face
+  - body
+  - jacket
+  - pants
+  - shoe
+  - goggles
+  - headphone

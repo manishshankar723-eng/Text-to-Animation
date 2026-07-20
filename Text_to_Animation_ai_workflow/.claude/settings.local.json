@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import fastapi\")",
+      "Bash(python -m pip show fastapi uvicorn pydantic)",
+      "Bash(python -m pip install \"fastapi>=0.110.0\" \"uvicorn[standard]>=0.27.0\" \"python-multipart>=0.0.6\")",
+      "Bash(API_JOB_STORE=memory python -c ' *)",
+      "Bash(python -m pip install \"pyjwt>=2.8.0\" \"bcrypt>=4.1.0\" \"pymongo>=4.6.0\" \"email-validator>=2.0.0\")",
+      "Bash(MONGODB_URI=\"mongodb://127.0.0.1:59999/?serverSelectionTimeoutMS=1500\" python seed_admin.py --email admin@example.com --password \"supersecret1\")",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(python -c \"import json; json.load\\(open\\('.vscode/tasks.json'\\)\\); print\\('tasks.json: valid JSON'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import secrets; print\\(secrets.token_urlsafe\\(48\\)\\)\")",
+      "Bash(python seed_admin.py --email harsh@immersivedata.ai --password \"Studio@2026\")",
+      "Bash(curl -s -m 5 http://127.0.0.1:8000/health)",
+      "Bash(echo \"---exit:$?---\")",
+      "PowerShell(\"Listeners on 8000:\"; Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; \"  PID $\\($_.OwningProcess\\) [$\\($p.ProcessName\\)] local=$\\($_.LocalAddress\\)\" }; \"\"; \"Health check \\(15s\\):\"; try { $r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -TimeoutSec 15; $r | ConvertTo-Json -Compress } catch { \"ERROR: $\\($_.Exception.Message\\)\" })"
+    ]
+  }
+}
