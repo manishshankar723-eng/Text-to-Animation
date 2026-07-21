@@ -252,6 +252,7 @@ def run_pipeline(
         "character": character_name,
         "template": template_name or "default",
         "parts_generated": list(processed_views.keys()),
+        "prompts": prompts,
         "urls": urls,
         "zip": zip_result,
         "meshy": meshy_results,
@@ -261,3 +262,105 @@ def run_pipeline(
                 character_name, len(processed_views))
 
     return summary
+
+
+def regenerate_single_part(
+    character_name: str,
+    reference_image_path: str,
+    part_name: str,
+    custom_prompt: str | None = None,
+    template_name: str | None = None,
+    local_only: bool = False,
+    output_dir: str = "output",
+    provider: str | None = None,
+    existing_result: dict | None = None,
+) -> dict:
+    """
+    Regenerate a single part for a character without re-running the entire pipeline.
+
+    Args:
+        character_name: e.g. "Vivaan"
+        reference_image_path: Path to the character reference image.
+        part_name: e.g. "face", "fullbody", "hair"
+        custom_prompt: Optional override prompt for this part.
+        template_name: Character template name.
+        local_only: Skip GCS upload if True.
+        output_dir: Base local directory.
+        provider: Image provider ("vertex" or "gemini").
+        existing_result: The existing pipeline summary dict to update.
+
+    Returns:
+        Updated pipeline summary dict.
+    """
+    config = load_prompts("prompts.yaml")
+    prompts, slot_renames = _resolve_prompts(config, template_name, None)
+
+    # Use custom prompt if given, else resolved prompt from YAML
+    final_prompt = custom_prompt if custom_prompt else prompts.get(part_name)
+    if not final_prompt:
+        raise ValueError(f"No prompt available for part '{part_name}'")
+
+    # Load reference image
+    ref_image = Image.open(reference_image_path).convert("RGB")
+
+    # For non-fullbody parts, try to use fullbody sheet if available, else reference image
+    if part_name != "fullbody":
+        fullbody_sheet_path = os.path.join(output_dir, character_name, "_fullbody_sheet.png")
+        if os.path.exists(fullbody_sheet_path):
+            try:
+                ref_image = Image.open(fullbody_sheet_path).convert("RGB")
+            except Exception:
+                pass
+
+    logger.info("[%s] Regenerating single part with prompt: %s", part_name, final_prompt)
+    sheet = generate_turnaround_sheet(ref_image, final_prompt, part_name=part_name, provider=provider)
+
+    if sheet is None:
+        raise RuntimeError(f"Failed to generate turnaround sheet for '{part_name}'")
+
+    # Save fullbody raw sheet if fullbody was regenerated
+    if part_name == "fullbody":
+        raw_sheet_path = os.path.join(output_dir, character_name, "_fullbody_sheet.png")
+        os.makedirs(os.path.dirname(raw_sheet_path), exist_ok=True)
+        sheet.save(raw_sheet_path, "PNG")
+
+    # Split into 4 views
+    views = split_sheet(sheet)
+
+    # Clean and normalize
+    cleaned_views = {}
+    for view_name, view_image in views.items():
+        cleaned_views[view_name] = clean_and_normalize(view_image)
+
+    output_name = slot_renames.get(part_name, part_name)
+    processed_views = {output_name: cleaned_views}
+
+    # Save views and update zip
+    upload_gcs = not local_only
+    updated_urls = save_character_assets(
+        character_name, processed_views, output_dir, upload_gcs
+    )
+    zip_result = create_zip(character_name, output_dir, upload_gcs)
+
+    # Merge into existing result dict
+    result = existing_result or {
+        "character": character_name,
+        "template": template_name or "default",
+        "parts_generated": [],
+        "prompts": {},
+        "urls": {},
+    }
+
+    if "prompts" not in result:
+        result["prompts"] = {}
+    result["prompts"][part_name] = final_prompt
+
+    if "urls" not in result:
+        result["urls"] = {}
+    result["urls"][output_name] = updated_urls[output_name]
+
+    if output_name not in result.get("parts_generated", []):
+        result.setdefault("parts_generated", []).append(output_name)
+
+    result["zip"] = zip_result
+    return result

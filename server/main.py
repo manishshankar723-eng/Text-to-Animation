@@ -40,6 +40,7 @@ from .schemas import (
     MeshyRequest,
     ReferenceRequest,
     ReferenceResponse,
+    RegeneratePartRequest,
     TemplateInfo,
 )
 from . import worker
@@ -438,6 +439,71 @@ def list_assets(job_id: str, current: CurrentUser = Depends(get_current_user)):
         assets=flat,
         zip=result.get("zip"),
     )
+
+
+@app.post("/jobs/{job_id}/regenerate-part")
+def regenerate_part(
+    job_id: str,
+    req: RegeneratePartRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Regenerate a single part for an existing character job using a custom or template prompt."""
+    job = _get_owned_job(job_id, current)
+    if job.status != JobStatus.SUCCEEDED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is '{job.status.value}', cannot regenerate parts until initial generation succeeds.",
+        )
+
+    # Find the reference image path stored under uploads/{job_id}/
+    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
+    ref_path = None
+    if os.path.exists(upload_dir):
+        for f in os.listdir(upload_dir):
+            if f.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                ref_path = os.path.join(upload_dir, f)
+                break
+
+    if not ref_path or not os.path.isfile(ref_path):
+        raise HTTPException(status_code=404, detail="Reference image for this job was not found.")
+
+    from pipeline import regenerate_single_part
+
+    provider = req.provider or job.params.get("provider")
+    local_only = job.params.get("local_only", False)
+
+    try:
+        updated_result = regenerate_single_part(
+            character_name=job.character_name,
+            reference_image_path=ref_path,
+            part_name=req.part,
+            custom_prompt=req.prompt,
+            template_name=job.template,
+            local_only=local_only,
+            output_dir=config.OUTPUT_DIR,
+            provider=provider,
+            existing_result=job.result or {},
+        )
+        get_store().mark_succeeded(job_id, updated_result)
+        return updated_result
+    except Exception as e:
+        logger.exception("[job %s] regenerate_part failed for part %s", job_id, req.part)
+        raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
+
+
+@app.get("/jobs/{job_id}/image/{part}/{view}")
+def get_asset_image(
+    job_id: str,
+    part: str,
+    view: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve a generated asset PNG directly."""
+    job = _get_owned_job(job_id, current)
+    img_path = os.path.join(config.OUTPUT_DIR, job.character_name, f"{part}_{view}.png")
+    if not os.path.isfile(img_path):
+        raise HTTPException(status_code=404, detail=f"Image {part}_{view}.png not found.")
+    return FileResponse(img_path, media_type="image/png")
 
 
 # ---------------------------------------------------------------------------

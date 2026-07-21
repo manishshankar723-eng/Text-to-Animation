@@ -29,64 +29,66 @@ defaults:
   fullbody: >
     COPY this exact {gender} character (age {age}, {skin_tone} skin) from the reference image onto
     a 2×2 grid showing the FULL BODY in four views: top-left = front, top-right = left side,
-    bottom-left = three-quarter angle, bottom-right = back view. Sample the skin tone and all
-    colors directly from the reference image. Pure white background in every panel. Same character,
-    same outfit, same proportions in all four panels. {gender}, age {age}. Do not change the
-    character's appearance — COPY, not create.
+    bottom-left = three-quarter angle, bottom-right = back view. Stand in a strict T-pose with arms
+    extended horizontally to the sides. Pure white background in every panel. NO text labels, NO
+    text annotations, NO panel titles (do NOT write FRONT, LEFT SIDE, BACK). NO black border lines or
+    box outlines. Exactly ONE character standing alone in all panels. COPY, not create.
 
   hair: >
     COPY the exact hairstyle from the reference image as an isolated hairpiece on an invisible head,
     like a helmet made of hair. {gender} character, age {age}. Show it on a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    The hollow inside of the hair is PURE WHITE — no black area, no dark shadow. Pure white
-    background in every panel. Sample the hair color directly from the reference image.
-    {gender}, age {age}. NOT a tight buzzcut afro. No sunglasses, no headphones, no accessories
-    on the hair. COPY, not create.
+    The hollow inside of the hair is PURE WHITE — no face, no neck, no black shadow. Pure white
+    background in every panel. NO text labels, NO panel titles, NO border lines. Sample the hair color
+    directly from the reference image. COPY, not create.
 
   face: >
-    COPY the exact face of this {gender} character (age {age}, {skin_tone} skin) from the reference
-    image. Show the face and head only (no body, no shoulders) on a 2×2 grid in four views:
+    COPY the exact face features (eyes, nose, mouth, skin tone, facial structure) of this {gender}
+    character (age {age}, {skin_tone} skin) from the reference image onto a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    Sample the skin tone directly from the reference image. Pure white background in every panel.
-    Same face in all four panels. {gender}, age {age}. Remove any sunglasses. COPY, not create.
+    Show the facial features and head contour ONLY — NO hair on top of head (bald scalp silhouette),
+    NO shoulders, NO neck, NO body. Pure white background in every panel. NO text labels, NO panel titles,
+    NO border lines. COPY, not create.
 
   body: >
-    COPY the exact body and skin tone from the reference image. Show the body wearing a modest
-    athletic t-shirt and knee-length shorts, fully covered, on a 2×2 grid in four views:
+    COPY the exact body shape and skin tone from the reference image onto a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    Pure white background in every panel. Same body in all four panels. Modest clothing, fully
-    covered. COPY the skin tone directly from the reference image — do not change it.
+    Show the body wearing a simple modest dark blue compression shirt and grey shorts, fully covered.
+    Pure white background in every panel. NO text labels, NO panel titles, NO border lines. Exactly ONE
+    body standing in T-pose in all panels. COPY skin tone directly from the reference.
 
   jacket: >
     Sleeves stretched straight out horizontally forming a letter T, NOT hanging down. COPY the exact
     jacket/top garment from the reference image as a ghost mannequin flat lay — IGNORE the person,
     reproduce ONLY the jacket. Show on a 2×2 grid in four views: top-left = front, top-right = left
     side, bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
-    panel. Same garment in all four panels. Ignore any pants in the reference. COPY, not create.
+    panel. NO text labels, NO panel titles, NO border lines. Same garment in all panels.
 
   pants: >
     COPY the exact pants/lower garment from the reference image as a ghost mannequin flat lay —
     IGNORE the person, reproduce ONLY the pants. Show on a 2×2 grid in four views: top-left = front,
     top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Pure white
-    background in every panel. Same garment in all four panels. Ignore any top/jacket in the
-    reference. COPY, not create.
+    background in every panel. NO text labels, NO panel titles, NO border lines. Same garment in all panels.
 
   shoe: >
     COPY the exact shoes/footwear from the reference image. Show a single pair on a 2×2 grid in
     four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
-    bottom-right = back. Pure white background in every panel. Same footwear in all four panels.
-    COPY, not create.
+    bottom-right = back. Pure white background in every panel. NO text labels, NO panel titles, NO
+    border lines. Same footwear in all four panels. COPY, not create.
 
   goggles: >
-    COPY the exact sunglasses/goggles from the reference image. Show on a 2×2 grid in four views:
-    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    Pure white background in every panel. Same eyewear in all four panels. NO reflections of a face
-    in the lenses. COPY, not create.
+    Show stylish modern protective goggles / sunglasses on a 2×2 grid in four views: top-left = front,
+    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. If character wears
+    goggles in reference image, COPY them; otherwise design matching modern futuristic goggles. Pure
+    white background in every panel. NO text labels, NO panel titles, NO border lines. NO face or head,
+    isolated eyewear only.
 
   headphone: >
-    COPY the exact headphones from the reference image. Show on a 2×2 grid in four views:
-    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    Pure white background in every panel. Same headphones in all four panels. COPY, not create.
+    Show stylish modern over-ear wireless headphones on a 2×2 grid in four views: top-left = front,
+    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. If character wears
+    headphones in reference image, COPY them; otherwise design matching modern headphones. Pure white
+    background in every panel. NO text labels, NO panel titles, NO border lines. NO head or ears,
+    isolated headphones only.
 
 
 # ---------------------------------------------------------------------------

@@ -3,8 +3,8 @@ import * as api from "../api.js";
 
 const VIEWS = ["front", "left", "three_quarter", "back"];
 
-// Detail panel for one job: polls until done, then shows the gallery, a zip
-// download, and a Meshy 3D submission control.
+// Detail panel for one job: polls until done, then shows the gallery, per-part
+// prompt view/edit, single-part regeneration, zip download, and Meshy 3D submission.
 export default function JobDetail({ jobId, onChanged }) {
   const [job, setJob] = useState(null);
   const [assets, setAssets] = useState(null);
@@ -13,6 +13,14 @@ export default function JobDetail({ jobId, onChanged }) {
   const [meshySel, setMeshySel] = useState([]);
   const [meshyKey, setMeshyKey] = useState("");
   const [meshyMsg, setMeshyMsg] = useState("");
+
+  // Per-part prompt editing & regeneration state
+  const [editedPrompts, setEditedPrompts] = useState({});
+  const [regenBusy, setRegenBusy] = useState({}); // { [partName]: boolean }
+  const [cacheBust, setCacheBust] = useState(Date.now());
+
+  // Lightbox popup for gallery images
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -33,6 +41,16 @@ export default function JobDetail({ jobId, onChanged }) {
     }
   }, [jobId]);
 
+  // Sync prompts from job result when job loads
+  useEffect(() => {
+    if (job?.result?.prompts) {
+      setEditedPrompts((prev) => ({
+        ...job.result.prompts,
+        ...prev,
+      }));
+    }
+  }, [job]);
+
   // Reset when the selected job changes.
   useEffect(() => {
     setJob(null);
@@ -40,6 +58,9 @@ export default function JobDetail({ jobId, onChanged }) {
     setMeshySel([]);
     setMeshyKey("");
     setMeshyMsg("");
+    setEditedPrompts({});
+    setRegenBusy({});
+    setCacheBust(Date.now());
     load();
   }, [jobId, load]);
 
@@ -82,6 +103,24 @@ export default function JobDetail({ jobId, onChanged }) {
     }
   }
 
+  async function handleRegeneratePart(partName) {
+    setRegenBusy((prev) => ({ ...prev, [partName]: true }));
+    setError("");
+    try {
+      const customPrompt = editedPrompts[partName];
+      const provider = job.params?.provider;
+      const updatedJob = await api.regeneratePart(jobId, partName, customPrompt, provider);
+      setJob(updatedJob);
+      setAssets(await api.getAssets(jobId));
+      setCacheBust(Date.now());
+      onChanged?.();
+    } catch (e) {
+      setError(`Failed to regenerate '${partName}': ${e.message}`);
+    } finally {
+      setRegenBusy((prev) => ({ ...prev, [partName]: false }));
+    }
+  }
+
   async function runMeshy() {
     setMeshyMsg("");
     setError("");
@@ -97,6 +136,16 @@ export default function JobDetail({ jobId, onChanged }) {
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  // Resolve image source URL: serve through API image route if local or fallback
+  function getPartViewUrl(part, view) {
+    const rawUrl = assets?.parts?.[part]?.[view];
+    if (!rawUrl) return null;
+    if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+      return `${rawUrl}?t=${cacheBust}`;
+    }
+    return `${api.BASE}/jobs/${jobId}/image/${part}/${view}?t=${cacheBust}`;
   }
 
   return (
@@ -148,39 +197,74 @@ export default function JobDetail({ jobId, onChanged }) {
             </button>
           </div>
 
-          {assets?.is_local && (
-            <p className="muted">
-              This was a local-only run — images are on the server's disk, so no
-              gallery preview here. Use the zip.
-            </p>
-          )}
-
-          {assets && !assets.is_local && (
+          {assets && (
             <>
-              {partNames.map((part) => (
-                <div key={part} className="part-block">
-                  <div className="part-head">
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={meshySel.includes(part)}
-                        onChange={() => toggleMeshy(part)}
+              {partNames.map((part) => {
+                const currentPrompt =
+                  editedPrompts[part] ?? job.result?.prompts?.[part] ?? "";
+                const isRegening = Boolean(regenBusy[part]);
+
+                return (
+                  <div key={part} className="part-block">
+                    <div className="part-head">
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={meshySel.includes(part)}
+                          onChange={() => toggleMeshy(part)}
+                        />
+                        <strong>{part}</strong> — select for 3D
+                      </label>
+                    </div>
+
+                    {/* Per-part prompt view, edit & regenerate section */}
+                    <details className="prompt-details" open={part === "fullbody" || part === "face"}>
+                      <summary>📝 View / Edit Prompt for {part}</summary>
+                      <textarea
+                        className="prompt-textarea"
+                        value={currentPrompt}
+                        onChange={(e) =>
+                          setEditedPrompts((prev) => ({
+                            ...prev,
+                            [part]: e.target.value,
+                          }))
+                        }
+                        rows={3}
+                        placeholder={`Prompt for ${part}...`}
                       />
-                      <strong>{part}</strong> — select for 3D
-                    </label>
+                      <button
+                        type="button"
+                        className="btn secondary small"
+                        disabled={isRegening || !currentPrompt.trim()}
+                        onClick={() => handleRegeneratePart(part)}
+                      >
+                        {isRegening ? <span className="spinner-inline" /> : null}
+                        {isRegening ? ` Regenerating ${part}…` : `🔄 Regenerate ${part}`}
+                      </button>
+                    </details>
+
+                    <div className="gallery">
+                      {VIEWS.map((v) => {
+                        const imgUrl = getPartViewUrl(part, v);
+                        if (!imgUrl) return null;
+                        return (
+                          <figure key={v}>
+                            <img
+                              src={imgUrl}
+                              alt={`${part} ${v}`}
+                              loading="lazy"
+                              className="clickable"
+                              onClick={() => setLightboxSrc(imgUrl)}
+                              title="Click to view full size"
+                            />
+                            <figcaption>{v.replace("_", " ")}</figcaption>
+                          </figure>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="gallery">
-                    {VIEWS.map((v) =>
-                      assets.parts[part][v] ? (
-                        <figure key={v}>
-                          <img src={assets.parts[part][v]} alt={`${part} ${v}`} loading="lazy" />
-                          <figcaption>{v.replace("_", " ")}</figcaption>
-                        </figure>
-                      ) : null
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
 
               <div className="meshy-bar">
                 <input
@@ -202,6 +286,25 @@ export default function JobDetail({ jobId, onChanged }) {
             </>
           )}
         </>
+      )}
+
+      {/* ----- Lightbox popup for gallery images ----- */}
+      {lightboxSrc && (
+        <div className="lightbox-overlay" onClick={() => setLightboxSrc(null)}>
+          <button
+            type="button"
+            className="lightbox-close"
+            onClick={() => setLightboxSrc(null)}
+          >
+            ✕
+          </button>
+          <img
+            className="lightbox-img"
+            src={lightboxSrc}
+            alt="Full size view"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   );

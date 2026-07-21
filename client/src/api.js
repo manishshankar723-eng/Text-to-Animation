@@ -99,6 +99,12 @@ export function submitMeshy(jobId, parts, meshyApiKey) {
   if (meshyApiKey) body.api_key = meshyApiKey;
   return request(`/jobs/${jobId}/meshy`, { method: "POST", body });
 }
+export function regeneratePart(jobId, part, prompt, provider) {
+  const body = { part };
+  if (prompt) body.prompt = prompt;
+  if (provider) body.provider = provider;
+  return request(`/jobs/${jobId}/regenerate-part`, { method: "POST", body });
+}
 
 // Download the zip via an authenticated request (the endpoint requires a bearer
 // token, so we can't just point a link at it). Fetch follows the GCS redirect

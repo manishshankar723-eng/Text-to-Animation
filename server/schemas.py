@@ -117,3 +117,21 @@ class ReferenceResponse(BaseModel):
     image_url: str
     message: str = "Reference image generated successfully."
 
+
+class RegeneratePartRequest(BaseModel):
+    """Body for POST /jobs/{job_id}/regenerate-part."""
+
+    part: str = Field(
+        ...,
+        description="Part name to regenerate, e.g. 'fullbody', 'hair', 'face'.",
+    )
+    prompt: str | None = Field(
+        None,
+        description="Custom prompt text to use for this part.",
+    )
+    provider: str | None = Field(
+        None,
+        description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
+    )
+
+
