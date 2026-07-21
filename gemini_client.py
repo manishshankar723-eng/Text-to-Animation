@@ -212,3 +212,131 @@ def generate_turnaround_sheet(
     # Should not reach here, but just in case
     logger.error("[%s] Exhausted all retries.", part_name)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Reference image generation (Step 0)
+# ---------------------------------------------------------------------------
+
+# System-level wrapper that steers Gemini toward producing a clean T-pose
+# character reference image suitable for the turnaround pipeline.
+_REFERENCE_PROMPT_TEMPLATE = (
+    "Generate a 3D animated Pixar-style character in T-pose (arms extended "
+    "straight out to the sides, palms facing down) on a pure white background. "
+    "Full body, front view, standing upright, clean studio lighting, no shadows "
+    "on the background. The character should be centered in the frame with head "
+    "to toe visible. Character description: {description}"
+)
+
+
+def _is_valid_reference(image: Image.Image) -> bool:
+    """
+    Sanity check for a single character reference image.
+
+    Expects a portrait-ish or square image (a single character, not a grid).
+    """
+    w, h = image.size
+    if w < 256 or h < 256:
+        return False
+    # Should be roughly portrait or square — NOT a wide 2×2 grid.
+    ratio = w / h
+    if ratio > 2.0 or ratio < 0.3:
+        return False
+    return True
+
+
+def generate_character_reference(
+    description: str,
+    provider: str | None = None,
+) -> Image.Image | None:
+    """
+    Generate a single T-pose character reference image from a text description.
+
+    This is "Step 0" of the pipeline — it produces an image like kamla.jpg that
+    can then be fed into the full turnaround generation pipeline.
+
+    Args:
+        description: Free-form character description, e.g.
+                     "An Indian woman in a red saree, age 30, medium brown skin".
+        provider: "vertex" or "gemini". Defaults to IMAGE_PROVIDER env (or "vertex").
+
+    Returns:
+        PIL Image of the character in T-pose on white background,
+        or None if generation failed.
+    """
+    provider = _resolve_provider(provider)
+    client = get_client(provider)
+    model_id = _model_id(provider)
+    prompt = _REFERENCE_PROMPT_TEMPLATE.format(description=description)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(
+                "[reference] Generating character reference (provider=%s, model=%s, attempt %d/%d)...",
+                provider, model_id, attempt, MAX_RETRIES,
+            )
+
+            response = client.models.generate_content(
+                model=model_id,
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                ),
+            )
+
+            # --- Extract image from response ---
+            if (
+                response.candidates
+                and response.candidates[0].content
+                and response.candidates[0].content.parts
+            ):
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        image = Image.open(io.BytesIO(part.inline_data.data))
+                        image = image.convert("RGB")
+
+                        if _is_valid_reference(image):
+                            logger.info(
+                                "[reference] Got valid reference image (%dx%d)",
+                                image.width, image.height,
+                            )
+                            return image
+                        else:
+                            logger.warning(
+                                "[reference] Image looks wrong (%dx%d), retrying...",
+                                image.width, image.height,
+                            )
+                            continue
+
+            # Empty response (content filter)
+            logger.warning(
+                "[reference] Gemini returned EMPTY response (content filter likely triggered). "
+                "Try adjusting the character description.",
+            )
+            return None
+
+        except Exception as e:
+            error_str = str(e)
+
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                logger.warning(
+                    "[reference] Rate limited (429). Waiting %ds before retry %d/%d...",
+                    backoff, attempt, MAX_RETRIES,
+                )
+                time.sleep(backoff)
+                continue
+
+            logger.error("[reference] Gemini call failed: %s", error_str)
+            if attempt < MAX_RETRIES:
+                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                logger.info("[reference] Retrying in %ds...", backoff)
+                time.sleep(backoff)
+                continue
+            else:
+                logger.error("[reference] All %d attempts failed.", MAX_RETRIES)
+                return None
+
+    logger.error("[reference] Exhausted all retries.")
+    return None
+

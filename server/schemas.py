@@ -94,3 +94,26 @@ class MeshyRequest(BaseModel):
     )
     # Optional per-request key; falls back to MESHY_API_KEY on the server.
     api_key: str | None = None
+
+
+class ReferenceRequest(BaseModel):
+    """Body for POST /characters/reference — generate a character from text."""
+
+    prompt: str = Field(
+        ...,
+        description="Free-form character description, e.g. 'An Indian woman in a red saree, age 30'.",
+        min_length=5,
+    )
+    provider: str | None = Field(
+        None,
+        description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
+    )
+
+
+class ReferenceResponse(BaseModel):
+    """Returned from POST /characters/reference after generating the image."""
+
+    reference_id: str
+    image_url: str
+    message: str = "Reference image generated successfully."
+

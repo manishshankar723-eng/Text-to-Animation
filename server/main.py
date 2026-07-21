@@ -3,7 +3,9 @@ main.py — FastAPI backend for the character asset generation pipeline (Phase 2
 
 Job-based, asynchronous API:
 
-    POST /characters          Upload a reference image + options → returns job_id
+    POST /characters/reference  Generate a T-pose reference image from text → preview
+    GET  /characters/reference/{id}/image  Serve the generated reference image
+    POST /characters          Upload a reference image (or use reference_id) + options → returns job_id
     GET  /jobs                List recent jobs
     GET  /jobs/{id}           Poll a job's status + result
     GET  /jobs/{id}/download  Download the assets zip (local file or GCS redirect)
@@ -17,6 +19,7 @@ Run locally:
 
 import logging
 import os
+import uuid
 
 import yaml
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -35,6 +38,8 @@ from .schemas import (
     JobKind,
     JobStatus,
     MeshyRequest,
+    ReferenceRequest,
+    ReferenceResponse,
     TemplateInfo,
 )
 from . import worker
@@ -144,12 +149,76 @@ def list_templates(current: CurrentUser = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
-# Generate
+# Step 0 — Generate character reference image from text
+# ---------------------------------------------------------------------------
+@app.post("/characters/reference", response_model=ReferenceResponse)
+def generate_reference(
+    body: ReferenceRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Generate a T-pose character reference image from a text description.
+
+    This is the optional "Step 0" — use it when the user doesn't have a
+    reference photo. The returned reference_id can be passed to
+    POST /characters instead of uploading an image file.
+    """
+    if body.provider is not None and body.provider not in _SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider '{body.provider}'. Use one of {list(_SUPPORTED_PROVIDERS)}.",
+        )
+
+    # Import lazily to avoid pulling in the heavy google.genai chain at startup.
+    from gemini_client import generate_character_reference
+
+    image = generate_character_reference(
+        description=body.prompt,
+        provider=body.provider,
+    )
+
+    if image is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to generate character reference image. "
+            "The content filter may have blocked the result — try rephrasing your description.",
+        )
+
+    # Save the generated reference image under a unique reference id.
+    reference_id = uuid.uuid4().hex[:12]
+    ref_dir = os.path.join(config.UPLOAD_DIR, "_references", reference_id)
+    os.makedirs(ref_dir, exist_ok=True)
+    image_path = os.path.join(ref_dir, "reference.png")
+    image.save(image_path, "PNG")
+    logger.info("[reference %s] saved reference image: %s", reference_id, image_path)
+
+    return ReferenceResponse(
+        reference_id=reference_id,
+        image_url=f"/characters/reference/{reference_id}/image",
+    )
+
+
+@app.get("/characters/reference/{reference_id}/image")
+def get_reference_image(
+    reference_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve a previously generated reference image for preview."""
+    image_path = os.path.join(
+        config.UPLOAD_DIR, "_references", reference_id, "reference.png"
+    )
+    if not os.path.isfile(image_path):
+        raise HTTPException(status_code=404, detail="Reference image not found.")
+    return FileResponse(image_path, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Generate (create character pipeline job)
 # ---------------------------------------------------------------------------
 @app.post("/characters", response_model=JobCreatedResponse, status_code=202)
 async def create_character(
     name: str = Form(..., description="Character name (used for output folder names)."),
-    image: UploadFile = File(..., description="Reference photo (person on white background)."),
+    image: UploadFile | None = File(None, description="Reference photo (person on white background). Provide this OR reference_id."),
+    reference_id: str | None = Form(None, description="ID from POST /characters/reference. Provide this OR image."),
     template: str | None = Form(None, description="Template name, e.g. 'saree'."),
     skip: str | None = Form(None, description="Comma-separated parts to skip."),
     parts: str | None = Form(None, description="Run ONLY these parts (comma-separated)."),
@@ -161,24 +230,53 @@ async def create_character(
     skin_tone: str | None = Form(None),
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Upload a reference image and enqueue a full pipeline run.
+    """Upload a reference image (or use a generated reference_id) and enqueue a full pipeline run.
 
+    Provide exactly one of `image` (file upload) or `reference_id` (from Step 0).
     Returns a job_id immediately; poll GET /jobs/{id} for progress.
     """
-    if image.content_type not in config.ALLOWED_IMAGE_TYPES:
+    # --- Resolve the reference image path ---
+    has_image = image is not None and image.filename
+    has_ref = reference_id is not None and reference_id.strip()
+
+    if has_image and has_ref:
         raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported image type '{image.content_type}'. "
-            f"Allowed: {sorted(config.ALLOWED_IMAGE_TYPES)}",
+            status_code=400,
+            detail="Provide either 'image' (file upload) or 'reference_id', not both.",
+        )
+    if not has_image and not has_ref:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either an 'image' file upload or a 'reference_id' from Step 0.",
         )
 
-    contents = await image.read()
-    if len(contents) > config.MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Image too large ({len(contents)} bytes). "
-            f"Max is {config.MAX_UPLOAD_BYTES} bytes.",
+    if has_image:
+        # Existing path: user uploaded a file.
+        if image.content_type not in config.ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported image type '{image.content_type}'. "
+                f"Allowed: {sorted(config.ALLOWED_IMAGE_TYPES)}",
+            )
+
+        contents = await image.read()
+        if len(contents) > config.MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Image too large ({len(contents)} bytes). "
+                f"Max is {config.MAX_UPLOAD_BYTES} bytes.",
+            )
+
+    if has_ref:
+        # Step 0 path: user generated a reference image via text prompt.
+        ref_path = os.path.join(
+            config.UPLOAD_DIR, "_references", reference_id.strip(), "reference.png"
         )
+        if not os.path.isfile(ref_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Reference '{reference_id}' not found. Generate one via POST /characters/reference first.",
+            )
 
     if provider is not None and provider not in _SUPPORTED_PROVIDERS:
         raise HTTPException(
@@ -220,14 +318,22 @@ async def create_character(
         owner=current.email,
     )
 
-    # Persist the uploaded reference image under this job's id.
+    # Persist / link the reference image for this job.
     upload_dir = os.path.join(config.UPLOAD_DIR, job.job_id)
     os.makedirs(upload_dir, exist_ok=True)
-    filename = os.path.basename(image.filename or "reference")
-    image_path = os.path.join(upload_dir, filename)
-    with open(image_path, "wb") as f:
-        f.write(contents)
-    logger.info("[job %s] saved reference image: %s", job.job_id, image_path)
+
+    if has_image:
+        filename = os.path.basename(image.filename or "reference")
+        image_path = os.path.join(upload_dir, filename)
+        with open(image_path, "wb") as f:
+            f.write(contents)
+        logger.info("[job %s] saved uploaded reference image: %s", job.job_id, image_path)
+    else:
+        # Copy the generated reference into the job's upload dir.
+        import shutil
+        image_path = os.path.join(upload_dir, "reference.png")
+        shutil.copy2(ref_path, image_path)
+        logger.info("[job %s] linked generated reference (ref=%s): %s", job.job_id, reference_id, image_path)
 
     pipeline_kwargs = {
         "character_name": name,

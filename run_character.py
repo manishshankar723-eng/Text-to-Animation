@@ -2,8 +2,11 @@
 run_character.py — CLI entry point for the character asset generation pipeline.
 
 Usage:
-    # Full run (all parts):
+    # Full run (all parts) with an uploaded image:
     python run_character.py --name kamla --image ./kamla.jpg --template saree --skip goggles,headphone
+
+    # Generate reference from text prompt (Step 0) then run pipeline:
+    python run_character.py --name kamla --prompt "Indian woman in red saree, age 30" --template saree
 
     # Test run (one part only, no GCS upload):
     python run_character.py --name kamla --image ./kamla.jpg --parts hair --local-only
@@ -56,9 +59,18 @@ Examples:
         "--name", required=True,
         help="Character name (used for output folder names).",
     )
-    parser.add_argument(
-        "--image", required=True,
+
+    # Exactly one of --image or --prompt is required.
+    ref_group = parser.add_mutually_exclusive_group(required=True)
+    ref_group.add_argument(
+        "--image",
         help="Path to the reference image (person/character on white background).",
+    )
+    ref_group.add_argument(
+        "--prompt",
+        help="Text description of a character. Step 0 will generate a T-pose "
+             "reference image from this prompt before running the pipeline. "
+             "E.g. 'Indian woman in a red saree, age 30, medium brown skin'.",
     )
     parser.add_argument(
         "--template",
@@ -118,7 +130,7 @@ def main():
     logger.info("CHARACTER ASSET GENERATION PIPELINE")
     logger.info("=" * 60)
     logger.info("Character : %s", args.name)
-    logger.info("Image     : %s", args.image)
+    logger.info("Input     : %s", args.image or f'[prompt] "{args.prompt}"')
     logger.info("Template  : %s", args.template or "default")
     logger.info("Skip      : %s", skip_parts or "none")
     logger.info("Only parts: %s", only_parts or "all")
@@ -127,10 +139,33 @@ def main():
     logger.info("Local only: %s", args.local_only)
     logger.info("=" * 60)
 
+    # --- Step 0: generate reference image from prompt if needed ---
+    reference_image_path = args.image
+    if args.prompt:
+        from gemini_client import generate_character_reference
+
+        logger.info("Step 0: Generating T-pose reference image from prompt...")
+        ref_image = generate_character_reference(
+            description=args.prompt,
+            provider=args.provider,
+        )
+        if ref_image is None:
+            logger.error("Step 0 failed: could not generate reference image. "
+                         "Try rephrasing the prompt or check your API key.")
+            sys.exit(1)
+
+        # Save the generated reference next to the output
+        import os
+        ref_dir = os.path.join(args.output_dir, args.name)
+        os.makedirs(ref_dir, exist_ok=True)
+        reference_image_path = os.path.join(ref_dir, "reference_generated.png")
+        ref_image.save(reference_image_path, "PNG")
+        logger.info("Step 0 complete. Reference saved: %s", reference_image_path)
+
     try:
         result = run_pipeline(
             character_name=args.name,
-            reference_image_path=args.image,
+            reference_image_path=reference_image_path,
             template_name=args.template,
             skip_parts=skip_parts,
             only_parts=only_parts,

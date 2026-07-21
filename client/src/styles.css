@@ -187,6 +187,60 @@ input[type="checkbox"] {
   border-radius: 8px;
   border: 1px solid var(--border);
 }
+.preview.clickable {
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.preview.clickable:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 20px rgba(108, 140, 255, 0.25);
+}
+
+/* Lightbox / fullscreen image popup */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: lightbox-fade-in 0.2s ease;
+}
+@keyframes lightbox-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  cursor: default;
+  object-fit: contain;
+}
+.lightbox-close {
+  position: fixed;
+  top: 1.2rem;
+  right: 1.5rem;
+  z-index: 10000;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 1.5rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.lightbox-close:hover {
+  background: rgba(255, 107, 107, 0.5);
+}
 .advanced {
   margin-top: 1rem;
   border-top: 1px solid var(--border);
@@ -196,6 +250,95 @@ input[type="checkbox"] {
   cursor: pointer;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.tab-btn {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border: none;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.2s, color 0.2s;
+}
+.tab-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+.tab-btn.active {
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 600;
+}
+.tab-content {
+  margin-bottom: 0.6rem;
+}
+
+/* Prompt textarea */
+.prompt-textarea {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+}
+.prompt-textarea::placeholder {
+  color: var(--muted);
+}
+
+/* Reference preview */
+.ref-preview {
+  margin-top: 0.6rem;
+}
+.ref-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 0.5rem;
+}
+.ref-ok {
+  font-size: 0.82rem;
+  color: var(--ok);
+}
+
+/* Secondary button */
+.btn.secondary {
+  background: var(--panel-2);
+  color: var(--primary);
+  border-color: var(--primary);
+  margin-top: 0.7rem;
+}
+.btn.secondary:hover {
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+/* Inline spinner (inside buttons) */
+.spinner-inline {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  vertical-align: middle;
 }
 
 /* Job list */

@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-20 (per-user Meshy API key)
+**Last updated:** 2026-07-21 (Step 0 — text-to-reference image)
 
 ---
 
@@ -36,6 +36,9 @@ asset sheets (front / left / three-quarter / back) for each body part and
 garment, then optionally turn them into 3D models via Meshy.
 
 Pipeline stages (see `pipeline.py`):
+0. **Reference image (Step 0, optional)** — user provides a text prompt → Gemini
+   generates a T-pose character on white background (`gemini_client.py:
+   generate_character_reference`). Alternative: user uploads their own image.
 1. **Fullbody sheet** — Gemini image model turns the reference photo into a 2×2
    turnaround grid.
 2. **Per-part sheets** — each part (hair, face, jacket/saree, pants, shoe, …) is
@@ -87,7 +90,9 @@ Pipeline stages (see `pipeline.py`):
 
 ### API endpoints
 - `POST /auth/register` · `POST /auth/login` · `GET /auth/me`
-- `POST /characters` — upload image + options → returns `job_id` (async)
+- `POST /characters/reference` — generate T-pose reference image from text (Step 0)
+- `GET /characters/reference/{id}/image` — serve generated reference for preview
+- `POST /characters` — upload image (or use `reference_id`) + options → `job_id` (async)
 - `GET /jobs` · `GET /jobs/{id}` — list / poll (scoped to the owner)
 - `GET /jobs/{id}/assets` — individual PNG URLs per part/view (nested + flat)
 - `GET /jobs/{id}/download` — zip (local file or GCS redirect)
@@ -100,8 +105,11 @@ Pipeline stages (see `pipeline.py`):
 
 ### CLI
 ```powershell
-# Full run (saree template), skip some parts:
+# Full run with uploaded image (saree template), skip some parts:
 python run_character.py --name kamla --image ./kamla.jpg --template saree --skip goggles,headphone
+
+# Generate reference from text prompt (Step 0) then run pipeline:
+python run_character.py --name kamla --prompt "Indian woman in red saree, age 30" --template saree
 
 # Cheap test — one part, no GCS:
 python run_character.py --name kamla --image ./kamla.jpg --parts hair --local-only
@@ -192,6 +200,27 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-21 — Step 0: text-to-reference image generation
+- `gemini_client.py`: added `generate_character_reference(description, provider)`
+  with a Pixar-style T-pose prompt template, validation, and full retry/backoff.
+- `server/schemas.py`: added `ReferenceRequest` and `ReferenceResponse` models.
+- `server/main.py`: new `POST /characters/reference` (generates + saves under
+  `uploads/_references/{id}/`) and `GET /characters/reference/{id}/image` (serves
+  preview). Updated `POST /characters` to accept optional `reference_id` OR file
+  upload (exactly one required). Uses `shutil.copy2` to link generated refs.
+- `client/src/api.js`: added `generateReference()` and `getReferenceImageUrl()`.
+- `client/src/components/GenerateForm.jsx`: redesigned with two-tab UI
+  (“✨ Describe Character” / “📁 Upload Image”). Describe tab: textarea +
+  generate button + loading spinner + preview + regenerate. Upload tab: existing
+  file picker. Both paths feed into the same pipeline form.
+- `client/src/styles.css`: added tab-bar, prompt-textarea, ref-preview,
+  ref-actions, secondary button, spinner-inline styles.
+- `run_character.py`: added `--prompt` flag via mutually exclusive group
+  (`--image | --prompt`). When `--prompt` is used, Step 0 runs first, saves
+  `reference_generated.png`, then feeds it into the pipeline.
+- Verified: `npm run build` passes (36 modules, 0 errors); CLI `--help` shows
+  `(--image IMAGE | --prompt PROMPT)` correctly.
 
 ### 2026-07-20 — Per-user Meshy API key in client
 - `client/src/components/JobDetail.jsx`: added `meshyKey` state and a
@@ -304,14 +333,15 @@ in `.env` — no code change needed.
 
 ## 🎯 Current State / Next Steps
 
-**Current state:** Phase 1 CLI works. Phase 2 API is built with async jobs,
-JWT+MongoDB auth, owner-scoped jobs, and a switchable Vertex/Gemini image backend.
-All non-network paths verified via TestClient.
+**Current state:** Phase 1 CLI works with both `--image` and `--prompt` input.
+Phase 2 API has Step 0 (`POST /characters/reference`) + updated
+`POST /characters` (accepts `reference_id` or file upload). Phase 3 client
+has a two-tab form (Describe/Upload). All non-network paths verified.
 
 **Not yet verified live** (needs real credentials/services running):
-- End-to-end generation through the API against real Gemini/GCS.
+- Step 0 text-to-reference against real Gemini/Vertex API.
+- End-to-end: describe → generate reference → preview → run pipeline.
 - MongoDB reachable at `MONGODB_URI` (auth needs it).
-- Model-name parity between Vertex and Gemini backends.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
 - [x] Per-job **asset-listing endpoint** — `GET /jobs/{id}/assets` (done 2026-07-20).
@@ -322,7 +352,11 @@ All non-network paths verified via TestClient.
       against MongoDB Atlas + Vertex AI + GCS (done 2026-07-20). Meshy path not yet
       exercised live.
 - [x] Per-user **Meshy API key** — let users supply their own key via the UI
-      (done 2026-07-20). Frontend input field + api.js passes it through.
-      Backend `MeshyRequest.api_key` already existed.
+      (done 2026-07-20).
+- [x] **Step 0 — text-to-reference image** — generate T-pose character from text
+      prompt. Two-tab client UI, new server endpoints, CLI `--prompt` flag
+      (done 2026-07-21).
+- [ ] **Live test Step 0** — verify text-to-reference → pipeline flow against
+      real Gemini API in browser.
 - [ ] Harden for production: lock down CORS origins, require `JWT_SECRET`,
       rate-limit auth endpoints.

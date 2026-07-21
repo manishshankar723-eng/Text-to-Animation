@@ -74,6 +74,14 @@ export function health() {
 }
 
 // --- Jobs ---
+export function generateReference(prompt, provider) {
+  const body = { prompt };
+  if (provider) body.provider = provider;
+  return request("/characters/reference", { method: "POST", body });
+}
+export function getReferenceImageUrl(referenceId) {
+  return `${BASE}/characters/reference/${referenceId}/image`;
+}
 export function createCharacter(formData) {
   return request("/characters", { method: "POST", body: formData, isForm: true });
 }
