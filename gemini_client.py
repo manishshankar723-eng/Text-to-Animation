@@ -106,9 +106,9 @@ def _is_valid_sheet(image: Image.Image) -> bool:
     w, h = image.size
     if w < 512 or h < 512:
         return False
-    # Aspect ratio between 0.7 and 1.5 is acceptable for a 2×2 grid
+    # Aspect ratio between 0.6 and 2.2 is acceptable for a 2×2 grid (e.g. 1408×768 = 1.83)
     ratio = w / h
-    if ratio < 0.7 or ratio > 1.5:
+    if ratio < 0.6 or ratio > 2.2:
         return False
     return True
 

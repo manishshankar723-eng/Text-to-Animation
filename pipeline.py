@@ -129,12 +129,8 @@ def run_pipeline(
 
     # --- Filter parts ---
     if only_parts:
-        # --parts flag: run ONLY these parts (but always include fullbody first)
-        parts_to_run = ["fullbody"] if "fullbody" not in only_parts else []
-        parts_to_run += [p for p in only_parts if p != "fullbody"]
-        # If only_parts doesn't include fullbody, we still need it for reference
-        if "fullbody" not in only_parts:
-            parts_to_run = ["fullbody"] + [p for p in only_parts]
+        # --parts flag: run ONLY these parts (always ensure fullbody is first for reference)
+        parts_to_run = ["fullbody"] + [p for p in only_parts if p != "fullbody"]
     else:
         parts_to_run = [p for p in parts_order if p not in (skip_parts or [])]
 
