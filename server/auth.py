@@ -135,3 +135,13 @@ def me(current: CurrentUser = Depends(get_current_user)):
         created_at=user.get("created_at"),
         disabled=user.get("disabled", False),
     )
+
+
+@router.delete("/me", status_code=204)
+def delete_me(current: CurrentUser = Depends(get_current_user)):
+    """Permanently delete the authenticated user's own account."""
+    deleted = users.delete_user(current.email)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found.")
+    logger.info("Deleted user account: %s", current.email)
+    return None

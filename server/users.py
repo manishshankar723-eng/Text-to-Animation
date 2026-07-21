@@ -91,6 +91,12 @@ def update_password(email: str, password_hash: str) -> bool:
     return result.matched_count > 0
 
 
+def delete_user(email: str) -> bool:
+    """Permanently delete a user by email. Returns True if a user was removed."""
+    result = get_collection().delete_one({"email": _normalize_email(email)})
+    return result.deleted_count > 0
+
+
 def check_connection() -> dict:
     """Ping MongoDB and report connectivity (never raises).
 

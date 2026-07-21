@@ -30,65 +30,88 @@ defaults:
     COPY this exact {gender} character (age {age}, {skin_tone} skin) from the reference image onto
     a 2×2 grid showing the FULL BODY in four views: top-left = front, top-right = left side,
     bottom-left = three-quarter angle, bottom-right = back view. Stand in a strict T-pose with arms
-    extended horizontally to the sides. Pure white background in every panel. NO text labels, NO
-    text annotations, NO panel titles (do NOT write FRONT, LEFT SIDE, BACK). NO black border lines or
-    box outlines. Exactly ONE character standing alone in all panels. COPY, not create.
+    extended horizontally to the sides. Keep NATURAL, REALISTIC human proportions — normal head-to-body
+    ratio, do NOT elongate, stretch or squash the figure; the same figure must be identical height and
+    build in all four panels. Exactly ONE character standing alone in each panel, framed head-to-feet
+    with a small even margin. Sample the skin tone and all colors directly from the reference image.
+    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere (do NOT write
+    FRONT, LEFT, BACK). NO borders, frames, outlines, grid lines, dividers or gutters — the four views
+    sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   hair: >
     COPY the exact hairstyle from the reference image as an isolated hairpiece on an invisible head,
     like a helmet made of hair. {gender} character, age {age}. Show it on a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    The hollow inside of the hair is PURE WHITE — no face, no neck, no black shadow. Pure white
-    background in every panel. NO text labels, NO panel titles, NO border lines. Sample the hair color
-    directly from the reference image. COPY, not create.
+    Keep the hair's natural shape and proportions — do NOT stretch or distort it. The hollow inside of
+    the hair is PURE WHITE — no face, no neck, no black shadow. Sample the hair color directly from the
+    reference image. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
+    anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
+    edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   face: >
     COPY the exact face features (eyes, nose, mouth, skin tone, facial structure) of this {gender}
     character (age {age}, {skin_tone} skin) from the reference image onto a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
     Show the facial features and head contour ONLY — NO hair on top of head (bald scalp silhouette),
-    NO shoulders, NO neck, NO body. Pure white background in every panel. NO text labels, NO panel titles,
-    NO border lines. COPY, not create.
+    NO shoulders, NO neck, NO body. Keep natural, realistic facial proportions — do NOT stretch or
+    distort the head. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
+    anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
+    edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   body: >
     COPY the exact body shape and skin tone from the reference image onto a 2×2 grid in four views:
     top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
     Show the body wearing a simple modest dark blue compression shirt and grey shorts, fully covered.
-    Pure white background in every panel. NO text labels, NO panel titles, NO border lines. Exactly ONE
-    body standing in T-pose in all panels. COPY skin tone directly from the reference.
+    Keep NATURAL, REALISTIC human proportions — do NOT elongate, stretch or squash the figure; identical
+    height and build in all four panels. Exactly ONE body standing in T-pose in each panel. ABSOLUTELY
+    NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders, frames,
+    outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    pure-white (#FFFFFF) background. COPY skin tone directly from the reference.
 
   jacket: >
     Sleeves stretched straight out horizontally forming a letter T, NOT hanging down. COPY the exact
     jacket/top garment from the reference image as a ghost mannequin flat lay — IGNORE the person,
     reproduce ONLY the jacket. Show on a 2×2 grid in four views: top-left = front, top-right = left
-    side, bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
-    panel. NO text labels, NO panel titles, NO border lines. Same garment in all panels.
+    side, bottom-left = three-quarter angle, bottom-right = back. Keep the garment's natural shape and
+    proportions — do NOT stretch or distort it; the same garment in all panels. ABSOLUTELY NO text,
+    letters, words, numbers, captions, labels or watermarks anywhere. NO borders, frames, outlines,
+    grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless pure-white
+    (#FFFFFF) background. COPY, not create.
 
   pants: >
     COPY the exact pants/lower garment from the reference image as a ghost mannequin flat lay —
     IGNORE the person, reproduce ONLY the pants. Show on a 2×2 grid in four views: top-left = front,
-    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Pure white
-    background in every panel. NO text labels, NO panel titles, NO border lines. Same garment in all panels.
+    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Keep the garment's
+    natural shape and proportions — do NOT stretch or distort it; the same garment in all panels.
+    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
+    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    pure-white (#FFFFFF) background. COPY, not create.
 
   shoe: >
     COPY the exact shoes/footwear from the reference image. Show a single pair on a 2×2 grid in
     four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
-    bottom-right = back. Pure white background in every panel. NO text labels, NO panel titles, NO
-    border lines. Same footwear in all four panels. COPY, not create.
+    bottom-right = back. Keep the footwear's natural shape and proportions — do NOT stretch or distort
+    it; the same footwear in all four panels. ABSOLUTELY NO text, letters, words, numbers, captions,
+    labels or watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the
+    four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   goggles: >
     Show stylish modern protective goggles / sunglasses on a 2×2 grid in four views: top-left = front,
     top-right = left side, bottom-left = three-quarter angle, bottom-right = back. If character wears
-    goggles in reference image, COPY them; otherwise design matching modern futuristic goggles. Pure
-    white background in every panel. NO text labels, NO panel titles, NO border lines. NO face or head,
-    isolated eyewear only.
+    goggles in reference image, COPY them; otherwise design matching modern futuristic goggles. Keep
+    natural, realistic proportions — do NOT stretch or distort. NO face or head, isolated eyewear only.
+    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
+    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    pure-white (#FFFFFF) background.
 
   headphone: >
     Show stylish modern over-ear wireless headphones on a 2×2 grid in four views: top-left = front,
     top-right = left side, bottom-left = three-quarter angle, bottom-right = back. If character wears
-    headphones in reference image, COPY them; otherwise design matching modern headphones. Pure white
-    background in every panel. NO text labels, NO panel titles, NO border lines. NO head or ears,
-    isolated headphones only.
+    headphones in reference image, COPY them; otherwise design matching modern headphones. Keep natural,
+    realistic proportions — do NOT stretch or distort. NO head or ears, isolated headphones only.
+    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
+    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    pure-white (#FFFFFF) background.
 
 
 # ---------------------------------------------------------------------------
@@ -126,49 +149,64 @@ templates:
         COPY this exact {gender} character (age {age}, {skin_tone} skin) wearing a traditional
         saree from the reference image onto a 2×2 grid showing the FULL BODY in four views:
         top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right =
-        back view. Sample the skin tone, saree color, and all details directly from the reference
-        image. Pure white background in every panel. Same character, same saree, same proportions
-        in all four panels. {gender}, age {age}. COPY, not create.
+        back view. Keep NATURAL, REALISTIC human proportions — normal head-to-body ratio, do NOT
+        elongate, stretch or squash the figure; identical height and build in all four panels.
+        Sample the skin tone, saree color, and all details directly from the reference image.
+        ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO
+        borders, frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge
+        on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
       hair: >
         COPY the exact hairstyle from the reference image as an isolated hairpiece on an invisible
         head, like a helmet made of hair. {gender} character, age {age}. Show on a 2×2 grid in
         four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
-        bottom-right = back. The hollow inside of the hair is PURE WHITE — no black area, no dark
-        shadow. Pure white background in every panel. Sample the hair color directly from the
-        reference image. {gender}, age {age}. No sunglasses, no headphones, no accessories on
-        the hair. COPY, not create.
+        bottom-right = back. Keep the hair's natural shape and proportions — do NOT stretch or
+        distort it. The hollow inside of the hair is PURE WHITE — no black area, no dark shadow.
+        Sample the hair color directly from the reference image. No sunglasses, no headphones, no
+        accessories on the hair. ABSOLUTELY NO text, letters, words, numbers, captions, labels or
+        watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four
+        views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
       face: >
         COPY the exact face of this {gender} character (age {age}, {skin_tone} skin) from the
         reference image. Show the face and head only on a 2×2 grid in four views: top-left = front,
         top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Include the
-        bindi if present in the reference. Sample the skin tone directly from the reference image.
-        Pure white background in every panel. {gender}, age {age}. Remove any sunglasses.
-        COPY, not create.
+        bindi if present in the reference. Keep natural, realistic facial proportions — do NOT stretch
+        or distort the head. Sample the skin tone directly from the reference image. Remove any
+        sunglasses. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
+        anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
+        edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
       jacket: >
         COMPLETE FULL-LENGTH saree, shoulder to ankles, zoom OUT so the ENTIRE saree fits
         top-to-bottom in each panel, nothing cut off. COPY the exact saree from the reference image
         as a ghost mannequin display — IGNORE the person, reproduce ONLY the draped saree fabric.
         Show on a 2×2 grid in four views: top-left = front, top-right = left side, bottom-left =
-        three-quarter angle, bottom-right = back. Pure white background in every panel. Same saree
-        in all four panels. Sample colors directly from the reference image. COPY, not create.
+        three-quarter angle, bottom-right = back. Keep the saree's natural drape and proportions — do
+        NOT stretch or distort it; the same saree in all four panels. Sample colors directly from the
+        reference image. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
+        anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
+        edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
       pants: >
         SAREE BLOUSE / choli, short cropped, HALF SLEEVES ending mid-upper-arm (not full sleeves,
         not sleeveless). COPY the exact saree blouse from the reference image as a ghost mannequin
         display. Show on a 2×2 grid in four views: top-left = front, top-right = left side,
-        bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
-        panel. Same blouse in all four panels. Sample colors directly from the reference image.
-        COPY, not create.
+        bottom-left = three-quarter angle, bottom-right = back. Keep the blouse's natural shape and
+        proportions — do NOT stretch or distort it; the same blouse in all four panels. Sample colors
+        directly from the reference image. ABSOLUTELY NO text, letters, words, numbers, captions,
+        labels or watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters —
+        the four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
       shoe: >
         COPY the exact footwear from the reference image. V-strap flip-flop, single strap between
         big toe and second toe, Hawaii chappal / thong slipper style, NOT strappy, NOT buckled,
         NOT closed shoes. Show on a 2×2 grid in four views: top-left = front, top-right = left side,
-        bottom-left = three-quarter angle, bottom-right = back. Pure white background in every
-        panel. Same footwear in all four panels. COPY, not create.
+        bottom-left = three-quarter angle, bottom-right = back. Keep the footwear's natural shape and
+        proportions — do NOT stretch or distort it; the same footwear in all four panels. ABSOLUTELY
+        NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders, frames,
+        outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+        pure-white (#FFFFFF) background. COPY, not create.
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,9 @@ export function login(email, password) {
 export function me() {
   return request("/auth/me");
 }
+export function deleteAccount() {
+  return request("/auth/me", { method: "DELETE" });
+}
 
 // --- Metadata ---
 export function listTemplates() {
