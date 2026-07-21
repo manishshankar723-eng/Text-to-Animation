@@ -103,7 +103,20 @@ export function submitMeshy(jobId, parts, meshyApiKey) {
 // Download the zip via an authenticated request (the endpoint requires a bearer
 // token, so we can't just point a link at it). Fetch follows the GCS redirect
 // automatically for cloud runs, or streams the local file otherwise.
-export async function downloadZip(jobId, filename) {
+export async function downloadZip(jobId, filename, zipUrl) {
+  // If we have a public GCS/HTTP URL, trigger direct browser download
+  if (zipUrl && (zipUrl.startsWith("http://") || zipUrl.startsWith("https://"))) {
+    const a = document.createElement("a");
+    a.href = zipUrl;
+    a.download = filename || `${jobId}_assets.zip`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return;
+  }
+
   const token = getToken();
   const res = await fetch(`${BASE}/jobs/${jobId}/download`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},

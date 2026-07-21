@@ -73,7 +73,8 @@ export default function JobDetail({ jobId, onChanged }) {
     setDownloading(true);
     setError("");
     try {
-      await api.downloadZip(jobId, `${job.character_name}_assets.zip`);
+      const zipUrl = assets?.zip || job?.result?.zip;
+      await api.downloadZip(jobId, `${job.character_name}_assets.zip`, zipUrl);
     } catch (e) {
       setError(e.message);
     } finally {
