@@ -135,7 +135,9 @@ def create_zip(
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for filename in sorted(os.listdir(char_dir)):
-            if filename.endswith(".png"):
+            # Skip internal/helper files (e.g. the raw "_fullbody_sheet.png" used
+            # only as a reference) — the zip should hold final assets only.
+            if filename.endswith(".png") and not filename.startswith("_"):
                 file_path = os.path.join(char_dir, filename)
                 # Store inside zip without the full directory path
                 zf.write(file_path, filename)

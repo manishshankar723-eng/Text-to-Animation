@@ -41,6 +41,7 @@ from .schemas import (
     ReferenceRequest,
     ReferenceResponse,
     RegeneratePartRequest,
+    RegenerateViewRequest,
     TemplateInfo,
 )
 from . import worker
@@ -170,18 +171,25 @@ def generate_reference(
         )
 
     # Import lazily to avoid pulling in the heavy google.genai chain at startup.
-    from gemini_client import generate_character_reference
+    from gemini_client import generate_character_reference, ReferenceGenerationError
 
-    image = generate_character_reference(
-        description=body.prompt,
-        provider=body.provider,
-    )
+    try:
+        image = generate_character_reference(
+            description=body.prompt,
+            provider=body.provider,
+        )
+    except ReferenceGenerationError as e:
+        # Surface the ACTUAL reason (API error / block / bad image), not a guess.
+        logger.warning("[reference] generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Reference generation failed: {e}")
+    except Exception as e:  # noqa: BLE001 — unexpected; still report clearly
+        logger.exception("[reference] unexpected error")
+        raise HTTPException(status_code=502, detail=f"Reference generation error: {e}")
 
     if image is None:
         raise HTTPException(
             status_code=502,
-            detail="Failed to generate character reference image. "
-            "The content filter may have blocked the result — try rephrasing your description.",
+            detail="Reference generation returned no image. Try rephrasing your description.",
         )
 
     # Save the generated reference image under a unique reference id.
@@ -407,7 +415,9 @@ def list_assets(job_id: str, current: CurrentUser = Depends(get_current_user)):
     in which case they are absolute local file paths (see `is_local`).
     """
     job = _get_owned_job(job_id, current)
-    if job.status != JobStatus.SUCCEEDED:
+    # SUCCEEDED → full asset set. RUNNING → whatever parts have finished so far
+    # (live preview). Anything else has nothing to show yet.
+    if job.status not in (JobStatus.SUCCEEDED, JobStatus.RUNNING):
         raise HTTPException(
             status_code=409,
             detail=f"Job is '{job.status.value}', assets not ready.",
@@ -416,7 +426,12 @@ def list_assets(job_id: str, current: CurrentUser = Depends(get_current_user)):
     result = job.result or {}
     parts = result.get("urls", {})
     if not parts:
-        raise HTTPException(status_code=404, detail="No assets found on this job.")
+        # While running, "nothing yet" is expected — tell the client to keep polling.
+        raise HTTPException(
+            status_code=409 if job.status == JobStatus.RUNNING else 404,
+            detail="No assets ready yet." if job.status == JobStatus.RUNNING
+            else "No assets found on this job.",
+        )
 
     # A run is "local" if any URL is a filesystem path rather than an http URL.
     is_local = not any(
@@ -491,6 +506,87 @@ def regenerate_part(
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
 
 
+@app.post("/jobs/{job_id}/regenerate-view")
+def regenerate_view(
+    job_id: str,
+    req: RegenerateViewRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Regenerate ONE view (front/left/three_quarter/back) of a part."""
+    job = _get_owned_job(job_id, current)
+    if job.status != JobStatus.SUCCEEDED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is '{job.status.value}', cannot regenerate views yet.",
+        )
+
+    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
+    ref_path = None
+    if os.path.exists(upload_dir):
+        for f in os.listdir(upload_dir):
+            if f.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                ref_path = os.path.join(upload_dir, f)
+                break
+    if not ref_path or not os.path.isfile(ref_path):
+        raise HTTPException(status_code=404, detail="Reference image for this job was not found.")
+
+    from pipeline import regenerate_single_view
+
+    provider = req.provider or job.params.get("provider")
+    local_only = job.params.get("local_only", False)
+    try:
+        updated_result = regenerate_single_view(
+            character_name=job.character_name,
+            reference_image_path=ref_path,
+            part_name=req.part,
+            view_name=req.view,
+            custom_prompt=req.prompt,
+            template_name=job.template,
+            local_only=local_only,
+            output_dir=config.OUTPUT_DIR,
+            provider=provider,
+            existing_result=job.result or {},
+        )
+        get_store().mark_succeeded(job_id, updated_result)
+        return updated_result
+    except Exception as e:
+        logger.exception("[job %s] regenerate_view failed for %s/%s", job_id, req.part, req.view)
+        raise HTTPException(status_code=500, detail=f"View regeneration failed: {e}")
+
+
+@app.get("/jobs/{job_id}/download/{part}")
+def download_part(
+    job_id: str,
+    part: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Download a single part's 4 view PNGs as a zip (per-section download)."""
+    import zipfile
+
+    job = _get_owned_job(job_id, current)
+    char_dir = os.path.join(config.OUTPUT_DIR, job.character_name)
+    if not os.path.isdir(char_dir):
+        raise HTTPException(status_code=404, detail="No assets on disk for this job.")
+
+    files = [
+        f for f in os.listdir(char_dir)
+        if f.startswith(f"{part}_") and f.endswith(".png") and not f.startswith("_")
+    ]
+    if not files:
+        raise HTTPException(status_code=404, detail=f"No images found for part '{part}'.")
+
+    zip_path = os.path.join(char_dir, f"_{part}_download.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(files):
+            zf.write(os.path.join(char_dir, f), f)
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{job.character_name}_{part}.zip",
+    )
+
+
 @app.get("/jobs/{job_id}/image/{part}/{view}")
 def get_asset_image(
     job_id: str,
@@ -555,16 +651,27 @@ def submit_meshy(
             ),
         )
 
+    # Resolve provider + key: explicit request key → user's saved key → env var.
+    provider = (req.provider or "meshy").strip().lower()
+    if provider not in ("meshy", "tripo"):
+        raise HTTPException(status_code=400, detail=f"Unknown 3D provider '{provider}'.")
+    api_key = req.api_key or users.get_api_key(current.email, provider)
+
     meshy_job = store.create(
         character_name=parent.character_name,
         kind=JobKind.MESHY,
         template=parent.template,
-        params={"parent_job_id": job_id, "parts": list(part_urls), "skipped": missing},
+        params={
+            "parent_job_id": job_id,
+            "parts": list(part_urls),
+            "skipped": missing,
+            "provider": provider,
+        },
         owner=current.email,
     )
-    worker.submit_meshy_job(meshy_job.job_id, part_urls, req.api_key)
+    worker.submit_meshy_job(meshy_job.job_id, part_urls, api_key, provider)
 
-    msg = "Meshy submission started."
+    msg = f"{provider.title()} submission started."
     if missing:
         msg += f" Skipped (no public URLs): {missing}."
     return JobCreatedResponse(

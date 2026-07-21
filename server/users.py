@@ -97,6 +97,37 @@ def delete_user(email: str) -> bool:
     return result.deleted_count > 0
 
 
+# --- Third-party 3D API keys (stored plaintext under user.api_keys.{provider}) ---
+def set_api_key(email: str, provider: str, api_key: str) -> bool:
+    """Save a 3D provider API key on the user record."""
+    result = get_collection().update_one(
+        {"email": _normalize_email(email)},
+        {"$set": {f"api_keys.{provider}": api_key}},
+    )
+    return result.matched_count > 0
+
+
+def get_api_key(email: str, provider: str) -> str | None:
+    """Return the user's saved key for a provider, or None."""
+    user = get_user_by_email(email) or {}
+    return (user.get("api_keys") or {}).get(provider)
+
+
+def get_saved_providers(email: str) -> dict:
+    """Return {provider: True} for each provider the user has a key stored for."""
+    user = get_user_by_email(email) or {}
+    return {p: True for p, v in (user.get("api_keys") or {}).items() if v}
+
+
+def delete_api_key(email: str, provider: str) -> bool:
+    """Remove a saved provider key. Returns True if a user matched."""
+    result = get_collection().update_one(
+        {"email": _normalize_email(email)},
+        {"$unset": {f"api_keys.{provider}": ""}},
+    )
+    return result.matched_count > 0
+
+
 def check_connection() -> dict:
     """Ping MongoDB and report connectivity (never raises).
 

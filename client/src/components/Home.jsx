@@ -6,19 +6,38 @@ import * as api from "../api.js";
 export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
+  const [apiKeys, setApiKeys] = useState({}); // { meshy:true, tripo:true }
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [p, j] = await Promise.all([api.me(), api.listJobs()]);
+      const [p, j, k] = await Promise.all([
+        api.me(),
+        api.listJobs(),
+        api.getApiKeys().catch(() => ({})),
+      ]);
       setProfile(p);
       setJobs(Array.isArray(j) ? j : j.jobs || []);
+      setApiKeys(k || {});
     } catch (e) {
       setError(e.message);
     }
   }, []);
+
+  async function removeKey(provider) {
+    try {
+      await api.deleteApiKey(provider);
+      setApiKeys((prev) => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      });
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   useEffect(() => {
     load();
@@ -135,9 +154,35 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
         {/* Account actions */}
         <section className="card home-card account-card">
           <h2>Account</h2>
-          <button className="btn account-btn" onClick={onLogout}>
-            ⎋ Log out
-          </button>
+          <p className="muted tiny">
+            To log out, click your name at the bottom of the sidebar.
+          </p>
+
+          {/* Saved 3D API keys */}
+          <div className="api-keys-block">
+            <h3 className="api-keys-title">3D API keys</h3>
+            {Object.keys(apiKeys).filter((p) => apiKeys[p]).length === 0 ? (
+              <p className="muted tiny">
+                No keys saved. You'll be asked for one when you generate a 3D model.
+              </p>
+            ) : (
+              <ul className="api-keys-list">
+                {Object.keys(apiKeys)
+                  .filter((p) => apiKeys[p])
+                  .map((p) => (
+                    <li key={p} className="api-key-item">
+                      <span>
+                        <strong style={{ textTransform: "capitalize" }}>{p}</strong>{" "}
+                        <span className="badge ok">saved</span>
+                      </span>
+                      <button className="btn small danger-btn" onClick={() => removeKey(p)}>
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
 
           <div className="danger-zone">
             <h3 className="danger-title">Danger zone</h3>

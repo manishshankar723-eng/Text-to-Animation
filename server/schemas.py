@@ -37,7 +37,11 @@ class Job(BaseModel):
     params: dict = Field(default_factory=dict)
     created_at: str
     updated_at: str
+    # Live progress while status == RUNNING: {percent, stage, current_part,
+    # message, done_parts, total_parts}. Cleared/ignored once finished.
+    progress: dict | None = None
     # Populated when status == SUCCEEDED — this is the pipeline summary dict.
+    # May be partially populated (urls only) while RUNNING for live preview.
     result: dict | None = None
     # Populated when status == FAILED.
     error: str | None = None
@@ -85,14 +89,16 @@ class AssetsResponse(BaseModel):
 
 
 class MeshyRequest(BaseModel):
-    """Body for POST /jobs/{job_id}/meshy — submit generated parts to Meshy."""
+    """Body for POST /jobs/{job_id}/meshy — submit generated parts for 3D."""
 
     parts: list[str] = Field(
         ...,
         description="Output part names to submit for 3D generation, e.g. ['hair', 'saree'].",
         min_length=1,
     )
-    # Optional per-request key; falls back to MESHY_API_KEY on the server.
+    # 3D backend: "meshy" (tested) or "tripo" (unverified).
+    provider: str = Field("meshy", description="3D provider: 'meshy' or 'tripo'.")
+    # Optional per-request key; falls back to the user's saved key, then env var.
     api_key: str | None = None
 
 
@@ -133,5 +139,14 @@ class RegeneratePartRequest(BaseModel):
         None,
         description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
     )
+
+
+class RegenerateViewRequest(BaseModel):
+    """Body for POST /jobs/{job_id}/regenerate-view — redo ONE view of a part."""
+
+    part: str = Field(..., description="Part name, e.g. 'fullbody', 'hair'.")
+    view: str = Field(..., description="View: front | left | three_quarter | back.")
+    prompt: str | None = Field(None, description="Optional custom prompt for the part.")
+    provider: str | None = Field(None, description="Image backend override.")
 
 

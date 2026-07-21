@@ -49,6 +49,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   function refreshJobs() {
     setRefreshKey((k) => k + 1);
@@ -67,6 +68,7 @@ export default function App() {
     setSelectedId(null);
     setNav("home");
     setAuthView("landing");
+    setAccountOpen(false);
   }
 
   function onJobCreated(jobId) {
@@ -138,8 +140,33 @@ export default function App() {
         onNavigate={setNav}
         email={email}
         onUpgrade={() => setUpgradeOpen(true)}
+        onProfileClick={() => setAccountOpen(true)}
       />
       <main className="shell-main">{content}</main>
+
+      {accountOpen && (
+        <div className="modal-overlay" onClick={() => setAccountOpen(false)}>
+          <div className="card account-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setAccountOpen(false)}>
+              ✕
+            </button>
+            <span className="account-modal-avatar">
+              {(email || "?").trim().charAt(0).toUpperCase()}
+            </span>
+            <h2>{email}</h2>
+            <p className="muted">Are you sure you want to log out of your account?</p>
+            <button className="btn primary" onClick={logout}>
+              ⎋ Log out
+            </button>
+            <button
+              className="btn ghost small account-modal-cancel"
+              onClick={() => setAccountOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {upgradeOpen && (
         <div className="modal-overlay" onClick={() => setUpgradeOpen(false)}>

@@ -68,6 +68,20 @@ export function deleteAccount() {
   return request("/auth/me", { method: "DELETE" });
 }
 
+// --- 3D provider API keys (saved on profile) ---
+export function getApiKeys() {
+  return request("/auth/me/api-keys"); // → { meshy: true, ... }
+}
+export function saveApiKey(provider, apiKey) {
+  return request("/auth/me/api-keys", {
+    method: "PUT",
+    body: { provider, api_key: apiKey },
+  });
+}
+export function deleteApiKey(provider) {
+  return request(`/auth/me/api-keys/${provider}`, { method: "DELETE" });
+}
+
 // --- Metadata ---
 export function listTemplates() {
   return request("/templates");
@@ -102,11 +116,25 @@ export function submitMeshy(jobId, parts, meshyApiKey) {
   if (meshyApiKey) body.api_key = meshyApiKey;
   return request(`/jobs/${jobId}/meshy`, { method: "POST", body });
 }
+// Submit ONE (or more) parts for 3D via a chosen provider. api_key is optional
+// when the user has a saved key for that provider on their profile.
+export function submitModel3D(jobId, parts, provider, apiKey) {
+  const body = { parts, provider };
+  if (apiKey) body.api_key = apiKey;
+  return request(`/jobs/${jobId}/meshy`, { method: "POST", body });
+}
 export function regeneratePart(jobId, part, prompt, provider) {
   const body = { part };
   if (prompt) body.prompt = prompt;
   if (provider) body.provider = provider;
   return request(`/jobs/${jobId}/regenerate-part`, { method: "POST", body });
+}
+// Regenerate ONE view (front/left/three_quarter/back) of a part.
+export function regenerateView(jobId, part, view, prompt, provider) {
+  const body = { part, view };
+  if (prompt) body.prompt = prompt;
+  if (provider) body.provider = provider;
+  return request(`/jobs/${jobId}/regenerate-view`, { method: "POST", body });
 }
 
 // Download the zip via an authenticated request (the endpoint requires a bearer
@@ -144,6 +172,33 @@ export async function downloadZip(jobId, filename, zipUrl) {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename || `${jobId}_assets.zip`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Download one part's 4 views as a zip (per-section download). Always goes
+// through the authenticated endpoint and streams the blob.
+export async function downloadPart(jobId, part, filename) {
+  const token = getToken();
+  const res = await fetch(`${BASE}/jobs/${jobId}/download/${part}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || `${part}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();

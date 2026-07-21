@@ -14,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import config
 from .jobs import get_store
-from .schemas import JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +32,9 @@ def submit_generate_job(job_id: str, pipeline_kwargs: dict):
     _executor.submit(_run_generate, job_id, pipeline_kwargs)
 
 
-def submit_meshy_job(job_id: str, part_urls: dict, api_key: str | None):
-    """Enqueue a standalone Meshy 3D submission for already-generated parts."""
-    _executor.submit(_run_meshy, job_id, part_urls, api_key)
+def submit_meshy_job(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):
+    """Enqueue a standalone 3D submission (Meshy or Tripo) for generated parts."""
+    _executor.submit(_run_meshy, job_id, part_urls, api_key, provider)
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +49,20 @@ def _run_generate(job_id: str, pipeline_kwargs: dict):
     store.mark_running(job_id)
     logger.info("[job %s] pipeline started: %s", job_id, pipeline_kwargs.get("character_name"))
 
+    def _progress(update: dict):
+        """Persist live progress (and partial URLs) so clients can poll it."""
+        partial_urls = update.pop("urls", None)
+        fields = {"progress": update}
+        # Surface parts as they finish so the gallery fills in one-by-one.
+        if partial_urls:
+            fields["result"] = {"urls": partial_urls}
+        try:
+            store.update(job_id, **fields)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the job
+            logger.debug("[job %s] progress update failed (ignored)", job_id, exc_info=True)
+
     try:
-        result = run_pipeline(**pipeline_kwargs)
+        result = run_pipeline(**pipeline_kwargs, progress_cb=_progress)
 
         if isinstance(result, dict) and "error" in result:
             store.mark_failed(job_id, str(result["error"]))
@@ -66,12 +77,16 @@ def _run_generate(job_id: str, pipeline_kwargs: dict):
         logger.exception("[job %s] pipeline crashed.", job_id)
 
 
-def _run_meshy(job_id: str, part_urls: dict, api_key: str | None):
-    from meshy import submit_and_wait
+def _run_meshy(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):
+    # Pick the 3D backend. Meshy is tested; Tripo is unverified.
+    if provider == "tripo":
+        from tripo import submit_and_wait
+    else:
+        from meshy import submit_and_wait
 
     store = get_store()
     store.mark_running(job_id)
-    logger.info("[job %s] Meshy submission started for parts: %s", job_id, list(part_urls))
+    logger.info("[job %s] %s submission started for parts: %s", job_id, provider, list(part_urls))
 
     results: dict = {}
     errors: list[str] = []

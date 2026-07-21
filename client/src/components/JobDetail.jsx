@@ -3,6 +3,19 @@ import * as api from "../api.js";
 
 const VIEWS = ["front", "left", "three_quarter", "back"];
 
+// Friendly section names. Anything not listed is title-cased from its key.
+const PART_LABELS = {
+  jacket: "Upper Garment",
+  pants: "Lower Garment",
+};
+function prettyPart(p) {
+  if (!p) return "";
+  return (
+    PART_LABELS[p] ||
+    p.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
 // Detail panel for one job: polls until done, then shows the gallery, per-part
 // prompt view/edit, single-part regeneration, zip download, and Meshy 3D submission.
 export default function JobDetail({ jobId, onChanged }) {
@@ -10,13 +23,21 @@ export default function JobDetail({ jobId, onChanged }) {
   const [assets, setAssets] = useState(null);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
-  const [meshySel, setMeshySel] = useState([]);
-  const [meshyKey, setMeshyKey] = useState("");
-  const [meshyMsg, setMeshyMsg] = useState("");
+
+  // Per-section 3D state: { [part]: { jobId, status, modelUrls, provider } }
+  const [model3d, setModel3d] = useState({});
+  const [savedKeys, setSavedKeys] = useState({}); // { meshy:true, tripo:true }
+  // 3D popup: which part it's for + form fields.
+  const [threeDPart, setThreeDPart] = useState(null);
+  const [tdProvider, setTdProvider] = useState("meshy");
+  const [tdKey, setTdKey] = useState("");
+  const [tdSave, setTdSave] = useState(true);
+  const [tdBusy, setTdBusy] = useState(false);
 
   // Per-part prompt editing & regeneration state
   const [editedPrompts, setEditedPrompts] = useState({});
   const [regenBusy, setRegenBusy] = useState({}); // { [partName]: boolean }
+  const [viewBusy, setViewBusy] = useState({}); // { [`${part}_${view}`]: boolean }
   const [cacheBust, setCacheBust] = useState(Date.now());
 
   // Lightbox popup for gallery images
@@ -27,11 +48,14 @@ export default function JobDetail({ jobId, onChanged }) {
       const j = await api.getJob(jobId);
       setJob(j);
       setError("");
-      if (j.status === "succeeded" && j.kind === "generate") {
+      // Fetch assets both when done AND while running, so parts appear
+      // one-by-one as the pipeline finishes each. A 409 ("nothing yet")
+      // is expected early on — keep whatever we already have.
+      if (j.kind === "generate" && (j.status === "succeeded" || j.status === "running")) {
         try {
           setAssets(await api.getAssets(jobId));
         } catch {
-          setAssets(null);
+          /* not ready yet — retain any previously loaded partial assets */
         }
       }
       return j;
@@ -55,14 +79,46 @@ export default function JobDetail({ jobId, onChanged }) {
   useEffect(() => {
     setJob(null);
     setAssets(null);
-    setMeshySel([]);
-    setMeshyKey("");
-    setMeshyMsg("");
+    setModel3d({});
+    setThreeDPart(null);
     setEditedPrompts({});
     setRegenBusy({});
     setCacheBust(Date.now());
     load();
   }, [jobId, load]);
+
+  // Which providers the user has a saved key for (to prefill the 3D popup).
+  useEffect(() => {
+    api.getApiKeys().then(setSavedKeys).catch(() => setSavedKeys({}));
+  }, []);
+
+  // Poll any in-flight per-section 3D jobs until they finish.
+  useEffect(() => {
+    const pending = Object.entries(model3d).filter(
+      ([, m]) => m.jobId && (m.status === "queued" || m.status === "running")
+    );
+    if (pending.length === 0) return;
+    const t = setInterval(async () => {
+      for (const [part, m] of pending) {
+        try {
+          const mj = await api.getJob(m.jobId);
+          const urls = mj.result?.meshy?.[part]?.model_urls;
+          setModel3d((prev) => ({
+            ...prev,
+            [part]: {
+              ...prev[part],
+              status: mj.status,
+              modelUrls: urls || prev[part]?.modelUrls,
+              error: mj.error,
+            },
+          }));
+        } catch {
+          /* keep trying */
+        }
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [model3d]);
 
   // Poll while the job is active.
   useEffect(() => {
@@ -84,10 +140,16 @@ export default function JobDetail({ jobId, onChanged }) {
   }
 
   const isActive = job.status === "queued" || job.status === "running";
+  const isDone = job.status === "succeeded";
   const partNames = assets ? Object.keys(assets.parts) : [];
 
-  function toggleMeshy(part) {
-    setMeshySel((s) => (s.includes(part) ? s.filter((p) => p !== part) : [...s, part]));
+  function open3D(part) {
+    setThreeDPart(part);
+    setTdKey("");
+    setTdSave(true);
+    // Default to a provider the user already has a key for, else meshy.
+    setTdProvider(savedKeys.meshy ? "meshy" : savedKeys.tripo ? "tripo" : "meshy");
+    setError("");
   }
 
   async function download() {
@@ -100,6 +162,25 @@ export default function JobDetail({ jobId, onChanged }) {
       setError(e.message);
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function handleRegenerateView(partName, view) {
+    const key = `${partName}_${view}`;
+    setViewBusy((prev) => ({ ...prev, [key]: true }));
+    setError("");
+    try {
+      const customPrompt = editedPrompts[partName];
+      const provider = job.params?.provider;
+      const updatedJob = await api.regenerateView(jobId, partName, view, customPrompt, provider);
+      setJob(updatedJob);
+      setAssets(await api.getAssets(jobId));
+      setCacheBust(Date.now());
+      onChanged?.();
+    } catch (e) {
+      setError(`Failed to regenerate '${partName}' ${view}: ${e.message}`);
+    } finally {
+      setViewBusy((prev) => ({ ...prev, [key]: false }));
     }
   }
 
@@ -121,20 +202,36 @@ export default function JobDetail({ jobId, onChanged }) {
     }
   }
 
-  async function runMeshy() {
-    setMeshyMsg("");
+  async function submit3D() {
+    const part = threeDPart;
+    const hasSavedKey = Boolean(savedKeys[tdProvider]);
+    const key = tdKey.trim();
+    if (!key && !hasSavedKey) {
+      setError(`Enter your ${tdProvider} API key (or save one in your profile).`);
+      return;
+    }
+    setTdBusy(true);
     setError("");
     try {
-      if (!meshyKey.trim()) {
-        setError("Please enter your Meshy API key.");
-        return;
+      // Optionally persist the key to the user's profile for reuse.
+      if (key && tdSave) {
+        try {
+          await api.saveApiKey(tdProvider, key);
+          setSavedKeys((prev) => ({ ...prev, [tdProvider]: true }));
+        } catch {
+          /* non-fatal — still submit with the key below */
+        }
       }
-      const res = await api.submitMeshy(jobId, meshySel, meshyKey.trim());
-      setMeshyMsg(`3D job started: ${res.job_id}. Watch it in the jobs list.`);
-      setMeshySel([]);
-      onChanged?.();
+      const res = await api.submitModel3D(jobId, [part], tdProvider, key || undefined);
+      setModel3d((prev) => ({
+        ...prev,
+        [part]: { jobId: res.job_id, status: res.status || "queued", provider: tdProvider },
+      }));
+      setThreeDPart(null);
     } catch (e) {
       setError(e.message);
+    } finally {
+      setTdBusy(false);
     }
   }
 
@@ -159,9 +256,25 @@ export default function JobDetail({ jobId, onChanged }) {
       </div>
 
       {isActive && (
-        <div className="progress">
-          <div className="spinner" />
-          <span>Working… this can take a few minutes.</span>
+        <div className="job-progress">
+          <div className="jp-row">
+            <span className="jp-msg">
+              <span className="spinner-inline" />{" "}
+              {job.progress?.message || "Queued — starting soon…"}
+            </span>
+            <span className="jp-pct">{job.progress?.percent ?? 0}%</span>
+          </div>
+          <div className="jp-bar">
+            <div
+              className="jp-fill"
+              style={{ width: `${Math.max(job.progress?.percent ?? 4, 4)}%` }}
+            />
+          </div>
+          <span className="muted tiny">
+            {job.progress?.total_parts
+              ? `${job.progress.done_parts?.length || 0} of ${job.progress.total_parts} parts done`
+              : "This can take a few minutes."}
+          </span>
         </div>
       )}
 
@@ -188,37 +301,72 @@ export default function JobDetail({ jobId, onChanged }) {
         </div>
       )}
 
-      {/* Generation result */}
-      {job.status === "succeeded" && job.kind === "generate" && (
+      {/* Generation result — gallery shows live while running (parts appear
+          one-by-one) and in full once done. Editing/3D controls only when done. */}
+      {job.kind === "generate" && (assets || isDone) && (
         <>
-          <div className="actions">
-            <button className="btn primary" onClick={download} disabled={downloading}>
-              {downloading ? "Preparing…" : "⬇ Download zip"}
-            </button>
-          </div>
+          {isDone && (
+            <div className="actions">
+              <button className="btn primary" onClick={download} disabled={downloading}>
+                {downloading ? "Preparing…" : "⬇ Download zip"}
+              </button>
+            </div>
+          )}
 
-          {assets && (
-            <>
-              {partNames.map((part) => {
-                const currentPrompt =
-                  editedPrompts[part] ?? job.result?.prompts?.[part] ?? "";
-                const isRegening = Boolean(regenBusy[part]);
+          {isActive && assets && (
+            <p className="muted tiny live-hint">
+              ✨ Parts appear below as each finishes generating…
+            </p>
+          )}
 
-                return (
-                  <div key={part} className="part-block">
-                    <div className="part-head">
-                      <label className="checkbox">
-                        <input
-                          type="checkbox"
-                          checked={meshySel.includes(part)}
-                          onChange={() => toggleMeshy(part)}
-                        />
-                        <strong>{part}</strong> — select for 3D
-                      </label>
-                    </div>
+          {assets &&
+            partNames.map((part) => {
+              const currentPrompt =
+                editedPrompts[part] ?? job.result?.prompts?.[part] ?? "";
+              const isRegening = Boolean(regenBusy[part]);
 
-                    {/* Per-part prompt view, edit & regenerate section */}
-                    <details className="prompt-details" open={part === "fullbody" || part === "face"}>
+              return (
+                <div key={part} className="part-block">
+                  <div className="part-head">
+                    {isDone ? (
+                      <>
+                        <strong className="part-title">{prettyPart(part)}</strong>
+                        <div className="part-actions">
+                          <button
+                            type="button"
+                            className="btn small"
+                            title={`Download ${prettyPart(part)} (4 views)`}
+                            onClick={() =>
+                              api
+                                .downloadPart(jobId, part, `${job.character_name}_${part}.zip`)
+                                .catch((e) => setError(e.message))
+                            }
+                          >
+                            ⬇ Download zip
+                          </button>
+                          <button
+                            type="button"
+                            className="btn small secondary"
+                            title={`Generate a 3D model for ${prettyPart(part)}`}
+                            onClick={() => open3D(part)}
+                          >
+                            🧊 Generate 3D
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <strong className="part-live-name">
+                        {prettyPart(part)} <span className="badge ok">ready</span>
+                      </strong>
+                    )}
+                  </div>
+
+                  {/* Prompt view/edit + regenerate — only once the job is done */}
+                  {isDone && (
+                    <details
+                      className="prompt-details"
+                      open={part === "fullbody" || part === "face"}
+                    >
                       <summary>📝 View / Edit Prompt for {part}</summary>
                       <textarea
                         className="prompt-textarea"
@@ -242,50 +390,148 @@ export default function JobDetail({ jobId, onChanged }) {
                         {isRegening ? ` Regenerating ${part}…` : `🔄 Regenerate ${part}`}
                       </button>
                     </details>
+                  )}
 
-                    <div className="gallery">
-                      {VIEWS.map((v) => {
-                        const imgUrl = getPartViewUrl(part, v);
-                        if (!imgUrl) return null;
-                        return (
-                          <figure key={v}>
-                            <img
-                              src={imgUrl}
-                              alt={`${part} ${v}`}
-                              loading="lazy"
-                              className="clickable"
-                              onClick={() => setLightboxSrc(imgUrl)}
-                              title="Click to view full size"
-                            />
-                            <figcaption>{v.replace("_", " ")}</figcaption>
-                          </figure>
-                        );
-                      })}
-                    </div>
+                  <div className="gallery">
+                    {VIEWS.map((v) => {
+                      const imgUrl = getPartViewUrl(part, v);
+                      if (!imgUrl) return null;
+                      const vBusy = Boolean(viewBusy[`${part}_${v}`]);
+                      return (
+                        <figure key={v} className="view-fig">
+                          <img
+                            src={imgUrl}
+                            alt={`${part} ${v}`}
+                            loading="lazy"
+                            className="clickable"
+                            onClick={() => setLightboxSrc(imgUrl)}
+                            title="Click to view full size"
+                          />
+                          {isDone && (
+                            <button
+                              type="button"
+                              className="view-regen"
+                              disabled={vBusy}
+                              title={`Regenerate only this ${v.replace("_", " ")} image`}
+                              onClick={() => handleRegenerateView(part, v)}
+                            >
+                              {vBusy ? <span className="spinner-inline" /> : "🔄"}
+                            </button>
+                          )}
+                          <figcaption>{v.replace("_", " ")}</figcaption>
+                        </figure>
+                      );
+                    })}
                   </div>
-                );
-              })}
 
-              <div className="meshy-bar">
-                <input
-                  type="password"
-                  className="meshy-key-input"
-                  placeholder="Paste your Meshy API key"
-                  value={meshyKey}
-                  onChange={(e) => setMeshyKey(e.target.value)}
-                />
-                <button
-                  className="btn"
-                  disabled={meshySel.length === 0 || !meshyKey.trim()}
-                  onClick={runMeshy}
-                >
-                  🧊 Generate 3D for {meshySel.length || "0"} selected
-                </button>
-                {meshyMsg && <span className="ok-msg">{meshyMsg}</span>}
+                  {/* Per-section 3D status / download */}
+                  {isDone && model3d[part] && (
+                    <Model3DStatus m={model3d[part]} part={prettyPart(part)} />
+                  )}
+                </div>
+              );
+            })}
+
+          {/* Skeleton loading UI for the section currently being generated */}
+          {isActive &&
+            job.progress?.current_part &&
+            !partNames.includes(job.progress.current_part) && (
+              <div className="part-block">
+                <div className="part-head">
+                  <strong className="part-live-name">
+                    {prettyPart(job.progress.current_part)}{" "}
+                    <span className="badge running">generating…</span>
+                  </strong>
+                </div>
+                <div className="skeleton-bar">
+                  <div className="skeleton-bar-fill" />
+                </div>
+                <div className="gallery">
+                  {VIEWS.map((v) => (
+                    <figure key={v} className="skeleton-tile">
+                      <div className="skeleton-img" />
+                      <figcaption>{v.replace("_", " ")}</figcaption>
+                    </figure>
+                  ))}
+                </div>
               </div>
-            </>
-          )}
+            )}
+
+          {/* Sections the model failed to produce — offer a retry */}
+          {isDone &&
+            (job.result?.failed_parts || [])
+              .filter((fp) => !partNames.includes(fp))
+              .map((fp) => (
+                <div key={`failed-${fp}`} className="part-block failed-block">
+                  <div className="part-head">
+                    <strong className="part-title">
+                      {prettyPart(fp)} <span className="badge fail">failed</span>
+                    </strong>
+                    <button
+                      type="button"
+                      className="btn small secondary"
+                      disabled={Boolean(regenBusy[fp])}
+                      onClick={() => handleRegeneratePart(fp)}
+                    >
+                      {regenBusy[fp] ? <span className="spinner-inline" /> : "🔄"} Regenerate
+                    </button>
+                  </div>
+                  <p className="muted tiny">
+                    The AI didn't return a usable image for this part. Try regenerating it.
+                  </p>
+                </div>
+              ))}
+
         </>
+      )}
+
+      {/* ----- 3D generation popup ----- */}
+      {threeDPart && (
+        <div className="modal-overlay" onClick={() => !tdBusy && setThreeDPart(null)}>
+          <div className="card td-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="modal-close"
+              onClick={() => !tdBusy && setThreeDPart(null)}
+            >
+              ✕
+            </button>
+            <span className="soon-icon">🧊</span>
+            <h2>Generate 3D — {prettyPart(threeDPart)}</h2>
+            <p className="muted tiny">
+              The 4 views of this section are sent to your chosen provider to build a 3D model.
+            </p>
+
+            <label>Provider</label>
+            <select value={tdProvider} onChange={(e) => setTdProvider(e.target.value)}>
+              <option value="meshy">Meshy.ai</option>
+              <option value="tripo">Tripo.ai (beta)</option>
+            </select>
+
+            <label>API key</label>
+            <input
+              type="password"
+              value={tdKey}
+              onChange={(e) => setTdKey(e.target.value)}
+              placeholder={
+                savedKeys[tdProvider]
+                  ? "Saved key on file — leave blank to use it"
+                  : `Paste your ${tdProvider} API key`
+              }
+            />
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                checked={tdSave}
+                onChange={(e) => setTdSave(e.target.checked)}
+              />
+              Save this key to my profile
+            </label>
+
+            <button className="btn primary" disabled={tdBusy} onClick={submit3D}>
+              {tdBusy ? "Submitting…" : "🧊 Generate 3D model"}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ----- Lightbox popup for gallery images ----- */}
@@ -312,4 +558,40 @@ export default function JobDetail({ jobId, onChanged }) {
 
 function statusClass(s) {
   return { queued: "queued", running: "running", succeeded: "ok", failed: "fail" }[s] || "";
+}
+
+// Per-section 3D status: shows progress while building, then download links.
+function Model3DStatus({ m, part }) {
+  const urls = m.modelUrls || {};
+  const formats = Object.entries(urls).filter(([, u]) => typeof u === "string" && u);
+
+  if (m.status === "succeeded" && formats.length > 0) {
+    return (
+      <div className="model3d-row done">
+        <span className="model3d-label">🧊 3D model ready ({m.provider}):</span>
+        {formats.map(([fmt, url]) => (
+          <a key={fmt} href={url} target="_blank" rel="noreferrer" className="chip" download>
+            ⬇ {fmt}
+          </a>
+        ))}
+      </div>
+    );
+  }
+  if (m.status === "failed") {
+    return (
+      <div className="model3d-row">
+        <span className="error tiny">
+          3D generation failed for {part}. {m.error || ""}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="model3d-row">
+      <span className="spinner-inline" />
+      <span className="muted tiny">
+        Building 3D model with {m.provider}… this can take several minutes.
+      </span>
+    </div>
+  );
 }

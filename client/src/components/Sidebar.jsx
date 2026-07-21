@@ -11,7 +11,7 @@ export const WORKFLOWS = [
   { id: "final-video-export", label: "Final Video Export", icon: "🎥", status: "soon" },
 ];
 
-export default function Sidebar({ active, onNavigate, email, onUpgrade }) {
+export default function Sidebar({ active, onNavigate, email, onUpgrade, onProfileClick }) {
   const initial = (email || "?").trim().charAt(0).toUpperCase();
   const workspace = (email || "My workspace").split("@")[0];
 
@@ -51,14 +51,14 @@ export default function Sidebar({ active, onNavigate, email, onUpgrade }) {
       {/* Profile chip + Upgrade CTA */}
       <div className="sb-footer">
         <button
-          className={`sb-workspace ${active === "home" ? "active" : ""}`}
-          onClick={() => onNavigate("home")}
-          title="Home & account"
+          className="sb-workspace"
+          onClick={onProfileClick}
+          title="Account"
         >
           <span className="sb-avatar">{initial}</span>
           <span className="sb-ws-text">
             <span className="sb-ws-name">{workspace}</span>
-            <span className="sb-ws-sub">View profile</span>
+            <span className="sb-ws-sub">Account</span>
           </span>
         </button>
 

@@ -83,6 +83,59 @@ def _auto_crop_and_normalize(image: Image.Image) -> Image.Image:
     return canvas
 
 
+def _clean_and_crop(image: Image.Image):
+    """Clean near-white to white, then return (cropped_image, (w, h)).
+
+    Returns (None, (0, 0)) if the image is entirely white / empty.
+    """
+    cleaned = _clean_white(image.convert("RGB"))
+    arr = np.array(cleaned)
+    non_white = np.any(arr < 255, axis=2)
+    if not np.any(non_white):
+        return None, (0, 0)
+    rows = np.any(non_white, axis=1)
+    cols = np.any(non_white, axis=0)
+    top = np.argmax(rows)
+    bottom = len(rows) - np.argmax(rows[::-1])
+    left = np.argmax(cols)
+    right = len(cols) - np.argmax(cols[::-1])
+    cropped = cleaned.crop((left, top, right, bottom))
+    return cropped, cropped.size
+
+
+def clean_and_normalize_group(views: dict[str, Image.Image]) -> dict[str, Image.Image]:
+    """Normalize the 4 views of ONE part with a SHARED scale.
+
+    Scaling each view independently to 85% makes a narrow side-view character
+    appear taller than a wide front-view one. Here we compute a single scale
+    factor (the most-constrained view, so none overflow) and apply it to all
+    views — so the subject is the SAME size across front / left / ¾ / back.
+    """
+    target = int(OUTPUT_SIZE * SUBJECT_FILL)
+    cropped = {}
+    scales = []
+    for name, img in views.items():
+        crop, (cw, ch) = _clean_and_crop(img)
+        cropped[name] = (crop, cw, ch)
+        if crop is not None and cw > 0 and ch > 0:
+            scales.append(min(target / cw, target / ch))
+
+    # One shared scale for consistency; fall back to 1.0 if all views empty.
+    shared = min(scales) if scales else 1.0
+
+    out = {}
+    for name, (crop, cw, ch) in cropped.items():
+        canvas = Image.new("RGB", (OUTPUT_SIZE, OUTPUT_SIZE), (255, 255, 255))
+        if crop is not None and cw > 0 and ch > 0:
+            new_w = max(1, int(cw * shared))
+            new_h = max(1, int(ch * shared))
+            resized = crop.resize((new_w, new_h), Image.LANCZOS)
+            canvas.paste(resized, ((OUTPUT_SIZE - new_w) // 2, (OUTPUT_SIZE - new_h) // 2))
+        out[name] = canvas
+    logger.info("Group-normalized %d views with shared scale %.4f", len(views), shared)
+    return out
+
+
 def clean_and_normalize(image: Image.Image) -> Image.Image:
     """
     Full post-processing pipeline for one view image:

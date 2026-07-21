@@ -18,7 +18,7 @@ from PIL import Image
 
 from gemini_client import generate_turnaround_sheet
 from splitter import split_sheet
-from postprocess import clean_and_normalize
+from postprocess import clean_and_normalize_group
 from storage import save_character_assets, create_zip
 from meshy import submit_and_wait
 
@@ -99,6 +99,7 @@ def run_pipeline(
     output_dir: str = "output",
     character_vars: dict | None = None,
     provider: str | None = None,
+    progress_cb=None,
 ) -> dict:
     """
     Run the full pipeline for one character.
@@ -142,13 +143,50 @@ def run_pipeline(
     logger.info("Loaded reference image: %s (%dx%d)",
                 reference_image_path, reference_image.width, reference_image.height)
 
-    # =====================================================================
-    # STAGE 1 & 2 — Generate turnaround sheets
-    # =====================================================================
-    sheets = {}       # {part_name: PIL.Image} — raw 2×2 sheets
-    fullbody_sheet = None
+    upload_gcs = not local_only
+    total_parts = len(parts_to_run)
 
-    for part in parts_to_run:
+    # Clear any stale assets from a previous run of the same character so the
+    # gallery, zip and disk all reflect ONLY this run's output.
+    char_dir = os.path.join(output_dir, character_name)
+    if os.path.isdir(char_dir):
+        for fname in os.listdir(char_dir):
+            if fname.endswith(".png"):
+                try:
+                    os.remove(os.path.join(char_dir, fname))
+                except OSError:
+                    logger.debug("Could not remove stale file: %s", fname)
+
+    def _report(**kw):
+        """Emit a progress update to the caller's callback (never raises)."""
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(kw)
+        except Exception:  # noqa: BLE001 — progress must never break the run
+            logger.debug("progress_cb raised (ignored)", exc_info=True)
+
+    _report(
+        percent=2, stage="starting", current_part=None,
+        message="Preparing character pipeline…",
+        done_parts=[], total_parts=total_parts, urls={},
+    )
+
+    # =====================================================================
+    # STAGES 1–5 — one part at a time: generate → split → clean → save.
+    # Each part is fully produced and saved before moving on, so the client
+    # can preview parts appearing one-by-one (fullbody → face → hair → …).
+    # =====================================================================
+    processed_views = {}  # {output_name: {view_name: PIL.Image}}
+    urls = {}             # accumulated per-part URLs (grows as parts finish)
+    fullbody_sheet = None
+    done_parts = []
+    failed_parts = []     # parts the model failed to produce (surfaced to the UI)
+
+    # Generation is the bulk of the wall-clock time — budget 6..88% across parts.
+    GEN_START, GEN_END = 6, 88
+
+    for idx, part in enumerate(parts_to_run):
         if part not in prompts:
             logger.warning("No prompt found for part '%s', skipping.", part)
             continue
@@ -156,67 +194,82 @@ def run_pipeline(
         prompt = prompts[part]
 
         if part == "fullbody":
-            # Stage 1: use the uploaded reference image
-            ref = reference_image
+            ref = reference_image  # Stage 1: uploaded reference
         else:
-            # Stage 2: use the fullbody sheet as reference
             if fullbody_sheet is None:
                 logger.error("Fullbody sheet not available — cannot generate '%s'", part)
                 continue
-            ref = fullbody_sheet
+            ref = fullbody_sheet   # Stage 2: fullbody sheet as reference
+
+        pct_before = GEN_START + int((GEN_END - GEN_START) * idx / max(total_parts, 1))
+        _report(
+            percent=pct_before, stage="generating", current_part=part,
+            message=f"Generating {part} turnaround ({idx + 1}/{total_parts})…",
+            done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+        )
 
         sheet = generate_turnaround_sheet(ref, prompt, part_name=part, provider=provider)
-
         if sheet is None:
             logger.warning("[%s] Generation failed — skipping this part.", part)
+            # Don't silently drop it — surface it so the user can regenerate.
+            if not (only_parts and part == "fullbody" and "fullbody" not in only_parts):
+                out_name = slot_renames.get(part, part)
+                if out_name not in failed_parts:
+                    failed_parts.append(out_name)
             continue
-
-        sheets[part] = sheet
 
         if part == "fullbody":
             fullbody_sheet = sheet
-            logger.info("Fullbody sheet ready — will use as reference for remaining parts.")
+            # Persist the raw fullbody sheet so single-part regeneration can reuse it.
+            raw_path = os.path.join(output_dir, character_name, "_fullbody_sheet.png")
+            os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+            sheet.save(raw_path, "PNG")
+            logger.info("Fullbody sheet ready — reused as reference for later parts.")
 
-    if not sheets:
+        # If only_parts was used and fullbody was added just for reference, don't save it.
+        if only_parts and part == "fullbody" and "fullbody" not in only_parts:
+            logger.info("Skipping save of fullbody (used only as reference).")
+            continue
+
+        _report(
+            percent=pct_before, stage="processing", current_part=part,
+            message=f"Splitting & cleaning {part} views…",
+            done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+        )
+
+        # Split into 4 views + post-process them together (shared scale so the
+        # subject is the same size across all four views).
+        cleaned_views = clean_and_normalize_group(split_sheet(sheet))
+        output_name = slot_renames.get(part, part)
+        processed_views[output_name] = cleaned_views
+
+        # Save just this part (local + optional GCS) and merge its URLs.
+        part_urls = save_character_assets(
+            character_name, {output_name: cleaned_views}, output_dir, upload_gcs
+        )
+        urls[output_name] = part_urls[output_name]
+        done_parts.append(output_name)
+        logger.info("[%s] Done → '%s' (%d/%d parts)", part, output_name, len(done_parts), total_parts)
+
+        pct_after = GEN_START + int((GEN_END - GEN_START) * (idx + 1) / max(total_parts, 1))
+        _report(
+            percent=pct_after, stage="part_done", current_part=output_name,
+            message=f"{output_name} ready ({len(done_parts)}/{total_parts})",
+            done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+        )
+
+    if not processed_views:
         logger.error("No sheets were generated. Aborting.")
         return {"error": "No sheets generated"}
 
     # =====================================================================
-    # STAGE 3 & 4 — Split + Post-process
-    # =====================================================================
-    processed_views = {}  # {output_name: {view_name: PIL.Image}}
-
-    for part, sheet in sheets.items():
-        # Split into 4 views
-        views = split_sheet(sheet)
-
-        # Post-process each view
-        cleaned_views = {}
-        for view_name, view_image in views.items():
-            cleaned_views[view_name] = clean_and_normalize(view_image)
-
-        # Apply slot renames for output filenames
-        output_name = slot_renames.get(part, part)
-
-        # If only_parts was used and fullbody was added just for reference, skip saving it
-        if only_parts and part == "fullbody" and "fullbody" not in only_parts:
-            logger.info("Skipping save of fullbody (was only used as reference).")
-            continue
-
-        processed_views[output_name] = cleaned_views
-        logger.info("[%s] Split + post-processed → '%s' (4 views)", part, output_name)
-
-    # =====================================================================
-    # STAGE 5 — Save locally + GCS
-    # =====================================================================
-    upload_gcs = not local_only
-    urls = save_character_assets(
-        character_name, processed_views, output_dir, upload_gcs
-    )
-
-    # =====================================================================
     # STAGE 6 — Zip + optional Meshy
     # =====================================================================
+    _report(
+        percent=92, stage="saving", current_part=None,
+        message="Finalizing & creating download zip…",
+        done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+    )
     zip_result = create_zip(character_name, output_dir, upload_gcs)
     logger.info("Zip created: %s", zip_result)
 
@@ -252,6 +305,7 @@ def run_pipeline(
         "character": character_name,
         "template": template_name or "default",
         "parts_generated": list(processed_views.keys()),
+        "failed_parts": failed_parts,
         "prompts": prompts,
         "urls": urls,
         "zip": zip_result,
@@ -260,6 +314,12 @@ def run_pipeline(
 
     logger.info("Pipeline complete for '%s'. Generated %d parts.",
                 character_name, len(processed_views))
+
+    _report(
+        percent=100, stage="done", current_part=None,
+        message=f"Complete — {len(processed_views)} parts generated.",
+        done_parts=list(processed_views.keys()), total_parts=total_parts, urls=dict(urls),
+    )
 
     return summary
 
@@ -324,13 +384,8 @@ def regenerate_single_part(
         os.makedirs(os.path.dirname(raw_sheet_path), exist_ok=True)
         sheet.save(raw_sheet_path, "PNG")
 
-    # Split into 4 views
-    views = split_sheet(sheet)
-
-    # Clean and normalize
-    cleaned_views = {}
-    for view_name, view_image in views.items():
-        cleaned_views[view_name] = clean_and_normalize(view_image)
+    # Split into 4 views + clean/normalize together (shared scale).
+    cleaned_views = clean_and_normalize_group(split_sheet(sheet))
 
     output_name = slot_renames.get(part_name, part_name)
     processed_views = {output_name: cleaned_views}
@@ -362,5 +417,81 @@ def regenerate_single_part(
     if output_name not in result.get("parts_generated", []):
         result.setdefault("parts_generated", []).append(output_name)
 
+    # It succeeded now — clear it from the failed list if it was there.
+    if output_name in result.get("failed_parts", []):
+        result["failed_parts"] = [p for p in result["failed_parts"] if p != output_name]
+
+    result["zip"] = zip_result
+    return result
+
+
+def regenerate_single_view(
+    character_name: str,
+    reference_image_path: str,
+    part_name: str,
+    view_name: str,
+    custom_prompt: str | None = None,
+    template_name: str | None = None,
+    local_only: bool = False,
+    output_dir: str = "output",
+    provider: str | None = None,
+    existing_result: dict | None = None,
+) -> dict:
+    """
+    Regenerate ONE view (front/left/three_quarter/back) of a single part.
+
+    Generates a fresh turnaround sheet for the part, then replaces ONLY the
+    requested view image — the other three views are left untouched. Useful when
+    a single panel came out wrong (e.g. two characters in one view).
+
+    Returns the updated pipeline summary dict.
+    """
+    valid_views = {"front", "left", "three_quarter", "back"}
+    if view_name not in valid_views:
+        raise ValueError(f"Invalid view '{view_name}'. Must be one of {sorted(valid_views)}.")
+
+    config = load_prompts("prompts.yaml")
+    prompts, slot_renames = _resolve_prompts(config, template_name, None)
+
+    final_prompt = custom_prompt if custom_prompt else prompts.get(part_name)
+    if not final_prompt:
+        raise ValueError(f"No prompt available for part '{part_name}'")
+
+    ref_image = Image.open(reference_image_path).convert("RGB")
+    if part_name != "fullbody":
+        fullbody_sheet_path = os.path.join(output_dir, character_name, "_fullbody_sheet.png")
+        if os.path.exists(fullbody_sheet_path):
+            try:
+                ref_image = Image.open(fullbody_sheet_path).convert("RGB")
+            except Exception:
+                pass
+
+    logger.info("[%s/%s] Regenerating single view.", part_name, view_name)
+    sheet = generate_turnaround_sheet(ref_image, final_prompt, part_name=part_name, provider=provider)
+    if sheet is None:
+        raise RuntimeError(f"Failed to generate turnaround sheet for '{part_name}'")
+
+    cleaned_views = clean_and_normalize_group(split_sheet(sheet))
+    if view_name not in cleaned_views:
+        raise RuntimeError(f"View '{view_name}' not produced for '{part_name}'.")
+
+    output_name = slot_renames.get(part_name, part_name)
+
+    # Save ONLY the requested view (overwrites that one file).
+    upload_gcs = not local_only
+    saved = save_character_assets(
+        character_name, {output_name: {view_name: cleaned_views[view_name]}}, output_dir, upload_gcs
+    )
+    zip_result = create_zip(character_name, output_dir, upload_gcs)
+
+    result = existing_result or {
+        "character": character_name,
+        "template": template_name or "default",
+        "parts_generated": [],
+        "prompts": {},
+        "urls": {},
+    }
+    result.setdefault("urls", {}).setdefault(output_name, {})
+    result["urls"][output_name][view_name] = saved[output_name][view_name]
     result["zip"] = zip_result
     return result

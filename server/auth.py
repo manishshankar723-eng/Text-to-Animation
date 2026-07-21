@@ -56,6 +56,11 @@ class CurrentUser(BaseModel):
     email: EmailStr
 
 
+class ApiKeyRequest(BaseModel):
+    provider: str = Field(..., description="3D provider: 'meshy' or 'tripo'.")
+    api_key: str = Field(..., min_length=8, max_length=256)
+
+
 # ---------------------------------------------------------------------------
 # Dependency
 # ---------------------------------------------------------------------------
@@ -144,4 +149,30 @@ def delete_me(current: CurrentUser = Depends(get_current_user)):
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found.")
     logger.info("Deleted user account: %s", current.email)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 3D provider API keys (saved on the user profile)
+# ---------------------------------------------------------------------------
+@router.get("/me/api-keys")
+def list_api_keys(current: CurrentUser = Depends(get_current_user)) -> dict:
+    """Return which providers have a saved key, e.g. {"meshy": true}.
+
+    Never returns the raw keys — only whether each provider is configured.
+    """
+    return users.get_saved_providers(current.email)
+
+
+@router.put("/me/api-keys", status_code=204)
+def save_api_key(req: ApiKeyRequest, current: CurrentUser = Depends(get_current_user)):
+    """Save (or replace) a 3D provider API key on the user's profile."""
+    users.set_api_key(current.email, req.provider.strip().lower(), req.api_key.strip())
+    return None
+
+
+@router.delete("/me/api-keys/{provider}", status_code=204)
+def delete_api_key(provider: str, current: CurrentUser = Depends(get_current_user)):
+    """Remove a saved provider key from the user's profile."""
+    users.delete_api_key(current.email, provider.strip().lower())
     return None

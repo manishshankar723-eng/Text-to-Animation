@@ -1,6 +1,24 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
 
+// Selectable parts. `value` is the backend part key; `label` is what the user
+// sees. "Upper/Lower Garments" map to the jacket/pants keys.
+const PART_OPTIONS = [
+  { value: "fullbody", label: "Fullbody" },
+  { value: "hair", label: "Hair" },
+  { value: "face", label: "Face" },
+  { value: "body", label: "Body" },
+  { value: "jacket", label: "Upper Garments" },
+  { value: "pants", label: "Lower Garments" },
+  { value: "shoe", label: "Shoe" },
+  { value: "headphone", label: "Headphone" },
+  { value: "goggles", label: "Goggles" },
+  { value: "watch", label: "Watch" },
+];
+function partLabel(value) {
+  return PART_OPTIONS.find((o) => o.value === value)?.label || value;
+}
+
 // Upload a reference image OR generate one from text, then start a pipeline job.
 // Calls onJobCreated(jobId) after a successful enqueue.
 export default function GenerateForm({ onJobCreated }) {
@@ -24,9 +42,8 @@ export default function GenerateForm({ onJobCreated }) {
   // Common fields
   const [template, setTemplate] = useState("");
   const [provider, setProvider] = useState(""); // provider for pipeline
-  const [parts, setParts] = useState("");
-  const [skip, setSkip] = useState("");
-  const [meshy, setMeshy] = useState("");
+  const [selectedParts, setSelectedParts] = useState([]); // [] = generate all
+  const [customAsset, setCustomAsset] = useState("");
   const [localOnly, setLocalOnly] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -89,6 +106,23 @@ export default function GenerateForm({ onJobCreated }) {
     setRefPreview(null);
   }
 
+  // --- Parts multi-select handlers ---
+  function addPart(value) {
+    if (value && !selectedParts.includes(value)) {
+      setSelectedParts((prev) => [...prev, value]);
+    }
+  }
+  function removePart(value) {
+    setSelectedParts((prev) => prev.filter((p) => p !== value));
+  }
+  function addCustomAsset() {
+    const v = customAsset.trim().toLowerCase().replace(/\s+/g, "_");
+    if (v && !selectedParts.includes(v)) {
+      setSelectedParts((prev) => [...prev, v]);
+    }
+    setCustomAsset("");
+  }
+
   // --- Submit pipeline job ---
   async function submit(e) {
     e.preventDefault();
@@ -109,10 +143,6 @@ export default function GenerateForm({ onJobCreated }) {
       setError("Please enter a character name.");
       return;
     }
-    if (meshy && localOnly) {
-      setError("Meshy needs public URLs — uncheck 'local only' to use it.");
-      return;
-    }
 
     const fd = new FormData();
     fd.append("name", name.trim());
@@ -125,19 +155,17 @@ export default function GenerateForm({ onJobCreated }) {
 
     if (template) fd.append("template", template);
     if (provider) fd.append("provider", provider);
-    if (parts.trim()) fd.append("parts", parts.trim());
-    if (skip.trim()) fd.append("skip", skip.trim());
-    if (meshy.trim()) fd.append("meshy", meshy.trim());
+    // Empty selection = generate ALL parts. Otherwise generate only the chosen.
+    if (selectedParts.length > 0) fd.append("parts", selectedParts.join(","));
     fd.append("local_only", String(localOnly));
 
     setBusy(true);
     try {
       const res = await api.createCharacter(fd);
       onJobCreated(res.job_id);
-      // Reset the volatile bits so the next run starts clean.
-      setParts("");
-      setSkip("");
-      setMeshy("");
+      // Keep the selected part tags visible (user asked for this) so they can
+      // see/reuse the selection. They persist until manually removed.
+      setCustomAsset("");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -307,27 +335,56 @@ export default function GenerateForm({ onJobCreated }) {
 
       <details className="advanced">
         <summary>Advanced options</summary>
-        <label>Only parts (comma-separated — cheap test)</label>
-        <input
-          value={parts}
-          onChange={(e) => setParts(e.target.value)}
-          placeholder="e.g. hair"
-        />
 
-        <label>Skip parts (comma-separated)</label>
-        <input
-          value={skip}
-          onChange={(e) => setSkip(e.target.value)}
-          placeholder="e.g. goggles,headphone"
-        />
+        <label>Parts to generate (leave empty to generate all)</label>
+        {selectedParts.length > 0 && (
+          <div className="chip-select">
+            {selectedParts.map((p) => (
+              <span className="chip removable" key={p}>
+                {partLabel(p)}
+                <button
+                  type="button"
+                  className="chip-x"
+                  aria-label={`Remove ${partLabel(p)}`}
+                  onClick={() => removePart(p)}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <select value="" onChange={(e) => addPart(e.target.value)}>
+          <option value="">+ Add a part…</option>
+          {PART_OPTIONS.filter((o) => !selectedParts.includes(o.value)).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
 
-        <label>Submit to Meshy 3D (comma-separated parts)</label>
-        <input
-          value={meshy}
-          onChange={(e) => setMeshy(e.target.value)}
-          placeholder="e.g. hair,saree"
-          disabled={localOnly}
-        />
+        <label>Custom asset (anything not in the list)</label>
+        <div className="custom-asset-row">
+          <input
+            value={customAsset}
+            onChange={(e) => setCustomAsset(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addCustomAsset();
+              }
+            }}
+            placeholder="e.g. cape, backpack…"
+          />
+          <button
+            type="button"
+            className="btn small"
+            onClick={addCustomAsset}
+            disabled={!customAsset.trim()}
+          >
+            Add
+          </button>
+        </div>
 
         <label className="checkbox">
           <input

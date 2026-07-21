@@ -229,6 +229,37 @@ _REFERENCE_PROMPT_TEMPLATE = (
 )
 
 
+class ReferenceGenerationError(Exception):
+    """Raised when a character reference image cannot be generated.
+
+    Carries a human-readable reason so the API can surface the ACTUAL cause
+    (API error / empty response / bad image) instead of a generic message.
+    """
+
+
+def _extract_block_reason(response) -> str | None:
+    """Pull an explicit block / finish reason out of a genai response, if any.
+
+    Returns a short string like "prompt blocked: SAFETY" or "finish: RECITATION",
+    or None if the response simply had no image without an explicit reason.
+    """
+    try:
+        feedback = getattr(response, "prompt_feedback", None)
+        block = getattr(feedback, "block_reason", None) if feedback else None
+        if block:
+            return f"prompt blocked: {block}"
+
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            finish = getattr(candidates[0], "finish_reason", None)
+            # STOP is normal; anything else on an image-less response is telling.
+            if finish and str(finish).upper() not in ("STOP", "FINISH_REASON_STOP", "1"):
+                return f"finish reason: {finish}"
+    except Exception:  # noqa: BLE001 — diagnostics must never mask the real error
+        return None
+    return None
+
+
 def _is_valid_reference(image: Image.Image) -> bool:
     """
     Sanity check for a single character reference image.
@@ -269,6 +300,9 @@ def generate_character_reference(
     model_id = _model_id(provider)
     prompt = _REFERENCE_PROMPT_TEMPLATE.format(description=description)
 
+    # Track the most specific reason so the caller can report the ACTUAL cause.
+    last_reason = "Unknown error generating the reference image."
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
@@ -302,41 +336,52 @@ def generate_character_reference(
                             )
                             return image
                         else:
-                            logger.warning(
-                                "[reference] Image looks wrong (%dx%d), retrying...",
-                                image.width, image.height,
+                            last_reason = (
+                                f"The model returned an unexpected image ({image.width}×"
+                                f"{image.height}px), not a single centered character."
                             )
+                            logger.warning("[reference] %s Retrying…", last_reason)
                             continue
 
-            # Empty response (content filter)
-            logger.warning(
-                "[reference] Gemini returned EMPTY response (content filter likely triggered). "
-                "Try adjusting the character description.",
-            )
-            return None
+            # No image part. Check for an explicit block/finish reason to be precise.
+            reason = _extract_block_reason(response)
+            if reason:
+                last_reason = (
+                    f"The provider blocked or returned no image ({reason}). "
+                    "Try rephrasing the description."
+                )
+            else:
+                last_reason = (
+                    "The model returned a response with no image (it may have replied "
+                    "with text only, or the safety filter blocked it). Try rephrasing."
+                )
+            logger.warning("[reference] %s", last_reason)
+            # An empty/blocked response won't change on identical retry — stop early.
+            raise ReferenceGenerationError(last_reason)
 
+        except ReferenceGenerationError:
+            raise
         except Exception as e:
             error_str = str(e)
 
             if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                last_reason = "Rate limited / quota exhausted on the image API (HTTP 429)."
                 backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
                 logger.warning(
-                    "[reference] Rate limited (429). Waiting %ds before retry %d/%d...",
-                    backoff, attempt, MAX_RETRIES,
+                    "[reference] %s Waiting %ds before retry %d/%d…",
+                    last_reason, backoff, attempt, MAX_RETRIES,
                 )
                 time.sleep(backoff)
                 continue
 
+            last_reason = f"Image API error: {error_str}"
             logger.error("[reference] Gemini call failed: %s", error_str)
             if attempt < MAX_RETRIES:
                 backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.info("[reference] Retrying in %ds...", backoff)
+                logger.info("[reference] Retrying in %ds…", backoff)
                 time.sleep(backoff)
                 continue
-            else:
-                logger.error("[reference] All %d attempts failed.", MAX_RETRIES)
-                return None
 
-    logger.error("[reference] Exhausted all retries.")
-    return None
+    logger.error("[reference] All attempts failed: %s", last_reason)
+    raise ReferenceGenerationError(last_reason)
 

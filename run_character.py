@@ -142,13 +142,17 @@ def main():
     # --- Step 0: generate reference image from prompt if needed ---
     reference_image_path = args.image
     if args.prompt:
-        from gemini_client import generate_character_reference
+        from gemini_client import generate_character_reference, ReferenceGenerationError
 
         logger.info("Step 0: Generating T-pose reference image from prompt...")
-        ref_image = generate_character_reference(
-            description=args.prompt,
-            provider=args.provider,
-        )
+        try:
+            ref_image = generate_character_reference(
+                description=args.prompt,
+                provider=args.provider,
+            )
+        except ReferenceGenerationError as e:
+            logger.error("Step 0 failed: %s", e)
+            sys.exit(1)
         if ref_image is None:
             logger.error("Step 0 failed: could not generate reference image. "
                          "Try rephrasing the prompt or check your API key.")

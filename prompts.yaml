@@ -59,14 +59,16 @@ defaults:
     edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   body: >
-    COPY the exact body shape and skin tone from the reference image onto a 2×2 grid in four views:
-    top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back.
-    Show the body wearing a simple modest dark blue compression shirt and grey shorts, fully covered.
-    Keep NATURAL, REALISTIC human proportions — do NOT elongate, stretch or squash the figure; identical
-    height and build in all four panels. Exactly ONE body standing in T-pose in each panel. ABSOLUTELY
-    NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders, frames,
-    outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
-    pure-white (#FFFFFF) background. COPY skin tone directly from the reference.
+    COPY the exact body shape and skin tone from the reference image as a CLEAN BASE BODY onto a 2×2
+    grid in four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
+    bottom-right = back. Show a bare shirtless torso wearing ONLY plain fitted grey shorts — NO shirt,
+    NO jacket, NO garments on the upper body, minimal plain footwear or bare feet. Match the same art
+    style, face and hairstyle as the reference. Keep NATURAL, REALISTIC human proportions — do NOT
+    elongate, stretch or squash the figure; identical height and build in all four panels. Exactly ONE
+    body standing in a T-pose in each panel. ABSOLUTELY NO text, letters, words, numbers, captions,
+    labels or watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the
+    four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY skin tone directly
+    from the reference.
 
   jacket: >
     Sleeves stretched straight out horizontally forming a letter T, NOT hanging down. COPY the exact
@@ -80,20 +82,23 @@ defaults:
 
   pants: >
     COPY the exact pants/lower garment from the reference image as a ghost mannequin flat lay —
-    IGNORE the person, reproduce ONLY the pants. Show on a 2×2 grid in four views: top-left = front,
-    top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Keep the garment's
-    natural shape and proportions — do NOT stretch or distort it; the same garment in all panels.
-    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
-    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
-    pure-white (#FFFFFF) background. COPY, not create.
+    IGNORE the person, reproduce ONLY the pants. EXACTLY ONE single pair of pants per panel — never
+    two pairs, never duplicated legs side by side; one garment only, shown from the stated angle.
+    Show on a 2×2 grid in four views: top-left = front, top-right = left side, bottom-left =
+    three-quarter angle, bottom-right = back. Keep the garment's natural shape and proportions — do
+    NOT stretch or distort it; the same single garment in all four panels. ABSOLUTELY NO text, letters,
+    words, numbers, captions, labels or watermarks anywhere. NO borders, frames, outlines, grid lines,
+    dividers or gutters — the four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF)
+    background. COPY, not create.
 
   shoe: >
-    COPY the exact shoes/footwear from the reference image. Show a single pair on a 2×2 grid in
-    four views: top-left = front, top-right = left side, bottom-left = three-quarter angle,
-    bottom-right = back. Keep the footwear's natural shape and proportions — do NOT stretch or distort
-    it; the same footwear in all four panels. ABSOLUTELY NO text, letters, words, numbers, captions,
-    labels or watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the
-    four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+    COPY the exact shoe/footwear from the reference image. Show EXACTLY ONE single shoe per panel —
+    ONE shoe only, NOT a pair, never two shoes side by side. Show that one shoe on a 2×2 grid in four
+    views: top-left = front, top-right = left side, bottom-left = three-quarter angle, bottom-right =
+    back. Keep the footwear's natural shape and proportions — do NOT stretch or distort it; the same
+    single shoe in all four panels. ABSOLUTELY NO text, letters, words, numbers, captions, labels or
+    watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views
+    sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   goggles: >
     Show stylish modern protective goggles / sunglasses on a 2×2 grid in four views: top-left = front,
@@ -109,6 +114,16 @@ defaults:
     top-right = left side, bottom-left = three-quarter angle, bottom-right = back. If character wears
     headphones in reference image, COPY them; otherwise design matching modern headphones. Keep natural,
     realistic proportions — do NOT stretch or distort. NO head or ears, isolated headphones only.
+    ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
+    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    pure-white (#FFFFFF) background.
+
+  watch: >
+    COPY the exact wristwatch / smartwatch from the reference image as an isolated single accessory.
+    Show ONE watch on a 2×2 grid in four views: top-left = front (dial facing viewer), top-right = left
+    side, bottom-left = three-quarter angle, bottom-right = back (strap/clasp). If the character wears a
+    watch in the reference, COPY it; otherwise design a matching modern smartwatch. Keep natural,
+    realistic proportions — do NOT stretch or distort. NO hand, wrist or arm — isolated watch only.
     ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
     frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
     pure-white (#FFFFFF) background.
@@ -222,5 +237,6 @@ parts_order:
   - jacket
   - pants
   - shoe
-  - goggles
   - headphone
+  - goggles
+  - watch
