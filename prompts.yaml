@@ -208,31 +208,40 @@ templates:
         COPY this exact robot / mecha / armored suit EXACTLY as shown in the reference image — same
         design, materials, plating, colors and glowing accents. NO human skin, NO hair, NO organic
         flesh. Full body standing upright, arms slightly out from the sides, onto a 2×2 grid: top-left =
-        front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Keep
-        NATURAL, realistic proportions — do NOT stretch or distort; identical in all four panels. Exactly
-        ONE robot per panel. ABSOLUTELY NO text, letters, captions, labels or watermarks. NO borders,
-        frames, grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF)
-        background. COPY, not create.
+        front, top-right = left side, bottom-left = three-quarter angle, bottom-right = back. EVERY panel
+        must show the COMPLETE figure from the top of the head to the feet, fully inside the frame with a
+        small even margin — NOTHING cropped or cut off, especially the three-quarter view. Keep NATURAL,
+        realistic proportions — do NOT stretch or distort; identical in all four panels. Exactly ONE
+        robot per panel. ABSOLUTELY NO text, letters, captions, labels or watermarks. NO borders, frames,
+        grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        COPY, not create.
       head: >
         COPY the robot's HEAD / helmet as an isolated part (no neck, no body) onto a 2×2 grid: top-left =
         front, top-right = left side, bottom-left = three-quarter, bottom-right = back. Same design and
         glowing accents as the reference. ABSOLUTELY NO text, captions, labels or watermarks. NO borders,
         frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
       torso: >
-        COPY the robot's TORSO / chest unit as an isolated part (no head, no arms, no legs) onto a 2×2
-        grid: top-left = front, top-right = left side, bottom-left = three-quarter, bottom-right = back.
-        ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or dividers —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        COPY ONLY the robot's central TORSO / chest plate as a single detached piece, floating alone in
+        the middle of each panel. ABSOLUTELY NO arms, NO shoulders, NO head, NO neck, NO legs, NO limbs
+        of any kind — just the chest/torso module by itself. Show it on a 2×2 grid: top-left = front,
+        top-right = left side, bottom-left = three-quarter, bottom-right = back. Same design and glowing
+        accents as the reference. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames,
+        grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
       arms: >
-        COPY ONE of the robot's ARMS (shoulder to hand) as an isolated single part onto a 2×2 grid:
-        top-left = front, top-right = left side, bottom-left = three-quarter, bottom-right = back. One
-        arm only. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or
-        dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        COPY EXACTLY ONE single robot ARM (one limb only, from the shoulder joint down to the hand) as a
+        detached piece floating alone in each panel. ONE arm only — NEVER two arms, NEVER a pair. NO
+        chest, NO torso, NO body, NO shoulders plate, NO head, NO legs — just one isolated arm. Show that
+        same single arm on a 2×2 grid: top-left = front, top-right = left side, bottom-left =
+        three-quarter, bottom-right = back. ABSOLUTELY NO text, captions, labels or watermarks. NO
+        borders, frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF)
+        background.
       legs: >
-        COPY ONE of the robot's LEGS (hip to foot) as an isolated single part onto a 2×2 grid: top-left =
-        front, top-right = left side, bottom-left = three-quarter, bottom-right = back. One leg only.
-        ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or dividers —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        COPY EXACTLY ONE single robot LEG (one limb only, from the hip joint down to the foot) as a
+        detached piece floating alone in each panel. ONE leg only — NEVER two legs, NEVER a pair. NO
+        torso, NO body, NO hips block, NO head, NO arms — just one isolated leg. Show that same single
+        leg on a 2×2 grid: top-left = front, top-right = left side, bottom-left = three-quarter,
+        bottom-right = back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid
+        lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
 
   # --- ANIMAL (four-legged creature) ---
   animal:

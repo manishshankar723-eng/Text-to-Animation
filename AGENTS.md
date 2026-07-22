@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-21 (Step 0 — text-to-reference image)
+**Last updated:** 2026-07-22 (client redesign, subject templates, live progress, per-section 3D)
 
 ---
 
@@ -41,7 +41,7 @@ Pipeline stages (see `pipeline.py`):
    generate_character_reference`). Alternative: user uploads their own image.
 1. **Fullbody sheet** — Gemini image model turns the reference photo into a 2×2
    turnaround grid.
-2. **Per-part sheets** — each part (hair, face, jacket/saree, pants, shoe, …) is
+2. **Per-part sheets** — each part (hair, face, upper/lower garment, shoe, …) is
    generated using the fullbody sheet as reference.
 3. **Split** — cut each 2×2 sheet into 4 view images (`splitter.py`).
 4. **Post-process** — clean white background + auto-crop + normalize to
@@ -63,7 +63,10 @@ Pipeline stages (see `pipeline.py`):
 | `postprocess.py` | Clean white bg + crop + normalize. |
 | `storage.py` | Local save, GCS upload, zip. |
 | `meshy.py` | Meshy multi-image-to-3D submit + poll. |
-| `prompts.yaml` | Prompt templates (`default`, `saree`) + `parts_order`. |
+| `tripo.py` | Tripo.ai multiview-to-3D submit + poll. **UNVERIFIED** (no live test). |
+| `prompts.yaml` | Prompt templates + per-template `parts_order`. Subject types: `default` (human, gender inferred), `human_male`, `human_female`, `robot`, `animal`, `bird`, `monster`, `ghost`. Global `parts_order` fallback. |
+| `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
+| `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
 | File | Responsibility |
@@ -80,23 +83,30 @@ Pipeline stages (see `pipeline.py`):
 ### Client (Phase 3 — React + Vite, in `client/`)
 | File | Responsibility |
 |------|----------------|
-| `client/src/api.js` | Fetch client, JWT in localStorage, auth'd blob download. |
-| `client/src/App.jsx` | Auth gate + two-column dashboard layout. |
-| `client/src/components/Login.jsx` | Login / register. |
-| `client/src/components/GenerateForm.jsx` | Upload + template/provider/options. |
+| `client/src/api.js` | Fetch client, JWT in localStorage, auth'd blob download, cache-busted zip, friendly network errors. |
+| `client/src/App.jsx` | Landing → Login → sidebar shell. Nav state, upgrade + account (logout) popups. |
+| `client/src/components/Landing.jsx` | Public marketing landing page (full-bleed). |
+| `client/src/components/Login.jsx` | Login / register + "Continue with Google" (UI only, not wired) + back-to-home. |
+| `client/src/components/Sidebar.jsx` | Nav rail: Home + Workflows (Text to Image live; others "Soon") + profile chip + gold Upgrade. |
+| `client/src/components/Home.jsx` | Profile, plan/credits, recent work + downloads, saved 3D API keys, delete account. |
+| `client/src/components/WorkflowSoon.jsx` | Placeholder for roadmap workflows. |
+| `client/src/components/GenerateForm.jsx` | Describe/Upload tabs (drag-and-drop), subject-type dropdown, parts multi-select chips + custom asset. |
 | `client/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
-| `client/src/components/JobDetail.jsx` | Poll, gallery, download zip, Meshy 3D. |
-| `client/src/styles.css` | Dark theme. |
+| `client/src/components/JobDetail.jsx` | Live progress bar + per-section skeletons, incremental gallery, per-view/section regenerate, failed-part retry, per-section download + 3D popup. |
+| `client/src/styles.css` | Dark + champagne-gold theme. |
 
 ### API endpoints
-- `POST /auth/register` · `POST /auth/login` · `GET /auth/me`
-- `POST /characters/reference` — generate T-pose reference image from text (Step 0)
+- `POST /auth/register` · `POST /auth/login` · `GET /auth/me` · `DELETE /auth/me` (delete account)
+- `GET/PUT /auth/me/api-keys` · `DELETE /auth/me/api-keys/{provider}` — saved 3D keys (plaintext)
+- `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
 - `GET /characters/reference/{id}/image` — serve generated reference for preview
-- `POST /characters` — upload image (or use `reference_id`) + options → `job_id` (async)
-- `GET /jobs` · `GET /jobs/{id}` — list / poll (scoped to the owner)
-- `GET /jobs/{id}/assets` — individual PNG URLs per part/view (nested + flat)
-- `GET /jobs/{id}/download` — zip (local file or GCS redirect)
-- `POST /jobs/{id}/meshy` — submit generated parts for 3D
+- `POST /characters` — upload image (or `reference_id`) + options → `job_id` (async)
+- `GET /jobs` · `GET /jobs/{id}` — list / poll (owner-scoped). Job carries live `progress`.
+- `GET /jobs/{id}/assets` — PNG URLs per part/view. Also serves PARTIAL assets while `running`.
+- `GET /jobs/{id}/image/{part}/{view}` — serve a single asset PNG (enables local-run previews)
+- `GET /jobs/{id}/download` — full zip · `GET /jobs/{id}/download/{part}` — per-section zip
+- `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
+- `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
 - `GET /templates` · `GET /health`
 
 ---
@@ -105,11 +115,11 @@ Pipeline stages (see `pipeline.py`):
 
 ### CLI
 ```powershell
-# Full run with uploaded image (saree template), skip some parts:
-python run_character.py --name kamla --image ./kamla.jpg --template saree --skip goggles,headphone
+# Full run with uploaded image (female subject template), skip some parts:
+python run_character.py --name kamla --image ./kamla.jpg --template human_female --skip goggles,headphone
 
 # Generate reference from text prompt (Step 0) then run pipeline:
-python run_character.py --name kamla --prompt "Indian woman in red saree, age 30" --template saree
+python run_character.py --name kamla --prompt "Indian woman in red saree, age 30" --template human_female
 
 # Cheap test — one part, no GCS:
 python run_character.py --name kamla --image ./kamla.jpg --parts hair --local-only
@@ -200,6 +210,67 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-22 — Client redesign, subject templates, live progress, per-section 3D
+Large multi-part session (committed across `2fc6562`, `e58b276`, `28902a0`).
+
+**Generation quality / pipeline**
+- `splitter.py`: removed the forced square resize — quadrants keep natural aspect
+  (fixes stretched/tall subjects from widescreen 1408×768 grids).
+- `postprocess.py`: added `clean_and_normalize_group()` — the 4 views of a part
+  share ONE scale factor, so the subject is the same size across front/left/¾/back
+  (fixes "front doesn't match the other 3").
+- `prompts.yaml`: hardened all prompts (NO text/labels/borders/gutters, single
+  subject, keep proportions). Pants = one pair/panel; shoe = one shoe. Added
+  `watch`. **Subject-type templates** with per-template `parts_order`: `default`
+  (gender INFERRED from reference — fixes girl→boy), `human_male`, `human_female`,
+  `robot`, `animal`, `bird`, `monster`, `ghost`. Removed `saree`. `body` is a
+  safe mannequin-style base body (avoids the safety-filter block on "shirtless").
+- `pipeline.py`: process each part fully (generate→split→clean→save) in ONE loop
+  with a `progress_cb` (percent/stage/current_part/done/total + partial urls).
+  Clears the character dir at run start (no stale files). Tracks `failed_parts`.
+  `_resolve_prompts` uses a safe formatter (missing `{gender}` etc. → blank, so
+  non-human templates don't crash) + `_resolve_parts_order`. `_generic_part_prompt`
+  lets CUSTOM assets (e.g. "mobile") generate. Reference-only fullbody is excluded
+  from the visible count and shown as a quiet "Preparing base reference" step.
+  Added `regenerate_single_part` (clears failed flag) + `regenerate_single_view`.
+- `storage.py`: zip skips `_`-prefixed helper files (raw fullbody sheet).
+- `gemini_client.py`: `generate_character_reference` now raises
+  `ReferenceGenerationError` with the ACTUAL cause (429 / API error / block /
+  empty) instead of returning a generic "content filter" message.
+
+**Backend API**
+- `server/main.py`: partial `/assets` while running; `/image/{part}/{view}`;
+  per-section `/download/{part}`; `/regenerate-view`; `provider` on `/meshy`
+  (routes to `meshy` or `tripo`, resolves saved key); `/templates` returns
+  per-template parts + label.
+- `server/auth.py` + `users.py`: `DELETE /auth/me`; saved 3D API keys
+  (`api_keys.{provider}`, plaintext) with GET/PUT/DELETE endpoints.
+- `server/worker.py`: `_run_generate` wires the progress callback; `_run_meshy`
+  dispatches Meshy vs Tripo.
+- `tripo.py`: new Tripo client mirroring `meshy.py`. **UNVERIFIED** (no live key).
+
+**Client (React)**
+- New flow: `Landing → Login → sidebar dashboard`. PicLumen-style dark sidebar
+  (Home + Workflows: Text-to-Image live, others "Soon"; profile chip → logout
+  popup; gold Upgrade). Home page (profile, plan/credits placeholder, recent work
+  + downloads, saved API keys, delete account). Login gained a Google button
+  (UI only) + drag-and-drop upload.
+- `JobDetail`: live gold progress bar + per-section loading skeletons (incl. the
+  first part), incremental gallery, per-view 🔄 and per-section regenerate,
+  failed-part retry cards, per-section Download/Generate-3D (matched buttons),
+  3D popup (Meshy/Tripo + key, optionally saved to profile).
+- `GenerateForm`: subject-type dropdown drives the parts multi-select (chips + X),
+  custom-asset field; part tags persist after submit.
+- `api.js`: friendly "can't reach server" errors; cache-busted cloud zip download.
+- Login lands on Text-to-Image; all-gold gradient buttons.
+
+**Verified:** `npm run build` clean throughout; backend imports + all templates
+resolve (no missing prompts / unresolved placeholders); mocked pipeline run
+confirms progress stages, per-part incremental urls, custom-asset generation, and
+correct visible part count. **NOT verified live:** Meshy/Tripo 3D calls (need real
+keys; Tripo entirely unverified), and the shirtless-mannequin `body` prompt may
+still occasionally be safety-filtered.
 
 ### 2026-07-21 — Step 0: text-to-reference image generation
 - `gemini_client.py`: added `generate_character_reference(description, provider)`
@@ -333,30 +404,35 @@ in `.env` — no code change needed.
 
 ## 🎯 Current State / Next Steps
 
-**Current state:** Phase 1 CLI works with both `--image` and `--prompt` input.
-Phase 2 API has Step 0 (`POST /characters/reference`) + updated
-`POST /characters` (accepts `reference_id` or file upload). Phase 3 client
-has a two-tab form (Describe/Upload). All non-network paths verified.
+**Current state:** Full app works end-to-end in the browser (verified live by the
+user against Vertex AI + GCS): Landing → Login → Text-to-Image workflow with
+subject-type templates, live per-section progress, incremental gallery,
+per-view/per-section/failed-part regeneration, per-section + full zip download,
+and a per-section 3D popup. Home dashboard (profile, recent work, saved API keys,
+delete account) done. Sidebar has placeholder "Soon" workflows for the future
+script→storyboard→animatics→video pipeline.
 
-**Not yet verified live** (needs real credentials/services running):
-- Step 0 text-to-reference against real Gemini/Vertex API.
-- End-to-end: describe → generate reference → preview → run pipeline.
-- MongoDB reachable at `MONGODB_URI` (auth needs it).
+**Known-good this session (user-confirmed in browser):** default (gender-inferred)
+human generation, per-part progress + skeletons, custom assets, safe body base
+mesh, zip cache-bust.
+
+**Not yet verified live** (needs real keys / steady backend):
+- **3D generation** — Meshy path is coded but not run live; **Tripo is entirely
+  unverified** (built from public docs, no test key — adjust request shape when tried).
+- The shirtless-mannequin `body` prompt may still occasionally be safety-filtered
+  (fallback = regenerate, or switch to the modest-clothed wording).
+- MongoDB Atlas was intermittently unreachable from the user's machine (SSL
+  handshake) — auth needs it; jobs use in-memory store.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
-- [x] Per-job **asset-listing endpoint** — `GET /jobs/{id}/assets` (done 2026-07-20).
-- [x] **Provider smoke-test script** — `smoke_test_providers.py` (done 2026-07-20).
-- [x] **MongoDB health + seed-admin** — `/health` mongodb status + `seed_admin.py` (done 2026-07-20).
-- [x] **Phase 3 client** — React + Vite app in `client/`, full flow (done 2026-07-20).
-- [x] **Live E2E test** — login → generate → gallery → download verified in browser
-      against MongoDB Atlas + Vertex AI + GCS (done 2026-07-20). Meshy path not yet
-      exercised live.
-- [x] Per-user **Meshy API key** — let users supply their own key via the UI
-      (done 2026-07-20).
-- [x] **Step 0 — text-to-reference image** — generate T-pose character from text
-      prompt. Two-tab client UI, new server endpoints, CLI `--prompt` flag
-      (done 2026-07-21).
-- [ ] **Live test Step 0** — verify text-to-reference → pipeline flow against
-      real Gemini API in browser.
+- [x] Client redesign (sidebar dashboard), subject-type templates, live progress,
+      per-section 3D + saved API keys, regenerate part/view, custom assets (2026-07-22).
+- [ ] **Live-test 3D** — run Meshy with a real key end-to-end; then fix/verify Tripo.
+- [ ] **Make regenerate + 3D async jobs** — currently regenerate is synchronous
+      (blocks the request ~30–60s and dies if the backend restarts). Convert to the
+      job/worker model so it survives restarts and shows progress.
+- [ ] **Wire Google OAuth** — the login button is UI-only; needs a Google client ID
+      + a backend verify endpoint.
 - [ ] Harden for production: lock down CORS origins, require `JWT_SECRET`,
-      rate-limit auth endpoints.
+      rate-limit auth endpoints, consider encrypting stored 3D API keys.
+- [ ] Build the roadmap workflows (Script→Storyboard→Animatics→Final Video).

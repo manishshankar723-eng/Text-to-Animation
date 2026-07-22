@@ -458,13 +458,27 @@ def list_assets(job_id: str, current: CurrentUser = Depends(get_current_user)):
     )
 
 
-@app.post("/jobs/{job_id}/regenerate-part")
+def _job_reference_path(job_id: str) -> str | None:
+    """Locate the uploaded/generated reference image stored for a job."""
+    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
+    if os.path.exists(upload_dir):
+        for f in os.listdir(upload_dir):
+            if f.endswith((".png", ".jpg", ".jpeg", ".webp")):
+                return os.path.join(upload_dir, f)
+    return None
+
+
+@app.post("/jobs/{job_id}/regenerate-part", response_model=JobCreatedResponse, status_code=202)
 def regenerate_part(
     job_id: str,
     req: RegeneratePartRequest,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Regenerate a single part for an existing character job using a custom or template prompt."""
+    """Regenerate a single part ASYNC — returns immediately; poll the job.
+
+    Runs in the worker so a long image call survives a dropped connection /
+    server restart. The parent job flips to RUNNING and back to SUCCEEDED.
+    """
     job = _get_owned_job(job_id, current)
     if job.status != JobStatus.SUCCEEDED:
         raise HTTPException(
@@ -472,49 +486,43 @@ def regenerate_part(
             detail=f"Job is '{job.status.value}', cannot regenerate parts until initial generation succeeds.",
         )
 
-    # Find the reference image path stored under uploads/{job_id}/
-    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
-    ref_path = None
-    if os.path.exists(upload_dir):
-        for f in os.listdir(upload_dir):
-            if f.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                ref_path = os.path.join(upload_dir, f)
-                break
-
+    ref_path = _job_reference_path(job_id)
     if not ref_path or not os.path.isfile(ref_path):
         raise HTTPException(status_code=404, detail="Reference image for this job was not found.")
 
-    from pipeline import regenerate_single_part
+    kwargs = dict(
+        character_name=job.character_name,
+        reference_image_path=ref_path,
+        part_name=req.part,
+        custom_prompt=req.prompt,
+        template_name=job.template,
+        local_only=job.params.get("local_only", False),
+        output_dir=config.OUTPUT_DIR,
+        provider=req.provider or job.params.get("provider"),
+        existing_result=job.result or {},
+    )
+    get_store().update(
+        job_id,
+        status=JobStatus.RUNNING,
+        progress={
+            "percent": 15, "stage": "regenerating", "current_part": req.part,
+            "message": f"Regenerating {req.part}…", "done_parts": [], "total_parts": 1,
+        },
+    )
+    worker.submit_regenerate_job(job_id, "part", kwargs)
+    return JobCreatedResponse(
+        job_id=job_id, status=JobStatus.RUNNING, kind=job.kind,
+        character_name=job.character_name, message=f"Regenerating {req.part}…",
+    )
 
-    provider = req.provider or job.params.get("provider")
-    local_only = job.params.get("local_only", False)
 
-    try:
-        updated_result = regenerate_single_part(
-            character_name=job.character_name,
-            reference_image_path=ref_path,
-            part_name=req.part,
-            custom_prompt=req.prompt,
-            template_name=job.template,
-            local_only=local_only,
-            output_dir=config.OUTPUT_DIR,
-            provider=provider,
-            existing_result=job.result or {},
-        )
-        get_store().mark_succeeded(job_id, updated_result)
-        return updated_result
-    except Exception as e:
-        logger.exception("[job %s] regenerate_part failed for part %s", job_id, req.part)
-        raise HTTPException(status_code=500, detail=f"Regeneration failed: {e}")
-
-
-@app.post("/jobs/{job_id}/regenerate-view")
+@app.post("/jobs/{job_id}/regenerate-view", response_model=JobCreatedResponse, status_code=202)
 def regenerate_view(
     job_id: str,
     req: RegenerateViewRequest,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Regenerate ONE view (front/left/three_quarter/back) of a part."""
+    """Regenerate ONE view (front/left/three_quarter/back) of a part — ASYNC."""
     job = _get_owned_job(job_id, current)
     if job.status != JobStatus.SUCCEEDED:
         raise HTTPException(
@@ -522,38 +530,35 @@ def regenerate_view(
             detail=f"Job is '{job.status.value}', cannot regenerate views yet.",
         )
 
-    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
-    ref_path = None
-    if os.path.exists(upload_dir):
-        for f in os.listdir(upload_dir):
-            if f.endswith((".png", ".jpg", ".jpeg", ".webp")):
-                ref_path = os.path.join(upload_dir, f)
-                break
+    ref_path = _job_reference_path(job_id)
     if not ref_path or not os.path.isfile(ref_path):
         raise HTTPException(status_code=404, detail="Reference image for this job was not found.")
 
-    from pipeline import regenerate_single_view
-
-    provider = req.provider or job.params.get("provider")
-    local_only = job.params.get("local_only", False)
-    try:
-        updated_result = regenerate_single_view(
-            character_name=job.character_name,
-            reference_image_path=ref_path,
-            part_name=req.part,
-            view_name=req.view,
-            custom_prompt=req.prompt,
-            template_name=job.template,
-            local_only=local_only,
-            output_dir=config.OUTPUT_DIR,
-            provider=provider,
-            existing_result=job.result or {},
-        )
-        get_store().mark_succeeded(job_id, updated_result)
-        return updated_result
-    except Exception as e:
-        logger.exception("[job %s] regenerate_view failed for %s/%s", job_id, req.part, req.view)
-        raise HTTPException(status_code=500, detail=f"View regeneration failed: {e}")
+    kwargs = dict(
+        character_name=job.character_name,
+        reference_image_path=ref_path,
+        part_name=req.part,
+        view_name=req.view,
+        custom_prompt=req.prompt,
+        template_name=job.template,
+        local_only=job.params.get("local_only", False),
+        output_dir=config.OUTPUT_DIR,
+        provider=req.provider or job.params.get("provider"),
+        existing_result=job.result or {},
+    )
+    get_store().update(
+        job_id,
+        status=JobStatus.RUNNING,
+        progress={
+            "percent": 15, "stage": "regenerating", "current_part": req.part,
+            "message": f"Regenerating {req.part} · {req.view}…", "done_parts": [], "total_parts": 1,
+        },
+    )
+    worker.submit_regenerate_job(job_id, "view", kwargs)
+    return JobCreatedResponse(
+        job_id=job_id, status=JobStatus.RUNNING, kind=job.kind,
+        character_name=job.character_name, message=f"Regenerating {req.part} {req.view}…",
+    )
 
 
 @app.get("/jobs/{job_id}/download/{part}")

@@ -10,7 +10,7 @@ Two steps per image:
 
 import logging
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
 
@@ -84,21 +84,47 @@ def _auto_crop_and_normalize(image: Image.Image) -> Image.Image:
 
 
 def _clean_and_crop(image: Image.Image):
-    """Clean near-white to white, then return (cropped_image, (w, h)).
+    """Clean near-white to white, then crop to the true subject bounding box.
 
-    Returns (None, (0, 0)) if the image is entirely white / empty.
+    Returns (cropped_image, (w, h)), or (None, (0, 0)) if the image is empty.
+
+    Robustness: the 2×2 sheet often has faint grid-divider lines; after splitting,
+    a sliver survives at a panel's edge. We (a) ignore a thin OUTER BORDER so those
+    edge lines don't inflate the box (which was pushing subjects off-center), and
+    (b) require a minimum number of non-white pixels per row/column so stray
+    1–2px lines are ignored.
     """
     cleaned = _clean_white(image.convert("RGB"))
     arr = np.array(cleaned)
     non_white = np.any(arr < 255, axis=2)
     if not np.any(non_white):
         return None, (0, 0)
-    rows = np.any(non_white, axis=1)
-    cols = np.any(non_white, axis=0)
-    top = np.argmax(rows)
-    bottom = len(rows) - np.argmax(rows[::-1])
-    left = np.argmax(cols)
-    right = len(cols) - np.argmax(cols[::-1])
+
+    h, w = non_white.shape
+    mask = non_white.copy()
+
+    # (a) Ignore a thin outer border — split-grid divider remnants live here.
+    b = max(2, int(round(0.02 * min(h, w))))
+    mask[:b, :] = False
+    mask[-b:, :] = False
+    mask[:, :b] = False
+    mask[:, -b:] = False
+
+    # (b) Ignore thin stray lines/noise: need a minimum run of content.
+    row_counts = mask.sum(axis=1)
+    col_counts = mask.sum(axis=0)
+    row_thr = max(3, int(0.03 * w))
+    col_thr = max(3, int(0.03 * h))
+    rows = np.where(row_counts > row_thr)[0]
+    cols = np.where(col_counts > col_thr)[0]
+
+    # Fallback to any non-white if the filters removed everything.
+    if rows.size == 0 or cols.size == 0:
+        rows = np.where(non_white.any(axis=1))[0]
+        cols = np.where(non_white.any(axis=0))[0]
+
+    top, bottom = int(rows[0]), int(rows[-1]) + 1
+    left, right = int(cols[0]), int(cols[-1]) + 1
     cropped = cleaned.crop((left, top, right, bottom))
     return cropped, cropped.size
 
@@ -130,6 +156,12 @@ def clean_and_normalize_group(views: dict[str, Image.Image]) -> dict[str, Image.
             new_w = max(1, int(cw * shared))
             new_h = max(1, int(ch * shared))
             resized = crop.resize((new_w, new_h), Image.LANCZOS)
+            # Upscaling a low-res generated view softens it — a light unsharp
+            # mask restores crispness. Only when we actually enlarged it.
+            if shared > 1.05:
+                resized = resized.filter(
+                    ImageFilter.UnsharpMask(radius=1.5, percent=85, threshold=3)
+                )
             canvas.paste(resized, ((OUTPUT_SIZE - new_w) // 2, (OUTPUT_SIZE - new_h) // 2))
         out[name] = canvas
     logger.info("Group-normalized %d views with shared scale %.4f", len(views), shared)

@@ -54,6 +54,9 @@ export default function JobDetail({ jobId, onChanged }) {
       if (j.kind === "generate" && (j.status === "succeeded" || j.status === "running")) {
         try {
           setAssets(await api.getAssets(jobId));
+          // Regenerated images reuse the same filenames — bust the cache when
+          // the job settles so the browser shows the fresh versions.
+          if (j.status === "succeeded") setCacheBust(Date.now());
         } catch {
           /* not ready yet — retain any previously loaded partial assets */
         }
@@ -172,13 +175,12 @@ export default function JobDetail({ jobId, onChanged }) {
     try {
       const customPrompt = editedPrompts[partName];
       const provider = job.params?.provider;
-      const updatedJob = await api.regenerateView(jobId, partName, view, customPrompt, provider);
-      setJob(updatedJob);
-      setAssets(await api.getAssets(jobId));
-      setCacheBust(Date.now());
-      onChanged?.();
+      // Async: kicks off a background job; the parent job goes RUNNING and the
+      // poll loop shows progress + refreshes when it finishes.
+      await api.regenerateView(jobId, partName, view, customPrompt, provider);
+      await load();
     } catch (e) {
-      setError(`Failed to regenerate '${partName}' ${view}: ${e.message}`);
+      setError(`Failed to start regeneration for '${partName}' ${view}: ${e.message}`);
     } finally {
       setViewBusy((prev) => ({ ...prev, [key]: false }));
     }
@@ -190,13 +192,11 @@ export default function JobDetail({ jobId, onChanged }) {
     try {
       const customPrompt = editedPrompts[partName];
       const provider = job.params?.provider;
-      const updatedJob = await api.regeneratePart(jobId, partName, customPrompt, provider);
-      setJob(updatedJob);
-      setAssets(await api.getAssets(jobId));
-      setCacheBust(Date.now());
-      onChanged?.();
+      // Async: background job; poll loop handles progress + refresh.
+      await api.regeneratePart(jobId, partName, customPrompt, provider);
+      await load();
     } catch (e) {
-      setError(`Failed to regenerate '${partName}': ${e.message}`);
+      setError(`Failed to start regeneration for '${partName}': ${e.message}`);
     } finally {
       setRegenBusy((prev) => ({ ...prev, [partName]: false }));
     }
@@ -283,6 +283,9 @@ export default function JobDetail({ jobId, onChanged }) {
       )}
 
       {error && <div className="error">{error}</div>}
+      {job.result?.regen_error && (
+        <div className="error">Regeneration failed — {job.result.regen_error}</div>
+      )}
 
       {/* Meshy job result */}
       {job.kind === "meshy" && job.status === "succeeded" && (

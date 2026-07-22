@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import config
 from .jobs import get_store
+from .schemas import JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,15 @@ def submit_generate_job(job_id: str, pipeline_kwargs: dict):
 def submit_meshy_job(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):
     """Enqueue a standalone 3D submission (Meshy or Tripo) for generated parts."""
     _executor.submit(_run_meshy, job_id, part_urls, api_key, provider)
+
+
+def submit_regenerate_job(job_id: str, mode: str, kwargs: dict):
+    """Enqueue an async regeneration of a single part ('part') or view ('view').
+
+    Runs off-request so a long (~30–60s) image call can't be killed by a
+    connection drop / server restart — the client just polls the same job.
+    """
+    _executor.submit(_run_regenerate, job_id, mode, kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -111,3 +121,34 @@ def _run_meshy(job_id: str, part_urls: dict, api_key: str | None, provider: str 
     except Exception as e:  # noqa: BLE001
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] Meshy submission crashed.", job_id)
+
+
+def _run_regenerate(job_id: str, mode: str, kwargs: dict):
+    """Regenerate one part/view in the background and update the SAME job.
+
+    The parent job was already flipped to RUNNING by the endpoint. On success we
+    replace its result; on failure we keep the existing (good) assets and attach
+    a `regen_error` so the UI can show what went wrong — the job stays SUCCEEDED.
+    """
+    from pipeline import regenerate_single_part, regenerate_single_view
+
+    store = get_store()
+    old_result = dict(kwargs.get("existing_result") or {})
+    label = kwargs.get("part_name") or "part"
+    view = kwargs.get("view_name")
+    tag = f"{label}/{view}" if view else label
+    logger.info("[job %s] regenerate (%s) started for %s", job_id, mode, tag)
+
+    try:
+        if mode == "view":
+            result = regenerate_single_view(**kwargs)
+        else:
+            result = regenerate_single_part(**kwargs)
+        result.pop("regen_error", None)  # clear any stale error
+        store.update(job_id, status=JobStatus.SUCCEEDED, result=result, progress=None, error=None)
+        logger.info("[job %s] regenerate (%s) succeeded for %s", job_id, mode, tag)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[job %s] regenerate (%s) failed for %s", job_id, mode, tag)
+        old_result["regen_error"] = f"{tag}: {e}"
+        # Keep the job usable with its previous assets.
+        store.update(job_id, status=JobStatus.SUCCEEDED, result=old_result, progress=None)
