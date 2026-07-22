@@ -45,7 +45,8 @@ export default function App() {
   const [email, setEmail] = useState(api.getEmail());
   const [authed, setAuthed] = useState(Boolean(api.getToken()));
   const [authView, setAuthView] = useState("landing");
-  const [nav, setNav] = useState("home"); // "home" | workflow id
+  // Land on the working page by default (both fresh login and returning session).
+  const [nav, setNav] = useState("text-to-image"); // "home" | workflow id
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
@@ -58,7 +59,7 @@ export default function App() {
   function onAuthed(mail) {
     setEmail(mail);
     setAuthed(true);
-    setNav("home");
+    setNav("text-to-image");
   }
 
   function logout() {

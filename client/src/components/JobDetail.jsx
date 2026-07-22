@@ -302,8 +302,9 @@ export default function JobDetail({ jobId, onChanged }) {
       )}
 
       {/* Generation result — gallery shows live while running (parts appear
-          one-by-one) and in full once done. Editing/3D controls only when done. */}
-      {job.kind === "generate" && (assets || isDone) && (
+          one-by-one) and in full once done. Editing/3D controls only when done.
+          Also render while active so the FIRST part shows its loading skeleton. */}
+      {job.kind === "generate" && (assets || isDone || isActive) && (
         <>
           {isDone && (
             <div className="actions">
@@ -313,7 +314,7 @@ export default function JobDetail({ jobId, onChanged }) {
             </div>
           )}
 
-          {isActive && assets && (
+          {isActive && (
             <p className="muted tiny live-hint">
               ✨ Parts appear below as each finishes generating…
             </p>
@@ -334,7 +335,7 @@ export default function JobDetail({ jobId, onChanged }) {
                         <div className="part-actions">
                           <button
                             type="button"
-                            className="btn small"
+                            className="btn small secondary part-btn"
                             title={`Download ${prettyPart(part)} (4 views)`}
                             onClick={() =>
                               api
@@ -346,7 +347,7 @@ export default function JobDetail({ jobId, onChanged }) {
                           </button>
                           <button
                             type="button"
-                            className="btn small secondary"
+                            className="btn small secondary part-btn"
                             title={`Generate a 3D model for ${prettyPart(part)}`}
                             onClick={() => open3D(part)}
                           >

@@ -31,60 +31,78 @@ def load_prompts(config_path: str = "prompts.yaml") -> dict:
         return yaml.safe_load(f)
 
 
+class _SafeDict(dict):
+    """dict for str.format_map that leaves unknown placeholders blank.
+
+    Lets a template omit character vars (e.g. a robot has no gender/skin_tone)
+    without raising KeyError — the placeholder just resolves to an empty string.
+    """
+
+    def __missing__(self, key):  # noqa: D401
+        return ""
+
+
 def _resolve_prompts(
     config: dict,
     template_name: str | None,
     character_vars: dict | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     """
-    Resolve the final prompts and slot renames for a character.
+    Resolve the final prompts and slot renames for a subject.
 
-    Args:
-        config: Full YAML config dict.
-        template_name: e.g. "saree" or None for defaults.
-        character_vars: e.g. {"age": "30", "gender": "female", "skin_tone": "medium brown"}
-                        If None, uses template defaults.
+    Works for ANY subject type (human / robot / animal / bird / …). Character
+    variables like {gender}, {age}, {skin_tone} are optional — templates that
+    don't define them simply resolve those placeholders to empty strings.
 
     Returns:
         (prompts_dict, slot_renames_dict)
-        prompts_dict: {part_name: final_prompt_string}
-        slot_renames_dict: {slot_name: output_name} e.g. {"jacket": "saree"}
     """
     defaults = config.get("defaults", {})
+    prompts = dict(defaults)
     slot_renames = {}
 
-    # Start with default prompts
-    prompts = dict(defaults)
-
-    # Apply template overrides if specified
-    if template_name and template_name in config.get("templates", {}):
-        template = config["templates"][template_name]
-
-        # Get slot renames
+    template = config.get("templates", {}).get(template_name or "", {})
+    if template:
         slot_renames = template.get("slot_renames", {})
-
-        # Override prompts from template
-        template_prompts = template.get("prompts", {})
-        for part, prompt in template_prompts.items():
+        for part, prompt in template.get("prompts", {}).items():
             prompts[part] = prompt
-
-        # Use template's character defaults if no explicit vars given
         if character_vars is None:
-            character_vars = template.get("character_defaults", {})
+            character_vars = template.get("character_defaults")
 
-    # If still no character vars, use the "default" template's defaults
-    if character_vars is None:
-        default_template = config.get("templates", {}).get("default", {})
-        character_vars = default_template.get("character_defaults", {
-            "age": "25", "gender": "male", "skin_tone": "medium brown"
-        })
-
-    # Fill in {age}, {gender}, {skin_tone} placeholders in character-specific prompts
-    for part in ["fullbody", "hair", "face"]:
-        if part in prompts:
-            prompts[part] = prompts[part].format(**character_vars)
-
+    # Fill placeholders safely across ALL prompts (missing keys → "").
+    safe = _SafeDict(character_vars or {})
+    prompts = {
+        part: (text.format_map(safe) if isinstance(text, str) else text)
+        for part, text in prompts.items()
+    }
     return prompts, slot_renames
+
+
+def _resolve_parts_order(config: dict, template_name: str | None) -> list[str]:
+    """Return the ordered part list for a template (its own, else the global)."""
+    template = config.get("templates", {}).get(template_name or "", {})
+    if template.get("parts_order"):
+        return list(template["parts_order"])
+    return list(config.get("parts_order", []))
+
+
+def _generic_part_prompt(part_name: str) -> str:
+    """Fallback prompt for a custom asset that has no template prompt.
+
+    Lets users generate arbitrary items (e.g. "mobile", "cape", "backpack") that
+    aren't predefined — reproduced as an isolated object turnaround.
+    """
+    nice = part_name.replace("_", " ")
+    return (
+        f"COPY the {nice} from the reference image as an isolated single object / accessory. "
+        f"If the {nice} is visible in the reference, COPY it exactly; otherwise design a matching "
+        f"one that fits the character. Show ONE {nice} on a 2×2 grid in four views: top-left = front, "
+        "top-right = left side, bottom-left = three-quarter angle, bottom-right = back. Keep natural, "
+        "realistic proportions — do NOT stretch or distort. Isolated object only — NO person, NO hand, "
+        "NO body. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. "
+        "NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge "
+        "on ONE seamless pure-white (#FFFFFF) background."
+    )
 
 
 def run_pipeline(
@@ -124,7 +142,7 @@ def run_pipeline(
     # --- Load config & resolve prompts ---
     config = load_prompts(config_path)
     prompts, slot_renames = _resolve_prompts(config, template_name, character_vars)
-    parts_order = config.get("parts_order", list(prompts.keys()))
+    parts_order = _resolve_parts_order(config, template_name) or list(prompts.keys())
 
     logger.info("Image provider: %s", provider or os.environ.get("IMAGE_PROVIDER", "vertex"))
 
@@ -144,7 +162,10 @@ def run_pipeline(
                 reference_image_path, reference_image.width, reference_image.height)
 
     upload_gcs = not local_only
-    total_parts = len(parts_to_run)
+    # When the user picks specific parts, fullbody is auto-added ONLY as a
+    # reference — it shouldn't count toward or appear in the visible progress.
+    ref_only_fullbody = bool(only_parts) and "fullbody" not in only_parts
+    total_parts = len([p for p in parts_to_run if not (ref_only_fullbody and p == "fullbody")])
 
     # Clear any stale assets from a previous run of the same character so the
     # gallery, zip and disk all reflect ONLY this run's output.
@@ -186,12 +207,12 @@ def run_pipeline(
     # Generation is the bulk of the wall-clock time — budget 6..88% across parts.
     GEN_START, GEN_END = 6, 88
 
-    for idx, part in enumerate(parts_to_run):
-        if part not in prompts:
-            logger.warning("No prompt found for part '%s', skipping.", part)
-            continue
+    vis_i = 0  # index over the VISIBLE parts (excludes the reference-only fullbody)
+    for part in parts_to_run:
+        is_ref_only = ref_only_fullbody and part == "fullbody"
 
-        prompt = prompts[part]
+        # Prompt: template prompt, or a generic fallback for custom assets.
+        prompt = prompts.get(part) or _generic_part_prompt(part)
 
         if part == "fullbody":
             ref = reference_image  # Stage 1: uploaded reference
@@ -201,21 +222,31 @@ def run_pipeline(
                 continue
             ref = fullbody_sheet   # Stage 2: fullbody sheet as reference
 
-        pct_before = GEN_START + int((GEN_END - GEN_START) * idx / max(total_parts, 1))
-        _report(
-            percent=pct_before, stage="generating", current_part=part,
-            message=f"Generating {part} turnaround ({idx + 1}/{total_parts})…",
-            done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
-        )
+        output_name = slot_renames.get(part, part)
+
+        if is_ref_only:
+            # Silent reference step — no visible section, no count.
+            _report(
+                percent=4, stage="reference", current_part=None,
+                message="Preparing base reference pose…",
+                done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+            )
+        else:
+            pct_before = GEN_START + int((GEN_END - GEN_START) * vis_i / max(total_parts, 1))
+            _report(
+                percent=pct_before, stage="generating", current_part=output_name,
+                message=f"Generating {output_name} turnaround ({vis_i + 1}/{total_parts})…",
+                done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
+            )
 
         sheet = generate_turnaround_sheet(ref, prompt, part_name=part, provider=provider)
         if sheet is None:
             logger.warning("[%s] Generation failed — skipping this part.", part)
-            # Don't silently drop it — surface it so the user can regenerate.
-            if not (only_parts and part == "fullbody" and "fullbody" not in only_parts):
-                out_name = slot_renames.get(part, part)
-                if out_name not in failed_parts:
-                    failed_parts.append(out_name)
+            # Surface failures (except the hidden reference) so the user can retry.
+            if not is_ref_only and output_name not in failed_parts:
+                failed_parts.append(output_name)
+            if not is_ref_only:
+                vis_i += 1
             continue
 
         if part == "fullbody":
@@ -226,21 +257,20 @@ def run_pipeline(
             sheet.save(raw_path, "PNG")
             logger.info("Fullbody sheet ready — reused as reference for later parts.")
 
-        # If only_parts was used and fullbody was added just for reference, don't save it.
-        if only_parts and part == "fullbody" and "fullbody" not in only_parts:
+        # Fullbody added only as a reference → don't save/show it.
+        if is_ref_only:
             logger.info("Skipping save of fullbody (used only as reference).")
             continue
 
         _report(
-            percent=pct_before, stage="processing", current_part=part,
-            message=f"Splitting & cleaning {part} views…",
+            percent=pct_before, stage="processing", current_part=output_name,
+            message=f"Splitting & cleaning {output_name} views…",
             done_parts=list(done_parts), total_parts=total_parts, urls=dict(urls),
         )
 
         # Split into 4 views + post-process them together (shared scale so the
         # subject is the same size across all four views).
         cleaned_views = clean_and_normalize_group(split_sheet(sheet))
-        output_name = slot_renames.get(part, part)
         processed_views[output_name] = cleaned_views
 
         # Save just this part (local + optional GCS) and merge its URLs.
@@ -249,9 +279,10 @@ def run_pipeline(
         )
         urls[output_name] = part_urls[output_name]
         done_parts.append(output_name)
+        vis_i += 1
         logger.info("[%s] Done → '%s' (%d/%d parts)", part, output_name, len(done_parts), total_parts)
 
-        pct_after = GEN_START + int((GEN_END - GEN_START) * (idx + 1) / max(total_parts, 1))
+        pct_after = GEN_START + int((GEN_END - GEN_START) * vis_i / max(total_parts, 1))
         _report(
             percent=pct_after, stage="part_done", current_part=output_name,
             message=f"{output_name} ready ({len(done_parts)}/{total_parts})",
@@ -355,10 +386,9 @@ def regenerate_single_part(
     config = load_prompts("prompts.yaml")
     prompts, slot_renames = _resolve_prompts(config, template_name, None)
 
-    # Use custom prompt if given, else resolved prompt from YAML
-    final_prompt = custom_prompt if custom_prompt else prompts.get(part_name)
-    if not final_prompt:
-        raise ValueError(f"No prompt available for part '{part_name}'")
+    # Custom prompt if given, else template prompt, else a generic fallback
+    # (so custom assets like "mobile" can be regenerated too).
+    final_prompt = custom_prompt or prompts.get(part_name) or _generic_part_prompt(part_name)
 
     # Load reference image
     ref_image = Image.open(reference_image_path).convert("RGB")
@@ -453,9 +483,7 @@ def regenerate_single_view(
     config = load_prompts("prompts.yaml")
     prompts, slot_renames = _resolve_prompts(config, template_name, None)
 
-    final_prompt = custom_prompt if custom_prompt else prompts.get(part_name)
-    if not final_prompt:
-        raise ValueError(f"No prompt available for part '{part_name}'")
+    final_prompt = custom_prompt or prompts.get(part_name) or _generic_part_prompt(part_name)
 
     ref_image = Image.open(reference_image_path).convert("RGB")
     if part_name != "fullbody":

@@ -16,7 +16,8 @@
       "Bash(python seed_admin.py --email harsh@immersivedata.ai --password \"Studio@2026\")",
       "Bash(curl -s -m 5 http://127.0.0.1:8000/health)",
       "Bash(echo \"---exit:$?---\")",
-      "PowerShell(\"Listeners on 8000:\"; Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; \"  PID $\\($_.OwningProcess\\) [$\\($p.ProcessName\\)] local=$\\($_.LocalAddress\\)\" }; \"\"; \"Health check \\(15s\\):\"; try { $r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -TimeoutSec 15; $r | ConvertTo-Json -Compress } catch { \"ERROR: $\\($_.Exception.Message\\)\" })"
+      "PowerShell(\"Listeners on 8000:\"; Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; \"  PID $\\($_.OwningProcess\\) [$\\($p.ProcessName\\)] local=$\\($_.LocalAddress\\)\" }; \"\"; \"Health check \\(15s\\):\"; try { $r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -TimeoutSec 15; $r | ConvertTo-Json -Compress } catch { \"ERROR: $\\($_.Exception.Message\\)\" })",
+      "Bash(npm run *)"
     ]
   }
 }

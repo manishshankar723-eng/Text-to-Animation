@@ -59,9 +59,10 @@ class JobCreatedResponse(BaseModel):
 
 class TemplateInfo(BaseModel):
     name: str
+    label: str | None = None  # friendly display name for the client dropdown
     character_defaults: dict = Field(default_factory=dict)
     slot_renames: dict = Field(default_factory=dict)
-    parts: list[str] = Field(default_factory=list)
+    parts: list[str] = Field(default_factory=list)  # this template's part order
 
 
 class AssetItem(BaseModel):

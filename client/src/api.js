@@ -31,7 +31,17 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
     payload = JSON.stringify(body);
   }
 
-  const res = await fetch(`${BASE}${path}`, { method, headers, body: payload });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, { method, headers, body: payload });
+  } catch {
+    // fetch() rejects with a TypeError ("Failed to fetch") when the browser
+    // can't reach the server at all — surface an actionable message instead.
+    throw new Error(
+      `Can't reach the server at ${BASE}. Make sure the backend is running ` +
+        `(uvicorn) and reachable, then try again.`
+    );
+  }
 
   if (res.status === 401) {
     clearSession();
@@ -141,10 +151,14 @@ export function regenerateView(jobId, part, view, prompt, provider) {
 // token, so we can't just point a link at it). Fetch follows the GCS redirect
 // automatically for cloud runs, or streams the local file otherwise.
 export async function downloadZip(jobId, filename, zipUrl) {
-  // If we have a public GCS/HTTP URL, trigger direct browser download
+  // If we have a public GCS/HTTP URL, trigger direct browser download.
   if (zipUrl && (zipUrl.startsWith("http://") || zipUrl.startsWith("https://"))) {
+    // The cloud zip lives at a fixed URL that every run overwrites, so the
+    // browser may serve a stale cached copy. Add a cache-buster to force fresh.
+    const bust = `t=${Date.now()}`;
+    const fresh = zipUrl + (zipUrl.includes("?") ? "&" : "?") + bust;
     const a = document.createElement("a");
-    a.href = zipUrl;
+    a.href = fresh;
     a.download = filename || `${jobId}_assets.zip`;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
@@ -155,9 +169,14 @@ export async function downloadZip(jobId, filename, zipUrl) {
   }
 
   const token = getToken();
-  const res = await fetch(`${BASE}/jobs/${jobId}/download`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}/jobs/${jobId}/download`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -182,9 +201,14 @@ export async function downloadZip(jobId, filename, zipUrl) {
 // through the authenticated endpoint and streams the blob.
 export async function downloadPart(jobId, part, filename) {
   const token = getToken();
-  const res = await fetch(`${BASE}/jobs/${jobId}/download/${part}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}/jobs/${jobId}/download/${part}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {

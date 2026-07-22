@@ -136,15 +136,17 @@ def list_templates(current: CurrentUser = Depends(get_current_user)):
     """List character templates defined in prompts.yaml."""
     cfg = _load_config()
     templates = cfg.get("templates", {})
-    parts_order = cfg.get("parts_order", [])
+    global_parts = cfg.get("parts_order", [])
     out = []
     for name, tpl in templates.items():
         out.append(
             TemplateInfo(
                 name=name,
+                label=tpl.get("label"),
                 character_defaults=tpl.get("character_defaults", {}),
                 slot_renames=tpl.get("slot_renames", {}),
-                parts=parts_order,
+                # This template's own part order, or the global fallback.
+                parts=tpl.get("parts_order") or global_parts,
             )
         )
     return out

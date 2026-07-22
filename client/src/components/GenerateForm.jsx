@@ -1,23 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 
-// Selectable parts. `value` is the backend part key; `label` is what the user
-// sees. "Upper/Lower Garments" map to the jacket/pants keys.
-const PART_OPTIONS = [
-  { value: "fullbody", label: "Fullbody" },
-  { value: "hair", label: "Hair" },
-  { value: "face", label: "Face" },
-  { value: "body", label: "Body" },
-  { value: "jacket", label: "Upper Garments" },
-  { value: "pants", label: "Lower Garments" },
-  { value: "shoe", label: "Shoe" },
-  { value: "headphone", label: "Headphone" },
-  { value: "goggles", label: "Goggles" },
-  { value: "watch", label: "Watch" },
-];
+// Friendly labels for specific part keys; anything else is title-cased.
+const PART_LABELS = { jacket: "Upper Garments", pants: "Lower Garments" };
 function partLabel(value) {
-  return PART_OPTIONS.find((o) => o.value === value)?.label || value;
+  return (
+    PART_LABELS[value] ||
+    value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }
+// Fallback part list when no template is selected (generic human).
+const DEFAULT_PARTS = [
+  "fullbody", "hair", "face", "body",
+  "jacket", "pants", "shoe", "headphone", "goggles", "watch",
+];
 
 // Upload a reference image OR generate one from text, then start a pipeline job.
 // Calls onJobCreated(jobId) after a successful enqueue.
@@ -38,6 +34,8 @@ export default function GenerateForm({ onJobCreated }) {
   // Upload tab
   const [file, setFile] = useState(null);
   const [filePreview, setFilePreview] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Common fields
   const [template, setTemplate] = useState("");
@@ -97,13 +95,27 @@ export default function GenerateForm({ onJobCreated }) {
   }
 
   // --- Upload tab handlers ---
-  function onFile(e) {
-    const f = e.target.files?.[0] || null;
+  // Accept a File from either the picker or a drag-and-drop.
+  function acceptFile(f) {
+    if (!f) return;
+    if (!f.type.startsWith("image/")) {
+      setError("Please choose an image file (PNG, JPG or WebP).");
+      return;
+    }
+    setError("");
     setFile(f);
-    setFilePreview(f ? URL.createObjectURL(f) : null);
-    // Clear describe tab state when switching to upload
+    setFilePreview(URL.createObjectURL(f));
+    // Clear describe-tab state when a file is chosen.
     setReferenceId(null);
     setRefPreview(null);
+  }
+  function onFile(e) {
+    acceptFile(e.target.files?.[0] || null);
+  }
+  function onDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    acceptFile(e.dataTransfer.files?.[0] || null);
   }
 
   // --- Parts multi-select handlers ---
@@ -177,6 +189,11 @@ export default function GenerateForm({ onJobCreated }) {
     tab === "describe" ? refPreview : filePreview;
   const canSubmit =
     tab === "describe" ? !!referenceId : !!file;
+
+  // Parts offered in the multi-select depend on the chosen subject template.
+  const selectedTemplate = templates.find((t) => t.name === template);
+  const availableParts =
+    selectedTemplate?.parts?.length ? selectedTemplate.parts : DEFAULT_PARTS;
 
   return (
     <form className="card" onSubmit={submit}>
@@ -265,11 +282,31 @@ export default function GenerateForm({ onJobCreated }) {
       {tab === "upload" && (
         <div className="tab-content">
           <label>Reference image</label>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={onFile}
-          />
+          <div
+            className={`dropzone${dragOver ? " over" : ""}`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            role="button"
+            tabIndex={0}
+          >
+            <span className="dropzone-icon">📁</span>
+            <span className="dropzone-text">
+              {file ? file.name : "Drag & drop an image here"}
+            </span>
+            <span className="dropzone-sub">or click to browse · PNG, JPG, WebP</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={onFile}
+              hidden
+            />
+          </div>
           {filePreview && (
             <img
               className="preview clickable"
@@ -293,17 +330,23 @@ export default function GenerateForm({ onJobCreated }) {
             required
           />
 
-          <label>Template</label>
+          <label>Subject type</label>
           <select
             value={template}
-            onChange={(e) => setTemplate(e.target.value)}
+            onChange={(e) => {
+              setTemplate(e.target.value);
+              // Different subject → different parts; reset the selection.
+              setSelectedParts([]);
+            }}
           >
-            <option value="">(default)</option>
-            {templates.map((t) => (
-              <option key={t.name} value={t.name}>
-                {t.name}
-              </option>
-            ))}
+            <option value="">(default — human, auto)</option>
+            {templates
+              .filter((t) => t.name !== "default")
+              .map((t) => (
+                <option key={t.name} value={t.name}>
+                  {t.label || t.name}
+                </option>
+              ))}
           </select>
 
           <label>Image provider (for pipeline)</label>
@@ -356,11 +399,13 @@ export default function GenerateForm({ onJobCreated }) {
         )}
         <select value="" onChange={(e) => addPart(e.target.value)}>
           <option value="">+ Add a part…</option>
-          {PART_OPTIONS.filter((o) => !selectedParts.includes(o.value)).map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
+          {availableParts
+            .filter((p) => !selectedParts.includes(p))
+            .map((p) => (
+              <option key={p} value={p}>
+                {partLabel(p)}
+              </option>
+            ))}
         </select>
 
         <label>Custom asset (anything not in the list)</label>
