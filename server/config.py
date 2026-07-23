@@ -47,6 +47,12 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 
+# Where user accounts live: "mongo" (default, MongoDB Atlas) or "local"
+# (a JSON file on disk — handy for dev when MongoDB is unreachable).
+USER_STORE = os.environ.get("API_USER_STORE", "mongo").lower()
+# Path for the local file-based user store (used when USER_STORE == "local").
+LOCAL_USERS_PATH = os.environ.get("API_LOCAL_USERS_PATH", ".local_users.json")
+
 # MongoDB connection for user accounts.
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB = os.environ.get("MONGODB_DB", "character_api")

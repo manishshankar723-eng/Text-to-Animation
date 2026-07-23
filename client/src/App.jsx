@@ -5,19 +5,13 @@ import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
+import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
 
 // Descriptions for the roadmap (not-yet-built) workflows.
 const SOON = {
-  "script-to-storyboard": {
-    icon: "📝",
-    title: "Script to Storyboard",
-    description:
-      "Paste a script and generate a shot-by-shot storyboard with framed panels, camera notes and scene beats.",
-    steps: ["Parse the script into scenes", "Generate a panel per shot", "Review & re-roll panels"],
-  },
   "storyboard-to-animatics": {
     icon: "🎬",
     title: "Storyboard to Animatics",
@@ -130,6 +124,8 @@ export default function App() {
         </div>
       </div>
     );
+  } else if (nav === "script-to-storyboard") {
+    content = <ScriptToStoryboard />;
   } else if (SOON[nav]) {
     content = <WorkflowSoon {...SOON[nav]} />;
   }

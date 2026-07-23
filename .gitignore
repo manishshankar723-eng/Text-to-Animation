@@ -1,6 +1,9 @@
 # Secrets — NEVER commit
 .env
 
+# Local dev user store (contains bcrypt password hashes)
+.local_users.json
+
 # Python
 __pycache__/
 *.pyc

@@ -1,26 +1,32 @@
 """
-users.py — MongoDB-backed user store for authentication.
+users.py — user store for authentication.
 
-Stores one document per user in the `users` collection:
+Two interchangeable backends, selected by `config.USER_STORE`:
+  * "mongo" (default) — one document per user in the MongoDB `users` collection.
+  * "local"           — a JSON file on disk (handy for dev when MongoDB Atlas is
+                        unreachable). Same public API; passwords are already
+                        bcrypt-hashed before they reach the store.
+
+Each user record looks like:
     {
-        "_id": ObjectId,
         "email": "user@example.com",   (unique, lowercased)
         "password_hash": "<bcrypt>",
         "created_at": "<iso8601>",
         "disabled": false,
+        "api_keys": { "meshy": "...", ... },   (optional)
     }
 """
 
+import json
 import logging
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import config
 
 logger = logging.getLogger(__name__)
 
-_client = None
-_collection = None
 _lock = threading.Lock()
 
 
@@ -28,12 +34,54 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_collection():
-    """Return the users collection, connecting to MongoDB on first use.
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
 
-    A unique index on `email` is ensured once so duplicate registrations fail
-    at the database level, not just in application code.
-    """
+
+class DuplicateUser(Exception):
+    """Raised when registering an email that already exists."""
+
+    def __init__(self, email: str):
+        super().__init__(f"User already exists: {email}")
+        self.email = email
+
+
+def _use_local() -> bool:
+    return config.USER_STORE == "local"
+
+
+# ===========================================================================
+# Local JSON-file backend
+# ===========================================================================
+def _local_path() -> Path:
+    return Path(config.LOCAL_USERS_PATH)
+
+
+def _local_load() -> dict:
+    """Return {email: user_dict}. Missing/corrupt file → empty store."""
+    path = _local_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Local user store at %s is unreadable — starting empty.", path)
+        return {}
+
+
+def _local_save(data: dict) -> None:
+    _local_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+# ===========================================================================
+# Mongo backend
+# ===========================================================================
+_client = None
+_collection = None
+
+
+def get_collection():
+    """Return the users collection, connecting to MongoDB on first use."""
     global _client, _collection
     if _collection is not None:
         return _collection
@@ -55,27 +103,41 @@ def get_collection():
         return _collection
 
 
-def _normalize_email(email: str) -> str:
-    return email.strip().lower()
-
-
+# ===========================================================================
+# Public API (dispatches to the active backend)
+# ===========================================================================
 def get_user_by_email(email: str) -> dict | None:
     """Return the raw user document (incl. password_hash) or None."""
-    return get_collection().find_one({"email": _normalize_email(email)})
+    key = _normalize_email(email)
+    if _use_local():
+        with _lock:
+            return _local_load().get(key)
+    return get_collection().find_one({"email": key})
 
 
 def create_user(email: str, password_hash: str) -> dict:
     """Insert a new user. Raises DuplicateUser if the email already exists."""
-    from pymongo.errors import DuplicateKeyError
-
+    key = _normalize_email(email)
     doc = {
-        "email": _normalize_email(email),
+        "email": key,
         "password_hash": password_hash,
         "created_at": _now_iso(),
         "disabled": False,
     }
+
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key in data:
+                raise DuplicateUser(email)
+            data[key] = doc
+            _local_save(data)
+        return doc
+
+    from pymongo.errors import DuplicateKeyError
+
     try:
-        result = get_collection().insert_one(doc)
+        result = get_collection().insert_one(dict(doc))
     except DuplicateKeyError as e:
         raise DuplicateUser(email) from e
     doc["_id"] = result.inserted_id
@@ -84,25 +146,50 @@ def create_user(email: str, password_hash: str) -> dict:
 
 def update_password(email: str, password_hash: str) -> bool:
     """Set a new password hash for an existing user. Returns True if updated."""
+    key = _normalize_email(email)
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key not in data:
+                return False
+            data[key]["password_hash"] = password_hash
+            _local_save(data)
+            return True
     result = get_collection().update_one(
-        {"email": _normalize_email(email)},
-        {"$set": {"password_hash": password_hash}},
+        {"email": key}, {"$set": {"password_hash": password_hash}}
     )
     return result.matched_count > 0
 
 
 def delete_user(email: str) -> bool:
     """Permanently delete a user by email. Returns True if a user was removed."""
-    result = get_collection().delete_one({"email": _normalize_email(email)})
+    key = _normalize_email(email)
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key not in data:
+                return False
+            del data[key]
+            _local_save(data)
+            return True
+    result = get_collection().delete_one({"email": key})
     return result.deleted_count > 0
 
 
 # --- Third-party 3D API keys (stored plaintext under user.api_keys.{provider}) ---
 def set_api_key(email: str, provider: str, api_key: str) -> bool:
     """Save a 3D provider API key on the user record."""
+    key = _normalize_email(email)
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key not in data:
+                return False
+            data[key].setdefault("api_keys", {})[provider] = api_key
+            _local_save(data)
+            return True
     result = get_collection().update_one(
-        {"email": _normalize_email(email)},
-        {"$set": {f"api_keys.{provider}": api_key}},
+        {"email": key}, {"$set": {f"api_keys.{provider}": api_key}}
     )
     return result.matched_count > 0
 
@@ -121,19 +208,30 @@ def get_saved_providers(email: str) -> dict:
 
 def delete_api_key(email: str, provider: str) -> bool:
     """Remove a saved provider key. Returns True if a user matched."""
+    key = _normalize_email(email)
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key not in data:
+                return False
+            (data[key].get("api_keys") or {}).pop(provider, None)
+            _local_save(data)
+            return True
     result = get_collection().update_one(
-        {"email": _normalize_email(email)},
-        {"$unset": {f"api_keys.{provider}": ""}},
+        {"email": key}, {"$unset": {f"api_keys.{provider}": ""}}
     )
     return result.matched_count > 0
 
 
 def check_connection() -> dict:
-    """Ping MongoDB and report connectivity (never raises).
+    """Report user-store connectivity (never raises).
 
     Returns {"connected": bool, "db": str, "error": str | None}. Used by the
     /health endpoint so operators can see at a glance whether auth will work.
     """
+    if _use_local():
+        return {"connected": True, "db": f"local:{config.LOCAL_USERS_PATH}", "error": None}
+
     status = {"connected": False, "db": config.MONGODB_DB, "error": None}
     try:
         col = get_collection()
@@ -142,11 +240,3 @@ def check_connection() -> dict:
     except Exception as e:  # noqa: BLE001 — health must not throw
         status["error"] = str(e)
     return status
-
-
-class DuplicateUser(Exception):
-    """Raised when registering an email that already exists."""
-
-    def __init__(self, email: str):
-        super().__init__(f"User already exists: {email}")
-        self.email = email

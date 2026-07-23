@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-22 (client redesign, subject templates, live progress, per-section 3D)
+**Last updated:** 2026-07-23 (Script→Storyboard workflow plan + local user store)
 
 ---
 
@@ -210,6 +210,81 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-23 — Local user-store fallback (fixes login when Mongo is down)
+- **Problem:** login showed "Can't reach the server" — backend WAS up (`/health`
+  200) but `/auth/*` 500'd because MongoDB Atlas is unreachable (TLS handshake);
+  the 500 reaches the browser without CORS headers, so fetch throws the network
+  message. Root cause is Atlas connectivity (IP allowlist / paused cluster /
+  corporate TLS), not the repo.
+- **Fix:** `server/users.py` now supports two backends behind the same public API,
+  selected by `config.USER_STORE`: `"mongo"` (default) or `"local"` (a JSON file,
+  `API_LOCAL_USERS_PATH`, default `.local_users.json`). Auth now works with no
+  MongoDB. `check_connection()` reports the local store as connected.
+- `server/config.py`: added `USER_STORE` + `LOCAL_USERS_PATH`.
+- `.env`: set `API_USER_STORE=local` (documented why); `.env.example`: documented
+  both keys (default `mongo`). `.gitignore`: ignore `.local_users.json` (holds
+  bcrypt hashes).
+- Verified: unit test (register/dup/case-insensitive lookup/verify), then live
+  over HTTP after restarting uvicorn — `/health` → `status: ok`, register → 201,
+  correct login → token, wrong pw → 401. Reset store to empty afterward.
+- **NOTE:** local store starts EMPTY — the user must **Register** before logging
+  in. To go back to Atlas once fixed, set `API_USER_STORE=mongo` and restart.
+  uvicorn does NOT reload on `.env` changes — full restart required.
+
+### 2026-07-23 — Script→Storyboard step 3 (Select Your Aspect Ratio)
+- `client/src/components/ScriptToStoryboard.jsx`: added `step: "aspect"`. Step 2's
+  Next now advances to Step 3; Step 3 is a gold-themed aspect-ratio picker (21:9,
+  16:9, 9:16, 2:3, 1:1) with an outlined frame icon sized to each ratio, Back →
+  step 2, Next disabled until a ratio is chosen (then "coming soon" notice).
+- `client/src/styles.css`: added `.ratio-card/.ratio-frame(-box)/.ratio-name/
+  .ratio-desc` (reuses `.style-grid` + `.style-card` base + gold selected ring).
+- Verified: `npm run build` clean.
+
+### 2026-07-23 — Script→Storyboard step 2 (Select Your Style)
+- `client/src/components/ScriptToStoryboard.jsx`: now a two-step flow with internal
+  `step` state. Step 1 (script composer) arrow button advances to Step 2 "Select
+  Your Style" (only when there's text/file). Step 2 is a gold-themed card picker
+  (Sketch / Comics / Realistic / 3D Animation + a dashed Custom card), Back returns
+  to step 1, Next is disabled until a style is chosen and (no backend yet) shows a
+  "coming soon" notice. Content + buttons mirror the Drawstory reference; design is
+  our own (icon + gradient preview tiles, gold selected-ring + ✓ badge) rather than
+  a copy. Both steps share one visual language (panels, pill buttons, title styling).
+- `client/src/styles.css`: added `.style-wrap/.sts-page/.sts-back/.style-grid/
+  .style-card(.selected)/.style-preview/.style-check/.style-custom/.sts-next` styles.
+- Verified: `npm run build` clean.
+
+### 2026-07-23 — Login password show/hide toggle + Mongo-error diagnosis
+- `client/src/components/Login.jsx`: added a show/hide password toggle (eye /
+  eye-off inline SVG icons, `showPassword` state, `type` switches text/password).
+- `client/src/styles.css`: added `.password-field` / `.password-toggle` styles
+  (gold hover, positioned inside the input).
+- **Diagnosed the "Can't reach the server" login error:** the backend runs fine
+  (`/health` → 200) but auth returns 500 because **MongoDB Atlas rejects the TLS
+  handshake** (`TLSV1_ALERT_INTERNAL_ERROR`). Confirmed NOT a code bug — DNS
+  resolves, TCP to shard:27017 connects, general outbound TLS works, and passing
+  `certifi.where()` as `tlsCAFile` does NOT help (Atlas sends the alert). Root
+  cause is almost certainly the **client IP not in Atlas Network Access allowlist**
+  (or a paused cluster). Fix is in the Atlas dashboard, not the repo. The frontend
+  "Can't reach the server" text specifically appears only when uvicorn isn't
+  running (fetch rejects); once it's up the user sees the 500 detail instead.
+- Verified: `npm run build` clean.
+
+### 2026-07-22 — Script→Storyboard composer UI (design-matched, gold theme)
+- New `client/src/components/ScriptToStoryboard.jsx`: centered "composer" hero
+  matching the Drawstory reference (big title, subtitle, rounded script textarea
+  with "Create…" placeholder, pill "+ Upload" button + circular send button,
+  helper footnote). Reuses the app's champagne-gold palette instead of the
+  reference's purple. Supports drag-and-drop file attach (PDF/txt/fountain/fdx/
+  docx) with a removable file chip; send is disabled until there's text or a file.
+  No storyboard backend yet, so submit shows a friendly "coming soon" notice.
+- `client/src/App.jsx`: routes `nav === "script-to-storyboard"` to the new
+  component (removed its entry from the `SOON` placeholder map).
+- `client/src/components/Sidebar.jsx`: `script-to-storyboard` status `soon → live`
+  (shows the live dot, not the "Soon" badge).
+- `client/src/styles.css`: added `.sts-*` composer styles (focus-within gold glow,
+  drag-over state, gold gradient send button, file chip, notice).
+- Verified: `npm run build` clean (41 modules, 0 errors).
 
 ### 2026-07-22 — Client redesign, subject templates, live progress, per-section 3D
 Large multi-part session (committed across `2fc6562`, `e58b276`, `28902a0`).
@@ -424,6 +499,53 @@ mesh, zip cache-bust.
 - MongoDB Atlas was intermittently unreachable from the user's machine (SSL
   handshake) — auth needs it; jobs use in-memory store.
 
+---
+
+## 🎬 Script → Storyboard workflow — build plan (researched 2026-07-23)
+
+**Goal:** turn a script into a shot-by-shot storyboard, competing with
+storyboarder.ai / drawstory.ai. UI must stay dead-simple (any-age users). We have
+two unfair advantages already built: (1) **consistent-character generation** (the
+Text-to-Image turnaround pipeline) and (2) the **async job + live-progress system**
+(`server/worker.py`, `JobDetail` progress UI). Reuse both.
+
+**Done so far (UI only, no backend):** `ScriptToStoryboard.jsx` 3-step input flow —
+① script paste/upload → ② style pick → ③ aspect-ratio pick. "Next" on step 3 only
+shows a "coming soon" notice. Everything below is the missing engine + screens.
+
+### Pipeline (the "AI film crew")
+| Stage | What it does | Reuse / build |
+|-------|--------------|---------------|
+| **A. Shot breakdown** ⭐ | LLM (Gemini) parses script → ordered shot list: `{scene, description, characters[], location, camera_angle}`. THE key new piece. | New: prompt + endpoint. |
+| **B. Character consistency** ⭐ | Extract characters from shot list; generate/upload one reference each; feed into every panel so faces stay identical. Our differentiator. | **Reuse** turnaround pipeline (`gemini_client`, `pipeline.py`). |
+| **C. Review shot list (page 4)** | Show the parsed shots so the user fixes AI mistakes BEFORE spending on images (edit/delete/reorder). Big quality + trust win; also saves image cost. | New: simple editable list UI + endpoint. |
+| **D. Generate panels (page 5)** | Loop shots → one image each from `description + style + aspect + character ref`. Live progress, panels stream in. | **Reuse** job/worker + live progress. |
+| **E. Storyboard board (page 6)** | Grid of panels + captions; per-panel regenerate / edit caption / reorder / add / delete. THIS is the product. | New board UI; regenerate reuses image gen. |
+| **F. Export/share (page 7)** | PDF (industry standard) + images + share link. Later: animatic (existing roadmap). | New: PDF export. |
+
+### Build order (ship incrementally)
+- **MVP (end-to-end first):** A → D (simple panels, NO character lock yet) → E (basic
+  board) → F (PDF). Already feels magic: script in, storyboard out.
+- **v2 (make it good):** add B (character consistency) + C (review/edit page).
+- **v3 (polish/retention):** per-panel regenerate, reorder, camera tags, then
+  animatics/video.
+
+### Notes / decisions
+- **Persist as a "project"**: project → scenes → shots → panels, so users can leave
+  and return (extend the job store, or a new `storyboards` store).
+- **Image gen costs time/money** → that's WHY the review page (C) exists: confirm the
+  plan before generating ~50 images.
+- **UX**: one clear action per page, big buttons, visible progress bar, board that
+  reads like sticky notes on a wall.
+- **OPEN DECISION (ask user before building):** editing depth —
+  *Simple* (drawstory-style: script in → board out, minimal edits; recommended for
+  any-age goal) vs *Full control* (storyboarder-style: editable shot lists, per-panel
+  regen, camera notes). Recommendation: start **Simple**, add control later.
+- **Refs:** storyboarder.ai (help.storyboarder.ai), drawstory.ai/blog/text-to-storyboard
+  + /blog/character-design-ai, boords.com/ai-storyboard-generator.
+
+---
+
 **Next steps** (pick the top unchecked item when told to "start next"):
 - [x] Client redesign (sidebar dashboard), subject-type templates, live progress,
       per-section 3D + saved API keys, regenerate part/view, custom assets (2026-07-22).
@@ -435,4 +557,8 @@ mesh, zip cache-bust.
       + a backend verify endpoint.
 - [ ] Harden for production: lock down CORS origins, require `JWT_SECRET`,
       rate-limit auth endpoints, consider encrypting stored 3D API keys.
-- [ ] Build the roadmap workflows (Script→Storyboard→Animatics→Final Video).
+- [ ] **Script→Storyboard** — see the full "build plan" section above. Input UI
+      (3 steps: script → style → aspect) is done; next is the backend engine.
+      Suggested first task: **Stage A** (LLM shot breakdown) → then MVP D/E/F.
+      ⚠️ Confirm the OPEN DECISION (Simple vs Full-control editing) with the user first.
+- [ ] Build the later roadmap workflows (Storyboard→Animatics→Final Video).
