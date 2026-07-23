@@ -4,7 +4,7 @@
 //   Step "review" — Stage C: the AI shot list, editable before generating panels
 //                   (edit description, reorder, delete, add). Panel generation is
 //                   the next build step (button shows a "coming soon" notice).
-import { Fragment, useState, useRef } from "react";
+import { useState, useRef } from "react";
 import * as api from "../api.js";
 import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
@@ -296,8 +296,7 @@ export default function ScriptToStoryboard() {
 
         <div className="shot-list">
           {shots.map((sh, i) => (
-            <Fragment key={i}>
-            <div className="card shot-card">
+            <div className="card shot-card" key={i}>
               <div className="shot-head">
                 <span className="shot-index">
                   Shot {i + 1}
@@ -321,6 +320,14 @@ export default function ScriptToStoryboard() {
                     title="Move down"
                   >
                     ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="shot-btn"
+                    onClick={() => insertShot(i)}
+                    title="Insert a shot below"
+                  >
+                    ＋
                   </button>
                   <button
                     type="button"
@@ -369,22 +376,10 @@ export default function ScriptToStoryboard() {
                 </div>
               )}
             </div>
-
-            {i < shots.length - 1 && (
-              <div className="shot-insert-row">
-                <button
-                  type="button"
-                  className="shot-insert-btn"
-                  onClick={() => insertShot(i)}
-                  title="Add a shot here"
-                >
-                  ＋ Add a shot
-                </button>
-              </div>
-            )}
-            </Fragment>
           ))}
+        </div>
 
+        <div className="add-shot-row">
           <button type="button" className="btn ghost add-shot-btn" onClick={addShot}>
             ＋ Add a shot
           </button>
@@ -439,6 +434,9 @@ export default function ScriptToStoryboard() {
 
       <div className="sts-hero-grid">
       <div className="sts-form-wrap">
+        {busy ? (
+          <BreakdownProgress />
+        ) : (
         <div className="card">
           {/* --- Script --- */}
           <label>Your script</label>
@@ -580,6 +578,7 @@ export default function ScriptToStoryboard() {
             )}
           </button>
         </div>
+        )}
       </div>
 
       <aside className="sts-hero-aside">

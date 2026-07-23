@@ -216,6 +216,21 @@ in `.env` — no code change needed.
 
 ## ✅ Work Log (newest first)
 
+### 2026-07-24 — Storyboard: fill-width layout + bigger titles (laptop == 2K)
+- Blank-space complaint was screen-scaling: fixed max-width caps left voids on a 2K
+  monitor. Bumped step caps to 2200px (review/board) so content fills up to 2K;
+  cast kept 1400 (compact centered), form 1500.
+- Review shots now a FIXED 3-column grid (`repeat(3,1fr)`, →2 @1200px, →1 @720px) so
+  the same 3-up layout shows on laptop and 2K (cards just scale). Moved the insert
+  action into each card's button row (`＋`, grid-friendly) and dropped the
+  between-card insert rows (Fragment removed); "Add a shot" moved below the grid
+  (`.add-shot-row`).
+- Board grid now `auto-fill minmax(340px,1fr)` (fills wide screens).
+- Bigger workflow titles: `.wf-title` clamp(1.9→2.6rem), larger `.wf-icon` (4rem) +
+  subtitle. Frontend-only; `npm run build` clean.
+- NOTE: pixel-identical across resolutions isn't possible; goal is same column
+  layout + no blank voids on both.
+
 ### 2026-07-23 — Breakdown: animated "scene breakdown" checklist
 - New `BreakdownProgress.jsx`: replaces the form while the breakdown call runs — a
   staged checklist (Reading story → Aligning genre → Identifying characters →
