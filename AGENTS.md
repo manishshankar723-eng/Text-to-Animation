@@ -216,6 +216,104 @@ in `.env` — no code change needed.
 
 ## ✅ Work Log (newest first)
 
+### 2026-07-23 — Breakdown: animated "scene breakdown" checklist
+- New `BreakdownProgress.jsx`: replaces the form while the breakdown call runs — a
+  staged checklist (Reading story → Aligning genre → Identifying characters →
+  Creating breakdown) that ticks off on a ~1.1s timer (gold checks, last step keeps
+  spinning until the API returns → Review). `ScriptToStoryboard` renders it when
+  `busy` on the form step. `.bp-*` styles (gold theme, not the reference's green).
+- Frontend-only; `npm run build` clean.
+
+### 2026-07-23 — Genre: Default (pre-selected) + Custom (free text)
+- Added a "✨ Default" chip (pre-selected; sends `genre=""` → no bias) and a
+  "＋ Custom" chip (reveals `.custom-genre-input` to type any genre). `effectiveGenre()`
+  resolves: Default→"", Custom→typed text, else the label minus emoji (e.g.
+  "Science Fiction"). Chips now plain-select (Default is the neutral, no toggle-off).
+  Resets to Default on Start over. Frontend-only; build clean.
+
+### 2026-07-23 — Form: Genre chip section (shapes story tone)
+- Added a **Genre** section to the Script→Storyboard form (same `.opt-chips` UI as
+  Visual style / Aspect ratio, placed after the script): 14 genres (Action…Thriller),
+  single-select, **optional** (toggle off by re-clicking; not in `canGenerate`).
+  Took only the genre content from the reference — no step-bar / extra button.
+- Threaded genre through: `api.js breakdownScript({genre})` →
+  `ScriptBreakdownRequest.genre` → `break_down_script(..., genre=)` prepends a
+  "Genre: X. Shape tone/pacing…" line to the LLM prompt.
+- `.label-optional` hint style; genre reset on Start over.
+- Verified: genre lands at the front of the prompt (mocked), server imports,
+  `npm run build` clean, uvicorn restarted (health 200).
+
+### 2026-07-23 — Board: "Retry all failed" bulk button
+- `StoryboardBoard.jsx`: added `retryAllFailed()` + a "🔄 Retry all failed (N)"
+  toolbar button (shown when `failedCount>0`, beside Download PDF). Loops failed
+  panel indices sequentially through the existing `retryPanel()` (gentler on rate
+  limits; per-tile spinners; in-place update). `.board-retry-all` style + toolbar gap.
+- Frontend-only (reuses `POST /storyboards/{id}/regenerate-panel`); build clean.
+
+### 2026-07-23 — Board: per-panel Retry/regenerate + safer prompt + zoom
+- **"Couldn't draw this panel" cause:** the image model returns EMPTY (safety
+  filter) on mildly-aggressive shots ("threateningly", "accusing", "mocking",
+  "insult", "flies at the camera"). Added a family-friendly / non-graphic line to
+  the panel prompt (`gemini_client.generate_storyboard_panel`) to cut blocks.
+- **Retry:** `storyboard_pipeline.regenerate_panel()` (one panel, reuses refs +
+  crop); `POST /storyboards/{id}/regenerate-panel {index}` (sync; updates
+  job.result.panels[index] + ok_count); `character_ref_paths` now stored in
+  job.params so retries keep character consistency. `api.js
+  regenerateStoryboardPanel`. Board: **🔄 Retry** button on failed tiles + a hover
+  **🔄** regenerate on good tiles (like Text-to-Image per-view regen), per-tile
+  spinner, live in-place update.
+- **Zoom:** click-to-zoom lightbox was already implemented (`.lightbox-*`); it
+  works — likely a cached build; hard-refresh. (No change needed.)
+- `client/src/styles.css`: `.panel-regen/.board-failed(flex)/.board-retry`;
+  `.board-frame{position:relative}`.
+- Verified: route registered, `regenerate_panel` imports, `npm run build` clean,
+  uvicorn restarted (health 200). NOT run live (billed image call per retry).
+
+### 2026-07-23 — Form step: two-column hero (fill the empty space)
+- Vertically centering the lone form card just moved the void top+bottom. Replaced
+  with a two-column hero (`.sts-hero-grid` 1.3fr/0.7fr, stacks <860px): form card
+  LEFT + a "How it works" 5-step guide panel RIGHT (`.sts-guide*`). `.sb-form` now
+  max-width 1100, top-anchored (no vertical centering). Fills the horizontal space
+  so the form no longer floats as a small card in a big black area. Paste/upload
+  160px height-match retained. Frontend-only; `npm run build` clean.
+
+### 2026-07-23 — Form step centered as a hero (kill bottom whitespace void)
+- Script→Storyboard input: `.sb-form` on the form wrapper — max-width 720, margin
+  auto, `min-height: calc(100vh - 6rem)` + flex column `justify-content:center`.
+  Header + card now share the 720 column (aligned) and sit vertically centred, so
+  whitespace balances above/below instead of a big empty area at the bottom.
+- Frontend-only; `npm run build` clean.
+
+### 2026-07-23 — Storyboard UI polish: matched cast buttons + centered columns
+- Cast page: Generate + Upload buttons now identical (both `.btn.secondary.cast-btn`,
+  equal `flex:1`, same colour/size) instead of one gold-outline + one plain.
+- Cast grid: grid→flexbox `justify-content:center` so an odd number of characters
+  (e.g. 3) is balanced, not left-hugging with an empty cell.
+- Reduced dead right-side whitespace across storyboard steps: centered content
+  columns via `.sb-review` (880px) / `.sb-cast` (1000px) / `.sb-board` (1120px) on
+  each step's `workflow-head-wrap`; review inner blocks fill the column.
+- Frontend-only; `npm run build` clean.
+
+### 2026-07-23 — Review shots: honest cast count + button loader/label tweaks
+- **Cast count bug:** "Next: cast (N)" used the full breakdown cast (e.g. 7) even
+  after deleting shots. Added `computeCast()` — derives the ACTIVE cast from the
+  CURRENT shots' character names (deduped, descriptions pulled from the breakdown
+  when available). Used for the review button count, the cast-step props, and the
+  cast-vs-generate branch. Deleting shots now shrinks the cast honestly.
+- Renamed the between-shots inserter label "＋ Insert shot here" → "＋ Add a shot".
+- Breakdown loading button: replaced the tiny inline dot with a circular ring
+  spinner (`.btn-loading`/`.btn-ring`) + text (indeterminate — single call, no %).
+- Frontend-only; `npm run build` clean.
+
+### 2026-07-23 — Review shots: insert-a-shot-between button
+- `ScriptToStoryboard.jsx`: added `insertShot(index)` (splices a blank shot AFTER
+  a position) + `blankShot()` helper; each shot card now renders a subtle dashed
+  "＋ Insert shot here" pill BETWEEN it and the next card (wrapped shots in
+  `Fragment`). Bottom "＋ Add a shot" (append) kept. Shot numbers are positional
+  (i+1) so they renumber automatically; inserted shot inherits the prior scene_number.
+- `client/src/styles.css`: `.shot-insert-row` / `.shot-insert-btn`.
+- Frontend-only; `npm run build` clean (no backend restart needed).
+
 ### 2026-07-23 — Cast: upload-your-own character image
 - `server/main.py`: `POST /characters/reference/upload` (multipart) — validates
   type/size, normalises any JPEG/PNG/WebP to a clean RGB `reference.png` under the

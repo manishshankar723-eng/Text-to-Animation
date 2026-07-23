@@ -54,6 +54,57 @@ def _load_character_refs(character_ref_paths: dict | None) -> dict:
     return refs
 
 
+def regenerate_panel(
+    job_id: str,
+    panel: dict,
+    style: str = "custom",
+    aspect_ratio: str = "16:9",
+    output_dir: str = "output",
+    character_ref_paths: dict | None = None,
+    provider: str | None = None,
+) -> dict:
+    """Re-generate ONE panel (used by the Retry button). Returns the updated panel."""
+    from gemini_client import generate_storyboard_panel
+
+    board_dir = os.path.join(output_dir, "_storyboards", job_id)
+    os.makedirs(board_dir, exist_ok=True)
+    char_refs = _load_character_refs(character_ref_paths)
+
+    i = panel["index"]
+    shot_refs = []
+    for name in panel.get("characters", []) or []:
+        ref = char_refs.get(str(name).strip().lower())
+        if ref is not None and ref not in shot_refs:
+            shot_refs.append(ref)
+        if len(shot_refs) >= 3:
+            break
+
+    updated = dict(panel)
+    description = str(panel.get("description", "")).strip()
+    image = None
+    if description:
+        image = generate_storyboard_panel(
+            description=description,
+            style=style,
+            aspect_ratio=aspect_ratio,
+            characters=panel.get("characters", []) or [],
+            location=panel.get("location", "") or "",
+            camera=panel.get("camera", "") or "",
+            reference_images=shot_refs or None,
+            provider=provider,
+        )
+
+    if image is not None:
+        image = _crop_to_aspect(image, aspect_ratio)
+        image.save(os.path.join(board_dir, f"panel_{i:02d}.png"), "PNG")
+        updated["url"] = f"/storyboards/{job_id}/panel/{i}"
+        updated["failed"] = False
+    else:
+        updated["url"] = None
+        updated["failed"] = True
+    return updated
+
+
 def run_storyboard(
     job_id: str,
     shots: list[dict],

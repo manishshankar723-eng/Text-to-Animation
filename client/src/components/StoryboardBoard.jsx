@@ -13,6 +13,8 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
   const [lightbox, setLightbox] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  const [retrying, setRetrying] = useState({});
+  const [retryingAll, setRetryingAll] = useState(false);
 
   // Poll the job until it finishes (recursive setTimeout — stops at terminal state).
   useEffect(() => {
@@ -73,6 +75,57 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
   const pendingCount = Math.max(0, total - panels.length);
   const tileRatio = (aspect || "16:9").replace(":", " / ");
   const okCount = panels.filter((p) => !p.failed && p.url).length;
+  const failedCount = panels.filter((p) => p.failed).length;
+
+  // Retry every failed panel, one at a time (gentler on rate limits).
+  async function retryAllFailed() {
+    if (retryingAll) return;
+    const failedIdx = (job?.result?.panels || [])
+      .filter((p) => p.failed)
+      .map((p) => p.index);
+    if (failedIdx.length === 0) return;
+    setRetryingAll(true);
+    for (const idx of failedIdx) {
+      // eslint-disable-next-line no-await-in-loop
+      await retryPanel(idx);
+    }
+    setRetryingAll(false);
+  }
+
+  // Re-draw a single panel (failed or just unwanted).
+  async function retryPanel(index) {
+    if (retrying[index]) return;
+    setError("");
+    setRetrying((r) => ({ ...r, [index]: true }));
+    try {
+      const res = await api.regenerateStoryboardPanel(jobId, index);
+      const panel = res.panel;
+      // Drop the cached blob so the fetch effect re-loads the fresh image.
+      const old = panelUrlsRef.current[index];
+      if (typeof old === "string" && old.startsWith("blob:")) URL.revokeObjectURL(old);
+      delete panelUrlsRef.current[index];
+      setPanelUrls((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+      setJob((prev) =>
+        prev
+          ? {
+              ...prev,
+              result: {
+                ...prev.result,
+                panels: prev.result.panels.map((p) => (p.index === index ? panel : p)),
+              },
+            }
+          : prev
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRetrying((r) => ({ ...r, [index]: false }));
+    }
+  }
 
   async function handlePdf() {
     if (pdfBusy) return;
@@ -88,7 +141,7 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
   }
 
   return (
-    <div className="workflow-head-wrap">
+    <div className="workflow-head-wrap sb-board">
       <div className="workflow-header">
         <span className="wf-icon">🎬</span>
         <div>
@@ -105,22 +158,40 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
         <div className="error">Generation failed: {job?.error || "unknown error"}</div>
       )}
 
-      {okCount > 0 && (
+      {(okCount > 0 || failedCount > 0) && (
         <div className="board-toolbar">
-          <button
-            type="button"
-            className="btn primary"
-            disabled={pdfBusy}
-            onClick={handlePdf}
-          >
-            {pdfBusy ? (
-              <>
-                <span className="spinner-inline" /> Preparing PDF…
-              </>
-            ) : (
-              `⬇ Download PDF (${okCount})`
-            )}
-          </button>
+          {failedCount > 0 && (
+            <button
+              type="button"
+              className="btn board-retry-all"
+              disabled={retryingAll}
+              onClick={retryAllFailed}
+            >
+              {retryingAll ? (
+                <>
+                  <span className="spinner-inline" /> Retrying failed…
+                </>
+              ) : (
+                `🔄 Retry all failed (${failedCount})`
+              )}
+            </button>
+          )}
+          {okCount > 0 && (
+            <button
+              type="button"
+              className="btn primary"
+              disabled={pdfBusy}
+              onClick={handlePdf}
+            >
+              {pdfBusy ? (
+                <>
+                  <span className="spinner-inline" /> Preparing PDF…
+                </>
+              ) : (
+                `⬇ Download PDF (${okCount})`
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -144,13 +215,41 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
           <figure className="board-tile" key={p.index}>
             <div className="board-frame" style={{ aspectRatio: tileRatio }}>
               {panelUrls[p.index] ? (
-                <img
-                  src={panelUrls[p.index]}
-                  alt={`Panel ${p.index + 1}`}
-                  onClick={() => setLightbox(panelUrls[p.index])}
-                />
+                <>
+                  <img
+                    src={panelUrls[p.index]}
+                    alt={`Panel ${p.index + 1}`}
+                    onClick={() => setLightbox(panelUrls[p.index])}
+                  />
+                  <button
+                    type="button"
+                    className="panel-regen"
+                    onClick={() => retryPanel(p.index)}
+                    disabled={retrying[p.index]}
+                    title="Regenerate this panel"
+                  >
+                    {retrying[p.index] ? <span className="spinner-inline" /> : "🔄"}
+                  </button>
+                </>
               ) : p.failed ? (
-                <div className="board-failed">⚠️ Couldn’t draw this panel</div>
+                <div className="board-failed">
+                  {retrying[p.index] ? (
+                    <>
+                      <span className="spinner" /> Retrying…
+                    </>
+                  ) : (
+                    <>
+                      <span>⚠️ Couldn’t draw this panel</span>
+                      <button
+                        type="button"
+                        className="btn small board-retry"
+                        onClick={() => retryPanel(p.index)}
+                      >
+                        🔄 Retry
+                      </button>
+                    </>
+                  )}
+                </div>
               ) : (
                 <div className="board-skeleton" />
               )}

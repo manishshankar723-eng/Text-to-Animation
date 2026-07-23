@@ -95,10 +95,10 @@ export function deleteApiKey(provider) {
 // --- Script → Storyboard ---
 // Stage A: break a script into an ordered shot list. Returns { shots, count,
 // style, aspect_ratio }. `provider` is optional ("vertex" | "gemini").
-export function breakdownScript(script, { style, aspectRatio, provider } = {}) {
+export function breakdownScript(script, { style, aspectRatio, genre, provider } = {}) {
   return request("/storyboards/breakdown", {
     method: "POST",
-    body: { script, style, aspect_ratio: aspectRatio, provider },
+    body: { script, style, aspect_ratio: aspectRatio, genre, provider },
   });
 }
 
@@ -127,6 +127,14 @@ export async function fetchStoryboardPanel(jobId, index) {
   });
   if (!res.ok) throw new Error(`Panel ${index} not ready`);
   return URL.createObjectURL(await res.blob());
+}
+
+// Re-draw one panel (Retry / regenerate). Returns { panel }.
+export function regenerateStoryboardPanel(jobId, index) {
+  return request(`/storyboards/${jobId}/regenerate-panel`, {
+    method: "POST",
+    body: { index },
+  });
 }
 
 // Stage F: download the board as a PDF (authed blob → browser download).

@@ -76,7 +76,7 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
   const readyCount = cast.filter((c) => c.referenceId).length;
 
   return (
-    <div className="workflow-head-wrap">
+    <div className="workflow-head-wrap sb-cast">
       <div className="workflow-header">
         <span className="wf-icon">🎭</span>
         <div>
@@ -122,7 +122,7 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
                 <div className="cast-actions">
                   <button
                     type="button"
-                    className="btn secondary cast-gen-btn"
+                    className="btn secondary cast-btn"
                     disabled={ch.busy}
                     onClick={() => generateRef(i)}
                   >
@@ -138,7 +138,7 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
                   </button>
                   <button
                     type="button"
-                    className="btn cast-upload-btn"
+                    className="btn secondary cast-btn"
                     disabled={ch.busy}
                     onClick={() => fileInputs.current[i]?.click()}
                   >

@@ -42,6 +42,7 @@ from .schemas import (
     ReferenceResponse,
     RegeneratePartRequest,
     RegenerateViewRequest,
+    PanelRegenerateRequest,
     ScriptBreakdownRequest,
     ScriptBreakdownResponse,
     StoryboardCreateRequest,
@@ -294,7 +295,7 @@ def breakdown_script(
     from script_breakdown import break_down_script, ScriptBreakdownError
 
     try:
-        result = break_down_script(body.script, provider=body.provider)
+        result = break_down_script(body.script, provider=body.provider, genre=body.genre)
     except ScriptBreakdownError as e:
         logger.warning("[breakdown] failed: %s", e)
         raise HTTPException(status_code=502, detail=f"Script breakdown failed: {e}")
@@ -354,6 +355,8 @@ def create_storyboard(
             "count": len(body.shots),
             "provider": body.provider,
             "character_count": len(character_ref_paths),
+            # Kept so a single panel can be regenerated later with the same refs.
+            "character_ref_paths": character_ref_paths,
         },
         owner=current.email,
     )
@@ -389,6 +392,45 @@ def get_storyboard_panel(
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
     return FileResponse(path, media_type="image/png")
+
+
+@app.post("/storyboards/{job_id}/regenerate-panel")
+def regenerate_storyboard_panel(
+    job_id: str,
+    body: PanelRegenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Re-draw ONE panel (the Retry button). Synchronous single image call."""
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+
+    result = job.result or {}
+    panels = result.get("panels") or []
+    if body.index < 0 or body.index >= len(panels):
+        raise HTTPException(status_code=404, detail=f"Panel {body.index} not found.")
+
+    from storyboard_pipeline import regenerate_panel
+
+    try:
+        updated = regenerate_panel(
+            job_id=job_id,
+            panel=panels[body.index],
+            style=job.params.get("style", "custom"),
+            aspect_ratio=job.params.get("aspect_ratio", "16:9"),
+            output_dir=config.OUTPUT_DIR,
+            character_ref_paths=job.params.get("character_ref_paths") or {},
+            provider=job.params.get("provider"),
+        )
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[storyboard %s] panel %d regen failed", job_id, body.index)
+        raise HTTPException(status_code=502, detail=f"Panel regeneration failed: {e}")
+
+    panels[body.index] = updated
+    result["panels"] = panels
+    result["ok_count"] = sum(1 for p in panels if not p.get("failed"))
+    get_store().update(job_id, result=result)
+    return {"panel": updated}
 
 
 @app.get("/storyboards/{job_id}/pdf")

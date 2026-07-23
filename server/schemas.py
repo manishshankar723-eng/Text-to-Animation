@@ -163,6 +163,7 @@ class ScriptBreakdownRequest(BaseModel):
         description="The raw script / story text to break into storyboard shots.",
         min_length=20,
     )
+    genre: str | None = Field(None, description="Optional genre — shapes tone/pacing.")
     style: str | None = Field(None, description="Chosen visual style (passed through).")
     aspect_ratio: str | None = Field(None, description="Chosen aspect ratio (passed through).")
     provider: str | None = Field(
@@ -214,5 +215,11 @@ class StoryboardCreateRequest(BaseModel):
         None,
         description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
     )
+
+
+class PanelRegenerateRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/regenerate-panel — redo one panel."""
+
+    index: int = Field(..., ge=0, description="Panel index to regenerate.")
 
 

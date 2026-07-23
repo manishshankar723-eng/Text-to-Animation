@@ -339,6 +339,11 @@ def generate_storyboard_panel(
         )
     parts.append(f"Scene: {description}")
     parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
+    # Keep borderline (mild-conflict) shots from tripping the safety filter.
+    parts.append(
+        "Non-graphic, family-friendly storyboard illustration suitable for a "
+        "general audience; depict any conflict in a light, cartoonish way."
+    )
     prompt = " ".join(parts)
 
     # Prompt first, then any character reference images.

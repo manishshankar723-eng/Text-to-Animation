@@ -4,10 +4,11 @@
 //   Step "review" — Stage C: the AI shot list, editable before generating panels
 //                   (edit description, reorder, delete, add). Panel generation is
 //                   the next build step (button shows a "coming soon" notice).
-import { useState, useRef } from "react";
+import { Fragment, useState, useRef } from "react";
 import * as api from "../api.js";
 import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
+import BreakdownProgress from "./BreakdownProgress.jsx";
 
 const STYLES = [
   { id: "sketch", label: "✏️ Sketch" },
@@ -25,6 +26,27 @@ const ASPECTS = [
   { id: "1:1", note: "Square" },
 ];
 
+// Genre shapes the story's tone / pacing in the shot breakdown.
+// "default" = no genre bias (let the story decide); "custom" = type your own.
+const GENRES = [
+  { id: "default", label: "✨ Default" },
+  { id: "action", label: "💥 Action" },
+  { id: "animation", label: "🎨 Animation" },
+  { id: "comedy", label: "😄 Comedy" },
+  { id: "commercial", label: "📢 Commercial" },
+  { id: "documentary", label: "🎥 Documentary" },
+  { id: "drama", label: "🎭 Drama" },
+  { id: "educational", label: "📚 Educational" },
+  { id: "fantasy", label: "🐉 Fantasy" },
+  { id: "horror", label: "👻 Horror" },
+  { id: "music-video", label: "🎵 Music Video" },
+  { id: "mystery", label: "🔍 Mystery" },
+  { id: "romance", label: "💕 Romance" },
+  { id: "sci-fi", label: "🚀 Science Fiction" },
+  { id: "thriller", label: "⚡ Thriller" },
+  { id: "custom", label: "＋ Custom" },
+];
+
 // Text-readable script files we can parse in the browser. PDF/DOCX need
 // server-side extraction (not built yet) — user pastes those for now.
 const TEXT_EXTENSIONS = ["txt", "fountain", "fdx", "md", "text"];
@@ -37,6 +59,8 @@ export default function ScriptToStoryboard() {
   const [script, setScript] = useState("");
   const [file, setFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [genre, setGenre] = useState("default"); // "default" = no bias
+  const [customGenre, setCustomGenre] = useState("");
   const [style, setStyle] = useState("");
   const [aspect, setAspect] = useState("");
   const fileInputRef = useRef(null);
@@ -61,6 +85,15 @@ export default function ScriptToStoryboard() {
     if (!f) return;
     setFile(f);
     setError("");
+  }
+
+  // The genre string sent to the breakdown: "" for Default, the typed text for
+  // Custom, otherwise the readable genre name (label minus its emoji).
+  function effectiveGenre() {
+    if (genre === "custom") return customGenre.trim();
+    if (!genre || genre === "default") return "";
+    const g = GENRES.find((x) => x.id === genre);
+    return g ? g.label.replace(/^\S+\s+/, "") : genre;
   }
 
   function handleDrop(e) {
@@ -95,7 +128,11 @@ export default function ScriptToStoryboard() {
       if (text.length < 20) {
         throw new Error("Please provide at least a few sentences of script.");
       }
-      const res = await api.breakdownScript(text, { style, aspectRatio: aspect });
+      const res = await api.breakdownScript(text, {
+        style,
+        aspectRatio: aspect,
+        genre: effectiveGenre(),
+      });
       setShots(res.shots || []);
       setCharacters(res.characters || []);
       setStep("review");
@@ -122,25 +159,54 @@ export default function ScriptToStoryboard() {
       return copy;
     });
   }
-  function addShot() {
-    setShots((s) => [
-      ...s,
-      {
-        scene_number: s.at(-1)?.scene_number || 1,
-        shot_number: s.length + 1,
-        description: "",
-        characters: [],
-        location: "",
-        camera: "",
-      },
-    ]);
+  function blankShot(sceneNumber) {
+    return {
+      scene_number: sceneNumber || 1,
+      shot_number: 0,
+      description: "",
+      characters: [],
+      location: "",
+      camera: "",
+    };
   }
+  function addShot() {
+    setShots((s) => [...s, blankShot(s.at(-1)?.scene_number || 1)]);
+  }
+  // Insert a blank shot right AFTER position `index` (between two shots).
+  function insertShot(index) {
+    setShots((s) => {
+      const copy = [...s];
+      copy.splice(index + 1, 0, blankShot(s[index]?.scene_number || 1));
+      return copy;
+    });
+  }
+  // The ACTIVE cast = only characters that appear in the current (edited) shots,
+  // deduped, enriched with descriptions from the breakdown when available. This
+  // shrinks as the user deletes shots, so the cast count stays honest.
+  function computeCast() {
+    const descByName = new Map(
+      characters.map((c) => [c.name.trim().toLowerCase(), c])
+    );
+    const seen = new Set();
+    const out = [];
+    for (const sh of shots) {
+      for (const raw of sh.characters || []) {
+        const name = (raw || "").trim();
+        const key = name.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(descByName.get(key) || { name, description: "" });
+      }
+    }
+    return out;
+  }
+
   // Review → cast (or straight to generation if the script has no named cast).
   function handleReviewNext() {
     if (shots.length === 0 || busy) return;
     setError("");
     setNotice("");
-    if (characters.length > 0) {
+    if (computeCast().length > 0) {
       setStep("cast");
     } else {
       startStoryboard({});
@@ -173,7 +239,7 @@ export default function ScriptToStoryboard() {
   if (step === "cast") {
     return (
       <StoryboardCast
-        characters={characters}
+        characters={computeCast()}
         busy={busy}
         onBack={() => setStep("review")}
         onGenerate={(refs) => startStoryboard(refs)}
@@ -193,6 +259,8 @@ export default function ScriptToStoryboard() {
           setJobId(null);
           setShots([]);
           setCharacters([]);
+          setGenre("default");
+          setCustomGenre("");
           setStep("form");
         }}
       />
@@ -201,8 +269,9 @@ export default function ScriptToStoryboard() {
 
   // ============================================================ Review step
   if (step === "review") {
+    const activeCast = computeCast();
     return (
-      <div className="workflow-head-wrap">
+      <div className="workflow-head-wrap sb-review">
         <div className="workflow-header">
           <span className="wf-icon">🎞️</span>
           <div>
@@ -227,7 +296,8 @@ export default function ScriptToStoryboard() {
 
         <div className="shot-list">
           {shots.map((sh, i) => (
-            <div className="card shot-card" key={i}>
+            <Fragment key={i}>
+            <div className="card shot-card">
               <div className="shot-head">
                 <span className="shot-index">
                   Shot {i + 1}
@@ -299,6 +369,20 @@ export default function ScriptToStoryboard() {
                 </div>
               )}
             </div>
+
+            {i < shots.length - 1 && (
+              <div className="shot-insert-row">
+                <button
+                  type="button"
+                  className="shot-insert-btn"
+                  onClick={() => insertShot(i)}
+                  title="Add a shot here"
+                >
+                  ＋ Add a shot
+                </button>
+              </div>
+            )}
+            </Fragment>
           ))}
 
           <button type="button" className="btn ghost add-shot-btn" onClick={addShot}>
@@ -328,8 +412,8 @@ export default function ScriptToStoryboard() {
               <>
                 <span className="spinner-inline" /> Starting…
               </>
-            ) : characters.length > 0 ? (
-              `🎭 Next: cast (${characters.length})`
+            ) : activeCast.length > 0 ? (
+              `🎭 Next: cast (${activeCast.length})`
             ) : (
               `🎬 Generate panels (${shots.length})`
             )}
@@ -341,7 +425,7 @@ export default function ScriptToStoryboard() {
 
   // ============================================================== Form step
   return (
-    <div className="workflow-head-wrap">
+    <div className="workflow-head-wrap sb-form">
       <div className="workflow-header">
         <span className="wf-icon">📝</span>
         <div>
@@ -353,6 +437,7 @@ export default function ScriptToStoryboard() {
         </div>
       </div>
 
+      <div className="sts-hero-grid">
       <div className="sts-form-wrap">
         <div className="card">
           {/* --- Script --- */}
@@ -422,6 +507,29 @@ export default function ScriptToStoryboard() {
             onChange={(e) => pickFile(e.target.files?.[0])}
           />
 
+          {/* --- Genre --- */}
+          <label>Genre <span className="label-optional">· shapes the tone</span></label>
+          <div className="opt-chips">
+            {GENRES.map((g) => (
+              <button
+                key={g.id}
+                type="button"
+                className={`opt-chip ${genre === g.id ? "active" : ""}`}
+                onClick={() => setGenre(g.id)}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+          {genre === "custom" && (
+            <input
+              className="custom-genre-input"
+              value={customGenre}
+              placeholder="Type your genre, e.g. Neo-noir, Coming-of-age…"
+              onChange={(e) => setCustomGenre(e.target.value)}
+            />
+          )}
+
           {/* --- Style --- */}
           <label>Visual style</label>
           <div className="opt-chips">
@@ -463,14 +571,48 @@ export default function ScriptToStoryboard() {
             onClick={handleGenerate}
           >
             {busy ? (
-              <>
-                <span className="spinner-inline" /> Breaking down your script…
-              </>
+              <span className="btn-loading">
+                <span className="btn-ring" />
+                Breaking down your script…
+              </span>
             ) : (
               "🎬 Generate storyboard"
             )}
           </button>
         </div>
+      </div>
+
+      <aside className="sts-hero-aside">
+        <div className="card sts-guide">
+          <h3 className="sts-guide-title">How it works</h3>
+          <ol className="sts-guide-steps">
+            <li>
+              <span className="sts-guide-num">1</span>
+              Paste or upload your script
+            </li>
+            <li>
+              <span className="sts-guide-num">2</span>
+              Pick a visual style &amp; frame
+            </li>
+            <li>
+              <span className="sts-guide-num">3</span>
+              Review &amp; edit the shots
+            </li>
+            <li>
+              <span className="sts-guide-num">4</span>
+              Set up your cast (optional)
+            </li>
+            <li>
+              <span className="sts-guide-num">5</span>
+              Generate panels &amp; download a PDF
+            </li>
+          </ol>
+          <p className="tiny muted sts-guide-tip">
+            Tip: keep each scene short and visual — one clear moment per shot gives
+            the best panels.
+          </p>
+        </div>
+      </aside>
       </div>
     </div>
   );

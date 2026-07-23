@@ -239,6 +239,7 @@ def break_down_script(
     script_text: str,
     provider: str | None = None,
     max_shots: int = MAX_SHOTS,
+    genre: str | None = None,
 ) -> dict:
     """Break a raw script into a storyboard shot list + a cast list.
 
@@ -246,6 +247,7 @@ def break_down_script(
         script_text: The raw script / story text to parse.
         provider: "vertex" or "gemini". Defaults to TEXT_PROVIDER env (or "vertex").
         max_shots: Upper bound on the number of shots to return.
+        genre: Optional genre — shapes the tone / pacing of the breakdown.
 
     Returns:
         {"shots": [{scene_number, shot_number, description, characters[], location,
@@ -265,6 +267,11 @@ def break_down_script(
     model_id = _model_id(provider)
     capped = max(1, min(int(max_shots or MAX_SHOTS), MAX_SHOTS))
     prompt = _PROMPT_TEMPLATE.format(max_shots=capped, script=text)
+    if genre and genre.strip():
+        prompt = (
+            f"Genre: {genre.strip()}. Shape the tone, pacing and shot choices to "
+            f"fit this genre.\n\n" + prompt
+        )
 
     last_reason = "Unknown error breaking down the script."
 
