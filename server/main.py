@@ -42,6 +42,9 @@ from .schemas import (
     ReferenceResponse,
     RegeneratePartRequest,
     RegenerateViewRequest,
+    ScriptBreakdownRequest,
+    ScriptBreakdownResponse,
+    StoryboardCreateRequest,
     TemplateInfo,
 )
 from . import worker
@@ -208,6 +211,51 @@ def generate_reference(
     )
 
 
+@app.post("/characters/reference/upload", response_model=ReferenceResponse)
+async def upload_reference(
+    image: UploadFile = File(..., description="Character image to use as a reference."),
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Upload your OWN character image as a reference (Stage B alternative).
+
+    Saved under the same _references/{id}/reference.png layout as generated
+    references, so it plugs straight into POST /storyboards' character_refs.
+    """
+    if image.content_type not in config.ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type '{image.content_type}'. "
+            f"Allowed: {sorted(config.ALLOWED_IMAGE_TYPES)}",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large ({len(contents)} bytes). Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+
+    reference_id = uuid.uuid4().hex[:12]
+    ref_dir = os.path.join(config.UPLOAD_DIR, "_references", reference_id)
+    os.makedirs(ref_dir, exist_ok=True)
+    image_path = os.path.join(ref_dir, "reference.png")
+
+    # Normalise whatever format was uploaded to a clean RGB PNG.
+    import io
+    from PIL import Image as PILImage
+
+    try:
+        PILImage.open(io.BytesIO(contents)).convert("RGB").save(image_path, "PNG")
+    except Exception as e:  # noqa: BLE001 — bad/corrupt upload
+        raise HTTPException(status_code=400, detail=f"Couldn't read that image: {e}")
+
+    logger.info("[reference %s] saved uploaded reference image", reference_id)
+    return ReferenceResponse(
+        reference_id=reference_id,
+        image_url=f"/characters/reference/{reference_id}/image",
+        message="Reference image uploaded successfully.",
+    )
+
+
 @app.get("/characters/reference/{reference_id}/image")
 def get_reference_image(
     reference_id: str,
@@ -220,6 +268,160 @@ def get_reference_image(
     if not os.path.isfile(image_path):
         raise HTTPException(status_code=404, detail="Reference image not found.")
     return FileResponse(image_path, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Script → Storyboard — Stage A: break a script into a shot list
+# ---------------------------------------------------------------------------
+@app.post("/storyboards/breakdown", response_model=ScriptBreakdownResponse)
+def breakdown_script(
+    body: ScriptBreakdownRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Turn a raw script into an ordered storyboard shot list (Stage A).
+
+    Synchronous: a single text-model call, usually a few seconds. The chosen
+    style / aspect_ratio are passed through so the client can carry them into the
+    next step (panel generation).
+    """
+    if body.provider is not None and body.provider not in _SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider '{body.provider}'. Use one of {list(_SUPPORTED_PROVIDERS)}.",
+        )
+
+    # Import lazily so the heavy google.genai chain isn't pulled in at startup.
+    from script_breakdown import break_down_script, ScriptBreakdownError
+
+    try:
+        result = break_down_script(body.script, provider=body.provider)
+    except ScriptBreakdownError as e:
+        logger.warning("[breakdown] failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Script breakdown failed: {e}")
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[breakdown] unexpected error")
+        raise HTTPException(status_code=502, detail=f"Script breakdown error: {e}")
+
+    shots = result["shots"]
+    return ScriptBreakdownResponse(
+        shots=shots,
+        characters=result.get("characters", []),
+        count=len(shots),
+        style=body.style,
+        aspect_ratio=body.aspect_ratio,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Script → Storyboard — Stage D: generate panels from a reviewed shot list
+# ---------------------------------------------------------------------------
+@app.post("/storyboards", response_model=JobCreatedResponse, status_code=202)
+def create_storyboard(
+    body: StoryboardCreateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Generate one storyboard panel per reviewed shot (async).
+
+    Returns a job_id immediately; poll GET /jobs/{id} for live progress. Panels
+    stream into job.result as each finishes; fetch each via
+    GET /storyboards/{job_id}/panel/{index}.
+    """
+    if body.provider is not None and body.provider not in _SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider '{body.provider}'. Use one of {list(_SUPPORTED_PROVIDERS)}.",
+        )
+
+    # Resolve character reference_ids → image paths (Stage B consistency).
+    # Silently skip any ref whose image file is missing.
+    character_ref_paths: dict[str, str] = {}
+    for name, ref_id in (body.character_refs or {}).items():
+        if not ref_id:
+            continue
+        ref_path = os.path.join(
+            config.UPLOAD_DIR, "_references", str(ref_id).strip(), "reference.png"
+        )
+        if os.path.isfile(ref_path):
+            character_ref_paths[name] = ref_path
+
+    title = (body.title or "Storyboard").strip() or "Storyboard"
+    job = get_store().create(
+        character_name=title,
+        kind=JobKind.STORYBOARD,
+        params={
+            "style": body.style,
+            "aspect_ratio": body.aspect_ratio,
+            "count": len(body.shots),
+            "provider": body.provider,
+            "character_count": len(character_ref_paths),
+        },
+        owner=current.email,
+    )
+
+    kwargs = {
+        "shots": [s.model_dump() for s in body.shots],
+        "style": body.style,
+        "aspect_ratio": body.aspect_ratio,
+        "output_dir": config.OUTPUT_DIR,
+        "provider": body.provider,
+        "character_ref_paths": character_ref_paths,
+    }
+    worker.submit_storyboard_job(job.job_id, kwargs)
+
+    return JobCreatedResponse(
+        job_id=job.job_id,
+        status=job.status,
+        kind=job.kind,
+        character_name=title,
+        message="Storyboard generation started. Poll GET /jobs/{job_id} for progress.",
+    )
+
+
+@app.get("/storyboards/{job_id}/panel/{index}")
+def get_storyboard_panel(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve one generated storyboard panel PNG (owner-scoped)."""
+    _get_owned_job(job_id, current)  # 404 if missing or not owned
+    path = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id, f"panel_{index:02d}.png")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/storyboards/{job_id}/pdf")
+def download_storyboard_pdf(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Export the storyboard board as a printable PDF (Stage F, owner-scoped)."""
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+
+    panels = (job.result or {}).get("panels") or []
+    if not panels:
+        raise HTTPException(status_code=409, detail="No panels generated yet.")
+
+    from storyboard_pdf import build_storyboard_pdf
+
+    try:
+        pdf_path = build_storyboard_pdf(
+            job_id=job_id,
+            output_dir=config.OUTPUT_DIR,
+            title=job.character_name,
+            panels=panels,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[storyboard %s] PDF export failed", job_id)
+        raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
+
+    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (job.character_name or "storyboard")).strip() or "storyboard"
+    return FileResponse(pdf_path, media_type="application/pdf", filename=f"{safe}.pdf")
 
 
 # ---------------------------------------------------------------------------

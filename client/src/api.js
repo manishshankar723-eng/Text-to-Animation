@@ -92,6 +92,73 @@ export function deleteApiKey(provider) {
   return request(`/auth/me/api-keys/${provider}`, { method: "DELETE" });
 }
 
+// --- Script → Storyboard ---
+// Stage A: break a script into an ordered shot list. Returns { shots, count,
+// style, aspect_ratio }. `provider` is optional ("vertex" | "gemini").
+export function breakdownScript(script, { style, aspectRatio, provider } = {}) {
+  return request("/storyboards/breakdown", {
+    method: "POST",
+    body: { script, style, aspect_ratio: aspectRatio, provider },
+  });
+}
+
+// Stage D: generate panels from the reviewed shots. Returns a job (poll getJob).
+// `characterRefs` is an optional { name: reference_id } map for consistency.
+export function createStoryboard({ shots, style, aspectRatio, title, characterRefs, provider } = {}) {
+  return request("/storyboards", {
+    method: "POST",
+    body: {
+      shots,
+      style,
+      aspect_ratio: aspectRatio,
+      title,
+      character_refs: characterRefs || {},
+      provider,
+    },
+  });
+}
+
+// Fetch one generated panel as an object URL (endpoint requires the bearer token,
+// so we can't point an <img src> straight at it).
+export async function fetchStoryboardPanel(jobId, index) {
+  const token = getToken();
+  const res = await fetch(`${BASE}/storyboards/${jobId}/panel/${index}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Panel ${index} not ready`);
+  return URL.createObjectURL(await res.blob());
+}
+
+// Stage F: download the board as a PDF (authed blob → browser download).
+export async function downloadStoryboardPdf(jobId, filename) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetch(`${BASE}/storyboards/${jobId}/pdf`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "storyboard.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // --- Metadata ---
 export function listTemplates() {
   return request("/templates");
@@ -105,6 +172,16 @@ export function generateReference(prompt, provider) {
   const body = { prompt };
   if (provider) body.provider = provider;
   return request("/characters/reference", { method: "POST", body });
+}
+// Upload your own image as a character reference. Returns { reference_id, ... }.
+export function uploadReference(file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request("/characters/reference/upload", {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
 }
 export function getReferenceImageUrl(referenceId) {
   return `${BASE}/characters/reference/${referenceId}/image`;

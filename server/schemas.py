@@ -20,8 +20,9 @@ class JobStatus(str, Enum):
 
 
 class JobKind(str, Enum):
-    GENERATE = "generate"  # full asset-generation pipeline run
-    MESHY = "meshy"        # 3D submission for an already-generated character
+    GENERATE = "generate"      # full asset-generation pipeline run
+    MESHY = "meshy"            # 3D submission for an already-generated character
+    STORYBOARD = "storyboard"  # script → storyboard panel generation
 
 
 class Job(BaseModel):
@@ -149,5 +150,69 @@ class RegenerateViewRequest(BaseModel):
     view: str = Field(..., description="View: front | left | three_quarter | back.")
     prompt: str | None = Field(None, description="Optional custom prompt for the part.")
     provider: str | None = Field(None, description="Image backend override.")
+
+
+# ---------------------------------------------------------------------------
+# Script → Storyboard (Stage A: script breakdown)
+# ---------------------------------------------------------------------------
+class ScriptBreakdownRequest(BaseModel):
+    """Body for POST /storyboards/breakdown — turn a script into a shot list."""
+
+    script: str = Field(
+        ...,
+        description="The raw script / story text to break into storyboard shots.",
+        min_length=20,
+    )
+    style: str | None = Field(None, description="Chosen visual style (passed through).")
+    aspect_ratio: str | None = Field(None, description="Chosen aspect ratio (passed through).")
+    provider: str | None = Field(
+        None,
+        description="Text backend: 'vertex' or 'gemini'. Defaults to server TEXT_PROVIDER.",
+    )
+
+
+class Shot(BaseModel):
+    """One storyboard panel produced by the script breakdown."""
+
+    scene_number: int = 1
+    shot_number: int = 1
+    description: str
+    characters: list[str] = Field(default_factory=list)
+    location: str = ""
+    camera: str = ""
+
+
+class Character(BaseModel):
+    """A named character with a visual description (the 'cast')."""
+
+    name: str
+    description: str = ""
+
+
+class ScriptBreakdownResponse(BaseModel):
+    """Returned from POST /storyboards/breakdown."""
+
+    shots: list[Shot]
+    characters: list[Character] = Field(default_factory=list)
+    count: int
+    style: str | None = None
+    aspect_ratio: str | None = None
+
+
+class StoryboardCreateRequest(BaseModel):
+    """Body for POST /storyboards — generate panels from a reviewed shot list."""
+
+    shots: list[Shot] = Field(..., min_length=1, description="The reviewed shots to draw.")
+    style: str = Field("custom", description="Visual style id, e.g. 'sketch', 'comics'.")
+    aspect_ratio: str = Field("16:9", description="Panel aspect ratio, e.g. '16:9'.")
+    title: str | None = Field(None, description="Optional storyboard title.")
+    # Character consistency (Stage B): map character name → reference_id (from
+    # POST /characters/reference). Those refs are fed into every panel the
+    # character appears in, so they stay visually consistent.
+    character_refs: dict[str, str] = Field(default_factory=dict)
+    provider: str | None = Field(
+        None,
+        description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
+    )
 
 

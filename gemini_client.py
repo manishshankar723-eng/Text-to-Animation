@@ -276,6 +276,119 @@ def _is_valid_reference(image: Image.Image) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Storyboard panel generation (Script → Storyboard, Stage D)
+# ---------------------------------------------------------------------------
+
+# Per-style art direction appended to every panel prompt.
+_STORYBOARD_STYLE_PROMPTS = {
+    "sketch": "black-and-white rough pencil storyboard sketch, loose gestural lines, minimal shading",
+    "comics": "bold colourful comic-book panel, strong ink outlines, dramatic cel shading",
+    "realistic": "photorealistic cinematic film still, natural lighting, shallow depth of field",
+    "3d-animation": "polished Pixar-style 3D animated render, soft global illumination",
+    "custom": "clean illustrated storyboard panel",
+}
+
+# Aspect-ratio phrasing (the image is also post-cropped to the exact ratio).
+_STORYBOARD_ASPECT_HINTS = {
+    "21:9": "ultra-wide 21:9 cinemascope framing",
+    "16:9": "wide 16:9 cinematic framing",
+    "9:16": "tall vertical 9:16 mobile framing",
+    "2:3": "portrait 2:3 comic-page framing",
+    "1:1": "square 1:1 framing",
+}
+
+
+def generate_storyboard_panel(
+    description: str,
+    style: str = "custom",
+    aspect_ratio: str = "16:9",
+    characters: list[str] | None = None,
+    location: str = "",
+    camera: str = "",
+    reference_images: list[Image.Image] | None = None,
+    provider: str | None = None,
+) -> Image.Image | None:
+    """Generate ONE storyboard panel image from a shot description.
+
+    Uses the IMAGE backend (IMAGE_PROVIDER / `provider` arg) — panels are images.
+    Style + aspect + camera + location are woven into the prompt. Optional
+    `reference_images` (character references) are passed alongside so the depicted
+    characters stay visually consistent across panels (Stage B). Returns a PIL
+    image, or None if the model returned nothing (e.g. safety filter).
+    """
+    provider = _resolve_provider(provider)
+    client = get_client(provider)
+    model_id = _model_id(provider)
+
+    style_txt = _STORYBOARD_STYLE_PROMPTS.get(style, _STORYBOARD_STYLE_PROMPTS["custom"])
+    aspect_txt = _STORYBOARD_ASPECT_HINTS.get(aspect_ratio, "wide 16:9 cinematic framing")
+
+    parts = [f"A single storyboard panel: {style_txt}.", f"{aspect_txt}."]
+    if camera:
+        parts.append(f"Camera: {camera}.")
+    if location:
+        parts.append(f"Location: {location}.")
+    if characters:
+        parts.append("Characters present: " + ", ".join(characters) + ".")
+    if reference_images:
+        parts.append(
+            "Use the provided reference image(s) to keep each character's face, "
+            "hair, body and clothing consistent — redraw them in this panel's art "
+            "style and pose, do not copy the reference framing."
+        )
+    parts.append(f"Scene: {description}")
+    parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
+    prompt = " ".join(parts)
+
+    # Prompt first, then any character reference images.
+    contents = [prompt, *(reference_images or [])]
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(
+                "[panel] Generating storyboard panel (provider=%s, model=%s, refs=%d, attempt %d/%d)…",
+                provider, model_id, len(reference_images or []), attempt, MAX_RETRIES,
+            )
+            response = client.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+            )
+
+            if (
+                response.candidates
+                and response.candidates[0].content
+                and response.candidates[0].content.parts
+            ):
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        image = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
+                        if image.width >= 256 and image.height >= 256:
+                            logger.info("[panel] Got panel (%dx%d)", image.width, image.height)
+                            return image
+                        logger.warning("[panel] Panel too small (%dx%d), retrying…", image.width, image.height)
+                        continue
+
+            logger.warning("[panel] Empty response (content filter likely). Prompt: %.80s…", prompt)
+            return None
+
+        except Exception as e:  # noqa: BLE001
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                logger.warning("[panel] Rate limited (429). Waiting %ds…", backoff)
+                time.sleep(backoff)
+                continue
+            logger.error("[panel] call failed: %s", error_str)
+            if attempt < MAX_RETRIES:
+                time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+                continue
+            return None
+
+    return None
+
+
 def generate_character_reference(
     description: str,
     provider: str | None = None,

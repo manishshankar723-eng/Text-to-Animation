@@ -59,6 +59,7 @@ Pipeline stages (see `pipeline.py`):
 | `run_character.py` | CLI entry point (argparse → `run_pipeline`). |
 | `pipeline.py` | Orchestrates all stages. `run_pipeline(...)`. |
 | `gemini_client.py` | Image generation. **Switchable backend: Vertex AI or Gemini API.** |
+| `script_breakdown.py` | Script→Storyboard Stage A: script → shot list (LLM). **Switchable text backend (`TEXT_PROVIDER`): Vertex AI or Gemini API.** |
 | `splitter.py` | Split 2×2 sheet → 4 views. |
 | `postprocess.py` | Clean white bg + crop + normalize. |
 | `storage.py` | Local save, GCS upload, zip. |
@@ -98,6 +99,8 @@ Pipeline stages (see `pipeline.py`):
 ### API endpoints
 - `POST /auth/register` · `POST /auth/login` · `GET /auth/me` · `DELETE /auth/me` (delete account)
 - `GET/PUT /auth/me/api-keys` · `DELETE /auth/me/api-keys/{provider}` — saved 3D keys (plaintext)
+- `POST /storyboards/breakdown` — Script→Storyboard Stage A: script → shot list (auth'd, sync; `TEXT_PROVIDER` backend)
+- `POST /storyboards` — Stage D: generate panels from reviewed shots (async job; poll `GET /jobs/{id}`) · `GET /storyboards/{id}/panel/{index}` — serve a panel PNG · `GET /storyboards/{id}/pdf` — Stage F: export the board as PDF
 - `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
 - `GET /characters/reference/{id}/image` — serve generated reference for preview
 - `POST /characters` — upload image (or `reference_id`) + options → `job_id` (async)
@@ -168,6 +171,8 @@ previews require a cloud run (not `local_only`).
 | Var | Purpose |
 |-----|---------|
 | `IMAGE_PROVIDER` | `vertex` (default) or `gemini`. Which image backend. |
+| `TEXT_PROVIDER` | `vertex` (default) or `gemini`. Which text/LLM backend (script breakdown). Independent of `IMAGE_PROVIDER`. |
+| `VERTEX_TEXT_MODEL` / `GEMINI_TEXT_MODEL` | Optional text-model overrides (default `gemini-2.5-flash`). |
 | `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | Vertex AI (location MUST be `global`). |
 | `GEMINI_API_KEY` | Required when `IMAGE_PROVIDER=gemini`. |
 | `VERTEX_IMAGE_MODEL` / `GEMINI_IMAGE_MODEL` | Optional model overrides (default `gemini-3.1-flash-image`). |
@@ -210,6 +215,152 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-23 — Cast: upload-your-own character image
+- `server/main.py`: `POST /characters/reference/upload` (multipart) — validates
+  type/size, normalises any JPEG/PNG/WebP to a clean RGB `reference.png` under the
+  SAME `uploads/_references/{id}/` layout as generated refs, returns a reference_id.
+  So uploaded refs plug straight into `POST /storyboards` `character_refs`.
+- `client/src/api.js`: `uploadReference(file)`.
+- `client/src/components/StoryboardCast.jsx`: each cast card now has **✨ Generate**
+  AND **📁 Upload** (hidden file input per card; previews the chosen file directly).
+- `client/src/styles.css`: `.cast-actions/.cast-upload-btn` (two-button row).
+- Verified E2E via TestClient (local user store): register → upload JPEG → saved as
+  reference.png → served back as PNG (200) → bad type 415; route registered;
+  `npm run build` clean; uvicorn restarted (health 200, route 401 w/o token).
+
+### 2026-07-23 — Script→Storyboard Stage B: character consistency
+- `script_breakdown.py`: breakdown now returns `{shots, characters}` in ONE call
+  (schema changed ARRAY→OBJECT; prompt also asks for a cast with visual
+  descriptions; `_coerce_characters` dedupes by name). `break_down_script` return
+  type changed list→dict — callers updated.
+- `gemini_client.py`: `generate_storyboard_panel(..., reference_images=[...])` —
+  passes character reference images alongside the prompt with a "keep characters
+  consistent, redraw in this panel's style" instruction.
+- `storyboard_pipeline.py`: `run_storyboard(..., character_ref_paths={name:path})`
+  loads refs once and feeds each shot only the refs for the characters IN that shot
+  (cap 3/panel).
+- `server/schemas.py`: `Character` model; `ScriptBreakdownResponse.characters`;
+  `StoryboardCreateRequest.character_refs` ({name: reference_id}).
+- `server/main.py`: breakdown returns characters; `POST /storyboards` resolves
+  reference_ids → `uploads/_references/{id}/reference.png` paths (skips missing).
+  Reuses the existing `POST /characters/reference` to MAKE the refs.
+- `client/src/components/StoryboardCast.jsx` (new): cast page — per character, edit
+  description + "Generate reference" (reuses `generateReference`), optional/skippable.
+  New flow: form → review → **cast** (only if named characters) → board.
+  `ScriptToStoryboard.jsx` wires it (`handleReviewNext` → cast or straight to
+  generate; `startStoryboard(refs)`); `api.js createStoryboard` sends `character_refs`.
+- `client/src/styles.css`: `.cast-grid/.cast-card/.cast-portrait/.cast-body` etc.
+- Verified WITHOUT billed calls: breakdown returns deduped `{shots, characters}`
+  (mocked genai); pipeline feeds exactly the right ref count per shot ([1,0] test);
+  server imports; `npm run build` clean; uvicorn restarted (health 200). NOT run
+  live. NOTE: refs reuse the T-pose "reference" generator (Pixar-ish white-bg
+  portrait) as the identity anchor — panel style still applies; may bias look, tune
+  later. Upload-your-own-character-image not built (generate-from-text only).
+
+### 2026-07-23 — Script→Storyboard Stage F: PDF export
+- New `storyboard_pdf.py`: `build_storyboard_pdf(job_id, output_dir, title, panels)`
+  — composes panels into a printable PDF (2×3 grid/page, title, wrapped captions,
+  shot numbers) using **Pillow only** (each page rendered as an image → multi-page
+  PDF, zero new deps). Skips failed/missing panels; raises ValueError if none.
+- `server/main.py`: `GET /storyboards/{job_id}/pdf` (owner-scoped, STORYBOARD only,
+  409 if no panels; streams the PDF as a download with a safe filename).
+- `client/src/api.js`: `downloadStoryboardPdf(jobId, filename)` (authed blob).
+- `client/src/components/StoryboardBoard.jsx`: "⬇ Download PDF (N)" button in a
+  toolbar (shown once ≥1 panel succeeded), spinner while preparing, error surface.
+- `client/src/styles.css`: `.board-toolbar`.
+- Verified WITHOUT billed calls: `build_storyboard_pdf` on stub-generated panels →
+  valid `%PDF-` file, 7 panels→2 pages, caption wrapping, empty-panels guard; route
+  registered; `npm run build` clean; uvicorn restarted (health 200, `/pdf` 401).
+- **Simple MVP pipeline is now complete end-to-end: script → shots → review →
+  panels → board → PDF.** (Live billed run still not executed.)
+
+### 2026-07-23 — Script→Storyboard Stage D: panel generation + live board
+- `gemini_client.py`: added `generate_storyboard_panel(description, style,
+  aspect_ratio, characters, location, camera, provider)` — single text→image call
+  (uses the IMAGE backend), per-style + per-aspect prompt phrasing, retry/backoff.
+- New `storyboard_pipeline.py`: `run_storyboard(job_id, shots, style, aspect_ratio,
+  output_dir, provider, progress_cb)` — loops shots, generates each panel,
+  centre-crops to the exact ratio (`_crop_to_aspect`), saves to
+  `output/_storyboards/{job_id}/panel_NN.png`, streams progress + partial panels.
+  Failed panels flagged (not fatal). Hard result: {style, aspect_ratio, count,
+  ok_count, panels[]}.
+- `server/schemas.py`: `JobKind.STORYBOARD`, `StoryboardCreateRequest`.
+- `server/worker.py`: `submit_storyboard_job` + `_run_storyboard` (streams partial
+  panels into job.result, mirrors `_run_generate`).
+- `server/main.py`: `POST /storyboards` (async job) + `GET /storyboards/{job_id}/
+  panel/{index}` (owner-scoped PNG serve). Poll via existing `GET /jobs/{id}`.
+- `client/src/api.js`: `createStoryboard(...)`, `fetchStoryboardPanel(jobId, index)`
+  (authed blob).
+- `client/src/components/StoryboardBoard.jsx` (new): polls the job, gold live
+  progress bar, panel grid that fills in as each finishes (skeletons for pending,
+  ⚠️ for failed), click-to-zoom lightbox. `ScriptToStoryboard.jsx`: "Generate
+  panels" now creates the job → board step; Back-to-shots / Start-over.
+- `client/src/styles.css`: `.board-grid/.board-tile/.board-frame/.board-skeleton/
+  .board-failed/.board-shotnum` etc.
+- Verified WITHOUT billed calls: backend imports + all 3 storyboard routes
+  registered; `_crop_to_aspect` (16:9→1280×720, 9:16, 1:1, 21:9); full
+  `run_storyboard` with a STUBBED panel generator (saves cropped files, flags empty
+  shot as failed, 5 progress ticks, correct result); `npm run build` clean; uvicorn
+  restarted (health 200, `/storyboards` 401 w/o token). NOT run live (needs real
+  billed image calls per panel).
+- NEXT (Stage E/F): board polish (per-panel regenerate is v3) + **PDF export**.
+
+### 2026-07-23 — Script→Storyboard: button wired + Review-shots page (Stage C)
+- `ScriptToStoryboard.jsx`: "Generate storyboard" now resolves the script (pasted,
+  or read from an uploaded TXT/Fountain/FDX/MD file — PDF/DOCX show a "paste for
+  now" message), calls `api.breakdownScript(text, {style, aspectRatio})` with a
+  loading state, then advances to a **Review shots** step. Review page (T2I look:
+  WorkflowHeader + `.card`s) lists each shot with an editable description +
+  camera/location inputs + character chips, and per-shot **↑ / ↓ reorder** and
+  **✕ delete**, plus **＋ Add a shot**. Footer: Back (to form) + "Generate panels"
+  (shows a "coming soon" notice — panel generation is the next step).
+- `client/src/styles.css`: added `.review-summary/.shot-list/.shot-card/.shot-head/
+  .shot-index/.shot-actions/.shot-btn/.shot-desc/.shot-meta/.shot-chars/
+  .add-shot-btn/.review-actions`.
+- Restarted uvicorn so `POST /storyboards/breakdown` is live (health 200; route
+  returns 401 without a token, as expected). Verified `npm run build` clean.
+- NOT run live end-to-end (needs a real Vertex/Gemini text call from the browser).
+- NEXT (Stage D): generate one image per reviewed shot (reuse job/worker + live
+  progress) → board (Stage E) → PDF (Stage F).
+
+### 2026-07-23 — Script→Storyboard Stage A: switchable script breakdown (Vertex⇄Gemini)
+- New `script_breakdown.py` (project root, mirrors `gemini_client.py`): `break_down_script(
+  script_text, provider=None, max_shots=60) -> list[shot dict]`. Uses the Gemini
+  text model via the SAME dual-backend pattern as images — `TEXT_PROVIDER` env
+  (vertex default | gemini), independent of `IMAGE_PROVIDER`, per-provider client
+  cache, `VERTEX_TEXT_MODEL`/`GEMINI_TEXT_MODEL` overrides (default
+  `gemini-2.5-flash`). Structured JSON output via `response_schema`; each shot =
+  `{scene_number, shot_number, description, characters[], location, camera}`.
+  Retry/backoff + `ScriptBreakdownError` with human-readable reasons; short-script
+  guard; hard cap of 60 shots.
+- `server/schemas.py`: `ScriptBreakdownRequest` (script + optional style/aspect_ratio/
+  provider), `Shot`, `ScriptBreakdownResponse`.
+- `server/main.py`: `POST /storyboards/breakdown` (auth'd, sync; lazy-imports the
+  genai chain; 400 on bad provider, 502 with the real reason on failure).
+- `client/src/api.js`: `breakdownScript(script, {style, aspectRatio, provider})`.
+- `.env` + `.env.example`: documented `TEXT_PROVIDER` + text-model overrides.
+- Verified WITHOUT a billed call: provider resolution (default/explicit/env/override/
+  bad), model-id overrides, shot coercion (defaults, empty-desc drop, non-dict skip),
+  short-script guard; `server.main` imports and the route is registered; `npm run
+  build` clean. NOT verified live (needs a real Vertex/Gemini text call).
+- NEXT: wire the "Generate storyboard" button → call breakdown → **Review shots**
+  page (Stage C) → then panel generation.
+
+### 2026-07-23 — Script→Storyboard input redesigned (single page, matches T2I)
+- User disliked the Drawstory-copied look (centered composer + style/aspect card
+  wizard). Rebuilt `ScriptToStoryboard.jsx` as ONE page in the Text-to-Image
+  design language: WorkflowHeader (📝 icon + title + subtitle) → a single `.card`
+  with stacked sections — script (tab-bar Paste/Upload → `.prompt-textarea` /
+  `.dropzone`), visual style (selectable `.opt-chip`s), aspect ratio (chips) → one
+  gold `.btn.primary` "Generate storyboard" (disabled until script + style +
+  aspect chosen). Removed the multi-step wizard + all Drawstory-style CSS.
+- `client/src/styles.css`: deleted the old `.sts-*/.style-*/.ratio-*` block
+  (~390 lines); added `.sts-form-wrap/.opt-chips/.opt-chip(.active)/.sts-generate`.
+- Decisions locked with user: Simple pipeline **+ Review/edit-shots** feature;
+  single-page input; keep everything in the T2I look (no Drawstory copy).
+- Verified: `npm run build` clean (CSS shrank). NEXT: backend Stage A (LLM shot
+  breakdown) → review-shots page → panel generation → board → PDF.
 
 ### 2026-07-23 — Local user-store fallback (fixes login when Mongo is down)
 - **Problem:** login showed "Can't reach the server" — backend WAS up (`/health`
@@ -509,19 +660,27 @@ two unfair advantages already built: (1) **consistent-character generation** (th
 Text-to-Image turnaround pipeline) and (2) the **async job + live-progress system**
 (`server/worker.py`, `JobDetail` progress UI). Reuse both.
 
-**Done so far (UI only, no backend):** `ScriptToStoryboard.jsx` 3-step input flow —
-① script paste/upload → ② style pick → ③ aspect-ratio pick. "Next" on step 3 only
-shows a "coming soon" notice. Everything below is the missing engine + screens.
+**Done so far (UI only, no backend):** `ScriptToStoryboard.jsx` — a SINGLE-page input
+form (redesigned 2026-07-23 to match the Text-to-Image workflow: WorkflowHeader +
+one `.card` + tab-bar + dropzone + selectable `.opt-chip`s + gold `.btn.primary`).
+Sections: script (paste/upload) → visual style → aspect ratio → one "Generate
+storyboard" button. Button only shows a "coming soon" notice for now. Everything
+below is the missing engine + screens.
+
+**DECIDED (2026-07-23, with user):** build the **Simple** pipeline **+** the ONE
+important full-control feature = **Review/edit shots** (Stage C). Input stays a
+**single page** (not a wizard). Keep every screen in the Text-to-Image visual
+language — do NOT copy the Drawstory reference's look/colours.
 
 ### Pipeline (the "AI film crew")
 | Stage | What it does | Reuse / build |
 |-------|--------------|---------------|
-| **A. Shot breakdown** ⭐ | LLM (Gemini) parses script → ordered shot list: `{scene, description, characters[], location, camera_angle}`. THE key new piece. | New: prompt + endpoint. |
-| **B. Character consistency** ⭐ | Extract characters from shot list; generate/upload one reference each; feed into every panel so faces stay identical. Our differentiator. | **Reuse** turnaround pipeline (`gemini_client`, `pipeline.py`). |
-| **C. Review shot list (page 4)** | Show the parsed shots so the user fixes AI mistakes BEFORE spending on images (edit/delete/reorder). Big quality + trust win; also saves image cost. | New: simple editable list UI + endpoint. |
-| **D. Generate panels (page 5)** | Loop shots → one image each from `description + style + aspect + character ref`. Live progress, panels stream in. | **Reuse** job/worker + live progress. |
-| **E. Storyboard board (page 6)** | Grid of panels + captions; per-panel regenerate / edit caption / reorder / add / delete. THIS is the product. | New board UI; regenerate reuses image gen. |
-| **F. Export/share (page 7)** | PDF (industry standard) + images + share link. Later: animatic (existing roadmap). | New: PDF export. |
+| **A. Shot breakdown** ⭐ ✅ | LLM parses script → ordered shot list. **DONE** — `script_breakdown.py` + `POST /storyboards/breakdown` (switchable `TEXT_PROVIDER`). Not yet run live. | Built 2026-07-23. |
+| **B. Character consistency** ⭐ ✅ | Cast extracted in the breakdown; per-character reference generated on the Cast page; fed into every panel the character appears in. **DONE** (generate-from-text refs; upload-your-own later). Not run live. | Built 2026-07-23. |
+| **C. Review shot list (page 4)** ✅ | Editable shot list before generating (edit/reorder/delete/add). **DONE** — Review step in `ScriptToStoryboard.jsx`, wired to Stage A. | Built 2026-07-23. |
+| **D. Generate panels (page 5)** ✅ | Loop shots → one image each. **DONE** — `storyboard_pipeline.py` + `POST /storyboards` + worker; live progress, panels stream in. NO character-ref lock yet (Stage B, later). Not run live. | Built 2026-07-23. |
+| **E. Storyboard board (page 6)** 🟡 | Grid of panels + captions — **basic board DONE** (`StoryboardBoard.jsx`, live fill-in + lightbox). Per-panel regenerate / caption edit / reorder = v3. | Built 2026-07-23. |
+| **F. Export/share (page 7)** ✅ | PDF export **DONE** — `storyboard_pdf.py` + `GET /storyboards/{id}/pdf` + board download button. Images/share-link later. | Built 2026-07-23. |
 
 ### Build order (ship incrementally)
 - **MVP (end-to-end first):** A → D (simple panels, NO character lock yet) → E (basic
@@ -537,10 +696,9 @@ shows a "coming soon" notice. Everything below is the missing engine + screens.
   plan before generating ~50 images.
 - **UX**: one clear action per page, big buttons, visible progress bar, board that
   reads like sticky notes on a wall.
-- **OPEN DECISION (ask user before building):** editing depth —
-  *Simple* (drawstory-style: script in → board out, minimal edits; recommended for
-  any-age goal) vs *Full control* (storyboarder-style: editable shot lists, per-panel
-  regen, camera notes). Recommendation: start **Simple**, add control later.
+- **RESOLVED (2026-07-23):** editing depth = **Simple + Review/edit-shots** (the one
+  full-control feature the user wants mid-flow). Per-panel regen / caption edit /
+  reorder are LATER (v3), not now.
 - **Refs:** storyboarder.ai (help.storyboarder.ai), drawstory.ai/blog/text-to-storyboard
   + /blog/character-design-ai, boords.com/ai-storyboard-generator.
 

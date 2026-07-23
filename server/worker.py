@@ -47,6 +47,11 @@ def submit_regenerate_job(job_id: str, mode: str, kwargs: dict):
     _executor.submit(_run_regenerate, job_id, mode, kwargs)
 
 
+def submit_storyboard_job(job_id: str, kwargs: dict):
+    """Enqueue storyboard panel generation (Script → Storyboard, Stage D)."""
+    _executor.submit(_run_storyboard, job_id, kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Job bodies (run inside worker threads)
 # ---------------------------------------------------------------------------
@@ -85,6 +90,43 @@ def _run_generate(job_id: str, pipeline_kwargs: dict):
     except Exception as e:  # noqa: BLE001 — record any failure on the job
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] pipeline crashed.", job_id)
+
+
+def _run_storyboard(job_id: str, kwargs: dict):
+    """Generate storyboard panels off-request, updating the SAME job.
+
+    Streams partial panels into job.result as each one finishes so the client's
+    board fills in one-by-one (mirrors _run_generate's partial-urls pattern).
+    """
+    from storyboard_pipeline import run_storyboard
+
+    store = get_store()
+    store.mark_running(job_id)
+    logger.info("[job %s] storyboard started (%d shots)", job_id, len(kwargs.get("shots") or []))
+
+    def _progress(update: dict):
+        partial_panels = update.pop("panels", None)
+        fields = {"progress": update}
+        if partial_panels is not None:
+            # Merge with the meta so the client always has style/aspect too.
+            fields["result"] = {
+                "panels": partial_panels,
+                "style": kwargs.get("style"),
+                "aspect_ratio": kwargs.get("aspect_ratio"),
+                "count": len(kwargs.get("shots") or []),
+            }
+        try:
+            store.update(job_id, **fields)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the job
+            logger.debug("[job %s] storyboard progress update failed (ignored)", job_id, exc_info=True)
+
+    try:
+        result = run_storyboard(job_id=job_id, progress_cb=_progress, **kwargs)
+        store.mark_succeeded(job_id, result)
+        logger.info("[job %s] storyboard succeeded (%s/%s ok).", job_id, result.get("ok_count"), result.get("count"))
+    except Exception as e:  # noqa: BLE001
+        store.mark_failed(job_id, f"{type(e).__name__}: {e}")
+        logger.exception("[job %s] storyboard crashed.", job_id)
 
 
 def _run_meshy(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):
