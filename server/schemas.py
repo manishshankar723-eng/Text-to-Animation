@@ -247,6 +247,9 @@ class StoryboardCreateRequest(BaseModel):
     # POST /assets/reference). Those prop/background refs are fed into every panel
     # the asset appears in, so props and locations stay visually consistent.
     asset_refs: dict[str, str] = Field(default_factory=dict)
+    # asset name → "prop" | "background". Not used for drawing — it's what lets
+    # the assets ZIP file them into props/ and backgrounds/ folders.
+    asset_categories: dict[str, str] = Field(default_factory=dict)
     provider: str | None = Field(
         None,
         description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",

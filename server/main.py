@@ -119,30 +119,28 @@ def _get_owned_job(job_id: str, current: CurrentUser) -> Job:
     return job
 
 
+def _safe_filename(name: str, fallback: str = "item") -> str:
+    """Make `name` safe to use as a file/folder name inside a download.
+
+    Punctuation becomes a space rather than an underscore, and runs collapse, so
+    "Postmarked: After Death!" reads as "Postmarked After Death" instead of the
+    ragged "Postmarked_ After Death_".
+    """
+    cleaned = "".join(c if c.isalnum() or c in "-_ " else " " for c in (name or ""))
+    return " ".join(cleaned.split()).strip(" -_") or fallback
+
+
 def _mark_ref_source(ref_dir: str, source: str) -> None:
     """Record whether a reference image was 'generated' or 'uploaded'.
 
-    Written next to reference.png so the final ZIP bundle can include only the
-    AI-generated refs (the user already has their own uploaded images).
+    Kept as provenance next to reference.png. The assets ZIP used to read this
+    to skip uploaded refs; it now ships everything, so nothing reads it today.
     """
     try:
         with open(os.path.join(ref_dir, "source.txt"), "w", encoding="utf-8") as f:
             f.write(source)
     except OSError:
         logger.debug("[reference] could not write source marker in %s", ref_dir, exc_info=True)
-
-
-def _ref_is_generated(ref_png_path: str) -> bool:
-    """True unless the reference was explicitly marked 'uploaded'.
-
-    (Missing marker → treated as generated, so pre-existing refs still bundle.)
-    """
-    marker = os.path.join(os.path.dirname(ref_png_path), "source.txt")
-    try:
-        with open(marker, encoding="utf-8") as f:
-            return f.read().strip() != "uploaded"
-    except OSError:
-        return True
 
 
 def _variants_of(result: dict) -> tuple[list[dict], int]:
@@ -482,6 +480,8 @@ def create_storyboard(
             # Kept so a single panel can be regenerated later with the same refs.
             "character_ref_paths": character_ref_paths,
             "asset_ref_paths": asset_ref_paths,
+            # Only used to sort the assets ZIP into props/ and backgrounds/.
+            "asset_categories": body.asset_categories,
             # Kept so a panel can always be re-drawn (even if it's missing from the
             # streamed result) and so edited prompts have a source of truth.
             "shots": shot_dicts,
@@ -951,7 +951,7 @@ def download_storyboard_pdf(
         logger.exception("[storyboard %s] PDF export failed", job_id)
         raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
 
-    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (job.character_name or "storyboard")).strip() or "storyboard"
+    safe = _safe_filename(job.character_name, "storyboard")
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"{safe}.pdf")
 
 
@@ -960,43 +960,71 @@ def download_storyboard_bundle(
     job_id: str,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Download a reusable ZIP of the AI-GENERATED references + the storyboard PDF.
+    """Download the complete storyboard package as a ZIP.
 
-    Contains the generated character refs (characters/), the generated prop &
-    background refs (assets/) and the board PDF — so the user can re-upload the
-    same references next time instead of regenerating them. UPLOADED references
-    are intentionally excluded (the user already has those images).
+    Layout (every file prefixed with the board's title, numbered in board order
+    so the sequence survives being unzipped into a flat folder):
+
+        panels/<Title>_shot_01.png ...   every drawn panel, full resolution
+        characters/<Title>_character_01_<Name>.png
+        props/<Title>_prop_01_<Name>.png
+        backgrounds/<Title>_background_01_<Name>.png
+        <Title>.pdf                      the board with camera/location/cast
+
+    Panels come from the ACTIVE style variant — the one shown on the board.
+    Both generated AND uploaded references are included: this is meant to be a
+    complete hand-off package, not just the re-usable bits.
     """
-    job = _get_owned_job(job_id, current)
-    if job.kind != JobKind.STORYBOARD:
-        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+    job = _get_owned_board(job_id, current)
 
-    def _safe(name: str) -> str:
-        cleaned = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "")).strip()
-        return cleaned or "item"
-
+    _safe = _safe_filename
+    title = _safe(job.character_name, "storyboard")
     char_refs = job.params.get("character_ref_paths") or {}
     asset_refs = job.params.get("asset_ref_paths") or {}
+    categories = job.params.get("asset_categories") or {}
     variants, active = _variants_of(job.result or {})
     panels = variants[active].get("panels") or []
-    pdf_subdir = "" if not active else f"v{active}"
+    subdir = "" if not active else f"v{active}"
+    src_dir = os.path.join(_board_dir(job_id), subdir) if subdir else _board_dir(job_id)
 
-    board_dir = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
+    board_dir = _board_dir(job_id)
     os.makedirs(board_dir, exist_ok=True)
     zip_path = os.path.join(board_dir, "bundle.zip")
 
     added = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, path in char_refs.items():
-            if os.path.isfile(path) and _ref_is_generated(path):
-                zf.write(path, f"characters/{_safe(name)}.png")
-                added += 1
-        for name, path in asset_refs.items():
-            if os.path.isfile(path) and _ref_is_generated(path):
-                zf.write(path, f"assets/{_safe(name)}.png")
+        # --- Panels, numbered in board order ---------------------------------
+        seq = 0
+        for p in panels:
+            if p.get("failed") or not p.get("url"):
+                continue
+            path = os.path.join(src_dir, f"panel_{p['index']:02d}.png")
+            if not os.path.isfile(path):
+                continue
+            seq += 1
+            zf.write(path, f"panels/{title}_shot_{seq:02d}.png")
+            added += 1
+
+        # --- References, split by kind and numbered ---------------------------
+        for i, (name, path) in enumerate(char_refs.items(), start=1):
+            if os.path.isfile(path):
+                zf.write(path, f"characters/{title}_character_{i:02d}_{_safe(name)}.png")
                 added += 1
 
-        # Include the storyboard PDF when at least one panel exists.
+        prop_n = bg_n = 0
+        for name, path in asset_refs.items():
+            if not os.path.isfile(path):
+                continue
+            if str(categories.get(name, "prop")).lower() == "background":
+                bg_n += 1
+                dest = f"backgrounds/{title}_background_{bg_n:02d}_{_safe(name)}.png"
+            else:
+                prop_n += 1
+                dest = f"props/{title}_prop_{prop_n:02d}_{_safe(name)}.png"
+            zf.write(path, dest)
+            added += 1
+
+        # --- The board itself -------------------------------------------------
         if panels:
             try:
                 from storyboard_pdf import build_storyboard_pdf
@@ -1006,13 +1034,14 @@ def download_storyboard_bundle(
                     output_dir=config.OUTPUT_DIR,
                     title=job.character_name,
                     panels=panels,
-                    subdir=pdf_subdir,
+                    subdir=subdir,
                 )
-                zf.write(pdf_path, f"{_safe(job.character_name or 'storyboard')}.pdf")
+                zf.write(pdf_path, f"{title}.pdf")
+                added += 1
             except Exception:  # noqa: BLE001 — PDF is best-effort inside the bundle
                 logger.exception("[storyboard %s] bundle PDF build failed", job_id)
 
-    if added == 0 and not panels:
+    if added == 0:
         raise HTTPException(
             status_code=409,
             detail="Nothing to bundle yet — generate references or panels first.",

@@ -308,6 +308,58 @@ in `.env` — no code change needed.
   paths (review→cast→back→cast, cast→props→back→cast, board→back→review→forward).
   NOT clicked through live in a browser this session — worth one manual pass.
 
+### 2026-07-24 — Assets ZIP = full package; PDF gains camera / location / cast
+
+**1. PDF now carries the shooting detail** (`storyboard_pdf.py`). Each cell used
+to be just the panel + "Shot N" + two description lines. It now mirrors the app's
+shot card: `Shot N  SCENE n`, description, **Camera**, **Location**, then the
+character names as gold pills.
+- `TEXT_H = 196` (was a hardcoded 96) reserves the room under each image; the
+  grid stays 2×3 per A4 page, panels land ~306px tall.
+- New helpers: `_meta_row()` (label + single-line ellipsised value),
+  `_cast_chips()` (rounded gold pills, wraps to a second row then collapses the
+  remainder into a `+N` pill so a crowded shot can't bleed into the panel below),
+  `_truncate()`.
+- **Verified by eye, not just assertion:** rendered a 6-panel sample board and
+  viewed page 1 as a PNG — long locations ellipsise, a 6-character cast fits.
+
+**2. Assets ZIP is now the complete package** (`GET /storyboards/{id}/bundle`).
+Previously it held only the AI-generated refs + the PDF — no panel images at all.
+Now:
+```
+panels/<Title>_shot_01.png ...        every drawn panel, full resolution
+characters/<Title>_character_01_<Name>.png
+props/<Title>_prop_01_<Name>.png
+backgrounds/<Title>_background_01_<Name>.png
+<Title>.pdf
+```
+- Every file is prefixed with the board title and numbered in board order, so the
+  sequence survives being unzipped into a flat folder.
+- **Panel numbering is contiguous over DRAWN panels** — a failed panel is skipped
+  without leaving a gap, so `shot_02` is the second picture you actually have.
+- Panels come from the **active style variant** (what the board shows), not
+  variant 0.
+- **Behaviour change:** uploaded references are now included. They used to be
+  skipped on the reasoning that "the user already has those images", which is
+  wrong for a hand-off package. `_ref_is_generated()` was the only reader of the
+  `source.txt` marker and is deleted; `_mark_ref_source()` still writes it as
+  provenance.
+- **props/ vs backgrounds/ needed new data:** the job stored `asset_ref_paths`
+  but no categories. Added `asset_categories` to `StoryboardCreateRequest` +
+  params; `ScriptToStoryboard.startStoryboard()` derives it from
+  `computeAssets()` (the props step doesn't report category upward). Duplicated
+  boards have no `assets` state, so their refs fall back to `prop`.
+- `_safe_filename()` is now one shared helper used by both the PDF download and
+  the ZIP. It maps punctuation to a space and collapses runs, so
+  "Postmarked: After Death!" → "Postmarked After Death" rather than the ragged
+  "Postmarked_ After Death_".
+- **Verified:** scripted test builds real PNGs on disk, calls the endpoint and
+  inspects the actual zip entry names — panel numbering skips a failed panel,
+  characters/props/backgrounds land in the right folders with the right
+  sequence, the PDF is a real `%PDF-` payload, and a board with nothing drawn
+  returns 409 instead of an empty zip. Library regression test still passes;
+  `npm run build` clean. NOT exercised against a live generated board.
+
 ### 2026-07-24 — Library: rename was broken by the Recent/All duplicate render
 
 - **Reported:** clicking the rename (⚙) icon didn't let the user rename; delete

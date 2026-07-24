@@ -113,6 +113,7 @@ export function createStoryboard({
   genre,
   characterRefs,
   assetRefs,
+  assetCategories,
   provider,
 } = {}) {
   return request("/storyboards", {
@@ -125,6 +126,8 @@ export function createStoryboard({
       genre,
       character_refs: characterRefs || {},
       asset_refs: assetRefs || {},
+      // Lets the assets ZIP file each reference under props/ or backgrounds/.
+      asset_categories: assetCategories || {},
       provider,
     },
   });

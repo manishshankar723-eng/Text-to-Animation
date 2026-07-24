@@ -391,6 +391,13 @@ export default function ScriptToStoryboard() {
     setError("");
     setBusy(true);
     try {
+      // Which of the chosen assets are props vs. backgrounds — the props step
+      // doesn't report this, so read it back off the active asset list. Only
+      // used to sort the downloadable ZIP into props/ and backgrounds/.
+      const assetCategories = {};
+      for (const a of computeAssets()) {
+        if (assetRefs?.[a.name]) assetCategories[a.name] = a.category || "prop";
+      }
       const res = await api.createStoryboard({
         shots,
         style: effectiveStyle(),
@@ -400,6 +407,7 @@ export default function ScriptToStoryboard() {
         genre: effectiveGenre(),
         characterRefs: charRefs || {},
         assetRefs: assetRefs || {},
+        assetCategories,
       });
       setJobId(res.job_id);
       setBoardOrigin("review");
