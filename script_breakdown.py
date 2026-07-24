@@ -125,20 +125,35 @@ _SYSTEM_INSTRUCTION = (
 )
 
 _PROMPT_TEMPLATE = (
-    "Break the following script into a storyboard shot list AND a short cast list.\n"
+    "Break the following script into a storyboard shot list, a short cast list, "
+    "AND an asset list.\n"
     "Return between 1 and {max_shots} shots, in reading order.\n"
     "For each shot provide:\n"
     "  - scene_number: which scene it belongs to (start at 1)\n"
     "  - shot_number: sequential shot index across the whole script (start at 1)\n"
     "  - description: one vivid sentence describing what we SEE in this panel\n"
     "  - characters: list of character names visible in the shot (empty if none)\n"
+    "  - assets: list of asset names visible in the shot — the key recurring "
+    "props/objects AND the background/location — using the SAME names as the "
+    "asset list below (empty if none)\n"
     "  - location: where the shot takes place\n"
     "  - camera: the shot type / angle, e.g. 'wide establishing', 'close-up', "
     "'over-the-shoulder', 'medium two-shot'\n"
     "Also return `characters`: every NAMED character in the script, each with a "
     "concise VISUAL description (age, build, hair, clothing, distinguishing "
     "features) an artist could draw consistently. Use the SAME name spelling in "
-    "both the shots and the cast list.\n\n"
+    "both the shots and the cast list.\n"
+    "Also return `assets`: the KEY visual elements that must look the SAME every "
+    "time they reappear, so the storyboard stays consistent. Include two kinds:\n"
+    "  - category 'prop': a specific recurring object that matters to the story "
+    "(e.g. a particular slipper, a wooden rolling pin, a phone, a car). Only list "
+    "objects that appear in MORE THAN ONE shot or are visually important — skip "
+    "generic background clutter.\n"
+    "  - category 'background': each distinct location/set the story revisits "
+    "(e.g. 'Kabir's bedroom', 'kitchen doorway').\n"
+    "Each asset has: name (short, reusable), category ('prop' or 'background'), "
+    "and a concise VISUAL description an artist could draw consistently. Use the "
+    "SAME asset name in both the shots' `assets` and this list.\n\n"
     "SCRIPT:\n{script}"
 )
 
@@ -161,6 +176,9 @@ def _breakdown_schema() -> types.Schema:
                         "characters": types.Schema(
                             type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)
                         ),
+                        "assets": types.Schema(
+                            type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)
+                        ),
                         "location": types.Schema(type=types.Type.STRING),
                         "camera": types.Schema(type=types.Type.STRING),
                     },
@@ -173,6 +191,18 @@ def _breakdown_schema() -> types.Schema:
                     required=["name"],
                     properties={
                         "name": types.Schema(type=types.Type.STRING),
+                        "description": types.Schema(type=types.Type.STRING),
+                    },
+                ),
+            ),
+            "assets": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    required=["name"],
+                    properties={
+                        "name": types.Schema(type=types.Type.STRING),
+                        "category": types.Schema(type=types.Type.STRING),
                         "description": types.Schema(type=types.Type.STRING),
                     },
                 ),
@@ -196,12 +226,16 @@ def _coerce_shots(raw) -> list[dict]:
         chars = item.get("characters") or []
         if not isinstance(chars, list):
             chars = [str(chars)]
+        assets = item.get("assets") or []
+        if not isinstance(assets, list):
+            assets = [str(assets)]
         shots.append(
             {
                 "scene_number": int(item.get("scene_number", 1) or 1),
                 "shot_number": int(item.get("shot_number", i) or i),
                 "description": desc,
                 "characters": [str(c).strip() for c in chars if str(c).strip()],
+                "assets": [str(a).strip() for a in assets if str(a).strip()],
                 "location": str(item.get("location", "")).strip(),
                 "camera": str(item.get("camera", "")).strip(),
             }
@@ -232,6 +266,40 @@ def _coerce_characters(raw) -> list[dict]:
     return out
 
 
+# Categories we recognise for a locked asset. Anything else → "prop".
+_ASSET_CATEGORIES = ("prop", "background")
+
+
+def _coerce_assets(raw) -> list[dict]:
+    """Normalise the asset list; dedupe by name (case-insensitive).
+
+    Each asset = {name, category ('prop'|'background'), description}. An unknown
+    or missing category falls back to 'prop' (a specific object).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        category = str(item.get("category", "")).strip().lower()
+        if category not in _ASSET_CATEGORIES:
+            category = "prop"
+        out.append(
+            {
+                "name": name,
+                "category": category,
+                "description": str(item.get("description", "")).strip(),
+            }
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -250,8 +318,9 @@ def break_down_script(
         genre: Optional genre — shapes the tone / pacing of the breakdown.
 
     Returns:
-        {"shots": [{scene_number, shot_number, description, characters[], location,
-        camera}, …], "characters": [{name, description}, …]}.
+        {"shots": [{scene_number, shot_number, description, characters[], assets[],
+        location, camera}, …], "characters": [{name, description}, …],
+        "assets": [{name, category, description}, …]}.
 
     Raises:
         ScriptBreakdownError: with a human-readable reason on any failure.
@@ -309,15 +378,18 @@ def break_down_script(
                 # A retry may return valid JSON — keep trying.
                 raise _Retry(last_reason)
 
-            # Tolerate either an object {shots, characters} or a bare shots list.
+            # Tolerate either an object {shots, characters, assets} or a bare list.
             shots_raw = raw.get("shots") if isinstance(raw, dict) else raw
             chars_raw = raw.get("characters") if isinstance(raw, dict) else []
+            assets_raw = raw.get("assets") if isinstance(raw, dict) else []
             shots = _coerce_shots(shots_raw)
             characters = _coerce_characters(chars_raw)
+            assets = _coerce_assets(assets_raw)
             logger.info(
-                "[breakdown] Produced %d shots, %d characters.", len(shots), len(characters)
+                "[breakdown] Produced %d shots, %d characters, %d assets.",
+                len(shots), len(characters), len(assets),
             )
-            return {"shots": shots, "characters": characters}
+            return {"shots": shots, "characters": characters, "assets": assets}
 
         except ScriptBreakdownError:
             raise

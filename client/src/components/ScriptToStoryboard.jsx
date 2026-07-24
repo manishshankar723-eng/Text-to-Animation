@@ -8,15 +8,30 @@ import { useState, useRef } from "react";
 import * as api from "../api.js";
 import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
+import StoryboardAssets from "./StoryboardAssets.jsx";
 import BreakdownProgress from "./BreakdownProgress.jsx";
 
+// Visual styles. The first 7 show as chips; the rest live behind "＋ More".
+// "custom" ("Add Your Own Style") reveals a free-text box.
 const STYLES = [
   { id: "sketch", label: "✏️ Sketch" },
-  { id: "comics", label: "💥 Comics" },
-  { id: "realistic", label: "📷 Realistic" },
-  { id: "3d-animation", label: "🎬 3D Animation" },
+  { id: "comic", label: "💥 Comic" },
+  { id: "cinematic", label: "🎬 Cinematic" },
+  { id: "animation-3d", label: "🧸 Animation 3D" },
+  { id: "watercolor", label: "🎨 Watercolor Paint" },
+];
+const MORE_STYLES = [
+  { id: "photo-commercial", label: "📷 Photo / Commercial" },
+  { id: "charcoal", label: "🖤 Charcoal Sketch" },
+  { id: "dark-anime", label: "🌃 Dark Anime" },
+  { id: "flat-vector", label: "🔷 Flat / Vector" },
+  { id: "noir", label: "🎞️ Noir" },
+  { id: "stick-figure", label: "🏃 Stick Figure" },
+  { id: "graphic-novel", label: "📖 Graphic Novel" },
   { id: "custom", label: "＋ Custom" },
 ];
+const ALL_STYLES = [...STYLES, ...MORE_STYLES];
+const DEFAULT_STYLE = "sketch"; // pre-selected default (highlighted)
 
 const ASPECTS = [
   { id: "21:9", note: "Ultra-wide" },
@@ -25,18 +40,23 @@ const ASPECTS = [
   { id: "2:3", note: "Comic page" },
   { id: "1:1", note: "Square" },
 ];
+const DEFAULT_ASPECT = "16:9"; // pre-selected standard frame
 
-// Genre shapes the story's tone / pacing in the shot breakdown.
-// "default" = no genre bias (let the story decide); "custom" = type your own.
+// Genre shapes the story's tone / pacing in the shot breakdown. The first 7 show
+// as chips; the rest live behind "＋ More". "default" = no genre bias (let the
+// story decide); "custom" = type your own.
 const GENRES = [
   { id: "default", label: "✨ Default" },
-  { id: "action", label: "💥 Action" },
   { id: "animation", label: "🎨 Animation" },
-  { id: "comedy", label: "😄 Comedy" },
   { id: "commercial", label: "📢 Commercial" },
   { id: "documentary", label: "🎥 Documentary" },
-  { id: "drama", label: "🎭 Drama" },
   { id: "educational", label: "📚 Educational" },
+  { id: "mythology", label: "🏛️ Mythology" },
+];
+const MORE_GENRES = [
+  { id: "action", label: "💥 Action" },
+  { id: "comedy", label: "😄 Comedy" },
+  { id: "drama", label: "🎭 Drama" },
   { id: "fantasy", label: "🐉 Fantasy" },
   { id: "horror", label: "👻 Horror" },
   { id: "music-video", label: "🎵 Music Video" },
@@ -46,6 +66,7 @@ const GENRES = [
   { id: "thriller", label: "⚡ Thriller" },
   { id: "custom", label: "＋ Custom" },
 ];
+const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 
 // Text-readable script files we can parse in the browser. PDF/DOCX need
 // server-side extraction (not built yet) — user pastes those for now.
@@ -61,13 +82,22 @@ export default function ScriptToStoryboard() {
   const [dragOver, setDragOver] = useState(false);
   const [genre, setGenre] = useState("default"); // "default" = no bias
   const [customGenre, setCustomGenre] = useState("");
-  const [style, setStyle] = useState("");
-  const [aspect, setAspect] = useState("");
+  const [style, setStyle] = useState(DEFAULT_STYLE);
+  const [customStyle, setCustomStyle] = useState("");
+  const [aspect, setAspect] = useState(DEFAULT_ASPECT);
+  const [customAspect, setCustomAspect] = useState("");
+  // "＋ More" popups for the overflow genres / styles.
+  const [genreMoreOpen, setGenreMoreOpen] = useState(false);
+  const [styleMoreOpen, setStyleMoreOpen] = useState(false);
   const fileInputRef = useRef(null);
 
   // Review state
   const [shots, setShots] = useState([]);
   const [characters, setCharacters] = useState([]);
+  const [assets, setAssets] = useState([]);
+  // Character refs chosen on the cast step, carried into the assets step so both
+  // sets of references reach panel generation together.
+  const [characterRefs, setCharacterRefs] = useState({});
 
   // Board state
   const [jobId, setJobId] = useState(null);
@@ -77,9 +107,26 @@ export default function ScriptToStoryboard() {
   const [notice, setNotice] = useState("");
 
   const hasScript = script.trim().length > 0 || Boolean(file);
+  // Style + aspect are pre-selected, so only the script gates generation.
   const canGenerate = hasScript && Boolean(style) && Boolean(aspect);
 
-  const styleLabel = STYLES.find((s) => s.id === style)?.label || style;
+  const styleLabel =
+    style === "custom" && customStyle.trim()
+      ? customStyle.trim()
+      : ALL_STYLES.find((s) => s.id === style)?.label || style;
+
+  // The style value sent to the backend: for "Add Your Own Style" send the typed
+  // text (used directly as the panel art direction); otherwise the style id.
+  function effectiveStyle() {
+    if (style === "custom") return customStyle.trim() || "custom";
+    return style;
+  }
+
+  // The aspect ratio sent to the backend: the typed W:H for Custom, else the id.
+  function effectiveAspect() {
+    if (aspect === "custom") return customAspect.trim() || DEFAULT_ASPECT;
+    return aspect;
+  }
 
   function pickFile(f) {
     if (!f) return;
@@ -92,7 +139,7 @@ export default function ScriptToStoryboard() {
   function effectiveGenre() {
     if (genre === "custom") return customGenre.trim();
     if (!genre || genre === "default") return "";
-    const g = GENRES.find((x) => x.id === genre);
+    const g = ALL_GENRES.find((x) => x.id === genre);
     return g ? g.label.replace(/^\S+\s+/, "") : genre;
   }
 
@@ -129,12 +176,13 @@ export default function ScriptToStoryboard() {
         throw new Error("Please provide at least a few sentences of script.");
       }
       const res = await api.breakdownScript(text, {
-        style,
-        aspectRatio: aspect,
+        style: effectiveStyle(),
+        aspectRatio: effectiveAspect(),
         genre: effectiveGenre(),
       });
       setShots(res.shots || []);
       setCharacters(res.characters || []);
+      setAssets(res.assets || []);
       setStep("review");
     } catch (e) {
       setError(e.message);
@@ -201,29 +249,69 @@ export default function ScriptToStoryboard() {
     return out;
   }
 
-  // Review → cast (or straight to generation if the script has no named cast).
+  // The ACTIVE assets to lock = the breakdown's canonical prop/background list,
+  // plus any asset named in a shot that wasn't in that list. Category/description
+  // come from the canonical list when available.
+  function computeAssets() {
+    const metaByName = new Map(
+      assets.map((a) => [a.name.trim().toLowerCase(), a])
+    );
+    const seen = new Set();
+    const out = [];
+    for (const a of assets) {
+      const key = (a.name || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(a);
+    }
+    for (const sh of shots) {
+      for (const raw of sh.assets || []) {
+        const name = (raw || "").trim();
+        const key = name.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(metaByName.get(key) || { name, category: "prop", description: "" });
+      }
+    }
+    return out;
+  }
+
+  // Review → cast → assets → board, skipping any step with nothing to set up.
   function handleReviewNext() {
     if (shots.length === 0 || busy) return;
     setError("");
     setNotice("");
     if (computeCast().length > 0) {
       setStep("cast");
+    } else if (computeAssets().length > 0) {
+      setStep("assets");
     } else {
-      startStoryboard({});
+      startStoryboard({}, {});
     }
   }
 
-  // Kick off panel generation (optionally with character references).
-  async function startStoryboard(characterRefs) {
+  // Cast done → assets step (if any) or straight to generation.
+  function handleCastNext(charRefs) {
+    setCharacterRefs(charRefs || {});
+    if (computeAssets().length > 0) {
+      setStep("assets");
+    } else {
+      startStoryboard(charRefs || {}, {});
+    }
+  }
+
+  // Kick off panel generation with the chosen character + asset references.
+  async function startStoryboard(charRefs, assetRefs) {
     if (busy) return;
     setError("");
     setBusy(true);
     try {
       const res = await api.createStoryboard({
         shots,
-        style,
-        aspectRatio: aspect,
-        characterRefs,
+        style: effectiveStyle(),
+        aspectRatio: effectiveAspect(),
+        characterRefs: charRefs || {},
+        assetRefs: assetRefs || {},
       });
       setJobId(res.job_id);
       setStep("board");
@@ -242,7 +330,19 @@ export default function ScriptToStoryboard() {
         characters={computeCast()}
         busy={busy}
         onBack={() => setStep("review")}
-        onGenerate={(refs) => startStoryboard(refs)}
+        onGenerate={handleCastNext}
+      />
+    );
+  }
+
+  // ============================================================ Assets step
+  if (step === "assets") {
+    return (
+      <StoryboardAssets
+        assets={computeAssets()}
+        busy={busy}
+        onBack={() => setStep(computeCast().length > 0 ? "cast" : "review")}
+        onGenerate={(assetRefs) => startStoryboard(characterRefs, assetRefs)}
       />
     );
   }
@@ -253,14 +353,20 @@ export default function ScriptToStoryboard() {
       <StoryboardBoard
         jobId={jobId}
         styleLabel={styleLabel}
-        aspect={aspect}
+        aspect={effectiveAspect()}
         onBack={() => setStep("review")}
         onRestart={() => {
           setJobId(null);
           setShots([]);
           setCharacters([]);
+          setAssets([]);
+          setCharacterRefs({});
           setGenre("default");
           setCustomGenre("");
+          setStyle(DEFAULT_STYLE);
+          setCustomStyle("");
+          setAspect(DEFAULT_ASPECT);
+          setCustomAspect("");
           setStep("form");
         }}
       />
@@ -270,6 +376,7 @@ export default function ScriptToStoryboard() {
   // ============================================================ Review step
   if (step === "review") {
     const activeCast = computeCast();
+    const activeAssets = computeAssets();
     return (
       <div className="workflow-head-wrap sb-review">
         <div className="workflow-header">
@@ -285,7 +392,7 @@ export default function ScriptToStoryboard() {
 
         <div className="review-summary">
           <span className="chip">{styleLabel}</span>
-          <span className="chip">{aspect}</span>
+          <span className="chip">{effectiveAspect()}</span>
           <span className="chip">
             {shots.length} shot{shots.length === 1 ? "" : "s"}
           </span>
@@ -409,6 +516,8 @@ export default function ScriptToStoryboard() {
               </>
             ) : activeCast.length > 0 ? (
               `🎭 Next: cast (${activeCast.length})`
+            ) : activeAssets.length > 0 ? (
+              `🎬 Next: props (${activeAssets.length})`
             ) : (
               `🎬 Generate panels (${shots.length})`
             )}
@@ -518,6 +627,19 @@ export default function ScriptToStoryboard() {
                 {g.label}
               </button>
             ))}
+            {/* Show the picked overflow genre so the selection stays visible. */}
+            {MORE_GENRES.some((g) => g.id === genre) && (
+              <button type="button" className="opt-chip active" onClick={() => setGenreMoreOpen(true)}>
+                {ALL_GENRES.find((g) => g.id === genre)?.label}
+              </button>
+            )}
+            <button
+              type="button"
+              className="opt-chip opt-chip-more"
+              onClick={() => setGenreMoreOpen(true)}
+            >
+              ＋ More
+            </button>
           </div>
           {genre === "custom" && (
             <input
@@ -541,7 +663,28 @@ export default function ScriptToStoryboard() {
                 {s.label}
               </button>
             ))}
+            {/* Show the picked overflow style so the selection stays visible. */}
+            {MORE_STYLES.some((s) => s.id === style) && (
+              <button type="button" className="opt-chip active" onClick={() => setStyleMoreOpen(true)}>
+                {ALL_STYLES.find((s) => s.id === style)?.label}
+              </button>
+            )}
+            <button
+              type="button"
+              className="opt-chip opt-chip-more"
+              onClick={() => setStyleMoreOpen(true)}
+            >
+              ＋ More
+            </button>
           </div>
+          {style === "custom" && (
+            <input
+              className="custom-genre-input"
+              value={customStyle}
+              placeholder="Describe your own style, e.g. 1980s retro anime, ink wash…"
+              onChange={(e) => setCustomStyle(e.target.value)}
+            />
+          )}
 
           {/* --- Aspect ratio --- */}
           <label>Aspect ratio</label>
@@ -558,7 +701,22 @@ export default function ScriptToStoryboard() {
                 <span className="opt-chip-note">{a.note}</span>
               </button>
             ))}
+            <button
+              type="button"
+              className={`opt-chip ${aspect === "custom" ? "active" : ""}`}
+              onClick={() => setAspect("custom")}
+            >
+              ＋ Custom
+            </button>
           </div>
+          {aspect === "custom" && (
+            <input
+              className="custom-genre-input"
+              value={customAspect}
+              placeholder="Type a ratio, e.g. 4:3, 5:4, 1.85:1…"
+              onChange={(e) => setCustomAspect(e.target.value)}
+            />
+          )}
 
           {error && <div className="error">{error}</div>}
 
@@ -599,7 +757,7 @@ export default function ScriptToStoryboard() {
             </li>
             <li>
               <span className="sts-guide-num">4</span>
-              Set up your cast (optional)
+              Lock your cast, props &amp; backgrounds (optional)
             </li>
             <li>
               <span className="sts-guide-num">5</span>
@@ -612,6 +770,57 @@ export default function ScriptToStoryboard() {
           </p>
         </div>
       </aside>
+      </div>
+
+      {genreMoreOpen && (
+        <MorePopup
+          title="More genres"
+          options={MORE_GENRES}
+          selected={genre}
+          onSelect={(id) => setGenre(id)}
+          onClose={() => setGenreMoreOpen(false)}
+        />
+      )}
+      {styleMoreOpen && (
+        <MorePopup
+          title="More visual styles"
+          options={MORE_STYLES}
+          selected={style}
+          onSelect={(id) => setStyle(id)}
+          onClose={() => setStyleMoreOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Overlay picker for the overflow ("＋ More") genres / styles. Selecting an
+// option applies it and closes; the ✕ (or a backdrop click) closes without change.
+function MorePopup({ title, options, selected, onSelect, onClose }) {
+  return (
+    <div className="more-overlay" onClick={onClose}>
+      <div className="more-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="more-head">
+          <h3>{title}</h3>
+          <button type="button" className="more-close" onClick={onClose} title="Close">
+            ✕
+          </button>
+        </div>
+        <div className="opt-chips">
+          {options.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              className={`opt-chip ${selected === o.id ? "active" : ""}`}
+              onClick={() => {
+                onSelect(o.id);
+                onClose();
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

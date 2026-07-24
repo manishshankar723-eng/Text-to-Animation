@@ -52,6 +52,11 @@ def submit_storyboard_job(job_id: str, kwargs: dict):
     _executor.submit(_run_storyboard, job_id, kwargs)
 
 
+def submit_restyle_job(job_id: str, kwargs: dict):
+    """Enqueue a re-style of the whole board into a NEW style variant."""
+    _executor.submit(_run_restyle, job_id, kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Job bodies (run inside worker threads)
 # ---------------------------------------------------------------------------
@@ -127,6 +132,58 @@ def _run_storyboard(job_id: str, kwargs: dict):
     except Exception as e:  # noqa: BLE001
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] storyboard crashed.", job_id)
+
+
+def _run_restyle(job_id: str, kwargs: dict):
+    """Re-draw the whole board in a NEW style, stored as a new style VARIANT.
+
+    Keeps every existing variant intact (so the user can switch back) and streams
+    the new variant's panels in as they render. `existing_variants` are the prior
+    variants; the new one is appended at index `variant` and made active.
+    """
+    from storyboard_pipeline import run_storyboard
+
+    store = get_store()
+    store.mark_running(job_id)
+    existing = kwargs.pop("existing_variants", [])
+    variant = kwargs["variant"]
+    new_style = kwargs["style"]
+    aspect = kwargs.get("aspect_ratio")
+    count = len(kwargs.get("shots") or [])
+    logger.info("[job %s] restyle started → variant %d (style=%s)", job_id, variant, new_style)
+
+    def _compose(panels: list) -> dict:
+        ok = sum(1 for p in panels if not p.get("failed"))
+        variants = list(existing) + [
+            {"style": new_style, "panels": panels, "ok_count": ok}
+        ]
+        return {
+            "variants": variants,
+            "active_variant": variant,
+            "style": new_style,
+            "aspect_ratio": aspect,
+            "count": count,
+            "ok_count": ok,
+            "panels": panels,
+        }
+
+    def _progress(update: dict):
+        partial = update.pop("panels", None)
+        fields = {"progress": update}
+        if partial is not None:
+            fields["result"] = _compose(partial)
+        try:
+            store.update(job_id, **fields)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the job
+            logger.debug("[job %s] restyle progress update failed (ignored)", job_id, exc_info=True)
+
+    try:
+        result = run_storyboard(job_id=job_id, progress_cb=_progress, **kwargs)
+        store.mark_succeeded(job_id, _compose(result["panels"]))
+        logger.info("[job %s] restyle succeeded (variant %d).", job_id, variant)
+    except Exception as e:  # noqa: BLE001
+        store.mark_failed(job_id, f"{type(e).__name__}: {e}")
+        logger.exception("[job %s] restyle crashed.", job_id)
 
 
 def _run_meshy(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):

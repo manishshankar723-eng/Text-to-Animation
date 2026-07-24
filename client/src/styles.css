@@ -1904,6 +1904,65 @@ input[type="checkbox"] {
 .opt-chip.active .opt-chip-note {
   color: var(--primary);
 }
+/* "＋ More" chip — dashed so it reads as an opener, not a selectable option. */
+.opt-chip-more {
+  border-style: dashed;
+  color: var(--muted);
+}
+.opt-chip-more:hover {
+  color: var(--primary);
+}
+
+/* ---- "＋ More" overlay picker (genre / style overflow) ---- */
+.more-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+.more-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.2rem 1.3rem 1.4rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.more-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+.more-head h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.more-close {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.more-close:hover {
+  border-color: var(--border-gold);
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.06);
+}
 
 .sts-generate {
   width: 100%;
@@ -2082,6 +2141,28 @@ input[type="checkbox"] {
   letter-spacing: 0.04em;
   margin-bottom: 0.25rem;
 }
+/* Editable shot prompt on each board tile. */
+.board-caption-edit {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+.board-caption-edit:focus {
+  outline: none;
+  border-color: var(--border-gold);
+}
+.board-regen-btn {
+  margin-top: 0.45rem;
+}
 .board-actions {
   max-width: none;
 }
@@ -2095,33 +2176,87 @@ input[type="checkbox"] {
   margin-top: 0;
 }
 
-/* ---- Script → Storyboard: Cast setup (Stage B) ---- */
-.cast-grid {
+/* ---- Storyboard: style variant switcher + restyle bar ---- */
+.board-styles {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
-  gap: 1.1rem;
+  align-items: center;
+  gap: 1.25rem 2rem;
+  margin: 0 0 1.2rem;
+  padding: 0.85rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.board-variant-switch,
+.board-restyle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.board-restyle {
+  margin-left: auto; /* push the "add a style" control to the right */
+}
+.board-styles-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.board-style-select {
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.board-style-select:focus {
+  outline: none;
+  border-color: var(--border-gold);
+}
+.board-restyle .btn.secondary {
+  margin-top: 0;
+}
+
+/* ---- Script → Storyboard: Cast setup (Stage B) ---- */
+.cast-grid {
+  /* Stretch cards to fill the full width so wide screens don't leave big
+     side gutters (was a centered flex row capped at ~460px per card). */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+  gap: 1.4rem;
 }
 .cast-card {
   display: flex;
-  gap: 1rem;
+  gap: 1.15rem;
   margin-bottom: 0;
-  flex: 1 1 400px;
-  max-width: 460px;
+  max-width: none; /* fill the grid cell */
+  padding: 1.25rem;
 }
-@media (max-width: 520px) {
-  .cast-card {
-    flex-basis: 100%;
+@media (max-width: 560px) {
+  .cast-grid {
+    grid-template-columns: 1fr;
   }
 }
 .cast-portrait {
   flex-shrink: 0;
-  width: 110px;
-  height: 110px;
+  width: 150px;
+  height: 150px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border-gold);
   background: var(--panel-2);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.cast-portrait.clickable {
+  cursor: zoom-in;
+}
+.cast-portrait.clickable:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(229, 193, 88, 0.25);
 }
 .cast-portrait img {
   width: 100%;
@@ -2145,10 +2280,34 @@ input[type="checkbox"] {
   font-weight: 700;
   font-size: 1rem;
   margin-bottom: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+/* Prop / background badge on the Props & backgrounds step. */
+.asset-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--muted, #9aa0aa);
+  white-space: nowrap;
+}
+.asset-badge-prop {
+  background: rgba(233, 196, 106, 0.12);
+  border-color: rgba(233, 196, 106, 0.35);
+  color: #e9c46a;
+}
+.asset-badge-background {
+  background: rgba(120, 170, 255, 0.12);
+  border-color: rgba(120, 170, 255, 0.35);
+  color: #8ab4ff;
 }
 .cast-desc {
-  min-height: 60px;
-  font-size: 0.85rem;
+  min-height: 76px;
+  font-size: 0.9rem;
 }
 .cast-actions {
   display: flex;
@@ -2220,7 +2379,7 @@ input[type="checkbox"] {
 /* Storyboard steps fill the available width (cap only on huge 4K displays) so
    the layout looks the SAME (just scaled) on a laptop and a 2K monitor. */
 .sb-review { max-width: 2200px; margin: 0 auto; }
-.sb-cast   { max-width: 1400px; margin: 0 auto; }
+.sb-cast   { max-width: 2200px; margin: 0 auto; }
 .sb-board  { max-width: 2200px; margin: 0 auto; }
 /* Let the review inner blocks fill the centered column so they line up. */
 .sb-review .shot-list,
@@ -2255,7 +2414,12 @@ input[type="checkbox"] {
 .sb-form {
   max-width: 1500px;
   margin: 0 auto;
-  padding-top: clamp(0.5rem, 3vh, 2.5rem);
+  /* Fill the viewport and centre the hero so there's no big empty area below. */
+  min-height: calc(100vh - 5rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1rem, 4vh, 3rem) 0;
 }
 .sb-form .workflow-header {
   margin-bottom: 1.6rem;

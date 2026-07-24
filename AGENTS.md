@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-23 (Script→Storyboard workflow plan + local user store)
+**Last updated:** 2026-07-24 (Board: change visual style → switchable style variants)
 
 ---
 
@@ -215,6 +215,147 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-24 — Board: change visual style → switchable style VARIANTS (keep-both)
+- **Feature:** re-cast the whole board into another style (Sketch→Comic→…). Each
+  restyle is saved as a **variant** you can switch between instantly (keep-both);
+  every panel reuses the locked character/prop/background refs PLUS its previous
+  render as a **composition reference**, so only the art style changes.
+- `gemini_client.generate_storyboard_panel`: new `composition_reference_image`
+  (appended last, with a "keep the same staging, only change the art style"
+  instruction).
+- `storyboard_pipeline`: `run_storyboard`/`regenerate_panel` are variant-aware —
+  `variant` writes panels to a `v{N}/` subfolder and tags URLs with `?v={N}`;
+  `composition_ref_dir` feeds the matching prior panel. Helpers `_variant_dir` /
+  `_panel_url` / `_load_composition_ref`. `storyboard_pdf.build_storyboard_pdf`
+  gained a `subdir` arg.
+- `server/worker.py`: `_run_restyle` streams the new variant in, preserving all
+  existing variants (result carries `variants:[{style,panels,ok_count}]` +
+  `active_variant`; flat `panels/style/ok_count` mirror the active one).
+- `server/main.py`: `_variants_of` (synthesises variant 0 for old jobs);
+  `POST /storyboards/{id}/restyle` (async, new variant, composition ref = active
+  variant's folder); `POST /storyboards/{id}/active-variant` (switch, no regen);
+  panel serve takes `?v=`; regenerate-panel + PDF + ZIP all act on the ACTIVE
+  variant/subdir. Shots are stored on the job so restyle can re-draw.
+- Client: `api.restyleStoryboard` / `setActiveVariant`; `fetchStoryboardPanel`
+  fetches by the panel's own URL (variant-tagged) + cache-busts. `StoryboardBoard`
+  gained a **style variant switcher** (chips) + **"Add a style" select + 🎨 Restyle
+  all**; panel blobs are cached by URL (per-variant); a nonce restarts polling for
+  the restyle run. `.board-styles/.board-variant-switch/.board-restyle/.board-style-select`.
+- Verified end-to-end (memory store, stubbed image call): initial render → restyle
+  to comic creates variant 1 (URLs `?v=1`, files in `v1/`, composition ref fed on
+  every panel), switch active back to 0, and variant-aware regenerate writes to
+  `v1/` with an edited prompt. `npm run build` clean; all backend modules import.
+  NOT run live (needs billed image calls per restyled panel).
+
+### 2026-07-24 — Board: fix Retry "Panel N not found" + editable per-shot prompts
+- **Bug:** retrying the last failed panel showed "Panel 16 not found." Root cause:
+  `regenerate-panel` looked up `panels[index]` by LIST POSITION and 404'd whenever
+  the persisted `result.panels` was momentarily shorter than the index (a poll
+  landing on a partial/streamed result, or any gap). Confirmed `run_storyboard`
+  itself DOES persist all N panels (17-shot repro), so this was purely the retry
+  endpoint's fragility.
+- **Fix (`server/main.py` regenerate_storyboard_panel):** locate the panel by its
+  `index` FIELD, fall back to list position, then REBUILD it from the shot list now
+  stored on the job (`params["shots"]`, added in `create_storyboard`). Write back by
+  matching index (insert + re-sort if absent). So retry works even for a panel
+  that isn't in the streamed result yet. Also backfills count/style/aspect on the
+  result. Verified end-to-end against a job whose result had 16 panels but 17 shots:
+  retry index 16 reconstructs, no 404.
+- **Editable prompts (user ask):** each board tile's caption is now an editable
+  textarea; a per-tile "🔄 Regenerate" (or "🔄 Retry" when failed) re-draws the shot
+  with the edited wording. `PanelRegenerateRequest` gained optional
+  `description`/`camera`/`location` overrides (persisted onto the panel);
+  `api.regenerateStoryboardPanel(jobId, index, overrides)`; `StoryboardBoard.jsx`
+  tracks `editedDesc` per index and sends it. Removed the redundant hover-only regen
+  overlay (`.panel-regen`) in favour of the always-visible caption button.
+  `.board-caption-edit` / `.board-regen-btn` styles.
+- Verified: `npm run build` clean; endpoint repro test passes (reconstruct + edit +
+  no 404); schema override round-trip.
+
+### 2026-07-24 — Cast/Props: click-to-enlarge, bigger cards, reusable-assets ZIP
+- **Enlarge on click:** new shared `ImageLightbox.jsx` (reuses `.lightbox-*`). Cast
+  and Props/backgrounds portraits are now clickable when they have a preview
+  (generated OR uploaded) → full-screen viewer with ✕ / backdrop close. Portrait
+  gets `.clickable` (zoom-in cursor + gold hover ring).
+- **Bigger UI:** `.cast-grid` min column 440→500px, gap 1.4rem, card padding 1.25rem;
+  portrait 128→150px; `.cast-desc` min-height 60→76px. (Container already 2200px.)
+- **Reusable-assets ZIP (final download):** so the user generates references once and
+  re-uploads next time instead of regenerating. `GET /storyboards/{id}/bundle` zips
+  the GENERATED character refs (`characters/<name>.png`) + generated prop/background
+  refs (`assets/<name>.png`) + the board PDF. UPLOADED refs are EXCLUDED — refs now
+  carry a `source.txt` marker written at save time (`_mark_ref_source`): "generated"
+  for `/characters/reference` + `/assets/reference`, "uploaded" for
+  `/characters/reference/upload`; `_ref_is_generated` includes everything except
+  explicit "uploaded" (missing marker → included, for older refs). Button lives on
+  the board (`StoryboardBoard.jsx` "⬇ Download assets (ZIP)"), api `downloadStoryboardBundle`.
+- Verified: `npm run build` clean; bundle route registered; marker logic unit-tested
+  (generated→include, uploaded→exclude, missing→include). NOT run live (needs billed
+  refs + a real job to produce a populated zip).
+
+### 2026-07-24 — Storyboard form: ＋More genre/style pickers + friendly defaults
+- User ask: fewer chips up front, the rest behind a "＋ More" popup (with an ✕
+  close), more visual-style options, and sensible pre-selected defaults.
+- `ScriptToStoryboard.jsx`: **Genre** now shows 7 primary chips (Default, Animation,
+  Cinematic, Commercial, Documentary, Educational, Mythology — Cinematic + Mythology
+  are new); the other 11 (incl. ＋ Custom) live behind **＋ More** (`MorePopup`
+  overlay, ✕ / backdrop-click to close). The picked overflow genre also renders as
+  an active chip so the selection stays visible. **Visual style** rebuilt to match
+  the reference set — 7 primary chips (Comic, Cinematic, Soft Pencil, Animation 3D,
+  Watercolor Paint, Photo/Commercial, Charcoal Sketch) + ＋ More (Dark Anime,
+  Flat/Vector, Noir, Stick Figure, Graphic Novel, ＋ Add Your Own Style). "Add Your
+  Own Style" reveals a free-text box; `effectiveStyle()` sends that text as the style.
+  **Defaults:** style pre-selected = `soft-pencil` (sketch), aspect = `16:9`
+  (`DEFAULT_STYLE`/`DEFAULT_ASPECT`), so the script is the only thing gating
+  generation. Reset on Start over.
+- `gemini_client.py`: `_STORYBOARD_STYLE_PROMPTS` expanded with art direction for
+  all new style ids (+ old ids kept as aliases). `generate_storyboard_panel` now
+  falls back to treating an unknown, non-empty style value as freeform art
+  direction (honours "Add Your Own Style"); empty → neutral "custom".
+- `client/src/styles.css`: `.opt-chip-more` (dashed opener) + `.more-overlay/
+  .more-panel/.more-head/.more-close` modal styles.
+- Verified: `npm run build` clean (45 modules); style-prompt keys + freeform
+  fallback unit-checked. Frontend still sends real backend calls only on generate.
+
+### 2026-07-24 — Script→Storyboard Stage B2: prop & background consistency
+- **Problem the user hit:** props/backgrounds drift between panels (the slipper in
+  Shot 2 ≠ Shot 3) because ONLY characters were locked with reference images.
+  Fixed by mirroring the Cast mechanism for non-character assets.
+- `script_breakdown.py`: breakdown now also returns `assets` — `[{name, category
+  ('prop'|'background'), description}]` — and tags each shot with `assets: [names]`.
+  Prompt asks for recurring important objects (props) + revisited locations
+  (backgrounds). `_coerce_assets` (dedupe by name, category→'prop' fallback) +
+  `assets` added to `_coerce_shots`. Return is now `{shots, characters, assets}`.
+- `gemini_client.py`: new `generate_asset_reference(description, category, provider)`
+  — clean prop-on-white OR empty establishing-background plate (two new prompt
+  templates), full retry/backoff, reuses `_is_valid_reference`. `generate_storyboard_panel`
+  gained `asset_reference_images` + a distinct "keep these props/background
+  consistent" instruction; asset refs appended AFTER character refs in `contents`.
+- `storyboard_pipeline.py`: generalised ref loading (`_load_refs`) + `_gather_refs`
+  (deduped BY NAME, not image value — two similar assets stay distinct). `run_storyboard`
+  + `regenerate_panel` take `asset_ref_paths`, feed each shot its assets' refs
+  (cap 3) alongside character refs. Panel dict carries `assets`.
+- `server/schemas.py`: `Asset` model, `Shot.assets`, `ScriptBreakdownResponse.assets`,
+  `StoryboardCreateRequest.asset_refs`, `AssetReferenceRequest`.
+- `server/main.py`: breakdown returns `assets`; new `POST /assets/reference`
+  (generate a prop/background ref — saved under the SAME `_references/{id}/reference.png`
+  layout, previewed via the existing image-serve route, uploads reuse the existing
+  `/characters/reference/upload`); `POST /storyboards` resolves `asset_refs` → paths
+  (shared `_resolve_refs` helper) + stores `asset_ref_paths`; regenerate-panel passes
+  them through. `worker.py` needed no change (kwargs spread).
+- Client: new `StoryboardAssets.jsx` (mirrors `StoryboardCast.jsx`; prop/background
+  badge, generate via `generateAssetReference`, upload via `uploadReference`). Flow
+  is now Review → **Cast** → **Props & backgrounds** → Board, each step skippable
+  (`ScriptToStoryboard.jsx`: `computeAssets()`, `handleCastNext`, `startStoryboard`
+  now takes char+asset refs). `api.js`: `generateAssetReference` + `assetRefs` on
+  `createStoryboard`. `.asset-badge` styles. "How it works" step 4 reworded.
+- Verified WITHOUT billed calls: breakdown coercion (assets + per-shot tags);
+  `run_storyboard`/`regenerate_panel` feed the RIGHT char+asset ref counts per shot
+  with a STUBBED panel generator (caught + fixed a dedupe-by-value bug); route
+  `/assets/reference` registered; schema round-trip; `server.main` imports;
+  `npm run build` clean (45 modules). NOT run live (needs billed image calls).
+- NOTE: "important movement" the user mentioned isn't lockable via a reference
+  IMAGE — it lives in the shot description; only props + backgrounds get refs.
 
 ### 2026-07-24 — Storyboard: fill-width layout + bigger titles (laptop == 2K)
 - Blank-space complaint was screen-scaling: fixed max-width caps left voids on a 2K
@@ -790,6 +931,7 @@ language — do NOT copy the Drawstory reference's look/colours.
 |-------|--------------|---------------|
 | **A. Shot breakdown** ⭐ ✅ | LLM parses script → ordered shot list. **DONE** — `script_breakdown.py` + `POST /storyboards/breakdown` (switchable `TEXT_PROVIDER`). Not yet run live. | Built 2026-07-23. |
 | **B. Character consistency** ⭐ ✅ | Cast extracted in the breakdown; per-character reference generated on the Cast page; fed into every panel the character appears in. **DONE** (generate-from-text refs; upload-your-own later). Not run live. | Built 2026-07-23. |
+| **B2. Prop & background consistency** ⭐ ✅ | Breakdown also extracts `assets` (props + backgrounds) and tags each shot; a "Props & backgrounds" page (after Cast) generates/uploads a reference per asset; fed into every panel the asset appears in (so the slipper/bedroom stay consistent). **DONE** (`generate_asset_reference` + `POST /assets/reference` + `StoryboardAssets.jsx`). Not run live. | Built 2026-07-24. |
 | **C. Review shot list (page 4)** ✅ | Editable shot list before generating (edit/reorder/delete/add). **DONE** — Review step in `ScriptToStoryboard.jsx`, wired to Stage A. | Built 2026-07-23. |
 | **D. Generate panels (page 5)** ✅ | Loop shots → one image each. **DONE** — `storyboard_pipeline.py` + `POST /storyboards` + worker; live progress, panels stream in. NO character-ref lock yet (Stage B, later). Not run live. | Built 2026-07-23. |
 | **E. Storyboard board (page 6)** 🟡 | Grid of panels + captions — **basic board DONE** (`StoryboardBoard.jsx`, live fill-in + lightbox). Per-panel regenerate / caption edit / reorder = v3. | Built 2026-07-23. |

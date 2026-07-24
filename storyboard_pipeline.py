@@ -43,15 +43,68 @@ def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
     return image.crop((0, top, w, top + new_h))
 
 
-def _load_character_refs(character_ref_paths: dict | None) -> dict:
-    """Load character reference images once, keyed by lowercased name."""
+def _load_refs(ref_paths: dict | None, kind: str = "reference") -> dict:
+    """Load reference images once, keyed by lowercased name.
+
+    Used for both character refs and asset (prop/background) refs — the loading
+    is identical, only the log label differs.
+    """
     refs: dict[str, "Image.Image"] = {}
-    for name, path in (character_ref_paths or {}).items():
+    for name, path in (ref_paths or {}).items():
         try:
             refs[name.strip().lower()] = Image.open(path).convert("RGB")
         except (OSError, AttributeError):
-            logger.warning("[storyboard] couldn't load character ref for %s: %s", name, path)
+            logger.warning("[storyboard] couldn't load %s ref for %s: %s", kind, name, path)
     return refs
+
+
+def _load_character_refs(character_ref_paths: dict | None) -> dict:
+    """Load character reference images once, keyed by lowercased name."""
+    return _load_refs(character_ref_paths, "character")
+
+
+def _variant_dir(board_dir: str, variant: int) -> str:
+    """Panel folder for a style variant (variant 0 = the board root, for compat)."""
+    return board_dir if not variant else os.path.join(board_dir, f"v{variant}")
+
+
+def _panel_url(job_id: str, i: int, variant: int) -> str:
+    """Serve URL for a panel, tagged with its variant so the client caches per-style."""
+    suffix = f"?v={variant}" if variant else ""
+    return f"/storyboards/{job_id}/panel/{i}{suffix}"
+
+
+def _load_composition_ref(composition_ref_dir: str | None, i: int) -> "Image.Image | None":
+    """Load an existing panel to feed as a composition reference when re-styling."""
+    if not composition_ref_dir:
+        return None
+    path = os.path.join(composition_ref_dir, f"panel_{i:02d}.png")
+    try:
+        return Image.open(path).convert("RGB")
+    except (OSError, AttributeError):
+        return None
+
+
+def _gather_refs(names, ref_map: dict, cap: int) -> list:
+    """Collect up to `cap` reference images for the given names.
+
+    Deduped by name (not by image value — two visually similar assets are still
+    distinct references).
+    """
+    out = []
+    seen: set[str] = set()
+    for name in names or []:
+        key = str(name).strip().lower()
+        if not key or key in seen:
+            continue
+        ref = ref_map.get(key)
+        if ref is None:
+            continue
+        seen.add(key)
+        out.append(ref)
+        if len(out) >= cap:
+            break
+    return out
 
 
 def regenerate_panel(
@@ -61,23 +114,25 @@ def regenerate_panel(
     aspect_ratio: str = "16:9",
     output_dir: str = "output",
     character_ref_paths: dict | None = None,
+    asset_ref_paths: dict | None = None,
+    variant: int = 0,
     provider: str | None = None,
 ) -> dict:
-    """Re-generate ONE panel (used by the Retry button). Returns the updated panel."""
+    """Re-generate ONE panel (used by the Retry button). Returns the updated panel.
+
+    `variant` targets the active style variant's subfolder + URL.
+    """
     from gemini_client import generate_storyboard_panel
 
     board_dir = os.path.join(output_dir, "_storyboards", job_id)
-    os.makedirs(board_dir, exist_ok=True)
+    write_dir = _variant_dir(board_dir, variant)
+    os.makedirs(write_dir, exist_ok=True)
     char_refs = _load_character_refs(character_ref_paths)
+    asset_refs = _load_refs(asset_ref_paths, "asset")
 
     i = panel["index"]
-    shot_refs = []
-    for name in panel.get("characters", []) or []:
-        ref = char_refs.get(str(name).strip().lower())
-        if ref is not None and ref not in shot_refs:
-            shot_refs.append(ref)
-        if len(shot_refs) >= 3:
-            break
+    shot_char_refs = _gather_refs(panel.get("characters", []), char_refs, 3)
+    shot_asset_refs = _gather_refs(panel.get("assets", []), asset_refs, 3)
 
     updated = dict(panel)
     description = str(panel.get("description", "")).strip()
@@ -90,14 +145,15 @@ def regenerate_panel(
             characters=panel.get("characters", []) or [],
             location=panel.get("location", "") or "",
             camera=panel.get("camera", "") or "",
-            reference_images=shot_refs or None,
+            reference_images=shot_char_refs or None,
+            asset_reference_images=shot_asset_refs or None,
             provider=provider,
         )
 
     if image is not None:
         image = _crop_to_aspect(image, aspect_ratio)
-        image.save(os.path.join(board_dir, f"panel_{i:02d}.png"), "PNG")
-        updated["url"] = f"/storyboards/{job_id}/panel/{i}"
+        image.save(os.path.join(write_dir, f"panel_{i:02d}.png"), "PNG")
+        updated["url"] = _panel_url(job_id, i, variant)
         updated["failed"] = False
     else:
         updated["url"] = None
@@ -113,19 +169,30 @@ def run_storyboard(
     output_dir: str = "output",
     provider: str | None = None,
     character_ref_paths: dict | None = None,
+    asset_ref_paths: dict | None = None,
+    variant: int = 0,
+    composition_ref_dir: str | None = None,
     progress_cb=None,
 ) -> dict:
     """Generate a storyboard panel for each shot.
 
+    `variant` writes panels into a per-style subfolder (0 = the board root) and
+    tags their URLs so the client caches each style separately.
+    `composition_ref_dir`, when set, feeds the matching existing panel as a
+    composition reference so a re-style keeps the same staging (only the art
+    style changes).
+
     Args:
         job_id: owning job id (used for the output folder + panel URLs).
         shots: list of shot dicts {scene_number, shot_number, description,
-               characters[], location, camera}.
+               characters[], assets[], location, camera}.
         style / aspect_ratio: chosen on the input page.
         output_dir: base output directory.
         provider: image backend ("vertex" | "gemini"); defaults to IMAGE_PROVIDER.
         character_ref_paths: {character_name: image_path} — reference images fed
             into every panel the character appears in (Stage B consistency).
+        asset_ref_paths: {asset_name: image_path} — prop/background reference
+            images fed into every panel the asset appears in (Stage B2 consistency).
         progress_cb: optional callable(update: dict) for live progress. Receives
             {percent, stage, message, current, total, panels(partial list)}.
 
@@ -137,9 +204,11 @@ def run_storyboard(
 
     total = len(shots)
     board_dir = os.path.join(output_dir, "_storyboards", job_id)
-    os.makedirs(board_dir, exist_ok=True)
+    write_dir = _variant_dir(board_dir, variant)
+    os.makedirs(write_dir, exist_ok=True)
 
     char_refs = _load_character_refs(character_ref_paths)
+    asset_refs = _load_refs(asset_ref_paths, "asset")
     # Cap references per panel so a crowd scene doesn't overload the request.
     MAX_REFS_PER_PANEL = 3
 
@@ -174,6 +243,7 @@ def run_storyboard(
             "shot_number": shot.get("shot_number", i + 1),
             "description": description,
             "characters": shot.get("characters", []) or [],
+            "assets": shot.get("assets", []) or [],
             "location": shot.get("location", "") or "",
             "camera": shot.get("camera", "") or "",
             "url": None,
@@ -185,14 +255,9 @@ def run_storyboard(
             f"Drawing panel {i + 1} of {total}…",
         )
 
-        # Gather reference images for the characters in THIS shot.
-        shot_refs = []
-        for name in panel["characters"]:
-            ref = char_refs.get(str(name).strip().lower())
-            if ref is not None and ref not in shot_refs:
-                shot_refs.append(ref)
-            if len(shot_refs) >= MAX_REFS_PER_PANEL:
-                break
+        # Gather reference images for the characters + assets in THIS shot.
+        shot_char_refs = _gather_refs(panel["characters"], char_refs, MAX_REFS_PER_PANEL)
+        shot_asset_refs = _gather_refs(panel["assets"], asset_refs, MAX_REFS_PER_PANEL)
 
         image = None
         if description:
@@ -203,16 +268,18 @@ def run_storyboard(
                 characters=panel["characters"],
                 location=panel["location"],
                 camera=panel["camera"],
-                reference_images=shot_refs or None,
+                reference_images=shot_char_refs or None,
+                asset_reference_images=shot_asset_refs or None,
+                composition_reference_image=_load_composition_ref(composition_ref_dir, i),
                 provider=provider,
             )
 
         if image is not None:
             image = _crop_to_aspect(image, aspect_ratio)
-            path = os.path.join(board_dir, f"panel_{i:02d}.png")
+            path = os.path.join(write_dir, f"panel_{i:02d}.png")
             image.save(path, "PNG")
-            panel["url"] = f"/storyboards/{job_id}/panel/{i}"
-            logger.info("[storyboard %s] panel %d/%d done", job_id, i + 1, total)
+            panel["url"] = _panel_url(job_id, i, variant)
+            logger.info("[storyboard %s] panel %d/%d done (variant %d)", job_id, i + 1, total, variant)
         else:
             panel["failed"] = True
             logger.warning("[storyboard %s] panel %d/%d FAILED (no image)", job_id, i + 1, total)
@@ -228,5 +295,6 @@ def run_storyboard(
         "aspect_ratio": aspect_ratio,
         "count": total,
         "ok_count": ok,
+        "variant": variant,
         "panels": panels,
     }

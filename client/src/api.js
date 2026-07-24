@@ -103,8 +103,17 @@ export function breakdownScript(script, { style, aspectRatio, genre, provider } 
 }
 
 // Stage D: generate panels from the reviewed shots. Returns a job (poll getJob).
-// `characterRefs` is an optional { name: reference_id } map for consistency.
-export function createStoryboard({ shots, style, aspectRatio, title, characterRefs, provider } = {}) {
+// `characterRefs` / `assetRefs` are optional { name: reference_id } maps that
+// lock character faces / props+backgrounds so they stay consistent across panels.
+export function createStoryboard({
+  shots,
+  style,
+  aspectRatio,
+  title,
+  characterRefs,
+  assetRefs,
+  provider,
+} = {}) {
   return request("/storyboards", {
     method: "POST",
     body: {
@@ -113,27 +122,50 @@ export function createStoryboard({ shots, style, aspectRatio, title, characterRe
       aspect_ratio: aspectRatio,
       title,
       character_refs: characterRefs || {},
+      asset_refs: assetRefs || {},
       provider,
     },
   });
 }
 
 // Fetch one generated panel as an object URL (endpoint requires the bearer token,
-// so we can't point an <img src> straight at it).
-export async function fetchStoryboardPanel(jobId, index) {
+// so we can't point an <img src> straight at it). `path` is the panel's own URL
+// (which carries the ?v=<variant> query when the board has style variants).
+export async function fetchStoryboardPanel(jobId, index, path) {
   const token = getToken();
-  const res = await fetch(`${BASE}/storyboards/${jobId}/panel/${index}`, {
+  let rel = path || `/storyboards/${jobId}/panel/${index}`;
+  // Cache-bust so a regenerated panel (same URL, new pixels) isn't served stale.
+  rel += `${rel.includes("?") ? "&" : "?"}_=${Date.now()}`;
+  const res = await fetch(`${BASE}${rel}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error(`Panel ${index} not ready`);
   return URL.createObjectURL(await res.blob());
 }
 
-// Re-draw one panel (Retry / regenerate). Returns { panel }.
-export function regenerateStoryboardPanel(jobId, index) {
-  return request(`/storyboards/${jobId}/regenerate-panel`, {
+// Re-draw the whole board in a new style (kept as a new variant). Returns a job.
+export function restyleStoryboard(jobId, style) {
+  return request(`/storyboards/${jobId}/restyle`, {
+    method: "POST",
+    body: { style },
+  });
+}
+
+// Switch which style variant is shown/exported (no regeneration).
+export function setActiveVariant(jobId, index) {
+  return request(`/storyboards/${jobId}/active-variant`, {
     method: "POST",
     body: { index },
+  });
+}
+
+// Re-draw one panel (Retry / regenerate). Returns { panel }.
+// `overrides` may carry an edited { description, camera, location } to re-draw
+// the shot with new wording.
+export function regenerateStoryboardPanel(jobId, index, overrides = {}) {
+  return request(`/storyboards/${jobId}/regenerate-panel`, {
+    method: "POST",
+    body: { index, ...overrides },
   });
 }
 
@@ -167,6 +199,37 @@ export async function downloadStoryboardPdf(jobId, filename) {
   URL.revokeObjectURL(url);
 }
 
+// Download a reusable ZIP of generated references (characters + props/backgrounds)
+// plus the storyboard PDF (authed blob → browser download).
+export async function downloadStoryboardBundle(jobId, filename) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetch(`${BASE}/storyboards/${jobId}/bundle`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "storyboard_assets.zip";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // --- Metadata ---
 export function listTemplates() {
   return request("/templates");
@@ -180,6 +243,13 @@ export function generateReference(prompt, provider) {
   const body = { prompt };
   if (provider) body.provider = provider;
   return request("/characters/reference", { method: "POST", body });
+}
+// Generate a prop / background reference image (Stage B2 asset consistency).
+// `category` is "prop" or "background". Returns { reference_id, image_url }.
+export function generateAssetReference(prompt, category = "prop", provider) {
+  const body = { prompt, category };
+  if (provider) body.provider = provider;
+  return request("/assets/reference", { method: "POST", body });
 }
 // Upload your own image as a character reference. Returns { reference_id, ... }.
 export function uploadReference(file) {

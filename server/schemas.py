@@ -126,6 +126,24 @@ class ReferenceResponse(BaseModel):
     message: str = "Reference image generated successfully."
 
 
+class AssetReferenceRequest(BaseModel):
+    """Body for POST /assets/reference — generate a prop/background reference."""
+
+    prompt: str = Field(
+        ...,
+        description="Free-form asset description, e.g. 'a worn brown leather slipper'.",
+        min_length=3,
+    )
+    category: str = Field(
+        "prop",
+        description="'prop' (a specific object) or 'background' (a location/set).",
+    )
+    provider: str | None = Field(
+        None,
+        description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
+    )
+
+
 class RegeneratePartRequest(BaseModel):
     """Body for POST /jobs/{job_id}/regenerate-part."""
 
@@ -179,6 +197,8 @@ class Shot(BaseModel):
     shot_number: int = 1
     description: str
     characters: list[str] = Field(default_factory=list)
+    # Names of props / backgrounds visible in this shot (match Asset.name).
+    assets: list[str] = Field(default_factory=list)
     location: str = ""
     camera: str = ""
 
@@ -190,11 +210,21 @@ class Character(BaseModel):
     description: str = ""
 
 
+class Asset(BaseModel):
+    """A locked prop or background/location for cross-panel consistency."""
+
+    name: str
+    # "prop" (a specific object) or "background" (a location/set).
+    category: str = "prop"
+    description: str = ""
+
+
 class ScriptBreakdownResponse(BaseModel):
     """Returned from POST /storyboards/breakdown."""
 
     shots: list[Shot]
     characters: list[Character] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
     count: int
     style: str | None = None
     aspect_ratio: str | None = None
@@ -211,6 +241,10 @@ class StoryboardCreateRequest(BaseModel):
     # POST /characters/reference). Those refs are fed into every panel the
     # character appears in, so they stay visually consistent.
     character_refs: dict[str, str] = Field(default_factory=dict)
+    # Asset consistency (Stage B2): map asset name → reference_id (from
+    # POST /assets/reference). Those prop/background refs are fed into every panel
+    # the asset appears in, so props and locations stay visually consistent.
+    asset_refs: dict[str, str] = Field(default_factory=dict)
     provider: str | None = Field(
         None,
         description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
@@ -218,8 +252,27 @@ class StoryboardCreateRequest(BaseModel):
 
 
 class PanelRegenerateRequest(BaseModel):
-    """Body for POST /storyboards/{job_id}/regenerate-panel — redo one panel."""
+    """Body for POST /storyboards/{job_id}/regenerate-panel — redo one panel.
+
+    The optional overrides let the user edit a shot's prompt on the board and
+    re-draw it with the new wording (persisted onto the panel).
+    """
 
     index: int = Field(..., ge=0, description="Panel index to regenerate.")
+    description: str | None = Field(None, description="Edited shot description (overrides the stored one).")
+    camera: str | None = Field(None, description="Edited camera/angle.")
+    location: str | None = Field(None, description="Edited location.")
+
+
+class RestyleRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/restyle — re-draw the board in a new style."""
+
+    style: str = Field(..., min_length=1, description="New visual style id (or freeform 'custom' text).")
+
+
+class ActiveVariantRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/active-variant — switch which style shows."""
+
+    index: int = Field(..., ge=0, description="Variant index to make active.")
 
 

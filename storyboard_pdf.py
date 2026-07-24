@@ -76,6 +76,7 @@ def build_storyboard_pdf(
     output_dir: str,
     title: str,
     panels: list[dict],
+    subdir: str = "",
 ) -> str:
     """Render the storyboard panels into a PDF and return its path.
 
@@ -84,6 +85,7 @@ def build_storyboard_pdf(
         output_dir: base output directory.
         title: storyboard title shown on page 1.
         panels: list of panel dicts {index, description, camera, location, failed}.
+        subdir: style-variant subfolder holding the PNGs (""=board root / variant 0).
 
     Returns:
         Absolute path to the written PDF.
@@ -92,11 +94,12 @@ def build_storyboard_pdf(
         ValueError if there are no drawable panels.
     """
     board_dir = os.path.join(output_dir, "_storyboards", job_id)
+    src_dir = os.path.join(board_dir, subdir) if subdir else board_dir
 
     drawable = [
         p for p in panels
         if not p.get("failed")
-        and os.path.isfile(os.path.join(board_dir, f"panel_{p['index']:02d}.png"))
+        and os.path.isfile(os.path.join(src_dir, f"panel_{p['index']:02d}.png"))
     ]
     if not drawable:
         raise ValueError("No generated panels to export yet.")
@@ -133,7 +136,7 @@ def build_storyboard_pdf(
 
             # Image frame
             draw.rectangle([x, y, x + cell_w, y + img_box_h], fill=CELL_BG, outline=LINE)
-            panel_path = os.path.join(board_dir, f"panel_{p['index']:02d}.png")
+            panel_path = os.path.join(src_dir, f"panel_{p['index']:02d}.png")
             try:
                 img = Image.open(panel_path).convert("RGB")
                 fitted = _fit(img, cell_w - 4, img_box_h - 4)

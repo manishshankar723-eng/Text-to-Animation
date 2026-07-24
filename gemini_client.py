@@ -229,6 +229,23 @@ _REFERENCE_PROMPT_TEMPLATE = (
 )
 
 
+# Asset references (Stage B2) — a clean, reusable image of a prop or a
+# background/location that gets fed into every panel the asset appears in, so
+# the object / set stays consistent across the storyboard.
+_ASSET_PROP_PROMPT_TEMPLATE = (
+    "Generate a single clean product-style reference image of ONE object on a "
+    "pure white background: {description}. Centered, front view, full object "
+    "visible, even studio lighting, no shadows on the background, no text, no "
+    "extra objects, no people. This is a design reference sheet for the object."
+)
+_ASSET_BACKGROUND_PROMPT_TEMPLATE = (
+    "Generate a single clean establishing background/location reference image "
+    "(no people, no characters): {description}. Wide empty set with clear, "
+    "consistent layout, lighting and colour palette an artist could match in "
+    "later panels. No text, no watermark, no on-screen labels."
+)
+
+
 class ReferenceGenerationError(Exception):
     """Raised when a character reference image cannot be generated.
 
@@ -282,11 +299,25 @@ def _is_valid_reference(image: Image.Image) -> bool:
 
 # Per-style art direction appended to every panel prompt.
 _STORYBOARD_STYLE_PROMPTS = {
+    # Current UI style ids (match client STYLES / MORE_STYLES).
+    "comic": "bold colourful comic-book panel, strong ink outlines, dramatic cel shading",
+    "cinematic": "photorealistic cinematic film still, natural lighting, shallow depth of field, filmic colour grade",
+    "soft-pencil": "soft graphite pencil storyboard sketch, light hand-drawn shading, clean paper texture",
+    "animation-3d": "polished Pixar-style 3D animated render, soft global illumination, expressive characters",
+    "watercolor": "soft watercolour painting, gentle washes of colour, visible paper texture, loose edges",
+    "photo-commercial": "clean commercial photography look, bright even lighting, crisp product-style framing",
+    "charcoal": "expressive black-and-white charcoal drawing, rich smudged shadows, bold strokes",
+    "dark-anime": "moody dark anime style, cinematic anime lighting, detailed line art, high contrast",
+    "flat-vector": "flat vector illustration, clean geometric shapes, bold solid colours, minimal shading",
+    "noir": "high-contrast black-and-white film-noir look, deep shadows, dramatic low-key lighting",
+    "stick-figure": "simple black-and-white stick-figure storyboard, minimal line drawing on a white background",
+    "graphic-novel": "gritty graphic-novel panel, inked linework, muted cinematic colour palette",
+    "custom": "clean illustrated storyboard panel",
+    # Back-compat aliases for older style ids.
     "sketch": "black-and-white rough pencil storyboard sketch, loose gestural lines, minimal shading",
     "comics": "bold colourful comic-book panel, strong ink outlines, dramatic cel shading",
     "realistic": "photorealistic cinematic film still, natural lighting, shallow depth of field",
     "3d-animation": "polished Pixar-style 3D animated render, soft global illumination",
-    "custom": "clean illustrated storyboard panel",
 }
 
 # Aspect-ratio phrasing (the image is also post-cropped to the exact ratio).
@@ -307,21 +338,31 @@ def generate_storyboard_panel(
     location: str = "",
     camera: str = "",
     reference_images: list[Image.Image] | None = None,
+    asset_reference_images: list[Image.Image] | None = None,
+    composition_reference_image: "Image.Image | None" = None,
     provider: str | None = None,
 ) -> Image.Image | None:
     """Generate ONE storyboard panel image from a shot description.
 
     Uses the IMAGE backend (IMAGE_PROVIDER / `provider` arg) — panels are images.
     Style + aspect + camera + location are woven into the prompt. Optional
-    `reference_images` (character references) are passed alongside so the depicted
-    characters stay visually consistent across panels (Stage B). Returns a PIL
-    image, or None if the model returned nothing (e.g. safety filter).
+    `reference_images` (character references) and `asset_reference_images`
+    (prop / background references) are passed alongside so the depicted
+    characters, key props and backgrounds stay visually consistent across panels
+    (Stage B). `composition_reference_image` is the existing render of THIS shot —
+    used when re-styling a board so the new panel keeps the same staging and only
+    the art style changes. Returns a PIL image, or None if the model returned
+    nothing (e.g. safety filter).
     """
     provider = _resolve_provider(provider)
     client = get_client(provider)
     model_id = _model_id(provider)
 
-    style_txt = _STORYBOARD_STYLE_PROMPTS.get(style, _STORYBOARD_STYLE_PROMPTS["custom"])
+    # Known style id → its art direction. An unknown, non-empty value is treated
+    # as the user's own freeform style text ("Add Your Own Style").
+    style_txt = _STORYBOARD_STYLE_PROMPTS.get(style)
+    if not style_txt:
+        style_txt = (style or "").strip() or _STORYBOARD_STYLE_PROMPTS["custom"]
     aspect_txt = _STORYBOARD_ASPECT_HINTS.get(aspect_ratio, "wide 16:9 cinematic framing")
 
     parts = [f"A single storyboard panel: {style_txt}.", f"{aspect_txt}."]
@@ -333,9 +374,23 @@ def generate_storyboard_panel(
         parts.append("Characters present: " + ", ".join(characters) + ".")
     if reference_images:
         parts.append(
-            "Use the provided reference image(s) to keep each character's face, "
-            "hair, body and clothing consistent — redraw them in this panel's art "
-            "style and pose, do not copy the reference framing."
+            "Use the provided character reference image(s) to keep each "
+            "character's face, hair, body and clothing consistent — redraw them "
+            "in this panel's art style and pose, do not copy the reference framing."
+        )
+    if asset_reference_images:
+        parts.append(
+            "The remaining reference image(s) show key props / objects and the "
+            "background/location for this scene — keep their shape, colour and "
+            "design consistent with these references, redrawn in this panel's art "
+            "style and framing."
+        )
+    if composition_reference_image is not None:
+        parts.append(
+            "The LAST reference image is the existing version of THIS exact panel. "
+            "Keep its composition, camera angle, staging and the positions of "
+            "everything in frame the same — ONLY re-render it in the new art style "
+            "described above. Do not change the layout or what is happening."
         )
     parts.append(f"Scene: {description}")
     parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
@@ -346,14 +401,19 @@ def generate_storyboard_panel(
     )
     prompt = " ".join(parts)
 
-    # Prompt first, then any character reference images.
-    contents = [prompt, *(reference_images or [])]
+    # Prompt first, then character refs, prop/background refs, then (last) the
+    # existing panel as a composition reference for re-styling.
+    contents = [prompt, *(reference_images or []), *(asset_reference_images or [])]
+    if composition_reference_image is not None:
+        contents.append(composition_reference_image)
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
-                "[panel] Generating storyboard panel (provider=%s, model=%s, refs=%d, attempt %d/%d)…",
-                provider, model_id, len(reference_images or []), attempt, MAX_RETRIES,
+                "[panel] Generating storyboard panel (provider=%s, model=%s, char_refs=%d, asset_refs=%d, composition=%s, attempt %d/%d)…",
+                provider, model_id, len(reference_images or []),
+                len(asset_reference_images or []), composition_reference_image is not None,
+                attempt, MAX_RETRIES,
             )
             response = client.models.generate_content(
                 model=model_id,
@@ -501,5 +561,103 @@ def generate_character_reference(
                 continue
 
     logger.error("[reference] All attempts failed: %s", last_reason)
+    raise ReferenceGenerationError(last_reason)
+
+
+def generate_asset_reference(
+    description: str,
+    category: str = "prop",
+    provider: str | None = None,
+) -> Image.Image | None:
+    """Generate a reference image for a prop or a background/location.
+
+    Mirrors ``generate_character_reference`` but for the storyboard's non-character
+    assets (Stage B2). A ``prop`` renders as one clean object on white; a
+    ``background`` renders as an empty establishing plate. The returned image is
+    fed into every panel the asset appears in, so it stays consistent.
+
+    Args:
+        description: Free-form asset description, e.g.
+                     "a worn brown leather slipper" or "a cramped sunlit bedroom".
+        category: "prop" (default) or "background".
+        provider: "vertex" or "gemini". Defaults to IMAGE_PROVIDER env.
+
+    Returns:
+        PIL Image of the asset, or raises ReferenceGenerationError on failure.
+    """
+    provider = _resolve_provider(provider)
+    client = get_client(provider)
+    model_id = _model_id(provider)
+    cat = (category or "prop").strip().lower()
+    template = (
+        _ASSET_BACKGROUND_PROMPT_TEMPLATE
+        if cat == "background"
+        else _ASSET_PROP_PROMPT_TEMPLATE
+    )
+    prompt = template.format(description=description)
+
+    last_reason = "Unknown error generating the asset reference image."
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(
+                "[asset-ref] Generating %s reference (provider=%s, model=%s, attempt %d/%d)...",
+                cat, provider, model_id, attempt, MAX_RETRIES,
+            )
+
+            response = client.models.generate_content(
+                model=model_id,
+                contents=[prompt],
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+            )
+
+            if (
+                response.candidates
+                and response.candidates[0].content
+                and response.candidates[0].content.parts
+            ):
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        image = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
+                        if _is_valid_reference(image):
+                            logger.info(
+                                "[asset-ref] Got valid %s reference (%dx%d)",
+                                cat, image.width, image.height,
+                            )
+                            return image
+                        last_reason = (
+                            f"The model returned an unexpected image ({image.width}×"
+                            f"{image.height}px)."
+                        )
+                        logger.warning("[asset-ref] %s Retrying…", last_reason)
+                        continue
+
+            reason = _extract_block_reason(response)
+            last_reason = (
+                f"The provider blocked or returned no image ({reason}). Try rephrasing."
+                if reason
+                else "The model returned no image (safety filter likely). Try rephrasing."
+            )
+            logger.warning("[asset-ref] %s", last_reason)
+            # An empty/blocked response won't change on identical retry — stop early.
+            raise ReferenceGenerationError(last_reason)
+
+        except ReferenceGenerationError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            error_str = str(e)
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                last_reason = "Rate limited / quota exhausted on the image API (HTTP 429)."
+                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+                logger.warning("[asset-ref] %s Waiting %ds…", last_reason, backoff)
+                time.sleep(backoff)
+                continue
+            last_reason = f"Image API error: {error_str}"
+            logger.error("[asset-ref] Gemini call failed: %s", error_str)
+            if attempt < MAX_RETRIES:
+                time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+                continue
+
+    logger.error("[asset-ref] All attempts failed: %s", last_reason)
     raise ReferenceGenerationError(last_reason)
 

@@ -20,6 +20,7 @@ Run locally:
 import logging
 import os
 import uuid
+import zipfile
 
 import yaml
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
@@ -37,12 +38,15 @@ from .schemas import (
     JobCreatedResponse,
     JobKind,
     JobStatus,
+    AssetReferenceRequest,
     MeshyRequest,
     ReferenceRequest,
     ReferenceResponse,
     RegeneratePartRequest,
     RegenerateViewRequest,
     PanelRegenerateRequest,
+    RestyleRequest,
+    ActiveVariantRequest,
     ScriptBreakdownRequest,
     ScriptBreakdownResponse,
     StoryboardCreateRequest,
@@ -107,6 +111,55 @@ def _get_owned_job(job_id: str, current: CurrentUser) -> Job:
     if job is None or job.owner != current.email:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return job
+
+
+def _mark_ref_source(ref_dir: str, source: str) -> None:
+    """Record whether a reference image was 'generated' or 'uploaded'.
+
+    Written next to reference.png so the final ZIP bundle can include only the
+    AI-generated refs (the user already has their own uploaded images).
+    """
+    try:
+        with open(os.path.join(ref_dir, "source.txt"), "w", encoding="utf-8") as f:
+            f.write(source)
+    except OSError:
+        logger.debug("[reference] could not write source marker in %s", ref_dir, exc_info=True)
+
+
+def _ref_is_generated(ref_png_path: str) -> bool:
+    """True unless the reference was explicitly marked 'uploaded'.
+
+    (Missing marker → treated as generated, so pre-existing refs still bundle.)
+    """
+    marker = os.path.join(os.path.dirname(ref_png_path), "source.txt")
+    try:
+        with open(marker, encoding="utf-8") as f:
+            return f.read().strip() != "uploaded"
+    except OSError:
+        return True
+
+
+def _variants_of(result: dict) -> tuple[list[dict], int]:
+    """Return (variants, active_index) for a storyboard result.
+
+    Older results (pre-restyle) have no `variants` list — synthesise a single
+    variant 0 from the flat panels/style so every code path can treat boards
+    uniformly.
+    """
+    result = result or {}
+    variants = result.get("variants")
+    if not variants:
+        variants = [
+            {
+                "style": result.get("style"),
+                "panels": result.get("panels") or [],
+                "ok_count": result.get("ok_count", 0),
+            }
+        ]
+    active = int(result.get("active_variant", 0) or 0)
+    if active < 0 or active >= len(variants):
+        active = 0
+    return variants, active
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +257,60 @@ def generate_reference(
     os.makedirs(ref_dir, exist_ok=True)
     image_path = os.path.join(ref_dir, "reference.png")
     image.save(image_path, "PNG")
+    _mark_ref_source(ref_dir, "generated")
     logger.info("[reference %s] saved reference image: %s", reference_id, image_path)
+
+    return ReferenceResponse(
+        reference_id=reference_id,
+        image_url=f"/characters/reference/{reference_id}/image",
+    )
+
+
+@app.post("/assets/reference", response_model=ReferenceResponse)
+def generate_asset_reference_image(
+    body: AssetReferenceRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Generate a prop / background reference image (Stage B2 consistency).
+
+    Saved under the SAME _references/{id}/reference.png layout as character
+    references, so the returned reference_id plugs straight into POST /storyboards'
+    asset_refs and can be previewed via GET /characters/reference/{id}/image.
+    """
+    if body.provider is not None and body.provider not in _SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid provider '{body.provider}'. Use one of {list(_SUPPORTED_PROVIDERS)}.",
+        )
+
+    from gemini_client import generate_asset_reference, ReferenceGenerationError
+
+    try:
+        image = generate_asset_reference(
+            description=body.prompt,
+            category=body.category,
+            provider=body.provider,
+        )
+    except ReferenceGenerationError as e:
+        logger.warning("[asset-ref] generation failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"Asset reference generation failed: {e}")
+    except Exception as e:  # noqa: BLE001 — unexpected; still report clearly
+        logger.exception("[asset-ref] unexpected error")
+        raise HTTPException(status_code=502, detail=f"Asset reference generation error: {e}")
+
+    if image is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Asset reference generation returned no image. Try rephrasing your description.",
+        )
+
+    reference_id = uuid.uuid4().hex[:12]
+    ref_dir = os.path.join(config.UPLOAD_DIR, "_references", reference_id)
+    os.makedirs(ref_dir, exist_ok=True)
+    image_path = os.path.join(ref_dir, "reference.png")
+    image.save(image_path, "PNG")
+    _mark_ref_source(ref_dir, "generated")
+    logger.info("[asset-ref %s] saved %s reference image", reference_id, body.category)
 
     return ReferenceResponse(
         reference_id=reference_id,
@@ -249,6 +355,7 @@ async def upload_reference(
     except Exception as e:  # noqa: BLE001 — bad/corrupt upload
         raise HTTPException(status_code=400, detail=f"Couldn't read that image: {e}")
 
+    _mark_ref_source(ref_dir, "uploaded")
     logger.info("[reference %s] saved uploaded reference image", reference_id)
     return ReferenceResponse(
         reference_id=reference_id,
@@ -307,6 +414,7 @@ def breakdown_script(
     return ScriptBreakdownResponse(
         shots=shots,
         characters=result.get("characters", []),
+        assets=result.get("assets", []),
         count=len(shots),
         style=body.style,
         aspect_ratio=body.aspect_ratio,
@@ -333,19 +441,26 @@ def create_storyboard(
             detail=f"Invalid provider '{body.provider}'. Use one of {list(_SUPPORTED_PROVIDERS)}.",
         )
 
-    # Resolve character reference_ids → image paths (Stage B consistency).
-    # Silently skip any ref whose image file is missing.
-    character_ref_paths: dict[str, str] = {}
-    for name, ref_id in (body.character_refs or {}).items():
-        if not ref_id:
-            continue
-        ref_path = os.path.join(
-            config.UPLOAD_DIR, "_references", str(ref_id).strip(), "reference.png"
-        )
-        if os.path.isfile(ref_path):
-            character_ref_paths[name] = ref_path
+    # Resolve reference_ids → image paths (Stage B / B2 consistency). Both
+    # character and asset refs share the same _references/{id}/reference.png
+    # layout. Silently skip any ref whose image file is missing.
+    def _resolve_refs(ref_map: dict | None) -> dict[str, str]:
+        resolved: dict[str, str] = {}
+        for name, ref_id in (ref_map or {}).items():
+            if not ref_id:
+                continue
+            ref_path = os.path.join(
+                config.UPLOAD_DIR, "_references", str(ref_id).strip(), "reference.png"
+            )
+            if os.path.isfile(ref_path):
+                resolved[name] = ref_path
+        return resolved
+
+    character_ref_paths = _resolve_refs(body.character_refs)
+    asset_ref_paths = _resolve_refs(body.asset_refs)
 
     title = (body.title or "Storyboard").strip() or "Storyboard"
+    shot_dicts = [s.model_dump() for s in body.shots]
     job = get_store().create(
         character_name=title,
         kind=JobKind.STORYBOARD,
@@ -355,19 +470,25 @@ def create_storyboard(
             "count": len(body.shots),
             "provider": body.provider,
             "character_count": len(character_ref_paths),
+            "asset_count": len(asset_ref_paths),
             # Kept so a single panel can be regenerated later with the same refs.
             "character_ref_paths": character_ref_paths,
+            "asset_ref_paths": asset_ref_paths,
+            # Kept so a panel can always be re-drawn (even if it's missing from the
+            # streamed result) and so edited prompts have a source of truth.
+            "shots": shot_dicts,
         },
         owner=current.email,
     )
 
     kwargs = {
-        "shots": [s.model_dump() for s in body.shots],
+        "shots": shot_dicts,
         "style": body.style,
         "aspect_ratio": body.aspect_ratio,
         "output_dir": config.OUTPUT_DIR,
         "provider": body.provider,
         "character_ref_paths": character_ref_paths,
+        "asset_ref_paths": asset_ref_paths,
     }
     worker.submit_storyboard_job(job.job_id, kwargs)
 
@@ -384,11 +505,16 @@ def create_storyboard(
 def get_storyboard_panel(
     job_id: str,
     index: int,
+    v: int = 0,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Serve one generated storyboard panel PNG (owner-scoped)."""
+    """Serve one generated storyboard panel PNG (owner-scoped).
+
+    `v` selects the style variant (0 = board root; N = the vN/ subfolder).
+    """
     _get_owned_job(job_id, current)  # 404 if missing or not owned
-    path = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id, f"panel_{index:02d}.png")
+    subdir = "" if not v else f"v{v}"
+    path = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id, subdir, f"panel_{index:02d}.png")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
     return FileResponse(path, media_type="image/png")
@@ -400,37 +526,182 @@ def regenerate_storyboard_panel(
     body: PanelRegenerateRequest,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Re-draw ONE panel (the Retry button). Synchronous single image call."""
+    """Re-draw ONE panel (Retry / edit-and-regenerate). Synchronous single call.
+
+    Robust to a panel that isn't in the streamed result yet: it's located by its
+    `index` field and, failing that, rebuilt from the shots stored on the job.
+    Optional description/camera/location overrides let the user edit the prompt.
+    """
     job = _get_owned_job(job_id, current)
     if job.kind != JobKind.STORYBOARD:
         raise HTTPException(status_code=400, detail="Not a storyboard job.")
 
     result = job.result or {}
-    panels = result.get("panels") or []
-    if body.index < 0 or body.index >= len(panels):
-        raise HTTPException(status_code=404, detail=f"Panel {body.index} not found.")
+    # Regenerate within the ACTIVE style variant so its subfolder + style are used.
+    variants, active = _variants_of(result)
+    panels = list(variants[active].get("panels") or [])
+    variant_style = variants[active].get("style") or job.params.get("style", "custom")
+    shots = job.params.get("shots") or []
+    count = int(job.params.get("count") or len(shots) or len(panels))
+
+    # Find the panel by its index field; fall back to list position, then to the
+    # original shot list (so a not-yet-streamed panel can still be re-drawn).
+    panel = next((p for p in panels if p.get("index") == body.index), None)
+    if panel is None and 0 <= body.index < len(panels):
+        panel = panels[body.index]
+    if panel is None:
+        if 0 <= body.index < len(shots):
+            s = shots[body.index]
+            panel = {
+                "index": body.index,
+                "scene_number": s.get("scene_number", 1),
+                "shot_number": s.get("shot_number", body.index + 1),
+                "description": s.get("description", ""),
+                "characters": s.get("characters", []) or [],
+                "assets": s.get("assets", []) or [],
+                "location": s.get("location", "") or "",
+                "camera": s.get("camera", "") or "",
+                "url": None,
+                "failed": True,
+            }
+        else:
+            raise HTTPException(status_code=404, detail=f"Panel {body.index} not found.")
+
+    # Apply any edited prompt fields before re-drawing.
+    panel = dict(panel)
+    if body.description is not None:
+        panel["description"] = body.description
+    if body.camera is not None:
+        panel["camera"] = body.camera
+    if body.location is not None:
+        panel["location"] = body.location
 
     from storyboard_pipeline import regenerate_panel
 
     try:
         updated = regenerate_panel(
             job_id=job_id,
-            panel=panels[body.index],
-            style=job.params.get("style", "custom"),
+            panel=panel,
+            style=variant_style,
             aspect_ratio=job.params.get("aspect_ratio", "16:9"),
             output_dir=config.OUTPUT_DIR,
             character_ref_paths=job.params.get("character_ref_paths") or {},
+            asset_ref_paths=job.params.get("asset_ref_paths") or {},
+            variant=active,
             provider=job.params.get("provider"),
         )
     except Exception as e:  # noqa: BLE001 — report clearly
         logger.exception("[storyboard %s] panel %d regen failed", job_id, body.index)
         raise HTTPException(status_code=502, detail=f"Panel regeneration failed: {e}")
 
-    panels[body.index] = updated
-    result["panels"] = panels
-    result["ok_count"] = sum(1 for p in panels if not p.get("failed"))
+    # Write the panel back in place (or insert it, keeping index order).
+    replaced = False
+    for i, p in enumerate(panels):
+        if p.get("index") == body.index:
+            panels[i] = updated
+            replaced = True
+            break
+    if not replaced:
+        panels.append(updated)
+        panels.sort(key=lambda p: p.get("index", 0))
+
+    ok = sum(1 for p in panels if not p.get("failed"))
+    variants[active]["panels"] = panels
+    variants[active]["ok_count"] = ok
+    result["variants"] = variants
+    result["active_variant"] = active
+    result["panels"] = panels  # mirror the active variant
+    result["ok_count"] = ok
+    result.setdefault("count", count)
+    result.setdefault("style", variant_style)
+    result.setdefault("aspect_ratio", job.params.get("aspect_ratio"))
     get_store().update(job_id, result=result)
     return {"panel": updated}
+
+
+@app.post("/storyboards/{job_id}/restyle", response_model=JobCreatedResponse, status_code=202)
+def restyle_storyboard(
+    job_id: str,
+    body: RestyleRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Re-draw the whole board in a NEW visual style, kept as a new style variant.
+
+    Async (poll GET /jobs/{id}); the new variant streams in and becomes active,
+    while every existing variant is preserved so the user can switch back. Each
+    panel reuses the locked character/prop/background refs and its previous render
+    as a composition reference, so only the art style changes.
+    """
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This storyboard is still generating.")
+
+    shots = job.params.get("shots") or []
+    if not shots:
+        raise HTTPException(status_code=409, detail="No shots stored for this storyboard.")
+
+    result = job.result or {}
+    variants, active = _variants_of(result)
+    new_index = len(variants)
+
+    # Composition reference = the currently active variant's panel folder.
+    board_dir = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
+    composition_ref_dir = board_dir if not active else os.path.join(board_dir, f"v{active}")
+
+    # Persist the (possibly synthesised) variants baseline before the run.
+    result["variants"] = variants
+    result["active_variant"] = active
+    get_store().update(job_id, result=result)
+
+    kwargs = {
+        "shots": shots,
+        "style": body.style,
+        "aspect_ratio": job.params.get("aspect_ratio", "16:9"),
+        "output_dir": config.OUTPUT_DIR,
+        "provider": job.params.get("provider"),
+        "character_ref_paths": job.params.get("character_ref_paths") or {},
+        "asset_ref_paths": job.params.get("asset_ref_paths") or {},
+        "variant": new_index,
+        "composition_ref_dir": composition_ref_dir,
+        "existing_variants": variants,
+    }
+    worker.submit_restyle_job(job_id, kwargs)
+
+    return JobCreatedResponse(
+        job_id=job_id,
+        status=JobStatus.RUNNING,
+        kind=JobKind.STORYBOARD,
+        character_name=job.character_name,
+        message=f"Re-styling the board to '{body.style}'. Poll GET /jobs/{job_id}.",
+    )
+
+
+@app.post("/storyboards/{job_id}/active-variant")
+def set_active_variant(
+    job_id: str,
+    body: ActiveVariantRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Switch which style variant is shown/exported (no regeneration)."""
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+
+    result = job.result or {}
+    variants, _ = _variants_of(result)
+    if body.index < 0 or body.index >= len(variants):
+        raise HTTPException(status_code=404, detail=f"Variant {body.index} not found.")
+
+    v = variants[body.index]
+    result["variants"] = variants
+    result["active_variant"] = body.index
+    result["panels"] = v.get("panels") or []
+    result["style"] = v.get("style")
+    result["ok_count"] = v.get("ok_count", sum(1 for p in (v.get("panels") or []) if not p.get("failed")))
+    get_store().update(job_id, result=result)
+    return {"active_variant": body.index, "style": v.get("style")}
 
 
 @app.get("/storyboards/{job_id}/pdf")
@@ -443,7 +714,8 @@ def download_storyboard_pdf(
     if job.kind != JobKind.STORYBOARD:
         raise HTTPException(status_code=400, detail="Not a storyboard job.")
 
-    panels = (job.result or {}).get("panels") or []
+    variants, active = _variants_of(job.result or {})
+    panels = variants[active].get("panels") or []
     if not panels:
         raise HTTPException(status_code=409, detail="No panels generated yet.")
 
@@ -455,6 +727,7 @@ def download_storyboard_pdf(
             output_dir=config.OUTPUT_DIR,
             title=job.character_name,
             panels=panels,
+            subdir="" if not active else f"v{active}",
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -464,6 +737,76 @@ def download_storyboard_pdf(
 
     safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (job.character_name or "storyboard")).strip() or "storyboard"
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"{safe}.pdf")
+
+
+@app.get("/storyboards/{job_id}/bundle")
+def download_storyboard_bundle(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Download a reusable ZIP of the AI-GENERATED references + the storyboard PDF.
+
+    Contains the generated character refs (characters/), the generated prop &
+    background refs (assets/) and the board PDF — so the user can re-upload the
+    same references next time instead of regenerating them. UPLOADED references
+    are intentionally excluded (the user already has those images).
+    """
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+
+    def _safe(name: str) -> str:
+        cleaned = "".join(c if c.isalnum() or c in "-_ " else "_" for c in (name or "")).strip()
+        return cleaned or "item"
+
+    char_refs = job.params.get("character_ref_paths") or {}
+    asset_refs = job.params.get("asset_ref_paths") or {}
+    variants, active = _variants_of(job.result or {})
+    panels = variants[active].get("panels") or []
+    pdf_subdir = "" if not active else f"v{active}"
+
+    board_dir = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
+    os.makedirs(board_dir, exist_ok=True)
+    zip_path = os.path.join(board_dir, "bundle.zip")
+
+    added = 0
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, path in char_refs.items():
+            if os.path.isfile(path) and _ref_is_generated(path):
+                zf.write(path, f"characters/{_safe(name)}.png")
+                added += 1
+        for name, path in asset_refs.items():
+            if os.path.isfile(path) and _ref_is_generated(path):
+                zf.write(path, f"assets/{_safe(name)}.png")
+                added += 1
+
+        # Include the storyboard PDF when at least one panel exists.
+        if panels:
+            try:
+                from storyboard_pdf import build_storyboard_pdf
+
+                pdf_path = build_storyboard_pdf(
+                    job_id=job_id,
+                    output_dir=config.OUTPUT_DIR,
+                    title=job.character_name,
+                    panels=panels,
+                    subdir=pdf_subdir,
+                )
+                zf.write(pdf_path, f"{_safe(job.character_name or 'storyboard')}.pdf")
+            except Exception:  # noqa: BLE001 — PDF is best-effort inside the bundle
+                logger.exception("[storyboard %s] bundle PDF build failed", job_id)
+
+    if added == 0 and not panels:
+        raise HTTPException(
+            status_code=409,
+            detail="Nothing to bundle yet — generate references or panels first.",
+        )
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{_safe(job.character_name or 'storyboard')}_assets.zip",
+    )
 
 
 # ---------------------------------------------------------------------------

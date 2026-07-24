@@ -5,8 +5,10 @@
 // the character appears in, so they stay consistent. Generating refs is optional.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+import ImageLightbox from "./ImageLightbox.jsx";
 
 export default function StoryboardCast({ characters, onBack, onGenerate, busy }) {
+  const [lightbox, setLightbox] = useState(null);
   const [cast, setCast] = useState(() =>
     (characters || []).map((c) => ({
       name: c.name,
@@ -99,7 +101,11 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
         <div className="cast-grid">
           {cast.map((ch, i) => (
             <div className="card cast-card" key={i}>
-              <div className="cast-portrait">
+              <div
+                className={`cast-portrait ${ch.previewUrl ? "clickable" : ""}`}
+                onClick={() => ch.previewUrl && setLightbox(ch.previewUrl)}
+                title={ch.previewUrl ? "Click to enlarge" : undefined}
+              >
                 {ch.previewUrl ? (
                   <img src={ch.previewUrl} alt={ch.name} />
                 ) : ch.busy ? (
@@ -182,6 +188,8 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
           )}
         </button>
       </div>
+
+      <ImageLightbox src={lightbox} alt="Character reference" onClose={() => setLightbox(null)} />
     </div>
   );
 }
