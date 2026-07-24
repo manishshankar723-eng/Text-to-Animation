@@ -110,6 +110,7 @@ export function createStoryboard({
   style,
   aspectRatio,
   title,
+  genre,
   characterRefs,
   assetRefs,
   provider,
@@ -121,11 +122,59 @@ export function createStoryboard({
       style,
       aspect_ratio: aspectRatio,
       title,
+      genre,
       character_refs: characterRefs || {},
       asset_refs: assetRefs || {},
       provider,
     },
   });
+}
+
+// --- Storyboard library ("Your Storyboards") ---
+// A saved project IS a storyboard job, so these all read/write the same records
+// the board itself uses — nothing can drift out of sync.
+
+// Every storyboard this user has generated, newest first.
+export function listStoryboards() {
+  return request("/storyboards");
+}
+
+// A saved board's shots + settings, for re-opening it as a new storyboard.
+export function getStoryboardProject(jobId) {
+  return request(`/storyboards/${jobId}/project`);
+}
+
+export function renameStoryboard(jobId, title) {
+  return request(`/storyboards/${jobId}`, { method: "PATCH", body: { title } });
+}
+
+// Deletes the record AND the generated panel files — not undoable.
+export function deleteStoryboard(jobId) {
+  return request(`/storyboards/${jobId}`, { method: "DELETE" });
+}
+
+// Turn the public link on / off. Returns { shared, share_token }.
+export function shareStoryboard(jobId) {
+  return request(`/storyboards/${jobId}/share`, { method: "POST" });
+}
+export function unshareStoryboard(jobId) {
+  return request(`/storyboards/${jobId}/share`, { method: "DELETE" });
+}
+
+// The link handed out for a shared board. Opening the app with ?s=<token>
+// renders the read-only public viewer instead of the login screen.
+export function shareUrl(token) {
+  return `${window.location.origin}${window.location.pathname}?s=${token}`;
+}
+
+// --- Public (shared) board — these are the only calls that work logged OUT ---
+export function getPublicStoryboard(token) {
+  return request(`/public/storyboards/${token}`);
+}
+
+// Public panels need no auth, so an <img src> can point straight at them.
+export function publicPanelUrl(token, index) {
+  return `${BASE}/public/storyboards/${token}/panel/${index}`;
 }
 
 // Fetch one generated panel as an object URL (endpoint requires the bearer token,

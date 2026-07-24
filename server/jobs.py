@@ -51,6 +51,14 @@ class JobStore:
     def list(self, limit: int = 50, owner: str | None = None) -> list[Job]:
         raise NotImplementedError
 
+    def delete(self, job_id: str) -> bool:
+        """Remove a job record. Returns True if something was deleted."""
+        raise NotImplementedError
+
+    def find_by_share_token(self, token: str) -> Job | None:
+        """Look up a job by the share token stored in params (public links)."""
+        raise NotImplementedError
+
     # --- Convenience helpers shared by all backends ------------------------
     def mark_running(self, job_id: str) -> Job | None:
         return self.update(job_id, status=JobStatus.RUNNING)
@@ -109,6 +117,20 @@ class MemoryJobStore(JobStore):
             jobs = [j for j in jobs if j.owner == owner]
         jobs.sort(key=lambda j: j.created_at, reverse=True)
         return jobs[:limit]
+
+    def delete(self, job_id):
+        with self._lock:
+            return self._jobs.pop(job_id, None) is not None
+
+    def find_by_share_token(self, token):
+        if not token:
+            return None
+        with self._lock:
+            jobs = list(self._jobs.values())
+        for job in jobs:
+            if (job.params or {}).get("share_token") == token:
+                return job
+        return None
 
 
 class FirestoreJobStore(JobStore):
@@ -169,6 +191,19 @@ class FirestoreJobStore(JobStore):
             "created_at", direction=firestore.Query.DESCENDING
         ).limit(limit)
         return [Job(**snap.to_dict()) for snap in query.stream()]
+
+    def delete(self, job_id):
+        doc = self._doc(job_id)
+        if not doc.get().exists:
+            return False
+        doc.delete()
+        return True
+
+    def find_by_share_token(self, token):
+        if not token:
+            return None
+        snaps = list(self._col.where("params.share_token", "==", token).limit(1).stream())
+        return Job(**snaps[0].to_dict()) if snaps else None
 
 
 # ---------------------------------------------------------------------------

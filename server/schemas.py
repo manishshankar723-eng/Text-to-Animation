@@ -237,6 +237,8 @@ class StoryboardCreateRequest(BaseModel):
     style: str = Field("custom", description="Visual style id, e.g. 'sketch', 'comics'.")
     aspect_ratio: str = Field("16:9", description="Panel aspect ratio, e.g. '16:9'.")
     title: str | None = Field(None, description="Optional storyboard title.")
+    # Stored (not used for drawing) so the library can label a saved board.
+    genre: str | None = Field(None, description="Genre chosen on the form, for the library card.")
     # Character consistency (Stage B): map character name → reference_id (from
     # POST /characters/reference). Those refs are fed into every panel the
     # character appears in, so they stay visually consistent.
@@ -274,5 +276,79 @@ class ActiveVariantRequest(BaseModel):
     """Body for POST /storyboards/{job_id}/active-variant — switch which style shows."""
 
     index: int = Field(..., ge=0, description="Variant index to make active.")
+
+
+# ---------------------------------------------------------------------------
+# Storyboard library ("Your Storyboards")
+# ---------------------------------------------------------------------------
+class StoryboardSummary(BaseModel):
+    """One saved storyboard project, as shown on the library grid.
+
+    Deliberately lean — the library renders dozens of these, so it must not drag
+    the whole panel list / shot list of every board across the wire.
+    """
+
+    job_id: str
+    title: str
+    status: JobStatus
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    panel_count: int = 0
+    # First successfully drawn panel of the ACTIVE style variant — the cover.
+    # Both are None when nothing is drawn yet (the card shows a placeholder).
+    cover_index: int | None = None
+    # Serve path for that panel, carrying its ?v=<variant> so a restyled board
+    # shows the style the owner last picked.
+    cover_url: str | None = None
+    shared: bool = False
+    share_token: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class StoryboardProject(BaseModel):
+    """A saved storyboard's reusable inputs — powers 'Duplicate'.
+
+    Returns what the workflow needs to re-open the board's shot list on the
+    review step, without re-running the (paid) script breakdown.
+    """
+
+    job_id: str
+    title: str
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    shots: list[Shot] = Field(default_factory=list)
+
+
+class StoryboardRenameRequest(BaseModel):
+    """Body for PATCH /storyboards/{job_id} — rename a saved storyboard."""
+
+    title: str = Field(..., min_length=1, max_length=120)
+
+
+class ShareResponse(BaseModel):
+    """Returned by the share endpoints — the token for a public view link."""
+
+    shared: bool
+    share_token: str | None = None
+
+
+class PublicStoryboard(BaseModel):
+    """A shared storyboard as seen by someone who is NOT logged in.
+
+    Carries only what the read-only viewer renders — no owner email, no shot
+    prompts, no reference paths.
+    """
+
+    title: str
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    panel_count: int = 0
+    # Panel indexes that actually have an image (the viewer requests only these).
+    panel_indexes: list[int] = Field(default_factory=list)
+    created_at: str
 
 

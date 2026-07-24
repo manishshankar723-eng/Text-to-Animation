@@ -11,7 +11,15 @@ export const WORKFLOWS = [
   { id: "final-video-export", label: "Final Video Export", icon: "🎥", status: "soon" },
 ];
 
-export default function Sidebar({ active, onNavigate, email, onUpgrade, onProfileClick }) {
+export default function Sidebar({
+  active,
+  onNavigate,
+  email,
+  theme,
+  onToggleTheme,
+  onUpgrade,
+  onProfileClick,
+}) {
   const initial = (email || "?").trim().charAt(0).toUpperCase();
   const workspace = (email || "My workspace").split("@")[0];
 
@@ -48,8 +56,24 @@ export default function Sidebar({ active, onNavigate, email, onUpgrade, onProfil
         ))}
       </nav>
 
-      {/* Profile chip + Upgrade CTA */}
+      {/* Theme switch + profile chip + Upgrade CTA */}
       <div className="sb-footer">
+        {/* Sits above the account button so it's reachable from every screen.
+            Flipping it re-skins the whole app (see theme.js). */}
+        <button
+          type="button"
+          className="sb-theme"
+          onClick={onToggleTheme}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          <span className="sb-ico">{theme === "dark" ? "☀️" : "🌙"}</span>
+          <span className="sb-theme-label">
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </span>
+          <span className={`sb-theme-switch ${theme === "light" ? "on" : ""}`} />
+        </button>
+
         <button
           className="sb-workspace"
           onClick={onProfileClick}

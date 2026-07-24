@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-24 (Board: change visual style → switchable style variants)
+**Last updated:** 2026-07-24 (light/dark mode toggle; Stage G storyboard library)
 
 ---
 
@@ -101,6 +101,8 @@ Pipeline stages (see `pipeline.py`):
 - `GET/PUT /auth/me/api-keys` · `DELETE /auth/me/api-keys/{provider}` — saved 3D keys (plaintext)
 - `POST /storyboards/breakdown` — Script→Storyboard Stage A: script → shot list (auth'd, sync; `TEXT_PROVIDER` backend)
 - `POST /storyboards` — Stage D: generate panels from reviewed shots (async job; poll `GET /jobs/{id}`) · `GET /storyboards/{id}/panel/{index}` — serve a panel PNG · `GET /storyboards/{id}/pdf` — Stage F: export the board as PDF
+- **Library (Stage G):** `GET /storyboards` — the caller's saved boards (lean summaries: title, genre, aspect, cover) · `GET /storyboards/{id}/project` — saved shots+settings for Duplicate · `PATCH /storyboards/{id}` — rename · `DELETE /storyboards/{id}` — delete record + panel files
+- **Share links:** `POST/DELETE /storyboards/{id}/share` — mint / revoke a public token · `GET /public/storyboards/{token}` · `GET /public/storyboards/{token}/panel/{index}` — **the only unauthenticated routes**; token-gated, serve drawn panels only
 - `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
 - `GET /characters/reference/{id}/image` — serve generated reference for preview
 - `POST /characters` — upload image (or `reference_id`) + options → `job_id` (async)
@@ -215,6 +217,337 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-24 — Stage G: "Your Storyboards" project library (save / reopen / share)
+
+- **Asked for:** a saved-project library like the reference mock — a New Storyboard
+  tile plus cards for past boards, so a returning user lands on their old work.
+  Agreed with the user: **finished boards only** (no draft-resume), card actions =
+  delete + rename + duplicate + share link, and the title comes from a new field
+  on the form.
+- **Key decision — a saved project IS a storyboard job.** Storyboard jobs were
+  already persisted per-owner with their shots, style and panels, so the library
+  is a *view* over `GET /storyboards` rather than a second store that could drift.
+  No migration, and old boards show up in the library for free.
+- **Backend**
+  - `jobs.py`: `JobStore.delete()` and `find_by_share_token()` on both the memory
+    and Firestore backends (Firestore uses a `params.share_token` field query).
+  - `schemas.py`: `StoryboardSummary` (lean — the grid must not drag every board's
+    panel+shot list over the wire), `StoryboardProject` (Duplicate),
+    `StoryboardRenameRequest`, `ShareResponse`, `PublicStoryboard`. `genre` added
+    to `StoryboardCreateRequest` and stored in params purely to label the card.
+  - `main.py`: the endpoints listed in the API section above. `_drawn_panels()`
+    reads the **active style variant**, so a restyled board's cover and shared
+    view show the style the owner last picked, not variant 0.
+  - **Share links:** token = `uuid4().hex` (32 hex chars) stored in params; it is
+    the credential, so the public routes expose ONLY title/style/aspect/genre and
+    the drawn panel indexes — never shots, refs or the owner email. Panel requests
+    are validated against that index list so a token can't probe for other files.
+    Revoke deletes the token and the old link 404s immediately. Sharing is
+    idempotent (re-clicking returns the same token, not a new one).
+  - Delete removes the record **and** `output/_storyboards/{id}/`; a running board
+    returns 409 so the worker isn't yanked out from under itself.
+- **Client**
+  - `StoryboardLibrary.jsx` — the grid. Covers are owner-scoped so each is fetched
+    as an authed blob (revoked on unmount). Polls every 5s **only while a board is
+    still generating**, so a board made this session fills in its cover instead of
+    saying "Generating…" until a reload. Delete is a two-step inline confirm.
+  - `ScriptToStoryboard.jsx` — new `"library"` step, and it's now the **entry
+    point** (`useState("library")`). Added a `title` field to the form
+    (`effectiveTitle()` falls back to the script's first line, then the filename,
+    so a board is never just called "Storyboard"). `applySavedSettings()` restores
+    a saved board's style/aspect/genre chips, mapping unknown values back into the
+    "custom" text fields. `boardOrigin` makes the board's ← Back return to the
+    library for a re-opened board (whose shots aren't loaded) and to the review
+    step for a freshly generated one. Duplicate reuses the stored shots, so it
+    **skips the paid breakdown call**.
+  - `PublicStoryboard.jsx` + `App.jsx` — a shared link is `?s=<token>`, read once
+    at boot (the app has no router) and rendered before the auth check, since this
+    is the one screen that must work logged out. The token is never persisted.
+  - `styles.css`: `.lib-*` grid/cards and `.public-*` viewer, in the existing
+    dark+gold language rather than the light mock's look.
+- **Verified:** a scripted TestClient pass over the whole surface — list (excludes
+  other users' boards and non-storyboard jobs), cover skips a failed panel and
+  honours the active variant, project/rename/duplicate, share idempotency, public
+  view **without an auth header**, failed panels not served publicly, revoke kills
+  the token, cross-user access is 404 (not 403), running-board delete is 409, and
+  delete empties the library. `npm run build` clean (48 modules).
+  NOT clicked through in a browser, and not tested against Firestore — the
+  `find_by_share_token` field query only ran against the memory store.
+- **Caveat worth knowing:** with `API_JOB_STORE=memory` (the local dev fallback)
+  the library empties on every backend restart. Persistent saving needs Firestore.
+
+### 2026-07-24 — Cast/props references now SURVIVE stepping Back (user-reported bug)
+
+- **Bug (reported by the user):** upload a character image on "Set up your cast" →
+  press ← Back → "Review your shots" → forward again to the cast page, and the
+  uploaded picture is gone. Same for generated refs, for edited descriptions, and
+  for the props/backgrounds page.
+- **Root cause:** `StoryboardCast` / `StoryboardAssets` owned everything in local
+  `useState` seeded once by a `useState(() => …)` initializer. `ScriptToStoryboard`
+  swaps steps by returning a different component, so stepping away **unmounts**
+  them and throws the state out. Worse, each had an unmount cleanup that called
+  `URL.revokeObjectURL` on its blob previews — so even a retained URL would have
+  rendered blank.
+- **Fix — lift the state to the workflow** (`ScriptToStoryboard.jsx`), which stays
+  mounted for the whole session:
+  - `savedCastRefs` / `savedAssetRefs`: maps of **lowercased name → `{ description,
+    referenceId, previewUrl }`**. Name-keyed (not index-keyed) so editing/reordering
+  /deleting shots between visits can't shift a picture onto the wrong character.
+  - `previewUrls` ref now owns every blob URL; the only revoke is on workflow
+    unmount or `clearSavedRefs()`. The per-step unmount cleanups are **deleted**.
+  - `clearSavedRefs()` runs on **Start over** and on a **new breakdown** — a new
+    script means a new cast, so a same-named character must not inherit the old
+    picture.
+- `StoryboardCast.jsx` / `StoryboardAssets.jsx`: take `saved` + `onSave` props.
+  They still keep local state for live editing (busy/error stay local), but they
+  **seed from `saved`** on mount and `patch()` mirrors the three durable fields up
+  via `onSave`. `DURABLE` const lists them in one place; `busy`/`error` deliberately
+  don't persist.
+- **Verified:** `npm run build` clean, and the flow re-checked by reading the code
+  paths (review→cast→back→cast, cast→props→back→cast, board→back→review→forward).
+  NOT clicked through live in a browser this session — worth one manual pass.
+
+### 2026-07-24 — Library: rename was broken by the Recent/All duplicate render
+
+- **Reported:** clicking the rename (⚙) icon didn't let the user rename; delete
+  and duplicate also felt wrong.
+- **Root cause — one bug, three symptoms.** The Recent and All sections render the
+  SAME board, and every per-card UI flag was keyed by `job_id`. So one click set
+  the flag for *both* copies:
+  - **Rename (broken):** two `<input autoFocus>` mounted; the second stole focus,
+    which blurred the first, whose `onBlur={saveRename}` ran with an unchanged
+    value and set `renamingId = null` — unmounting both. The box flashed and
+    vanished, so renaming appeared to do nothing.
+  - **Delete (confusing):** the confirm panel opened on two cards at once.
+  - **Duplicate (confusing):** both copies greyed out while the fetch ran.
+- **Fix:** transient state is now keyed by a per-instance card id,
+  `` `${section}:${job_id}` `` — `renamingId`, `confirmId`, `copiedId`, and the
+  React `key`. `renderBoard(b, section)` and `renderSection(section, …)` thread it
+  through. `saveRename` also closes via `setRenamingId(id => id === uid ? null : id)`
+  so a slow response can't close an editor the user reopened elsewhere.
+- **Deliberately still keyed by `job_id`** (shared across both copies is correct):
+  `busyId` (an in-flight action must disable that board in both sections so it
+  can't be fired twice), `covers` (fetch the cover once), and `patchBoard` (a
+  rename must update both copies).
+- **Checked and ruled out** as causes: CORS (`allow_methods=["*"]`, so the new
+  PATCH/DELETE preflights pass) and the 204 delete response (`request()` returns
+  the raw Response for non-JSON, which the caller ignores).
+- **Verified:** backend smoke test re-run, all pass (rename/delete/project
+  included); `npm run build` clean; grepped for leftover `=== b.job_id`
+  comparisons — only the three intended ones remain. NOT clicked through in a
+  browser.
+
+### 2026-07-24 — Light mode: chips/pills filled gold with white ink
+
+- **Reported:** the review summary's "Dark Anime / 16:9 / 6 shots" pills and the
+  character-name chips ("Vivan") looked weak in light mode; user asked for the
+  same gold fill + white text as the buttons, on every page.
+- `.chip` on the dark theme is a faint gold tint with gold text, which on white
+  collapses to a barely-there outline. Light mode now fills it with `--gold-fill`
+  and puts `--gold-ink` (white) on top. One rule covers every page: the review
+  summary pills, per-shot character chips, the library cards' genre/ratio/panel
+  pills, GenerateForm's removable custom-asset chips, **and** JobDetail's download
+  chips — so both workflows match.
+- `.opt-chip.active` (selected style / genre / ratio on the form) fills the same
+  way — a picked option must not look weaker than a read-only pill beside it —
+  and its `.opt-chip-note` flips to white. `.opt-chip:hover`'s 6%-gold tint was
+  invisible on white, now a light-appropriate 8%.
+- `.chip-x` (remove button inside a removable chip) goes translucent-white so it
+  reads on the gold fill; its red hover already used white.
+- **`.asset-badge-prop` / `-background` fill too, but stay two DIFFERENT colours**
+  (gold / blue `#3a6cbf`). That difference is information — a prop vs. a location
+  — so they were not merged into one gold.
+- **Verified:** white ink measures 3.41:1 on the gold pills and 5.15:1 on the blue
+  badge; chip render sites grepped across all components to confirm coverage.
+  `npm run build` clean. Dark mode untouched. NOT viewed in a browser.
+
+### 2026-07-24 — Light mode: plain `.btn` was invisible against the page
+
+- **Reported:** "← Your Storyboards" looked flat/inconsistent next to the other
+  buttons in light mode.
+- **Cause:** `.btn` filled with `--panel-2` (#eceff5) sits on `--bg` (#f4f6fa) —
+  a 1.02:1 difference, so on the page background it read as plain text. On the
+  dark theme that same recessed grey reads correctly as a button.
+- **Fix:** the plain button's surface now comes from `--btn-bg` / `--btn-border`
+  / `--btn-shadow`. Dark keeps the old values exactly; light raises the button to
+  white with a firmer `#c7cedd` edge and a soft shadow.
+  - **Why variables and not a `:root[data-theme="light"] .btn` override:** that
+    selector scores 0,3,0 and would have beaten `.btn.primary` (0,2,0) — silently
+    stripping the gold off every primary button. Variables let `.primary` /
+    `.secondary` / `.ghost` keep overriding exactly as they do today.
+  - `.btn.ghost` gained `box-shadow: none` (it's borderless — it must not inherit
+    the raised shadow), and `.btn:hover` / `.btn.secondary:hover` are now gated on
+    `:not(:disabled)`, so a disabled button no longer lights up gold on hover.
+- **Verified:** `npm run build` clean; dark-mode values unchanged by inspection.
+  NOT viewed in a browser.
+
+### 2026-07-24 — Light mode: white ink on gold fills (user-reported)
+
+- **Reported:** in light mode the active tab ("✨ Describe Character") was a muddy
+  dark-gold block with near-black text, and the disabled "Generate Reference
+  Image" button was washed out to nothing. User asked for **white text on a gold
+  fill, applied everywhere**.
+- **Root cause:** the previous entry set `--primary` to a deep gold so gold-as-
+  *text* would read on white — but ~9 rules also use `var(--primary)` as a
+  *background* and pair it with `--primary-ink` (near-black). Deep gold + dark
+  ink = the muddy block. Separately, `.btn:disabled`'s `opacity: 0.45` is fine on
+  a dark surface and invisible on a light one.
+- **Fix — one source of truth for gold fills** (`styles.css`). Added
+  `--gold-grad`, `--gold-grad-hover`, `--gold-grad-rich(-hover)`, `--gold-bar`,
+  `--gold-fill`, `--gold-ink` and `--disabled-opacity`, then routed **every**
+  gold-filled surface through them — 23 literal gradients / `var(--primary)`
+  backgrounds and 17 `color: var(--primary-ink)` declarations. Covers both
+  workflows and every page: `.btn.primary`, `.tab-btn.active`,
+  `.btn.secondary:hover`, `.sb-upgrade`, `.upgrade-inline`, `.lib-new-plus`,
+  `.lib-badge`, `.step-num`, `.sts-guide-num`, all four avatars, the three
+  regen/retry hovers, and the two progress bars.
+- **Dark mode is byte-identical** — its variables hold exactly the old literals.
+- **The gold had to darken, then the user pulled it back up.** White on the dark
+  theme's `#e5c158` is 1.7:1 (unreadable), so the first pass used an antique-gold
+  ramp at 4.4:1+. The user judged that "dark golden" and asked for **mid golden**,
+  so the shipped ramp is `#bd8d1e → #a87914` (solid fill `#b0841a`), landing at
+  **3.0–3.9:1** with white. That clears WCAG AA's 3:1 large-text bar — which the
+  bold button labels these fills carry do qualify for — but not the 4.5:1 body
+  bar. **Keep these gold surfaces to short bold labels**; don't put paragraph
+  text on them. Brightness here is a deliberate, user-made trade.
+- Two `border-top-color: var(--primary-ink)` spinner arcs were deliberately NOT
+  switched to `--gold-ink`: they also spin on plain (non-gold) buttons, where
+  white would vanish.
+- **Verified:** contrast ratios computed, not eyeballed — every white-on-gold
+  stop 4.47–6.45:1; dark-mode ink on gold unchanged at 8.7–10.9:1; light `--text`
+  17.7:1 and `--muted` 6.0:1 on white. No gold literal survives outside the two
+  `:root` blocks. `npm run build` clean. NOT viewed in a browser.
+
+### 2026-07-24 — Light / dark mode toggle (sidebar, above the account button)
+
+- `theme.js` (new): `getTheme()` reads `localStorage.cas_theme`, falling back to
+  the OS `prefers-color-scheme` on first visit; `applyTheme()` stamps
+  `<html data-theme>` and persists. `main.jsx` applies it **before the first
+  render** so a light-mode user doesn't get a flash of the dark palette.
+- Because the switch is one attribute on `<html>` and every colour reads from a
+  CSS variable, it re-skins the WHOLE frontend — including screens rendered
+  outside the sidebar (landing, login, the public shared board) that never see
+  the React state. `App.jsx` owns the state, `Sidebar.jsx` renders the control.
+- `styles.css`: `:root[data-theme="light"]` palette. **The gold button gradients
+  are unchanged** (brand), but gold used as *text* or a *border* washes out on
+  white, so `--primary` / `--border-gold` go several shades deeper. Added
+  `--shadow-sm/-/-lg` (black in dark, soft blue-grey in light) and `--frame-bg`
+  (image letterboxing: still `#000` in dark, grey in light — so dark mode is
+  pixel-identical to before). `color-scheme` is set per theme so the browser's
+  own scrollbars / `<select>` / autofill follow along.
+- **Contrast bugs found while auditing, not just the palette:**
+  - `.btn:hover` was `color: #fff` over a `--panel-2` background — invisible in
+    light mode. Now `var(--text)`.
+  - `.error` / `.danger-btn` / `.shot-btn.danger:hover` used a hardcoded pale red
+    `#fca5a5` on a pink tint — now `var(--fail)`.
+  - `.auth-wrap`'s radial backdrop was hardcoded dark, so **login and landing
+    would have stayed dark** regardless of the toggle.
+  - Light-mode overrides for tints written as translucent white or pale
+    gold/blue (`.chip`, `.tab-btn:hover`, `.asset-badge*`).
+  - Deliberately left dark: `.lightbox-img` shadow and `.modal-overlay` scrim
+    (they sit over a dark backdrop in both themes) and `.art-cell`/`.gallery
+    figure`'s white image backing (intentional, for transparent PNGs).
+- **Verified:** `npm run build` clean (49 modules); swept every hardcoded colour
+  in styles.css and classified each. NOT viewed in a browser — the light palette
+  has not been eyeballed on a real screen, and contrast was reasoned about
+  rather than measured.
+
+### 2026-07-24 — Library: "Recent Storyboards" + "All Storyboards" sections
+
+- Page 1 now has two labelled folder-style sections under the New Storyboard
+  tile: **Recent Storyboards** (newest `RECENT_COUNT` = 4) and **All
+  Storyboards** (everything). An empty section keeps the existing "Nothing here
+  yet…" note, so a brand-new account looks the same as before.
+- The card markup moved into a shared `renderBoard(b)` so the two sections can
+  never drift apart; both read the same `boards` state, so a rename/delete/share
+  updates in both at once.
+- **Trap avoided:** the section is a render FUNCTION, not a nested component. A
+  component declared inside `StoryboardLibrary` gets a new identity every render,
+  so React would remount the section on each keystroke and the inline rename
+  input would lose focus after one character.
+- `styles.css`: `.lib-section*` heading + rule, `.lib-new-row` spacing, and
+  `.lib-empty` re-padded now that it sits inside a section rather than after the
+  whole grid.
+- **Verified:** `npm run build` clean. NOT viewed in a browser; the populated
+  layout (cards in both sections) has only been reasoned through, not seen.
+
+### 2026-07-24 — Step actions sit UNDER the page title (follow-up placement fix)
+
+- The previous entry put the Back/Next bar above `.workflow-header`, which pushed
+  the page title and its icon below the buttons. The user wants the title to read
+  first, with the buttons directly under it.
+- Swapped the order in all five headers — form (← Your Storyboards), review, cast,
+  props, board. The bar keeps its `.top-actions` divider, which now separates the
+  whole title+buttons block from the page content.
+- `styles.css`: `.workflow-header:has(+ .top-actions)` tightens the title→buttons
+  gap to 1.1rem (the header's default 1.8rem is meant for spacing off content).
+- **Verified:** `npm run build` clean; header-before-actions confirmed in all five
+  render paths. NOT viewed in a browser.
+
+### 2026-07-24 — Storyboard steps: Back / Next action bar moved to the TOP
+
+- **Why:** on every storyboard step the Back + primary (Next / Generate panels)
+  buttons sat at the very bottom, so with a long shot list, a full cast grid or a
+  big panel board the user had to scroll to the end just to move forward or back.
+- Moved the `.review-actions` bar from the bottom to the **first element inside
+  the step wrapper**, above `.workflow-header`, in all four storyboard screens —
+  the markup and handlers are unchanged, only the position:
+  - `client/src/components/ScriptToStoryboard.jsx` (review-shots step:
+    ← Back / 🎭 Next: cast · 🎬 Next: props · 🎬 Generate panels)
+  - `client/src/components/StoryboardCast.jsx` (← Back / 🎬 Generate panels)
+  - `client/src/components/StoryboardAssets.jsx` (← Back / 🎬 Generate panels)
+  - `client/src/components/StoryboardBoard.jsx` (← Back to shots / Start over)
+- `client/src/styles.css`: new `.top-actions` modifier on `.review-actions` —
+  `margin: 0 0 1.4rem`, bottom rule (`1px solid var(--border)`) to separate it
+  from the page title, `align-items: center` + `flex-wrap` so the two buttons sit
+  on one line, and `margin-top: 0` overriding `.btn.primary`'s `1.1rem` (which had
+  been pushing the gold button out of alignment with Back).
+- **Verified:** `npm run build` in `client/` is clean (46 modules, no warnings).
+  NOT clicked through in a live browser this session.
+
+### 2026-07-24 — Image-API throttle + PARALLEL panel generation
+- **Quota investigation (done with the user, GCP project `project-cf56be07-4f9e-45d4-9f4`):**
+  the app calls `gemini-3.1-flash-image` via `generate_content`, so it uses the
+  **"Generate content requests per minute"** buckets (**300–1600/min**) — NOT the
+  Imagen `imagegeneration`/`imagen-3.0-*` buckets (10–20/min) that looked alarming.
+  There is no `global` model-serving bucket (only non-regional job/CRUD ones).
+  **Conclusion: quota was never the real constraint.** The real problems were
+  (a) the synchronous cast/props/retry endpoints run on FastAPI's own ~40-thread
+  pool, bypassing `API_MAX_WORKERS=2` entirely (7 Cast cards = 7 unbounded calls),
+  and (b) every error — transient 503 OR permanent safety block — burned 3 attempts
+  and ~28s of blocking sleep.
+- **Phase 1 — one governor at the chokepoint (`gemini_client.py`).** Every image
+  call in the process funnels through this module, so capping here bounds both the
+  worker path and the interactive endpoints:
+  - `_TokenBucket` (thread-safe, rolling-minute) + `BoundedSemaphore`, exposed as a
+    `_throttle()` context manager wrapped around ALL FOUR `generate_content` call
+    sites (turnaround sheet, storyboard panel, character ref, asset ref).
+  - **Error classification** — `_is_retryable()`: retry 429/500/503/504 only; fail
+    fast on 400/401/403/404/safety/blocked. This is the actual fix for the wasted
+    28s waits.
+  - `_backoff_delay()` — exponential **with jitter** (0.5–1.5×) so parallel workers
+    don't retry in lockstep, and `_retry_after_seconds()` honours a server
+    `Retry-After` / `retryDelay` hint (capped 120s).
+  - Env: `IMAGE_MAX_CONCURRENCY` (default 6), `IMAGE_RPM` (default 120, 0 = off).
+- **Phase 2 — parallel panels (`storyboard_pipeline.run_storyboard`).** Replaced the
+  serial `for` loop with a `ThreadPoolExecutor` (`STORYBOARD_PANEL_CONCURRENCY`,
+  default 4). Panels are **pre-built up front** so the streamed list is always
+  FULL-LENGTH — pending entries have `url=None, failed=False`, which the board
+  already renders as skeletons, so **no frontend change was needed** (and
+  `pendingCount` naturally becomes 0). Mutations guarded by a lock; progress emits a
+  snapshot; a crashed panel is flagged without killing the board.
+- `.env.example`: documented all three new vars.
+- **Verified:** throttle bounds peak in-flight to exactly 6 under 30 threads;
+  classification table (7 cases); Retry-After parsing; jitter produces varied
+  delays; 12-panel parallel run = 0.68s vs ~2.4s serial (**3.5×**) with order
+  preserved, failure flagged, and every emit full-length; **regression** — restyle
+  variants, composition refs, variant switch and per-panel regenerate all still
+  pass under parallel rendering. Backend imports + `npm run build` clean.
+  NOT run live (needs billed calls).
+- **NOT done (deliberately):** grid batching (Phase 3) was dropped — it was
+  justified by a 4× quota saving the numbers show you don't need. Circuit-breaker /
+  provider-failover / durable queue remain future work.
 
 ### 2026-07-24 — Board: change visual style → switchable style VARIANTS (keep-both)
 - **Feature:** re-cast the whole board into another style (Sketch→Comic→…). Each
@@ -895,6 +1228,11 @@ script→storyboard→animatics→video pipeline.
 **Known-good this session (user-confirmed in browser):** default (gender-inferred)
 human generation, per-part progress + skeletons, custom assets, safe body base
 mesh, zip cache-bust.
+
+**Script → Storyboard now opens on "Your Storyboards"** (Stage G): every generated
+board is saved and re-openable, with rename / duplicate / delete / public share
+link per card. Note that persistence follows the job store — under
+`API_JOB_STORE=memory` the library empties when the backend restarts.
 
 **Not yet verified live** (needs real keys / steady backend):
 - **3D generation** — Meshy path is coded but not run live; **Tripo is entirely

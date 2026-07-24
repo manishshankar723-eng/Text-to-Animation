@@ -22,8 +22,12 @@ VERTEX_IMAGE_MODEL / GEMINI_IMAGE_MODEL.
 
 import io
 import os
+import random
+import re
+import threading
 import time
 import logging
+from contextlib import contextmanager
 
 from dotenv import load_dotenv
 from google import genai
@@ -42,6 +46,108 @@ DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 5  # doubles each retry: 5s, 10s, 20s
+
+
+# ---------------------------------------------------------------------------
+# Throttling — ONE governor for every image call in the process
+# ---------------------------------------------------------------------------
+# Every path (background storyboard jobs AND the synchronous cast/props/retry
+# endpoints, which run on FastAPI's own threadpool) funnels through this module,
+# so capping here bounds real API pressure regardless of who calls.
+#   IMAGE_MAX_CONCURRENCY — simultaneous in-flight image requests
+#   IMAGE_RPM             — requests per minute (0 disables the rate limit)
+MAX_CONCURRENCY = max(1, int(os.environ.get("IMAGE_MAX_CONCURRENCY", "6")))
+IMAGE_RPM = max(0, int(os.environ.get("IMAGE_RPM", "120")))
+
+
+class _TokenBucket:
+    """Thread-safe token bucket: at most `rpm` acquisitions per rolling minute."""
+
+    def __init__(self, rpm: int):
+        self.rate = rpm / 60.0 if rpm > 0 else 0.0  # tokens per second
+        self.capacity = float(max(rpm, 1))
+        self._tokens = self.capacity
+        self._updated = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Block until a token is available (no-op when the limit is disabled)."""
+        if self.rate <= 0:
+            return
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._tokens = min(
+                    self.capacity, self._tokens + (now - self._updated) * self.rate
+                )
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                wait = (1.0 - self._tokens) / self.rate
+            time.sleep(min(wait, 5.0))
+
+
+_semaphore = threading.BoundedSemaphore(MAX_CONCURRENCY)
+_bucket = _TokenBucket(IMAGE_RPM)
+
+
+@contextmanager
+def _throttle():
+    """Hold a concurrency slot and a rate-limit token for one API call."""
+    _bucket.acquire()
+    _semaphore.acquire()
+    try:
+        yield
+    finally:
+        _semaphore.release()
+
+
+# ---------------------------------------------------------------------------
+# Error classification — only retry what can actually succeed on a retry
+# ---------------------------------------------------------------------------
+_RETRYABLE_MARKERS = (
+    "429", "resource_exhausted", "rate limit", "quota",
+    "500", "internal error",
+    "503", "unavailable", "overloaded",
+    "504", "deadline", "timeout",
+)
+# Permanent: retrying burns time and never succeeds.
+_PERMANENT_MARKERS = (
+    "400", "invalid argument", "invalid_argument",
+    "401", "403", "permission denied", "unauthenticated",
+    "404", "not found",
+    "safety", "blocked", "prohibited_content",
+)
+
+
+def _is_retryable(error: Exception) -> bool:
+    """True if re-issuing this request has a real chance of succeeding."""
+    text = str(error).lower()
+    if any(m in text for m in _PERMANENT_MARKERS):
+        return False
+    return any(m in text for m in _RETRYABLE_MARKERS)
+
+
+def _retry_after_seconds(error: Exception) -> float | None:
+    """Honour a server-provided Retry-After / retryDelay hint when present."""
+    match = re.search(r"retry[- _]?(?:after|delay)\D{0,10}(\d+(?:\.\d+)?)", str(error), re.I)
+    if match:
+        try:
+            return min(float(match.group(1)), 120.0)
+        except ValueError:
+            return None
+    return None
+
+
+def _backoff_delay(attempt: int, error: Exception | None = None) -> float:
+    """Exponential backoff with jitter (so parallel workers don't retry in lockstep)."""
+    if error is not None:
+        hinted = _retry_after_seconds(error)
+        if hinted is not None:
+            return hinted
+    base = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    return base * random.uniform(0.5, 1.5)
 
 
 def _resolve_provider(provider: str | None = None) -> str:
@@ -144,13 +250,14 @@ def generate_turnaround_sheet(
                 part_name, provider, model_id, attempt, MAX_RETRIES,
             )
 
-            response = client.models.generate_content(
-                model=model_id,
-                contents=[prompt, reference_image],
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                ),
-            )
+            with _throttle():
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[prompt, reference_image],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    ),
+                )
 
             # --- Extract image from response ---
             if (
@@ -188,26 +295,21 @@ def generate_turnaround_sheet(
         except Exception as e:
             error_str = str(e)
 
-            # 429 RESOURCE_EXHAUSTED — retry with exponential backoff
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.warning(
-                    "[%s] Rate limited (429). Waiting %ds before retry %d/%d...",
-                    part_name, backoff, attempt, MAX_RETRIES,
-                )
-                time.sleep(backoff)
-                continue
-
-            # Other errors — log and give up
-            logger.error("[%s] Gemini call failed: %s", part_name, error_str)
-            if attempt < MAX_RETRIES:
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.info("[%s] Retrying in %ds...", part_name, backoff)
-                time.sleep(backoff)
-                continue
-            else:
-                logger.error("[%s] All %d attempts failed.", part_name, MAX_RETRIES)
+            # Permanent (bad request / auth / safety) — a retry can't fix it.
+            if not _is_retryable(e):
+                logger.error("[%s] permanent error, not retrying: %s", part_name, error_str)
                 return None
+
+            if attempt < MAX_RETRIES:
+                delay = _backoff_delay(attempt, e)
+                logger.warning(
+                    "[%s] transient error (attempt %d/%d), retrying in %.1fs: %s",
+                    part_name, attempt, MAX_RETRIES, delay, error_str,
+                )
+                time.sleep(delay)
+                continue
+            logger.error("[%s] All %d attempts failed: %s", part_name, MAX_RETRIES, error_str)
+            return None
 
     # Should not reach here, but just in case
     logger.error("[%s] Exhausted all retries.", part_name)
@@ -415,11 +517,12 @@ def generate_storyboard_panel(
                 len(asset_reference_images or []), composition_reference_image is not None,
                 attempt, MAX_RETRIES,
             )
-            response = client.models.generate_content(
-                model=model_id,
-                contents=contents,
-                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-            )
+            with _throttle():
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                )
 
             if (
                 response.candidates
@@ -439,17 +542,19 @@ def generate_storyboard_panel(
             return None
 
         except Exception as e:  # noqa: BLE001
-            error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.warning("[panel] Rate limited (429). Waiting %ds…", backoff)
-                time.sleep(backoff)
-                continue
-            logger.error("[panel] call failed: %s", error_str)
-            if attempt < MAX_RETRIES:
-                time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
-                continue
-            return None
+            # Only retry what a retry can fix; a safety block / bad request never
+            # succeeds, so fail fast instead of burning the backoff budget.
+            if not _is_retryable(e):
+                logger.error("[panel] permanent error, not retrying: %s", e)
+                return None
+            if attempt >= MAX_RETRIES:
+                logger.error("[panel] call failed after %d attempts: %s", MAX_RETRIES, e)
+                return None
+            delay = _backoff_delay(attempt, e)
+            logger.warning("[panel] transient error (attempt %d/%d), retrying in %.1fs: %s",
+                           attempt, MAX_RETRIES, delay, e)
+            time.sleep(delay)
+            continue
 
     return None
 
@@ -488,13 +593,14 @@ def generate_character_reference(
                 provider, model_id, attempt, MAX_RETRIES,
             )
 
-            response = client.models.generate_content(
-                model=model_id,
-                contents=[prompt],
-                config=types.GenerateContentConfig(
-                    response_modalities=["IMAGE"],
-                ),
-            )
+            with _throttle():
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"],
+                    ),
+                )
 
             # --- Extract image from response ---
             if (
@@ -541,24 +647,23 @@ def generate_character_reference(
             raise
         except Exception as e:
             error_str = str(e)
-
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                last_reason = "Rate limited / quota exhausted on the image API (HTTP 429)."
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.warning(
-                    "[reference] %s Waiting %ds before retry %d/%d…",
-                    last_reason, backoff, attempt, MAX_RETRIES,
-                )
-                time.sleep(backoff)
-                continue
-
             last_reason = f"Image API error: {error_str}"
-            logger.error("[reference] Gemini call failed: %s", error_str)
+
+            # Permanent failures (bad request / auth / safety) never succeed on a
+            # retry — surface them immediately instead of waiting out the backoff.
+            if not _is_retryable(e):
+                logger.error("[reference] permanent error, not retrying: %s", error_str)
+                raise ReferenceGenerationError(last_reason)
+
             if attempt < MAX_RETRIES:
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.info("[reference] Retrying in %ds…", backoff)
-                time.sleep(backoff)
+                delay = _backoff_delay(attempt, e)
+                logger.warning(
+                    "[reference] transient error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt, MAX_RETRIES, delay, error_str,
+                )
+                time.sleep(delay)
                 continue
+            logger.error("[reference] Gemini call failed: %s", error_str)
 
     logger.error("[reference] All attempts failed: %s", last_reason)
     raise ReferenceGenerationError(last_reason)
@@ -605,11 +710,12 @@ def generate_asset_reference(
                 cat, provider, model_id, attempt, MAX_RETRIES,
             )
 
-            response = client.models.generate_content(
-                model=model_id,
-                contents=[prompt],
-                config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
-            )
+            with _throttle():
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                )
 
             if (
                 response.candidates
@@ -646,17 +752,16 @@ def generate_asset_reference(
             raise
         except Exception as e:  # noqa: BLE001
             error_str = str(e)
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                last_reason = "Rate limited / quota exhausted on the image API (HTTP 429)."
-                backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-                logger.warning("[asset-ref] %s Waiting %ds…", last_reason, backoff)
-                time.sleep(backoff)
-                continue
             last_reason = f"Image API error: {error_str}"
-            logger.error("[asset-ref] Gemini call failed: %s", error_str)
+            if not _is_retryable(e):
+                logger.error("[asset-ref] permanent error, not retrying: %s", error_str)
+                raise ReferenceGenerationError(last_reason)
             if attempt < MAX_RETRIES:
-                time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+                delay = _backoff_delay(attempt, e)
+                logger.warning("[asset-ref] transient error, retrying in %.1fs: %s", delay, error_str)
+                time.sleep(delay)
                 continue
+            logger.error("[asset-ref] Gemini call failed: %s", error_str)
 
     logger.error("[asset-ref] All attempts failed: %s", last_reason)
     raise ReferenceGenerationError(last_reason)

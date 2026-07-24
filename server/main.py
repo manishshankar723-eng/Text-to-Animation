@@ -19,6 +19,7 @@ Run locally:
 
 import logging
 import os
+import shutil
 import uuid
 import zipfile
 
@@ -50,6 +51,11 @@ from .schemas import (
     ScriptBreakdownRequest,
     ScriptBreakdownResponse,
     StoryboardCreateRequest,
+    StoryboardProject,
+    StoryboardRenameRequest,
+    StoryboardSummary,
+    PublicStoryboard,
+    ShareResponse,
     TemplateInfo,
 )
 from . import worker
@@ -467,6 +473,8 @@ def create_storyboard(
         params={
             "style": body.style,
             "aspect_ratio": body.aspect_ratio,
+            # Not used for drawing — labels the card in the storyboard library.
+            "genre": body.genre,
             "count": len(body.shots),
             "provider": body.provider,
             "character_count": len(character_ref_paths),
@@ -499,6 +507,214 @@ def create_storyboard(
         character_name=title,
         message="Storyboard generation started. Poll GET /jobs/{job_id} for progress.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Storyboard library ("Your Storyboards") — save / reopen / manage past boards
+#
+# A saved "project" IS a storyboard job: they are already persisted per-owner
+# with their shots, style and panels, so the library is a view over them rather
+# than a second store that could drift out of sync.
+# ---------------------------------------------------------------------------
+def _board_dir(job_id: str) -> str:
+    return os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
+
+
+def _drawn_panels(job: Job) -> list[tuple[int, str]]:
+    """(index, serve-url) for panels that actually have an image, in board order.
+
+    Reads the ACTIVE style variant, so a restyled board's cover and shared view
+    show the style the owner last picked — not whatever variant 0 happens to be.
+    """
+    variants, active = _variants_of(job.result or {})
+    panels = variants[active].get("panels") or []
+    return [
+        (i, (p or {}).get("url"))
+        for i, p in enumerate(panels)
+        if (p or {}).get("url") and not (p or {}).get("failed")
+    ]
+
+
+def _panel_indexes(job: Job) -> list[int]:
+    return [i for i, _ in _drawn_panels(job)]
+
+
+def _summarise_board(job: Job) -> StoryboardSummary:
+    params = job.params or {}
+    drawn = _drawn_panels(job)
+    token = params.get("share_token")
+    return StoryboardSummary(
+        job_id=job.job_id,
+        title=job.character_name or "Storyboard",
+        status=job.status,
+        style=params.get("style"),
+        aspect_ratio=params.get("aspect_ratio"),
+        genre=params.get("genre"),
+        panel_count=int(params.get("count") or 0),
+        cover_index=drawn[0][0] if drawn else None,
+        cover_url=drawn[0][1] if drawn else None,
+        shared=bool(token),
+        share_token=token,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+def _get_owned_board(job_id: str, current: CurrentUser) -> Job:
+    """Like _get_owned_job, but rejects jobs that aren't storyboards."""
+    job = _get_owned_job(job_id, current)
+    if job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="Not a storyboard job.")
+    return job
+
+
+@app.get("/storyboards", response_model=list[StoryboardSummary])
+def list_storyboards(
+    limit: int = 100,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """List the caller's saved storyboards, newest first (the library grid)."""
+    jobs = get_store().list(limit=limit, owner=current.email)
+    return [_summarise_board(j) for j in jobs if j.kind == JobKind.STORYBOARD]
+
+
+@app.get("/storyboards/{job_id}/project", response_model=StoryboardProject)
+def get_storyboard_project(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Return a saved board's reusable inputs (shots + settings) for Duplicate.
+
+    Re-opening a board this way skips the paid script-breakdown call.
+    """
+    job = _get_owned_board(job_id, current)
+    params = job.params or {}
+    return StoryboardProject(
+        job_id=job.job_id,
+        title=job.character_name or "Storyboard",
+        style=params.get("style"),
+        aspect_ratio=params.get("aspect_ratio"),
+        genre=params.get("genre"),
+        shots=params.get("shots") or [],
+    )
+
+
+@app.patch("/storyboards/{job_id}", response_model=StoryboardSummary)
+def rename_storyboard(
+    job_id: str,
+    body: StoryboardRenameRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Rename a saved storyboard (the title shown on its library card)."""
+    _get_owned_board(job_id, current)
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty.")
+    job = get_store().update(job_id, character_name=title)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return _summarise_board(job)
+
+
+@app.delete("/storyboards/{job_id}", status_code=204)
+def delete_storyboard(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Delete a saved storyboard: its record AND its generated panel files."""
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="This storyboard is still generating — wait for it to finish first.",
+        )
+    # Remove the panels from disk. A failure here must not strand the record,
+    # so it's logged and the delete continues.
+    board_dir = _board_dir(job_id)
+    if os.path.isdir(board_dir):
+        try:
+            shutil.rmtree(board_dir)
+        except OSError:
+            logger.exception("[storyboard %s] could not remove %s", job_id, board_dir)
+    get_store().delete(job_id)
+    return None
+
+
+@app.post("/storyboards/{job_id}/share", response_model=ShareResponse)
+def share_storyboard(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Create (or return) an unguessable public link token for this board.
+
+    Anyone holding the token can view the panels WITHOUT logging in, so it is
+    treated as the secret: 32 hex chars from `uuid4`, and it can be revoked.
+    Only the drawn panels are exposed — never the shots, refs or owner.
+    """
+    job = _get_owned_board(job_id, current)
+    params = dict(job.params or {})
+    token = params.get("share_token")
+    if not token:
+        token = uuid.uuid4().hex
+        params["share_token"] = token
+        get_store().update(job_id, params=params)
+    return ShareResponse(shared=True, share_token=token)
+
+
+@app.delete("/storyboards/{job_id}/share", response_model=ShareResponse)
+def unshare_storyboard(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Revoke the public link — the old token stops working immediately."""
+    job = _get_owned_board(job_id, current)
+    params = dict(job.params or {})
+    params.pop("share_token", None)
+    get_store().update(job_id, params=params)
+    return ShareResponse(shared=False, share_token=None)
+
+
+# ---- Public (NO AUTH) — only reachable with a valid share token ------------
+def _get_shared_board(token: str) -> Job:
+    job = get_store().find_by_share_token(token)
+    if job is None or job.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=404, detail="This shared storyboard is no longer available.")
+    return job
+
+
+@app.get("/public/storyboards/{token}", response_model=PublicStoryboard)
+def get_public_storyboard(token: str):
+    """A shared board's viewer metadata. No auth — the token IS the credential."""
+    job = _get_shared_board(token)
+    params = job.params or {}
+    drawn = _panel_indexes(job)
+    return PublicStoryboard(
+        title=job.character_name or "Storyboard",
+        style=params.get("style"),
+        aspect_ratio=params.get("aspect_ratio"),
+        genre=params.get("genre"),
+        panel_count=len(drawn),
+        panel_indexes=drawn,
+        created_at=job.created_at,
+    )
+
+
+@app.get("/public/storyboards/{token}/panel/{index}")
+def get_public_storyboard_panel(token: str, index: int):
+    """Serve one panel of a shared board (no auth, token-gated).
+
+    Only panels the board actually reports as drawn are served, so the token
+    can't be used to probe for other files.
+    """
+    job = _get_shared_board(token)
+    if index not in _panel_indexes(job):
+        raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
+    variants, active = _variants_of(job.result or {})
+    subdir = "" if not active else f"v{active}"
+    path = os.path.join(_board_dir(job.job_id), subdir, f"panel_{index:02d}.png")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/storyboards/{job_id}/panel/{index}")

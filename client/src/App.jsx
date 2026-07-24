@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "./api.js";
+import { applyTheme, getTheme } from "./theme.js";
 import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
+import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
@@ -35,7 +37,15 @@ const SOON = {
   },
 };
 
+// A shared storyboard link is `?s=<token>`. Read it once at boot: the app has
+// no router, and this is the only route that must render logged OUT.
+function readShareToken() {
+  const t = new URLSearchParams(window.location.search).get("s");
+  return t && /^[a-f0-9]{32}$/i.test(t) ? t : null;
+}
+
 export default function App() {
+  const [shareToken, setShareToken] = useState(readShareToken);
   const [email, setEmail] = useState(api.getEmail());
   const [authed, setAuthed] = useState(Boolean(api.getToken()));
   const [authView, setAuthView] = useState("landing");
@@ -45,6 +55,11 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // main.jsx already applied the stored theme before the first paint; this only
+  // has to re-stamp <html> when the user flips the switch.
+  const [theme, setTheme] = useState(getTheme);
+
+  useEffect(() => applyTheme(theme), [theme]);
 
   function refreshJobs() {
     setRefreshKey((k) => k + 1);
@@ -74,6 +89,20 @@ export default function App() {
   function openJobInWorkflow(jobId) {
     setNav("text-to-image");
     setSelectedId(jobId);
+  }
+
+  // ---- Shared storyboard (public, works with or without a session) ----
+  if (shareToken) {
+    return (
+      <PublicStoryboard
+        token={shareToken}
+        onExit={() => {
+          // Drop ?s= from the URL so a refresh lands on the normal app.
+          window.history.replaceState({}, "", window.location.pathname);
+          setShareToken(null);
+        }}
+      />
+    );
   }
 
   // ---- Logged-out screens ----
@@ -136,6 +165,8 @@ export default function App() {
         active={nav}
         onNavigate={setNav}
         email={email}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onUpgrade={() => setUpgradeOpen(true)}
         onProfileClick={() => setAccountOpen(true)}
       />

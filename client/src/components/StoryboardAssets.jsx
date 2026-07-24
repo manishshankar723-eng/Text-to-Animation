@@ -4,7 +4,7 @@
 // image. Those references are fed into every panel the asset appears in, so the
 // same slipper / bedroom looks identical across shots. This step is optional —
 // any asset can be skipped, mirroring the Cast page.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
 
@@ -14,29 +14,44 @@ const CATEGORY_META = {
   background: { label: "Background", icon: "🏙️" },
 };
 
-export default function StoryboardAssets({ assets, onBack, onGenerate, busy }) {
+// Fields worth keeping when the user steps away from this page (see `saved`).
+const DURABLE = ["description", "referenceId", "previewUrl"];
+
+export default function StoryboardAssets({
+  assets,
+  saved,
+  onSave,
+  onBack,
+  onGenerate,
+  busy,
+}) {
+  // `saved` holds what the user already set up for these assets on an earlier
+  // visit (the workflow owns it, so it outlives this component). Seed from it,
+  // otherwise fall back to the breakdown's description.
   const [items, setItems] = useState(() =>
-    (assets || []).map((a) => ({
-      name: a.name,
-      category: a.category === "background" ? "background" : "prop",
-      description: a.description || "",
-      referenceId: null,
-      previewUrl: null,
-      busy: false,
-      error: "",
-    }))
+    (assets || []).map((a) => {
+      const prev = saved?.[(a.name || "").trim().toLowerCase()] || {};
+      return {
+        name: a.name,
+        category: a.category === "background" ? "background" : "prop",
+        description: prev.description ?? a.description ?? "",
+        referenceId: prev.referenceId ?? null,
+        previewUrl: prev.previewUrl ?? null,
+        busy: false,
+        error: "",
+      };
+    })
   );
   const [lightbox, setLightbox] = useState(null);
-  const blobUrls = useRef([]);
   const fileInputs = useRef([]);
-
-  // Revoke any object URLs we created on unmount.
-  useEffect(() => {
-    return () => blobUrls.current.forEach((u) => URL.revokeObjectURL(u));
-  }, []);
 
   function patch(i, fields) {
     setItems((c) => c.map((it, idx) => (idx === i ? { ...it, ...fields } : it)));
+    // Mirror the durable fields up to the workflow so leaving this step doesn't
+    // discard the reference the user just set up.
+    const durable = {};
+    for (const k of DURABLE) if (k in fields) durable[k] = fields[k];
+    if (Object.keys(durable).length > 0) onSave?.(items[i].name, durable);
   }
 
   async function generateRef(i) {
@@ -52,10 +67,7 @@ export default function StoryboardAssets({ assets, onBack, onGenerate, busy }) {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       let previewUrl = null;
-      if (imgRes.ok) {
-        previewUrl = URL.createObjectURL(await imgRes.blob());
-        blobUrls.current.push(previewUrl);
-      }
+      if (imgRes.ok) previewUrl = URL.createObjectURL(await imgRes.blob());
       patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
@@ -69,7 +81,6 @@ export default function StoryboardAssets({ assets, onBack, onGenerate, busy }) {
       // Uploads reuse the shared reference-upload endpoint (any image → ref).
       const res = await api.uploadReference(file);
       const previewUrl = URL.createObjectURL(file);
-      blobUrls.current.push(previewUrl);
       patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
@@ -98,6 +109,28 @@ export default function StoryboardAssets({ assets, onBack, onGenerate, busy }) {
             — you can skip any asset.
           </p>
         </div>
+      </div>
+
+      <div className="review-actions board-actions top-actions">
+        <button type="button" className="btn" onClick={onBack} disabled={busy}>
+          ← Back
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={handleGenerate}
+          disabled={busy}
+        >
+          {busy ? (
+            <>
+              <span className="spinner-inline" /> Starting…
+            </>
+          ) : readyCount > 0 ? (
+            `🎬 Generate panels · ${readyCount} ref${readyCount === 1 ? "" : "s"}`
+          ) : (
+            "🎬 Generate panels (skip refs)"
+          )}
+        </button>
       </div>
 
       {items.length === 0 ? (
@@ -188,28 +221,6 @@ export default function StoryboardAssets({ assets, onBack, onGenerate, busy }) {
           })}
         </div>
       )}
-
-      <div className="review-actions board-actions">
-        <button type="button" className="btn" onClick={onBack} disabled={busy}>
-          ← Back
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={handleGenerate}
-          disabled={busy}
-        >
-          {busy ? (
-            <>
-              <span className="spinner-inline" /> Starting…
-            </>
-          ) : readyCount > 0 ? (
-            `🎬 Generate panels · ${readyCount} ref${readyCount === 1 ? "" : "s"}`
-          ) : (
-            "🎬 Generate panels (skip refs)"
-          )}
-        </button>
-      </div>
 
       <ImageLightbox src={lightbox} alt="Asset reference" onClose={() => setLightbox(null)} />
     </div>

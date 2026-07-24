@@ -1,4 +1,10 @@
+/* Dark theme (the default). Every colour in this file comes from one of these
+   variables, so the light theme below only has to redefine the palette — see
+   theme.js, which stamps data-theme onto <html>. */
 :root {
+  /* Tells the browser to theme its own widgets too — scrollbars, <select>
+     dropdowns, autofill. Without it those stay dark in light mode. */
+  color-scheme: dark;
   --bg: #0c0e12;
   --panel: #13161f;
   --panel-2: #1b1e2b;
@@ -14,6 +20,124 @@
   --fail: #f87171;
   --running: #e5c158;
   --gold-glow: 0 4px 20px rgba(229, 193, 88, 0.22);
+  /* Gold FILLS and the ink that sits on them. Every filled gold surface in
+     this file goes through these, so the two themes can differ without any
+     individual rule knowing about it. Dark mode keeps its exact old values. */
+  --gold-grad: linear-gradient(135deg, #e5c158 0%, #d4aa3b 100%);
+  --gold-grad-hover: linear-gradient(135deg, #f3d67b 0%, #e2be52 100%);
+  --gold-grad-rich: linear-gradient(135deg, #f3d67b 0%, #e5c158 45%, #d4aa3b 100%);
+  --gold-grad-rich-hover: linear-gradient(135deg, #f7de8c 0%, #f0cf6c 45%, #e2be52 100%);
+  --gold-bar: linear-gradient(90deg, #d4aa3b 0%, #e5c158 50%, #f3d67b 100%);
+  --gold-fill: #e5c158;
+  --gold-ink: #141005;
+  --disabled-opacity: 0.45;
+  /* Plain-button surface — see the .btn comment. */
+  --btn-bg: var(--panel-2);
+  --btn-border: var(--border);
+  --btn-shadow: none;
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+  /* Letterbox behind panel / preview images. */
+  --frame-bg: #000;
+}
+
+/* Light theme. The gold BUTTON gradients stay exactly as they are — that's the
+   brand — but gold used as text or a border washes out on white, so those go
+   several shades deeper to stay readable. Shadows become soft and blue-grey
+   instead of black. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-2: #eceff5;
+  --border: #d8dde8;
+  --border-gold: rgba(150, 116, 27, 0.4);
+  --text: #141824;
+  --muted: #5b6377;
+  --primary: #8a6b17;
+  --primary-hover: #6f5511;
+  --primary-ink: #141005;
+  --ok: #15803d;
+  --warn: #b45309;
+  --fail: #dc2626;
+  --running: #a97f14;
+  --gold-glow: 0 4px 18px rgba(180, 140, 40, 0.26);
+  /* A MID gold — the user asked for this brightness over the deeper, more
+     legible one. White ink lands around 3.0-3.4:1 here: it clears WCAG AA for
+     the bold button labels these fills carry (large-text threshold is 3:1) but
+     not the 4.5:1 body-text bar, so keep these surfaces to short bold labels.
+     The dark theme's own #e5c158 would be 1.7:1 — that is why this isn't just
+     the same gold. Hovers go DARKER, the light-mode convention. */
+  --gold-grad: linear-gradient(135deg, #bd8d1e 0%, #a87914 100%);
+  --gold-grad-hover: linear-gradient(135deg, #a87914 0%, #94690f 100%);
+  --gold-grad-rich: linear-gradient(135deg, #c29320 0%, #bd8d1e 45%, #a87914 100%);
+  --gold-grad-rich-hover: linear-gradient(135deg, #b0821a 0%, #a87914 45%, #946a0f 100%);
+  --gold-bar: linear-gradient(90deg, #a87914 0%, #bd8d1e 50%, #cba02c 100%);
+  --gold-fill: #b0841a;
+  --gold-ink: #ffffff;
+  /* 0.45 washes a disabled button out to nothing on a light surface. */
+  --disabled-opacity: 0.6;
+  --btn-bg: var(--panel);
+  --btn-border: #c7cedd;
+  --btn-shadow: var(--shadow-sm);
+  --shadow-sm: 0 2px 10px rgba(20, 24, 36, 0.06);
+  --shadow: 0 4px 16px rgba(20, 24, 36, 0.09);
+  --shadow-lg: 0 20px 50px rgba(20, 24, 36, 0.18);
+  --frame-bg: #e4e8f0;
+}
+
+/* A handful of tints were written as translucent white or pale gold/blue, which
+   only reads on a dark surface. These are the light-mode counterparts. */
+/* Chips and pills. On the dark theme a faint gold tint with gold text reads
+   fine; on white it turns into a barely-there outline, so light mode fills them
+   with the same gold as the buttons and puts white ink on top. This covers
+   every page at once — the review summary's style/ratio/shot-count pills, the
+   character-name chips on each shot, the library cards' genre/ratio/panel
+   pills, and the removable custom-asset chips. */
+:root[data-theme="light"] .chip {
+  background: var(--gold-fill);
+  border-color: transparent;
+  color: var(--gold-ink);
+}
+:root[data-theme="light"] .chip-x {
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--gold-ink);
+}
+/* Selected style / genre / ratio options are the same visual family, so they
+   fill too — otherwise the picked option would look weaker than a read-only
+   pill sitting next to it. */
+:root[data-theme="light"] .opt-chip:hover {
+  background: rgba(150, 116, 27, 0.08);
+}
+:root[data-theme="light"] .opt-chip.active {
+  background: var(--gold-fill);
+  border-color: var(--gold-fill);
+  color: var(--gold-ink);
+  box-shadow: inset 0 0 0 1px var(--gold-fill);
+}
+:root[data-theme="light"] .opt-chip.active .opt-chip-note {
+  color: var(--gold-ink);
+  opacity: 0.8;
+}
+:root[data-theme="light"] .tab-btn:hover {
+  background: rgba(20, 24, 36, 0.05);
+}
+/* Prop / background badges fill like the other pills, but KEEP their two
+   colours — that difference is information (a prop vs. a location), not
+   decoration, so they aren't merged into one gold. */
+:root[data-theme="light"] .asset-badge {
+  border-color: transparent;
+  color: #ffffff;
+}
+:root[data-theme="light"] .asset-badge-prop {
+  background: var(--gold-fill);
+}
+:root[data-theme="light"] .asset-badge-background {
+  background: #3a6cbf;
+}
+:root[data-theme="light"] .sb-theme-switch.on {
+  background: rgba(150, 116, 27, 0.18);
 }
 
 * {
@@ -92,7 +216,7 @@ input[type="checkbox"] {
 .error {
   background: rgba(248, 113, 113, 0.12);
   border: 1px solid var(--fail);
-  color: #fca5a5;
+  color: var(--fail);
   padding: 0.6rem 0.8rem;
   border-radius: 9px;
   margin: 0.8rem 0;
@@ -105,10 +229,17 @@ input[type="checkbox"] {
   margin-left: 0.6rem;
 }
 
-/* Buttons */
+/* Buttons.
+   The plain button's surface comes from --btn-* rather than being hardcoded:
+   on the dark page a recessed grey reads as a button, but on the light page
+   that same grey is nearly the background's own value, so the button looks
+   like flat text. Light mode raises it to white with a firmer edge instead.
+   Keeping it in variables means .primary / .secondary / .ghost keep overriding
+   it exactly as before — no specificity fights. */
 .btn {
-  border: 1px solid var(--border);
-  background: var(--panel-2);
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  box-shadow: var(--btn-shadow);
   color: var(--text);
   padding: 0.6rem 1.1rem;
   border-radius: 9px;
@@ -117,30 +248,32 @@ input[type="checkbox"] {
   font-weight: 500;
   transition: all 0.2s ease;
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   border-color: var(--primary);
-  color: #fff;
+  color: var(--text);
+  background: var(--panel-2);
 }
 .btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
   cursor: not-allowed;
 }
 .btn.primary {
-  background: linear-gradient(135deg, #e5c158 0%, #d4aa3b 100%);
-  color: var(--primary-ink);
+  background: var(--gold-grad);
+  color: var(--gold-ink);
   border-color: var(--primary);
   font-weight: 650;
   margin-top: 1.1rem;
   box-shadow: var(--gold-glow);
 }
 .btn.primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #f3d67b 0%, #e2be52 100%);
+  background: var(--gold-grad-hover);
   box-shadow: 0 6px 24px rgba(229, 193, 88, 0.35);
   transform: translateY(-1px);
 }
 .btn.ghost {
   background: transparent;
   border-color: transparent;
+  box-shadow: none;
 }
 .btn.ghost:hover {
   background: var(--panel-2);
@@ -157,7 +290,7 @@ input[type="checkbox"] {
   border-radius: 14px;
   padding: 1.35rem;
   margin-bottom: 1.2rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow);
 }
 .brand {
   font-size: 1.5rem;
@@ -177,7 +310,7 @@ input[type="checkbox"] {
   padding: 0.9rem 2rem;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-sm);
 }
 .topbar-right {
   display: flex;
@@ -210,7 +343,7 @@ input[type="checkbox"] {
   display: grid;
   place-items: center;
   padding: 1rem;
-  background: radial-gradient(circle at center, #1b1e2b 0%, #0c0e12 80%);
+  background: radial-gradient(circle at center, var(--panel-2) 0%, var(--bg) 80%);
 }
 .auth-card {
   width: 100%;
@@ -394,7 +527,7 @@ input[type="checkbox"] {
   margin-bottom: 1.1rem;
 }
 .grad {
-  background: linear-gradient(135deg, #f3d67b 0%, #e5c158 45%, #d4aa3b 100%);
+  background: var(--gold-grad-rich);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -448,7 +581,7 @@ input[type="checkbox"] {
   border: 1px solid var(--border-gold);
   border-radius: 18px;
   padding: 1.1rem;
-  box-shadow: var(--gold-glow), 0 20px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--gold-glow), var(--shadow-lg);
   transform: rotate(-1.5deg);
   transition: transform 0.3s ease;
 }
@@ -473,14 +606,14 @@ input[type="checkbox"] {
 .art-figure {
   width: 62%;
   height: 78%;
-  fill: #2a2f3e;
+  fill: var(--panel-2);
 }
 .art-label {
   position: absolute;
   bottom: 0.4rem;
   right: 0.5rem;
   font-size: 0.62rem;
-  color: #8a90a0;
+  color: var(--muted);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -540,8 +673,8 @@ input[type="checkbox"] {
   width: 2.1rem;
   height: 2.1rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #e5c158, #d4aa3b);
-  color: var(--primary-ink);
+  background: var(--gold-grad);
+  color: var(--gold-ink);
   display: grid;
   place-items: center;
   font-weight: 750;
@@ -635,7 +768,7 @@ input[type="checkbox"] {
   border-radius: 10px;
   border: 1px solid var(--border);
   object-fit: contain;
-  background: #000;
+  background: var(--frame-bg);
 }
 .preview.clickable {
   cursor: pointer;
@@ -791,8 +924,8 @@ input[type="checkbox"] {
   background: rgba(255, 255, 255, 0.04);
 }
 .tab-btn.active {
-  background: var(--primary);
-  color: var(--primary-ink);
+  background: var(--gold-fill);
+  color: var(--gold-ink);
   font-weight: 650;
   box-shadow: 0 2px 10px rgba(229, 193, 88, 0.25);
 }
@@ -876,9 +1009,9 @@ input[type="checkbox"] {
   border-color: var(--border-gold);
   margin-top: 0.8rem;
 }
-.btn.secondary:hover {
-  background: var(--primary);
-  color: var(--primary-ink);
+.btn.secondary:hover:not(:disabled) {
+  background: var(--gold-fill);
+  color: var(--gold-ink);
   box-shadow: var(--gold-glow);
 }
 
@@ -1037,7 +1170,7 @@ input[type="checkbox"] {
 .jp-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #d4aa3b 0%, #e5c158 50%, #f3d67b 100%);
+  background: var(--gold-bar);
   box-shadow: 0 0 10px rgba(229, 193, 88, 0.5);
   transition: width 0.5s ease;
 }
@@ -1127,7 +1260,7 @@ input[type="checkbox"] {
   height: 100%;
   width: 40%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #d4aa3b, #f3d67b);
+  background: var(--gold-bar);
   animation: skeleton-slide 1.3s ease-in-out infinite;
 }
 @keyframes skeleton-slide {
@@ -1177,7 +1310,7 @@ input[type="checkbox"] {
   border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 /* Per-view regenerate button (top-right overlay on each image) */
 .view-fig {
@@ -1205,8 +1338,8 @@ input[type="checkbox"] {
   opacity: 1;
 }
 .view-regen:hover:not(:disabled) {
-  background: var(--primary);
-  color: var(--primary-ink);
+  background: var(--gold-fill);
+  color: var(--gold-ink);
 }
 
 .failed-block {
@@ -1341,8 +1474,8 @@ input[type="checkbox"] {
   display: grid;
   place-items: center;
   font-weight: 700;
-  color: var(--primary-ink);
-  background: linear-gradient(135deg, #e5c158, #d4aa3b);
+  color: var(--gold-ink);
+  background: var(--gold-grad);
 }
 .sb-ws-text {
   display: flex;
@@ -1435,6 +1568,67 @@ input[type="checkbox"] {
 .sb-footer {
   padding-top: 0.6rem;
 }
+
+/* ---- Light / dark switch, directly above the account button ---- */
+.sb-theme {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.4rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.86rem;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.sb-theme:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+.sb-theme-label {
+  flex: 1;
+  min-width: 0;
+}
+/* Little track+knob so the current mode is readable at a glance. */
+.sb-theme-switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 2.1rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  transition: background 0.2s, border-color 0.2s;
+}
+.sb-theme:hover .sb-theme-switch {
+  border-color: var(--border-gold);
+}
+.sb-theme-switch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.15rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition: left 0.2s ease, background 0.2s ease;
+}
+.sb-theme-switch.on {
+  background: rgba(229, 193, 88, 0.18);
+  border-color: var(--border-gold);
+}
+.sb-theme-switch.on::after {
+  left: calc(100% - 0.95rem);
+  background: var(--gold-fill);
+}
 .sb-upgrade {
   display: flex;
   align-items: center;
@@ -1447,14 +1641,14 @@ input[type="checkbox"] {
   cursor: pointer;
   font-weight: 700;
   font-size: 0.92rem;
-  color: var(--primary-ink);
-  background: linear-gradient(135deg, #f3d67b 0%, #e5c158 45%, #d4aa3b 100%);
+  color: var(--gold-ink);
+  background: var(--gold-grad-rich);
   box-shadow: var(--gold-glow);
   transition: transform 0.2s, box-shadow 0.2s;
 }
 .sb-upgrade:hover {
   transform: translateY(-1px);
-  background: linear-gradient(135deg, #f7de8c 0%, #f0cf6c 45%, #e2be52 100%);
+  background: var(--gold-grad-rich-hover);
   box-shadow: 0 8px 26px rgba(229, 193, 88, 0.45);
 }
 .sb-upgrade-ico {
@@ -1531,8 +1725,8 @@ input[type="checkbox"] {
   place-items: center;
   font-size: 1.5rem;
   font-weight: 700;
-  color: var(--primary-ink);
-  background: linear-gradient(135deg, #e5c158, #d4aa3b);
+  color: var(--gold-ink);
+  background: var(--gold-grad);
   box-shadow: var(--gold-glow);
 }
 .profile-email {
@@ -1569,17 +1763,17 @@ input[type="checkbox"] {
   line-height: 1.1;
 }
 .upgrade-inline {
-  background: linear-gradient(135deg, #f3d67b 0%, #e5c158 45%, #d4aa3b 100%);
-  color: var(--primary-ink);
+  background: var(--gold-grad-rich);
+  color: var(--gold-ink);
   border: 1px solid var(--primary);
   font-weight: 650;
   width: 100%;
   box-shadow: var(--gold-glow);
 }
 .upgrade-inline:hover {
-  color: var(--primary-ink);
+  color: var(--gold-ink);
   transform: translateY(-1px);
-  background: linear-gradient(135deg, #f7de8c 0%, #f0cf6c 45%, #e2be52 100%);
+  background: var(--gold-grad-rich-hover);
   box-shadow: 0 6px 20px rgba(229, 193, 88, 0.45);
 }
 .plan-note {
@@ -1690,7 +1884,7 @@ input[type="checkbox"] {
 }
 .danger-btn {
   border-color: rgba(248, 113, 113, 0.4);
-  color: #fca5a5;
+  color: var(--fail);
   background: rgba(248, 113, 113, 0.08);
 }
 .danger-btn:hover:not(:disabled) {
@@ -1820,8 +2014,8 @@ input[type="checkbox"] {
   margin: 0 auto 0.6rem;
   font-size: 1.6rem;
   font-weight: 700;
-  color: var(--primary-ink);
-  background: linear-gradient(135deg, #e5c158, #d4aa3b);
+  color: var(--gold-ink);
+  background: var(--gold-grad);
   box-shadow: var(--gold-glow);
 }
 .account-modal .btn.primary {
@@ -1934,7 +2128,7 @@ input[type="checkbox"] {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 1.2rem 1.3rem 1.4rem;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 .more-head {
   display: flex;
@@ -2030,7 +2224,7 @@ input[type="checkbox"] {
 .shot-btn.danger:hover:not(:disabled) {
   border-color: var(--fail);
   background: rgba(248, 113, 113, 0.12);
-  color: #fca5a5;
+  color: var(--fail);
 }
 .shot-btn:disabled {
   opacity: 0.35;
@@ -2069,6 +2263,28 @@ input[type="checkbox"] {
   max-width: 760px;
 }
 
+/* Step navigation directly UNDER the page title (Back on the left, the
+   next/generate action on the right), so both are reachable without scrolling
+   past a long list of shots, cast cards or panels — and the title still reads
+   first. The rule below the row separates the whole header block from the
+   page content. */
+.top-actions {
+  max-width: none;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 1.4rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+/* Tighten the title→buttons gap; the header's own 1.8rem is meant for content. */
+.workflow-header:has(+ .top-actions) {
+  margin-bottom: 1.1rem;
+}
+.top-actions .btn,
+.top-actions .btn.primary {
+  margin-top: 0;
+}
+
 /* ---- Script → Storyboard: Board (Stage D output) ---- */
 .board-grid {
   display: grid;
@@ -2092,11 +2308,11 @@ input[type="checkbox"] {
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow);
 }
 .board-frame {
   width: 100%;
-  background: #000;
+  background: var(--frame-bg);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -2481,8 +2697,8 @@ input[type="checkbox"] {
   place-items: center;
   font-size: 0.8rem;
   font-weight: 750;
-  color: var(--primary-ink);
-  background: linear-gradient(135deg, #e5c158, #d4aa3b);
+  color: var(--gold-ink);
+  background: var(--gold-grad);
   box-shadow: var(--gold-glow);
 }
 .sts-guide-tip {
@@ -2530,8 +2746,8 @@ input[type="checkbox"] {
   opacity: 1;
 }
 .panel-regen:hover:not(:disabled) {
-  background: var(--primary);
-  color: var(--primary-ink);
+  background: var(--gold-fill);
+  color: var(--gold-ink);
 }
 .board-failed {
   display: flex;
@@ -2549,8 +2765,8 @@ input[type="checkbox"] {
   color: var(--primary);
 }
 .board-retry:hover {
-  background: var(--primary);
-  color: var(--primary-ink);
+  background: var(--gold-fill);
+  color: var(--gold-ink);
   border-color: var(--primary);
 }
 
@@ -2563,8 +2779,8 @@ input[type="checkbox"] {
   color: var(--primary);
 }
 .board-retry-all:hover:not(:disabled) {
-  background: var(--primary);
-  color: var(--primary-ink);
+  background: var(--gold-fill);
+  color: var(--gold-ink);
   border-color: var(--primary);
 }
 
@@ -2654,6 +2870,284 @@ input[type="checkbox"] {
   transition: background 0.3s, box-shadow 0.3s;
 }
 .bp-dot2.on {
-  background: var(--primary);
+  background: var(--gold-fill);
   box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.18);
+}
+
+/* =========================================================================
+   STORYBOARD LIBRARY ("Your Storyboards" — step 1 of Script → Storyboard)
+   ========================================================================= */
+.sb-library {
+  max-width: 2200px;
+  margin: 0 auto;
+}
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.2rem;
+  align-items: start;
+}
+@media (max-width: 640px) {
+  .lib-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- The "New Storyboard" tile: always first, so starting is one click ---- */
+.lib-new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 280px;
+  margin: 0;
+  cursor: pointer;
+  border-style: dashed;
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.lib-new:hover {
+  border-color: var(--border-gold);
+  transform: translateY(-2px);
+}
+.lib-new-plus {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 14px;
+  font-size: 2.4rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--gold-ink);
+  background: var(--gold-grad);
+  box-shadow: var(--gold-glow);
+}
+.lib-new-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+}
+
+/* ---- A saved storyboard card ---- */
+.lib-card {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.lib-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--panel-2);
+  cursor: pointer;
+  overflow: hidden;
+}
+.lib-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.25s ease;
+}
+.lib-cover:hover img {
+  transform: scale(1.03);
+}
+.lib-cover-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 2rem;
+  color: var(--muted);
+}
+.lib-badge {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--gold-ink);
+  background: var(--gold-fill);
+}
+.lib-badge.failed {
+  color: #fff;
+  background: var(--fail);
+}
+.lib-body {
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.lib-title {
+  font-weight: 650;
+  font-size: 1.02rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-title:hover {
+  color: var(--primary);
+}
+.lib-rename {
+  width: 100%;
+  font-weight: 650;
+}
+.lib-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.lib-meta .chip {
+  margin: 0;
+}
+.lib-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.lib-actions {
+  display: flex;
+  gap: 0.15rem;
+}
+.lib-icon {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.lib-icon:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  background: var(--panel-2);
+}
+.lib-icon.on {
+  color: var(--primary);
+}
+.lib-icon.danger:hover:not(:disabled) {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.lib-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Public link row, shown while a board is shared. */
+.lib-share {
+  display: flex;
+  gap: 0.4rem;
+}
+.lib-share input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.lib-share .btn {
+  flex-shrink: 0;
+}
+
+/* Two-step delete: destructive and not undoable, so it always confirms. */
+.lib-confirm {
+  border: 1px solid var(--fail);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  background: rgba(248, 113, 113, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.lib-confirm-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.btn.lib-delete {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.btn.lib-delete:hover:not(:disabled) {
+  background: var(--fail);
+  color: #fff;
+}
+.lib-empty {
+  margin: 0;
+  padding: 1.6rem 0;
+  text-align: center;
+}
+
+/* ---- Folder-style sections: Recent Storyboards / All Storyboards ---- */
+.lib-new-row {
+  margin-bottom: 2rem;
+}
+.lib-section + .lib-section {
+  margin-top: 2rem;
+}
+.lib-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.lib-section-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* The form step's lone "back to library" button shouldn't stretch. */
+.sb-form-actions {
+  justify-content: flex-start;
+}
+.sts-script-label {
+  margin-top: 1rem;
+}
+
+/* =========================================================================
+   PUBLIC (SHARED) STORYBOARD VIEW — rendered without a session
+   ========================================================================= */
+.public-wrap {
+  min-height: 100vh;
+  padding: 0 clamp(1.2rem, 3vw, 2.5rem) 3rem;
+}
+.public-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.public-board {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.public-msg {
+  max-width: 480px;
+  margin: 15vh auto 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
 }

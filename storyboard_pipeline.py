@@ -7,14 +7,24 @@ progress after each panel (so the client's board fills in one-by-one).
 
 Synchronous + I/O-bound (Gemini image calls) — run it in the worker thread pool,
 never on the FastAPI event loop. Mirrors pipeline.py's progress-callback shape.
+
+Panels are rendered CONCURRENTLY (STORYBOARD_PANEL_CONCURRENCY). Real API pressure
+is bounded by the shared throttle in gemini_client, so this pool only controls how
+many panels are in flight locally.
 """
 
 import logging
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# How many panels to draw at once. The gemini_client throttle
+# (IMAGE_MAX_CONCURRENCY / IMAGE_RPM) is the real ceiling.
+PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "4")))
 
 
 def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
@@ -212,18 +222,40 @@ def run_storyboard(
     # Cap references per panel so a crowd scene doesn't overload the request.
     MAX_REFS_PER_PANEL = 3
 
-    panels: list[dict] = []
+    # Build every panel up front so the board can show correct shot numbers and a
+    # skeleton for each one still rendering (url=None, failed=False → skeleton).
+    panels: list[dict] = [
+        {
+            "index": i,
+            "scene_number": shot.get("scene_number", 1),
+            "shot_number": shot.get("shot_number", i + 1),
+            "description": str(shot.get("description", "")).strip(),
+            "characters": shot.get("characters", []) or [],
+            "assets": shot.get("assets", []) or [],
+            "location": shot.get("location", "") or "",
+            "camera": shot.get("camera", "") or "",
+            "url": None,
+            "failed": False,
+        }
+        for i, shot in enumerate(shots)
+    ]
+
+    state_lock = threading.Lock()
+    done = 0
 
     def _emit(percent, message, extra=None):
         if not progress_cb:
             return
+        with state_lock:
+            snapshot = [dict(p) for p in panels]
+            current = done
         update = {
             "percent": percent,
             "stage": "generating",
             "message": message,
-            "current": len(panels),
+            "current": current,
             "total": total,
-            "panels": list(panels),  # partial list so the board fills in
+            "panels": snapshot,  # full-length; pending ones render as skeletons
         }
         if extra:
             update.update(extra)
@@ -232,29 +264,10 @@ def run_storyboard(
         except Exception:  # noqa: BLE001 — progress must never kill the run
             logger.debug("[storyboard %s] progress cb failed (ignored)", job_id, exc_info=True)
 
-    logger.info("[storyboard %s] generating %d panels (style=%s, aspect=%s)", job_id, total, style, aspect_ratio)
-    _emit(2, f"Starting {total} panels…")
-
-    for i, shot in enumerate(shots):
-        description = str(shot.get("description", "")).strip()
-        panel = {
-            "index": i,
-            "scene_number": shot.get("scene_number", 1),
-            "shot_number": shot.get("shot_number", i + 1),
-            "description": description,
-            "characters": shot.get("characters", []) or [],
-            "assets": shot.get("assets", []) or [],
-            "location": shot.get("location", "") or "",
-            "camera": shot.get("camera", "") or "",
-            "url": None,
-            "failed": False,
-        }
-
-        _emit(
-            int(2 + (i / max(total, 1)) * 96),
-            f"Drawing panel {i + 1} of {total}…",
-        )
-
+    def _render(i: int) -> None:
+        """Draw ONE panel and record the outcome (runs in the panel pool)."""
+        panel = panels[i]
+        description = panel["description"]
         # Gather reference images for the characters + assets in THIS shot.
         shot_char_refs = _gather_refs(panel["characters"], char_refs, MAX_REFS_PER_PANEL)
         shot_asset_refs = _gather_refs(panel["assets"], asset_refs, MAX_REFS_PER_PANEL)
@@ -276,15 +289,43 @@ def run_storyboard(
 
         if image is not None:
             image = _crop_to_aspect(image, aspect_ratio)
-            path = os.path.join(write_dir, f"panel_{i:02d}.png")
-            image.save(path, "PNG")
-            panel["url"] = _panel_url(job_id, i, variant)
+            image.save(os.path.join(write_dir, f"panel_{i:02d}.png"), "PNG")
+            with state_lock:
+                panel["url"] = _panel_url(job_id, i, variant)
             logger.info("[storyboard %s] panel %d/%d done (variant %d)", job_id, i + 1, total, variant)
         else:
-            panel["failed"] = True
+            with state_lock:
+                panel["failed"] = True
             logger.warning("[storyboard %s] panel %d/%d FAILED (no image)", job_id, i + 1, total)
 
-        panels.append(panel)
+    logger.info(
+        "[storyboard %s] generating %d panels (style=%s, aspect=%s, concurrency=%d)",
+        job_id, total, style, aspect_ratio, PANEL_CONCURRENCY,
+    )
+    _emit(2, f"Starting {total} panels…")
+
+    # Render panels concurrently. Actual API pressure is bounded by the shared
+    # throttle in gemini_client, so this pool only controls local fan-out.
+    if total:
+        with ThreadPoolExecutor(
+            max_workers=min(PANEL_CONCURRENCY, total), thread_name_prefix="panel"
+        ) as pool:
+            futures = {pool.submit(_render, i): i for i in range(total)}
+            for future in as_completed(futures):
+                i = futures[future]
+                try:
+                    future.result()
+                except Exception:  # noqa: BLE001 — one panel must not kill the board
+                    with state_lock:
+                        panels[i]["failed"] = True
+                    logger.exception("[storyboard %s] panel %d crashed", job_id, i + 1)
+                with state_lock:
+                    done += 1
+                    completed = done
+                _emit(
+                    int(2 + (completed / max(total, 1)) * 96),
+                    f"Drawing panels… {completed} of {total} done",
+                )
 
     ok = sum(1 for p in panels if not p["failed"])
     _emit(100, f"Done — {ok}/{total} panels generated.")

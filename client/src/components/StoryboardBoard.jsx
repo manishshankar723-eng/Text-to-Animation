@@ -23,7 +23,14 @@ const RESTYLE_OPTIONS = [
 const styleLabelFor = (id) =>
   RESTYLE_OPTIONS.find((s) => s.id === id)?.label || id || "Style";
 
-export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onRestart }) {
+export default function StoryboardBoard({
+  jobId,
+  styleLabel,
+  aspect,
+  backLabel,
+  onBack,
+  onRestart,
+}) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
   const [panelUrls, setPanelUrls] = useState({});
@@ -249,6 +256,15 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
         </div>
       </div>
 
+      <div className="review-actions board-actions top-actions">
+        <button type="button" className="btn" onClick={onBack}>
+          {backLabel || "← Back to shots"}
+        </button>
+        <button type="button" className="btn ghost" onClick={onRestart}>
+          Start over
+        </button>
+      </div>
+
       {/* Style variants: switch between saved styles, or add a new one. */}
       {variants.length > 0 && (
         <div className="board-styles">
@@ -443,15 +459,6 @@ export default function StoryboardBoard({ jobId, styleLabel, aspect, onBack, onR
             </figcaption>
           </figure>
         ))}
-      </div>
-
-      <div className="review-actions board-actions">
-        <button type="button" className="btn" onClick={onBack}>
-          ← Back to shots
-        </button>
-        <button type="button" className="btn ghost" onClick={onRestart}>
-          Start over
-        </button>
       </div>
 
       {lightbox && (

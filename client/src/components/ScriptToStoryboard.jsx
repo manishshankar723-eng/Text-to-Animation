@@ -1,14 +1,18 @@
 // Script → Storyboard flow:
+//   Step "library"— "Your Storyboards": every board this user has generated,
+//                   plus the New Storyboard card. This is where the flow opens,
+//                   so returning users land on their saved work.
 //   Step "form"   — single-page input (script → style → aspect), matches the
 //                   Text-to-Image workflow's design language.
 //   Step "review" — Stage C: the AI shot list, editable before generating panels
 //                   (edit description, reorder, delete, add). Panel generation is
 //                   the next build step (button shows a "coming soon" notice).
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import * as api from "../api.js";
 import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
 import StoryboardAssets from "./StoryboardAssets.jsx";
+import StoryboardLibrary from "./StoryboardLibrary.jsx";
 import BreakdownProgress from "./BreakdownProgress.jsx";
 
 // Visual styles. The first 7 show as chips; the rest live behind "＋ More".
@@ -73,11 +77,13 @@ const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 const TEXT_EXTENSIONS = ["txt", "fountain", "fdx", "md", "text"];
 
 export default function ScriptToStoryboard() {
-  const [step, setStep] = useState("form"); // "form" | "review"
+  // Open on the library so a returning user sees their saved storyboards first.
+  const [step, setStep] = useState("library");
 
   // Form state
   const [tab, setTab] = useState("paste"); // "paste" | "upload"
   const [script, setScript] = useState("");
+  const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [genre, setGenre] = useState("default"); // "default" = no bias
@@ -99,8 +105,47 @@ export default function ScriptToStoryboard() {
   // sets of references reach panel generation together.
   const [characterRefs, setCharacterRefs] = useState({});
 
+  // Everything the user sets up on the cast / props steps — the generated or
+  // uploaded reference AND the edited description — lives HERE rather than in
+  // those step components, because they unmount whenever the user steps away.
+  // Keyed by lowercased name, so a step can re-seed itself when it mounts again
+  // and the work survives Back → forward for the whole storyboard session.
+  const [savedCastRefs, setSavedCastRefs] = useState({});
+  const [savedAssetRefs, setSavedAssetRefs] = useState({});
+  // Blob preview URLs are owned here too: the step components used to revoke
+  // theirs on unmount, which is exactly what blanked the thumbnails on Back.
+  const previewUrls = useRef([]);
+
+  useEffect(
+    () => () => previewUrls.current.forEach((u) => URL.revokeObjectURL(u)),
+    []
+  );
+
+  function refKey(name) {
+    return (name || "").trim().toLowerCase();
+  }
+
+  // Called by the cast / props steps whenever a durable field changes.
+  function saveRefFields(setter, name, fields) {
+    const key = refKey(name);
+    if (!key) return;
+    if (fields.previewUrl) previewUrls.current.push(fields.previewUrl);
+    setter((m) => ({ ...m, [key]: { ...m[key], ...fields } }));
+  }
+
+  function clearSavedRefs() {
+    previewUrls.current.forEach((u) => URL.revokeObjectURL(u));
+    previewUrls.current = [];
+    setSavedCastRefs({});
+    setSavedAssetRefs({});
+  }
+
   // Board state
   const [jobId, setJobId] = useState(null);
+  // Where the board was opened from, so ← Back goes somewhere that still has
+  // content: the review step for a board we just generated, the library for a
+  // saved board re-opened from a card (whose shots aren't loaded).
+  const [boardOrigin, setBoardOrigin] = useState("review");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -132,6 +177,43 @@ export default function ScriptToStoryboard() {
     if (!f) return;
     setFile(f);
     setError("");
+  }
+
+  // The name this storyboard is saved under. Falls back to the script's first
+  // non-empty line so a saved board is never just called "Storyboard".
+  function effectiveTitle() {
+    const typed = title.trim();
+    if (typed) return typed;
+    const firstLine = script
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    if (firstLine) return firstLine.slice(0, 80);
+    if (file?.name) return file.name.replace(/\.[^.]+$/, "");
+    return "Untitled storyboard";
+  }
+
+  // Re-select the chips for a saved board's settings. Anything that isn't one
+  // of our known ids came from a "custom" field, so restore it as custom text.
+  function applySavedSettings({ style: s, aspect_ratio: a, genre: g }) {
+    if (s) {
+      const known = ALL_STYLES.some((x) => x.id === s && x.id !== "custom");
+      setStyle(known ? s : "custom");
+      setCustomStyle(known ? "" : s);
+    }
+    if (a) {
+      const known = ASPECTS.some((x) => x.id === a);
+      setAspect(known ? a : "custom");
+      setCustomAspect(known ? "" : a);
+    }
+    // Genres are stored as their readable label, so match on that too.
+    if (g) {
+      const match = ALL_GENRES.find(
+        (x) => x.id === g || x.label.replace(/^\S+\s+/, "") === g
+      );
+      setGenre(match ? match.id : "custom");
+      setCustomGenre(match ? "" : g);
+    }
   }
 
   // The genre string sent to the breakdown: "" for Default, the typed text for
@@ -183,6 +265,9 @@ export default function ScriptToStoryboard() {
       setShots(res.shots || []);
       setCharacters(res.characters || []);
       setAssets(res.assets || []);
+      // A new breakdown is a new cast — drop refs saved for the previous script
+      // so a same-named character can't inherit the old picture.
+      clearSavedRefs();
       setStep("review");
     } catch (e) {
       setError(e.message);
@@ -310,10 +395,14 @@ export default function ScriptToStoryboard() {
         shots,
         style: effectiveStyle(),
         aspectRatio: effectiveAspect(),
+        // Saved with the job so the library card can name and label the board.
+        title: effectiveTitle(),
+        genre: effectiveGenre(),
         characterRefs: charRefs || {},
         assetRefs: assetRefs || {},
       });
       setJobId(res.job_id);
+      setBoardOrigin("review");
       setStep("board");
     } catch (e) {
       setError(e.message);
@@ -323,11 +412,64 @@ export default function ScriptToStoryboard() {
     }
   }
 
+  // Wipe the in-flight storyboard so the form / library starts clean.
+  function resetWorkflow() {
+    setJobId(null);
+    setShots([]);
+    setCharacters([]);
+    setAssets([]);
+    setCharacterRefs({});
+    clearSavedRefs();
+    setScript("");
+    setFile(null);
+    setTitle("");
+    setGenre("default");
+    setCustomGenre("");
+    setStyle(DEFAULT_STYLE);
+    setCustomStyle("");
+    setAspect(DEFAULT_ASPECT);
+    setCustomAspect("");
+    setError("");
+    setNotice("");
+  }
+
+  // =========================================================== Library step
+  if (step === "library") {
+    return (
+      <StoryboardLibrary
+        onNew={() => {
+          resetWorkflow();
+          setStep("form");
+        }}
+        onOpen={(board) => {
+          // Re-open a saved board read-side: its panels live on the server, so
+          // only the display settings need restoring.
+          setTitle(board.title || "");
+          applySavedSettings(board);
+          setJobId(board.job_id);
+          setBoardOrigin("library");
+          setStep("board");
+        }}
+        onDuplicate={(project) => {
+          // Reuse the saved shots instead of re-running the paid breakdown —
+          // drops the user straight on the review step with a fresh name.
+          resetWorkflow();
+          applySavedSettings(project);
+          setShots(project.shots || []);
+          setTitle(`${project.title} (copy)`);
+          setStep("review");
+        }}
+      />
+    );
+  }
+
   // ============================================================== Cast step
   if (step === "cast") {
     return (
       <StoryboardCast
         characters={computeCast()}
+        saved={savedCastRefs}
+        onSave={(name, fields) => saveRefFields(setSavedCastRefs, name, fields)}
         busy={busy}
         onBack={() => setStep("review")}
         onGenerate={handleCastNext}
@@ -340,6 +482,8 @@ export default function ScriptToStoryboard() {
     return (
       <StoryboardAssets
         assets={computeAssets()}
+        saved={savedAssetRefs}
+        onSave={(name, fields) => saveRefFields(setSavedAssetRefs, name, fields)}
         busy={busy}
         onBack={() => setStep(computeCast().length > 0 ? "cast" : "review")}
         onGenerate={(assetRefs) => startStoryboard(characterRefs, assetRefs)}
@@ -354,20 +498,11 @@ export default function ScriptToStoryboard() {
         jobId={jobId}
         styleLabel={styleLabel}
         aspect={effectiveAspect()}
-        onBack={() => setStep("review")}
+        backLabel={boardOrigin === "library" ? "← Your Storyboards" : "← Back to shots"}
+        onBack={() => setStep(boardOrigin)}
         onRestart={() => {
-          setJobId(null);
-          setShots([]);
-          setCharacters([]);
-          setAssets([]);
-          setCharacterRefs({});
-          setGenre("default");
-          setCustomGenre("");
-          setStyle(DEFAULT_STYLE);
-          setCustomStyle("");
-          setAspect(DEFAULT_ASPECT);
-          setCustomAspect("");
-          setStep("form");
+          resetWorkflow();
+          setStep("library");
         }}
       />
     );
@@ -388,6 +523,38 @@ export default function ScriptToStoryboard() {
               chance to fix the AI before it draws.
             </p>
           </div>
+        </div>
+
+        <div className="review-actions top-actions">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setNotice("");
+              setError("");
+              setStep("form");
+            }}
+          >
+            ← Back
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={shots.length === 0 || busy}
+            onClick={handleReviewNext}
+          >
+            {busy ? (
+              <>
+                <span className="spinner-inline" /> Starting…
+              </>
+            ) : activeCast.length > 0 ? (
+              `🎭 Next: cast (${activeCast.length})`
+            ) : activeAssets.length > 0 ? (
+              `🎬 Next: props (${activeAssets.length})`
+            ) : (
+              `🎬 Generate panels (${shots.length})`
+            )}
+          </button>
         </div>
 
         <div className="review-summary">
@@ -492,37 +659,6 @@ export default function ScriptToStoryboard() {
           </button>
         </div>
 
-        <div className="review-actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setNotice("");
-              setError("");
-              setStep("form");
-            }}
-          >
-            ← Back
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={shots.length === 0 || busy}
-            onClick={handleReviewNext}
-          >
-            {busy ? (
-              <>
-                <span className="spinner-inline" /> Starting…
-              </>
-            ) : activeCast.length > 0 ? (
-              `🎭 Next: cast (${activeCast.length})`
-            ) : activeAssets.length > 0 ? (
-              `🎬 Next: props (${activeAssets.length})`
-            ) : (
-              `🎬 Generate panels (${shots.length})`
-            )}
-          </button>
-        </div>
       </div>
     );
   }
@@ -541,14 +677,29 @@ export default function ScriptToStoryboard() {
         </div>
       </div>
 
+      <div className="review-actions top-actions sb-form-actions">
+        <button type="button" className="btn" onClick={() => setStep("library")}>
+          ← Your Storyboards
+        </button>
+      </div>
+
       <div className="sts-hero-grid">
       <div className="sts-form-wrap">
         {busy ? (
           <BreakdownProgress />
         ) : (
         <div className="card">
+          {/* --- Title (what this board is saved as in the library) --- */}
+          <label>Storyboard title</label>
+          <input
+            value={title}
+            placeholder="Leave blank to name it after your script's first line"
+            maxLength={120}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+
           {/* --- Script --- */}
-          <label>Your script</label>
+          <label className="sts-script-label">Your script</label>
           <div className="tab-bar">
             <button
               type="button"

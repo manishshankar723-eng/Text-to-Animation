@@ -3,32 +3,47 @@
 // the visual description and generate a reference image (reusing the existing
 // character-reference endpoint). Those references are then fed into every panel
 // the character appears in, so they stay consistent. Generating refs is optional.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
 
-export default function StoryboardCast({ characters, onBack, onGenerate, busy }) {
-  const [lightbox, setLightbox] = useState(null);
-  const [cast, setCast] = useState(() =>
-    (characters || []).map((c) => ({
-      name: c.name,
-      description: c.description || "",
-      referenceId: null,
-      previewUrl: null,
-      busy: false,
-      error: "",
-    }))
-  );
-  const blobUrls = useRef([]);
-  const fileInputs = useRef([]);
+// Fields worth keeping when the user steps away from this page (see `saved`).
+const DURABLE = ["description", "referenceId", "previewUrl"];
 
-  // Revoke any object URLs we created on unmount.
-  useEffect(() => {
-    return () => blobUrls.current.forEach((u) => URL.revokeObjectURL(u));
-  }, []);
+export default function StoryboardCast({
+  characters,
+  saved,
+  onSave,
+  onBack,
+  onGenerate,
+  busy,
+}) {
+  const [lightbox, setLightbox] = useState(null);
+  // `saved` holds what the user already set up for these characters on an
+  // earlier visit (the workflow owns it, so it outlives this component). Seed
+  // from it, otherwise fall back to the breakdown's description.
+  const [cast, setCast] = useState(() =>
+    (characters || []).map((c) => {
+      const prev = saved?.[(c.name || "").trim().toLowerCase()] || {};
+      return {
+        name: c.name,
+        description: prev.description ?? c.description ?? "",
+        referenceId: prev.referenceId ?? null,
+        previewUrl: prev.previewUrl ?? null,
+        busy: false,
+        error: "",
+      };
+    })
+  );
+  const fileInputs = useRef([]);
 
   function patch(i, fields) {
     setCast((c) => c.map((ch, idx) => (idx === i ? { ...ch, ...fields } : ch)));
+    // Mirror the durable fields up to the workflow so leaving this step (Back,
+    // or on to props) doesn't discard the reference the user just set up.
+    const durable = {};
+    for (const k of DURABLE) if (k in fields) durable[k] = fields[k];
+    if (Object.keys(durable).length > 0) onSave?.(cast[i].name, durable);
   }
 
   async function generateRef(i) {
@@ -44,10 +59,7 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       let previewUrl = null;
-      if (imgRes.ok) {
-        previewUrl = URL.createObjectURL(await imgRes.blob());
-        blobUrls.current.push(previewUrl);
-      }
+      if (imgRes.ok) previewUrl = URL.createObjectURL(await imgRes.blob());
       patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
@@ -60,7 +72,6 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
     try {
       const res = await api.uploadReference(file);
       const previewUrl = URL.createObjectURL(file);
-      blobUrls.current.push(previewUrl);
       patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
@@ -88,6 +99,28 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
             panel. This step is optional — you can skip any character.
           </p>
         </div>
+      </div>
+
+      <div className="review-actions board-actions top-actions">
+        <button type="button" className="btn" onClick={onBack} disabled={busy}>
+          ← Back
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={handleGenerate}
+          disabled={busy}
+        >
+          {busy ? (
+            <>
+              <span className="spinner-inline" /> Starting…
+            </>
+          ) : readyCount > 0 ? (
+            `🎬 Generate panels · ${readyCount} ref${readyCount === 1 ? "" : "s"}`
+          ) : (
+            "🎬 Generate panels (skip refs)"
+          )}
+        </button>
       </div>
 
       {cast.length === 0 ? (
@@ -166,28 +199,6 @@ export default function StoryboardCast({ characters, onBack, onGenerate, busy })
           ))}
         </div>
       )}
-
-      <div className="review-actions board-actions">
-        <button type="button" className="btn" onClick={onBack} disabled={busy}>
-          ← Back
-        </button>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={handleGenerate}
-          disabled={busy}
-        >
-          {busy ? (
-            <>
-              <span className="spinner-inline" /> Starting…
-            </>
-          ) : readyCount > 0 ? (
-            `🎬 Generate panels · ${readyCount} ref${readyCount === 1 ? "" : "s"}`
-          ) : (
-            "🎬 Generate panels (skip refs)"
-          )}
-        </button>
-      </div>
 
       <ImageLightbox src={lightbox} alt="Character reference" onClose={() => setLightbox(null)} />
     </div>
