@@ -1988,12 +1988,6 @@ input[type="checkbox"] {
   padding: 1rem;
   animation: lightbox-fade-in 0.2s ease;
 }
-.upgrade-modal {
-  position: relative;
-  max-width: 420px;
-  text-align: center;
-  border-color: var(--border-gold);
-}
 .account-modal {
   position: relative;
   max-width: 380px;
@@ -2279,6 +2273,16 @@ input[type="checkbox"] {
 /* Tighten the title→buttons gap; the header's own 1.8rem is meant for content. */
 .workflow-header:has(+ .top-actions) {
   margin-bottom: 1.1rem;
+}
+/* Group the right-hand review actions (Regenerate + reopen) together. */
+.review-actions-right {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.review-actions-right .btn.primary {
+  margin-top: 0;
 }
 .top-actions .btn,
 .top-actions .btn.primary {
@@ -2808,35 +2812,48 @@ input[type="checkbox"] {
   text-align: center;
   gap: 0.35rem;
 }
-.bp-ring2 {
-  width: 150px;
-  height: 150px;
-  border-radius: 50%;
-  background: conic-gradient(var(--primary) var(--pct, 0%), var(--border) 0);
+/* SVG progress ring. The stroke animates smoothly (a conic-gradient background
+   can't be tweened, which is what made the old ring jump in steps). */
+.bp-ring {
+  position: relative;
   display: grid;
   place-items: center;
-  box-shadow: var(--gold-glow);
-  transition: background 0.2s linear;
   margin-bottom: 1.3rem;
+  filter: drop-shadow(var(--gold-glow));
 }
-.bp-ring2-inner {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: var(--panel);
+.bp-ring-svg {
+  transform: rotate(-90deg); /* start the arc at 12 o'clock */
+}
+.bp-ring-track {
+  fill: none;
+  stroke: var(--border);
+}
+.bp-ring-arc {
+  fill: none;
+  stroke: var(--gold-fill);
+  stroke-linecap: round;
+  /* NO transition on purpose: the arc's offset is set every animation frame in
+     JS, so a CSS transition on the same property just makes the drawn arc lag
+     its real value — which reads as the ring falling out of sync with the
+     number. requestAnimationFrame at 60fps is already smooth. */
+}
+.bp-ring-inner {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0.1rem;
 }
-.bp-ring2-pct {
+.bp-ring-pct {
   font-size: 1.75rem;
   font-weight: 750;
   color: var(--primary);
   line-height: 1;
+  font-variant-numeric: tabular-nums; /* stops the % text jittering as digits change */
 }
-.bp-ring2-label {
+.bp-ring-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -2851,11 +2868,13 @@ input[type="checkbox"] {
   font-size: 0.95rem;
   min-height: 1.4rem;
   margin: 0;
-  animation: bp-fade 0.45s ease;
+  /* Re-keyed on every step change, so this fade-and-rise replays as each new
+     label appears. */
+  animation: bp-fade 0.6s ease;
 }
 @keyframes bp-fade {
-  from { opacity: 0.25; transform: translateY(3px); }
-  to   { opacity: 1; transform: translateY(0); }
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 .bp-dots {
   display: flex;
@@ -2872,6 +2891,13 @@ input[type="checkbox"] {
 .bp-dot2.on {
   background: var(--gold-fill);
   box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.18);
+}
+/* Respect users who ask for less motion: drop the label's slide-in. The ring
+   still fills (that IS the progress feedback), just without the extra easing. */
+@media (prefers-reduced-motion: reduce) {
+  .bp-inline-step {
+    animation: none;
+  }
 }
 
 /* =========================================================================
@@ -3114,6 +3140,91 @@ input[type="checkbox"] {
   letter-spacing: -0.01em;
 }
 
+/* ---- Dimmed placeholder ("ghost") cards for an empty / loading section ---- */
+.lib-ghost {
+  pointer-events: none;
+  opacity: 0.55;
+}
+.lib-ghost-cover {
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+.lib-ghost-ico {
+  font-size: 1.9rem;
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.lib-ghost-line,
+.lib-ghost-chip {
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+.lib-ghost-title {
+  height: 0.95rem;
+  width: 62%;
+  margin: 0.15rem 0 0.15rem;
+}
+.lib-ghost-chip {
+  display: inline-block;
+  width: 3.2rem;
+  height: 1.15rem;
+  border-radius: 999px;
+}
+/* Empty-state card: mirrors the "New Storyboard" tile — icon + text stacked and
+   centered in the middle of a dashed card. */
+.lib-ghost-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  min-height: 280px;
+  padding: 1.5rem;
+  text-align: center;
+  border-style: dashed;
+}
+.lib-empty-ico {
+  font-size: 2.4rem;
+  opacity: 0.45;
+  filter: grayscale(0.4);
+}
+.lib-empty-text {
+  margin: 0;
+  max-width: 22ch;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.lib-empty-text strong {
+  color: var(--primary);
+}
+/* While the list is still loading, the placeholders shimmer to read as "busy"
+   rather than "empty". Once loaded-and-empty they hold still (no animation). */
+.lib-ghosts.is-loading .lib-ghost-cover,
+.lib-ghosts.is-loading .lib-ghost-line,
+.lib-ghosts.is-loading .lib-ghost-chip {
+  background: linear-gradient(
+    90deg,
+    var(--panel-2) 25%,
+    var(--border) 50%,
+    var(--panel-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: lib-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes lib-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-ghosts.is-loading .lib-ghost-cover,
+  .lib-ghosts.is-loading .lib-ghost-line,
+  .lib-ghosts.is-loading .lib-ghost-chip {
+    animation: none;
+  }
+}
+
 /* The form step's lone "back to library" button shouldn't stretch. */
 .sb-form-actions {
   justify-content: flex-start;
@@ -3150,4 +3261,256 @@ input[type="checkbox"] {
   flex-direction: column;
   align-items: center;
   gap: 0.8rem;
+}
+
+/* =========================================================================
+   PRICING / PLANS MODAL (sidebar "Upgrade")
+   ========================================================================= */
+.pricing-modal {
+  position: relative;
+  width: min(1180px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 2rem clamp(1rem, 2.5vw, 2rem) 1.6rem;
+  box-shadow: var(--shadow-lg);
+}
+.pricing-head {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+.pricing-eyebrow {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin-bottom: 0.4rem;
+}
+.pricing-title {
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 1rem;
+}
+.pricing-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 1rem;
+  max-width: 720px;
+  margin: 0 auto 1.2rem;
+  padding: 0.7rem 1rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.pricing-pill {
+  font-size: 0.82rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+/* Monthly / Yearly switch */
+.pricing-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.pricing-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.pricing-toggle button.on {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.pricing-save {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--gold-ink);
+  background: var(--gold-fill);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+.pricing-notice {
+  text-align: center;
+  margin: 0 auto 1rem;
+  max-width: 520px;
+}
+
+/* Plan cards */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+@media (max-width: 900px) {
+  .pricing-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 540px) {
+  .pricing-grid { grid-template-columns: 1fr; }
+}
+.pricing-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.4rem 1.2rem 1.3rem;
+  background: var(--panel-2);
+}
+.pricing-card.current {
+  border-color: var(--ok);
+}
+.pricing-card.featured {
+  background: var(--gold-grad);
+  border-color: transparent;
+  box-shadow: var(--gold-glow);
+}
+/* On the gold card, recolour text for contrast. */
+.pricing-card.featured .pricing-name,
+.pricing-card.featured .pricing-blurb,
+.pricing-card.featured .pricing-amount,
+.pricing-card.featured .pricing-per,
+.pricing-card.featured .pricing-features li,
+.pricing-card.featured .pricing-features .strong {
+  color: var(--gold-ink);
+}
+.pricing-card.featured .pricing-blurb,
+.pricing-card.featured .pricing-per {
+  opacity: 0.85;
+}
+.pricing-badge {
+  position: absolute;
+  top: -0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--panel);
+}
+.pricing-card.current .pricing-badge {
+  background: var(--ok);
+  color: #fff;
+}
+.pricing-card.featured .pricing-badge {
+  background: #141824;
+  color: #fff;
+}
+.pricing-name {
+  font-size: 1.15rem;
+  font-weight: 750;
+  margin: 0.3rem 0 0.35rem;
+}
+.pricing-blurb {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+  min-height: 3.4em;
+  margin-bottom: 0.9rem;
+}
+.pricing-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.pricing-amount {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.pricing-was {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--fail);
+  padding: 0.05rem 0.4rem;
+  border-radius: 6px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.6);
+}
+.pricing-per {
+  font-size: 0.76rem;
+  color: var(--muted);
+  margin: 0.2rem 0 1rem;
+}
+.pricing-cta {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+.pricing-card.featured .pricing-cta {
+  background: #141824;
+  color: #fff;
+  border-color: transparent;
+}
+.pricing-card.featured .pricing-cta:hover:not(:disabled) {
+  background: #000;
+}
+.pricing-features {
+  list-style: none;
+  margin: 0.2rem 0 0;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.pricing-card.featured .pricing-features {
+  border-top-color: rgba(20, 24, 36, 0.25);
+}
+.pricing-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.84rem;
+  color: var(--text);
+}
+.pricing-features li.no {
+  color: var(--muted);
+}
+.pricing-features .strong {
+  font-weight: 700;
+}
+.pricing-ic {
+  flex-shrink: 0;
+  color: var(--ok);
+  font-weight: 700;
+}
+.pricing-features li.no .pricing-ic {
+  color: var(--fail);
+}
+.pricing-card.featured .pricing-ic {
+  color: #141824;
+}
+.pricing-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem 1.5rem;
+  margin-top: 1.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
 }

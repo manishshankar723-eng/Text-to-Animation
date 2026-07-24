@@ -8,6 +8,7 @@ import Home from "./components/Home.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
+import PricingModal from "./components/PricingModal.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
@@ -196,24 +197,7 @@ export default function App() {
         </div>
       )}
 
-      {upgradeOpen && (
-        <div className="modal-overlay" onClick={() => setUpgradeOpen(false)}>
-          <div className="card upgrade-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setUpgradeOpen(false)}>
-              ✕
-            </button>
-            <span className="soon-icon">⚡</span>
-            <h2>Plans &amp; upgrades coming soon</h2>
-            <p className="muted">
-              Paid plans with more credits, faster generation and the full
-              script-to-video pipeline are on the way. You're on the Free plan for now.
-            </p>
-            <button className="btn primary" onClick={() => setUpgradeOpen(false)}>
-              Got it
-            </button>
-          </div>
-        </div>
-      )}
+      {upgradeOpen && <PricingModal onClose={() => setUpgradeOpen(false)} />}
     </div>
   );
 }

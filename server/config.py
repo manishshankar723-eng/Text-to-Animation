@@ -30,6 +30,10 @@ CONFIG_PATH = os.environ.get("API_CONFIG_PATH", "prompts.yaml")
 # process only (handy for local dev with no Firestore access).
 JOB_STORE = os.environ.get("API_JOB_STORE", "firestore").lower()
 FIRESTORE_COLLECTION = os.environ.get("API_FIRESTORE_COLLECTION", "character_jobs")
+# When JOB_STORE == "memory", jobs are ALSO mirrored to this JSON file so a
+# backend restart (e.g. uvicorn --reload picking up a code change) doesn't wipe
+# saved storyboards. Set empty to disable and keep jobs purely in RAM.
+LOCAL_JOBS_PATH = os.environ.get("API_LOCAL_JOBS_PATH", ".local_jobs.json")
 
 # --- Worker ------------------------------------------------------------------
 # How many pipeline jobs may run concurrently. Each job makes several Gemini

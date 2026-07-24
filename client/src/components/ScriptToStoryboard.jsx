@@ -101,6 +101,11 @@ export default function ScriptToStoryboard() {
   const [shots, setShots] = useState([]);
   const [characters, setCharacters] = useState([]);
   const [assets, setAssets] = useState([]);
+  // Set true the moment the breakdown API call returns, so the progress ring
+  // can race to 100% and THEN hand off to Review — instead of the old behaviour
+  // where the call finishing froze the ring wherever it happened to be.
+  const [breakdownDone, setBreakdownDone] = useState(false);
+  const pendingBreakdown = useRef(null);
   // Character refs chosen on the cast step, carried into the assets step so both
   // sets of references reach panel generation together.
   const [characterRefs, setCharacterRefs] = useState({});
@@ -142,6 +147,11 @@ export default function ScriptToStoryboard() {
 
   // Board state
   const [jobId, setJobId] = useState(null);
+  // Signature of the shots/style/aspect that produced the CURRENT board. Lets us
+  // tell "nothing changed, reopen the existing board" from "shots edited,
+  // regenerate" — so going Back to shots and returning doesn't throw away the
+  // panels already drawn and start over.
+  const [generatedSig, setGeneratedSig] = useState(null);
   // Where the board was opened from, so ← Back goes somewhere that still has
   // content: the review step for a board we just generated, the library for a
   // saved board re-opened from a card (whose shots aren't loaded).
@@ -251,6 +261,8 @@ export default function ScriptToStoryboard() {
     if (!canGenerate || busy) return;
     setError("");
     setNotice("");
+    setBreakdownDone(false);
+    pendingBreakdown.current = null;
     setBusy(true);
     try {
       const text = await resolveScriptText();
@@ -262,18 +274,32 @@ export default function ScriptToStoryboard() {
         aspectRatio: effectiveAspect(),
         genre: effectiveGenre(),
       });
-      setShots(res.shots || []);
-      setCharacters(res.characters || []);
-      setAssets(res.assets || []);
-      // A new breakdown is a new cast — drop refs saved for the previous script
-      // so a same-named character can't inherit the old picture.
-      clearSavedRefs();
-      setStep("review");
+      // Hold the result and let the ring finish to 100%. finishBreakdown()
+      // (called by the ring on completion) applies it and moves to Review.
+      pendingBreakdown.current = res;
+      setBreakdownDone(true);
     } catch (e) {
       setError(e.message);
-    } finally {
       setBusy(false);
+      setBreakdownDone(false);
+      pendingBreakdown.current = null;
     }
+  }
+
+  // Called by BreakdownProgress once the ring has reached 100%.
+  function finishBreakdown() {
+    const res = pendingBreakdown.current;
+    pendingBreakdown.current = null;
+    if (!res) return;
+    setShots(res.shots || []);
+    setCharacters(res.characters || []);
+    setAssets(res.assets || []);
+    // A new breakdown is a new cast — drop refs saved for the previous script
+    // so a same-named character can't inherit the old picture.
+    clearSavedRefs();
+    setBreakdownDone(false);
+    setBusy(false);
+    setStep("review");
   }
 
   // ---- Review handlers ----
@@ -361,17 +387,35 @@ export default function ScriptToStoryboard() {
     return out;
   }
 
+  // What the current board was drawn from. If this still matches the board's
+  // saved signature, the panels on screen are still valid — no need to redraw.
+  function currentSig() {
+    return JSON.stringify({
+      shots,
+      style: effectiveStyle(),
+      aspect: effectiveAspect(),
+    });
+  }
+  // True when a board exists and nothing that affects the panels has changed.
+  const boardUpToDate = Boolean(jobId) && generatedSig === currentSig();
+
   // Review → cast → assets → board, skipping any step with nothing to set up.
-  function handleReviewNext() {
+  // When the board is already up to date, just reopen it (unless the user
+  // explicitly asks to regenerate) so their drawn panels aren't thrown away.
+  function handleReviewNext(forceRegen = false) {
     if (shots.length === 0 || busy) return;
     setError("");
     setNotice("");
+    if (!forceRegen && boardUpToDate) {
+      setStep("board");
+      return;
+    }
     if (computeCast().length > 0) {
       setStep("cast");
     } else if (computeAssets().length > 0) {
       setStep("assets");
     } else {
-      startStoryboard({}, {});
+      startStoryboard(characterRefs || {}, {});
     }
   }
 
@@ -410,6 +454,7 @@ export default function ScriptToStoryboard() {
         assetCategories,
       });
       setJobId(res.job_id);
+      setGeneratedSig(currentSig()); // remember what this board was drawn from
       setBoardOrigin("review");
       setStep("board");
     } catch (e) {
@@ -423,6 +468,7 @@ export default function ScriptToStoryboard() {
   // Wipe the in-flight storyboard so the form / library starts clean.
   function resetWorkflow() {
     setJobId(null);
+    setGeneratedSig(null);
     setShots([]);
     setCharacters([]);
     setAssets([]);
@@ -545,24 +591,49 @@ export default function ScriptToStoryboard() {
           >
             ← Back
           </button>
-          <button
-            type="button"
-            className="btn primary"
-            disabled={shots.length === 0 || busy}
-            onClick={handleReviewNext}
-          >
-            {busy ? (
+          <div className="review-actions-right">
+            {/* Board already drawn from these exact shots → offer to reopen it
+                (keeping the panels) plus a separate Regenerate. Editing any shot
+                makes boardUpToDate false and this collapses back to one button. */}
+            {boardUpToDate && !busy ? (
               <>
-                <span className="spinner-inline" /> Starting…
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => handleReviewNext(true)}
+                  title="Draw every panel again from scratch"
+                >
+                  🔄 Regenerate
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => handleReviewNext(false)}
+                >
+                  → Back to your storyboard
+                </button>
               </>
-            ) : activeCast.length > 0 ? (
-              `🎭 Next: cast (${activeCast.length})`
-            ) : activeAssets.length > 0 ? (
-              `🎬 Next: props (${activeAssets.length})`
             ) : (
-              `🎬 Generate panels (${shots.length})`
+              <button
+                type="button"
+                className="btn primary"
+                disabled={shots.length === 0 || busy}
+                onClick={() => handleReviewNext(false)}
+              >
+                {busy ? (
+                  <>
+                    <span className="spinner-inline" /> Starting…
+                  </>
+                ) : activeCast.length > 0 ? (
+                  `🎭 Next: cast (${activeCast.length})`
+                ) : activeAssets.length > 0 ? (
+                  `🎬 Next: props (${activeAssets.length})`
+                ) : (
+                  `🎬 Generate panels (${shots.length})`
+                )}
+              </button>
             )}
-          </button>
+          </div>
         </div>
 
         <div className="review-summary">
@@ -694,7 +765,7 @@ export default function ScriptToStoryboard() {
       <div className="sts-hero-grid">
       <div className="sts-form-wrap">
         {busy ? (
-          <BreakdownProgress />
+          <BreakdownProgress done={breakdownDone} onDone={finishBreakdown} />
         ) : (
         <div className="card">
           {/* --- Title (what this board is saved as in the library) --- */}

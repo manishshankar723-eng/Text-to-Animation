@@ -44,8 +44,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_ID = "gemini-3.1-flash-image"
 DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
-MAX_RETRIES = 3
-INITIAL_BACKOFF_SECONDS = 5  # doubles each retry: 5s, 10s, 20s
+# Total attempts per image call. Quota (429) errors get the full budget because
+# a per-minute quota REFILLS — waiting through it is the whole point.
+MAX_RETRIES = max(1, int(os.environ.get("IMAGE_MAX_RETRIES", "5")))
+INITIAL_BACKOFF_SECONDS = 3  # generic transient ladder: 3s, 6s, 12s, 24s…
+# Quota errors need a per-minute refill, so they wait longer between tries.
+QUOTA_BACKOFF_SECONDS = 15   # 15s, 30s, then capped — catches a minute refill
+QUOTA_BACKOFF_CAP = 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -56,17 +61,23 @@ INITIAL_BACKOFF_SECONDS = 5  # doubles each retry: 5s, 10s, 20s
 # so capping here bounds real API pressure regardless of who calls.
 #   IMAGE_MAX_CONCURRENCY — simultaneous in-flight image requests
 #   IMAGE_RPM             — requests per minute (0 disables the rate limit)
-MAX_CONCURRENCY = max(1, int(os.environ.get("IMAGE_MAX_CONCURRENCY", "6")))
-IMAGE_RPM = max(0, int(os.environ.get("IMAGE_RPM", "120")))
+# Lowered from 6/120: firing many image calls at once is what blew a per-minute
+# quota all in one go (whole boards failing together). Fewer in flight + gentler
+# pacing spreads the load so the quota can keep up.
+MAX_CONCURRENCY = max(1, int(os.environ.get("IMAGE_MAX_CONCURRENCY", "3")))
+IMAGE_RPM = max(0, int(os.environ.get("IMAGE_RPM", "60")))
 
 
 class _TokenBucket:
     """Thread-safe token bucket: at most `rpm` acquisitions per rolling minute."""
 
-    def __init__(self, rpm: int):
+    def __init__(self, rpm: int, burst: int = 2):
         self.rate = rpm / 60.0 if rpm > 0 else 0.0  # tokens per second
         self.capacity = float(max(rpm, 1))
-        self._tokens = self.capacity
+        # Start with only a SMALL burst, not a full minute's worth of tokens —
+        # otherwise the first N calls fire instantly with no pacing at all (which
+        # is exactly what let a whole board hit the quota at once).
+        self._tokens = float(min(self.capacity, max(1, burst)))
         self._updated = time.monotonic()
         self._lock = threading.Lock()
 
@@ -129,6 +140,18 @@ def _is_retryable(error: Exception) -> bool:
     return any(m in text for m in _RETRYABLE_MARKERS)
 
 
+_QUOTA_MARKERS = ("429", "resource_exhausted", "quota", "rate limit")
+
+
+def _is_quota_error(error: Exception) -> bool:
+    """True for a rate/quota error (429 / RESOURCE_EXHAUSTED) specifically.
+
+    These REFILL over time, so they deserve longer, more patient backoff than a
+    one-off 500/503 blip.
+    """
+    return any(m in str(error).lower() for m in _QUOTA_MARKERS)
+
+
 def _retry_after_seconds(error: Exception) -> float | None:
     """Honour a server-provided Retry-After / retryDelay hint when present."""
     match = re.search(r"retry[- _]?(?:after|delay)\D{0,10}(\d+(?:\.\d+)?)", str(error), re.I)
@@ -141,11 +164,15 @@ def _retry_after_seconds(error: Exception) -> float | None:
 
 
 def _backoff_delay(attempt: int, error: Exception | None = None) -> float:
-    """Exponential backoff with jitter (so parallel workers don't retry in lockstep)."""
+    """Backoff with jitter. Quota errors wait longer (they refill per-minute);
+    a server Retry-After/retryDelay hint always wins when present."""
     if error is not None:
         hinted = _retry_after_seconds(error)
         if hinted is not None:
             return hinted
+        if _is_quota_error(error):
+            base = min(QUOTA_BACKOFF_SECONDS * (2 ** (attempt - 1)), QUOTA_BACKOFF_CAP)
+            return base * random.uniform(0.8, 1.2)
     base = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
     return base * random.uniform(0.5, 1.5)
 

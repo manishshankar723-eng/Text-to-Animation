@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # How many panels to draw at once. The gemini_client throttle
 # (IMAGE_MAX_CONCURRENCY / IMAGE_RPM) is the real ceiling.
-PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "4")))
+PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "2")))
 
 
 def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":

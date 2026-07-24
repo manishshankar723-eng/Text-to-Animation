@@ -10,7 +10,9 @@ GET /jobs/{id}. Two backends are available (selected by API_JOB_STORE):
 Both share the same interface: create / get / update_status / list.
 """
 
+import json
 import logging
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -71,11 +73,46 @@ class JobStore:
 
 
 class MemoryJobStore(JobStore):
-    """Thread-safe in-process job store (dev / no-Firestore mode)."""
+    """Thread-safe in-process job store (dev / no-Firestore mode).
 
-    def __init__(self):
+    Optionally mirrors every job to a JSON file (`persist_path`) so a backend
+    restart doesn't lose saved storyboards. The file is the convenience of
+    Firestore without the setup; it is NOT meant for production/multi-process.
+    """
+
+    def __init__(self, persist_path: str | None = None):
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._persist_path = persist_path or None
+        self._load()
+
+    # --- file persistence -------------------------------------------------
+    def _load(self) -> None:
+        if not self._persist_path or not os.path.isfile(self._persist_path):
+            return
+        try:
+            with open(self._persist_path, encoding="utf-8") as f:
+                raw = json.load(f)
+            for rec in raw:
+                job = Job(**rec)
+                self._jobs[job.job_id] = job
+            logger.info(
+                "Loaded %d job(s) from %s", len(self._jobs), self._persist_path
+            )
+        except Exception as e:  # noqa: BLE001 — a corrupt file must not crash boot
+            logger.warning("Could not load jobs from %s (%s).", self._persist_path, e)
+
+    def _save_locked(self) -> None:
+        """Write the whole store to disk. Caller must hold self._lock."""
+        if not self._persist_path:
+            return
+        try:
+            tmp = f"{self._persist_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump([j.model_dump(mode="json") for j in self._jobs.values()], f)
+            os.replace(tmp, self._persist_path)  # atomic — never a half-written file
+        except OSError as e:
+            logger.warning("Could not persist jobs to %s (%s).", self._persist_path, e)
 
     def create(self, character_name, kind=JobKind.GENERATE, template=None, params=None, owner=None):
         now = _now_iso()
@@ -92,6 +129,7 @@ class MemoryJobStore(JobStore):
         )
         with self._lock:
             self._jobs[job.job_id] = job
+            self._save_locked()
         return job
 
     def get(self, job_id):
@@ -108,6 +146,7 @@ class MemoryJobStore(JobStore):
             data["updated_at"] = _now_iso()
             job = Job(**data)
             self._jobs[job_id] = job
+            self._save_locked()
             return job
 
     def list(self, limit=50, owner=None):
@@ -120,7 +159,10 @@ class MemoryJobStore(JobStore):
 
     def delete(self, job_id):
         with self._lock:
-            return self._jobs.pop(job_id, None) is not None
+            existed = self._jobs.pop(job_id, None) is not None
+            if existed:
+                self._save_locked()
+            return existed
 
     def find_by_share_token(self, token):
         if not token:
@@ -223,8 +265,12 @@ def get_store() -> JobStore:
         return _store
 
     if config.JOB_STORE == "memory":
-        logger.info("Using in-memory job store (API_JOB_STORE=memory).")
-        _store = MemoryJobStore()
+        path = getattr(config, "LOCAL_JOBS_PATH", "") or None
+        logger.info(
+            "Using in-memory job store (API_JOB_STORE=memory)%s.",
+            f", persisting to {path}" if path else "",
+        )
+        _store = MemoryJobStore(persist_path=path)
         return _store
 
     try:
@@ -238,5 +284,5 @@ def get_store() -> JobStore:
             "Set API_JOB_STORE=memory to silence this.",
             e,
         )
-        _store = MemoryJobStore()
+        _store = MemoryJobStore(persist_path=getattr(config, "LOCAL_JOBS_PATH", "") or None)
     return _store

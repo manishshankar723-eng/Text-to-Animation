@@ -29,9 +29,12 @@ const GENRE_LABELS = {
   thriller: "Thriller",
 };
 
-// How many boards the "Recent Storyboards" section shows before you fall back
-// to "All Storyboards" below it.
-const RECENT_COUNT = 4;
+// "Recent Storyboards" highlights just the single newest board; every board
+// (including that one) is listed under "All Storyboards" below.
+const RECENT_COUNT = 1;
+// How many dimmed placeholder cards to show in an empty / still-loading section,
+// so the page reads as a real gallery waiting to be filled rather than bare text.
+const GHOST_COUNT = { recent: 1, all: 3 };
 
 function titleCase(s) {
   return s.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -373,22 +376,46 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
   // declared in here gets a new identity every render, so React would remount
   // the section on each keystroke and the rename field would lose focus.
   function renderSection(section, title, hint, items) {
+    const empty = items.length === 0;
+    const ghosts = GHOST_COUNT[section] || 1;
     return (
       <section className="lib-section" key={section}>
         <div className="lib-section-head">
           <h2 className="lib-section-title">{title}</h2>
           <span className="tiny muted">{hint}</span>
         </div>
-        {items.length > 0 ? (
+        {loading ? (
+          // Shimmering skeletons shaped like real cards while the list loads.
+          <div className="lib-grid lib-ghosts is-loading">
+            {Array.from({ length: ghosts }, (_, i) => (
+              <div className="card lib-card lib-ghost" key={i} aria-hidden="true">
+                <div className="lib-cover lib-ghost-cover" />
+                <div className="lib-body">
+                  <div className="lib-ghost-line lib-ghost-title" />
+                  <div className="lib-meta">
+                    <span className="lib-ghost-chip" />
+                    <span className="lib-ghost-chip" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : empty ? (
+          // Genuinely empty — one centered placeholder card in the same style as
+          // the "New Storyboard" tile: icon + hint stacked in the middle.
+          <div className="lib-grid">
+            <div className="card lib-card lib-ghost-empty">
+              <span className="lib-empty-ico">🎬</span>
+              <p className="lib-empty-text">
+                No storyboards yet — hit <strong>New Storyboard</strong> and your
+                board appears here.
+              </p>
+            </div>
+          </div>
+        ) : (
           <div className="lib-grid">
             {items.map((b) => renderBoard(b, section))}
           </div>
-        ) : (
-          <p className="muted lib-empty">
-            {loading
-              ? "Loading your storyboards…"
-              : "Nothing here yet — start your first storyboard and it'll be saved automatically."}
-          </p>
         )}
       </section>
     );
@@ -424,9 +451,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
       {renderSection(
         "recent",
         "Recent Storyboards",
-        recent.length > 0
-          ? `Your latest ${recent.length === 1 ? "board" : `${recent.length} boards`}`
-          : "",
+        recent.length > 0 ? "Your latest board" : "",
         recent
       )}
       {renderSection(

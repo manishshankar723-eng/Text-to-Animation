@@ -133,14 +133,28 @@ def _safe_filename(name: str, fallback: str = "item") -> str:
 def _mark_ref_source(ref_dir: str, source: str) -> None:
     """Record whether a reference image was 'generated' or 'uploaded'.
 
-    Kept as provenance next to reference.png. The assets ZIP used to read this
-    to skip uploaded refs; it now ships everything, so nothing reads it today.
+    Written next to reference.png so the assets ZIP can skip UPLOADED refs — the
+    user already has those images; only AI-generated ones are worth bundling.
     """
     try:
         with open(os.path.join(ref_dir, "source.txt"), "w", encoding="utf-8") as f:
             f.write(source)
     except OSError:
         logger.debug("[reference] could not write source marker in %s", ref_dir, exc_info=True)
+
+
+def _ref_is_generated(ref_png_path: str) -> bool:
+    """True unless the reference was explicitly marked 'uploaded'.
+
+    A missing marker → treated as generated, so older refs (created before the
+    marker existed) still get bundled.
+    """
+    marker = os.path.join(os.path.dirname(ref_png_path), "source.txt")
+    try:
+        with open(marker, encoding="utf-8") as f:
+            return f.read().strip() != "uploaded"
+    except OSError:
+        return True
 
 
 def _variants_of(result: dict) -> tuple[list[dict], int]:
@@ -972,8 +986,8 @@ def download_storyboard_bundle(
         <Title>.pdf                      the board with camera/location/cast
 
     Panels come from the ACTIVE style variant — the one shown on the board.
-    Both generated AND uploaded references are included: this is meant to be a
-    complete hand-off package, not just the re-usable bits.
+    Only AI-GENERATED references are bundled; UPLOADED ones are skipped because
+    the user already has those source images.
     """
     job = _get_owned_board(job_id, current)
 
@@ -1006,14 +1020,20 @@ def download_storyboard_bundle(
             added += 1
 
         # --- References, split by kind and numbered ---------------------------
-        for i, (name, path) in enumerate(char_refs.items(), start=1):
-            if os.path.isfile(path):
-                zf.write(path, f"characters/{title}_character_{i:02d}_{_safe(name)}.png")
-                added += 1
+        # UPLOADED refs are skipped on purpose: the user already has those images.
+        # Only AI-generated references are worth bundling. Numbering runs over the
+        # INCLUDED refs, so it stays contiguous even when uploads are dropped.
+        char_n = 0
+        for name, path in char_refs.items():
+            if not os.path.isfile(path) or not _ref_is_generated(path):
+                continue
+            char_n += 1
+            zf.write(path, f"characters/{title}_character_{char_n:02d}_{_safe(name)}.png")
+            added += 1
 
         prop_n = bg_n = 0
         for name, path in asset_refs.items():
-            if not os.path.isfile(path):
+            if not os.path.isfile(path) or not _ref_is_generated(path):
                 continue
             if str(categories.get(name, "prop")).lower() == "background":
                 bg_n += 1

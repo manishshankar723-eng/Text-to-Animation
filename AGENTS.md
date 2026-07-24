@@ -308,6 +308,230 @@ in `.env` — no code change needed.
   paths (review→cast→back→cast, cast→props→back→cast, board→back→review→forward).
   NOT clicked through live in a browser this session — worth one manual pass.
 
+### 2026-07-24 — Assets ZIP: skip UPLOADED refs again (user request)
+
+- **Reported:** the ZIP included the user's own uploaded character images, which
+  they already have — they only want the AI-generated ones.
+- Reverted the "bundle everything" decision from the earlier ZIP entry. Re-added
+  `_ref_is_generated()` (reads the `source.txt` marker `_mark_ref_source` already
+  writes: uploads → "uploaded", generations → "generated"; missing marker =
+  treated as generated so pre-marker refs still bundle). The bundle now skips any
+  ref whose marker is "uploaded", for BOTH characters and props/backgrounds.
+  Numbering runs over the INCLUDED refs so it stays contiguous. Panels + PDF
+  unchanged.
+- **Verified:** TestClient test with one generated + one uploaded of each kind —
+  ZIP contained the generated character/background + panels + PDF, and NEITHER
+  uploaded ref. Backend imports clean.
+
+### 2026-07-24 — "Back to shots" no longer discards the generated board
+
+- **Reported:** on the board (even mid-generation), pressing "← Back to shots"
+  then going forward again started a FRESH generation from shot 1 — the drawn
+  panels were lost.
+- **Cause:** the review step's primary action always called `startStoryboard`,
+  which POSTs `/storyboards` = a brand-new job. The old job (and its panels) was
+  just abandoned.
+- **Fix (`ScriptToStoryboard.jsx`):** record `generatedSig` — a JSON signature of
+  the shots+style+aspect the current board was drawn from — when a board is
+  created. `boardUpToDate = jobId && generatedSig === currentSig()`. On the
+  review step:
+  - up to date → primary button is **"→ Back to your storyboard"** (reopens the
+    SAME job via `setStep("board")`, keeping all panels; if it's still
+    generating, the board just resumes polling the ongoing server job), plus a
+    separate **"🔄 Regenerate"** for a deliberate fresh draw.
+  - edit any shot → the signature changes, `boardUpToDate` flips false, and it
+    collapses back to the normal "Next: cast / props / Generate panels" button.
+  - `generatedSig` cleared in `resetWorkflow`.
+- Library-opened boards are unaffected (their Back goes to the library, not
+  review). `.review-actions-right` groups the two right-hand buttons.
+- **Verified:** `npm run build` clean. Flow reasoned through the code paths
+  (generate → back to shots → return reopens same job; edit a shot → regenerates)
+  but NOT clicked through live.
+
+### 2026-07-24 — Upgrade button now opens a full pricing/plans modal
+
+- Replaced the one-line "coming soon" popup with `PricingModal.jsx` — a 4-tier
+  plans table (Trial/Free · Starter · Pro Unlimited · Production Unlimited) with a
+  Monthly/Yearly toggle (Yearly shows the discounted per-month price + "Save 25%"),
+  struck-through "was" prices, feature lists with ✓/✕, and the "Most Popular"
+  card highlighted in brand gold. Modeled on the reference layout but themed in
+  the app's dark+gold language, not the reference's branding.
+- **Payments are NOT wired** — the Upgrade CTAs show an inline "checkout coming
+  soon" note instead of starting a charge. The tier data is a single `PLANS`
+  array, ready to hook to a billing provider later. Trial shows "Current Plan"
+  (disabled). Prices are placeholders.
+- `App.jsx` renders `<PricingModal>` for `upgradeOpen`; old inline modal +
+  orphaned `.upgrade-modal` CSS removed (`.soon-icon` kept — still used by
+  WorkflowSoon/JobDetail).
+- **Verified:** `npm run build` clean. Modal not viewed in a browser.
+
+### 2026-07-24 — Panels failing en masse: patient quota retries + gentler pacing
+
+- **Reported:** generating a 10-panel board, only 2 succeed; the rest show
+  "Couldn't draw this panel". Same `429 RESOURCE_EXHAUSTED` as before. The
+  succeed-some/fail-rest pattern = a per-minute rate quota, not a hard/daily zero.
+- **Why it wiped out most panels:** (1) the token bucket started FULL (120
+  tokens) so a whole board fired instantly with zero pacing; (2) 4 panels ×
+  6-wide concurrency slammed the API together; (3) the 429 retry ladder was only
+  ~20s — far too short for a per-minute quota to refill — so panels gave up and
+  were marked failed.
+- **Fix (`gemini_client.py`, `storyboard_pipeline.py`):**
+  - **Quota-aware backoff:** new `_is_quota_error()`; 429s now use a long ladder
+    (`QUOTA_BACKOFF` 15s→cap 50s) for ~140s of patience across `MAX_RETRIES`=5,
+    vs ~39s for ordinary 503 blips. A server `retryDelay`/Retry-After hint still
+    wins. So a panel now WAITS for the quota to refill instead of failing.
+  - **Gentler pacing:** token bucket starts with a 2-token burst, not a full
+    minute's worth — pacing applies from the first call. Defaults lowered:
+    `IMAGE_MAX_CONCURRENCY` 6→3, `IMAGE_RPM` 120→60, `STORYBOARD_PANEL_CONCURRENCY`
+    4→2. Fewer calls in flight → the quota keeps up.
+  - New `IMAGE_MAX_RETRIES` env (default 5); all documented in `.env.example`.
+- **Trade-off (intended):** boards now generate SLOWER but should COMPLETE. A
+  panel can wait up to ~2 min riding out the quota before failing.
+- **Verified:** ladder math printed (quota ~140s vs 503 ~39s, hint honoured),
+  burst reduced 120→2, imports clean. NOT run against the live API (needs the
+  user's billed quota) — the real per-minute limit is still unknown; these make
+  the client patient and gentle rather than assuming a specific number.
+- **Still recommended:** confirm the actual quota in GCP Console → IAM & Admin →
+  Quotas (Vertex AI, region — note `GOOGLE_CLOUD_LOCATION=global`), and that
+  billing is enabled; a trial project's image quota is often very low.
+
+### 2026-07-24 — Breakdown ring: EVEN climb + quick finish (final shape)
+
+- **Reported (again):** "1→86 fast then slow to 100" still looked wrong.
+- **Honest root cause, stated plainly:** the breakdown is a single AI call with
+  no progress signal, so the % is unavoidably an estimate. Earlier passes had the
+  motion shape BACKWARDS — fast (22%/s) then slow (0.9%/s), a 24× slowdown, which
+  is the classic "stuck" read. Good loaders do the reverse: even climb, quick
+  finish.
+- **Fix:** one constant `FILL_RATE` 6.5%/s carries it 0→`SOFT_CAP` 96% (≈15s) —
+  no rush at the start; a gentle `CRAWL_RATE` past 96 only for slow outliers; on
+  `done`, `FINISH_RATE` 34%/s sweeps to 100 (speeding up at the end = "done").
+- **Verified:** Node trace shows an even line — 7/13/26/39/52/65% at 1/2/4/6/8/10s
+  (~6.5%/s early AND late, no rush) — and API waits of 3/8/13/25s all reach 100%.
+  `npm run build` clean. Not viewed in a browser.
+- **Known limit (documented so it isn't "fixed" in a circle):** a fake bar can
+  never perfectly track an unknown-duration call. If this still isn't wanted, the
+  only truly honest alternatives are (a) an indeterminate spinner with no number,
+  or (b) real server-side progress — which the one-shot breakdown call cannot
+  emit without faking sub-steps there instead.
+
+### 2026-07-24 — Breakdown ring: creep while waiting (no freeze at the cap)
+
+- **Reported:** ring parked at 90% and looked hung.
+- **Cause:** the previous fix held a HARD cap of 90% until the breakdown API
+  returned. That's correct in spirit, but the text model is sometimes throttled,
+  so the wait is long and a frozen 90% reads as broken.
+- **Fix (`BreakdownProgress.jsx`):** pre-completion motion is now two-phase —
+  brisk `FILL_RATE` up to `SOFT_CAP` 85%, then a slow `CRAWL_RATE` toward
+  `HARD_CAP` 97% that keeps inching the whole wait (never reaches 100 until
+  `done`). On `done` it still sweeps to 100 and hands off. Added a
+  `LONG_WAIT_MS`=16s reassurance sub-line ("Still working — longer scripts take a
+  little more time…"). No wiring change; `done`/`onDone` still drive completion.
+- **Verified:** Node simulation of the exact loop — a 30s wait shows 86→95→97%
+  (always rising, never frozen, never 100 early) and completes at 30.03s; fast
+  and instant cases still finish; a stand-alone check confirms pct keeps rising
+  10s→20s while waiting. `npm run build` clean. Motion not viewed in a browser.
+
+### 2026-07-24 — Storyboards survive restart; library: Recent=1 + ghost cards
+
+**1. Saved storyboards no longer vanish (the real "it disappeared" fix).**
+`API_JOB_STORE=memory` (this dev machine) keeps jobs in RAM, so any backend
+restart — including uvicorn --reload picking up a code edit — wiped them.
+`MemoryJobStore` now mirrors every create/update/delete to a JSON file
+(`API_LOCAL_JOBS_PATH`, default `.local_jobs.json`, atomic via tmp+os.replace)
+and reloads it on boot. Panels/covers already live on disk under
+`output/_storyboards/`, so a reloaded board shows its cover too. `persist_path=
+None` keeps the old pure-RAM behaviour. Added to `.env.example` + `.gitignore`.
+- **Verified:** a Node-style Python test creates two boards in one store
+  instance, opens a SECOND instance on the same file (simulating a restart) and
+  confirms both boards + their status survive; delete persists; RAM-only mode
+  still works. NOT the production path — Firestore remains the real backend.
+
+**2. Library layout** (`StoryboardLibrary.jsx` + CSS):
+- `RECENT_COUNT` 4 → **1**: "Recent Storyboards" now highlights only the newest
+  board; "All Storyboards" still lists every board (the newest appears in both,
+  which is the intended highlight-vs-index split).
+- **Empty/loading sections now show dimmed "ghost" cards** shaped like a real
+  board card (blank cover + title bar + two chip pills) instead of a bare line of
+  text — 1 ghost in Recent, 3 in All. While `loading` they shimmer; once known-
+  empty they hold still with a "hit New Storyboard" hint on the first card.
+  `prefers-reduced-motion` drops the shimmer.
+- **Verified:** `npm run build` clean; backend imports clean. Ghost/empty visuals
+  NOT viewed in a browser.
+
+### 2026-07-24 — Breakdown ring now actually reaches 100% before Review
+
+- **Reported:** the ring stopped at a different value every time (56/63/66%) and
+  never hit 100%.
+- **Real cause (the earlier passes only polished a fake timer):** the ring was
+  cosmetic. `handleGenerate` `await`ed the breakdown call and then immediately
+  `setStep("review")`, unmounting the ring at whatever % it had reached. The
+  value differed run-to-run because the API returned at a different moment.
+- **Fix — tie the ring to the actual call** (`ScriptToStoryboard.jsx` +
+  `BreakdownProgress.jsx`):
+  - The result is stashed in `pendingBreakdown` ref and `breakdownDone` state is
+    flipped true; navigation no longer happens inline.
+  - `BreakdownProgress` gained `done` + `onDone`. It fills steadily but **holds
+    at 90%** while `done` is false (never claims completion before the work is),
+    then on `done` sweeps to 100% at `FINISH_RATE` and calls `onDone` after a
+    350ms beat. `finishBreakdown()` then applies shots/characters/assets and
+    goes to Review — so number, ring and label reach 100% together every time.
+  - At 100% the label reads "Scene breakdown ready!", the sublabel "ready", and
+    all dots light.
+  - Error path clears `busy`/`breakdownDone`/`pendingBreakdown`, so a failed
+    breakdown drops back to the form with the message (no stuck ring).
+  - `done`/`onDone` are read through refs so the rAF effect keeps its empty deps
+    and isn't restarted each render.
+- **Verified:** simulated the exact loop+constants in Node for fast (1.5s), slow
+  (8s) and near-instant (0.2s) API returns — all reach 100% and fire `onDone`;
+  the slow case correctly parks at 90% until the call returns. `npm run build`
+  clean. In-browser motion still not directly viewable — but the "never reaches
+  100%" bug was logic, and the logic is now proven.
+
+### 2026-07-24 — Breakdown ring: steady fill + label derived from the percentage
+
+- **Reported (follow-ups):** the ring "rushed 0→80 then crawled to 100", and the
+  step label didn't line up with the number.
+- **Two causes:**
+  1. Asymptotic easing (`+= (95-p)·k`) moves fast when far from target and slow
+     when near — hence rush-then-crawl.
+  2. The label rotated on its own `setInterval`, unrelated to the percentage, so
+     it never matched where the ring was.
+- **Fix (`BreakdownProgress.jsx`):**
+  - **Constant-speed fill:** `FILL_RATE = 90/13 %·s⁻¹` up to 90%, then a slow
+    `CREEP_RATE` 1.2%/s to a 99% ceiling so it never looks frozen if the call
+    runs long. No easing curve → even pace the whole way.
+  - **Label is now `stepFor(pct)`** — each step owns a %-slice (0–20, 20–40, …),
+    so the text changes exactly as the ring passes that mark. The active dot
+    follows the same function. Text and ring can no longer disagree.
+  - Earlier fix (SVG stroke, no CSS transition on the arc) is retained.
+- **Verified:** `npm run build` clean. Motion NOT viewed in a browser.
+  If a stale bundle is served, a hard refresh (Ctrl+Shift+R) is needed to see it.
+
+### 2026-07-24 — Breakdown progress ring: smooth fill instead of stepping
+
+- **Reported:** the "Generating your scene breakdown" ring jumped in visible
+  steps ("break break") instead of moving smoothly.
+- **Cause:** the ring was a `conic-gradient` background driven by a `--pct`
+  variable, with `transition: background 0.2s linear`. Browsers **cannot tween a
+  conic-gradient**, so the transition was a no-op and the arc snapped each time
+  the 180ms interval bumped the number.
+- **Fix (`BreakdownProgress.jsx` + `styles.css`):**
+  - Ring is now an **SVG** two-circle (track + arc) with `stroke-dashoffset` —
+    which does animate — rotated -90° to start at 12 o'clock, round line cap.
+  - Progress is eased in a `requestAnimationFrame` loop with **time-based**
+    (frame-rate-independent) asymptotic easing toward 95% — `+= (95-p) *
+    (1 - e^(-0.9·dt))` — so the number and arc glide continuously instead of
+    ticking. `dt` clamped to 50ms so a backgrounded tab doesn't jump on return.
+  - Percentage held in a `useRef`, only the rounded display value in state;
+    `tabular-nums` stops the digits jittering as they change.
+  - Step label cross-fade strengthened (0→1 opacity + 6px rise, re-keyed per
+    step); added a 5th step so the rotation matches a longer breakdown.
+  - `@media (prefers-reduced-motion)` drops the slide/transition (the ring still
+    fills — that's the actual feedback).
+- **Verified:** `npm run build` clean; no stale `bp-ring2` refs remain. Motion
+  itself NOT viewed in a browser (can't see animation from a build).
+
 ### 2026-07-24 — Assets ZIP = full package; PDF gains camera / location / cast
 
 **1. PDF now carries the shooting detail** (`storyboard_pdf.py`). Each cell used
