@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-24 (light/dark mode toggle; Stage G storyboard library)
+**Last updated:** 2026-07-25 (Stop generation; ZIP names; script panel + per-shot quotes; story WORLD)
 
 ---
 
@@ -101,6 +101,7 @@ Pipeline stages (see `pipeline.py`):
 - `GET/PUT /auth/me/api-keys` · `DELETE /auth/me/api-keys/{provider}` — saved 3D keys (plaintext)
 - `POST /storyboards/breakdown` — Script→Storyboard Stage A: script → shot list (auth'd, sync; `TEXT_PROVIDER` backend)
 - `POST /storyboards` — Stage D: generate panels from reviewed shots (async job; poll `GET /jobs/{id}`) · `GET /storyboards/{id}/panel/{index}` — serve a panel PNG · `GET /storyboards/{id}/pdf` — Stage F: export the board as PDF
+- **Board editing:** `POST /storyboards/{id}/panels/insert` (`{at, description}`) — add a blank panel, shifting the rest down · `DELETE /storyboards/{id}/panels/{index}` — remove a panel, shifting up. Both renumber files+indices+urls across ALL style variants so `index == position` stays true; the new panel is drawn with the normal `regenerate-panel` call.
 - **Library (Stage G):** `GET /storyboards` — the caller's saved boards (lean summaries: title, genre, aspect, cover) · `GET /storyboards/{id}/project` — saved shots+settings for Duplicate · `PATCH /storyboards/{id}` — rename · `DELETE /storyboards/{id}` — delete record + panel files
 - **Share links:** `POST/DELETE /storyboards/{id}/share` — mint / revoke a public token · `GET /public/storyboards/{token}` · `GET /public/storyboards/{token}/panel/{index}` — **the only unauthenticated routes**; token-gated, serve drawn panels only
 - `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
@@ -218,6 +219,297 @@ in `.env` — no code change needed.
 
 ## ✅ Work Log (newest first)
 
+### 2026-07-25 — "⏹ Stop generation" on the board
+
+- **Asked for:** a stop button next to "Download assets (ZIP)" — if the first
+  one or two panels come back wrong, kill the run instead of paying for the
+  other thirteen.
+- **`storyboard_pipeline.py`** owns the cancel registry (`request_cancel` /
+  `is_cancelled` / `clear_cancel`, a lock + a set of job ids, in-process next to
+  the worker pool that reads it). `_render()` checks the flag **first thing**, so
+  every panel still queued in the ThreadPoolExecutor returns without calling the
+  image API. `run_storyboard` clears the flag on entry (a stale stop must not
+  kill the next run) and again on exit, and returns `stopped` in its result.
+- **The honest limit, stated in the UI:** an HTTP call already in flight cannot
+  be un-sent, so the 1–2 panels mid-request still finish. The button reads
+  "Stopping…" until the job goes terminal.
+- **Skipped panels are left `url=None, failed=False`** — not marked failed. The
+  board already renders that state as "✏️ New panel" with "✨ Generate this
+  panel", so a stopped board is directly resumable, one panel at a time.
+- **`POST /storyboards/{id}/stop`** — owner-scoped, 409 unless RUNNING/QUEUED.
+- **Deliberate call — a stopped run is marked SUCCEEDED, not FAILED.** There is
+  no CANCELLED in `JobStatus`, and adding one would mean touching every
+  terminal-state check in the board, the library and the board guards. The
+  panels it did draw are real and downloadable, so the job genuinely finished;
+  honesty is carried by `result["stopped"]`, which the board reads to show
+  "⏹ You stopped this generation — N of M panels drawn" and which the progress
+  line reports as "Stopped by you". Revisit if a real CANCELLED status is ever
+  needed elsewhere.
+- Restyle stops the same way (`_compose(panels, stopped)` in `worker.py`).
+- **Client:** the toolbar now renders **while generating too** (it used to need a
+  drawn panel), so Stop is reachable from the first suspicious panel; the ZIP
+  button is gated on `okCount > 0` so it can't offer an empty zip. A `useEffect`
+  clears `stopRequested` when the run ends, so a later re-style doesn't open
+  with the button stuck on "Stopping…".
+- **Verified** with a fake slow generator (no quota spent): 20 shots, Stop after
+  ~1s → **6 calls made, 14 panels never requested**, `stopped=True`, skipped
+  panels not marked failed, the flag cleared so an immediate re-run draws all 3
+  of its shots. Endpoint guards checked: cross-user → 404, finished board → 409,
+  and a rejected stop leaves no flag behind. `npm run build` clean; backend
+  imports clean. NOT clicked through in a browser, and not tested against the
+  real image API.
+
+### 2026-07-25 — ZIP: images named after the thing, not the board title
+
+- **Reported:** the folders in the assets ZIP were right, but every image was
+  prefixed with the board title (`Postmarked After Death_character_01_Lubdhaka
+  .png`). The user wants the name they see on the page — `Lubdhaka.png`.
+- **`GET /storyboards/{id}/bundle`** now names files as the app labels them.
+  The folder already says what kind of thing it is, so the title and the
+  `character_`/`prop_`/`background_` word were pure noise:
+  ```
+  panels/Shot 03.png     characters/Lubdhaka.png
+  props/Bilva Bel Tree.png   backgrounds/Dense Forest.png
+  Postmarked After Death.pdf
+  ```
+- **Two deliberate calls:**
+  1. **The PDF keeps the board title.** It isn't one image — it IS the board, and
+     it lands at the zip root where "Storyboard.pdf" would be meaningless in a
+     downloads folder.
+  2. **Panels now carry the BOARD's number** (`index + 1`), not a contiguous
+     count over drawn panels. This REVERSES the 2026-07-24 decision to close
+     gaps: a failed panel now leaves `Shot 02.png` missing. That's the point —
+     the name has to match the tile on screen, and a gap says a picture really is
+     missing rather than silently renumbering the rest.
+- **Collision safety:** two names can clean to the same string ("Shiva." and
+  "Shiva"), and a zip with duplicate entry names is corrupt. `_unique()` per
+  folder appends " (2)", so nothing is silently overwritten or dropped.
+- **Verified** by building real PNGs + refs on disk, calling the endpoint and
+  reading back the ACTUAL zip entry names: panel 2 fails and is absent while 3
+  and 4 keep their board numbers, the two Shivas come out as `Shiva.png` +
+  `Shiva (2).png`, punctuation is cleaned (`Bilva (Bel) Tree` → `Bilva Bel
+  Tree.png`), the uploaded ref stays out, no image carries the title, and the
+  PDF still does. Backend imports clean.
+
+### 2026-07-25 — Script panel on review; per-shot quotes fixed; even shot cards
+
+Three user-reported issues from the review step, one of them a real bug.
+
+**1. Every shot showed the SAME script text (the bug).** All five cards read
+"FROM YOUR SCRIPT · LINE 1" with the identical paragraph.
+- **Cause:** `_flatten_script()` mapped each character to its LINE index, and
+  `_attach_script_lines()` then displayed the whole line. The user's script is
+  one long paragraph on one line, so every shot resolved to line 1 and showed
+  the entire paragraph. The matcher was right; the display granularity was wrong.
+- **Fix:** the flattener now maps each normalised character back to its
+  **original character offset**, so a span can be sliced out of the middle of a
+  paragraph. `script_line` is now EXACTLY the matched passage — one sentence per
+  shot — and the line number is derived by counting newlines before the offset.
+  `MAX_EXCERPT_LINES` (12) is replaced by `MAX_EXCERPT_CHARS` (420), trimmed at
+  a word boundary with an ellipsis.
+- `_find_span()` gained `since`: shots run in reading order, so a match at or
+  after the previous shot's end is preferred, with a global search as fallback —
+  a repeated phrase resolves forward instead of snapping back to occurrence one.
+- Prompt hardened too: quote only the part that becomes THIS panel, each shot a
+  different passage, moving forward through the script.
+- **Verified** with the exact failing shape (one-paragraph script, 5 shots): five
+  distinct sentences, each `in` the script verbatim. Multi-line scripts still
+  report true line numbers (3 and 5 in the fixture); hallucinated quotes still
+  rejected; runaway quotes trimmed. The earlier 7-case test still passes (its
+  whole-line assertion was updated to a substring check — the behaviour it
+  encoded is what changed).
+
+**2. "📄 Your script" panel on the review step** (`ScriptPanel.jsx`), under the
+World card. Line-numbered and scrollable, `<details open>` so it collapses. The
+numbers are the point: they're what each card's "LINE n" refers to.
+- The resolved script text (pasted OR read out of an uploaded file) is now kept
+  in `scriptText` state, sent with `POST /storyboards`, stored in
+  `params["script"]` **capped at `MAX_STORED_SCRIPT_CHARS` = 200k** (Firestore
+  has a 1 MB document limit), and returned by `/project` so a duplicated board
+  still shows its script. Display only — never fed to any model.
+
+**3. Ragged shot cards.** `.sb-review .shot-list` used `align-items: start`, so a
+shot with no cast chips sat visibly shorter than its neighbours. Now `stretch`,
+with `.shot-card` a full-height flex column and `.shot-chars` pushed to the foot
+(`margin-top: auto`) so chip rows line up across the grid. The in-card quote is
+capped at 5.6rem so context can't dominate the prompt.
+
+**Verified:** matcher tests above; a round-trip test proving script + world
+survive create → project, that an oversized script is capped rather than
+rejected, and that a board with no script still works; `npm run build` clean (54
+modules). NOT viewed in a browser, and no live breakdown was run — whether the
+model now returns five DIFFERENT quotes is prompt-dependent and unmeasured, but
+even if it repeats one, each shot now shows only the matched sentence.
+
+### 2026-07-25 — WORLD of the story: culture/period now drives every image
+
+- **Reported (a real quality bug):** a Shiva Purana script produced a cast
+  reference for Lubdhaka — an ancient Indian hunter — that looked like a white
+  Western man. The user asked for the breakdown to capture the story's culture
+  once and apply it to every generated image.
+- **Cause:** nothing in any image prompt said where or when the story is set.
+  The cast description the model wrote ("a lean, rugged hunter in simple, worn
+  forest attire") named no ethnicity or period dress, and image models default
+  to Western/European faces and clothing when not told otherwise. The panels,
+  props and backgrounds had the same hole.
+- **`script_breakdown.py`** now returns a **`world`** block alongside shots /
+  characters / assets: `setting` (place+period), `culture` (cultural/religious
+  tradition), `ethnicity` (what the people look like), `wardrobe`, `environment`,
+  `notes` — `WORLD_FIELDS` is the one list, `_coerce_world()` normalises it.
+  The system instruction tells the model to read this off the script's names,
+  places, deities and festivals ("Lubdhaka + Shiva Purana = ancient India")
+  and never fall back on a Western default. Belt and braces: **every character
+  description must now state ethnicity and period-correct clothing**, and asset
+  descriptions must be region-correct — so even a dropped world block leaves the
+  cue in the text.
+- **`gemini_client.build_world_context()`** is the single place that turns that
+  block into prompt text, and it is prefixed onto **all four** image paths:
+  panels, character references, prop references, background references. Naming
+  the culture isn't enough on its own, so it ends with an explicit rule: *"Do
+  NOT default to Western/European faces, dress or settings."* An empty/missing
+  world returns `""` — prompts are then byte-identical to before.
+- **Plumbing:** `World` model in `schemas.py`; carried on `ReferenceRequest`,
+  `AssetReferenceRequest`, `StoryboardCreateRequest`, `ScriptBreakdownResponse`
+  and `StoryboardProject`. Stored in job `params["world"]`, so **re-style and
+  single-panel redraw stay in the same world** rather than reverting — this was
+  the easy thing to miss. Duplicate gets it back via `/project`.
+- **Client:** `WorldSetting.jsx` — an **editable** card ("🌍 World of your
+  story") on the review step, and the same component collapsed inside the
+  pre-flight modal. Editable on purpose: the AI's reading is a starting point
+  and the writer is the authority on their own world. `world` lives in
+  `ScriptToStoryboard` state, is passed to the cast and props steps (so every
+  reference call carries it), and is part of `currentSig()` — editing it marks
+  the board out of date, exactly like editing a shot.
+- **Verified (no API spend):** the real generation client was replaced with a
+  stub that captures the prompt, and all four paths were checked for the
+  ethnicity, the culture AND the anti-default rule — all four carry them; a
+  `None`/`{}` world provably adds nothing. A second test drove the endpoint
+  functions directly with stubbed generators: the world reaches the character
+  ref, the asset ref, the worker kwargs, the stored job params and the Duplicate
+  payload, and a request with no world stores `{}`. `npm run build` clean (53
+  modules), backend imports clean.
+- **NOT verified:** no real image was generated (that costs quota), so how much
+  the prompt actually moves the model is unmeasured — worth one Lubdhaka run to
+  confirm. If a character still comes out wrong, the ethnicity field is editable
+  on the review step and applies to the next generation.
+
+### 2026-07-25 — Each shot now shows the SCRIPT LINE it came from
+
+- **Asked for:** on the review shot card, show the writer's own script line above
+  the AI's image prompt, so it's obvious which line of the script became which
+  panel. Order requested: script line box on top, then the prompt, then camera /
+  location.
+- **The data didn't exist** — the breakdown returned a description and nothing
+  tying it back to the source text. `script_breakdown.py` now asks for
+  `script_excerpt` (a verbatim quote) per shot, in both the prompt and the
+  response schema.
+- **Quotes are NEVER trusted — this is the important part.** Models paraphrase,
+  so `_attach_script_lines()` matches every quote back against the real script
+  and replaces it with the actual lines found there:
+  - `_flatten_script()` builds a whitespace/case-normalised one-line script plus
+    a per-character map back to line indexes.
+  - `_find_span()` tries an exact match, then anchors on the longest word-PREFIX
+    that IS present and stretches to the longest findable word-SUFFIX (models
+    drift at the tail of a quote more than the head). The result is rejected
+    unless it covers ≥50% of the quote, so a coincidental phrase can't pass.
+  - No match → the shot carries **no** script line. A blank box is honest; an
+    invented "your script says…" is not.
+  - Runaway quotes (the model handing back half the script) cap at
+    `MAX_EXCERPT_LINES` = 12.
+  - The raw `script_excerpt` is popped, so the unverified quote never reaches
+    the client.
+- Shots gain `script_line` + 1-based `script_line_start`/`script_line_end`
+  (`schemas.py: Shot`), which flow through `POST /storyboards` into `params`, so
+  a saved board and Duplicate keep them.
+- **Client:** `ScriptLineBox.jsx` (new, shared) renders the box — gold left
+  spine, "📄 From your script · line 12", `white-space: pre-wrap` so the writer's
+  own line breaks survive, and it renders **nothing** when there's no verified
+  text (hand-added shots included). Used on the review card *and* in the
+  pre-flight modal. The review card's prompt got an "Image prompt" label so two
+  stacked boxes can't be confused.
+- **Deliberately NOT done:** the board tiles and the PDF don't show script lines
+  — the ask was about the review panel, and `storyboard_pipeline` doesn't copy
+  the field onto panels. Adding it there is a one-line pipeline change plus the
+  same component if it's wanted later.
+- **Verified:** an offline matcher test (no API call) over 7 cases — exact
+  multi-line quote, exact single line, drifted tail, case+whitespace differences,
+  a **hallucinated quote correctly rejected**, an empty quote, and a
+  whole-script dump capped at 12 lines; every reported line was checked byte-for-
+  byte against the source. Plus a pydantic round-trip test proving the fields
+  survive breakdown → response → create-request and that `script_excerpt` never
+  leaks. `npm run build` clean (52 modules). The live model has NOT been asked
+  for a real breakdown (that costs a text call) — how *often* it quotes verbatim
+  enough to match is still unmeasured; the fallback is a missing box, not a
+  wrong one.
+
+### 2026-07-25 — Pre-flight modal: confirm (and re-pick the frame) before drawing
+
+- **Reported:** "when I enter this page I see automatically generate all images" —
+  reaching the board started 15 generations with no confirmation. The user wanted
+  a final reminder showing every prompt with its cast/props/backgrounds plus
+  genre/style/aspect, editable, then an explicit Generate. Their earlier 9:16
+  problem is solved by this: the frame is now changeable at the last moment.
+- **Where generation actually started (the cause):** `startStoryboard()` POSTs
+  `/storyboards`, which *is* the generation — and the review / cast / props steps
+  all called it directly, then navigated to the board. The board page looked like
+  the culprit but only ever polled a job that was already running.
+- **`PreflightModal.jsx` (new):** header (panel count + "changing it here costs
+  nothing"), a Settings block (style + genre selects, aspect chips, custom text
+  boxes for each), a Cast/props/backgrounds grid showing each name's thumbnail
+  and whether a locked reference is really going along, and every shot as an
+  **editable** prompt with its Scene tag, camera, location, cast chips and
+  prop/background badges. Scrolls in the middle; head and Generate stay put.
+- **`ScriptToStoryboard.jsx`:** new `preflight` state holds `{charRefs,
+  assetRefs}` — the launch the user asked for but hasn't confirmed. All three
+  launch paths (review with no cast/props, cast→done, props→done) now call
+  `requestLaunch()`; **`startStoryboard` is called from exactly one place, the
+  modal's Confirm.** Grep for it before adding a fourth path.
+  - The modal is built once and dropped into the review / cast / props returns —
+    it's a fixed overlay, so it renders over whichever is on screen.
+  - Settings write straight to the existing form state, so `currentSig()` /
+    `boardUpToDate` and the POST pick the new aspect up with no extra plumbing.
+  - **On failure the modal STAYS OPEN** with the error, because `preflight` still
+    holds the chosen references — pressing Generate again just retries. Cancel
+    lands on review.
+- Aspect is still baked in at generation time (the model is prompted with it and
+  the result is centre-cropped), so the finished board can't be re-framed — the
+  modal says so. The variant-based re-frame plan from earlier today is unbuilt
+  and now much less urgent.
+- **Verified:** `npm run build` clean (51 modules — the new component is in), and
+  grepped every `startStoryboard` / `requestLaunch` call site to confirm no path
+  bypasses the modal. The modal has NOT been viewed in a browser.
+
+### 2026-07-25 — Board tiles + PDF now show the SCENE number (user-reported)
+
+- **Reported:** on the final board every tile read only "SHOT 1" — the scene was
+  nowhere, even though the Review step shows "Shot 1 · Scene 1".
+- **The data was already there** — `storyboard_pipeline.build_storyboard` puts
+  `scene_number` on every panel and it survives into `job.result.panels`. Only the
+  board's caption never rendered it.
+- `StoryboardBoard.jsx`: the caption head now renders
+  `Shot N` + `<span className="board-scene">Scene X</span>`, mirroring
+  `.shot-index`/`.shot-scene` on the review card. Rendered only when
+  `scene_number` is set, so an older board without it doesn't print "Scene
+  undefined". `.board-shotnum` became a baseline flex row (was `display:block`)
+  with a `.board-scene` muted tag beside it.
+- `storyboard_pdf.py`: the PDF *did* already draw "SCENE n", but as 16px MUTED
+  grey that vanished next to the bold shot label. New `_scene_pill()` draws it as
+  an outlined tinted pill (`SCENE_BG/LINE/INK` — deliberately NOT gold; the cast
+  chips own gold in this layout, and two gold pills on one row read as the same
+  kind of thing). Same conditional: no scene → no pill, no layout shift.
+- **Bug fixed on the way:** `POST /storyboards/{id}/panels/insert` hardcoded
+  `scene_number: 1`, so a panel inserted in the middle of scene 3 claimed scene 1
+  on the board and in the PDF. It now inherits from the panel it displaces (or
+  the one before it when appending).
+- **Not changed:** the public shared board (`PublicStoryboard.jsx`) still shows
+  "Shot N" only — the public payload deliberately exposes just the drawn panel
+  indexes, and adding scene numbers there means widening what a share token
+  leaks. Say so before "fixing" it.
+- **Verified:** rendered a 6-panel sample PDF and **looked at page 1** — pills
+  read clearly at Shot 1–5 (scenes 1/1/2/2/3) and Shot 6, whose `scene_number` is
+  None, correctly has none. `npm run build` clean (50 modules); backend imports
+  clean. The board tile itself was NOT viewed in a browser.
+
 ### 2026-07-24 — Stage G: "Your Storyboards" project library (save / reopen / share)
 
 - **Asked for:** a saved-project library like the reference mock — a New Storyboard
@@ -307,6 +599,60 @@ in `.env` — no code change needed.
 - **Verified:** `npm run build` clean, and the flow re-checked by reading the code
   paths (review→cast→back→cast, cast→props→back→cast, board→back→review→forward).
   NOT clicked through live in a browser this session — worth one manual pass.
+
+### 2026-07-24 — Board editing: insert / delete a panel in place (add + generate)
+
+- **Asked for:** on the final board (where the real images are visible), add a
+  panel between shots, type its prompt, and generate it there — plus delete —
+  instead of going back to Review and regenerating the whole board. Scope chosen
+  WITH the user: add + delete + generate (NO reorder — the riskiest part), and
+  the new panel generates on demand (type prompt → Generate), not automatically.
+- **Design decision that kept everything else working:** panels are addressed by
+  position (`panel_00.png`…) in the serve route, PDF, ZIP and public view — all
+  assume `index == position`. So insert/delete **renumber** rather than break
+  that: they shift the PNG files on disk and rebuild each panel's `index`+`url`
+  in EVERY style variant, preserving `index == position`. Nothing else changed.
+  - `_shift_panel_files` moves files descending (insert) / ascending (delete) so
+    none clobbers another; missing files (failed/empty panels) are skipped.
+  - `_renumber` sets index=position and rebuilds url via `_panel_url` for drawn
+    panels (empty ones keep `url=None`).
+  - Guards: 409 while the board is still generating; 404 bad index; 400 refuses
+    to delete the last panel. `count` (params + result) updated.
+- **Client (`StoryboardBoard.jsx`):** each tile gets ＋ (insert before this shot)
+  and ✕ (delete); a "＋ Add a panel" card appends at the end. A freshly inserted
+  panel shows "✏️ New panel — write a prompt, then Generate" and its button reads
+  "✨ Generate this panel" (reuses the existing per-panel regenerate call). All
+  edit controls hide while the board is generating. `reloadBoard()` clears the
+  panel-blob cache AND the index-keyed `editedDesc`/`retrying` (indices shift, so
+  stale entries would land on the wrong tile) then refetches the job.
+- **Verified:** backend test with real PNGs + 2 style variants — insert@1 shifts
+  files in both variants and `/panel/3` serves the moved image; the new panel
+  generates at its index; delete@0 shifts down; guards (404/400) hold; indices
+  and urls stay contiguous throughout. `npm run build` + backend import clean.
+  NOT clicked through live.
+
+### 2026-07-24 — Cast/Props: "Generate all" + "Retry failed" bulk buttons
+
+- **Asked for:** on the cast and props/background steps, board-style bulk actions
+  — one button to generate every missing reference and one to retry the failed
+  ones — and crucially, **don't regenerate an image the user uploaded**.
+- **`StoryboardCast.jsx` + `StoryboardAssets.jsx`:**
+  - Each item now carries an `uploaded` flag (true when set via Upload, false
+    when generated). It's in `DURABLE` + seeded from `saved`, so it survives
+    Back navigation.
+  - New toolbar above the grid: **✨ Generate all (N)** targets items with no
+    reference AND not uploaded (`needsGen`); **🔄 Retry failed (N)** targets items
+    with an error AND not uploaded (`isFailed`). Uploaded images are skipped by
+    both — that's the whole point.
+  - `runBulk(predicate)` snapshots the target set up front and generates
+    **sequentially** (one at a time), matching the board's "Retry all failed" —
+    gentler on the image quota than firing them all at once.
+  - `generateRef`/`uploadRef` refactored around a shared `runGenerate(i, item)`
+    that takes the item snapshot, so the bulk loop doesn't depend on React state
+    updating between iterations. Generating clears `uploaded`; uploading sets it.
+  - `.cast-toolbar` CSS (flex-end, like `.board-toolbar`).
+- **Verified:** `npm run build` clean; both files wired (toolbar + predicates).
+  NOT clicked through live.
 
 ### 2026-07-24 — Assets ZIP: skip UPLOADED refs again (user request)
 

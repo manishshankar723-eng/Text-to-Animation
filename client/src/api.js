@@ -114,6 +114,8 @@ export function createStoryboard({
   characterRefs,
   assetRefs,
   assetCategories,
+  world,
+  script,
   provider,
 } = {}) {
   return request("/storyboards", {
@@ -124,6 +126,10 @@ export function createStoryboard({
       aspect_ratio: aspectRatio,
       title,
       genre,
+      // The script's region/period/culture — prefixed onto every panel prompt.
+      world: world || null,
+      // Saved so a re-opened / duplicated board can still show the source script.
+      script: script || null,
       character_refs: characterRefs || {},
       asset_refs: assetRefs || {},
       // Lets the assets ZIP file each reference under props/ or backgrounds/.
@@ -203,12 +209,32 @@ export function restyleStoryboard(jobId, style) {
   });
 }
 
+// Stop a board that is still generating. Panels not yet started are skipped;
+// the ones already in flight finish. Returns { stopping: true }.
+export function stopStoryboard(jobId) {
+  return request(`/storyboards/${jobId}/stop`, { method: "POST" });
+}
+
 // Switch which style variant is shown/exported (no regeneration).
 export function setActiveVariant(jobId, index) {
   return request(`/storyboards/${jobId}/active-variant`, {
     method: "POST",
     body: { index },
   });
+}
+
+// Insert a blank panel at position `at` (shifts the rest down). The new panel
+// has no image — generate it afterwards with regenerateStoryboardPanel.
+export function insertStoryboardPanel(jobId, at, description = "") {
+  return request(`/storyboards/${jobId}/panels/insert`, {
+    method: "POST",
+    body: { at, description },
+  });
+}
+
+// Delete the panel at `index` (removes its image, shifts the rest up).
+export function deleteStoryboardPanel(jobId, index) {
+  return request(`/storyboards/${jobId}/panels/${index}`, { method: "DELETE" });
 }
 
 // Re-draw one panel (Retry / regenerate). Returns { panel }.
@@ -291,15 +317,19 @@ export function health() {
 }
 
 // --- Jobs ---
-export function generateReference(prompt, provider) {
+// `world` is the script's region/period/culture (from the breakdown). Passing it
+// is what stops the model drawing its Western default for a non-Western story.
+export function generateReference(prompt, world, provider) {
   const body = { prompt };
+  if (world) body.world = world;
   if (provider) body.provider = provider;
   return request("/characters/reference", { method: "POST", body });
 }
 // Generate a prop / background reference image (Stage B2 asset consistency).
 // `category` is "prop" or "background". Returns { reference_id, image_url }.
-export function generateAssetReference(prompt, category = "prop", provider) {
+export function generateAssetReference(prompt, category = "prop", world, provider) {
   const body = { prompt, category };
+  if (world) body.world = world;
   if (provider) body.provider = provider;
   return request("/assets/reference", { method: "POST", body });
 }

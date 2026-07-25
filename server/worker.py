@@ -127,8 +127,15 @@ def _run_storyboard(job_id: str, kwargs: dict):
 
     try:
         result = run_storyboard(job_id=job_id, progress_cb=_progress, **kwargs)
+        # A stopped run is still a finished JOB — the panels it did draw are real
+        # and downloadable. `result["stopped"]` is what the board reads to say
+        # "you stopped this" instead of claiming the board is complete.
         store.mark_succeeded(job_id, result)
-        logger.info("[job %s] storyboard succeeded (%s/%s ok).", job_id, result.get("ok_count"), result.get("count"))
+        logger.info(
+            "[job %s] storyboard %s (%s/%s ok).",
+            job_id, "STOPPED by user" if result.get("stopped") else "succeeded",
+            result.get("ok_count"), result.get("count"),
+        )
     except Exception as e:  # noqa: BLE001
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] storyboard crashed.", job_id)
@@ -152,7 +159,7 @@ def _run_restyle(job_id: str, kwargs: dict):
     count = len(kwargs.get("shots") or [])
     logger.info("[job %s] restyle started → variant %d (style=%s)", job_id, variant, new_style)
 
-    def _compose(panels: list) -> dict:
+    def _compose(panels: list, stopped: bool = False) -> dict:
         ok = sum(1 for p in panels if not p.get("failed"))
         variants = list(existing) + [
             {"style": new_style, "panels": panels, "ok_count": ok}
@@ -165,6 +172,8 @@ def _run_restyle(job_id: str, kwargs: dict):
             "count": count,
             "ok_count": ok,
             "panels": panels,
+            # Carried up so a stopped re-style says so, same as a stopped board.
+            "stopped": stopped,
         }
 
     def _progress(update: dict):
@@ -179,8 +188,11 @@ def _run_restyle(job_id: str, kwargs: dict):
 
     try:
         result = run_storyboard(job_id=job_id, progress_cb=_progress, **kwargs)
-        store.mark_succeeded(job_id, _compose(result["panels"]))
-        logger.info("[job %s] restyle succeeded (variant %d).", job_id, variant)
+        store.mark_succeeded(job_id, _compose(result["panels"], result.get("stopped", False)))
+        logger.info(
+            "[job %s] restyle %s (variant %d).",
+            job_id, "STOPPED by user" if result.get("stopped") else "succeeded", variant,
+        )
     except Exception as e:  # noqa: BLE001
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] restyle crashed.", job_id)

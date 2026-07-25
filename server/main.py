@@ -45,6 +45,7 @@ from .schemas import (
     ReferenceResponse,
     RegeneratePartRequest,
     RegenerateViewRequest,
+    PanelInsertRequest,
     PanelRegenerateRequest,
     RestyleRequest,
     ActiveVariantRequest,
@@ -90,6 +91,9 @@ _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]
 # Valid image backends (kept local so importing the API doesn't pull in the
 # heavy google.genai import chain — the worker imports the pipeline lazily).
 _SUPPORTED_PROVIDERS = ("vertex", "gemini")
+# The source script is stored with a storyboard for display only. Capped so a
+# pasted novel can't push the job record past Firestore's 1 MB document limit.
+MAX_STORED_SCRIPT_CHARS = 200_000
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +258,8 @@ def generate_reference(
         image = generate_character_reference(
             description=body.prompt,
             provider=body.provider,
+            # Draw them as a person of the script's world, not the model's default.
+            world=body.world.model_dump() if body.world else None,
         )
     except ReferenceGenerationError as e:
         # Surface the ACTUAL reason (API error / block / bad image), not a guess.
@@ -308,6 +314,8 @@ def generate_asset_reference_image(
             description=body.prompt,
             category=body.category,
             provider=body.provider,
+            # A hut, a cooking pot and a temple all differ by culture.
+            world=body.world.model_dump() if body.world else None,
         )
     except ReferenceGenerationError as e:
         logger.warning("[asset-ref] generation failed: %s", e)
@@ -433,6 +441,7 @@ def breakdown_script(
         shots=shots,
         characters=result.get("characters", []),
         assets=result.get("assets", []),
+        world=result.get("world") or {},
         count=len(shots),
         style=body.style,
         aspect_ratio=body.aspect_ratio,
@@ -479,6 +488,9 @@ def create_storyboard(
 
     title = (body.title or "Storyboard").strip() or "Storyboard"
     shot_dicts = [s.model_dump() for s in body.shots]
+    # The script's world rides along with every panel prompt, and is stored so a
+    # later re-style / single-panel redraw stays in the same culture and period.
+    world = body.world.model_dump() if body.world else {}
     job = get_store().create(
         character_name=title,
         kind=JobKind.STORYBOARD,
@@ -499,6 +511,10 @@ def create_storyboard(
             # Kept so a panel can always be re-drawn (even if it's missing from the
             # streamed result) and so edited prompts have a source of truth.
             "shots": shot_dicts,
+            "world": world,
+            # Display only. Capped so a pasted novel can't bloat the job record
+            # (Firestore documents have a hard size limit).
+            "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
         },
         owner=current.email,
     )
@@ -511,6 +527,7 @@ def create_storyboard(
         "provider": body.provider,
         "character_ref_paths": character_ref_paths,
         "asset_ref_paths": asset_ref_paths,
+        "world": world,
     }
     worker.submit_storyboard_job(job.job_id, kwargs)
 
@@ -610,6 +627,8 @@ def get_storyboard_project(
         aspect_ratio=params.get("aspect_ratio"),
         genre=params.get("genre"),
         shots=params.get("shots") or [],
+        world=params.get("world") or {},
+        script=params.get("script") or "",
     )
 
 
@@ -819,6 +838,7 @@ def regenerate_storyboard_panel(
             asset_ref_paths=job.params.get("asset_ref_paths") or {},
             variant=active,
             provider=job.params.get("provider"),
+            world=job.params.get("world") or {},
         )
     except Exception as e:  # noqa: BLE001 — report clearly
         logger.exception("[storyboard %s] panel %d regen failed", job_id, body.index)
@@ -847,6 +867,149 @@ def regenerate_storyboard_panel(
     result.setdefault("aspect_ratio", job.params.get("aspect_ratio"))
     get_store().update(job_id, result=result)
     return {"panel": updated}
+
+
+# ---------------------------------------------------------------------------
+# Board editing — insert / delete a panel in place.
+#
+# Panels are addressed by position (panel_00.png, panel_01.png…) everywhere —
+# the serve route, PDF, ZIP and public view all assume index == position. So
+# rather than break that invariant, insert/delete RENUMBER: they shift the PNG
+# files and rebuild each panel's index + url, in every style variant, keeping
+# index == position intact. That's why nothing else needed to change.
+# ---------------------------------------------------------------------------
+def _variant_subdir(variant_idx: int) -> str:
+    return "" if not variant_idx else f"v{variant_idx}"
+
+
+def _panel_file(board_dir: str, variant_idx: int, index: int) -> str:
+    sub = _variant_subdir(variant_idx)
+    return os.path.join(board_dir, sub, f"panel_{index:02d}.png")
+
+
+def _shift_panel_files(board_dir: str, variant_idx: int, start: int, count: int, delta: int) -> None:
+    """Move panel files [start, count) by `delta` positions on disk.
+
+    delta=+1 (insert): walk DOWN so a file never overwrites one not yet moved.
+    delta=-1 (delete): walk UP for the same reason. Missing files (failed /
+    ungenerated panels) are simply skipped.
+    """
+    order = range(count - 1, start - 1, -1) if delta > 0 else range(start, count)
+    for i in order:
+        src = _panel_file(board_dir, variant_idx, i)
+        if os.path.isfile(src):
+            os.replace(src, _panel_file(board_dir, variant_idx, i + delta))
+
+
+def _renumber(panels: list[dict], job_id: str, variant_idx: int) -> list[dict]:
+    """Set every panel's index to its position and rebuild url for drawn ones."""
+    from storyboard_pipeline import _panel_url
+
+    out = []
+    for pos, p in enumerate(panels):
+        q = dict(p)
+        q["index"] = pos
+        # A drawn panel keeps its image (which just moved to this position); an
+        # empty/failed one has no file, so its url stays None.
+        q["url"] = _panel_url(job_id, pos, variant_idx) if p.get("url") else None
+        out.append(q)
+    return out
+
+
+def _persist_structural_change(job_id: str, result: dict, variants: list[dict], active: int) -> dict:
+    count = len(variants[active].get("panels") or [])
+    for v in variants:
+        v["ok_count"] = sum(1 for p in (v.get("panels") or []) if p.get("url") and not p.get("failed"))
+    result["variants"] = variants
+    result["active_variant"] = active
+    result["panels"] = variants[active].get("panels") or []
+    result["ok_count"] = variants[active].get("ok_count", 0)
+    result["count"] = count
+    job = get_store().get(job_id)
+    params = dict((job.params if job else {}) or {})
+    params["count"] = count
+    get_store().update(job_id, result=result, params=params)
+    return result
+
+
+@app.post("/storyboards/{job_id}/panels/insert")
+def insert_storyboard_panel(
+    job_id: str,
+    body: PanelInsertRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Insert a blank panel at position `at` (shifts the rest down, all variants)."""
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Wait for the board to finish generating first.")
+
+    result = job.result or {}
+    variants, active = _variants_of(result)
+    board_dir = _board_dir(job_id)
+    existing = variants[active].get("panels") or []
+    n = len(existing)
+    at = max(0, min(body.at, n))  # clamp; == n means append at the end
+
+    # Inherit the scene from the panel it lands next to (the one it pushes down,
+    # else the one before it) — a panel added inside scene 3 belongs to scene 3.
+    neighbour = existing[at] if at < n else (existing[at - 1] if n else None)
+
+    new_panel_base = {
+        "scene_number": (neighbour or {}).get("scene_number", 1) or 1,
+        "shot_number": at + 1,
+        "description": body.description or "",
+        "characters": [],
+        "assets": [],
+        "location": "",
+        "camera": "",
+        "url": None,
+        "failed": False,
+    }
+    for vi, v in enumerate(variants):
+        panels = list(v.get("panels") or [])
+        _shift_panel_files(board_dir, vi, at, len(panels), +1)
+        panels.insert(at, dict(new_panel_base))
+        v["panels"] = _renumber(panels, job_id, vi)
+
+    _persist_structural_change(job_id, result, variants, active)
+    return {"panels": variants[active]["panels"], "count": len(variants[active]["panels"])}
+
+
+@app.delete("/storyboards/{job_id}/panels/{index}")
+def delete_storyboard_panel(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Delete the panel at `index` (removes its files, shifts the rest up, all variants)."""
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Wait for the board to finish generating first.")
+
+    result = job.result or {}
+    variants, active = _variants_of(result)
+    board_dir = _board_dir(job_id)
+    n = len(variants[active].get("panels") or [])
+    if not (0 <= index < n):
+        raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
+    if n <= 1:
+        raise HTTPException(status_code=400, detail="A storyboard needs at least one panel.")
+
+    for vi, v in enumerate(variants):
+        panels = list(v.get("panels") or [])
+        f = _panel_file(board_dir, vi, index)
+        if os.path.isfile(f):
+            try:
+                os.remove(f)
+            except OSError:
+                logger.warning("[storyboard %s] could not remove %s", job_id, f)
+        if 0 <= index < len(panels):
+            panels.pop(index)
+        _shift_panel_files(board_dir, vi, index + 1, len(panels) + 1, -1)
+        v["panels"] = _renumber(panels, job_id, vi)
+
+    _persist_structural_change(job_id, result, variants, active)
+    return {"panels": variants[active]["panels"], "count": len(variants[active]["panels"])}
 
 
 @app.post("/storyboards/{job_id}/restyle", response_model=JobCreatedResponse, status_code=202)
@@ -893,6 +1056,8 @@ def restyle_storyboard(
         "provider": job.params.get("provider"),
         "character_ref_paths": job.params.get("character_ref_paths") or {},
         "asset_ref_paths": job.params.get("asset_ref_paths") or {},
+        # A re-style changes the art style, never the story's world.
+        "world": job.params.get("world") or {},
         "variant": new_index,
         "composition_ref_dir": composition_ref_dir,
         "existing_variants": variants,
@@ -906,6 +1071,31 @@ def restyle_storyboard(
         character_name=job.character_name,
         message=f"Re-styling the board to '{body.style}'. Poll GET /jobs/{job_id}.",
     )
+
+
+@app.post("/storyboards/{job_id}/stop")
+def stop_storyboard(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Stop a board that is still generating — the "Stop generation" button.
+
+    Point of it: stop SPENDING generations once the first panels come back
+    wrong. Panels not yet started are skipped; the one or two already talking to
+    the image API finish, because an in-flight HTTP call can't be un-sent. The
+    job then completes normally with whatever was drawn — those panels are real
+    and downloadable, and every skipped panel can be drawn on its own from the
+    board afterwards.
+    """
+    job = _get_owned_board(job_id, current)
+    if job.status not in (JobStatus.RUNNING, JobStatus.QUEUED):
+        raise HTTPException(status_code=409, detail="This board isn't generating.")
+
+    from storyboard_pipeline import request_cancel
+
+    request_cancel(job_id)
+    logger.info("[storyboard %s] stop requested by %s", job_id, current.email)
+    return {"stopping": True, "job_id": job_id}
 
 
 @app.post("/storyboards/{job_id}/active-variant")
@@ -976,23 +1166,37 @@ def download_storyboard_bundle(
 ):
     """Download the complete storyboard package as a ZIP.
 
-    Layout (every file prefixed with the board's title, numbered in board order
-    so the sequence survives being unzipped into a flat folder):
+    Files are named the way they are LABELLED IN THE APP — the folder says what
+    kind of thing it is, so repeating the board title on every image only made
+    the names harder to read:
 
-        panels/<Title>_shot_01.png ...   every drawn panel, full resolution
-        characters/<Title>_character_01_<Name>.png
-        props/<Title>_prop_01_<Name>.png
-        backgrounds/<Title>_background_01_<Name>.png
-        <Title>.pdf                      the board with camera/location/cast
+        panels/Shot 03.png ...      numbered as the board numbers them
+        characters/Lubdhaka.png
+        props/Bilva Tree.png
+        backgrounds/Dense Forest.png
+        <Title>.pdf                 the one file that IS the whole board
 
-    Panels come from the ACTIVE style variant — the one shown on the board.
-    Only AI-GENERATED references are bundled; UPLOADED ones are skipped because
-    the user already has those source images.
+    Panel numbers are the board's own (a failed panel leaves a gap, which is
+    honest — the picture really is missing). Panels come from the ACTIVE style
+    variant — the one shown on the board. Only AI-GENERATED references are
+    bundled; UPLOADED ones are skipped because the user already has those.
     """
     job = _get_owned_board(job_id, current)
 
     _safe = _safe_filename
     title = _safe(job.character_name, "storyboard")
+
+    # Two characters can share a name once punctuation is stripped ("Shiva." and
+    # "Shiva"), and a zip with two identical entry names is corrupt — so names
+    # are made unique per folder: "Shiva.png", "Shiva (2).png".
+    def _unique(used: set[str], name: str, fallback: str) -> str:
+        base = _safe(name, fallback)
+        candidate, n = base, 1
+        while candidate.lower() in used:
+            n += 1
+            candidate = f"{base} ({n})"
+        used.add(candidate.lower())
+        return candidate
     char_refs = job.params.get("character_ref_paths") or {}
     asset_refs = job.params.get("asset_ref_paths") or {}
     categories = job.params.get("asset_categories") or {}
@@ -1007,40 +1211,37 @@ def download_storyboard_bundle(
 
     added = 0
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # --- Panels, numbered in board order ---------------------------------
-        seq = 0
+        # --- Panels, named as the board numbers them --------------------------
+        used_panels: set[str] = set()
         for p in panels:
             if p.get("failed") or not p.get("url"):
                 continue
             path = os.path.join(src_dir, f"panel_{p['index']:02d}.png")
             if not os.path.isfile(path):
                 continue
-            seq += 1
-            zf.write(path, f"panels/{title}_shot_{seq:02d}.png")
+            name = _unique(used_panels, f"Shot {p['index'] + 1:02d}", "Shot")
+            zf.write(path, f"panels/{name}.png")
             added += 1
 
-        # --- References, split by kind and numbered ---------------------------
+        # --- References, named after the character / prop / location ----------
         # UPLOADED refs are skipped on purpose: the user already has those images.
-        # Only AI-generated references are worth bundling. Numbering runs over the
-        # INCLUDED refs, so it stays contiguous even when uploads are dropped.
-        char_n = 0
+        # Only AI-generated references are worth bundling.
+        used_chars: set[str] = set()
         for name, path in char_refs.items():
             if not os.path.isfile(path) or not _ref_is_generated(path):
                 continue
-            char_n += 1
-            zf.write(path, f"characters/{title}_character_{char_n:02d}_{_safe(name)}.png")
+            zf.write(path, f"characters/{_unique(used_chars, name, 'character')}.png")
             added += 1
 
-        prop_n = bg_n = 0
+        used_props: set[str] = set()
+        used_bgs: set[str] = set()
         for name, path in asset_refs.items():
             if not os.path.isfile(path) or not _ref_is_generated(path):
                 continue
             if str(categories.get(name, "prop")).lower() == "background":
-                bg_n += 1
-                dest = f"backgrounds/{title}_background_{bg_n:02d}_{_safe(name)}.png"
+                dest = f"backgrounds/{_unique(used_bgs, name, 'background')}.png"
             else:
-                prop_n += 1
-                dest = f"props/{title}_prop_{prop_n:02d}_{_safe(name)}.png"
+                dest = f"props/{_unique(used_props, name, 'prop')}.png"
             zf.write(path, dest)
             added += 1
 

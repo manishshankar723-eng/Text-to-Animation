@@ -26,6 +26,36 @@ logger = logging.getLogger(__name__)
 # (IMAGE_MAX_CONCURRENCY / IMAGE_RPM) is the real ceiling.
 PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "2")))
 
+# ---------------------------------------------------------------------------
+# Stop / cancel
+# ---------------------------------------------------------------------------
+# A board can be stopped mid-run from the UI ("Stop generation") when the first
+# panels come back wrong — the point is to stop SPENDING generations. There is
+# no way to abort an HTTP call already in flight, so the deal is: every panel
+# that hasn't started yet is skipped, and the 1–2 already talking to the API
+# finish. Flags live in this process, alongside the worker pool that reads them.
+_cancel_lock = threading.Lock()
+_cancelled: set[str] = set()
+
+
+def request_cancel(job_id: str) -> None:
+    """Ask a running board to stop after the panels already in flight."""
+    with _cancel_lock:
+        _cancelled.add(job_id)
+    logger.info("[storyboard %s] STOP requested", job_id)
+
+
+def is_cancelled(job_id: str) -> bool:
+    """True while a stop is pending for this board."""
+    with _cancel_lock:
+        return job_id in _cancelled
+
+
+def clear_cancel(job_id: str) -> None:
+    """Drop the flag so the next run of this board isn't stopped by a stale one."""
+    with _cancel_lock:
+        _cancelled.discard(job_id)
+
 
 def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
     """Centre-crop an image to the given W:H ratio (e.g. '16:9')."""
@@ -127,10 +157,13 @@ def regenerate_panel(
     asset_ref_paths: dict | None = None,
     variant: int = 0,
     provider: str | None = None,
+    world: dict | None = None,
 ) -> dict:
     """Re-generate ONE panel (used by the Retry button). Returns the updated panel.
 
-    `variant` targets the active style variant's subfolder + URL.
+    `variant` targets the active style variant's subfolder + URL. `world` is the
+    script's region/period/culture, so a redrawn panel matches the rest of the
+    board instead of reverting to the model's default look.
     """
     from gemini_client import generate_storyboard_panel
 
@@ -158,6 +191,7 @@ def regenerate_panel(
             reference_images=shot_char_refs or None,
             asset_reference_images=shot_asset_refs or None,
             provider=provider,
+            world=world,
         )
 
     if image is not None:
@@ -182,6 +216,7 @@ def run_storyboard(
     asset_ref_paths: dict | None = None,
     variant: int = 0,
     composition_ref_dir: str | None = None,
+    world: dict | None = None,
     progress_cb=None,
 ) -> dict:
     """Generate a storyboard panel for each shot.
@@ -203,6 +238,9 @@ def run_storyboard(
             into every panel the character appears in (Stage B consistency).
         asset_ref_paths: {asset_name: image_path} — prop/background reference
             images fed into every panel the asset appears in (Stage B2 consistency).
+        world: the script's region/period/culture block, prefixed onto every
+            panel prompt so the whole board stays true to the story's world
+            (see gemini_client.build_world_context).
         progress_cb: optional callable(update: dict) for live progress. Receives
             {percent, stage, message, current, total, panels(partial list)}.
 
@@ -266,6 +304,11 @@ def run_storyboard(
 
     def _render(i: int) -> None:
         """Draw ONE panel and record the outcome (runs in the panel pool)."""
+        # Every queued panel checks here first, so a stop costs nothing beyond
+        # the calls already in flight. Skipped panels stay url=None/failed=False
+        # — the board then offers "Generate this panel" for each of them.
+        if is_cancelled(job_id):
+            return
         panel = panels[i]
         description = panel["description"]
         # Gather reference images for the characters + assets in THIS shot.
@@ -285,6 +328,7 @@ def run_storyboard(
                 asset_reference_images=shot_asset_refs or None,
                 composition_reference_image=_load_composition_ref(composition_ref_dir, i),
                 provider=provider,
+                world=world,
             )
 
         if image is not None:
@@ -302,6 +346,8 @@ def run_storyboard(
         "[storyboard %s] generating %d panels (style=%s, aspect=%s, concurrency=%d)",
         job_id, total, style, aspect_ratio, PANEL_CONCURRENCY,
     )
+    # A stop flag left over from a previous run must not kill this one.
+    clear_cancel(job_id)
     _emit(2, f"Starting {total} panels…")
 
     # Render panels concurrently. Actual API pressure is bounded by the shared
@@ -324,12 +370,21 @@ def run_storyboard(
                     completed = done
                 _emit(
                     int(2 + (completed / max(total, 1)) * 96),
-                    f"Drawing panels… {completed} of {total} done",
+                    "Stopping — finishing the panels already started…"
+                    if is_cancelled(job_id)
+                    else f"Drawing panels… {completed} of {total} done",
                 )
 
-    ok = sum(1 for p in panels if not p["failed"])
-    _emit(100, f"Done — {ok}/{total} panels generated.")
-    logger.info("[storyboard %s] complete: %d/%d ok", job_id, ok, total)
+    stopped = is_cancelled(job_id)
+    clear_cancel(job_id)
+    ok = sum(1 for p in panels if p.get("url") and not p["failed"])
+    drawn = sum(1 for p in panels if p.get("url") or p["failed"])
+    if stopped:
+        _emit(100, f"Stopped by you — {ok} of {total} panels drawn.")
+        logger.info("[storyboard %s] STOPPED: %d/%d drawn (%d ok)", job_id, drawn, total, ok)
+    else:
+        _emit(100, f"Done — {ok}/{total} panels generated.")
+        logger.info("[storyboard %s] complete: %d/%d ok", job_id, ok, total)
 
     return {
         "style": style,
@@ -338,4 +393,7 @@ def run_storyboard(
         "ok_count": ok,
         "variant": variant,
         "panels": panels,
+        # The run ended early because the user stopped it — the board says so
+        # rather than pretending a half-drawn board is a finished one.
+        "stopped": stopped,
     }

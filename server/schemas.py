@@ -104,6 +104,23 @@ class MeshyRequest(BaseModel):
     api_key: str | None = None
 
 
+class World(BaseModel):
+    """The story's visual world, read from the script by the breakdown.
+
+    Carried into EVERY image prompt — character references, prop/background
+    references and each panel — so a Shiva Purana script draws Indian people and
+    Indian architecture instead of the image model's Western default. All fields
+    are optional: an empty world leaves prompts exactly as they were.
+    """
+
+    setting: str = ""  # place + period
+    culture: str = ""  # cultural / religious tradition
+    ethnicity: str = ""  # what the people of this world look like
+    wardrobe: str = ""
+    environment: str = ""  # architecture, landscape, everyday objects
+    notes: str = ""  # iconography, rituals, symbols, colours
+
+
 class ReferenceRequest(BaseModel):
     """Body for POST /characters/reference — generate a character from text."""
 
@@ -111,6 +128,10 @@ class ReferenceRequest(BaseModel):
         ...,
         description="Free-form character description, e.g. 'An Indian woman in a red saree, age 30'.",
         min_length=5,
+    )
+    world: World | None = Field(
+        None,
+        description="Story world (region/period/culture) to draw this character within.",
     )
     provider: str | None = Field(
         None,
@@ -137,6 +158,10 @@ class AssetReferenceRequest(BaseModel):
     category: str = Field(
         "prop",
         description="'prop' (a specific object) or 'background' (a location/set).",
+    )
+    world: World | None = Field(
+        None,
+        description="Story world (region/period/culture) this prop/location belongs to.",
     )
     provider: str | None = Field(
         None,
@@ -201,6 +226,13 @@ class Shot(BaseModel):
     assets: list[str] = Field(default_factory=list)
     location: str = ""
     camera: str = ""
+    # Traceability: the VERBATIM script text this panel was drawn from, with its
+    # 1-based line range, so the writer can see which lines became this shot.
+    # Empty when the breakdown's quote couldn't be found in the script (it is
+    # matched back against the real text — never taken on trust).
+    script_line: str = ""
+    script_line_start: int | None = None
+    script_line_end: int | None = None
 
 
 class Character(BaseModel):
@@ -225,6 +257,8 @@ class ScriptBreakdownResponse(BaseModel):
     shots: list[Shot]
     characters: list[Character] = Field(default_factory=list)
     assets: list[Asset] = Field(default_factory=list)
+    # The story's region/period/culture, so every later image prompt can carry it.
+    world: World = Field(default_factory=World)
     count: int
     style: str | None = None
     aspect_ratio: str | None = None
@@ -250,6 +284,14 @@ class StoryboardCreateRequest(BaseModel):
     # asset name → "prop" | "background". Not used for drawing — it's what lets
     # the assets ZIP file them into props/ and backgrounds/ folders.
     asset_categories: dict[str, str] = Field(default_factory=dict)
+    # The script's world — prefixed onto every panel prompt so the whole board
+    # stays true to the story's region, period and culture.
+    world: World | None = Field(
+        None, description="Story world (region/period/culture) for every panel."
+    )
+    # The source script. Not used for drawing — kept so a re-opened or duplicated
+    # board can still show the writer the text its shots were traced from.
+    script: str | None = Field(None, description="The source script text.")
     provider: str | None = Field(
         None,
         description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER.",
@@ -267,6 +309,18 @@ class PanelRegenerateRequest(BaseModel):
     description: str | None = Field(None, description="Edited shot description (overrides the stored one).")
     camera: str | None = Field(None, description="Edited camera/angle.")
     location: str | None = Field(None, description="Edited location.")
+
+
+class PanelInsertRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/panels/insert — add a blank panel.
+
+    `at` is the 0-based position the new panel takes; everything from there on
+    shifts down by one. The panel starts empty (no image) — the user types a
+    prompt on the board and generates it with the normal regenerate-panel call.
+    """
+
+    at: int = Field(..., ge=0, description="Position to insert the new panel at.")
+    description: str = Field("", description="Optional starting prompt for the new panel.")
 
 
 class RestyleRequest(BaseModel):
@@ -323,6 +377,10 @@ class StoryboardProject(BaseModel):
     aspect_ratio: str | None = None
     genre: str | None = None
     shots: list[Shot] = Field(default_factory=list)
+    # So a duplicated board redraws in the same culture/period as the original.
+    world: World = Field(default_factory=World)
+    # The source script, so the review step can still show it line by line.
+    script: str = ""
 
 
 class StoryboardRenameRequest(BaseModel):

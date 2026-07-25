@@ -14,6 +14,10 @@ import StoryboardCast from "./StoryboardCast.jsx";
 import StoryboardAssets from "./StoryboardAssets.jsx";
 import StoryboardLibrary from "./StoryboardLibrary.jsx";
 import BreakdownProgress from "./BreakdownProgress.jsx";
+import PreflightModal from "./PreflightModal.jsx";
+import ScriptLineBox from "./ScriptLineBox.jsx";
+import WorldSetting from "./WorldSetting.jsx";
+import ScriptPanel from "./ScriptPanel.jsx";
 
 // Visual styles. The first 7 show as chips; the rest live behind "＋ More".
 // "custom" ("Add Your Own Style") reveals a free-text box.
@@ -101,6 +105,14 @@ export default function ScriptToStoryboard() {
   const [shots, setShots] = useState([]);
   const [characters, setCharacters] = useState([]);
   const [assets, setAssets] = useState([]);
+  // The story's region / period / culture, read off the script by the breakdown
+  // and editable by the user. Goes into EVERY image prompt (cast, props,
+  // backgrounds, panels) so a non-Western story isn't drawn Western by default.
+  const [world, setWorld] = useState({});
+  // The resolved script text (pasted, or read out of an uploaded file). Shown in
+  // full on the review step and saved with the board, so the line numbers on the
+  // shot cards can be looked up — including on a duplicated board.
+  const [scriptText, setScriptText] = useState("");
   // Set true the moment the breakdown API call returns, so the progress ring
   // can race to 100% and THEN hand off to Review — instead of the old behaviour
   // where the call finishing froze the ring wherever it happened to be.
@@ -109,6 +121,12 @@ export default function ScriptToStoryboard() {
   // Character refs chosen on the cast step, carried into the assets step so both
   // sets of references reach panel generation together.
   const [characterRefs, setCharacterRefs] = useState({});
+
+  // The launch the user has ASKED for but not yet confirmed: {charRefs,
+  // assetRefs}. Non-null = the pre-flight modal is up. Nothing is generated
+  // until it is confirmed, so reaching the board can never start images by
+  // itself.
+  const [preflight, setPreflight] = useState(null);
 
   // Everything the user sets up on the cast / props steps — the generated or
   // uploaded reference AND the edited description — lives HERE rather than in
@@ -269,6 +287,7 @@ export default function ScriptToStoryboard() {
       if (text.length < 20) {
         throw new Error("Please provide at least a few sentences of script.");
       }
+      setScriptText(text); // what the review step shows, line for line
       const res = await api.breakdownScript(text, {
         style: effectiveStyle(),
         aspectRatio: effectiveAspect(),
@@ -294,6 +313,7 @@ export default function ScriptToStoryboard() {
     setShots(res.shots || []);
     setCharacters(res.characters || []);
     setAssets(res.assets || []);
+    setWorld(res.world || {});
     // A new breakdown is a new cast — drop refs saved for the previous script
     // so a same-named character can't inherit the old picture.
     clearSavedRefs();
@@ -326,6 +346,10 @@ export default function ScriptToStoryboard() {
       characters: [],
       location: "",
       camera: "",
+      // A shot the user added by hand came from no script line.
+      script_line: "",
+      script_line_start: null,
+      script_line_end: null,
     };
   }
   function addShot() {
@@ -394,6 +418,8 @@ export default function ScriptToStoryboard() {
       shots,
       style: effectiveStyle(),
       aspect: effectiveAspect(),
+      // Editing the world changes every panel, so it must invalidate the board.
+      world,
     });
   }
   // True when a board exists and nothing that affects the panels has changed.
@@ -415,7 +441,7 @@ export default function ScriptToStoryboard() {
     } else if (computeAssets().length > 0) {
       setStep("assets");
     } else {
-      startStoryboard(characterRefs || {}, {});
+      requestLaunch(characterRefs || {}, {});
     }
   }
 
@@ -425,8 +451,17 @@ export default function ScriptToStoryboard() {
     if (computeAssets().length > 0) {
       setStep("assets");
     } else {
-      startStoryboard(charRefs || {}, {});
+      requestLaunch(charRefs || {}, {});
     }
+  }
+
+  // Everything is chosen — ask for confirmation instead of generating. The modal
+  // is the ONLY thing that calls startStoryboard, so no path can spend
+  // generations without the user seeing what is about to be drawn.
+  function requestLaunch(charRefs, assetRefs) {
+    setError("");
+    setNotice("");
+    setPreflight({ charRefs: charRefs || {}, assetRefs: assetRefs || {} });
   }
 
   // Kick off panel generation with the chosen character + asset references.
@@ -452,14 +487,20 @@ export default function ScriptToStoryboard() {
         characterRefs: charRefs || {},
         assetRefs: assetRefs || {},
         assetCategories,
+        world,
+        script: scriptText,
       });
       setJobId(res.job_id);
       setGeneratedSig(currentSig()); // remember what this board was drawn from
       setBoardOrigin("review");
+      setPreflight(null); // confirmed and away — drop the modal
       setStep("board");
     } catch (e) {
+      // Keep the modal up with the error in it: the chosen references are still
+      // in `preflight`, so the user can just press Generate again. Behind it,
+      // review is where Cancel should land.
       setError(e.message);
-      setStep("review"); // surface the error where the user can act on it
+      setStep("review");
     } finally {
       setBusy(false);
     }
@@ -472,7 +513,10 @@ export default function ScriptToStoryboard() {
     setShots([]);
     setCharacters([]);
     setAssets([]);
+    setWorld({});
+    setScriptText("");
     setCharacterRefs({});
+    setPreflight(null);
     clearSavedRefs();
     setScript("");
     setFile(null);
@@ -486,6 +530,48 @@ export default function ScriptToStoryboard() {
     setError("");
     setNotice("");
   }
+
+  // The pre-flight confirmation. Built once and dropped into every step that
+  // can launch a generation (review / cast / props) — it's a fixed overlay, so
+  // it renders over whichever of them is on screen.
+  const preflightModal = preflight ? (
+    <PreflightModal
+      title={effectiveTitle()}
+      shots={shots}
+      cast={computeCast()}
+      assets={computeAssets()}
+      charRefs={preflight.charRefs}
+      assetRefs={preflight.assetRefs}
+      savedCast={savedCastRefs}
+      savedAssets={savedAssetRefs}
+      styleOptions={ALL_STYLES}
+      aspectOptions={ASPECTS}
+      genreOptions={ALL_GENRES}
+      style={style}
+      customStyle={customStyle}
+      onStyle={setStyle}
+      onCustomStyle={setCustomStyle}
+      aspect={aspect}
+      customAspect={customAspect}
+      onAspect={setAspect}
+      onCustomAspect={setCustomAspect}
+      genre={genre}
+      customGenre={customGenre}
+      onGenre={setGenre}
+      onCustomGenre={setCustomGenre}
+      world={world}
+      onWorld={setWorld}
+      busy={busy}
+      error={error}
+      onEditShot={updateShot}
+      onCancel={() => {
+        if (busy) return; // never abandon a launch that's already in flight
+        setPreflight(null);
+        setStep("review");
+      }}
+      onConfirm={() => startStoryboard(preflight.charRefs, preflight.assetRefs)}
+    />
+  ) : null;
 
   // =========================================================== Library step
   if (step === "library") {
@@ -510,6 +596,8 @@ export default function ScriptToStoryboard() {
           resetWorkflow();
           applySavedSettings(project);
           setShots(project.shots || []);
+          setWorld(project.world || {});
+          setScriptText(project.script || "");
           setTitle(`${project.title} (copy)`);
           setStep("review");
         }}
@@ -520,28 +608,36 @@ export default function ScriptToStoryboard() {
   // ============================================================== Cast step
   if (step === "cast") {
     return (
-      <StoryboardCast
-        characters={computeCast()}
-        saved={savedCastRefs}
-        onSave={(name, fields) => saveRefFields(setSavedCastRefs, name, fields)}
-        busy={busy}
-        onBack={() => setStep("review")}
-        onGenerate={handleCastNext}
-      />
+      <>
+        <StoryboardCast
+          characters={computeCast()}
+          saved={savedCastRefs}
+          onSave={(name, fields) => saveRefFields(setSavedCastRefs, name, fields)}
+          world={world}
+          busy={busy}
+          onBack={() => setStep("review")}
+          onGenerate={handleCastNext}
+        />
+        {preflightModal}
+      </>
     );
   }
 
   // ============================================================ Assets step
   if (step === "assets") {
     return (
-      <StoryboardAssets
-        assets={computeAssets()}
-        saved={savedAssetRefs}
-        onSave={(name, fields) => saveRefFields(setSavedAssetRefs, name, fields)}
-        busy={busy}
-        onBack={() => setStep(computeCast().length > 0 ? "cast" : "review")}
-        onGenerate={(assetRefs) => startStoryboard(characterRefs, assetRefs)}
-      />
+      <>
+        <StoryboardAssets
+          assets={computeAssets()}
+          saved={savedAssetRefs}
+          onSave={(name, fields) => saveRefFields(setSavedAssetRefs, name, fields)}
+          world={world}
+          busy={busy}
+          onBack={() => setStep(computeCast().length > 0 ? "cast" : "review")}
+          onGenerate={(assetRefs) => requestLaunch(characterRefs, assetRefs)}
+        />
+        {preflightModal}
+      </>
     );
   }
 
@@ -647,6 +743,13 @@ export default function ScriptToStoryboard() {
         {error && <div className="error">{error}</div>}
         {notice && <div className="info-msg">{notice}</div>}
 
+        {/* The world every reference and panel gets drawn in — check it BEFORE
+            generating the cast, since that's the first thing it affects. */}
+        <WorldSetting world={world} onChange={setWorld} />
+
+        {/* The whole script, numbered — this is what each shot's "LINE n" points at. */}
+        <ScriptPanel script={scriptText} />
+
         <div className="shot-list">
           {shots.map((sh, i) => (
             <div className="card shot-card" key={i}>
@@ -693,6 +796,10 @@ export default function ScriptToStoryboard() {
                 </div>
               </div>
 
+              {/* Their script first, then the AI's prompt for it. */}
+              <ScriptLineBox shot={sh} />
+
+              <label className="shot-prompt-label">Image prompt</label>
               <textarea
                 className="prompt-textarea shot-desc"
                 value={sh.description}
@@ -738,6 +845,7 @@ export default function ScriptToStoryboard() {
           </button>
         </div>
 
+        {preflightModal}
       </div>
     );
   }

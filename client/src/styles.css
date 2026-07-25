@@ -2353,13 +2353,73 @@ input[type="checkbox"] {
   line-height: 1.45;
 }
 .board-shotnum {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   font-weight: 700;
   color: var(--text);
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 0.25rem;
+}
+/* Scene tag beside the shot number — same read as the review step's shot card. */
+.board-scene {
+  font-weight: 600;
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+/* Shot label + add/delete controls on one row. */
+.board-caption-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.board-caption-head .board-shotnum {
+  margin-bottom: 0;
+}
+.board-tile-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+/* Empty state for a freshly inserted panel (no image yet). */
+.board-newpanel {
+  color: var(--primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.8rem;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+/* "＋ Add a panel" card at the end of the grid. */
+.board-add-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+.board-add-tile:hover:not(:disabled) {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+.board-add-tile:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 /* Editable shot prompt on each board tile. */
 .board-caption-edit {
@@ -2401,6 +2461,10 @@ input[type="checkbox"] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  /* space-between so: with variant chips → chips left, "add a style" right;
+     with only the restyle control (the common single-style case) → it sits on
+     the LEFT instead of being shoved to the far right over an empty bar. */
+  justify-content: space-between;
   gap: 1.25rem 2rem;
   margin: 0 0 1.2rem;
   padding: 0.85rem 1rem;
@@ -2414,9 +2478,6 @@ input[type="checkbox"] {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
-}
-.board-restyle {
-  margin-left: auto; /* push the "add a style" control to the right */
 }
 .board-styles-label {
   font-size: 0.8rem;
@@ -2442,6 +2503,17 @@ input[type="checkbox"] {
 }
 
 /* ---- Script → Storyboard: Cast setup (Stage B) ---- */
+/* Bulk actions above the cast / props grid: Generate all + Retry failed. */
+.cast-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0 0 1.1rem;
+}
+.cast-toolbar .btn.secondary {
+  margin-top: 0;
+}
 .cast-grid {
   /* Stretch cards to fill the full width so wide screens don't leave big
      side gutters (was a centered flex row capped at ~460px per card). */
@@ -2608,11 +2680,29 @@ input[type="checkbox"] {
 }
 /* Review shots: a fixed 3-column grid that stretches to fill the width. Same
    3-up layout on every wide screen; drops to 2 then 1 on smaller ones. */
+/* `stretch`, not `start`: a shot with no cast chips used to sit visibly shorter
+   than its neighbours, so the grid looked ragged. Every card in a row now takes
+   the row's height and the cards read as one set. */
 .sb-review .shot-list {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 1.1rem;
-  align-items: start;
+  align-items: stretch;
+}
+.sb-review .shot-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+/* Cast chips sit at the FOOT of the card, so the row of chips lines up across
+   the grid instead of floating wherever the text above happens to end. */
+.sb-review .shot-chars {
+  margin-top: auto;
+  padding-top: 0.7rem;
+}
+/* Keep the quote from dominating a card — it's context, the prompt is the work. */
+.sb-review .script-line-text {
+  max-height: 5.6rem;
 }
 @media (max-width: 1200px) {
   .sb-review .shot-list {
@@ -3513,4 +3603,404 @@ input[type="checkbox"] {
   margin-top: 1.4rem;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+/* =========================================================================
+   PRE-FLIGHT MODAL — the last stop before panel generation spends credits.
+   Shows every prompt with its cast/props/backgrounds and lets the board-wide
+   settings (style, genre, ASPECT RATIO) be changed while it's still free.
+   ========================================================================= */
+.pf-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: min(88vh, 900px);
+  background: var(--panel);
+  border: 1px solid var(--border-gold);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.pf-head {
+  padding: 1.4rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.pf-eyebrow {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.pf-title {
+  margin: 0.3rem 0 0.4rem;
+  font-size: 1.3rem;
+}
+.pf-sub {
+  margin: 0;
+  font-size: 0.86rem;
+  max-width: 62ch;
+}
+/* The scrolling middle — the header and the Generate button stay put. */
+.pf-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.2rem 1.5rem 0.6rem;
+}
+.pf-section {
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.pf-section:last-child {
+  border-bottom: none;
+}
+.pf-h3 {
+  margin: 0 0 0.7rem;
+  font-size: 0.94rem;
+}
+.pf-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.pf-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pf-label-block {
+  display: block;
+  margin: 0.9rem 0 0.45rem;
+}
+.pf-note {
+  margin: 0.6rem 0 0;
+}
+/* Cast / props / backgrounds — is a locked reference actually going along? */
+.pf-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.55rem;
+}
+.pf-ref {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pf-ref-thumb {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  font-weight: 700;
+}
+.pf-ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pf-ref-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pf-ref-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-ref-state {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.pf-ref-state.ok {
+  color: var(--ok);
+}
+/* The prompts themselves — editable here, so a typo doesn't cost a redraw. */
+.pf-shots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.pf-shot {
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pf-shotnum {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+.pf-scene {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.pf-shot-desc {
+  width: 100%;
+  resize: vertical;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.pf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.pf-meta b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+.pf-shot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.pf-error {
+  margin: 0 1.5rem;
+}
+.pf-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.9rem 1.5rem 1.1rem;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+@media (max-width: 620px) {
+  .pf-settings {
+    grid-template-columns: 1fr;
+  }
+  .pf-foot {
+    flex-direction: column-reverse;
+  }
+  .pf-foot .btn {
+    width: 100%;
+  }
+}
+
+/* Script traceability — the writer's own lines above the AI's image prompt.
+   Deliberately quieter than the prompt box (it's source material, not an input)
+   but with a gold spine so it reads as "this is yours". */
+.script-line {
+  margin: 0.1rem 0 0.7rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+}
+.script-line-tag {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin-bottom: 0.25rem;
+}
+.script-line-text {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+  /* Scripts are line-broken on purpose — keep the writer's own line breaks. */
+  white-space: pre-wrap;
+  max-height: 8.5rem;
+  overflow-y: auto;
+}
+/* Label over the prompt box, so the two stacked boxes can't be confused. */
+.shot-prompt-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+/* =========================================================================
+   WORLD OF YOUR STORY — region / period / culture, prefixed onto every image
+   prompt. Editable, because the writer is the authority on their own world.
+   ========================================================================= */
+.world-card {
+  border-color: var(--border-gold);
+}
+.world-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.world-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.world-count {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.world-note {
+  margin: 0.35rem 0 0.8rem;
+}
+.world-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+.world-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+/* "The people look like" and the free-notes field earn a full row. */
+.world-field.wide {
+  grid-column: 1 / -1;
+}
+.world-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Collapsed form, used inside the pre-flight modal where space is tight. */
+.world-details {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  padding: 0.6rem 0.75rem;
+}
+.world-details > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.world-details[open] > summary {
+  margin-bottom: 0.6rem;
+}
+@media (max-width: 620px) {
+  .world-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+   YOUR SCRIPT — the full source text on the review step, line-numbered so the
+   "FROM YOUR SCRIPT · LINE n" tag on each shot card can be looked up.
+   ========================================================================= */
+.script-panel {
+  border-color: var(--border-gold);
+}
+.script-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  cursor: pointer;
+  list-style: none;
+}
+.script-panel-head::-webkit-details-marker {
+  display: none;
+}
+.script-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.script-panel-head::after {
+  content: "▸";
+  order: -1;
+  margin-right: -0.35rem;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.script-panel[open] .script-panel-head::after {
+  transform: rotate(90deg);
+}
+.script-panel-meta {
+  margin-left: auto;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.script-panel-body {
+  margin-top: 0.8rem;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.script-panel-lines {
+  margin: 0;
+  padding: 0.6rem 0;
+  list-style: none;
+  counter-reset: none;
+}
+.script-panel-lines li {
+  display: flex;
+  gap: 0.9rem;
+  padding: 0 0.8rem;
+}
+.script-panel-lines li:hover {
+  background: rgba(229, 193, 88, 0.07);
+}
+.spl-num {
+  flex: 0 0 2.6rem;
+  text-align: right;
+  font-size: 0.74rem;
+  line-height: 1.65;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.spl-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  /* The writer's own wrapping and indentation, preserved. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

@@ -22,6 +22,7 @@ are overridable via VERTEX_TEXT_MODEL / GEMINI_TEXT_MODEL.
 import json
 import logging
 import os
+import re
 import time
 
 from dotenv import load_dotenv
@@ -121,7 +122,15 @@ _SYSTEM_INSTRUCTION = (
     "concrete and visual (what the camera sees), not internal thoughts. Infer a "
     "sensible location and camera angle when the script doesn't state them. Do "
     "NOT invent major plot the script doesn't imply. Split long actions into "
-    "multiple shots when the visual clearly changes."
+    "multiple shots when the visual clearly changes.\n\n"
+    "You also identify the story's WORLD — its region, period, culture and "
+    "religious tradition — and make sure the people, clothing, buildings and "
+    "objects you describe belong to THAT world. An artist reading your breakdown "
+    "must never have to guess someone's ethnicity or dress. Judge this from the "
+    "script's names, places, deities, festivals, food and language: a story about "
+    "Lubdhaka and the Shiva Purana is ancient India and its people are Indian, "
+    "just as a story about Kenji in Kyoto is Japanese. Never fall back on a "
+    "generic Western/European default."
 )
 
 _PROMPT_TEMPLATE = (
@@ -132,6 +141,15 @@ _PROMPT_TEMPLATE = (
     "  - scene_number: which scene it belongs to (start at 1)\n"
     "  - shot_number: sequential shot index across the whole script (start at 1)\n"
     "  - description: one vivid sentence describing what we SEE in this panel\n"
+    "  - script_excerpt: the EXACT sentence(s) from the script THIS shot is drawn "
+    "from, copied VERBATIM — same words, same spelling, no paraphrasing, no "
+    "summarising, nothing added. Quote ONLY the part that becomes this one panel: "
+    "usually a single sentence or clause, never the whole paragraph and never the "
+    "whole scene. Each shot must quote a DIFFERENT passage, and the quotes must "
+    "move FORWARD through the script in shot order — if two shots would carry the "
+    "same text, you have split the wrong sentence. This is shown to the writer to "
+    "point at the exact words that became this panel, so a short exact quote is "
+    "far better than a long or rewritten one.\n"
     "  - characters: list of character names visible in the shot (empty if none)\n"
     "  - assets: list of asset names visible in the shot — the key recurring "
     "props/objects AND the background/location — using the SAME names as the "
@@ -139,9 +157,30 @@ _PROMPT_TEMPLATE = (
     "  - location: where the shot takes place\n"
     "  - camera: the shot type / angle, e.g. 'wide establishing', 'close-up', "
     "'over-the-shoulder', 'medium two-shot'\n"
+    "Also return `world`: the story's visual world, read from the script itself "
+    "(names, places, deities, festivals, food, language). Every field is a short "
+    "phrase an artist can draw from:\n"
+    "  - setting: place AND period, e.g. 'Ancient India, Puranic era — forest, "
+    "village and stone temple'\n"
+    "  - culture: the cultural / religious tradition the story sits in, e.g. "
+    "'Hindu (Shaivite) mythology, Shiva Purana'\n"
+    "  - ethnicity: what the PEOPLE of this world look like — regional origin, "
+    "skin tone, hair and features, e.g. 'South Asian (Indian) — warm brown skin, "
+    "black hair, dark eyes'. Be specific; this is used to draw them.\n"
+    "  - wardrobe: the clothing of this world, e.g. 'handwoven dhoti, "
+    "angavastram, simple tribal hunter's gear, rudraksha beads'\n"
+    "  - environment: architecture, landscape and everyday objects of this world\n"
+    "  - notes: any other visual detail that must be right (iconography, rituals, "
+    "symbols, colours)\n"
+    "If the script genuinely gives no cultural signal, say so plainly in `setting` "
+    "rather than inventing one.\n"
     "Also return `characters`: every NAMED character in the script, each with a "
     "concise VISUAL description (age, build, hair, clothing, distinguishing "
-    "features) an artist could draw consistently. Use the SAME name spelling in "
+    "features) an artist could draw consistently. EVERY character description "
+    "MUST state their ethnicity/regional appearance and period-correct clothing, "
+    "consistent with `world` — write 'a lean South Asian hunter with weathered "
+    "brown skin, black hair tied back, in a coarse cotton dhoti', never just 'a "
+    "lean hunter in simple attire'. Use the SAME name spelling in "
     "both the shots and the cast list.\n"
     "Also return `assets`: the KEY visual elements that must look the SAME every "
     "time they reappear, so the storyboard stays consistent. Include two kinds:\n"
@@ -152,7 +191,9 @@ _PROMPT_TEMPLATE = (
     "  - category 'background': each distinct location/set the story revisits "
     "(e.g. 'Kabir's bedroom', 'kitchen doorway').\n"
     "Each asset has: name (short, reusable), category ('prop' or 'background'), "
-    "and a concise VISUAL description an artist could draw consistently. Use the "
+    "and a concise VISUAL description an artist could draw consistently — "
+    "period- and region-correct for `world` (a hut, a temple, a cooking pot and a "
+    "weapon all differ by culture). Use the "
     "SAME asset name in both the shots' `assets` and this list.\n\n"
     "SCRIPT:\n{script}"
 )
@@ -173,6 +214,7 @@ def _breakdown_schema() -> types.Schema:
                         "scene_number": types.Schema(type=types.Type.INTEGER),
                         "shot_number": types.Schema(type=types.Type.INTEGER),
                         "description": types.Schema(type=types.Type.STRING),
+                        "script_excerpt": types.Schema(type=types.Type.STRING),
                         "characters": types.Schema(
                             type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)
                         ),
@@ -183,6 +225,17 @@ def _breakdown_schema() -> types.Schema:
                         "camera": types.Schema(type=types.Type.STRING),
                     },
                 ),
+            ),
+            "world": types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "setting": types.Schema(type=types.Type.STRING),
+                    "culture": types.Schema(type=types.Type.STRING),
+                    "ethnicity": types.Schema(type=types.Type.STRING),
+                    "wardrobe": types.Schema(type=types.Type.STRING),
+                    "environment": types.Schema(type=types.Type.STRING),
+                    "notes": types.Schema(type=types.Type.STRING),
+                },
             ),
             "characters": types.Schema(
                 type=types.Type.ARRAY,
@@ -209,6 +262,135 @@ def _breakdown_schema() -> types.Schema:
             ),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Script traceability — tie each shot back to the lines it came from
+# ---------------------------------------------------------------------------
+# The model is asked to quote the script verbatim, but models paraphrase. So a
+# quote is never trusted on its own: it is matched back against the real script
+# and REPLACED by the actual lines found there. If it can't be located, the shot
+# simply carries no script line — a blank box is honest, an invented "your
+# script says…" is not.
+_WS_RE = re.compile(r"\s+")
+# A quote longer than this is a runaway (the model handing back half the script)
+# — it gets trimmed at a word boundary rather than swallowing the shot card.
+MAX_EXCERPT_CHARS = 420
+
+
+def _norm(text: str) -> str:
+    """Whitespace- and case-normalised text, for matching only."""
+    return _WS_RE.sub(" ", text or "").strip().lower()
+
+
+def _flatten_script(text: str) -> tuple[str, list[int]]:
+    """Normalised one-line script + a per-character map back to ORIGINAL offsets.
+
+    Mapping to character offsets (not line numbers) is what lets a shot quote ONE
+    sentence out of a long paragraph. Mapping to lines meant every shot in a
+    single-paragraph script resolved to the same whole line — five shots showing
+    identical text.
+    """
+    flat: list[str] = []
+    origin: list[int] = []
+    in_space = True  # skips leading whitespace
+    for i, ch in enumerate(text or ""):
+        if ch.isspace():
+            if not in_space:
+                flat.append(" ")
+                origin.append(i)
+                in_space = True
+            continue
+        flat.append(ch.lower())
+        origin.append(i)
+        in_space = False
+    # Drop a trailing separator space so spans can't end past the last word.
+    if flat and flat[-1] == " ":
+        flat.pop()
+        origin.pop()
+    return "".join(flat), origin
+
+
+def _find_span(flat: str, excerpt: str, since: int = 0) -> tuple[int, int] | None:
+    """Character span of `excerpt` within `flat`, or None if it isn't really there.
+
+    Exact match first. Failing that, anchor on the longest word-PREFIX that does
+    appear (models drift at the tail of a quote more than at its head) and
+    stretch to the longest word-SUFFIX still findable after it. The result is
+    rejected unless it covers at least half the quote, so a single coincidental
+    phrase can't pass as a match.
+
+    `since` is where the PREVIOUS shot's quote ended. Shots run in reading order,
+    so a match at or after that point is preferred; we only fall back to a global
+    search when the text genuinely doesn't appear again later.
+    """
+    if not excerpt or not flat:
+        return None
+
+    def _exact(frm: int) -> int:
+        return flat.find(excerpt, frm)
+
+    for frm in (since, 0) if since else (0,):
+        pos = _exact(frm)
+        if pos >= 0:
+            return pos, pos + len(excerpt)
+
+    words = excerpt.split(" ")
+    if len(words) < 5:  # too short to anchor safely
+        return None
+
+    for frm in (since, 0) if since else (0,):
+        start, head_len = -1, 0
+        for k in range(len(words), 3, -1):
+            probe = " ".join(words[:k])
+            p = flat.find(probe, frm)
+            if p >= 0:
+                start, head_len = p, len(probe)
+                break
+        if start < 0:
+            continue
+
+        end = start + head_len
+        for k in range(len(words), 3, -1):
+            probe = " ".join(words[-k:])
+            p = flat.find(probe, start)
+            if p >= 0:
+                end = max(end, p + len(probe))
+                break
+        if (end - start) >= len(excerpt) * 0.5:
+            return start, end
+    return None
+
+
+def _attach_script_lines(shots: list[dict], script_text: str) -> None:
+    """Resolve each shot's quoted excerpt to the real script text, in place.
+
+    Sets `script_line` to EXACTLY the matched passage as it appears in the script
+    — the sentence(s) that became this shot, not the whole line containing them,
+    so shots from one long paragraph each get their own text. Also sets the
+    1-based `script_line_start` / `script_line_end` for display. Unlocatable
+    quotes leave the fields blank.
+    """
+    text = script_text or ""
+    flat, origin = _flatten_script(text)
+    cursor = 0  # shots run in reading order; prefer matches after the last one
+
+    for shot in shots:
+        excerpt = _norm(shot.pop("script_excerpt", ""))
+        span = _find_span(flat, excerpt, since=cursor)
+        if not span:
+            continue
+        start = origin[span[0]]
+        end = origin[min(span[1], len(origin)) - 1] + 1
+        passage = text[start:end].strip()
+        if not passage:
+            continue
+        if len(passage) > MAX_EXCERPT_CHARS:  # runaway quote — trim at a word
+            passage = passage[:MAX_EXCERPT_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+        shot["script_line"] = passage
+        shot["script_line_start"] = text.count("\n", 0, start) + 1
+        shot["script_line_end"] = text.count("\n", 0, end - 1) + 1
+        cursor = span[1]
 
 
 def _coerce_shots(raw) -> list[dict]:
@@ -238,6 +420,12 @@ def _coerce_shots(raw) -> list[dict]:
                 "assets": [str(a).strip() for a in assets if str(a).strip()],
                 "location": str(item.get("location", "")).strip(),
                 "camera": str(item.get("camera", "")).strip(),
+                # Filled in by _attach_script_lines once the quote below has been
+                # checked against the real script.
+                "script_line": "",
+                "script_line_start": None,
+                "script_line_end": None,
+                "script_excerpt": str(item.get("script_excerpt", "")).strip(),
             }
         )
 
@@ -264,6 +452,18 @@ def _coerce_characters(raw) -> list[dict]:
         seen.add(name.lower())
         out.append({"name": name, "description": str(item.get("description", "")).strip()})
     return out
+
+
+# The story's visual world. Every field is optional text; the order here is the
+# order it reads in a prompt and in the UI.
+WORLD_FIELDS = ("setting", "culture", "ethnicity", "wardrobe", "environment", "notes")
+
+
+def _coerce_world(raw) -> dict:
+    """Normalise the world block to {field: str} over WORLD_FIELDS only."""
+    if not isinstance(raw, dict):
+        return {}
+    return {f: str(raw.get(f, "") or "").strip() for f in WORLD_FIELDS}
 
 
 # Categories we recognise for a locked asset. Anything else → "prop".
@@ -319,8 +519,19 @@ def break_down_script(
 
     Returns:
         {"shots": [{scene_number, shot_number, description, characters[], assets[],
-        location, camera}, …], "characters": [{name, description}, …],
-        "assets": [{name, category, description}, …]}.
+        location, camera, script_line, script_line_start, script_line_end}, …],
+        "characters": [{name, description}, …],
+        "assets": [{name, category, description}, …],
+        "world": {setting, culture, ethnicity, wardrobe, environment, notes}}.
+
+        `world` is the story's region/period/culture read from the script. It is
+        prefixed onto EVERY image prompt (cast, props, backgrounds, panels) so a
+        Shiva Purana script draws Indian characters rather than the image model's
+        Western default — see gemini_client.build_world_context().
+
+        `script_line` is the VERBATIM script text this shot was drawn from, with
+        its 1-based line range — empty when the model's quote couldn't be found
+        in the script.
 
     Raises:
         ScriptBreakdownError: with a human-readable reason on any failure.
@@ -382,14 +593,26 @@ def break_down_script(
             shots_raw = raw.get("shots") if isinstance(raw, dict) else raw
             chars_raw = raw.get("characters") if isinstance(raw, dict) else []
             assets_raw = raw.get("assets") if isinstance(raw, dict) else []
+            world = _coerce_world(raw.get("world") if isinstance(raw, dict) else None)
             shots = _coerce_shots(shots_raw)
+            # Tie each shot back to the lines it came from (drops quotes that
+            # aren't actually in the script).
+            _attach_script_lines(shots, text)
             characters = _coerce_characters(chars_raw)
             assets = _coerce_assets(assets_raw)
+            traced = sum(1 for s in shots if s.get("script_line"))
             logger.info(
-                "[breakdown] Produced %d shots, %d characters, %d assets.",
-                len(shots), len(characters), len(assets),
+                "[breakdown] Produced %d shots (%d traced to script lines), "
+                "%d characters, %d assets. World: %s / %s",
+                len(shots), traced, len(characters), len(assets),
+                world.get("culture") or "—", world.get("ethnicity") or "—",
             )
-            return {"shots": shots, "characters": characters, "assets": assets}
+            return {
+                "shots": shots,
+                "characters": characters,
+                "assets": assets,
+                "world": world,
+            }
 
         except ScriptBreakdownError:
             raise

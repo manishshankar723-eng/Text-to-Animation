@@ -347,6 +347,56 @@ def generate_turnaround_sheet(
 # Reference image generation (Step 0)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# World / cultural context — prefixed onto EVERY image prompt
+# ---------------------------------------------------------------------------
+# Image models default to Western/European faces, clothing and architecture
+# unless told otherwise, which is how a Shiva Purana script produced a white
+# hunter. The script breakdown reads the story's region, period, culture and
+# people (script_breakdown.WORLD_FIELDS) and that block is carried into every
+# generation — character references, prop and background references, and each
+# panel — through this one builder, so all four can never drift apart.
+_WORLD_LABELS = {
+    "setting": "Setting",
+    "culture": "Cultural / religious tradition",
+    "ethnicity": "The people of this world look like",
+    "wardrobe": "Clothing",
+    "environment": "Architecture, landscape and objects",
+    "notes": "Also important",
+}
+# The instruction that does the actual work — naming the culture is not enough,
+# the model has to be told not to fall back on its default.
+_WORLD_RULE = (
+    "Everyone and everything drawn must belong authentically to this world: "
+    "correct skin tones, facial features, hair, clothing, architecture, props "
+    "and iconography for this region, period and tradition. Do NOT default to "
+    "Western/European faces, dress or settings, and do not mix in other cultures."
+)
+
+
+def build_world_context(world: dict | None) -> str:
+    """One paragraph of cultural/period art direction, or "" when unknown.
+
+    Args:
+        world: {setting, culture, ethnicity, wardrobe, environment, notes} from
+            the script breakdown (any subset; empty values are skipped).
+
+    Returns:
+        Prompt text to prefix onto an image prompt, or "" if nothing is known —
+        in which case the prompt is left exactly as it was before this existed.
+    """
+    if not isinstance(world, dict):
+        return ""
+    lines = [
+        f"{label}: {str(world.get(field) or '').strip()}."
+        for field, label in _WORLD_LABELS.items()
+        if str(world.get(field) or "").strip()
+    ]
+    if not lines:
+        return ""
+    return "WORLD OF THIS STORY — " + " ".join(lines) + " " + _WORLD_RULE
+
+
 # System-level wrapper that steers Gemini toward producing a clean T-pose
 # character reference image suitable for the turnaround pipeline.
 _REFERENCE_PROMPT_TEMPLATE = (
@@ -470,6 +520,7 @@ def generate_storyboard_panel(
     asset_reference_images: list[Image.Image] | None = None,
     composition_reference_image: "Image.Image | None" = None,
     provider: str | None = None,
+    world: dict | None = None,
 ) -> Image.Image | None:
     """Generate ONE storyboard panel image from a shot description.
 
@@ -480,8 +531,10 @@ def generate_storyboard_panel(
     characters, key props and backgrounds stay visually consistent across panels
     (Stage B). `composition_reference_image` is the existing render of THIS shot —
     used when re-styling a board so the new panel keeps the same staging and only
-    the art style changes. Returns a PIL image, or None if the model returned
-    nothing (e.g. safety filter).
+    the art style changes. `world` is the script's region/period/culture block —
+    see build_world_context(); it keeps the people and places in the panel true
+    to the story instead of the model's Western default. Returns a PIL image, or
+    None if the model returned nothing (e.g. safety filter).
     """
     provider = _resolve_provider(provider)
     client = get_client(provider)
@@ -495,6 +548,11 @@ def generate_storyboard_panel(
     aspect_txt = _STORYBOARD_ASPECT_HINTS.get(aspect_ratio, "wide 16:9 cinematic framing")
 
     parts = [f"A single storyboard panel: {style_txt}.", f"{aspect_txt}."]
+    # The story's world comes BEFORE the shot detail, so the model has the
+    # culture in hand while it reads what to draw.
+    world_txt = build_world_context(world)
+    if world_txt:
+        parts.append(world_txt)
     if camera:
         parts.append(f"Camera: {camera}.")
     if location:
@@ -589,6 +647,7 @@ def generate_storyboard_panel(
 def generate_character_reference(
     description: str,
     provider: str | None = None,
+    world: dict | None = None,
 ) -> Image.Image | None:
     """
     Generate a single T-pose character reference image from a text description.
@@ -600,6 +659,9 @@ def generate_character_reference(
         description: Free-form character description, e.g.
                      "An Indian woman in a red saree, age 30, medium brown skin".
         provider: "vertex" or "gemini". Defaults to IMAGE_PROVIDER env (or "vertex").
+        world: The script's region/period/culture block (see build_world_context).
+               Without it the model draws its default — which is how an ancient
+               Indian hunter came back looking Western.
 
     Returns:
         PIL Image of the character in T-pose on white background,
@@ -608,7 +670,10 @@ def generate_character_reference(
     provider = _resolve_provider(provider)
     client = get_client(provider)
     model_id = _model_id(provider)
+    world_txt = build_world_context(world)
     prompt = _REFERENCE_PROMPT_TEMPLATE.format(description=description)
+    if world_txt:
+        prompt = f"{world_txt} {prompt}"
 
     # Track the most specific reason so the caller can report the ACTUAL cause.
     last_reason = "Unknown error generating the reference image."
@@ -700,6 +765,7 @@ def generate_asset_reference(
     description: str,
     category: str = "prop",
     provider: str | None = None,
+    world: dict | None = None,
 ) -> Image.Image | None:
     """Generate a reference image for a prop or a background/location.
 
@@ -713,6 +779,8 @@ def generate_asset_reference(
                      "a worn brown leather slipper" or "a cramped sunlit bedroom".
         category: "prop" (default) or "background".
         provider: "vertex" or "gemini". Defaults to IMAGE_PROVIDER env.
+        world: The script's region/period/culture block (see build_world_context)
+               — a hut, a cooking pot and a temple all differ by culture.
 
     Returns:
         PIL Image of the asset, or raises ReferenceGenerationError on failure.
@@ -727,6 +795,9 @@ def generate_asset_reference(
         else _ASSET_PROP_PROMPT_TEMPLATE
     )
     prompt = template.format(description=description)
+    world_txt = build_world_context(world)
+    if world_txt:
+        prompt = f"{world_txt} {prompt}"
 
     last_reason = "Unknown error generating the asset reference image."
 

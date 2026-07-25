@@ -29,6 +29,10 @@ LINE = (210, 214, 222)
 # Character chips, matching the gold the app uses for pills.
 CHIP_BG = (176, 132, 26)
 CHIP_INK = (255, 255, 255)
+# Scene tag: a tinted pill (not gold — the cast chips own that colour here).
+SCENE_BG = (243, 238, 224)
+SCENE_LINE = (214, 199, 160)
+SCENE_INK = (124, 94, 20)
 
 # Height reserved UNDER each panel image for shot label, description, camera,
 # location and the cast chips. Grown from the old 96px, which only fitted a
@@ -94,6 +98,17 @@ def _meta_row(draw, x, y, label, value, f_label, f_value, max_width):
         fill=INK,
     )
     return y + 24
+
+
+def _scene_pill(draw, x, y, text, font):
+    """Draw the 'SCENE n' tag as an outlined pill so it reads on a white page."""
+    pad_x, h = 8, 20
+    w = draw.textlength(text, font=font) + 2 * pad_x
+    draw.rounded_rectangle(
+        [x, y, x + w, y + h], radius=h // 2, fill=SCENE_BG, outline=SCENE_LINE
+    )
+    draw.text((x + pad_x, y + 2), text, font=font, fill=SCENE_INK)
+    return x + w
 
 
 def _cast_chips(draw, x, y, names, font, max_width):
@@ -213,17 +228,18 @@ def build_storyboard_pdf(
             except OSError:
                 draw.text((x + 12, y + 12), "(panel missing)", font=f_cap, fill=MUTED)
 
-            # Shot label + SCENE n, mirroring the shot card in the app.
+            # Shot label + a SCENE n pill, mirroring the shot card in the app.
             ty = y + img_box_h + 10
             shot_label = f"Shot {p['index'] + 1}"
             draw.text((x, ty), shot_label, font=f_shot, fill=INK)
             scene = p.get("scene_number")
             if scene:
-                draw.text(
-                    (x + draw.textlength(shot_label, font=f_shot) + 10, ty + 6),
+                _scene_pill(
+                    draw,
+                    x + draw.textlength(shot_label, font=f_shot) + 10,
+                    ty + 2,
                     f"SCENE {scene}",
-                    font=f_scene,
-                    fill=MUTED,
+                    f_scene,
                 )
             ty += 30
 

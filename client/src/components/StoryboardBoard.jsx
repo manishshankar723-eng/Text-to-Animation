@@ -39,6 +39,9 @@ export default function StoryboardBoard({
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
   const [zipBusy, setZipBusy] = useState(false);
+  // A stop has been asked for but the run hasn't wound down yet (the panels
+  // already talking to the image API still have to come back).
+  const [stopRequested, setStopRequested] = useState(false);
   const [retrying, setRetrying] = useState({});
   const [retryingAll, setRetryingAll] = useState(false);
   // Per-panel edited descriptions (keyed by panel index). Undefined = unedited,
@@ -106,6 +109,9 @@ export default function StoryboardBoard({
   const panels = job?.result?.panels || [];
   const total = job?.result?.count || job?.params?.count || panels.length || 0;
   const running = status === "queued" || status === "running" || !status;
+  // The run ended early because the user pressed Stop (server-reported, so it
+  // survives a reload) — the board says so instead of looking half-finished.
+  const stopped = Boolean(job?.result?.stopped);
   // Style variants (each = one full-board render). Absent on older jobs → treat
   // the flat panels as the single variant 0.
   const variants =
@@ -176,6 +182,56 @@ export default function StoryboardBoard({
 
   // Re-draw a single panel (failed, edited, or just unwanted). Sends the edited
   // description when the user has changed the shot's prompt.
+  // After a structural edit (insert/delete) panel indices shift, so a cached
+  // blob keyed by "/panel/2" may now belong to a different shot. Drop the whole
+  // cache and reload the job so every tile re-fetches the right pixels.
+  async function reloadBoard() {
+    Object.values(panelUrlsRef.current).forEach((u) => {
+      if (typeof u === "string" && u.startsWith("blob:")) URL.revokeObjectURL(u);
+    });
+    panelUrlsRef.current = {};
+    setPanelUrls({});
+    // editedDesc / retrying are keyed by index; indices just shifted, so any
+    // stale per-index entries would land on the wrong tile. Clear them — the
+    // server persisted each panel's description, so nothing is lost.
+    setEditedDesc({});
+    setRetrying({});
+    const j = await api.getJob(jobId);
+    setJob(j);
+  }
+
+  const [editBusy, setEditBusy] = useState(false);
+
+  // Insert a new (empty) panel at position `at`; the user then writes a prompt
+  // and generates it with the existing per-panel Generate button.
+  async function addPanelAt(at) {
+    if (editBusy || running) return;
+    setError("");
+    setEditBusy(true);
+    try {
+      await api.insertStoryboardPanel(jobId, at);
+      await reloadBoard();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function deletePanel(index) {
+    if (editBusy || running) return;
+    setError("");
+    setEditBusy(true);
+    try {
+      await api.deleteStoryboardPanel(jobId, index);
+      await reloadBoard();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
   async function retryPanel(index) {
     if (retrying[index]) return;
     setError("");
@@ -241,6 +297,26 @@ export default function StoryboardBoard({
       setPdfError(e.message);
     } finally {
       setZipBusy(false);
+    }
+  }
+
+  // Once the run is over the flag has done its job — clear it so a later
+  // re-style doesn't open with the button already reading "Stopping…".
+  useEffect(() => {
+    if (!running) setStopRequested(false);
+  }, [running]);
+
+  // Stop the run. Panels not yet started are skipped; ones already in flight
+  // finish, so the button keeps saying "Stopping…" until the job goes terminal.
+  async function handleStop() {
+    if (stopRequested || !running) return;
+    setError("");
+    setStopRequested(true);
+    try {
+      await api.stopStoryboard(jobId);
+    } catch (e) {
+      setError(e.message);
+      setStopRequested(false); // it didn't take — let them press it again
     }
   }
 
@@ -324,8 +400,34 @@ export default function StoryboardBoard({
         <div className="error">Generation failed: {job?.error || "unknown error"}</div>
       )}
 
-      {(okCount > 0 || failedCount > 0) && (
+      {stopped && (
+        <div className="info-msg">
+          ⏹ You stopped this generation — {okCount} of {total} panels drawn. Use
+          “✨ Generate this panel” on any empty tile to draw the rest.
+        </div>
+      )}
+
+      {/* Toolbar is up while GENERATING too, so Stop is reachable from the
+          moment the first panel looks wrong — that's the point of it. */}
+      {(running || okCount > 0 || failedCount > 0) && (
         <div className="board-toolbar">
+          {running && (
+            <button
+              type="button"
+              className="btn danger-btn"
+              disabled={stopRequested}
+              onClick={handleStop}
+              title="Stop drawing the remaining panels — the ones already started will still finish"
+            >
+              {stopRequested ? (
+                <>
+                  <span className="spinner-inline" /> Stopping…
+                </>
+              ) : (
+                "⏹ Stop generation"
+              )}
+            </button>
+          )}
           {failedCount > 0 && (
             <button
               type="button"
@@ -358,21 +460,23 @@ export default function StoryboardBoard({
               )}
             </button>
           )}
-          <button
-            type="button"
-            className="btn"
-            disabled={zipBusy}
-            onClick={handleZip}
-            title="Generated character, prop & background images + the PDF, as a ZIP you can reuse"
-          >
-            {zipBusy ? (
-              <>
-                <span className="spinner-inline" /> Zipping…
-              </>
-            ) : (
-              "⬇ Download assets (ZIP)"
-            )}
-          </button>
+          {okCount > 0 && (
+            <button
+              type="button"
+              className="btn"
+              disabled={zipBusy}
+              onClick={handleZip}
+              title="Generated character, prop & background images + the PDF, as a ZIP you can reuse"
+            >
+              {zipBusy ? (
+                <>
+                  <span className="spinner-inline" /> Zipping…
+                </>
+              ) : (
+                "⬇ Download assets (ZIP)"
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -392,60 +496,106 @@ export default function StoryboardBoard({
       )}
 
       <div className="board-grid">
-        {panels.map((p) => (
-          <figure className="board-tile" key={p.index}>
-            <div className="board-frame" style={{ aspectRatio: tileRatio }}>
-              {p.url && panelUrls[p.url] ? (
-                <img
-                  src={panelUrls[p.url]}
-                  alt={`Panel ${p.index + 1}`}
-                  onClick={() => setLightbox(panelUrls[p.url])}
-                />
-              ) : p.failed ? (
-                <div className="board-failed">
-                  {retrying[p.index] ? (
-                    <>
-                      <span className="spinner" /> Redrawing…
-                    </>
-                  ) : (
-                    <span>⚠️ Couldn’t draw this panel</span>
+        {panels.map((p) => {
+          // A new panel the user inserted: no image yet, board not generating.
+          const isNew = !p.url && !p.failed && !running;
+          return (
+            <figure className="board-tile" key={p.index}>
+              <div className="board-frame" style={{ aspectRatio: tileRatio }}>
+                {p.url && panelUrls[p.url] ? (
+                  <img
+                    src={panelUrls[p.url]}
+                    alt={`Panel ${p.index + 1}`}
+                    onClick={() => setLightbox(panelUrls[p.url])}
+                  />
+                ) : p.failed ? (
+                  <div className="board-failed">
+                    {retrying[p.index] ? (
+                      <>
+                        <span className="spinner" /> Redrawing…
+                      </>
+                    ) : (
+                      <span>⚠️ Couldn’t draw this panel</span>
+                    )}
+                  </div>
+                ) : isNew ? (
+                  <div className="board-newpanel">
+                    {retrying[p.index] ? (
+                      <>
+                        <span className="spinner" /> Drawing…
+                      </>
+                    ) : (
+                      <span>✏️ New panel — write a prompt, then Generate</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="board-skeleton" />
+                )}
+              </div>
+              <figcaption>
+                <div className="board-caption-head">
+                  <span className="board-shotnum">
+                    Shot {p.index + 1}
+                    {p.scene_number ? (
+                      <span className="board-scene">Scene {p.scene_number}</span>
+                    ) : null}
+                  </span>
+                  {/* Structural edits only while the board isn't generating. */}
+                  {!running && (
+                    <div className="board-tile-actions">
+                      <button
+                        type="button"
+                        className="shot-btn"
+                        onClick={() => addPanelAt(p.index)}
+                        disabled={editBusy}
+                        title="Add a panel before this one"
+                      >
+                        ＋
+                      </button>
+                      <button
+                        type="button"
+                        className="shot-btn danger"
+                        onClick={() => deletePanel(p.index)}
+                        disabled={editBusy || panels.length <= 1}
+                        title="Delete this panel"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
-              ) : (
-                <div className="board-skeleton" />
-              )}
-            </div>
-            <figcaption>
-              <span className="board-shotnum">Shot {p.index + 1}</span>
-              <textarea
-                className="board-caption-edit"
-                value={editedDesc[p.index] ?? p.description ?? ""}
-                onChange={(e) =>
-                  setEditedDesc((d) => ({ ...d, [p.index]: e.target.value }))
-                }
-                rows={2}
-                placeholder="Describe what we see in this shot…"
-              />
-              <button
-                type="button"
-                className="btn small board-regen-btn"
-                onClick={() => retryPanel(p.index)}
-                disabled={retrying[p.index]}
-                title="Re-draw this shot with the current prompt"
-              >
-                {retrying[p.index] ? (
-                  <>
-                    <span className="spinner-inline" /> Redrawing…
-                  </>
-                ) : p.failed ? (
-                  "🔄 Retry"
-                ) : (
-                  "🔄 Regenerate"
-                )}
-              </button>
-            </figcaption>
-          </figure>
-        ))}
+                <textarea
+                  className="board-caption-edit"
+                  value={editedDesc[p.index] ?? p.description ?? ""}
+                  onChange={(e) =>
+                    setEditedDesc((d) => ({ ...d, [p.index]: e.target.value }))
+                  }
+                  rows={2}
+                  placeholder="Describe what we see in this shot…"
+                />
+                <button
+                  type="button"
+                  className={`btn small board-regen-btn ${isNew ? "secondary" : ""}`}
+                  onClick={() => retryPanel(p.index)}
+                  disabled={retrying[p.index]}
+                  title={isNew ? "Draw this panel" : "Re-draw this shot with the current prompt"}
+                >
+                  {retrying[p.index] ? (
+                    <>
+                      <span className="spinner-inline" /> {isNew ? "Generating…" : "Redrawing…"}
+                    </>
+                  ) : isNew ? (
+                    "✨ Generate this panel"
+                  ) : p.failed ? (
+                    "🔄 Retry"
+                  ) : (
+                    "🔄 Regenerate"
+                  )}
+                </button>
+              </figcaption>
+            </figure>
+          );
+        })}
 
         {/* Placeholders for shots not yet reached */}
         {Array.from({ length: pendingCount }).map((_, i) => (
@@ -459,6 +609,19 @@ export default function StoryboardBoard({
             </figcaption>
           </figure>
         ))}
+
+        {/* Append a new panel at the end (only when nothing is generating). */}
+        {!running && panels.length > 0 && (
+          <button
+            type="button"
+            className="board-tile board-add-tile"
+            onClick={() => addPanelAt(panels.length)}
+            disabled={editBusy}
+            title="Add a panel at the end"
+          >
+            {editBusy ? <span className="spinner" /> : <span>＋ Add a panel</span>}
+          </button>
+        )}
       </div>
 
       {lightbox && (

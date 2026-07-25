@@ -15,12 +15,17 @@ const CATEGORY_META = {
 };
 
 // Fields worth keeping when the user steps away from this page (see `saved`).
-const DURABLE = ["description", "referenceId", "previewUrl"];
+// `uploaded` rides along so "Generate all" keeps skipping the user's own images
+// even after they leave and come back.
+const DURABLE = ["description", "referenceId", "previewUrl", "uploaded"];
 
 export default function StoryboardAssets({
   assets,
   saved,
   onSave,
+  // The script's region/period/culture — a hut, a pot and a temple all differ
+  // by culture, so every prop/background reference carries it too.
+  world,
   onBack,
   onGenerate,
   busy,
@@ -37,12 +42,14 @@ export default function StoryboardAssets({
         description: prev.description ?? a.description ?? "",
         referenceId: prev.referenceId ?? null,
         previewUrl: prev.previewUrl ?? null,
+        uploaded: prev.uploaded ?? false, // user's own image → never auto-generated
         busy: false,
         error: "",
       };
     })
   );
   const [lightbox, setLightbox] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const fileInputs = useRef([]);
 
   function patch(i, fields) {
@@ -54,13 +61,13 @@ export default function StoryboardAssets({
     if (Object.keys(durable).length > 0) onSave?.(items[i].name, durable);
   }
 
-  async function generateRef(i) {
-    const it = items[i];
-    if (it.busy) return;
+  // Generate one reference. Takes the item snapshot so a bulk loop doesn't rely
+  // on React state having updated between iterations.
+  async function runGenerate(i, item) {
     patch(i, { busy: true, error: "" });
     try {
-      const prompt = it.description.trim() || it.name;
-      const res = await api.generateAssetReference(prompt, it.category);
+      const prompt = item.description.trim() || item.name;
+      const res = await api.generateAssetReference(prompt, item.category, world);
       // Fetch the generated image as an authed blob for preview.
       const token = api.getToken();
       const imgRes = await fetch(api.getReferenceImageUrl(res.reference_id), {
@@ -68,10 +75,16 @@ export default function StoryboardAssets({
       });
       let previewUrl = null;
       if (imgRes.ok) previewUrl = URL.createObjectURL(await imgRes.blob());
-      patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
+      // uploaded:false — a generated ref replaces any prior upload flag.
+      patch(i, { referenceId: res.reference_id, previewUrl, uploaded: false, busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
     }
+  }
+
+  function generateRef(i) {
+    if (items[i].busy) return;
+    runGenerate(i, items[i]);
   }
 
   async function uploadRef(i, file) {
@@ -81,10 +94,33 @@ export default function StoryboardAssets({
       // Uploads reuse the shared reference-upload endpoint (any image → ref).
       const res = await api.uploadReference(file);
       const previewUrl = URL.createObjectURL(file);
-      patch(i, { referenceId: res.reference_id, previewUrl, busy: false });
+      // uploaded:true so bulk "Generate all" / "Retry failed" leaves it alone.
+      patch(i, { referenceId: res.reference_id, previewUrl, uploaded: true, error: "", busy: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
     }
+  }
+
+  // An asset still needs generating if it has no reference AND the user hasn't
+  // uploaded their own image for it.
+  const needsGen = (c) => !c.referenceId && !c.uploaded;
+  const isFailed = (c) => Boolean(c.error) && !c.uploaded;
+
+  const toGenCount = items.filter(needsGen).length;
+  const failedCount = items.filter(isFailed).length;
+
+  // Generate references one at a time (gentler on the image quota). Snapshot the
+  // targets up front so the set doesn't shift as state updates.
+  async function runBulk(predicate) {
+    if (bulkBusy) return;
+    setBulkBusy(true);
+    const targets = items
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => predicate(c) && !c.busy);
+    for (const { c, i } of targets) {
+      await runGenerate(i, c);
+    }
+    setBulkBusy(false);
   }
 
   function handleGenerate() {
@@ -132,6 +168,44 @@ export default function StoryboardAssets({
           )}
         </button>
       </div>
+
+      {items.length > 0 && (toGenCount > 0 || failedCount > 0) && (
+        <div className="cast-toolbar">
+          {failedCount > 0 && (
+            <button
+              type="button"
+              className="btn"
+              disabled={bulkBusy || busy}
+              onClick={() => runBulk(isFailed)}
+            >
+              {bulkBusy ? (
+                <>
+                  <span className="spinner-inline" /> Working…
+                </>
+              ) : (
+                `🔄 Retry failed (${failedCount})`
+              )}
+            </button>
+          )}
+          {toGenCount > 0 && (
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={bulkBusy || busy}
+              onClick={() => runBulk(needsGen)}
+              title="Generate a reference for every prop/background that doesn't have one (your uploads are left as-is)"
+            >
+              {bulkBusy ? (
+                <>
+                  <span className="spinner-inline" /> Generating…
+                </>
+              ) : (
+                `✨ Generate all (${toGenCount})`
+              )}
+            </button>
+          )}
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="card">
