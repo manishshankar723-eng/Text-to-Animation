@@ -14,9 +14,20 @@ from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_SIZE = 1080
+OUTPUT_SIZE = 1080  # upper bound for the square canvas
 SUBJECT_FILL = 0.85  # Subject should fill ~85% of the canvas
 WHITE_THRESHOLD = 205  # R, G, B all >= this → treat as white
+
+# The canvas ADAPTS to the art instead of forcing every asset to 1080.
+#
+# A 2×2 sheet only gives each view ~704×384, so stretching that to fill 85% of a
+# 1080 canvas meant a 2–3× enlargement — soft and blurry. Capping the
+# enlargement fixed the blur but left the subject small in a sea of white.
+# Sizing the canvas to the subject gives BOTH: the subject fills the frame AND
+# the pixels stay native (scale ≈ 1.0, no invented detail). The canvas is
+# clamped so assets never get uselessly tiny or pointlessly upscaled.
+MIN_OUTPUT = 576
+MAX_UPSCALE = 1.5  # still applies when a view is so small the canvas clamps
 
 
 def _clean_white(image: Image.Image) -> Image.Image:
@@ -88,11 +99,15 @@ def _clean_and_crop(image: Image.Image):
 
     Returns (cropped_image, (w, h)), or (None, (0, 0)) if the image is empty.
 
-    Robustness: the 2×2 sheet often has faint grid-divider lines; after splitting,
-    a sliver survives at a panel's edge. We (a) ignore a thin OUTER BORDER so those
-    edge lines don't inflate the box (which was pushing subjects off-center), and
-    (b) require a minimum number of non-white pixels per row/column so stray
-    1–2px lines are ignored.
+    Robustness, in two passes:
+      1. CORE box — ignore a thin outer border and thin stray rows/cols, so a
+         leftover grid-divider line at a panel edge can't inflate the box (which
+         used to push subjects off-centre).
+      2. GROW back out — extend the core box outward while the neighbouring
+         row/col still has real content, stopping at blank space. This is what
+         keeps T-pose HANDS and other parts that reach the panel edge: they are
+         connected to the subject, whereas an isolated divider line is separated
+         from it by white and is never reached.
     """
     cleaned = _clean_white(image.convert("RGB"))
     arr = np.array(cleaned)
@@ -103,14 +118,13 @@ def _clean_and_crop(image: Image.Image):
     h, w = non_white.shape
     mask = non_white.copy()
 
-    # (a) Ignore a thin outer border — split-grid divider remnants live here.
+    # --- Pass 1: robust CORE box (ignores edge lines + thin strays) ---
     b = max(2, int(round(0.02 * min(h, w))))
     mask[:b, :] = False
     mask[-b:, :] = False
     mask[:, :b] = False
     mask[:, -b:] = False
 
-    # (b) Ignore thin stray lines/noise: need a minimum run of content.
     row_counts = mask.sum(axis=1)
     col_counts = mask.sum(axis=0)
     row_thr = max(3, int(0.03 * w))
@@ -125,6 +139,24 @@ def _clean_and_crop(image: Image.Image):
 
     top, bottom = int(rows[0]), int(rows[-1]) + 1
     left, right = int(cols[0]), int(cols[-1]) + 1
+
+    # --- Pass 2: grow outward to recover content clipped by pass 1 ---
+    # A neighbouring line counts as subject if it has more than a trace of
+    # content; a 1px divider sitting alone in white never connects.
+    grow_row_thr = max(2, int(0.01 * w))
+    grow_col_thr = max(2, int(0.01 * h))
+    full_rows = non_white.sum(axis=1)
+    full_cols = non_white.sum(axis=0)
+
+    while top > 0 and full_rows[top - 1] > grow_row_thr:
+        top -= 1
+    while bottom < h and full_rows[bottom] > grow_row_thr:
+        bottom += 1
+    while left > 0 and full_cols[left - 1] > grow_col_thr:
+        left -= 1
+    while right < w and full_cols[right] > grow_col_thr:
+        right += 1
+
     cropped = cleaned.crop((left, top, right, bottom))
     return cropped, cropped.size
 
@@ -136,35 +168,56 @@ def clean_and_normalize_group(views: dict[str, Image.Image]) -> dict[str, Image.
     appear taller than a wide front-view one. Here we compute a single scale
     factor (the most-constrained view, so none overflow) and apply it to all
     views — so the subject is the SAME size across front / left / ¾ / back.
+
+    The canvas is then sized to the art: big enough that the subject fills
+    ~85% of it at (near) native resolution. That keeps the framing tight — no
+    sea of white — without the 2–3× enlargement that made assets look blurry.
     """
-    target = int(OUTPUT_SIZE * SUBJECT_FILL)
     cropped = {}
-    scales = []
+    biggest = 0
     for name, img in views.items():
         crop, (cw, ch) = _clean_and_crop(img)
         cropped[name] = (crop, cw, ch)
         if crop is not None and cw > 0 and ch > 0:
-            scales.append(min(target / cw, target / ch))
+            biggest = max(biggest, cw, ch)
 
-    # One shared scale for consistency; fall back to 1.0 if all views empty.
+    if biggest <= 0:
+        return {n: Image.new("RGB", (MIN_OUTPUT, MIN_OUTPUT), (255, 255, 255)) for n in views}
+
+    # Canvas follows the art, clamped to a sane range.
+    canvas_size = int(round(biggest / SUBJECT_FILL))
+    canvas_size = max(MIN_OUTPUT, min(OUTPUT_SIZE, canvas_size))
+
+    target = canvas_size * SUBJECT_FILL
+    scales = [
+        min(target / cw, target / ch)
+        for (crop, cw, ch) in cropped.values()
+        if crop is not None and cw > 0 and ch > 0
+    ]
     shared = min(scales) if scales else 1.0
+    # Only relevant when the canvas hit MIN_OUTPUT for a very small subject.
+    if shared > MAX_UPSCALE:
+        logger.info("Capping upscale %.2f → %.2f to preserve sharpness", shared, MAX_UPSCALE)
+        shared = MAX_UPSCALE
 
     out = {}
     for name, (crop, cw, ch) in cropped.items():
-        canvas = Image.new("RGB", (OUTPUT_SIZE, OUTPUT_SIZE), (255, 255, 255))
+        canvas = Image.new("RGB", (canvas_size, canvas_size), (255, 255, 255))
         if crop is not None and cw > 0 and ch > 0:
             new_w = max(1, int(cw * shared))
             new_h = max(1, int(ch * shared))
             resized = crop.resize((new_w, new_h), Image.LANCZOS)
-            # Upscaling a low-res generated view softens it — a light unsharp
-            # mask restores crispness. Only when we actually enlarged it.
+            # Any enlargement softens a low-res view — a light unsharp mask
+            # restores crispness.
             if shared > 1.05:
                 resized = resized.filter(
-                    ImageFilter.UnsharpMask(radius=1.5, percent=85, threshold=3)
+                    ImageFilter.UnsharpMask(radius=1.0, percent=60, threshold=3)
                 )
-            canvas.paste(resized, ((OUTPUT_SIZE - new_w) // 2, (OUTPUT_SIZE - new_h) // 2))
+            canvas.paste(resized, ((canvas_size - new_w) // 2, (canvas_size - new_h) // 2))
         out[name] = canvas
-    logger.info("Group-normalized %d views with shared scale %.4f", len(views), shared)
+    logger.info(
+        "Group-normalized %d views: canvas %dpx, scale %.3f", len(views), canvas_size, shared
+    )
     return out
 
 

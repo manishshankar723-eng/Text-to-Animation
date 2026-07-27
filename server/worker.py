@@ -63,10 +63,13 @@ def submit_restyle_job(job_id: str, kwargs: dict):
 def _run_generate(job_id: str, pipeline_kwargs: dict):
     # Imported here so importing the API package never triggers the heavy
     # pipeline import chain (Gemini/Vertex client, etc.).
+    from cancel import clear_cancel, is_cancelled
     from pipeline import run_pipeline
 
     store = get_store()
     store.mark_running(job_id)
+    # A stop flag left over from an earlier run of this job must not kill this one.
+    clear_cancel(job_id)
     logger.info("[job %s] pipeline started: %s", job_id, pipeline_kwargs.get("character_name"))
 
     def _progress(update: dict):
@@ -82,19 +85,31 @@ def _run_generate(job_id: str, pipeline_kwargs: dict):
             logger.debug("[job %s] progress update failed (ignored)", job_id, exc_info=True)
 
     try:
-        result = run_pipeline(**pipeline_kwargs, progress_cb=_progress)
+        result = run_pipeline(
+            **pipeline_kwargs,
+            progress_cb=_progress,
+            cancel_check=lambda: is_cancelled(job_id),
+        )
 
         if isinstance(result, dict) and "error" in result:
             store.mark_failed(job_id, str(result["error"]))
             logger.error("[job %s] pipeline reported error: %s", job_id, result["error"])
             return
 
+        # A stopped run is still a finished JOB — the parts it did generate are
+        # real and downloadable. `result["stopped"]` is what the UI reads to say
+        # "you stopped this" instead of claiming the character is complete.
         store.mark_succeeded(job_id, result)
-        logger.info("[job %s] pipeline succeeded.", job_id)
+        logger.info(
+            "[job %s] pipeline %s.",
+            job_id, "STOPPED by user" if result.get("stopped") else "succeeded",
+        )
 
     except Exception as e:  # noqa: BLE001 — record any failure on the job
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] pipeline crashed.", job_id)
+    finally:
+        clear_cancel(job_id)
 
 
 def _run_storyboard(job_id: str, kwargs: dict):

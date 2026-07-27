@@ -15,7 +15,9 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
     try {
       const [p, j, k] = await Promise.all([
         api.me(),
-        api.listJobs(),
+        // Character work only: "Recent work" opens the Text-to-Image job detail
+        // and offers its asset ZIP, neither of which a storyboard job can serve.
+        api.listJobs(api.CHARACTER_JOB_KINDS),
         api.getApiKeys().catch(() => ({})),
       ]);
       setProfile(p);

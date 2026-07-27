@@ -626,10 +626,12 @@ export default function StoryboardBoard({
 
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>
-          <button className="lightbox-close" onClick={() => setLightbox(null)}>
-            ✕
-          </button>
-          <img className="lightbox-img" src={lightbox} alt="Panel" onClick={(e) => e.stopPropagation()} />
+          <div className="lightbox-figure" onClick={(e) => e.stopPropagation()}>
+            <button className="lightbox-close" onClick={() => setLightbox(null)}>
+              ✕
+            </button>
+            <img className="lightbox-img" src={lightbox} alt="Panel" />
+          </div>
         </div>
       )}
     </div>

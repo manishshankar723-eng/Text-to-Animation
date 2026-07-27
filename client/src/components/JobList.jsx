@@ -8,17 +8,39 @@ const STATUS_CLASS = {
   failed: "badge fail",
 };
 
-// List of the current user's jobs. Auto-refreshes while any job is active.
+// List of the current user's Text-to-Image jobs — character runs and their 3D
+// submissions ONLY. Storyboards belong to the Script → Storyboard workflow and
+// are listed in "Your Storyboards"; they used to appear here too.
+// Auto-refreshes while any job is active.
 export default function JobList({ selectedId, onSelect, refreshKey }) {
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState("");
+  // Two-step delete: the row asks for confirmation before anything is removed.
+  const [confirmId, setConfirmId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   async function load() {
     try {
-      setJobs(await api.listJobs());
+      setJobs(await api.listJobs(api.CHARACTER_JOB_KINDS));
       setError("");
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function remove(jobId) {
+    setDeletingId(jobId);
+    setError("");
+    try {
+      await api.deleteJob(jobId);
+      // Clear the detail pane if we just deleted what it was showing.
+      if (jobId === selectedId) onSelect(null);
+      setConfirmId(null);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -58,11 +80,51 @@ export default function JobList({ selectedId, onSelect, refreshKey }) {
                 {j.character_name}
                 {j.kind === "meshy" ? " · 3D" : ""}
               </span>
-              <span className={STATUS_CLASS[j.status] || "badge"}>{j.status}</span>
+              <span className="job-row-right">
+                <span className={STATUS_CLASS[j.status] || "badge"}>{j.status}</span>
+                <button
+                  type="button"
+                  className="job-del"
+                  title="Delete this job"
+                  disabled={deletingId === j.job_id}
+                  onClick={(e) => {
+                    e.stopPropagation(); // don't select the row
+                    setConfirmId(confirmId === j.job_id ? null : j.job_id);
+                  }}
+                >
+                  🗑
+                </button>
+              </span>
             </div>
             <div className="muted tiny">
               {j.template || "default"} · {j.created_at?.slice(0, 19).replace("T", " ")}
             </div>
+
+            {confirmId === j.job_id && (
+              <div className="job-confirm" onClick={(e) => e.stopPropagation()}>
+                <span className="tiny">
+                  Delete this job and its images? This can't be undone.
+                </span>
+                <span className="job-confirm-actions">
+                  <button
+                    type="button"
+                    className="btn small danger-btn"
+                    disabled={deletingId === j.job_id}
+                    onClick={() => remove(j.job_id)}
+                  >
+                    {deletingId === j.job_id ? "Deleting…" : "Delete"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    disabled={deletingId === j.job_id}
+                    onClick={() => setConfirmId(null)}
+                  >
+                    Cancel
+                  </button>
+                </span>
+              </div>
+            )}
           </li>
         ))}
       </ul>

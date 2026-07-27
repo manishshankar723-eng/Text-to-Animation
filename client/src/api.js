@@ -20,6 +20,21 @@ export function clearSession() {
   localStorage.removeItem(EMAIL_KEY);
 }
 
+// Ride out a backend that is momentarily unreachable (typically uvicorn
+// --reload restarting after a code change). Only connection failures are
+// retried — once the server answers, its response is returned as-is, errors
+// included, so real 4xx/5xx are never re-sent.
+async function fetchWithRetry(url, options, attempts = 3, delayMs = 700) {
+  for (let i = 1; ; i++) {
+    try {
+      return await fetch(url, options);
+    } catch (e) {
+      if (i >= attempts) throw e;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
+
 async function request(path, { method = "GET", body, isForm = false } = {}) {
   const headers = {};
   const token = getToken();
@@ -33,10 +48,12 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
 
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, { method, headers, body: payload });
+    // fetch() rejects with a TypeError when the browser can't reach the server
+    // at all. In dev that is nearly always uvicorn's --reload restarting, a
+    // window of a second or two, so retry briefly before giving up. A rejected
+    // fetch means the request never got a response, so re-sending is safe.
+    res = await fetchWithRetry(`${BASE}${path}`, { method, headers, body: payload });
   } catch {
-    // fetch() rejects with a TypeError ("Failed to fetch") when the browser
-    // can't reach the server at all — surface an actionable message instead.
     throw new Error(
       `Can't reach the server at ${BASE}. Make sure the backend is running ` +
         `(uvicorn) and reachable, then try again.`
@@ -215,6 +232,12 @@ export function stopStoryboard(jobId) {
   return request(`/storyboards/${jobId}/stop`, { method: "POST" });
 }
 
+// Stop a character run (Text to Image). The part being drawn finishes, nothing
+// after it starts, and what's already generated stays downloadable.
+export function stopJob(jobId) {
+  return request(`/jobs/${jobId}/stop`, { method: "POST" });
+}
+
 // Switch which style variant is shown/exported (no regeneration).
 export function setActiveVariant(jobId, index) {
   return request(`/storyboards/${jobId}/active-variant`, {
@@ -252,7 +275,7 @@ export async function downloadStoryboardPdf(jobId, filename) {
   const token = getToken();
   let res;
   try {
-    res = await fetch(`${BASE}/storyboards/${jobId}/pdf`, {
+    res = await fetchWithRetry(`${BASE}/storyboards/${jobId}/pdf`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
@@ -283,7 +306,7 @@ export async function downloadStoryboardBundle(jobId, filename) {
   const token = getToken();
   let res;
   try {
-    res = await fetch(`${BASE}/storyboards/${jobId}/bundle`, {
+    res = await fetchWithRetry(`${BASE}/storyboards/${jobId}/bundle`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
@@ -349,11 +372,23 @@ export function getReferenceImageUrl(referenceId) {
 export function createCharacter(formData) {
   return request("/characters", { method: "POST", body: formData, isForm: true });
 }
-export function listJobs() {
-  return request("/jobs");
+// The Text-to-Image workflow's jobs: character runs and their 3D submissions.
+// Storyboards are deliberately NOT here — they live in "Your Storyboards", and
+// mixing them put boards in the character job list (and offered a Download that
+// storyboard jobs can't serve).
+export const CHARACTER_JOB_KINDS = ["generate", "meshy"];
+
+// `kinds` is an array of job kinds, e.g. CHARACTER_JOB_KINDS. Omit for all.
+export function listJobs(kinds) {
+  const q = kinds?.length ? `?kind=${encodeURIComponent(kinds.join(","))}` : "";
+  return request(`/jobs${q}`);
 }
 export function getJob(jobId) {
   return request(`/jobs/${jobId}`);
+}
+// Permanently delete a job: its record, reference upload and generated assets.
+export function deleteJob(jobId) {
+  return request(`/jobs/${jobId}`, { method: "DELETE" });
 }
 export function getAssets(jobId) {
   return request(`/jobs/${jobId}/assets`);
@@ -408,7 +443,7 @@ export async function downloadZip(jobId, filename, zipUrl) {
   const token = getToken();
   let res;
   try {
-    res = await fetch(`${BASE}/jobs/${jobId}/download`, {
+    res = await fetchWithRetry(`${BASE}/jobs/${jobId}/download`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
@@ -440,7 +475,7 @@ export async function downloadPart(jobId, part, filename) {
   const token = getToken();
   let res;
   try {
-    res = await fetch(`${BASE}/jobs/${jobId}/download/${part}`, {
+    res = await fetchWithRetry(`${BASE}/jobs/${jobId}/download/${part}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {

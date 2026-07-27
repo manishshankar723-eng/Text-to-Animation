@@ -5,15 +5,14 @@ export default function ImageLightbox({ src, alt = "", onClose }) {
   if (!src) return null;
   return (
     <div className="lightbox-overlay" onClick={onClose}>
-      <button type="button" className="lightbox-close" onClick={onClose} title="Close">
-        ✕
-      </button>
-      <img
-        className="lightbox-img"
-        src={src}
-        alt={alt}
-        onClick={(e) => e.stopPropagation()}
-      />
+      {/* Wrapper shrinks to the image so the ✕ sits on its corner, not in the
+          far corner of the screen. */}
+      <div className="lightbox-figure" onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="lightbox-close" onClick={onClose} title="Close">
+          ✕
+        </button>
+        <img className="lightbox-img" src={src} alt={alt} />
+      </div>
     </div>
   );
 }

@@ -806,10 +806,19 @@ input[type="checkbox"] {
   cursor: default;
   object-fit: contain;
 }
+/* Shrinks to the image so the ✕ hugs its corner instead of sitting in the far
+   corner of the screen (which looked miles away for square images). */
+.lightbox-figure {
+  position: relative;
+  display: inline-flex;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+
 .lightbox-close {
-  position: fixed;
-  top: 1.5rem;
-  right: 1.8rem;
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
   z-index: 10000;
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(229, 193, 88, 0.4);
@@ -1063,6 +1072,47 @@ input[type="checkbox"] {
 }
 .job-name {
   font-weight: 600;
+}
+.job-row-right {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+/* Per-job delete — quiet until hovered so the list stays calm. */
+.job-del {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.25rem;
+  border-radius: 6px;
+  opacity: 0.45;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.joblist li:hover .job-del {
+  opacity: 1;
+}
+.job-del:hover:not(:disabled) {
+  color: var(--fail);
+  background: rgba(248, 113, 113, 0.12);
+}
+.job-confirm {
+  margin-top: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  background: rgba(248, 113, 113, 0.07);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.job-confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 /* Badges */
@@ -1344,6 +1394,11 @@ input[type="checkbox"] {
 
 .failed-block {
   border-left: 3px solid var(--fail);
+  padding-left: 0.9rem;
+}
+/* Sections skipped because the run was stopped — retryable, not broken. */
+.pending-block {
+  border-left: 3px solid var(--warn);
   padding-left: 0.9rem;
 }
 .gallery img {
@@ -4003,4 +4058,14 @@ input[type="checkbox"] {
   /* The writer's own wrapping and indentation, preserved. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Progress footer: "N of M parts done" on the left, Stop generation on the
+   right — the stop has to be reachable the moment a part looks wrong. */
+.jp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
 }

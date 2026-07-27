@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-25 (Stop generation; ZIP names; script panel + per-shot quotes; story WORLD)
+**Last updated:** 2026-07-26 (Stop in both workflows; workflows unmixed; ZIP names; script panel)
 
 ---
 
@@ -107,10 +107,11 @@ Pipeline stages (see `pipeline.py`):
 - `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
 - `GET /characters/reference/{id}/image` — serve generated reference for preview
 - `POST /characters` — upload image (or `reference_id`) + options → `job_id` (async)
-- `GET /jobs` · `GET /jobs/{id}` — list / poll (owner-scoped). Job carries live `progress`.
+- `GET /jobs?kind=generate,meshy` · `GET /jobs/{id}` — list / poll (owner-scoped). `kind` is a comma-separated `JobKind` filter that keeps the Text-to-Image list free of storyboards; omit it for all kinds. Job carries live `progress`.
 - `GET /jobs/{id}/assets` — PNG URLs per part/view. Also serves PARTIAL assets while `running`.
 - `GET /jobs/{id}/image/{part}/{view}` — serve a single asset PNG (enables local-run previews)
 - `GET /jobs/{id}/download` — full zip · `GET /jobs/{id}/download/{part}` — per-section zip
+- `POST /jobs/{id}/stop` — stop a running job (any kind): finishes the work in flight, skips the rest, keeps what was generated. `POST /storyboards/{id}/stop` is the same helper for a board.
 - `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
 - `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
 - `GET /templates` · `GET /health`
@@ -218,6 +219,77 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-26 — "⏹ Stop generation" in Text to Image too
+
+- **Asked for:** the same stop button in the character workflow.
+- **`cancel.py` (new)** now owns the flag registry for BOTH pipelines —
+  `request_cancel` / `is_cancelled` / `clear_cancel`, a lock + a set of job ids.
+  `storyboard_pipeline` re-exports the three names (callers already import them
+  from there), so yesterday's board Stop is unchanged. Flags are per-process:
+  a multi-process deployment would have to move them into the job store.
+- **`pipeline.py` takes `cancel_check` — a CALLABLE, not a job id.** It's also
+  the CLI entry point and has no concept of a job; the worker passes
+  `lambda: is_cancelled(job_id)`. Checked at the top of the part loop, so a stop
+  costs nothing beyond the sheet already being drawn. `_stop_requested()`
+  swallows exceptions from the callback — a broken check must never kill a run.
+- **What a stopped character run does:** keeps every finished part, still zips
+  them (they're real and downloadable), **skips Meshy entirely** (3D is the most
+  expensive step and stopping means spend nothing more), and returns
+  `stopped: True`.
+  - **The empty case matters:** stopped before ANY part finished used to fall
+    into `return {"error": "No sheets generated"}`, which the worker turns into
+    a FAILED job. A stop is a choice, not a failure, so that path now returns a
+    proper stopped summary (`zip: None`) instead.
+- **`POST /jobs/{id}/stop`** — generic and owner-scoped. `/storyboards/{id}/stop`
+  now delegates to the same `_request_stop()` helper, so both routes share one
+  set of guards (409 unless RUNNING/QUEUED). A storyboard can be stopped through
+  either route.
+- **Client:** `api.stopJob()`; `JobDetail` shows the button in a new `.jp-foot`
+  row inside the progress block (parts-done count left, Stop right), and prints
+  "⏹ You stopped this generation — N of M parts were made" afterwards, read from
+  `job.result.stopped`.
+- **Verified** with the image calls faked out (no quota): a 10-part run stopped
+  after 3 → **7 parts never drawn**, the 3 kept and zipped, `stopped=True`, no
+  error, only the in-flight part still finished. Then: the flag doesn't leak
+  into the next run, and the CLI path (no `cancel_check`) behaves exactly as
+  before. Endpoint guards: cross-user → 404, finished job → 409, a rejected stop
+  leaves no flag, and the board route still works through the shared helper.
+  `npm run build` clean; backend imports clean. NOT clicked through in a browser.
+
+### 2026-07-25 — The two workflows no longer share a job list
+
+- **Reported:** storyboard projects were showing up in the Text-to-Image
+  workflow's "Your jobs" list (a board titled "A hunter accidentally worshipped
+  Lord Shiva…" sat next to a character run). The two workflows must stay apart.
+- **Cause:** `GET /jobs` returned every job the user owned, of every kind, and
+  both `JobList.jsx` and `Home.jsx` ("Recent work") rendered the lot. Storyboard
+  jobs there were also broken, not just misplaced: clicking one opened the
+  Text-to-Image job detail, and its ⬇ Download called `/jobs/{id}/download`,
+  which needs a `result.zip` a storyboard has never had.
+- **`JobStore.list()` takes `kinds`** now (base + memory + Firestore), so the
+  filter happens BEFORE `limit`. That also fixes the mirror-image bug in
+  `GET /storyboards`, which fetched `limit` jobs and filtered in Python — a burst
+  of character runs could push a board off the page before it was considered.
+  Tested: a board is still found behind 30 character jobs.
+- **Firestore deliberately filters in PYTHON, not `where("kind", "in", …)`.**
+  A second equality filter next to the owner filter and the `created_at`
+  ordering needs another composite index, and any deployment without it would
+  start throwing FailedPrecondition at runtime. It over-fetches (`limit * 4`,
+  capped at 500) and trims instead. Don't "optimise" this into a `where` clause
+  without creating the index first.
+- **`GET /jobs?kind=generate,meshy`** — comma-separated, validated against
+  `JobKind` (400 on anything else). Omitting it still returns all kinds, so
+  nothing else that calls the endpoint changes behaviour.
+- **Client:** `api.CHARACTER_JOB_KINDS = ["generate", "meshy"]` is the single
+  definition of "what the Text-to-Image workflow owns"; `JobList` and `Home`
+  both pass it. 3D (meshy) jobs stay in that list on purpose — they're
+  submissions for a character run, and the list already labels them "· 3D".
+- **Verified:** with a mixed store — the job list returns only the character +
+  meshy jobs, the library returns only the board, an unfiltered call still
+  returns all three, a bogus kind is a 400, another user's board is invisible to
+  both, and the board survives 30 character jobs at `limit=5`. `npm run build`
+  clean; grepped for any remaining unfiltered `listJobs(` caller — none.
 
 ### 2026-07-25 — "⏹ Stop generation" on the board
 

@@ -454,19 +454,16 @@ export default function GenerateForm({ onJobCreated }) {
       {/* ----- Lightbox popup ----- */}
       {lightboxSrc && (
         <div className="lightbox-overlay" onClick={() => setLightboxSrc(null)}>
-          <button
-            type="button"
-            className="lightbox-close"
-            onClick={() => setLightboxSrc(null)}
-          >
-            ✕
-          </button>
-          <img
-            className="lightbox-img"
-            src={lightboxSrc}
-            alt="Full size preview"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div className="lightbox-figure" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="lightbox-close"
+              onClick={() => setLightboxSrc(null)}
+            >
+              ✕
+            </button>
+            <img className="lightbox-img" src={lightboxSrc} alt="Full size preview" />
+          </div>
         </div>
       )}
     </form>

@@ -50,7 +50,20 @@ class JobStore:
     def update(self, job_id: str, **fields) -> Job | None:
         raise NotImplementedError
 
-    def list(self, limit: int = 50, owner: str | None = None) -> list[Job]:
+    def list(
+        self,
+        limit: int = 50,
+        owner: str | None = None,
+        kinds: "list[JobKind] | tuple[JobKind, ...] | None" = None,
+    ) -> list[Job]:
+        """Newest-first jobs, optionally restricted to an owner and to `kinds`.
+
+        `kinds` keeps the two workflows apart: the Text-to-Image job list must
+        not show storyboards, and the storyboard library must not show character
+        runs. Filtering here (rather than in the caller) means the `limit` is
+        applied AFTER the filter, so a long run of one kind can't push the other
+        kind off the end of the list.
+        """
         raise NotImplementedError
 
     def delete(self, job_id: str) -> bool:
@@ -149,11 +162,14 @@ class MemoryJobStore(JobStore):
             self._save_locked()
             return job
 
-    def list(self, limit=50, owner=None):
+    def list(self, limit=50, owner=None, kinds=None):
         with self._lock:
             jobs = list(self._jobs.values())
         if owner is not None:
             jobs = [j for j in jobs if j.owner == owner]
+        if kinds:
+            wanted = set(kinds)
+            jobs = [j for j in jobs if j.kind in wanted]
         jobs.sort(key=lambda j: j.created_at, reverse=True)
         return jobs[:limit]
 
@@ -223,16 +239,26 @@ class FirestoreJobStore(JobStore):
         doc.set(job.model_dump(mode="json"))
         return job
 
-    def list(self, limit=50, owner=None):
+    def list(self, limit=50, owner=None, kinds=None):
         from google.cloud import firestore
 
         query = self._col
         if owner is not None:
             query = query.where("owner", "==", owner)
+        # `kinds` is filtered in Python, NOT with a `where("kind", "in", …)`:
+        # adding a second equality filter alongside the owner filter and the
+        # created_at ordering needs another composite index, which would fail at
+        # runtime on any deployment that hasn't created it. Instead we over-fetch
+        # and trim, so the caller still gets a full page of the kind it asked for.
+        fetch = min(limit * 4, 500) if kinds else limit
         query = query.order_by(
             "created_at", direction=firestore.Query.DESCENDING
-        ).limit(limit)
-        return [Job(**snap.to_dict()) for snap in query.stream()]
+        ).limit(fetch)
+        jobs = [Job(**snap.to_dict()) for snap in query.stream()]
+        if kinds:
+            wanted = set(kinds)
+            jobs = [j for j in jobs if j.kind in wanted]
+        return jobs[:limit]
 
     def delete(self, job_id):
         doc = self._doc(job_id)

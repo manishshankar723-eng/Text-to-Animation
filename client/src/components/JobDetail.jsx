@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 
 const VIEWS = ["front", "left", "three_quarter", "back"];
@@ -23,6 +23,9 @@ export default function JobDetail({ jobId, onChanged }) {
   const [assets, setAssets] = useState(null);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
+  // A stop has been asked for but the run hasn't wound down yet (the part being
+  // drawn still has to come back).
+  const [stopRequested, setStopRequested] = useState(false);
 
   // Per-section 3D state: { [part]: { jobId, status, modelUrls, provider } }
   const [model3d, setModel3d] = useState({});
@@ -123,16 +126,28 @@ export default function JobDetail({ jobId, onChanged }) {
     return () => clearInterval(t);
   }, [model3d]);
 
-  // Poll while the job is active.
+  // Poll while the job is active, and tell the parent ONCE when it settles.
+  // `onChanged` is deliberately not a dependency and is read through a ref:
+  // it bumps state in the parent, so re-running this effect whenever the
+  // parent re-rendered would notify → re-render → notify … forever.
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+  const notifiedRef = useRef(null); // last status we announced, per job
+
   useEffect(() => {
     if (!job) return;
-    if (job.status !== "queued" && job.status !== "running") {
-      onChanged?.();
+    const active = job.status === "queued" || job.status === "running";
+    if (!active) {
+      const key = `${job.job_id}:${job.status}`;
+      if (notifiedRef.current !== key) {
+        notifiedRef.current = key;
+        onChangedRef.current?.();
+      }
       return;
     }
     const t = setInterval(load, 3000);
     return () => clearInterval(t);
-  }, [job, load, onChanged]);
+  }, [job, load]);
 
   if (!job) {
     return (
@@ -144,7 +159,24 @@ export default function JobDetail({ jobId, onChanged }) {
 
   const isActive = job.status === "queued" || job.status === "running";
   const isDone = job.status === "succeeded";
+  // The run ended early because the user pressed Stop (server-reported, so it
+  // survives a reload) — say so rather than showing a half set as "complete".
+  const wasStopped = Boolean(job.result?.stopped);
   const partNames = assets ? Object.keys(assets.parts) : [];
+
+  // Stop the run. The part being drawn finishes, so the button keeps saying
+  // "Stopping…" until the job reaches a terminal state.
+  async function stopRun() {
+    if (stopRequested || !isActive) return;
+    setError("");
+    setStopRequested(true);
+    try {
+      await api.stopJob(jobId);
+    } catch (e) {
+      setError(e.message);
+      setStopRequested(false); // it didn't take — let them press it again
+    }
+  }
 
   function open3D(part) {
     setThreeDPart(part);
@@ -270,11 +302,41 @@ export default function JobDetail({ jobId, onChanged }) {
               style={{ width: `${Math.max(job.progress?.percent ?? 4, 4)}%` }}
             />
           </div>
-          <span className="muted tiny">
-            {job.progress?.total_parts
-              ? `${job.progress.done_parts?.length || 0} of ${job.progress.total_parts} parts done`
-              : "This can take a few minutes."}
-          </span>
+          <div className="jp-foot">
+            <span className="muted tiny">
+              {job.progress?.total_parts
+                ? `${job.progress.done_parts?.length || 0} of ${job.progress.total_parts} parts done`
+                : "This can take a few minutes."}
+            </span>
+            {/* Stop as soon as the first part looks wrong — the parts already
+                generated are kept and stay downloadable. */}
+            <button
+              type="button"
+              className="btn small danger-btn"
+              disabled={stopRequested}
+              onClick={stopRun}
+              title="Stop generating the remaining parts — the part being drawn will still finish"
+            >
+              {stopRequested ? (
+                <>
+                  <span className="spinner-inline" /> Stopping…
+                </>
+              ) : (
+                "⏹ Stop generation"
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {wasStopped && (
+        <div className="info-msg">
+          ⏹ You stopped this generation — {job.result?.parts_generated?.length || 0} of{" "}
+          {job.progress?.total_parts || "?"} parts were made. They're all
+          downloadable. Use 🔄 on any section to redo it
+          {(job.result?.pending_parts || []).length > 0
+            ? ", and the skipped sections listed below have a Generate button."
+            : ", or start a new run for the rest."}
         </div>
       )}
 
@@ -486,6 +548,33 @@ export default function JobDetail({ jobId, onChanged }) {
                 </div>
               ))}
 
+          {/* Parts that were never started because the run was stopped —
+              offer the same one-click retry instead of forcing a whole new run. */}
+          {isDone &&
+            (job.result?.pending_parts || [])
+              .filter((pp) => !partNames.includes(pp))
+              .map((pp) => (
+                <div key={`pending-${pp}`} className="part-block pending-block">
+                  <div className="part-head">
+                    <strong className="part-title">
+                      {prettyPart(pp)} <span className="badge queued">not generated</span>
+                    </strong>
+                    <button
+                      type="button"
+                      className="btn small secondary"
+                      disabled={Boolean(regenBusy[pp])}
+                      onClick={() => handleRegeneratePart(pp)}
+                    >
+                      {regenBusy[pp] ? <span className="spinner-inline" /> : "🔄"} Generate
+                    </button>
+                  </div>
+                  <p className="muted tiny">
+                    Skipped because you stopped the run. Generate it now without
+                    redoing the parts you already have.
+                  </p>
+                </div>
+              ))}
+
         </>
       )}
 
@@ -541,19 +630,16 @@ export default function JobDetail({ jobId, onChanged }) {
       {/* ----- Lightbox popup for gallery images ----- */}
       {lightboxSrc && (
         <div className="lightbox-overlay" onClick={() => setLightboxSrc(null)}>
-          <button
-            type="button"
-            className="lightbox-close"
-            onClick={() => setLightboxSrc(null)}
-          >
-            ✕
-          </button>
-          <img
-            className="lightbox-img"
-            src={lightboxSrc}
-            alt="Full size view"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div className="lightbox-figure" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="lightbox-close"
+              onClick={() => setLightboxSrc(null)}
+            >
+              ✕
+            </button>
+            <img className="lightbox-img" src={lightboxSrc} alt="Full size view" />
+          </div>
         </div>
       )}
     </div>

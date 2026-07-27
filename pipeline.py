@@ -118,6 +118,7 @@ def run_pipeline(
     character_vars: dict | None = None,
     provider: str | None = None,
     progress_cb=None,
+    cancel_check=None,
 ) -> dict:
     """
     Run the full pipeline for one character.
@@ -135,9 +136,16 @@ def run_pipeline(
         character_vars: Override character variables (age, gender, skin_tone).
         provider: Image backend — "vertex" or "gemini". Defaults to the
                   IMAGE_PROVIDER env var (or "vertex").
+        cancel_check: Optional callable() -> bool, polled before each part. When
+                  it returns True the run stops early ("Stop generation" in the
+                  UI): the part being drawn finishes, nothing further is started,
+                  and whatever HAS been generated is still zipped and returned.
+                  A callable rather than a job id keeps this module usable from
+                  the CLI, which has no job concept.
 
     Returns:
-        Dict with results: {part_name: {view_name: url_or_path}}, zip path, meshy results.
+        Dict with results: {part_name: {view_name: url_or_path}}, zip path, meshy
+        results, and `stopped` — True when the run ended early on request.
     """
     # --- Load config & resolve prompts ---
     config = load_prompts(config_path)
@@ -187,6 +195,16 @@ def run_pipeline(
         except Exception:  # noqa: BLE001 — progress must never break the run
             logger.debug("progress_cb raised (ignored)", exc_info=True)
 
+    def _stop_requested() -> bool:
+        """Has the user pressed Stop? A broken check must not kill the run."""
+        if cancel_check is None:
+            return False
+        try:
+            return bool(cancel_check())
+        except Exception:  # noqa: BLE001
+            logger.debug("cancel_check raised (ignored)", exc_info=True)
+            return False
+
     _report(
         percent=2, stage="starting", current_part=None,
         message="Preparing character pipeline…",
@@ -208,7 +226,23 @@ def run_pipeline(
     GEN_START, GEN_END = 6, 88
 
     vis_i = 0  # index over the VISIBLE parts (excludes the reference-only fullbody)
-    for part in parts_to_run:
+    stopped = False
+    pending_parts = []  # requested but never started (user stopped) — UI offers a retry
+    for i, part in enumerate(parts_to_run):
+        # Checked BEFORE each part, so a stop costs nothing beyond the sheet
+        # already being drawn. Parts finished so far are kept, zipped and served.
+        if _stop_requested():
+            stopped = True
+            # Record what we never got to, so the UI can show those sections with
+            # a Regenerate button instead of silently dropping them.
+            pending_parts = [
+                slot_renames.get(p, p)
+                for p in parts_to_run[i:]
+                if not (ref_only_fullbody and p == "fullbody")
+            ]
+            logger.info("Stop requested — skipping the remaining parts: %s", pending_parts)
+            break
+
         is_ref_only = ref_only_fullbody and part == "fullbody"
 
         # Prompt: template prompt, or a generic fallback for custom assets.
@@ -290,6 +324,26 @@ def run_pipeline(
         )
 
     if not processed_views:
+        # Stopped before anything finished: that's the user's choice, not a
+        # failure, so it must NOT come back as an error the UI reports as broken.
+        if stopped:
+            logger.info("Stopped before any part completed — nothing to zip.")
+            _report(
+                percent=100, stage="stopped", current_part=None,
+                message="Stopped by you — no parts were generated.",
+                done_parts=[], total_parts=total_parts, urls={},
+            )
+            return {
+                "character": character_name,
+                "template": template_name or "default",
+                "parts_generated": [],
+                "failed_parts": failed_parts,
+                "pending_parts": pending_parts,
+                "urls": {},
+                "zip": None,
+                "meshy": {},
+                "stopped": True,
+            }
         logger.error("No sheets were generated. Aborting.")
         return {"error": "No sheets generated"}
 
@@ -305,8 +359,10 @@ def run_pipeline(
     logger.info("Zip created: %s", zip_result)
 
     # --- Meshy submission ---
+    # Skipped entirely on a stop: 3D generation is the most expensive step here,
+    # and stopping means "spend nothing more on this run".
     meshy_results = {}
-    if meshy_parts and not local_only:
+    if meshy_parts and not local_only and not stopped:
         for part in meshy_parts:
             # Resolve slot rename for lookup
             output_name = slot_renames.get(part, part)
@@ -337,18 +393,30 @@ def run_pipeline(
         "template": template_name or "default",
         "parts_generated": list(processed_views.keys()),
         "failed_parts": failed_parts,
+        # Requested but never started because the run was stopped — the UI shows
+        # these as sections with a Regenerate button.
+        "pending_parts": pending_parts,
         "prompts": prompts,
         "urls": urls,
         "zip": zip_result,
         "meshy": meshy_results,
+        # True when the user stopped the run — the parts below are real and
+        # downloadable, they're just not the whole set that was asked for.
+        "stopped": stopped,
     }
 
-    logger.info("Pipeline complete for '%s'. Generated %d parts.",
-                character_name, len(processed_views))
+    logger.info(
+        "Pipeline %s for '%s'. Generated %d parts.",
+        "STOPPED by user" if stopped else "complete", character_name, len(processed_views),
+    )
 
     _report(
-        percent=100, stage="done", current_part=None,
-        message=f"Complete — {len(processed_views)} parts generated.",
+        percent=100, stage="stopped" if stopped else "done", current_part=None,
+        message=(
+            f"Stopped by you — {len(processed_views)} of {total_parts} parts generated."
+            if stopped
+            else f"Complete — {len(processed_views)} parts generated."
+        ),
         done_parts=list(processed_views.keys()), total_parts=total_parts, urls=dict(urls),
     )
 
@@ -447,9 +515,11 @@ def regenerate_single_part(
     if output_name not in result.get("parts_generated", []):
         result.setdefault("parts_generated", []).append(output_name)
 
-    # It succeeded now — clear it from the failed list if it was there.
+    # It succeeded now — clear it from the failed / pending lists if it was there.
     if output_name in result.get("failed_parts", []):
         result["failed_parts"] = [p for p in result["failed_parts"] if p != output_name]
+    if output_name in result.get("pending_parts", []):
+        result["pending_parts"] = [p for p in result["pending_parts"] if p != output_name]
 
     result["zip"] = zip_result
     return result

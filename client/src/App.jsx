@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as api from "./api.js";
 import { applyTheme, getTheme } from "./theme.js";
 import Landing from "./components/Landing.jsx";
@@ -62,9 +62,12 @@ export default function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
 
-  function refreshJobs() {
+  // Stable identity: children list this in effect deps, so a fresh function on
+  // every render would re-fire those effects (and, for the one that calls back
+  // here, loop forever).
+  const refreshJobs = useCallback(() => {
     setRefreshKey((k) => k + 1);
-  }
+  }, []);
 
   function onAuthed(mail) {
     setEmail(mail);

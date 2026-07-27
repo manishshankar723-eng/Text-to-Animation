@@ -605,8 +605,12 @@ def list_storyboards(
     current: CurrentUser = Depends(get_current_user),
 ):
     """List the caller's saved storyboards, newest first (the library grid)."""
-    jobs = get_store().list(limit=limit, owner=current.email)
-    return [_summarise_board(j) for j in jobs if j.kind == JobKind.STORYBOARD]
+    # Filtered in the store, so a burst of character-generation jobs can't push
+    # older boards out of the page before they're even considered.
+    jobs = get_store().list(
+        limit=limit, owner=current.email, kinds=[JobKind.STORYBOARD]
+    )
+    return [_summarise_board(j) for j in jobs]
 
 
 @app.get("/storyboards/{job_id}/project", response_model=StoryboardProject)
@@ -1073,29 +1077,35 @@ def restyle_storyboard(
     )
 
 
+def _request_stop(job, email: str, noun: str) -> dict:
+    """Flag a running job to stop. Shared by both workflows' Stop buttons.
+
+    Whatever has already been generated is kept and the job finishes normally —
+    stopping is about not SPENDING more, not about throwing work away. Work
+    already in flight still completes: an HTTP request can't be un-sent.
+    """
+    if job.status not in (JobStatus.RUNNING, JobStatus.QUEUED):
+        raise HTTPException(status_code=409, detail=f"This {noun} isn't generating.")
+
+    from cancel import request_cancel
+
+    request_cancel(job.job_id)
+    logger.info("[job %s] stop requested by %s", job.job_id, email)
+    return {"stopping": True, "job_id": job.job_id}
+
+
 @app.post("/storyboards/{job_id}/stop")
 def stop_storyboard(
     job_id: str,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Stop a board that is still generating — the "Stop generation" button.
+    """Stop a board that is still generating — the board's "Stop generation".
 
-    Point of it: stop SPENDING generations once the first panels come back
-    wrong. Panels not yet started are skipped; the one or two already talking to
-    the image API finish, because an in-flight HTTP call can't be un-sent. The
-    job then completes normally with whatever was drawn — those panels are real
-    and downloadable, and every skipped panel can be drawn on its own from the
-    board afterwards.
+    Panels not yet started are skipped; the one or two already talking to the
+    image API finish. Every skipped panel can then be drawn on its own from the
+    board with "Generate this panel".
     """
-    job = _get_owned_board(job_id, current)
-    if job.status not in (JobStatus.RUNNING, JobStatus.QUEUED):
-        raise HTTPException(status_code=409, detail="This board isn't generating.")
-
-    from storyboard_pipeline import request_cancel
-
-    request_cancel(job_id)
-    logger.info("[storyboard %s] stop requested by %s", job_id, current.email)
-    return {"stopping": True, "job_id": job_id}
+    return _request_stop(_get_owned_board(job_id, current), current.email, "board")
 
 
 @app.post("/storyboards/{job_id}/active-variant")
@@ -1422,13 +1432,97 @@ async def create_character(
 # Job status / listing
 # ---------------------------------------------------------------------------
 @app.get("/jobs", response_model=list[Job])
-def list_jobs(limit: int = 50, current: CurrentUser = Depends(get_current_user)):
-    return get_store().list(limit=limit, owner=current.email)
+def list_jobs(
+    limit: int = 50,
+    kind: str | None = None,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """The caller's jobs, newest first.
+
+    `kind` is a comma-separated filter (e.g. `generate,meshy`) that keeps the two
+    workflows apart: the Text-to-Image job list asks for the character kinds, so
+    storyboards stay in "Your Storyboards" where they belong. Omitted = all kinds.
+    """
+    kinds = None
+    if kind:
+        kinds = []
+        for raw in kind.split(","):
+            value = raw.strip().lower()
+            if not value:
+                continue
+            try:
+                kinds.append(JobKind(value))
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown job kind '{value}'. Use one of "
+                    f"{[k.value for k in JobKind]}.",
+                )
+    return get_store().list(limit=limit, owner=current.email, kinds=kinds or None)
 
 
 @app.get("/jobs/{job_id}", response_model=Job)
 def get_job(job_id: str, current: CurrentUser = Depends(get_current_user)):
     return _get_owned_job(job_id, current)
+
+
+@app.delete("/jobs/{job_id}", status_code=204)
+def delete_job(job_id: str, current: CurrentUser = Depends(get_current_user)):
+    """Delete a character job: its record, its reference upload, and its assets.
+
+    Asset files live in output/{character_name}/, which is keyed by NAME, not by
+    job id — so two runs of the same character share one folder. We only remove
+    that folder when no other job of this owner still points at it, otherwise
+    deleting one run would wipe the other run's images.
+    """
+    job = _get_owned_job(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="This job is still generating — stop it first, then delete.",
+        )
+
+    # The reference upload is keyed by job id, so it is always safe to remove.
+    upload_dir = os.path.join(config.UPLOAD_DIR, job_id)
+    if os.path.isdir(upload_dir):
+        try:
+            shutil.rmtree(upload_dir)
+        except OSError:
+            logger.exception("[job %s] could not remove %s", job_id, upload_dir)
+
+    # Shared-name check before touching generated assets.
+    others = [
+        j for j in get_store().list(limit=500, owner=current.email)
+        if j.job_id != job_id and j.character_name == job.character_name
+    ]
+    if not others:
+        char_dir = os.path.join(config.OUTPUT_DIR, job.character_name)
+        if os.path.isdir(char_dir):
+            try:
+                shutil.rmtree(char_dir)
+            except OSError:
+                logger.exception("[job %s] could not remove %s", job_id, char_dir)
+    else:
+        logger.info(
+            "[job %s] keeping assets for '%s' — %d other job(s) still use them.",
+            job_id, job.character_name, len(others),
+        )
+
+    get_store().delete(job_id)
+    logger.info("[job %s] deleted by %s", job_id, current.email)
+    return None
+
+
+@app.post("/jobs/{job_id}/stop")
+def stop_job(job_id: str, current: CurrentUser = Depends(get_current_user)):
+    """Stop a character run that is still generating (Text to Image "Stop").
+
+    The part being drawn finishes; nothing after it is started. Parts already
+    generated are kept, zipped and downloadable, and any part can be redone
+    later with the existing per-part regenerate. 3D submission is skipped
+    entirely — stopping means spending nothing more on this run.
+    """
+    return _request_stop(_get_owned_job(job_id, current), current.email, "job")
 
 
 @app.get("/jobs/{job_id}/download")

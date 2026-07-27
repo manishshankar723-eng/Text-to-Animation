@@ -26,35 +26,11 @@ logger = logging.getLogger(__name__)
 # (IMAGE_MAX_CONCURRENCY / IMAGE_RPM) is the real ceiling.
 PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "2")))
 
-# ---------------------------------------------------------------------------
-# Stop / cancel
-# ---------------------------------------------------------------------------
-# A board can be stopped mid-run from the UI ("Stop generation") when the first
-# panels come back wrong — the point is to stop SPENDING generations. There is
-# no way to abort an HTTP call already in flight, so the deal is: every panel
-# that hasn't started yet is skipped, and the 1–2 already talking to the API
-# finish. Flags live in this process, alongside the worker pool that reads them.
-_cancel_lock = threading.Lock()
-_cancelled: set[str] = set()
-
-
-def request_cancel(job_id: str) -> None:
-    """Ask a running board to stop after the panels already in flight."""
-    with _cancel_lock:
-        _cancelled.add(job_id)
-    logger.info("[storyboard %s] STOP requested", job_id)
-
-
-def is_cancelled(job_id: str) -> bool:
-    """True while a stop is pending for this board."""
-    with _cancel_lock:
-        return job_id in _cancelled
-
-
-def clear_cancel(job_id: str) -> None:
-    """Drop the flag so the next run of this board isn't stopped by a stale one."""
-    with _cancel_lock:
-        _cancelled.discard(job_id)
+# Stop / cancel. The registry is shared with the character pipeline (cancel.py);
+# re-exported here because callers already import these names from this module.
+# For a board: every panel not yet started is skipped, and the 1–2 already
+# talking to the image API finish, because an in-flight call can't be un-sent.
+from cancel import clear_cancel, is_cancelled, request_cancel  # noqa: E402,F401
 
 
 def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
