@@ -487,6 +487,22 @@ _STORYBOARD_STYLE_PROMPTS = {
     "photo-commercial": "clean commercial photography look, bright even lighting, crisp product-style framing",
     "charcoal": "expressive black-and-white charcoal drawing, rich smudged shadows, bold strokes",
     "dark-anime": "moody dark anime style, cinematic anime lighting, detailed line art, high contrast",
+    # The default. A real animation-department thumbnail: drawn to communicate
+    # staging, not to be admired. Deliberately verbose — this style has to fight
+    # the model's pull toward rendering, colour and detail, and it's the one
+    # style whose whole value is that there's nothing in it to get wrong.
+    "rough-sketch": (
+        "a rough hand-drawn animation storyboard thumbnail on white paper, "
+        "greyscale only — black pencil or marker linework with flat grey marker "
+        "tones in TWO OR THREE values at most, no gradients, no rendering, no "
+        "texture, no cross-hatching; loose confident tapered strokes with visible "
+        "construction lines and honest wobble, as if drawn quickly by hand; "
+        "simple shapes and clear readable silhouettes, expressive exaggerated "
+        "poses, faces suggested with a few marks rather than detailed; only the "
+        "background elements the shot actually needs, everything else left as "
+        "blank paper; absolutely no colour, no photorealism, no fine detail, no "
+        "digital polish"
+    ),
     "flat-vector": "flat vector illustration, clean geometric shapes, bold solid colours, minimal shading",
     "noir": "high-contrast black-and-white film-noir look, deep shadows, dramatic low-key lighting",
     "stick-figure": "simple black-and-white stick-figure storyboard, minimal line drawing on a white background",

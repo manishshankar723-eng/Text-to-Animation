@@ -7,7 +7,7 @@
 //   Step "review" — Stage C: the AI shot list, editable before generating panels
 //                   (edit description, reorder, delete, add). Panel generation is
 //                   the next build step (button shows a "coming soon" notice).
-import { useState, useRef, useEffect } from "react";
+import { Fragment, useState, useRef, useEffect } from "react";
 import * as api from "../api.js";
 import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
@@ -21,8 +21,15 @@ import ScriptPanel from "./ScriptPanel.jsx";
 
 // Visual styles. The first 7 show as chips; the rest live behind "＋ More".
 // "custom" ("Add Your Own Style") reveals a free-text box.
+//
+// "rough-sketch" is the DEFAULT and is deliberately first: a plain grey
+// storyboard thumbnail is what a board is FOR (staging and timing), it reads
+// instantly, and because there's no rendered detail there's nothing for the
+// model to get wrong — so it needs far fewer expensive re-draws. Anyone who
+// wants a polished look just picks another style and gets the full flow.
 const STYLES = [
-  { id: "sketch", label: "✏️ Sketch" },
+  { id: "rough-sketch", label: "✏️ Rough Sketch" },
+  { id: "sketch", label: "🖊️ Sketch" },
   { id: "comic", label: "💥 Comic" },
   { id: "cinematic", label: "🎬 Cinematic" },
   { id: "animation-3d", label: "🧸 Animation 3D" },
@@ -39,7 +46,14 @@ const MORE_STYLES = [
   { id: "custom", label: "＋ Custom" },
 ];
 const ALL_STYLES = [...STYLES, ...MORE_STYLES];
-const DEFAULT_STYLE = "sketch"; // pre-selected default (highlighted)
+const DEFAULT_STYLE = "rough-sketch"; // pre-selected default (highlighted)
+
+// Styles that draw straight from the shot prompts, with NO locked character /
+// prop / background reference images — so the cast and props steps are skipped
+// entirely. A rough thumbnail has no rendered faces or sets to keep consistent,
+// which is exactly why it's cheap: no reference images to generate either.
+// Every other style keeps the full cast → props → panels flow unchanged.
+const REFERENCE_FREE_STYLES = new Set(["rough-sketch"]);
 
 const ASPECTS = [
   { id: "21:9", note: "Ultra-wide" },
@@ -80,7 +94,7 @@ const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 // server-side extraction (not built yet) — user pastes those for now.
 const TEXT_EXTENSIONS = ["txt", "fountain", "fdx", "md", "text"];
 
-export default function ScriptToStoryboard() {
+export default function ScriptToStoryboard({ onOpenAnimatic }) {
   // Open on the library so a returning user sees their saved storyboards first.
   const [step, setStep] = useState("library");
 
@@ -193,6 +207,13 @@ export default function ScriptToStoryboard() {
   function effectiveStyle() {
     if (style === "custom") return customStyle.trim() || "custom";
     return style;
+  }
+
+  // Does the chosen style skip the cast + props steps? (Rough Sketch does — see
+  // REFERENCE_FREE_STYLES.) Read from the EFFECTIVE style, so switching style
+  // at any point — including inside the pre-flight modal — changes the flow.
+  function skipsRefs() {
+    return REFERENCE_FREE_STYLES.has(effectiveStyle());
   }
 
   // The aspect ratio sent to the backend: the typed W:H for Custom, else the id.
@@ -436,7 +457,10 @@ export default function ScriptToStoryboard() {
       setStep("board");
       return;
     }
-    if (computeCast().length > 0) {
+    // Rough Sketch draws straight from the prompts — no cast, no props page.
+    if (skipsRefs()) {
+      requestLaunch({}, {});
+    } else if (computeCast().length > 0) {
       setStep("cast");
     } else if (computeAssets().length > 0) {
       setStep("assets");
@@ -470,6 +494,13 @@ export default function ScriptToStoryboard() {
     setError("");
     setBusy(true);
     try {
+      // A reference-free style sends NO refs, even if the user set some up and
+      // then switched style in the pre-flight modal — otherwise the modal's
+      // "not used by this style" would be a lie.
+      if (skipsRefs()) {
+        charRefs = {};
+        assetRefs = {};
+      }
       // Which of the chosen assets are props vs. backgrounds — the props step
       // doesn't report this, so read it back off the active asset list. Only
       // used to sort the downloadable ZIP into props/ and backgrounds/.
@@ -540,6 +571,7 @@ export default function ScriptToStoryboard() {
       shots={shots}
       cast={computeCast()}
       assets={computeAssets()}
+      refsSkipped={skipsRefs()}
       charRefs={preflight.charRefs}
       assetRefs={preflight.assetRefs}
       savedCast={savedCastRefs}
@@ -650,6 +682,7 @@ export default function ScriptToStoryboard() {
         aspect={effectiveAspect()}
         backLabel={boardOrigin === "library" ? "← Your Storyboards" : "← Back to shots"}
         onBack={() => setStep(boardOrigin)}
+        onOpenAnimatic={onOpenAnimatic}
         onRestart={() => {
           resetWorkflow();
           setStep("library");
@@ -720,6 +753,9 @@ export default function ScriptToStoryboard() {
                   <>
                     <span className="spinner-inline" /> Starting…
                   </>
+                ) : skipsRefs() ? (
+                  /* Rough Sketch has no cast/props step to offer. */
+                  `🎬 Generate panels (${shots.length})`
                 ) : activeCast.length > 0 ? (
                   `🎭 Next: cast (${activeCast.length})`
                 ) : activeAssets.length > 0 ? (
@@ -752,11 +788,32 @@ export default function ScriptToStoryboard() {
 
         <div className="shot-list">
           {shots.map((sh, i) => (
-            <div className="card shot-card" key={i}>
+            /* A full-width divider wherever the scene changes, so the script's
+               scene breaks are visible instead of only implied by a tag. */
+            <Fragment key={i}>
+              {sh.scene_number !== shots[i - 1]?.scene_number && (
+                <div className="scene-divider">
+                  <span className="scene-divider-label">
+                    Scene {sh.scene_number}
+                  </span>
+                  {sh.location && (
+                    <span className="scene-divider-where">{sh.location}</span>
+                  )}
+                  <span className="scene-divider-count">
+                    {shots.filter((s) => s.scene_number === sh.scene_number).length} shot
+                    {shots.filter((s) => s.scene_number === sh.scene_number).length === 1
+                      ? ""
+                      : "s"}
+                  </span>
+                </div>
+              )}
+            <div className="card shot-card">
               <div className="shot-head">
                 <span className="shot-index">
                   Shot {i + 1}
-                  <span className="shot-scene">Scene {sh.scene_number}</span>
+                  <span className="shot-scene">
+                    Scene {sh.scene_number} · Shot {sh.shot_number || 1}
+                  </span>
                 </span>
                 <div className="shot-actions">
                   <button
@@ -836,6 +893,7 @@ export default function ScriptToStoryboard() {
                 </div>
               )}
             </div>
+            </Fragment>
           ))}
         </div>
 
@@ -1023,6 +1081,12 @@ export default function ScriptToStoryboard() {
               onChange={(e) => setCustomStyle(e.target.value)}
             />
           )}
+          {/* Say what the default actually does, where the choice is made. */}
+          <p className="tiny muted style-note">
+            {skipsRefs()
+              ? "✏️ Rough Sketch is a plain grey storyboard thumbnail — the fastest and cheapest way to check your staging. It draws straight from your shots, so there's no cast or props step. Pick any other style for a detailed, coloured board with locked characters and locations."
+              : "This style locks characters, props and backgrounds first, so they stay consistent across panels — more detail, more images to generate. Choose Rough Sketch for a quick, cheap pass instead."}
+          </p>
 
           {/* --- Aspect ratio --- */}
           <label>Aspect ratio</label>
@@ -1093,12 +1157,16 @@ export default function ScriptToStoryboard() {
               <span className="sts-guide-num">3</span>
               Review &amp; edit the shots
             </li>
+            {/* Step 4 only exists for the detailed styles — with Rough Sketch
+                selected it would be a step the user never sees. */}
+            {!skipsRefs() && (
+              <li>
+                <span className="sts-guide-num">4</span>
+                Lock your cast, props &amp; backgrounds (optional)
+              </li>
+            )}
             <li>
-              <span className="sts-guide-num">4</span>
-              Lock your cast, props &amp; backgrounds (optional)
-            </li>
-            <li>
-              <span className="sts-guide-num">5</span>
+              <span className="sts-guide-num">{skipsRefs() ? 4 : 5}</span>
               Generate panels &amp; download a PDF
             </li>
           </ol>

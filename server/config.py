@@ -44,6 +44,18 @@ MAX_WORKERS = int(os.environ.get("API_MAX_WORKERS", "2"))
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = int(os.environ.get("API_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
 
+# --- Animatics (Storyboard → Animatic) ---------------------------------------
+# Audio laid under an animatic. Browsers report mp3 as audio/mpeg; the extension
+# is accepted as a fallback because content types vary by OS and browser.
+ALLOWED_AUDIO_TYPES = {
+    "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/wave",
+    "audio/mp4", "audio/x-m4a", "audio/aac", "audio/ogg", "audio/webm",
+}
+ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".webm"}
+MAX_AUDIO_BYTES = int(os.environ.get("API_MAX_AUDIO_BYTES", str(50 * 1024 * 1024)))
+# Guard rail on the sequence length — an animatic is a rough cut, not a feature.
+MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
+
 # --- Auth (JWT login + MongoDB user store) -----------------------------------
 # Secret used to sign JWTs. MUST be set in production. A dev fallback is used
 # if unset (with a loud warning at startup) so local runs work out of the box.

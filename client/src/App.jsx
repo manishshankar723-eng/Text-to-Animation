@@ -7,6 +7,7 @@ import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
+import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
@@ -15,13 +16,6 @@ import JobDetail from "./components/JobDetail.jsx";
 
 // Descriptions for the roadmap (not-yet-built) workflows.
 const SOON = {
-  "storyboard-to-animatics": {
-    icon: "🎬",
-    title: "Storyboard to Animatics",
-    description:
-      "Turn static storyboard panels into timed animatics with motion, transitions and rough timing.",
-    steps: ["Sequence the panels", "Add timing & camera moves", "Preview the animatic"],
-  },
   "animatics-to-video": {
     icon: "🎞️",
     title: "Animatics to Final Video",
@@ -54,6 +48,9 @@ export default function App() {
   const [nav, setNav] = useState("text-to-image"); // "home" | workflow id
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Set by the board's "Make animatic" button: the animatic already exists, so
+  // the animatics workflow opens straight into its editor instead of the library.
+  const [pendingAnimaticId, setPendingAnimaticId] = useState(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   // main.jsx already applied the stored theme before the first paint; this only
@@ -158,7 +155,21 @@ export default function App() {
       </div>
     );
   } else if (nav === "script-to-storyboard") {
-    content = <ScriptToStoryboard />;
+    content = (
+      <ScriptToStoryboard
+        onOpenAnimatic={(id) => {
+          setPendingAnimaticId(id);
+          setNav("storyboard-to-animatics");
+        }}
+      />
+    );
+  } else if (nav === "storyboard-to-animatics") {
+    content = (
+      <StoryboardToAnimatics
+        openId={pendingAnimaticId}
+        onOpened={() => setPendingAnimaticId(null)}
+      />
+    );
   } else if (SOON[nav]) {
     content = <WorkflowSoon {...SOON[nav]} />;
   }

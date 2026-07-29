@@ -7,7 +7,8 @@ import * as api from "../api.js";
 
 // Styles the user can re-cast the whole board into (kept as switchable variants).
 const RESTYLE_OPTIONS = [
-  { id: "sketch", label: "✏️ Sketch" },
+  { id: "rough-sketch", label: "✏️ Rough Sketch" },
+  { id: "sketch", label: "🖊️ Sketch" },
   { id: "comic", label: "💥 Comic" },
   { id: "cinematic", label: "🎬 Cinematic" },
   { id: "animation-3d", label: "🧸 Animation 3D" },
@@ -30,6 +31,9 @@ export default function StoryboardBoard({
   backLabel,
   onBack,
   onRestart,
+  // Set by App: hands the new animatic's id to the animatics workflow. Absent
+  // when the board is rendered somewhere that can't navigate there.
+  onOpenAnimatic,
 }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
@@ -39,6 +43,7 @@ export default function StoryboardBoard({
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
   const [zipBusy, setZipBusy] = useState(false);
+  const [animaticBusy, setAnimaticBusy] = useState(false);
   // A stop has been asked for but the run hasn't wound down yet (the panels
   // already talking to the image API still have to come back).
   const [stopRequested, setStopRequested] = useState(false);
@@ -300,6 +305,22 @@ export default function StoryboardBoard({
     }
   }
 
+  // Turn this board into an animatic: every drawn panel becomes a frame at a
+  // 2-second hold, and the animatics editor opens on it. Costs no AI quota —
+  // the frames reference these panels rather than redrawing anything.
+  async function handleMakeAnimatic() {
+    if (animaticBusy) return;
+    setPdfError("");
+    setAnimaticBusy(true);
+    try {
+      const project = await api.createAnimatic({ sourceStoryboardId: jobId });
+      onOpenAnimatic(project.job_id);
+    } catch (e) {
+      setPdfError(e.message);
+      setAnimaticBusy(false);
+    }
+  }
+
   // Once the run is over the flag has done its job — clear it so a later
   // re-style doesn't open with the button already reading "Stopping…".
   useEffect(() => {
@@ -457,6 +478,25 @@ export default function StoryboardBoard({
                 </>
               ) : (
                 `⬇ Download PDF (${okCount})`
+              )}
+            </button>
+          )}
+          {/* Sits next to the exports because that's what it is: the board,
+              turned into something you can watch. No AI credits are spent. */}
+          {okCount > 0 && onOpenAnimatic && !running && (
+            <button
+              type="button"
+              className="btn board-animatic"
+              disabled={animaticBusy}
+              onClick={handleMakeAnimatic}
+              title="Time these panels against audio and export a video — costs no AI credits"
+            >
+              {animaticBusy ? (
+                <>
+                  <span className="spinner-inline" /> Opening…
+                </>
+              ) : (
+                "🎬 Make animatic"
               )}
             </button>
           )}

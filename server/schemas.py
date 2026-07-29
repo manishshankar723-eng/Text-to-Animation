@@ -23,6 +23,7 @@ class JobKind(str, Enum):
     GENERATE = "generate"      # full asset-generation pipeline run
     MESHY = "meshy"            # 3D submission for an already-generated character
     STORYBOARD = "storyboard"  # script → storyboard panel generation
+    ANIMATIC = "animatic"      # timed image sequence + audio → video
 
 
 class Job(BaseModel):
@@ -394,6 +395,152 @@ class ShareResponse(BaseModel):
 
     shared: bool
     share_token: str | None = None
+
+
+class AnimaticFrameSource(BaseModel):
+    """Where one animatic frame's picture comes from.
+
+    A storyboard panel is referenced BY INDEX and never copied, so re-drawing
+    that panel on the board updates the animatic too. An upload is a file the
+    user dropped into this animatic, stored under its own id.
+    """
+
+    kind: str = Field("panel", description="'panel' (a storyboard panel) or 'upload'.")
+    storyboard_id: str | None = Field(None, description="Board job id (kind='panel').")
+    index: int | None = Field(None, description="Panel index on that board (kind='panel').")
+    upload_id: str | None = Field(None, description="Uploaded image id (kind='upload').")
+
+
+class AnimaticFrame(BaseModel):
+    """One held image in the sequence, with how long it stays on screen."""
+
+    id: str = Field(..., description="Stable client-side id (survives reordering).")
+    src: AnimaticFrameSource
+    # 0.1s–10min. The whole point of the editor is that this is per-frame.
+    duration_ms: int = Field(2000, ge=100, le=600_000)
+    label: str = Field("", description="Caption, e.g. 'Shot 3'. Burned in only if show_labels.")
+    # Filled by the server on read so the client has ONE url shape for both
+    # source kinds. Ignored on write.
+    url: str | None = None
+
+
+class AnimaticAudio(BaseModel):
+    """The single audio track laid under the whole sequence."""
+
+    upload_id: str
+    filename: str = ""
+    # Measured in the BROWSER (decodeAudioData) and sent up — the server has no
+    # audio decoder of its own, and ffmpeg doesn't need to be told.
+    duration_ms: int = 0
+    # How far into the audio file playback starts (skips an intro). Never negative.
+    offset_ms: int = Field(0, ge=0)
+    url: str | None = None
+
+
+class AnimaticSettings(BaseModel):
+    """Everything about an animatic that isn't a frame or the audio."""
+
+    aspect_ratio: str = Field("16:9", description="Frame shape, e.g. '16:9', '9:16', '1:1'.")
+    fps: int = Field(24, ge=1, le=60)
+    # "contain" letterboxes (whole image visible — the default, because a
+    # storyboard frame you cropped is a frame you can't read); "cover" fills.
+    fit: str = Field("contain", description="'contain' (letterbox) or 'cover' (crop to fill).")
+    background: str = Field("#000000", description="Letterbox colour, #rrggbb.")
+    show_labels: bool = Field(False, description="Burn each frame's label into the video.")
+
+
+class AnimaticProject(BaseModel):
+    """A saved animatic: the frames, their timing, the audio and the settings."""
+
+    job_id: str
+    title: str
+    status: JobStatus
+    # The board this was started from, if any (Duplicate / 'back to board').
+    source_storyboard_id: str | None = None
+    settings: AnimaticSettings = Field(default_factory=AnimaticSettings)
+    frames: list[AnimaticFrame] = Field(default_factory=list)
+    audio: AnimaticAudio | None = None
+    # Sum of the frame durations — the length of the video that will be exported.
+    duration_ms: int = 0
+    # Last export: {url, size_bytes, exported_at, duration_ms, stale}. `stale` is
+    # set the moment the project is edited afterwards, so the UI can say the
+    # downloadable file no longer matches what's on screen.
+    video: dict | None = None
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class AnimaticCreateRequest(BaseModel):
+    """Body for POST /animatics — start a new animatic project.
+
+    With `source_storyboard_id` and no frames, the server fills the sequence
+    with that board's drawn panels in order — the board's "Make animatic".
+    """
+
+    title: str | None = None
+    source_storyboard_id: str | None = None
+    settings: AnimaticSettings | None = None
+    frames: list[AnimaticFrame] = Field(default_factory=list)
+    default_duration_ms: int = Field(2000, ge=100, le=600_000)
+
+
+class AnimaticSaveRequest(BaseModel):
+    """Body for PUT /animatics/{id} — save the edited project.
+
+    Every field is optional so a partial save is possible, which is why removing
+    the audio needs its own flag: `audio: null` can't be told apart from
+    "audio not included in this save".
+    """
+
+    title: str | None = None
+    settings: AnimaticSettings | None = None
+    frames: list[AnimaticFrame] | None = None
+    audio: AnimaticAudio | None = None
+    clear_audio: bool = False
+
+
+class AnimaticSummary(BaseModel):
+    """One saved animatic, as shown on the library grid (deliberately lean)."""
+
+    job_id: str
+    title: str
+    status: JobStatus
+    aspect_ratio: str = "16:9"
+    frame_count: int = 0
+    duration_ms: int = 0
+    # Serve path for the first frame — the card's thumbnail.
+    cover_url: str | None = None
+    has_audio: bool = False
+    has_video: bool = False
+    created_at: str
+    updated_at: str
+
+
+class AnimaticMediaItem(BaseModel):
+    """One uploaded image, ready to be added to the sequence."""
+
+    upload_id: str
+    filename: str = ""
+    width: int = 0
+    height: int = 0
+
+
+class AnimaticUploadResponse(BaseModel):
+    """Returned from POST /animatics/{id}/images — uploads in the order sent."""
+
+    items: list[AnimaticMediaItem] = Field(default_factory=list)
+    # Files that couldn't be read, so the UI can name them instead of silently
+    # dropping them from a 40-file drag-and-drop.
+    rejected: list[str] = Field(default_factory=list)
+
+
+class AnimaticAudioResponse(BaseModel):
+    """Returned from POST /animatics/{id}/audio."""
+
+    upload_id: str
+    filename: str = ""
+    url: str
 
 
 class PublicStoryboard(BaseModel):

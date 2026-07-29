@@ -331,6 +331,117 @@ export async function downloadStoryboardBundle(jobId, filename) {
   URL.revokeObjectURL(url);
 }
 
+// --- Storyboard → Animatic -------------------------------------------------
+// A saved animatic IS a job (kind "animatic"), the same call the storyboard
+// library made. Nothing here costs AI quota — it's images, timing and audio.
+
+// Start a new animatic. Pass `sourceStoryboardId` alone and the server fills the
+// sequence with that board's drawn panels (the board's "Make animatic" button).
+export function createAnimatic({
+  title,
+  sourceStoryboardId,
+  settings,
+  frames,
+  defaultDurationMs,
+} = {}) {
+  return request("/animatics", {
+    method: "POST",
+    body: {
+      title: title || null,
+      source_storyboard_id: sourceStoryboardId || null,
+      settings: settings || null,
+      frames: frames || [],
+      default_duration_ms: defaultDurationMs || 2000,
+    },
+  });
+}
+
+export function listAnimatics() {
+  return request("/animatics");
+}
+export function getAnimatic(id) {
+  return request(`/animatics/${id}`);
+}
+
+// Save the edited project. Every field is optional; removing the audio needs
+// `clear_audio: true`, because `audio: null` can't be told apart from "not sent".
+export function saveAnimatic(id, { title, settings, frames, audio, clearAudio } = {}) {
+  const body = {};
+  if (title !== undefined) body.title = title;
+  if (settings !== undefined) body.settings = settings;
+  if (frames !== undefined) body.frames = frames;
+  if (audio !== undefined) body.audio = audio;
+  if (clearAudio) body.clear_audio = true;
+  return request(`/animatics/${id}`, { method: "PUT", body });
+}
+
+export function deleteAnimatic(id) {
+  return request(`/animatics/${id}`, { method: "DELETE" });
+}
+
+// Upload images into an animatic. They're stored but NOT sequenced — the client
+// decides the order and saves the project afterwards.
+export function uploadAnimaticImages(id, files) {
+  const fd = new FormData();
+  for (const file of files) fd.append("files", file);
+  return request(`/animatics/${id}/images`, { method: "POST", body: fd, isForm: true });
+}
+
+export function uploadAnimaticAudio(id, file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  return request(`/animatics/${id}/audio`, { method: "POST", body: fd, isForm: true });
+}
+
+// Encode the MP4 (async — poll getJob(id) for progress, same as a board).
+export function exportAnimatic(id) {
+  return request(`/animatics/${id}/export`, { method: "POST" });
+}
+export function stopAnimaticExport(id) {
+  return request(`/animatics/${id}/stop`, { method: "POST" });
+}
+
+// Frames and audio live behind the bearer token, so an <img>/<audio> src can't
+// point straight at them — fetch as a blob and hand back an object URL. The
+// CALLER owns the URL and must revoke it.
+export async function fetchAnimaticMedia(path) {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Media not available");
+  return URL.createObjectURL(await res.blob());
+}
+
+export async function downloadAnimaticVideo(id, filename) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetchWithRetry(`${BASE}/animatics/${id}/video`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "animatic.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // --- Metadata ---
 export function listTemplates() {
   return request("/templates");

@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-26 (Stop in both workflows; workflows unmixed; ZIP names; script panel)
+**Last updated:** 2026-07-29 (Storyboard → Animatic: timeline editor + MP4 export)
 
 ---
 
@@ -68,11 +68,14 @@ Pipeline stages (see `pipeline.py`):
 | `prompts.yaml` | Prompt templates + per-template `parts_order`. Subject types: `default` (human, gender inferred), `human_male`, `human_female`, `robot`, `animal`, `bird`, `monster`, `ghost`. Global `parts_order` fallback. |
 | `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
 | `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
+| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + audio → MP4. The ONLY module that knows ffmpeg exists. Spends no AI quota. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
 | File | Responsibility |
 |------|----------------|
-| `server/main.py` | FastAPI app, all endpoints, provider validation. |
+| `server/main.py` | FastAPI app, most endpoints, provider validation. |
+| `server/animatics.py` | `/animatics` router: animatic CRUD, media upload, frame/audio serving, export, stop. |
+| `server/common.py` | Helpers shared by `main.py` and `animatics.py` (`get_owned_job`, `board_dir`, `variants_of`, `panel_path`). They live here so the two route modules don't import each other. |
 | `server/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
 | `server/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
 | `server/jobs.py` | Job store: Firestore (default) + in-memory fallback. |
@@ -94,6 +97,12 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/GenerateForm.jsx` | Describe/Upload tabs (drag-and-drop), subject-type dropdown, parts multi-select chips + custom asset. |
 | `client/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
 | `client/src/components/JobDetail.jsx` | Live progress bar + per-section skeletons, incremental gallery, per-view/section regenerate, failed-part retry, per-section download + 3D popup. |
+| `client/src/components/StoryboardToAnimatics.jsx` | Animatics workflow shell: library ⇄ one open animatic. |
+| `client/src/components/AnimaticLibrary.jsx` | "Your Animatics" grid + New (blank) / From a storyboard. |
+| `client/src/components/AnimaticEditor.jsx` | The editor: preview, transport, autosave, export. **Audio is the playback clock** (see the Work Log). |
+| `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
+| `client/src/components/Timeline.jsx` | Proportional bars + ruler + playhead; drag a bar's right edge to change a hold. Exports `formatTime`. |
+| `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
 | `client/src/styles.css` | Dark + champagne-gold theme. |
 
 ### API endpoints
@@ -114,7 +123,11 @@ Pipeline stages (see `pipeline.py`):
 - `POST /jobs/{id}/stop` — stop a running job (any kind): finishes the work in flight, skips the rest, keeps what was generated. `POST /storyboards/{id}/stop` is the same helper for a board.
 - `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
 - `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
-- `GET /templates` · `GET /health`
+- **Storyboard → Animatic (`server/animatics.py`, kind `animatic`):**
+  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project (PUT is the editor's autosave; 409 while exporting) · `DELETE /animatics/{id}`
+  `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
+  `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
+- `GET /templates` · `GET /health` (also reports `ffmpeg`)
 
 ---
 
@@ -186,6 +199,9 @@ previews require a cloud run (not `local_only`).
 | `MONGODB_URI` / `MONGODB_DB` | User account store (default `mongodb://localhost:27017`). |
 | `API_JOB_STORE` | `firestore` (default) or `memory` (local dev). |
 | `API_MAX_WORKERS` | Concurrent pipeline jobs (default 2). |
+| `FFMPEG_BINARY` | Optional path to your own ffmpeg. Unset → PATH → the `imageio-ffmpeg` bundled binary. |
+| `API_MAX_AUDIO_BYTES` | Animatic audio upload cap (default 50 MB). |
+| `API_MAX_ANIMATIC_FRAMES` | Frames per animatic (default 500). |
 
 ---
 
@@ -219,6 +235,209 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-29 — Storyboard → Animatic: timeline editor + MP4 export (NEW WORKFLOW)
+
+- **Asked for:** a simple editor to sequence storyboard images, give each one its
+  own hold ("image 1 = 2 sec, image 5 = 5 sec"), drop an MP3 under it to see how
+  the cut plays against the audio, and export a video. Two ways in: a button on a
+  finished board, and manual upload of images one-by-one or as a sequence.
+- **The workflow is now live** — `storyboard-to-animatics` went from `soon` to a
+  real screen in `Sidebar.jsx`, and `App.jsx` routes it.
+- **It spends NO AI quota.** Images, timing, audio, one video encode. Worth
+  saying out loud, because every other workflow here bills per image.
+
+**Three decisions that shaped everything else**
+
+1. **Preview in the browser, export on the server.** Browser-side recording
+   (`MediaRecorder`) runs in REAL TIME — a 3-minute animatic takes 3 minutes and
+   yields WebM. Server ffmpeg does the same job in seconds and yields H.264 MP4.
+   `imageio-ffmpeg` is in `requirements.txt` so there is **no system install**;
+   resolution order is `FFMPEG_BINARY` → PATH → the bundled binary, and
+   `GET /health` now reports whether one was found.
+2. **Audio is the playback clock, never a timer.** `AnimaticEditor` reads
+   `<audio>.currentTime` on every `requestAnimationFrame` and picks the frame
+   whose slice contains it, so pictures cannot drift from sound — which is the
+   one thing the feature exists to let you check. If the track ends before the
+   sequence does, it falls back to a wall clock anchored fresh every frame, so
+   the handover is seamless instead of freezing.
+3. **A saved animatic IS a job** (`JobKind.ANIMATIC`) — the same call the
+   storyboard library made. The library is a view over `GET /animatics`, and
+   ownership, persistence and polling came for free. The job's **status describes
+   the EXPORT**: `queued` = draft never exported, `running` = encoding,
+   `succeeded` = a video exists, `failed` = last export failed (project still
+   editable).
+
+**Backend**
+
+- **`animatic.py`** — every frame is normalised with **Pillow** to the exact
+  video size BEFORE ffmpeg sees it. Uploads arrive at every size and the concat
+  demuxer needs them uniform; doing the letterbox/crop/label work in Python keeps
+  it out of an unreadable filter graph. Then one concat-demuxer pass.
+  - **Length is set by the FRAMES, not `-shortest`.** Output is cut at `-t <sum
+    of holds>`, so a short track can't truncate the video and a long one can't
+    stretch it. Both are tested against real files.
+  - The concat list repeats the last image with no duration — without that quirk
+    the demuxer drops the final frame and the animatic ends a picture early.
+  - Filenames in the list are RELATIVE to the list file, which sidesteps every
+    Windows path-quoting problem the demuxer has.
+  - Progress comes from `-progress pipe:1` (`key=value` lines, stable across
+    ffmpeg versions) rather than scraping human-readable stderr; stderr is
+    drained on a thread so a long error log can't deadlock the pipe.
+  - A frame whose file has vanished is **skipped and reported**, not fatal.
+    Cancel is checked between frames and during encoding (`cancel.py`, shared
+    with both other workflows).
+- **`server/animatics.py`** — frames reference board panels **by index, never by
+  copy**, and are resolved through the board's ACTIVE style variant on every
+  request. Re-draw or re-style a panel and the animatic picks it up with nothing
+  to re-import (verified by decoding the exported pixels).
+  - **The security bit worth knowing:** frames are user-editable JSON, so a
+    crafted `storyboard_id` would otherwise read another account's panels.
+    `_resolve_frame_path` checks `board.owner == job.owner`, and `upload_id` must
+    match `^[a-f0-9]{6,32}$` before it becomes a filename.
+  - Saving is refused (409) while an export runs — the encoder is reading those
+    exact frames. Editing after an export marks the video `stale` rather than
+    deleting it; the old cut is still worth having until the new one exists.
+- **`server/common.py` (new)** — `get_owned_job` / `board_dir` / `variants_of` /
+  `panel_path` moved out of `main.py` so the two route modules don't import each
+  other. `main.py` imports them under their old private names, so its ~30 call
+  sites are untouched.
+
+**Client**
+
+- `AnimaticEditor` + `FrameStrip` + `Timeline` + `Waveform` + `AnimaticLibrary` +
+  `StoryboardToAnimatics`. **No new npm dependency** — the waveform is decoded
+  with WebAudio and drawn on a canvas; peaks are computed ONCE at 4000 buckets
+  and re-bucketed for the canvas, so zooming never re-decodes the MP3.
+- **A hold can be set three ways**, because different moments want different
+  ones: typed on the frame card, dragged on the timeline (snapped to 100 ms), or
+  bulk "set all to 1/2/3/5s". **"⇔ Fit frames to audio"** scales every hold and
+  puts the rounding remainder on the last frame so the total is EXACT.
+- Autosave is debounced 900 ms, paused during an export, and flushed on unmount.
+- Multi-file drops are sorted by filename with `numeric: true`, so `01.png …
+  12.png` lands in the order the user named them.
+- Defaults chosen (and stated in the UI): **letterbox**, 1920-long-edge, 24 fps,
+  shot labels **off**. A cropped storyboard frame is a frame you can't read.
+
+**Verified — no AI quota spent, real files throughout**
+
+- `animatic.py`: 38 checks. Real MP4s written and **read back with ffmpeg**:
+  8.5s of holds → a genuinely 8.5s file; 20s audio doesn't stretch it; 3s audio
+  doesn't truncate it; 9:16 really is 1080×1920; letterbox bars and cover-crop
+  checked per-pixel; missing frames skipped and reported; cancel writes nothing
+  and cleans up; progress is monotonic and ends at 100; a throwing progress
+  callback doesn't kill the export.
+- API: 63 checks through a real `TestClient` — upload/save/serve, export → poll →
+  download, stale-after-edit, from-board (drawn panels only, failed panel skipped
+  without renumbering, board aspect inherited), cross-user 404s on every route,
+  traversal refused, a frame pointing at another user's board serves nothing and
+  can't be exported, all four 409 guards, 413/422 limits, and animatics staying
+  out of both other lists.
+- Board→video: exported a restyled board and **decoded the pixels** — the active
+  variant's art is what lands in the MP4, and a re-drawn panel appears on the
+  next export.
+- `npm run build` clean (60 modules).
+- **NOT done:** never clicked through in a browser. The drag interactions
+  (reorder, edge-resize, playhead scrub) and the waveform are unexercised by any
+  test — worth one manual pass. No transitions/crossfades, no Ken Burns, no
+  burned-in dialogue, single audio track only.
+
+**⚠️ Incident during this work — read if CSS looks wrong.** `git checkout --
+client/src/styles.css` was run to undo a bad encoding-mangled append; the repo
+was NOT clean (the session's git snapshot said it was), so it destroyed 38 lines
+of **uncommitted** CSS: `.style-note` and the four `.scene-divider*` rules from
+the 2026-07-26 scene-division work. All five were **recovered byte-for-byte from
+`client/dist/assets/*.css`** (the previous production build) and re-expanded at
+the end of the file, where they had been. Verified: every class present in that
+build is present in the source again. The only thing not recoverable is any
+comment that sat above them (comments are stripped from a build) — one 2-line
+comment was written fresh. **Commit early; the working tree here carries
+uncommitted work from several sessions.**
+
+### 2026-07-26 — Scenes are actually divided now (everything was "Scene 1")
+
+- **Reported:** every panel on the finished board said SCENE 1 — the AI wasn't
+  dividing the script into scenes at all.
+- **Cause:** the breakdown prompt said only *"scene_number: which scene it
+  belongs to (start at 1)"*. It never said what a scene IS, so for a short
+  continuous story the model put everything in scene 1 — technically obeying the
+  instruction. `shot_number` was also asked for as a running index across the
+  whole script, which is not how boards are labelled.
+- **Prompt now defines the boundary:** a scene is one continuous action in ONE
+  place at ONE time; start a new scene on a location change, a time jump, or a
+  clearly separate beat; returning to an earlier location later is a NEW number;
+  numbers only go up. With the explicit example that forest-by-day → tree-at-
+  night → next-morning is three scenes, and the caveat that a script which truly
+  never leaves one place is legitimately one scene. `shot_number` now restarts
+  at 1 inside each scene.
+- **`_normalise_scenes()` repairs it deterministically** — a prompt alone can't
+  be trusted for something this structural:
+  1. Renumber 1..N **by run**, so gaps vanish and revisits become new scenes:
+     `[1,1,5,5,1] → [1,1,2,2,3]`.
+  2. **The targeted repair for the reported bug:** if that still leaves ONE scene
+     for the whole board but the shots name ≥2 distinct locations, scenes are
+     re-derived from consecutive runs of `location` — a change of place is the
+     one boundary inferable from the data with confidence. A single location
+     stays a single scene, so no breaks are invented.
+  3. `shot_number` rewritten as position within its scene.
+- **Review page now SHOWS the division:** a full-width scene divider
+  (`grid-column: 1 / -1`) appears wherever the scene changes, with the location
+  and the shot count for that scene; each card's tag reads "Scene 2 · Shot 1".
+  The board tile and the PDF pill pick up the corrected numbers for free.
+  The board keeps its global "Shot 7" label — that's what the ZIP filenames use.
+- **Verified** on the exact failing shape (6 shots, all scene 1, three locations)
+  → 1/1, 1/2, 2/1, 2/2, 2/3, 3/1; plus single-location stays one scene, an
+  already-correct breakdown is left alone, `[1,1,5,5,1]` normalises, missing and
+  junk values don't crash, and an empty shot list is a no-op. A full-chain check
+  confirms scene numbering doesn't disturb script-line tracing and the result
+  still satisfies the `Shot` API model. `npm run build` clean. No live breakdown
+  run — how well the model divides scenes on its own is now backed by the
+  location fallback either way.
+
+### 2026-07-26 — "Rough Sketch": new DEFAULT style that skips cast + props
+
+- **Asked for:** a real storyboard-thumbnail look (user supplied reference
+  images: grey-marker animation boards, Wall-E thumbs, pencil fight beats) as a
+  NEW style called Rough Sketch — the old `sketch` kept — made the default, and
+  with the cast and props/backgrounds steps **removed for that style only**.
+  Every other style keeps today's flow untouched.
+- **The cost question they asked first, answered honestly:** per-image billing
+  doesn't care about style — a rough sketch and a photoreal frame at the same
+  size cost the same. Simple is cheaper *indirectly*: there's no rendered detail
+  to come out wrong, so far fewer re-draws, and with Rough Sketch there are also
+  **zero reference images to generate** (a 15-shot board with 3 refs drops from
+  ~18 images to 15).
+- **`gemini_client.py`:** new `rough-sketch` entry in `_STORYBOARD_STYLE_PROMPTS`
+  — deliberately the longest one in the dict, because it has to fight the
+  model's pull toward rendering: white paper, greyscale, flat marker tones in
+  **two or three values**, visible construction lines, silhouette-first posing,
+  background only where the shot needs it, and explicit no-colour /
+  no-photorealism / no-fine-detail. The old `sketch` string is **byte-identical**
+  — verified by assertion, not by eye.
+- **`REFERENCE_FREE_STYLES`** (a Set in `ScriptToStoryboard.jsx`) is the single
+  definition of "this style needs no reference images"; `skipsRefs()` reads it
+  from the EFFECTIVE style, so switching style anywhere — including inside the
+  pre-flight modal — re-routes the flow immediately. It drives four things:
+  `handleReviewNext` launching straight past cast/props, the review button
+  reading "🎬 Generate panels" instead of "🎭 Next: cast", the modal's
+  cast/props section becoming an explanation, and the how-it-works list losing
+  step 4 (and renumbering) so the default user isn't promised a step they'll
+  never see.
+- **`startStoryboard` strips refs when `skipsRefs()`** even if some were already
+  set up and the user then switched style in the modal — otherwise the modal's
+  "not used by this style" would be a lie.
+- `DEFAULT_STYLE` is now `rough-sketch`; `RESTYLE_OPTIONS` on the board offers it
+  too, so an expensive board can be re-cast down into thumbnails. A note under
+  the style chips states the trade-off both ways (rough = no cast step, cheap /
+  detailed = locked refs, more images).
+- **Unchanged on purpose:** the WORLD block still reaches every Rough Sketch
+  panel — culture and period matter just as much in a grey thumbnail, and it
+  costs nothing.
+- **Verified:** the prompt builder resolves `rough-sketch` to the new art
+  direction, `sketch` to the old string unchanged, `cinematic` untouched, all 18
+  style entries intact; `npm run build` clean. **No image was actually generated**
+  (that costs quota) — how closely the model matches the reference boards is
+  unmeasured. Draw 2 panels and Stop before committing to a full board.
 
 ### 2026-07-26 — "⏹ Stop generation" in Text to Image too
 

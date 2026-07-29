@@ -6,7 +6,7 @@
 export const WORKFLOWS = [
   { id: "text-to-image", label: "Text to Image", icon: "🖼️", status: "live" },
   { id: "script-to-storyboard", label: "Script to Storyboard", icon: "📝", status: "live" },
-  { id: "storyboard-to-animatics", label: "Storyboard to Animatics", icon: "🎬", status: "soon" },
+  { id: "storyboard-to-animatics", label: "Storyboard to Animatics", icon: "🎬", status: "live" },
   { id: "animatics-to-video", label: "Animatics to Final Video", icon: "🎞️", status: "soon" },
   { id: "final-video-export", label: "Final Video Export", icon: "🎥", status: "soon" },
 ];

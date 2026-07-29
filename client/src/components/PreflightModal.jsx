@@ -14,6 +14,9 @@ export default function PreflightModal({
   shots,
   cast,
   assets,
+  // True when the chosen style draws straight from the prompts (Rough Sketch),
+  // so the cast + props steps were skipped and no references will be sent.
+  refsSkipped,
   charRefs,
   assetRefs,
   savedCast,
@@ -196,7 +199,19 @@ export default function PreflightModal({
             <WorldSetting world={world} onChange={onWorld} collapsible />
           </section>
 
-          {(cast.length > 0 || assets.length > 0) && (
+          {refsSkipped ? (
+            <section className="pf-section">
+              <h3 className="pf-h3">Cast, props &amp; backgrounds</h3>
+              <p className="tiny muted pf-note">
+                Not used by this style — a rough thumbnail has no rendered faces
+                or sets to keep consistent, so panels are drawn straight from the
+                prompts below. That's {cast.length + assets.length} reference
+                image{cast.length + assets.length === 1 ? "" : "s"} you don't
+                have to generate. Switch to another style above if you want
+                locked characters and locations.
+              </p>
+            </section>
+          ) : (cast.length > 0 || assets.length > 0) && (
             <section className="pf-section">
               <h3 className="pf-h3">
                 Cast, props &amp; backgrounds ({cast.length + assets.length})

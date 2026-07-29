@@ -138,8 +138,18 @@ _PROMPT_TEMPLATE = (
     "AND an asset list.\n"
     "Return between 1 and {max_shots} shots, in reading order.\n"
     "For each shot provide:\n"
-    "  - scene_number: which scene it belongs to (start at 1)\n"
-    "  - shot_number: sequential shot index across the whole script (start at 1)\n"
+    "  - scene_number: which SCENE this shot belongs to, starting at 1. A scene is "
+    "one continuous piece of action in ONE place at ONE time. Start a NEW scene "
+    "(next number) whenever the location changes, whenever time jumps (night → "
+    "morning, 'later that day', 'years passed'), or whenever the story moves to a "
+    "clearly separate beat. Returning to an earlier location LATER is a new scene "
+    "number, not a repeat of the old one. Scene numbers only ever go up, and every "
+    "shot in the same scene shares the same number. Do NOT put a whole script in "
+    "scene 1 — a story that moves from a forest by day, to a tree at night, to the "
+    "next morning is THREE scenes. Only use a single scene when the script genuinely "
+    "never leaves one place or time.\n"
+    "  - shot_number: this shot's position WITHIN its scene, restarting at 1 in "
+    "each new scene (so scene 2's first shot is shot_number 1)\n"
     "  - description: one vivid sentence describing what we SEE in this panel\n"
     "  - script_excerpt: the EXACT sentence(s) from the script THIS shot is drawn "
     "from, copied VERBATIM — same words, same spelling, no paraphrasing, no "
@@ -437,6 +447,59 @@ def _coerce_shots(raw) -> list[dict]:
     return shots
 
 
+def _normalise_scenes(shots: list[dict]) -> None:
+    """Fix up scene / shot numbering in place, deterministically.
+
+    The model is asked to divide the script into scenes, but it can still hand
+    back something unusable — most often EVERY shot in scene 1. Three repairs,
+    none of which invent information:
+
+    1. Scenes are renumbered 1..N by RUN: the number increments each time the
+       model's value changes. Screenplay convention is that coming back to an
+       earlier location later is a new scene, so [1,1,2,2,1] → [1,1,2,2,3] and
+       scene numbers never go backwards or leave gaps.
+    2. If that still leaves the whole board in one scene BUT the shots name two
+       or more different locations, the scenes are re-derived from consecutive
+       runs of `location` — a change of place is the one scene boundary we can
+       infer from the data with confidence. A single location stays one scene.
+    3. `shot_number` is rewritten as the shot's position within its scene, so it
+       always agrees with the scene numbering above it.
+    """
+    if not shots:
+        return
+
+    def _by_runs(key) -> int:
+        """Number consecutive runs of `key(shot)` 1..N. Returns the last number."""
+        scene = 0
+        previous = object()  # sentinel: never equal to a real key
+        for shot in shots:
+            current = key(shot)
+            if current != previous:
+                scene += 1
+                previous = current
+            shot["scene_number"] = scene
+        return scene
+
+    last = _by_runs(lambda s: s.get("scene_number", 1))
+
+    if last == 1:
+        places = [str(s.get("location", "")).strip().lower() for s in shots]
+        if len({p for p in places if p}) > 1:
+            logger.info(
+                "[breakdown] Model put every shot in scene 1 — deriving scenes "
+                "from %d distinct locations instead.", len({p for p in places if p})
+            )
+            _by_runs(lambda s: str(s.get("location", "")).strip().lower())
+
+    # Shot numbers restart inside each scene.
+    position, current_scene = 0, None
+    for shot in shots:
+        if shot["scene_number"] != current_scene:
+            current_scene, position = shot["scene_number"], 0
+        position += 1
+        shot["shot_number"] = position
+
+
 def _coerce_characters(raw) -> list[dict]:
     """Normalise the cast list; dedupe by name (case-insensitive)."""
     if not isinstance(raw, list):
@@ -595,16 +658,19 @@ def break_down_script(
             assets_raw = raw.get("assets") if isinstance(raw, dict) else []
             world = _coerce_world(raw.get("world") if isinstance(raw, dict) else None)
             shots = _coerce_shots(shots_raw)
+            # Sequential scenes + per-scene shot numbers, whatever the model did.
+            _normalise_scenes(shots)
             # Tie each shot back to the lines it came from (drops quotes that
             # aren't actually in the script).
             _attach_script_lines(shots, text)
             characters = _coerce_characters(chars_raw)
             assets = _coerce_assets(assets_raw)
             traced = sum(1 for s in shots if s.get("script_line"))
+            scenes = shots[-1]["scene_number"] if shots else 0
             logger.info(
-                "[breakdown] Produced %d shots (%d traced to script lines), "
-                "%d characters, %d assets. World: %s / %s",
-                len(shots), traced, len(characters), len(assets),
+                "[breakdown] Produced %d shots in %d scene(s) (%d traced to "
+                "script lines), %d characters, %d assets. World: %s / %s",
+                len(shots), scenes, traced, len(characters), len(assets),
                 world.get("culture") or "—", world.get("ethnicity") or "—",
             )
             return {

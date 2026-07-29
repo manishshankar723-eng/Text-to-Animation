@@ -57,6 +57,11 @@ def submit_restyle_job(job_id: str, kwargs: dict):
     _executor.submit(_run_restyle, job_id, kwargs)
 
 
+def submit_animatic_export(job_id: str, kwargs: dict):
+    """Enqueue an animatic MP4 export (Storyboard → Animatic)."""
+    _executor.submit(_run_animatic_export, job_id, kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Job bodies (run inside worker threads)
 # ---------------------------------------------------------------------------
@@ -211,6 +216,90 @@ def _run_restyle(job_id: str, kwargs: dict):
     except Exception as e:  # noqa: BLE001
         store.mark_failed(job_id, f"{type(e).__name__}: {e}")
         logger.exception("[job %s] restyle crashed.", job_id)
+
+
+def _run_animatic_export(job_id: str, kwargs: dict):
+    """Encode an animatic to MP4 off-request, updating the SAME job.
+
+    The job's status describes the export, not the project: the frames and audio
+    are still there whatever happens, so a failed export leaves an editable
+    animatic behind rather than a broken one.
+    """
+    from datetime import datetime, timezone
+
+    from animatic import AnimaticError, build_animatic
+    from cancel import clear_cancel, is_cancelled
+
+    store = get_store()
+    # A stop flag left over from an earlier export must not kill this one.
+    clear_cancel(job_id)
+    logger.info("[job %s] animatic export started (%d frames)", job_id, len(kwargs.get("frames") or []))
+
+    def _progress(update: dict):
+        try:
+            store.update(job_id, progress=update)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the export
+            logger.debug("[job %s] animatic progress update failed (ignored)", job_id, exc_info=True)
+
+    try:
+        summary = build_animatic(
+            job_id=job_id,
+            progress_cb=_progress,
+            cancel_check=lambda: is_cancelled(job_id),
+            **kwargs,
+        )
+
+        if summary.get("stopped"):
+            # Nothing was written, so the PREVIOUS video (if any) is still the
+            # truth — keep it, and drop back to whichever state that implies.
+            job = store.get(job_id)
+            previous = dict((job.result if job else None) or {})
+            store.update(
+                job_id,
+                status=JobStatus.SUCCEEDED if previous.get("video") else JobStatus.QUEUED,
+                result=previous or None,
+                progress=None,
+            )
+            logger.info("[job %s] animatic export STOPPED by user", job_id)
+            return
+
+        store.update(
+            job_id,
+            status=JobStatus.SUCCEEDED,
+            error=None,
+            progress=None,
+            result={
+                "video": {
+                    "url": f"/animatics/{job_id}/video",
+                    "exported_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": summary.get("duration_ms", 0),
+                    "frame_count": summary.get("frame_count", 0),
+                    "skipped_frames": summary.get("skipped_frames") or [],
+                    "width": summary.get("width"),
+                    "height": summary.get("height"),
+                    "fps": summary.get("fps"),
+                    "has_audio": summary.get("has_audio", False),
+                    "size_bytes": summary.get("size_bytes", 0),
+                    # False until the project is edited again (see save_animatic).
+                    "stale": False,
+                }
+            },
+        )
+        logger.info(
+            "[job %s] animatic exported: %d frame(s), %.1fs",
+            job_id, summary.get("frame_count", 0), summary.get("duration_ms", 0) / 1000,
+        )
+
+    except AnimaticError as e:
+        # Deliberately shown verbatim — these messages are written for the user
+        # (missing ffmpeg, no readable frames) and tell them what to do next.
+        store.update(job_id, status=JobStatus.FAILED, error=str(e), progress=None)
+        logger.error("[job %s] animatic export failed: %s", job_id, e)
+    except Exception as e:  # noqa: BLE001
+        store.update(job_id, status=JobStatus.FAILED, error=f"{type(e).__name__}: {e}", progress=None)
+        logger.exception("[job %s] animatic export crashed.", job_id)
+    finally:
+        clear_cancel(job_id)
 
 
 def _run_meshy(job_id: str, part_urls: dict, api_key: str | None, provider: str = "meshy"):

@@ -30,7 +30,15 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from . import config
 from . import users
+from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
+# Shared with the animatics router — they live in common.py so the two route
+# modules don't have to import each other. Aliased to the names used below.
+from .common import (
+    board_dir as _board_dir,
+    get_owned_job as _get_owned_job,
+    variants_of as _variants_of,
+)
 from .jobs import get_store
 from .schemas import (
     AssetItem,
@@ -84,6 +92,9 @@ app.add_middleware(
 
 # Mount authentication routes (/auth/register, /auth/login, /auth/me).
 app.include_router(auth_router)
+# Storyboard → Animatic (/animatics/…). Its own module: it shares nothing with
+# the image pipeline and spends no AI quota.
+app.include_router(animatics_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]
@@ -110,17 +121,6 @@ def _split_csv(value: str | None) -> list[str] | None:
 def _load_config() -> dict:
     with open(config.CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def _get_owned_job(job_id: str, current: CurrentUser) -> Job:
-    """Fetch a job, returning 404 if it doesn't exist OR isn't owned by the caller.
-
-    Using 404 (not 403) for the not-owned case avoids leaking which job ids exist.
-    """
-    job = get_store().get(job_id)
-    if job is None or job.owner != current.email:
-        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
-    return job
 
 
 def _safe_filename(name: str, fallback: str = "item") -> str:
@@ -161,29 +161,6 @@ def _ref_is_generated(ref_png_path: str) -> bool:
         return True
 
 
-def _variants_of(result: dict) -> tuple[list[dict], int]:
-    """Return (variants, active_index) for a storyboard result.
-
-    Older results (pre-restyle) have no `variants` list — synthesise a single
-    variant 0 from the flat panels/style so every code path can treat boards
-    uniformly.
-    """
-    result = result or {}
-    variants = result.get("variants")
-    if not variants:
-        variants = [
-            {
-                "style": result.get("style"),
-                "panels": result.get("panels") or [],
-                "ok_count": result.get("ok_count", 0),
-            }
-        ]
-    active = int(result.get("active_variant", 0) or 0)
-    if active < 0 or active >= len(variants):
-        active = 0
-    return variants, active
-
-
 # ---------------------------------------------------------------------------
 # Health & metadata
 # ---------------------------------------------------------------------------
@@ -201,6 +178,14 @@ def health(check_db: bool = True):
         "insecure_dev_jwt_secret": config.JWT_SECRET_IS_DEV,
         "default_image_provider": os.environ.get("IMAGE_PROVIDER", "vertex"),
     }
+    # Animatic export needs ffmpeg. Reported rather than assumed, so a missing
+    # binary shows up here instead of only when an export fails.
+    try:
+        from animatic import ffmpeg_available
+
+        body["ffmpeg"] = ffmpeg_available()
+    except Exception:  # noqa: BLE001 — health must never 500
+        body["ffmpeg"] = False
     if check_db:
         mongo = users.check_connection()
         body["mongodb"] = mongo
@@ -547,10 +532,6 @@ def create_storyboard(
 # with their shots, style and panels, so the library is a view over them rather
 # than a second store that could drift out of sync.
 # ---------------------------------------------------------------------------
-def _board_dir(job_id: str) -> str:
-    return os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
-
-
 def _drawn_panels(job: Job) -> list[tuple[int, str]]:
     """(index, serve-url) for panels that actually have an image, in board order.
 

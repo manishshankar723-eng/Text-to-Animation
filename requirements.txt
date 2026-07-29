@@ -10,6 +10,11 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
+# --- Animatic export (Storyboard → Animatic) ---
+# Ships a static ffmpeg binary, so exporting video needs no system install.
+# Override with FFMPEG_BINARY if you'd rather use your own build.
+imageio-ffmpeg>=0.4.9
+
 # --- Auth (JWT login + MongoDB user store) ---
 pyjwt>=2.8.0
 bcrypt>=4.1.0
