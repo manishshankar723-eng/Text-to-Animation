@@ -98,7 +98,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
 | `client/src/components/JobDetail.jsx` | Live progress bar + per-section skeletons, incremental gallery, per-view/section regenerate, failed-part retry, per-section download + 3D popup. |
 | `client/src/components/StoryboardToAnimatics.jsx` | Animatics workflow shell: library ⇄ one open animatic. |
-| `client/src/components/AnimaticLibrary.jsx` | "Your Animatics" grid + New (blank) / From a storyboard. |
+| `client/src/components/AnimaticLibrary.jsx` | "Your Animatics": New / From a Storyboard tiles + Recent / All sections. **Mirrors `StoryboardLibrary.jsx` and shares its `.lib-*` styles** — change a card in one, change it in both. |
 | `client/src/components/AnimaticEditor.jsx` | The editor: preview, transport, autosave, export. **Audio is the playback clock** (see the Work Log). |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
 | `client/src/components/Timeline.jsx` | **Three tracks** (🖼 Images / T Text / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
@@ -236,6 +236,75 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-30 — Rename icon is a pencil now, not a cog (user-reported)
+
+- **Reported:** the ⚙ rename button doesn't read as "rename" at a glance.
+- Swapped to **✏️ (U+270F U+FE0F)** on **both** library cards — the storyboard
+  one and the animatic one — since they share the same card design and a split
+  would be worse than the original problem. Those were the only two rename
+  affordances in the app; the animatic editor renames by typing straight into
+  its title field, so it needs no icon.
+- Tooltips sharpened at the same time: "Rename" → "Rename this storyboard" /
+  "Rename this animatic", so hover confirms what the pencil will touch.
+- **Verified:** grepped for any remaining ⚙ used as an icon (none), and checked
+  the codepoints in both buttons are U+270F U+FE0F rather than trusting how the
+  glyph renders in a terminal (the Windows console can't print it at all).
+  `npm run build` clean. **NOT viewed in a browser.**
+
+### 2026-07-30 — A ＋ on every timeline layer, not just Text (user request)
+
+- **Asked for:** the same ＋ the Text layer has, on the Audio layer too.
+- Added there, **and on Images** — with two of the three carrying it the odd one
+  out would have looked like a missing feature. All three gutter rows now behave
+  identically: ＋ adds to that layer.
+- **The empty band of a layer is now itself the button** ("♪ No audio yet —
+  click to add an MP3…"), which is the thing people actually reach for. It
+  stops the pointer event so it can't scrub instead, and nothing is lost: with
+  no waveform there's nothing there to scrub against, and the ruler still does.
+- **One hidden `<input>` per media type, at the editor level.** The audio picker
+  used to be a `<label>` wrapping its own input inside the tools row, which the
+  timeline couldn't reach; it's now a ref'd input that both entry points click.
+  `FrameStrip` keeps its own image picker (it needs one for drop-at-index), but
+  both routes end in `addFiles()` — the single place an upload becomes frames.
+- **Verified:** a script asserting all three gutter rows render a `tl-layer-add`
+  button and that all three `onAdd*` props are wired from the editor.
+  `npm run build` clean. **NOT clicked through in a browser.**
+
+### 2026-07-30 — "Your Animatics" rebuilt to match "Your Storyboards" (user-reported)
+
+- **Reported:** the two library pages didn't look like the same product. The
+  animatics page had its own header wording, its own card layout and its own
+  bespoke `.an-lib-*` styles, while the storyboard page had the New tile plus
+  **Recent / All** sections, chips and icon actions.
+- **`AnimaticLibrary.jsx` now mirrors `StoryboardLibrary.jsx` structurally** —
+  same `workflow-header`, same `card lib-new` tile, the same `renderItem` /
+  `renderSection` split, the same loading ghosts and empty-state card, the same
+  `chip` meta row and `lib-icon` action row, the same delete confirm. The whole
+  bespoke `.an-lib-*` CSS block is **deleted**; both pages now draw from one set
+  of `.lib-*` rules, so a change to a card lands on both.
+- **Two New tiles sit in the `lib-new-row`** — "New Animatic" and "From a
+  Storyboard" — instead of the old mixed grid, so both ways in are one click and
+  the sections below hold only real projects.
+- Card actions are the animatic equivalents of the board's: ⬇ (download the MP4,
+  only when one exists), ▶ Open, ⚙ Rename, 🗑 Delete. There is no share icon —
+  animatics have no public link, and inventing one would have meant a new
+  token-gated route.
+- **The one deliberate difference:** running time on the thumbnail
+  (`.lib-badge.time`, bottom-right). A storyboard card has no equivalent, and
+  it's the convention every video tile follows.
+- Copied two hard-won details from the board library rather than re-learning
+  them: per-card state is keyed `"<section>:<job_id>"` (the same card renders in
+  Recent *and* All, and a shared key made rename steal focus), and the section is
+  a render **function**, not a nested component, or React remounts it on every
+  keystroke.
+- Also picked up the 5s refresh while an export is running, so a card made this
+  session fills in instead of sitting on "Exporting…" until a reload.
+- **Verified:** a script comparing the class vocabulary of both files —
+  **42 shared layout classes**, with only `lib-share` (boards only) and
+  `spinner-inline` (the picker) differing. `npm run build` clean; grepped for
+  leftover `an-lib-*` / `an-from-board` references — none. **NOT viewed in a
+  browser.**
 
 ### 2026-07-30 — Animatic TEXT layer (3 tracks) + an export-length bug found on the way
 

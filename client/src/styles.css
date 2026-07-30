@@ -3081,6 +3081,9 @@ input[type="checkbox"] {
 /* =========================================================================
    STORYBOARD LIBRARY ("Your Storyboards" — step 1 of Script → Storyboard)
    ========================================================================= */
+/* Shared by BOTH project libraries — "Your Storyboards" and "Your Animatics".
+   Every `.lib-*` rule below is used by both pages on purpose, so the two
+   workflows read as one product; change a card here and it changes in both. */
 .sb-library {
   max-width: 2200px;
   margin: 0 auto;
@@ -4756,83 +4759,18 @@ input[type="checkbox"] {
 }
 
 /* --- Library ------------------------------------------------------------ */
-.an-lib-thumb {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  background: var(--frame-bg);
-  border-radius: 9px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-.an-lib-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-.an-lib-len {
-  position: absolute;
-  right: 0.4rem;
-  bottom: 0.4rem;
-  background: rgba(0, 0, 0, 0.66);
+/* The animatics library REUSES the storyboard library's `.lib-*` classes so the
+   two workflows read as one product — see AnimaticLibrary.jsx. The only thing
+   it adds is the running time on the thumbnail, which a storyboard card has no
+   equivalent for. Bottom-right, the convention every video tile follows. */
+.lib-badge.time {
+  top: auto;
+  left: auto;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  background: rgba(0, 0, 0, 0.72);
   color: #fff;
-  font-size: 0.7rem;
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
   font-variant-numeric: tabular-nums;
-}
-.an-lib-badge {
-  position: absolute;
-  left: 0.4rem;
-  top: 0.4rem;
-  background: var(--gold-grad);
-  color: var(--gold-ink);
-  font-size: 0.68rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-}
-.an-lib-body {
-  padding-top: 0.6rem;
-}
-.an-lib-title {
-  margin: 0 0 0.25rem;
-  font-size: 0.95rem;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.an-lib-title:hover {
-  color: var(--primary);
-}
-.an-lib-rename {
-  width: 100%;
-  background: var(--panel-2);
-  border: 1px solid var(--primary);
-  border-radius: 6px;
-  color: var(--text);
-  padding: 0.25rem 0.4rem;
-  font-size: 0.9rem;
-  margin-bottom: 0.25rem;
-}
-.an-lib-meta {
-  font-size: 0.76rem;
-  line-height: 1.5;
-  margin: 0 0 0.6rem;
-}
-.an-lib-actions {
-  display: flex;
-  gap: 0.3rem;
-  flex-wrap: wrap;
-}
-.an-lib-empty {
-  padding: 1.2rem;
-}
-.an-from-board .lib-new-plus {
-  font-size: 1.6rem;
 }
 
 .an-pick-modal {
@@ -5042,6 +4980,22 @@ input[type="checkbox"] {
   color: var(--muted);
   padding: 0.45rem 0.6rem;
   user-select: none;
+}
+/* The empty band of a layer IS its add button — the obvious thing to click. */
+.tl-track-add {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-track-add:hover {
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
 }
 .tl-audio .tl-track-empty {
   padding: 0.9rem 0.7rem;

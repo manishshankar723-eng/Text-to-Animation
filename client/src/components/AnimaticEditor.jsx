@@ -10,7 +10,7 @@
 // nothing. Only "Export video" touches the server for real work.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
-import FrameStrip from "./FrameStrip.jsx";
+import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 
 const ZOOMS = [8, 16, 32, 64, 128, 256]; // pixels per second
@@ -126,6 +126,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [showSettings, setShowSettings] = useState(false);
 
   const textAreaRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   const loadedRef = useRef(false);
   const docRef = useRef(null); // latest project, for the unmount flush
   const dirtyRef = useRef(false);
@@ -549,6 +551,12 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     }
   }
 
+  // Opening the OS file dialog is the whole action for the audio layer, so both
+  // entry points (the tools row and the ＋ on the Audio track) share this.
+  function openAudioPicker() {
+    audioInputRef.current?.click();
+  }
+
   async function pickAudio(file) {
     if (!file) return;
     setError("");
@@ -896,18 +904,22 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         </div>
 
         <div className="an-tool-group">
-          <label className="an-audio-pick">
-            <input
-              type="file"
-              accept="audio/*"
-              hidden
-              onChange={(e) => {
-                pickAudio(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-            <span className="btn small">{audio ? "♪ Replace audio" : "♪ Add audio (MP3)"}</span>
-          </label>
+          {/* One hidden input for the whole editor: this button AND the ＋ on
+              the Audio layer in the timeline both open it, so there is a single
+              place that turns a chosen file into the track. */}
+          <input
+            ref={audioInputRef}
+            type="file"
+            accept="audio/*"
+            hidden
+            onChange={(e) => {
+              pickAudio(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <button type="button" className="btn small" onClick={openAudioPicker}>
+            {audio ? "♪ Replace audio" : "♪ Add audio (MP3)"}
+          </button>
           {audio && (
             <>
               <span className="an-audio-name" title={audio.filename}>
@@ -1006,7 +1018,25 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           onSeek={seek}
           onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
           onTextChange={patchText}
+          onAddImages={() => imageInputRef.current?.click()}
           onAddText={addText}
+          onAddAudio={openAudioPicker}
+          hasAudio={Boolean(audio)}
+        />
+
+        {/* The Images layer's ＋ opens this. The frame strip has its own picker
+            for the same job; both end up in addFiles(), which is the single
+            place an upload becomes frames. */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files?.length) addFiles(sortFiles(e.target.files));
+            e.target.value = "";
+          }}
         />
       </div>
 

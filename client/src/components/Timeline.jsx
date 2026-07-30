@@ -43,7 +43,12 @@ export default function Timeline({
   onSeek,
   onResize,
   onTextChange,
+  // Every layer carries the same ＋ in its gutter row, so "add to this layer"
+  // is one gesture wherever you are on the timeline.
+  onAddImages,
   onAddText,
+  onAddAudio,
+  hasAudio = false,
 }) {
   const trackRef = useRef(null);
   // While an edge or a clip is being dragged we show a DRAFT, so things move
@@ -191,6 +196,14 @@ export default function Timeline({
         <div className="tl-gutter-ruler" />
         <div className="tl-gutter-row" title="Your frames, in order">
           <span className="tl-layer-ico">🖼</span> Images
+          <button
+            type="button"
+            className="tl-layer-add"
+            onClick={onAddImages}
+            title="Add images to the end of the sequence"
+          >
+            ＋
+          </button>
         </div>
         <div className="tl-gutter-row" title="On-screen text, timed on its own">
           <span className="tl-layer-ico">T</span> Text
@@ -205,6 +218,14 @@ export default function Timeline({
         </div>
         <div className="tl-gutter-row" title="The audio track">
           <span className="tl-layer-ico">♪</span> Audio
+          <button
+            type="button"
+            className="tl-layer-add"
+            onClick={onAddAudio}
+            title={hasAudio ? "Replace the audio track" : "Add an audio track (MP3)"}
+          >
+            ＋
+          </button>
         </div>
       </div>
 
@@ -278,9 +299,14 @@ export default function Timeline({
               );
             })}
             {!texts.length && (
-              <div className="tl-track-empty">
-                T No text yet — press ＋ to caption the shot at the playhead
-              </div>
+              <button
+                type="button"
+                className="tl-track-empty tl-track-add"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={onAddText}
+              >
+                T No text yet — click to caption the shot at the playhead
+              </button>
             )}
           </div>
 
@@ -295,9 +321,17 @@ export default function Timeline({
                 offsetMs={audioOffsetMs}
               />
             ) : (
-              <div className="tl-track-empty">
-                ♪ No audio yet — add an MP3 to time against it
-              </div>
+              // The empty band is the obvious place to reach for, so it opens
+              // the picker itself. Nothing is lost: with no waveform there is
+              // nothing here to scrub against, and the ruler still scrubs.
+              <button
+                type="button"
+                className="tl-track-empty tl-track-add"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={onAddAudio}
+              >
+                ♪ No audio yet — click to add an MP3 to time against
+              </button>
             )}
           </div>
 

@@ -306,13 +306,13 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
                       type="button"
                       className="lib-icon"
                       disabled={busy}
-                      title="Rename"
+                      title="Rename this storyboard"
                       onClick={() => {
                         setRenameValue(b.title);
                         setRenamingId(uid);
                       }}
                     >
-                      ⚙
+                      ✏️
                     </button>
                     <button
                       type="button"
