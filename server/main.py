@@ -88,6 +88,12 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # Downloads are fetched as authed blobs, so the browser's own filename
+    # handling never runs — the client has to READ this header to name the file
+    # after the board. Response headers aren't visible to JS across origins
+    # unless they're exposed here, so without this every PDF saved as
+    # "storyboard.pdf" (and browsers deduped that to "storyboard (7).pdf").
+    expose_headers=["Content-Disposition"],
 )
 
 # Mount authentication routes (/auth/register, /auth/login, /auth/me).
@@ -128,9 +134,11 @@ def _safe_filename(name: str, fallback: str = "item") -> str:
 
     Punctuation becomes a space rather than an underscore, and runs collapse, so
     "Postmarked: After Death!" reads as "Postmarked After Death" instead of the
-    ragged "Postmarked_ After Death_".
+    ragged "Postmarked_ After Death_". Apostrophes are DELETED rather than
+    spaced, so "Kabir's Morning" stays "Kabirs Morning" and not "Kabir s".
     """
-    cleaned = "".join(c if c.isalnum() or c in "-_ " else " " for c in (name or ""))
+    name = (name or "").replace("'", "").replace("’", "")
+    cleaned = "".join(c if c.isalnum() or c in "-_ " else " " for c in name)
     return " ".join(cleaned.split()).strip(" -_") or fallback
 
 

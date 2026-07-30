@@ -48,7 +48,10 @@ export default function StoryboardBoard({
   // already talking to the image API still have to come back).
   const [stopRequested, setStopRequested] = useState(false);
   const [retrying, setRetrying] = useState({});
-  const [retryingAll, setRetryingAll] = useState(false);
+  // A running bulk draw: { kind: "remaining" | "failed", done, total }. One at a
+  // time, and interruptible — `batchStopRef` is read between panels.
+  const [batch, setBatch] = useState(null);
+  const batchStopRef = useRef(false);
   // Per-panel edited descriptions (keyed by panel index). Undefined = unedited,
   // so the textarea falls back to the panel's stored description.
   const [editedDesc, setEditedDesc] = useState({});
@@ -170,19 +173,26 @@ export default function StoryboardBoard({
   const okCount = panels.filter((p) => !p.failed && p.url).length;
   const failedCount = panels.filter((p) => p.failed).length;
 
-  // Retry every failed panel, one at a time (gentler on rate limits).
-  async function retryAllFailed() {
-    if (retryingAll) return;
-    const failedIdx = (job?.result?.panels || [])
-      .filter((p) => p.failed)
-      .map((p) => p.index);
-    if (failedIdx.length === 0) return;
-    setRetryingAll(true);
-    for (const idx of failedIdx) {
+  // Panels with no image and no failure = never drawn. That's what a stopped
+  // run leaves behind, and what "Generate remaining" finishes off.
+  const emptyIdx = panels.filter((p) => !p.url && !p.failed).map((p) => p.index);
+  const failedIdx = panels.filter((p) => p.failed).map((p) => p.index);
+
+  // Draw a set of panels ONE AT A TIME (gentler on the rate limit than firing
+  // them all at once) — shared by "Generate remaining" and "Retry all failed".
+  // The loop is interruptible: a 20-panel batch going wrong shouldn't have to
+  // run to the end, same reasoning as the Stop button on the run itself.
+  async function runBatch(kind, indices) {
+    if (batch || indices.length === 0) return;
+    batchStopRef.current = false;
+    setBatch({ kind, done: 0, total: indices.length });
+    for (const [i, idx] of indices.entries()) {
+      if (batchStopRef.current) break;
       // eslint-disable-next-line no-await-in-loop
       await retryPanel(idx);
+      setBatch({ kind, done: i + 1, total: indices.length });
     }
-    setRetryingAll(false);
+    setBatch(null);
   }
 
   // Re-draw a single panel (failed, edited, or just unwanted). Sends the edited
@@ -277,12 +287,26 @@ export default function StoryboardBoard({
     }
   }
 
+  // Fallback download name, used only if the server's Content-Disposition can't
+  // be read. Mirrors the server's _safe_filename: punctuation → space, runs
+  // collapsed, so "Postmarked: After Death!" reads as "Postmarked After Death".
+  function safeTitle() {
+    const cleaned = (job?.character_name || "")
+      .replace(/['’]/g, "") // "Kabir's" → "Kabirs", never "Kabir s"
+      .replace(/[^\p{L}\p{N}\-_ ]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(" ")
+      .replace(/^[-_ ]+|[-_ ]+$/g, "");
+    return cleaned || "storyboard";
+  }
+
   async function handlePdf() {
     if (pdfBusy) return;
     setPdfError("");
     setPdfBusy(true);
     try {
-      await api.downloadStoryboardPdf(jobId, "storyboard.pdf");
+      await api.downloadStoryboardPdf(jobId, `${safeTitle()}.pdf`);
     } catch (e) {
       setPdfError(e.message);
     } finally {
@@ -297,7 +321,7 @@ export default function StoryboardBoard({
     setPdfError("");
     setZipBusy(true);
     try {
-      await api.downloadStoryboardBundle(jobId, "storyboard_assets.zip");
+      await api.downloadStoryboardBundle(jobId, `${safeTitle()}_assets.zip`);
     } catch (e) {
       setPdfError(e.message);
     } finally {
@@ -423,8 +447,10 @@ export default function StoryboardBoard({
 
       {stopped && (
         <div className="info-msg">
-          ⏹ You stopped this generation — {okCount} of {total} panels drawn. Use
-          “✨ Generate this panel” on any empty tile to draw the rest.
+          ⏹ You stopped this generation — {okCount} of {total} panels drawn.
+          {emptyIdx.length > 0
+            ? ` Use “✨ Generate remaining (${emptyIdx.length})” to finish the board, or “✨ Generate this panel” on a single tile.`
+            : " Every panel now has an image."}
         </div>
       )}
 
@@ -449,26 +475,61 @@ export default function StoryboardBoard({
               )}
             </button>
           )}
-          {failedCount > 0 && (
+          {/* Finish a stopped board in one click, instead of tile by tile. */}
+          {!running && emptyIdx.length > 0 && (
             <button
               type="button"
-              className="btn board-retry-all"
-              disabled={retryingAll}
-              onClick={retryAllFailed}
+              /* While drawing it's BUSY, not unavailable — the gold fill dimmed
+                 to 45% read as a broken slab next to the live buttons. */
+              className={`btn ${batch?.kind === "remaining" ? "is-busy" : "primary"}`}
+              disabled={Boolean(batch)}
+              onClick={() => runBatch("remaining", emptyIdx)}
+              title="Draw every panel that has no image yet, one at a time"
             >
-              {retryingAll ? (
+              {batch?.kind === "remaining" ? (
                 <>
-                  <span className="spinner-inline" /> Retrying failed…
+                  <span className="spinner-inline" /> Drawing{" "}
+                  {Math.min(batch.done + 1, batch.total)} of {batch.total}…
+                </>
+              ) : (
+                `✨ Generate remaining (${emptyIdx.length})`
+              )}
+            </button>
+          )}
+          {!running && failedCount > 0 && (
+            <button
+              type="button"
+              className={`btn board-retry-all ${batch?.kind === "failed" ? "is-busy" : ""}`}
+              disabled={Boolean(batch)}
+              onClick={() => runBatch("failed", failedIdx)}
+            >
+              {batch?.kind === "failed" ? (
+                <>
+                  <span className="spinner-inline" /> Retrying{" "}
+                  {Math.min(batch.done + 1, batch.total)} of {batch.total}…
                 </>
               ) : (
                 `🔄 Retry all failed (${failedCount})`
               )}
             </button>
           )}
+          {/* A bulk draw is many paid generations — it must be interruptible too. */}
+          {batch && (
+            <button
+              type="button"
+              className="btn danger-btn"
+              onClick={() => {
+                batchStopRef.current = true;
+              }}
+              title="Stop after the panel currently being drawn"
+            >
+              ⏹ Stop
+            </button>
+          )}
           {okCount > 0 && (
             <button
               type="button"
-              className="btn primary"
+              className="btn"
               disabled={pdfBusy}
               onClick={handlePdf}
             >
@@ -477,26 +538,7 @@ export default function StoryboardBoard({
                   <span className="spinner-inline" /> Preparing PDF…
                 </>
               ) : (
-                `⬇ Download PDF (${okCount})`
-              )}
-            </button>
-          )}
-          {/* Sits next to the exports because that's what it is: the board,
-              turned into something you can watch. No AI credits are spent. */}
-          {okCount > 0 && onOpenAnimatic && !running && (
-            <button
-              type="button"
-              className="btn board-animatic"
-              disabled={animaticBusy}
-              onClick={handleMakeAnimatic}
-              title="Time these panels against audio and export a video — costs no AI credits"
-            >
-              {animaticBusy ? (
-                <>
-                  <span className="spinner-inline" /> Opening…
-                </>
-              ) : (
-                "🎬 Make animatic"
+                "⬇ Download PDF"
               )}
             </button>
           )}
@@ -514,6 +556,25 @@ export default function StoryboardBoard({
                 </>
               ) : (
                 "⬇ Download assets (ZIP)"
+              )}
+            </button>
+          )}
+          {/* LAST in the row, after the two downloads: it's the step you take
+              once the board is done, not another export. No AI credits spent. */}
+          {okCount > 0 && onOpenAnimatic && !running && (
+            <button
+              type="button"
+              className="btn board-animatic"
+              disabled={animaticBusy}
+              onClick={handleMakeAnimatic}
+              title="Time these panels against audio and export a video — costs no AI credits"
+            >
+              {animaticBusy ? (
+                <>
+                  <span className="spinner-inline" /> Opening…
+                </>
+              ) : (
+                "🎬 Make animatic"
               )}
             </button>
           )}

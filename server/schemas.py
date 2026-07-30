@@ -437,6 +437,33 @@ class AnimaticAudio(BaseModel):
     url: str | None = None
 
 
+class AnimaticTextClip(BaseModel):
+    """One piece of on-screen text, with its OWN start and length.
+
+    Deliberately time-based rather than attached to a frame: a caption often has
+    to appear part-way through a held image, or run across a cut. It lives on its
+    own timeline track for exactly that reason.
+    """
+
+    id: str
+    text: str = ""
+    # Where it sits on the timeline, in video time.
+    start_ms: int = Field(0, ge=0)
+    duration_ms: int = Field(2000, ge=100, le=600_000)
+    # Where it sits on the frame.
+    position: str = Field("bottom", description="'top' | 'middle' | 'bottom'.")
+    align: str = Field("center", description="'left' | 'center' | 'right'.")
+    size: str = Field("medium", description="'small' | 'medium' | 'large'.")
+    color: str = Field("#ffffff", description="Text colour, #rrggbb.")
+    # How the text is kept readable over busy art: a translucent bar behind it
+    # ("scrim"), a solid box, or an outline only ("none").
+    backdrop: str = Field("scrim", description="'scrim' | 'box' | 'none'.")
+
+    @property
+    def end_ms(self) -> int:
+        return self.start_ms + self.duration_ms
+
+
 class AnimaticSettings(BaseModel):
     """Everything about an animatic that isn't a frame or the audio."""
 
@@ -459,8 +486,13 @@ class AnimaticProject(BaseModel):
     source_storyboard_id: str | None = None
     settings: AnimaticSettings = Field(default_factory=AnimaticSettings)
     frames: list[AnimaticFrame] = Field(default_factory=list)
+    # The text layer. Independent of the frames — a clip can start mid-frame and
+    # run across a cut.
+    texts: list[AnimaticTextClip] = Field(default_factory=list)
     audio: AnimaticAudio | None = None
     # Sum of the frame durations — the length of the video that will be exported.
+    # The FRAMES decide the length; a text clip hanging past the end is simply
+    # not seen (and is cut by the exporter).
     duration_ms: int = 0
     # Last export: {url, size_bytes, exported_at, duration_ms, stale}. `stale` is
     # set the moment the project is edited afterwards, so the UI can say the
@@ -496,6 +528,7 @@ class AnimaticSaveRequest(BaseModel):
     title: str | None = None
     settings: AnimaticSettings | None = None
     frames: list[AnimaticFrame] | None = None
+    texts: list[AnimaticTextClip] | None = None
     audio: AnimaticAudio | None = None
     clear_audio: bool = False
 
@@ -511,6 +544,7 @@ class AnimaticSummary(BaseModel):
     duration_ms: int = 0
     # Serve path for the first frame — the card's thumbnail.
     cover_url: str | None = None
+    text_count: int = 0
     has_audio: bool = False
     has_video: bool = False
     created_at: str

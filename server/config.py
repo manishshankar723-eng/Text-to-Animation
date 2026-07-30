@@ -55,6 +55,9 @@ ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".webm"}
 MAX_AUDIO_BYTES = int(os.environ.get("API_MAX_AUDIO_BYTES", str(50 * 1024 * 1024)))
 # Guard rail on the sequence length — an animatic is a rough cut, not a feature.
 MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
+# Text clips per animatic. Each boundary splits the timeline into another
+# rendered still, so this also caps how much work an export can be asked to do.
+MAX_ANIMATIC_TEXTS = int(os.environ.get("API_MAX_ANIMATIC_TEXTS", "400"))
 
 # --- Auth (JWT login + MongoDB user store) -----------------------------------
 # Secret used to sign JWTs. MUST be set in production. A dev fallback is used

@@ -274,6 +274,7 @@ def _run_animatic_export(job_id: str, kwargs: dict):
                     "exported_at": datetime.now(timezone.utc).isoformat(),
                     "duration_ms": summary.get("duration_ms", 0),
                     "frame_count": summary.get("frame_count", 0),
+                    "text_count": summary.get("text_count", 0),
                     "skipped_frames": summary.get("skipped_frames") or [],
                     "width": summary.get("width"),
                     "height": summary.get("height"),

@@ -28,6 +28,41 @@ const ASPECTS = [
 
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
+// A new caption. Defaults to a scrim so it stays readable over a grey
+// storyboard thumbnail, which is what most of these frames are.
+const newTextClip = (startMs, durationMs) => ({
+  id: newId(),
+  text: "",
+  start_ms: Math.max(0, Math.round(startMs)),
+  duration_ms: Math.max(100, Math.round(durationMs)),
+  position: "bottom",
+  align: "center",
+  size: "medium",
+  color: "#ffffff",
+  backdrop: "scrim",
+});
+
+const TEXT_POSITIONS = [
+  { id: "top", label: "Top" },
+  { id: "middle", label: "Middle" },
+  { id: "bottom", label: "Bottom" },
+];
+const TEXT_ALIGNS = [
+  { id: "left", label: "◧" },
+  { id: "center", label: "▣" },
+  { id: "right", label: "◨" },
+];
+const TEXT_SIZES = [
+  { id: "small", label: "S" },
+  { id: "medium", label: "M" },
+  { id: "large", label: "L" },
+];
+const TEXT_BACKDROPS = [
+  { id: "scrim", label: "Shaded bar" },
+  { id: "box", label: "Solid box" },
+  { id: "none", label: "Outline only" },
+];
+
 // Read an audio file's length in the browser. The server has no audio decoder
 // (and doesn't need one) — this is what "fit frames to audio" measures against.
 function measureAudio(file) {
@@ -60,6 +95,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     background: "#000000",
     show_labels: false,
   });
+  // The text layer. Timed independently of the frames, which is why it isn't
+  // just a field on a frame.
+  const [texts, setTexts] = useState([]);
   const [audio, setAudio] = useState(null);
   const [video, setVideo] = useState(null);
   const [sourceBoard, setSourceBoard] = useState(null);
@@ -78,6 +116,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
   // --- UI ---
   const [selectedId, setSelectedId] = useState(null);
+  const [selectedTextId, setSelectedTextId] = useState(null);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState("saved"); // saved | dirty | saving | error
@@ -86,6 +125,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
+  const textAreaRef = useRef(null);
   const loadedRef = useRef(false);
   const docRef = useRef(null); // latest project, for the unmount flush
   const dirtyRef = useRef(false);
@@ -112,6 +152,20 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   }, [frames, starts, timeMs]);
   const currentFrame = currentIndex >= 0 ? frames[currentIndex] : null;
 
+  // What the viewer would see right now. Empty clips are skipped here AND in the
+  // exporter, so an unfinished caption never burns a blank bar into the video.
+  const activeTexts = useMemo(
+    () =>
+      texts.filter(
+        (c) =>
+          (c.text || "").trim() &&
+          timeMs >= c.start_ms &&
+          timeMs < c.start_ms + c.duration_ms
+      ),
+    [texts, timeMs]
+  );
+  const selectedText = texts.find((c) => c.id === selectedTextId) || null;
+
   const exporting = exportJob?.status === "running" || exportBusy;
   const audioMs = audio?.duration_ms || 0;
 
@@ -125,6 +179,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         if (!alive) return;
         setTitle(p.title);
         setFrames(p.frames || []);
+        setTexts(p.texts || []);
         setSettings(p.settings);
         setAudio(p.audio || null);
         setVideo(p.video || null);
@@ -247,6 +302,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           duration_ms: f.duration_ms,
           label: f.label || "",
         })),
+        texts: doc.texts,
         audio: doc.audio || undefined,
         clearAudio: !doc.audio,
       });
@@ -263,8 +319,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
   // Keep the latest project in a ref so the unmount flush sees it.
   useEffect(() => {
-    docRef.current = { title, settings, frames, audio };
-  }, [title, settings, frames, audio]);
+    docRef.current = { title, settings, frames, texts, audio };
+  }, [title, settings, frames, texts, audio]);
 
   // Debounced autosave. Blocked during an export (the server refuses a save
   // while ffmpeg is reading these exact frames), and retried once it ends.
@@ -275,7 +331,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     if (exporting) return;
     const t = setTimeout(flush, AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [title, settings, frames, audio, exporting, flush]);
+  }, [title, settings, frames, texts, audio, exporting, flush]);
 
   useEffect(
     () => () => {
@@ -421,6 +477,44 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     setFrames((list) => list.filter((f) => f.id !== id));
     setSelectedId((s) => (s === id ? null : s));
   }
+
+  // ----------------------------------------------------------- text layer
+  // A new clip covers the frame the playhead is sitting on — "add text to this
+  // shot" is what people mean nine times out of ten — but it is a free-floating
+  // clip from that moment on, so it can be dragged and stretched anywhere.
+  function addText() {
+    const i = currentIndex >= 0 ? currentIndex : 0;
+    const start = frames.length ? starts[i] : 0;
+    const length = frames.length ? frames[i].duration_ms : 2000;
+    const clip = newTextClip(start, length);
+    setTexts((list) => [...list, clip]);
+    setSelectedTextId(clip.id);
+    seek(start);
+    setNotice("Text added over this frame — type it below, then drag its edge to re-time it.");
+  }
+
+  const patchText = (id, patch) =>
+    setTexts((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+
+  function deleteText(id) {
+    setTexts((list) => list.filter((c) => c.id !== id));
+    setSelectedTextId((s) => (s === id ? null : s));
+  }
+
+  function duplicateText(id) {
+    setTexts((list) => {
+      const source = list.find((c) => c.id === id);
+      if (!source) return list;
+      const copy = { ...source, id: newId(), start_ms: source.start_ms + source.duration_ms };
+      setSelectedTextId(copy.id);
+      return [...list, copy];
+    });
+  }
+
+  // Typing in the caption box should focus it as soon as a clip is picked.
+  useEffect(() => {
+    if (selectedTextId) textAreaRef.current?.focus();
+  }, [selectedTextId]);
 
   async function addFiles(files, insertAt) {
     if (!files.length) return;
@@ -698,6 +792,40 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               {frames.length ? "Loading…" : "Add images to start your animatic"}
             </div>
           )}
+          {/* The text layer, over the picture. Sized in `cqh` (a fraction of
+              this box's own height) using the SAME divisors the exporter uses,
+              so the preview and the MP4 agree by construction rather than by
+              two numbers that have to be kept in step by hand. */}
+          {activeTexts.length > 0 && (
+            <div className="an-text-layer">
+              {["top", "middle", "bottom"].map((zone) => {
+                const zoneClips = activeTexts.filter(
+                  (c) => (c.position || "bottom") === zone
+                );
+                if (!zoneClips.length) return null;
+                return (
+                  <div key={zone} className={`an-text-zone an-text-${zone}`}>
+                    {zoneClips.map((c) => (
+                      <span
+                        key={c.id}
+                        className={[
+                          "an-text-clip",
+                          `sz-${c.size || "medium"}`,
+                          `bd-${c.backdrop || "scrim"}`,
+                          `al-${c.align || "center"}`,
+                          selectedTextId === c.id ? "sel" : "",
+                        ].join(" ")}
+                        style={{ color: c.color || "#ffffff" }}
+                      >
+                        {c.text}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {settings.show_labels && currentFrame?.label && (
             <span className="an-screen-label">{currentFrame.label}</span>
           )}
@@ -754,6 +882,19 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
       {/* --------------------------------------------------- audio + tools */}
       <div className="an-tools">
+        {/* The "add a layer" row: text and audio sit together, because that is
+            what they are — the two things you lay over the pictures. */}
+        <div className="an-tool-group">
+          <button
+            type="button"
+            className="btn small an-add-text"
+            onClick={addText}
+            title="Add a text clip over the frame at the playhead"
+          >
+            T ＋ Add text
+          </button>
+        </div>
+
         <div className="an-tool-group">
           <label className="an-audio-pick">
             <input
@@ -852,17 +993,167 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         </div>
         <Timeline
           frames={frames}
+          texts={texts}
           totalMs={totalMs || 1000}
           timeMs={timeMs}
           pxPerSec={pxPerSec}
           selectedId={selectedId}
+          selectedTextId={selectedTextId}
           audioUrl={audioUrl}
           audioOffsetMs={offsetMs}
           onSelect={setSelectedId}
+          onSelectText={setSelectedTextId}
           onSeek={seek}
           onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
+          onTextChange={patchText}
+          onAddText={addText}
         />
       </div>
+
+      {/* ------------------------------------------------- text inspector */}
+      {selectedText && (
+        <div className="an-text-panel">
+          <div className="an-tp-head">
+            <strong>Text</strong>
+            <span className="muted">
+              {formatTime(selectedText.start_ms)} → {formatTime(selectedText.start_ms + selectedText.duration_ms)}
+              {selectedText.start_ms + selectedText.duration_ms > totalMs &&
+                " · runs past the end of the video"}
+            </span>
+            <span className="an-spacer" />
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => duplicateText(selectedText.id)}
+              title="Copy this text and place it straight after"
+            >
+              ⧉ Duplicate
+            </button>
+            <button
+              type="button"
+              className="btn small danger-btn"
+              onClick={() => deleteText(selectedText.id)}
+            >
+              ✕ Remove
+            </button>
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => setSelectedTextId(null)}
+            >
+              Done
+            </button>
+          </div>
+
+          <textarea
+            ref={textAreaRef}
+            className="an-tp-text"
+            rows={2}
+            value={selectedText.text}
+            placeholder="Type the caption — press Enter for a second line"
+            onChange={(e) => patchText(selectedText.id, { text: e.target.value })}
+          />
+
+          <div className="an-tp-rows">
+            <label className="an-tp-field">
+              <span>Starts at</span>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                value={(selectedText.start_ms / 1000).toFixed(1)}
+                onChange={(e) =>
+                  patchText(selectedText.id, {
+                    start_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
+                  })
+                }
+              />
+              <span className="an-tp-unit">s</span>
+            </label>
+
+            <label className="an-tp-field">
+              <span>Stays for</span>
+              <input
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={(selectedText.duration_ms / 1000).toFixed(1)}
+                onChange={(e) =>
+                  patchText(selectedText.id, {
+                    duration_ms: Math.max(
+                      100,
+                      Math.round(parseFloat(e.target.value || 0) * 1000)
+                    ),
+                  })
+                }
+              />
+              <span className="an-tp-unit">s</span>
+            </label>
+
+            <span className="an-tp-group">
+              {TEXT_POSITIONS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`an-tp-btn ${selectedText.position === p.id ? "on" : ""}`}
+                  onClick={() => patchText(selectedText.id, { position: p.id })}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </span>
+
+            <span className="an-tp-group">
+              {TEXT_ALIGNS.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={`an-tp-btn ${selectedText.align === a.id ? "on" : ""}`}
+                  title={`Align ${a.id}`}
+                  onClick={() => patchText(selectedText.id, { align: a.id })}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </span>
+
+            <span className="an-tp-group">
+              {TEXT_SIZES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`an-tp-btn ${selectedText.size === s.id ? "on" : ""}`}
+                  title={`${s.id} text`}
+                  onClick={() => patchText(selectedText.id, { size: s.id })}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </span>
+
+            <select
+              className="an-select"
+              value={selectedText.backdrop}
+              onChange={(e) => patchText(selectedText.id, { backdrop: e.target.value })}
+              title="How the text is kept readable over the art"
+            >
+              {TEXT_BACKDROPS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="color"
+              className="an-colour"
+              value={selectedText.color}
+              onChange={(e) => patchText(selectedText.id, { color: e.target.value })}
+              title="Text colour"
+            />
+          </div>
+        </div>
+      )}
 
       {/* ------------------------------------------------------- settings */}
       <div className="an-settings">

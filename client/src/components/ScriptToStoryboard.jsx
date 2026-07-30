@@ -55,6 +55,17 @@ const DEFAULT_STYLE = "rough-sketch"; // pre-selected default (highlighted)
 // Every other style keeps the full cast → props → panels flow unchanged.
 const REFERENCE_FREE_STYLES = new Set(["rough-sketch"]);
 
+// A shot's position WITHIN its scene, derived from the current list rather than
+// read off the stored `shot_number`. Moving, inserting or deleting a shot never
+// renumbers the stored field, so a stored value goes stale the moment the user
+// reorders — this can't.
+function sceneShotNo(list, index) {
+  const scene = list[index]?.scene_number;
+  let n = 0;
+  for (let i = 0; i <= index; i++) if (list[i]?.scene_number === scene) n++;
+  return n;
+}
+
 const ASPECTS = [
   { id: "21:9", note: "Ultra-wide" },
   { id: "16:9", note: "Standard HD" },
@@ -89,6 +100,11 @@ const MORE_GENRES = [
   { id: "custom", label: "＋ Custom" },
 ];
 const ALL_GENRES = [...GENRES, ...MORE_GENRES];
+
+// How many opening words of the script to use when the user types no title.
+// Four keeps two boards from the same script distinguishable while still
+// producing a filename you can read at a glance.
+const TITLE_WORDS = 4;
 
 // Text-readable script files we can parse in the browser. PDF/DOCX need
 // server-side extraction (not built yet) — user pastes those for now.
@@ -233,11 +249,17 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   function effectiveTitle() {
     const typed = title.trim();
     if (typed) return typed;
+    // No title typed → the script's OPENING WORDS, not its whole first line.
+    // This name becomes the board's card AND the downloaded PDF/ZIP filename,
+    // so a full sentence made for an unusable file name.
     const firstLine = script
       .split("\n")
       .map((l) => l.trim())
       .find((l) => l.length > 0);
-    if (firstLine) return firstLine.slice(0, 80);
+    if (firstLine) {
+      const words = firstLine.split(/\s+/).slice(0, TITLE_WORDS).join(" ");
+      return words.slice(0, 40).replace(/[.,;:!?—–-]+$/, "").trim() || firstLine.slice(0, 40);
+    }
     if (file?.name) return file.name.replace(/\.[^.]+$/, "");
     return "Untitled storyboard";
   }
@@ -810,10 +832,8 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             <div className="card shot-card">
               <div className="shot-head">
                 <span className="shot-index">
-                  Shot {i + 1}
-                  <span className="shot-scene">
-                    Scene {sh.scene_number} · Shot {sh.shot_number || 1}
-                  </span>
+                  <span className="shot-scene">Scene {sh.scene_number} ·</span>
+                  Shot {sceneShotNo(shots, i)}
                 </span>
                 <div className="shot-actions">
                   <button

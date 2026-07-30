@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-29 (Storyboard → Animatic: timeline editor + MP4 export)
+**Last updated:** 2026-07-30 (Animatic TEXT layer; export-duration bug fixed)
 
 ---
 
@@ -68,7 +68,7 @@ Pipeline stages (see `pipeline.py`):
 | `prompts.yaml` | Prompt templates + per-template `parts_order`. Subject types: `default` (human, gender inferred), `human_male`, `human_female`, `robot`, `animal`, `bird`, `monster`, `ghost`. Global `parts_order` fallback. |
 | `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
 | `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
-| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + audio → MP4. The ONLY module that knows ffmpeg exists. Spends no AI quota. |
+| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. The ONLY module that knows ffmpeg exists. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
 | File | Responsibility |
@@ -101,7 +101,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/AnimaticLibrary.jsx` | "Your Animatics" grid + New (blank) / From a storyboard. |
 | `client/src/components/AnimaticEditor.jsx` | The editor: preview, transport, autosave, export. **Audio is the playback clock** (see the Work Log). |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
-| `client/src/components/Timeline.jsx` | Proportional bars + ruler + playhead; drag a bar's right edge to change a hold. Exports `formatTime`. |
+| `client/src/components/Timeline.jsx` | **Three tracks** (🖼 Images / T Text / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
 | `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
 | `client/src/styles.css` | Dark + champagne-gold theme. |
 
@@ -124,7 +124,7 @@ Pipeline stages (see `pipeline.py`):
 - `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
 - `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
 - **Storyboard → Animatic (`server/animatics.py`, kind `animatic`):**
-  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project (PUT is the editor's autosave; 409 while exporting) · `DELETE /animatics/{id}`
+  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts` (the text layer), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - `GET /templates` · `GET /health` (also reports `ffmpeg`)
@@ -202,6 +202,7 @@ previews require a cloud run (not `local_only`).
 | `FFMPEG_BINARY` | Optional path to your own ffmpeg. Unset → PATH → the `imageio-ffmpeg` bundled binary. |
 | `API_MAX_AUDIO_BYTES` | Animatic audio upload cap (default 50 MB). |
 | `API_MAX_ANIMATIC_FRAMES` | Frames per animatic (default 500). |
+| `API_MAX_ANIMATIC_TEXTS` | Text clips per animatic (default 400). Each clip boundary splits the timeline into another rendered still, so this also caps export work. |
 
 ---
 
@@ -235,6 +236,127 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-30 — Animatic TEXT layer (3 tracks) + an export-length bug found on the way
+
+- **Asked for:** add text to a frame in the animatic, control **how long that text
+  stays** on the timeline, and show the editor as **layers — image, text, voice**.
+- **Text clips are TIME-based, not attached to a frame.** `AnimaticTextClip` has
+  its own `start_ms` + `duration_ms`, so a caption can appear part-way through a
+  held image or run across a cut. Pressing **T ＋ Add text** still defaults the
+  new clip to exactly the frame under the playhead — "text on this shot" is what
+  people mean — but from then on it is free to be dragged and stretched.
+- **The timeline is now three tracks** with a fixed label gutter (`🖼 Images` /
+  `T Text` / `♪ Audio`) that does not scroll with the tracks. Track heights come
+  from CSS variables (`--tl-img-h`, `--tl-txt-h`, `--tl-aud-h`) so the gutter rows
+  and the tracks can't drift out of alignment. Text clips: drag the body to move,
+  the right edge to stretch, both snapped to 100 ms. A clip hanging past the last
+  frame gets a dashed amber border — the FRAMES decide the video's length, so it
+  would never be seen.
+- **Inspector under the timeline** when a clip is selected: the caption itself,
+  numeric start / length, position (top/middle/bottom), align, size (S/M/L),
+  backdrop (shaded bar / solid box / outline only), colour, duplicate, remove.
+- **Preview and export agree by construction.** The overlay is sized in `cqh`
+  (a fraction of the preview's own height) with the SAME divisors the exporter
+  uses — 30 / 21 / 14 — so nothing has to be kept in step by hand. `.an-screen`
+  gets `container-type: size` to make those units work. "Outline only" draws a
+  dark stroke in both, because white text on a pale sketch is invisible otherwise.
+
+**How text is burned in (`plan_segments`)**
+
+- A clip boundary can fall in the middle of a held image, so **the unit of
+  rendering is now a SEGMENT — a stretch where the picture AND the visible text
+  are both constant** — not a frame. The timeline is cut at every frame edge and
+  every clip start/end, and each piece is rendered as its own still. Chosen over
+  ffmpeg `drawtext` filters: no escaping or font-path problems, and it reuses the
+  Pillow code that was already normalising frames.
+- **With no text there is exactly one segment per frame**, so an animatic without
+  captions renders precisely as it did before.
+- Segments are **cached by (frame, active clip ids)**, so a caption appearing and
+  disappearing over one long hold re-renders that picture twice, not per boundary.
+- Slivers under 40 ms are folded into their neighbour (a boundary landing almost
+  exactly on a cut would otherwise be too short to encode).
+- `frame_count` still means PICTURES; the new `segment_count` reports the real
+  work done.
+
+**⚠️ Bug this uncovered — the exported video was SHORTER than promised**
+
+- Symptom while testing: a 14 s animatic exported as **13.46 s**; a **single 2 s
+  frame exported as a 0.04 s video**; two frames of 1 s each gave 1.04 s.
+- **Cause:** the concat demuxer hands over a variable-rate stream (one image,
+  held for its declared `duration`), and **`-r 24` on the output does not
+  reliably expand those holds into real frames.** Whether it worked depended on
+  the exact pattern of durations — which is why the original 3-frame tests passed
+  and nobody noticed. `-t` then cut an already-too-short stream, and padding the
+  tail made no difference (the input wasn't running out; the holds were being
+  dropped).
+- **Fix:** resample with the **`fps=` FILTER** (`-vf fps={fps}`), which works off
+  the input timestamps and is exact. `-r` is kept so the container is tagged with
+  the same rate. Measured worst case is now one frame.
+- **This was a pre-existing bug in yesterday's export**, not something the text
+  layer introduced — short animatics were affected regardless of text.
+- **New `test_duration_exact.py` exists to stop it coming back:** 1/2/3/8 frames,
+  all-minimum 100 ms holds, a single 30 s hold, non-frame-aligned holds
+  (333/777/1234/2999 ms), text inside a frame / across a cut / overlapping /
+  past the end, at 12/24/25/30 fps — every case asserts the REAL file duration
+  read back with ffmpeg against what the UI promises.
+
+**Verified (no AI quota spent)**
+
+- `test_text_layer.py` — 38 checks. Segment planning: a clip inside one frame
+  splits it in three with the boundaries landing exactly on the clip, a clip
+  spanning a cut marks both frames, overlapping clips both apply, a blank caption
+  is ignored, a clip past the end is cut not extended, slivers folded. Rendering
+  checked **per-pixel band**: bottom text darkens only the bottom, top only the
+  top, middle only the middle; large covers >2× small; "outline only" is visible
+  on white yet draws no bar; long captions wrap; two captions stack. Export:
+  decoded frames at 1 s / 3 s / 5 s prove the text is on screen **only inside its
+  window**.
+- `test_text_api.py` — 19 checks: save/read-back/reload, a frames-only save does
+  not wipe the text, library `text_count`, 422 on negative start and zero length,
+  413 over the cap with the good clips left untouched, and the caption present in
+  the exported pixels.
+- Re-ran `test_animatic.py` (38) and `test_board_export.py` (17, now asserting the
+  caption appears at 4 s and not at 1 s or 6 s) — both pass, so the segment
+  rewrite didn't regress letterboxing, audio length rules, frame skipping, cancel
+  or progress. `npm run build` clean.
+- **NOT done:** still never clicked through in a browser — the clip drag/stretch
+  interactions and the `cqh` preview sizing are unexercised by any test. One
+  manual pass is worth it. Text is one style per clip (no per-word styling), and
+  there are no fades on text in or out.
+
+### 2026-07-29 — Every DELETE in the app was reported as an error (user-reported)
+
+- **Reported:** deleting an animatic showed *"Failed to execute 'json' on
+  'Response': Unexpected end of JSON input"* and the card stayed on screen.
+- **Cause — in the SHARED `request()` helper, not in the animatics code.** A
+  `204 No Content` has no body, but FastAPI still labels it
+  `content-type: application/json`. `api.js` decided how to read a response from
+  the content-type alone:
+  ```js
+  return ct.includes("application/json") ? res.json() : res;   // ← threw on 204
+  ```
+  so `res.json()` parsed an empty string and threw. **The delete had actually
+  SUCCEEDED** every time — the server was fine; only the client's reading of the
+  reply failed, and the thrown error skipped the line that removes the card.
+- **This affected every 204 endpoint, not just animatics:** `deleteStoryboard`,
+  `deleteJob`, `deleteApiKey` and `deleteAnimatic` all go through `request()`.
+- **Fix:** check for a body before reading one — `204`/`205`, plus a
+  `content-length: 0` belt-and-braces guard, return `null`. Callers already
+  ignore the return value of a delete, so nothing else changed.
+- **Why the earlier animatics tests missed it:** they called the API through
+  `TestClient` and asserted on status codes, so no test ever ran `api.js`. The
+  new test closes that hole — it **imports the real `client/src/api.js`** (with
+  `import.meta.env` and `localStorage` shimmed) and drives it against a **real
+  uvicorn** on port 8123, so the browser's exact code path is exercised.
+- **Verified:** 10 checks — the reported delete no longer throws and the item
+  really leaves the library; deleting a saved API key (the same 204 shape)
+  works; POST/GET/PUT still parse their JSON normally; and 404s still throw with
+  the server's own message rather than being swallowed by the new early return.
+  Plus a **negative control**: the same test run against a copy of `api.js` with
+  the guards removed reproduces *"Unexpected end of JSON input"* exactly, and
+  shows the record being deleted anyway — proving both the diagnosis and that
+  the test would catch a regression. `npm run build` clean.
 
 ### 2026-07-29 — Storyboard → Animatic: timeline editor + MP4 export (NEW WORKFLOW)
 

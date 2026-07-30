@@ -170,12 +170,156 @@ def _draw_label(canvas: Image.Image, text: str) -> None:
     draw.text((x - box[0], y - box[1]), text, font=font, fill=(255, 255, 255, 235))
 
 
+# --- On-screen text ---------------------------------------------------------
+# Font height as a fraction of the frame height, per size name.
+_TEXT_DIVISOR = {"small": 30, "medium": 21, "large": 14}
+# Text never runs edge to edge — this is the usable width, as a fraction.
+_TEXT_WIDTH = 0.86
+_LINE_SPACING = 1.28
+
+
+def _text_font(height: int, size_name: str):
+    px = max(14, int(height / _TEXT_DIVISOR.get(size_name, _TEXT_DIVISOR["medium"])))
+    for name in _LABEL_FONTS:
+        try:
+            return ImageFont.truetype(name, px)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=px)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _wrap_text(draw, text: str, font, max_width: float) -> list[str]:
+    """Break `text` into lines that fit `max_width`, keeping the user's newlines.
+
+    A single word longer than the line is left to overflow rather than being cut
+    mid-word — a broken word is harder to read than a slightly wide line.
+    """
+    lines: list[str] = []
+    for paragraph in (text or "").split("\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            trial = f"{current} {word}"
+            if draw.textlength(trial, font=font) <= max_width:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return lines
+
+
+def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
+    """Draw the text clips that are on screen for this moment.
+
+    Clips sharing a position stack downward in the order given, so two captions
+    at the bottom don't land on top of each other.
+    """
+    if not clips:
+        return
+    width, height = canvas.size
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    max_width = width * _TEXT_WIDTH
+    margin = height * 0.055
+
+    # Measure everything first: a position's block can only be placed once the
+    # total height of every clip sharing that position is known.
+    blocks: dict[str, list[dict]] = {"top": [], "middle": [], "bottom": []}
+    for clip in clips:
+        text = (clip.get("text") or "").strip()
+        if not text:
+            continue
+        font = _text_font(height, clip.get("size", "medium"))
+        lines = _wrap_text(draw, text, font, max_width)
+        ascent, descent = font.getmetrics()
+        line_h = int((ascent + descent) * _LINE_SPACING)
+        pad = max(6, int(line_h * 0.28))
+        widest = max((draw.textlength(ln, font=font) for ln in lines), default=0)
+        position = clip.get("position", "bottom")
+        if position not in blocks:
+            position = "bottom"
+        blocks[position].append(
+            {
+                "clip": clip,
+                "font": font,
+                "lines": lines,
+                "line_h": line_h,
+                "pad": pad,
+                "text_w": widest,
+                "height": line_h * len(lines) + pad * 2,
+            }
+        )
+
+    for position, group in blocks.items():
+        if not group:
+            continue
+        total = sum(b["height"] for b in group) + margin * 0.25 * (len(group) - 1)
+        if position == "top":
+            y = margin
+        elif position == "middle":
+            y = (height - total) / 2
+        else:
+            y = height - total - margin
+
+        for block in group:
+            clip = block["clip"]
+            font, lines, line_h, pad = block["font"], block["lines"], block["line_h"], block["pad"]
+            align = clip.get("align", "center")
+            ink = _parse_colour(clip.get("color", "#ffffff"))
+            backdrop = clip.get("backdrop", "scrim")
+
+            box_w = min(width - margin, block["text_w"] + pad * 2)
+            if align == "left":
+                box_x = margin
+            elif align == "right":
+                box_x = width - margin - box_w
+            else:
+                box_x = (width - box_w) / 2
+
+            if backdrop in ("scrim", "box"):
+                alpha = 140 if backdrop == "scrim" else 225
+                draw.rounded_rectangle(
+                    [box_x, y, box_x + box_w, y + block["height"]],
+                    radius=max(4, int(pad * 0.6)),
+                    fill=(0, 0, 0, alpha),
+                )
+
+            ty = y + pad
+            for line in lines:
+                line_w = draw.textlength(line, font=font)
+                if align == "left":
+                    tx = box_x + pad
+                elif align == "right":
+                    tx = box_x + box_w - pad - line_w
+                else:
+                    tx = box_x + (box_w - line_w) / 2
+                # With no backdrop the text sits straight on the art, which for a
+                # grey storyboard thumbnail can be white-on-white — so it always
+                # gets a dark outline in that mode.
+                if backdrop == "none":
+                    draw.text(
+                        (tx, ty), line, font=font, fill=(*ink, 255),
+                        stroke_width=max(2, line_h // 14), stroke_fill=(0, 0, 0, 210),
+                    )
+                else:
+                    draw.text((tx, ty), line, font=font, fill=(*ink, 255))
+                ty += line_h
+            y += block["height"] + margin * 0.25
+
+
 def render_frame(
     src_path: str,
     size: tuple[int, int],
     fit: str = "contain",
     background: str = "#000000",
     label: str = "",
+    texts: list[dict] | None = None,
 ) -> Image.Image:
     """Fit one source image onto the video frame.
 
@@ -205,6 +349,10 @@ def render_frame(
     left = (target_w - new.width) // 2
     top = (target_h - new.height) // 2
     canvas.paste(new, (left, top))
+    # Text goes on before the shot label, so the label always stays legible in
+    # its corner even if a caption is placed at the bottom too.
+    if texts:
+        draw_texts(canvas, texts)
     if label:
         _draw_label(canvas, label)
     return canvas
@@ -213,6 +361,73 @@ def render_frame(
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
+def plan_segments(frames: list[dict], texts: list[dict]) -> tuple[list[dict], int]:
+    """Cut the timeline into stretches where the picture AND the text are constant.
+
+    Text clips have their own start and length, so one can appear half-way
+    through a held image or run across a cut. Rather than fight that in an ffmpeg
+    filter graph, the timeline is split at every text boundary and each piece is
+    rendered as its own still. With no text there is exactly one segment per
+    frame, so nothing changes for an animatic that has none.
+
+    Returns (segments, total_ms) where each segment is
+    {"frame": index into `frames`, "start_ms", "duration_ms", "texts": [clip…]}.
+    A clip running past the last frame is cut there — the FRAMES decide the
+    length of the video.
+    """
+    spans: list[tuple[int, int, int]] = []  # (start, end, frame index)
+    clock = 0
+    for i, frame in enumerate(frames):
+        length = max(100, int(frame.get("duration_ms") or 2000))
+        spans.append((clock, clock + length, i))
+        clock += length
+    total_ms = clock
+    if not spans:
+        return [], 0
+
+    # Normalise the clips once, and drop any that fall entirely off the end.
+    clips: list[tuple[int, int, dict]] = []
+    for clip in texts:
+        if not (clip.get("text") or "").strip():
+            continue
+        start = max(0, int(clip.get("start_ms") or 0))
+        end = start + max(100, int(clip.get("duration_ms") or 0))
+        if start >= total_ms:
+            continue
+        clips.append((start, min(end, total_ms), clip))
+
+    cuts = {0, total_ms}
+    for start, end, _ in spans:
+        cuts.add(start)
+        cuts.add(end)
+    for start, end, _ in clips:
+        cuts.add(start)
+        cuts.add(end)
+    ordered = sorted(c for c in cuts if 0 <= c <= total_ms)
+
+    segments: list[dict] = []
+    for a, b in zip(ordered, ordered[1:]):
+        if b - a <= 0:
+            continue
+        frame_index = next((i for (s, e, i) in spans if s <= a < e), None)
+        if frame_index is None:
+            continue
+        active = [clip for (s, e, clip) in clips if s <= a < e]
+        segments.append(
+            {"frame": frame_index, "start_ms": a, "duration_ms": b - a, "texts": active}
+        )
+
+    # A boundary landing exactly on a frame edge can leave a sliver too short for
+    # ffmpeg to show; fold anything under 40ms into its neighbour.
+    merged: list[dict] = []
+    for segment in segments:
+        if merged and segment["duration_ms"] < 40 and merged[-1]["frame"] == segment["frame"]:
+            merged[-1]["duration_ms"] += segment["duration_ms"]
+            continue
+        merged.append(segment)
+    return merged, total_ms
+
+
 def _write_concat_list(path: str, entries: list[tuple[str, float]]) -> None:
     """Write an ffconcat list of (filename, seconds) pairs.
 
@@ -292,6 +507,7 @@ def build_animatic(
     job_id: str,
     frames: list[dict],
     *,
+    texts: list[dict] | None = None,
     audio_path: str | None = None,
     audio_offset_ms: int = 0,
     aspect_ratio: str = "16:9",
@@ -309,6 +525,11 @@ def build_animatic(
         frames: [{"path": str, "duration_ms": int, "label": str}] in play order.
             A frame whose file is missing is SKIPPED (a panel may have been
             deleted from the board since) and reported in the result.
+        texts: [{"id", "text", "start_ms", "duration_ms", "position", "align",
+            "size", "color", "backdrop"}] — the text layer, timed independently
+            of the frames. Note that because a missing frame is dropped, text
+            timed against a timeline that HAD that frame shifts with everything
+            after it; the alternative (holding a blank) would be worse.
         audio_path: optional audio file laid under the whole sequence.
         audio_offset_ms: how far into that file playback starts.
         progress_cb: called with {"percent", "message", "stage"}.
@@ -343,43 +564,70 @@ def build_animatic(
         except Exception:  # noqa: BLE001 — a broken check must not stop the export
             return False
 
-    # --- 1. Normalise every frame to the exact video size ------------------
-    entries: list[tuple[str, float]] = []
+    # --- 1. Work out what has to be drawn ----------------------------------
+    # Frames whose image has gone are dropped FIRST, so every later calculation
+    # works on the timeline that will actually be encoded.
+    usable: list[dict] = []
     skipped: list[int] = []
-    total = len(frames)
-
     for i, frame in enumerate(frames):
-        if _cancelled():
-            shutil.rmtree(build_dir, ignore_errors=True)
-            return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
-
         path = frame.get("path")
         if not path or not os.path.isfile(path):
             logger.warning("[animatic %s] frame %d has no image (%s) — skipped", job_id, i, path)
             skipped.append(i)
             continue
+        usable.append(frame)
 
-        name = f"f{len(entries):04d}.png"
-        try:
-            image = render_frame(
-                path,
-                size,
-                fit=fit,
-                background=background,
-                label=frame.get("label", "") if show_labels else "",
-            )
-            image.save(os.path.join(build_dir, name), "PNG")
-        except AnimaticError:
-            raise
-        except Exception as e:  # noqa: BLE001 — one unreadable file, not a dead export
-            logger.warning("[animatic %s] frame %d unreadable (%s) — skipped", job_id, i, e)
-            skipped.append(i)
-            continue
+    if not usable:
+        shutil.rmtree(build_dir, ignore_errors=True)
+        raise AnimaticError(
+            "None of the frames could be read — their images may have been deleted."
+        )
 
-        seconds = max(0.1, int(frame.get("duration_ms") or 2000) / 1000)
-        entries.append((name, seconds))
+    segments, total_ms = plan_segments(usable, texts or [])
+
+    # --- 2. Render one PNG per segment -------------------------------------
+    # A text clip can start or end part-way through a held image, so the unit of
+    # rendering is a SEGMENT (a stretch where both the picture and the visible
+    # text are constant), not a frame. With no text there is exactly one segment
+    # per frame, so this costs nothing in the common case.
+    entries: list[tuple[str, float]] = []
+    rendered: dict[tuple, str] = {}  # (frame index, active text ids) → filename
+    total = len(segments)
+
+    for n, segment in enumerate(segments):
+        if _cancelled():
+            shutil.rmtree(build_dir, ignore_errors=True)
+            return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
+
+        frame = usable[segment["frame"]]
+        key = (segment["frame"], tuple(t.get("id") for t in segment["texts"]))
+        name = rendered.get(key)
+
+        if name is None:
+            name = f"f{len(rendered):04d}.png"
+            try:
+                image = render_frame(
+                    frame["path"],
+                    size,
+                    fit=fit,
+                    background=background,
+                    label=frame.get("label", "") if show_labels else "",
+                    texts=segment["texts"],
+                )
+                image.save(os.path.join(build_dir, name), "PNG")
+            except AnimaticError:
+                raise
+            except Exception as e:  # noqa: BLE001 — one bad file, not a dead export
+                logger.warning(
+                    "[animatic %s] segment %d (frame %d) unreadable (%s) — skipped",
+                    job_id, n, segment["frame"], e,
+                )
+                continue
+            rendered[key] = name
+
+        entries.append((name, max(0.1, segment["duration_ms"] / 1000)))
         # Preparing frames is the first 55% — it's real work on big images.
-        _report(int(55 * (i + 1) / total), f"Preparing frame {i + 1} of {total}", "frames")
+        _report(int(55 * (n + 1) / total), f"Preparing frame {n + 1} of {total}", "frames")
 
     if not entries:
         shutil.rmtree(build_dir, ignore_errors=True)
@@ -411,6 +659,14 @@ def build_animatic(
         "-preset", "veryfast",
         "-crf", "20",
         "-pix_fmt", "yuv420p",  # required for playback in browsers / QuickTime
+        # `fps=` FILTER, not just `-r`. The concat demuxer hands over a
+        # variable-rate stream (one image, held for its declared duration), and
+        # `-r` alone does NOT reliably expand those holds into real frames: a
+        # single 2s frame came out as a 0.04s video, and a 14s sequence as 13.46s,
+        # depending on the exact duration pattern. The fps filter resamples from
+        # the input TIMESTAMPS, which is exact. `-r` is kept so the container is
+        # tagged with the same rate. Measured worst-case error: one frame.
+        "-vf", f"fps={fps}",
         "-r", str(fps),
         # The frames decide the length: a short audio file must not truncate the
         # video (which is what -shortest would do), and a long one must not run on.
@@ -422,8 +678,8 @@ def build_animatic(
 
     _report(58, "Encoding video…")
     logger.info(
-        "[animatic %s] encoding %d frame(s), %.1fs, %dx%d @%dfps%s",
-        job_id, len(entries), total_ms / 1000, size[0], size[1], fps,
+        "[animatic %s] encoding %d frame(s) in %d segment(s), %.1fs, %dx%d @%dfps%s",
+        job_id, len(usable), len(entries), total_ms / 1000, size[0], size[1], fps,
         " + audio" if has_audio else "",
     )
 
@@ -448,7 +704,11 @@ def build_animatic(
         "stopped": False,
         "video": out_path,
         "duration_ms": total_ms,
-        "frame_count": len(entries),
+        # Pictures in the finished cut — NOT the number of segments encoded, which
+        # is higher whenever text starts or ends part-way through a held image.
+        "frame_count": len(usable),
+        "segment_count": len(entries),
+        "text_count": len([t for t in (texts or []) if (t.get("text") or "").strip()]),
         "skipped_frames": skipped,
         "width": size[0],
         "height": size[1],

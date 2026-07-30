@@ -43,6 +43,7 @@ from .schemas import (
     AnimaticSaveRequest,
     AnimaticSettings,
     AnimaticSummary,
+    AnimaticTextClip,
     AnimaticUploadResponse,
     Job,
     JobCreatedResponse,
@@ -111,6 +112,17 @@ def _frames_of(job: Job) -> list[AnimaticFrame]:
     return out
 
 
+def _texts_of(job: Job) -> list[AnimaticTextClip]:
+    raw = (job.params or {}).get("texts") or []
+    out: list[AnimaticTextClip] = []
+    for item in raw:
+        try:
+            out.append(AnimaticTextClip(**item))
+        except Exception:  # noqa: BLE001 — one bad clip must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable text clip %r", job.job_id, item)
+    return out
+
+
 def _audio_of(job: Job) -> AnimaticAudio | None:
     raw = (job.params or {}).get("audio")
     if not raw:
@@ -154,6 +166,7 @@ def _project_of(job: Job) -> AnimaticProject:
         source_storyboard_id=(job.params or {}).get("source_storyboard_id"),
         settings=_settings_of(job),
         frames=frames,
+        texts=_texts_of(job),
         audio=audio,
         duration_ms=_duration_ms(frames),
         video=(job.result or {}).get("video"),
@@ -173,6 +186,7 @@ def _summarise(job: Job) -> AnimaticSummary:
         frame_count=len(frames),
         duration_ms=_duration_ms(frames),
         cover_url=f"/animatics/{job.job_id}/frame/{frames[0].id}" if frames else None,
+        text_count=len(_texts_of(job)),
         has_audio=bool(_audio_of(job)),
         has_video=bool((job.result or {}).get("video")),
         created_at=job.created_at,
@@ -280,6 +294,7 @@ def create_animatic(
         params={
             "settings": settings.model_dump(),
             "frames": [f.model_dump(exclude={"url"}) for f in frames],
+            "texts": [],
             "audio": None,
             "source_storyboard_id": source_id,
         },
@@ -347,6 +362,14 @@ def save_animatic(
                 detail=f"An animatic can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
             )
         params["frames"] = [f.model_dump(exclude={"url"}) for f in body.frames]
+
+    if body.texts is not None:
+        if len(body.texts) > config.MAX_ANIMATIC_TEXTS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_TEXTS} text clips.",
+            )
+        params["texts"] = [t.model_dump() for t in body.texts]
 
     if body.clear_audio:
         params["audio"] = None
@@ -592,6 +615,7 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         job_id,
         {
             "frames": resolved,
+            "texts": [t.model_dump() for t in _texts_of(job)],
             "audio_path": audio_path,
             "audio_offset_ms": audio.offset_ms if audio else 0,
             "aspect_ratio": settings.aspect_ratio,

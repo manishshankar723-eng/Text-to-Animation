@@ -2242,12 +2242,15 @@ input[type="checkbox"] {
   font-weight: 700;
   font-size: 0.98rem;
 }
+/* Sits BEFORE the shot number ("Scene 1 · Shot 2"), so the card carries each
+   number exactly once. Tightened gap: the "·" already separates them. */
 .shot-scene {
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  margin-right: -0.25rem;
 }
 .shot-actions {
   display: flex;
@@ -2922,6 +2925,36 @@ input[type="checkbox"] {
 /* Board toolbar: space the Retry-all + Download buttons */
 .board-toolbar {
   gap: 0.6rem;
+  flex-wrap: wrap;
+}
+/* One uniform button size across the toolbar. Three things made them mismatch:
+   a 14px inline-block spinner grows the line box, so a button showing progress
+   sat taller than its neighbours; the label width jumped as the counter
+   advanced ("Drawing 2 of 20…" vs "Generate remaining (20)"); and each button
+   was only as wide as its own text. Fixed box + centred flex content fixes all
+   three, and the row wraps instead of squeezing on narrow screens. */
+.board-toolbar .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+  min-width: 13.5rem;
+  min-height: 42px;
+  padding: 0.5rem 1rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  /* Counters must not re-flow the label as the digits change. */
+  font-variant-numeric: tabular-nums;
+}
+/* A button mid-batch is disabled (it must not be clicked twice) but it is
+   WORKING, not unavailable — so it keeps full opacity and a gold edge instead
+   of the flat 45% dim every other disabled button gets. */
+.board-toolbar .btn.is-busy:disabled {
+  opacity: 1;
+  cursor: progress;
+  border-color: var(--border-gold);
+  color: var(--primary);
 }
 .board-retry-all {
   border-color: var(--border-gold);
@@ -4852,5 +4885,355 @@ input[type="checkbox"] {
   }
   .an-set-label {
     min-width: 100%;
+  }
+}
+
+/* =========================================================================
+   ANIMATIC — TEXT LAYER
+   The timeline is three tracks (images / text / audio) with a fixed label
+   gutter. Track heights come from these variables so the gutter rows and the
+   tracks themselves can never drift out of alignment.
+   ========================================================================= */
+.an-timeline {
+  --tl-ruler-h: 1.15rem;
+  --tl-img-h: 2.2rem;
+  --tl-txt-h: 2rem;
+  --tl-aud-h: 50px;
+  --tl-row-gap: 0.3rem;
+}
+
+.tl-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.tl-gutter {
+  flex: 0 0 6.6rem;
+  width: 6.6rem;
+}
+.tl-gutter-ruler {
+  height: var(--tl-ruler-h);
+}
+.tl-gutter-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 0.4rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.tl-gutter-row:nth-of-type(1) {
+  height: var(--tl-img-h);
+  margin-top: 0.25rem;
+}
+.tl-gutter-row:nth-of-type(2) {
+  height: var(--tl-txt-h);
+  margin-top: var(--tl-row-gap);
+}
+.tl-gutter-row:nth-of-type(3) {
+  height: var(--tl-aud-h);
+  margin-top: var(--tl-row-gap);
+}
+.tl-layer-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--primary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.tl-layer-add {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.1rem 0.25rem;
+  flex-shrink: 0;
+}
+.tl-layer-add:hover {
+  border-color: var(--primary);
+  background: var(--panel);
+}
+
+.tl-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tl-bars {
+  box-sizing: border-box;
+  height: var(--tl-img-h);
+}
+.tl-audio {
+  box-sizing: border-box;
+  height: var(--tl-aud-h);
+  margin-top: var(--tl-row-gap);
+}
+
+/* --- Text track ---------------------------------------------------------- */
+/* Clips are absolutely positioned because a caption's start is independent of
+   the frames above it — that is the whole point of the layer. */
+.tl-texts {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--tl-txt-h);
+  margin-top: var(--tl-row-gap);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  cursor: text;
+}
+.tl-text {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: rgba(229, 193, 88, 0.22);
+  border: 1px solid var(--border-gold);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-text:active {
+  cursor: grabbing;
+}
+.tl-text.sel {
+  background: var(--gold-grad);
+  border-color: var(--primary);
+}
+.tl-text.sel .tl-text-label {
+  color: var(--gold-ink);
+}
+/* A clip hanging past the last frame is never seen — the frames decide the
+   length of the video — so it is marked rather than silently ignored. */
+.tl-text.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+.tl-text-label {
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.tl-track-empty {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.45rem 0.6rem;
+  user-select: none;
+}
+.tl-audio .tl-track-empty {
+  padding: 0.9rem 0.7rem;
+}
+
+/* --- Text over the preview ---------------------------------------------- */
+/* `container-type: size` is what makes `cqh` below work: the text is sized as a
+   fraction of the PREVIEW's own height using the same divisors the exporter
+   uses (30 / 21 / 14), so what you see here is what gets burned in. */
+.an-screen {
+  container-type: size;
+}
+.an-text-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.an-text-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4cqh;
+  padding: 0 7%;
+}
+.an-text-top {
+  top: 5.5%;
+}
+.an-text-middle {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.an-text-bottom {
+  bottom: 5.5%;
+}
+.an-text-clip {
+  display: inline-block;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.28;
+  padding: 0.28em 0.5em;
+  border-radius: 0.25em;
+  font-weight: 500;
+  /* Fallback for browsers without container query units. */
+  font-size: 1rem;
+}
+.an-text-clip.sz-small {
+  font-size: calc(100cqh / 30);
+}
+.an-text-clip.sz-medium {
+  font-size: calc(100cqh / 21);
+}
+.an-text-clip.sz-large {
+  font-size: calc(100cqh / 14);
+}
+.an-text-clip.bd-scrim {
+  background: rgba(0, 0, 0, 0.55);
+}
+.an-text-clip.bd-box {
+  background: rgba(0, 0, 0, 0.88);
+}
+/* No backdrop means the text sits straight on the art, which on a pale
+   storyboard thumbnail can be white-on-white — hence the outline, matching the
+   stroke the exporter draws in this mode. */
+.an-text-clip.bd-none {
+  background: none;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.055em rgba(0, 0, 0, 0.85);
+}
+.an-text-clip.al-left {
+  align-self: flex-start;
+  text-align: left;
+}
+.an-text-clip.al-center {
+  align-self: center;
+  text-align: center;
+}
+.an-text-clip.al-right {
+  align-self: flex-end;
+  text-align: right;
+}
+.an-text-clip.sel {
+  outline: 1px dashed var(--primary);
+  outline-offset: 2px;
+}
+
+/* --- Add-text button ---------------------------------------------------- */
+.an-add-text {
+  font-weight: 650;
+}
+
+/* --- Text inspector ----------------------------------------------------- */
+.an-text-panel {
+  background: var(--panel);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem 0.9rem;
+  margin-bottom: 0.9rem;
+}
+.an-tp-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.84rem;
+  margin-bottom: 0.55rem;
+}
+.an-tp-head .muted {
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.an-tp-text {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+}
+.an-tp-text:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-tp-rows {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+.an-tp-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.an-tp-field input {
+  width: 4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.22rem 0.35rem;
+  text-align: right;
+}
+.an-tp-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-tp-unit {
+  font-size: 0.74rem;
+}
+.an-tp-group {
+  display: inline-flex;
+  gap: 0.15rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.15rem;
+}
+.an-tp-btn {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+}
+.an-tp-btn:hover {
+  color: var(--text);
+}
+.an-tp-btn.on {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  font-weight: 650;
+}
+
+@media (max-width: 720px) {
+  .tl-gutter {
+    flex-basis: 4.4rem;
+    width: 4.4rem;
+    font-size: 0.68rem;
   }
 }

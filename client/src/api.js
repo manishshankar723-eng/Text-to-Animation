@@ -77,6 +77,14 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
     );
   }
 
+  // A 204/205 has NO body, but FastAPI still labels it `application/json`.
+  // Parsing on the content-type alone therefore threw "Unexpected end of JSON
+  // input" and turned every successful DELETE (animatic, storyboard, job, saved
+  // API key) into an error the UI showed while the thing really had been
+  // deleted. Check for a body before trying to read one.
+  if (res.status === 204 || res.status === 205) return null;
+  if (res.headers.get("content-length") === "0") return null;
+
   const ct = res.headers.get("content-type") || "";
   return ct.includes("application/json") ? res.json() : res;
 }
@@ -270,7 +278,28 @@ export function regenerateStoryboardPanel(jobId, index, overrides = {}) {
   });
 }
 
+// The name the SERVER wants this file saved as. Downloads go through fetch as
+// authed blobs, so the browser never applies Content-Disposition itself — we
+// read it and put it on the <a download>. The server derives it from the board
+// title (one source of truth), and `fallback` covers a deployment that hasn't
+// exposed the header yet.
+function serverFilename(res, fallback) {
+  const cd = res.headers.get("content-disposition") || "";
+  // filename*=UTF-8''name.pdf  (preferred, encoded) or filename="name.pdf"
+  const star = /filename\*=\s*UTF-8''([^;]+)/i.exec(cd);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      /* malformed encoding — fall through to the plain form */
+    }
+  }
+  const plain = /filename=\s*"?([^";]+)"?/i.exec(cd);
+  return plain ? plain[1].trim() : fallback;
+}
+
 // Stage F: download the board as a PDF (authed blob → browser download).
+// `filename` is only a FALLBACK — the server's own name wins when readable.
 export async function downloadStoryboardPdf(jobId, filename) {
   const token = getToken();
   let res;
@@ -293,7 +322,7 @@ export async function downloadStoryboardPdf(jobId, filename) {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename || "storyboard.pdf";
+  a.download = serverFilename(res, filename || "storyboard.pdf");
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -324,7 +353,7 @@ export async function downloadStoryboardBundle(jobId, filename) {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename || "storyboard_assets.zip";
+  a.download = serverFilename(res, filename || "storyboard_assets.zip");
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -365,11 +394,12 @@ export function getAnimatic(id) {
 
 // Save the edited project. Every field is optional; removing the audio needs
 // `clear_audio: true`, because `audio: null` can't be told apart from "not sent".
-export function saveAnimatic(id, { title, settings, frames, audio, clearAudio } = {}) {
+export function saveAnimatic(id, { title, settings, frames, texts, audio, clearAudio } = {}) {
   const body = {};
   if (title !== undefined) body.title = title;
   if (settings !== undefined) body.settings = settings;
   if (frames !== undefined) body.frames = frames;
+  if (texts !== undefined) body.texts = texts;
   if (audio !== undefined) body.audio = audio;
   if (clearAudio) body.clear_audio = true;
   return request(`/animatics/${id}`, { method: "PUT", body });
