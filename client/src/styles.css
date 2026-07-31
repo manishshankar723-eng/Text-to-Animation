@@ -237,6 +237,15 @@ input[type="checkbox"] {
    like flat text. Light mode raises it to white with a firmer edge instead.
    Keeping it in variables means .primary / .secondary / .ghost keep overriding
    it exactly as before — no specificity fights. */
+/* Icons are inline SVG stroked with `currentColor`, so they take the colour of
+   whatever button they sit in — that's the whole reason they aren't emoji, which
+   carry their own colours and can't be restyled. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+
 .btn {
   border: 1px solid var(--btn-border);
   background: var(--btn-bg);
@@ -4543,7 +4552,12 @@ input[type="checkbox"] {
 }
 .tl-inner {
   position: relative;
-  min-width: 100%;
+  /* NO `min-width: 100%`. It used to stretch the tracks to fill the pane
+     whenever the timeline was shorter than it — but the time mapping is
+     `x / pxPerSec`, which does NOT stretch. The lanes were then drawn wider
+     than the time they represent: a click at the visual half-way point landed
+     at 0:44 of 0:59, and the playhead could never reach the right-hand edge.
+     The timeline is now exactly as wide as the time it shows. */
 }
 .tl-ruler {
   position: relative;
@@ -4809,8 +4823,10 @@ input[type="checkbox"] {
   gap: 0.5rem;
 }
 .tl-gutter {
-  flex: 0 0 6.6rem;
-  width: 6.6rem;
+  /* Wide enough for a track's filename beside its mute button — at 6.6rem a
+     name truncated to "m..." told you nothing about which lane was which. */
+  flex: 0 0 9rem;
+  width: 9rem;
 }
 .tl-gutter-ruler {
   height: var(--tl-ruler-h);
@@ -5126,8 +5142,8 @@ input[type="checkbox"] {
 
 @media (max-width: 720px) {
   .tl-gutter {
-    flex-basis: 4.4rem;
-    width: 4.4rem;
+    flex-basis: 6.4rem;
+    width: 6.4rem;
     font-size: 0.68rem;
   }
 }
@@ -5322,13 +5338,53 @@ input[type="checkbox"] {
   margin-bottom: 0.4rem;
 }
 .an-media-track {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.an-media-track-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* Volume for THIS track in the mix — the reason multiple tracks exist is being
+   able to pull music down under a voice. */
+.an-media-track-mix {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.an-vol {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--primary);
+}
+.an-vol:disabled {
+  opacity: var(--disabled-opacity);
+}
+.an-vol-read {
+  min-width: 2.6rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.an-mute {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.15rem 0.25rem;
+}
+.an-mute.on {
+  border-color: var(--warn);
+}
+.an-mix-note {
+  margin: 0.2rem 0 0;
+  line-height: 1.4;
 }
 .an-media-ico {
   color: var(--primary);
@@ -5486,12 +5542,16 @@ input[type="checkbox"] {
 .an-pane-timeline {
   /* Tall enough for the ruler + three tracks without the pane scrolling, but it
      gives room back to the picture on a short screen instead of fighting it. */
-  height: clamp(13rem, 24vh, 15.5rem);
+  /* Grows with the number of layers — a second audio lane needs room — but
+     never eats more than half the window, and scrolls beyond that. */
+  height: auto;
+  min-height: clamp(13rem, 24vh, 15.5rem);
+  max-height: 50vh;
   flex-shrink: 0;
 }
 .an-timeline-body {
   padding: 0.5rem 0.6rem 0.6rem;
-  overflow: hidden;
+  overflow: auto;
 }
 .an-pane-timeline .an-tl-total {
   display: inline-flex;
@@ -5614,4 +5674,226 @@ input[type="checkbox"] {
     height: auto;
     min-height: 40rem;
   }
+}
+
+/* Icon-only buttons: centre the glyph and let it inherit the button colour. */
+.lib-icon,
+.fs-tool,
+.an-topbar .an-del-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lib-icon .icon {
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: middle;
+}
+.fs-tool .icon {
+  width: 1em;
+  height: 1em;
+}
+
+/* --- Timeline: audio LAYERS ---------------------------------------------- */
+/* Each track gets its own lane and its own gutter row, so a voiceover and a
+   music bed are visibly separate things that happen to be mixed. */
+.tl-layer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tl-layer-mute {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  flex-shrink: 0;
+}
+/* A muted lane is dimmed rather than hidden — it's still part of the edit. */
+.tl-audio.muted {
+  opacity: 0.42;
+}
+.tl-audio + .tl-audio {
+  margin-top: var(--tl-row-gap);
+}
+.tl-add-layer {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: var(--tl-row-gap);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.2rem;
+}
+.tl-add-layer:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.tl-add-layer:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.tl-layer-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.1rem;
+  line-height: 1;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.tl-layer-del:hover {
+  color: var(--fail);
+}
+.tl-layer-del .icon {
+  width: 0.85em;
+  height: 0.85em;
+}
+
+/* --- Add-layer picker ---------------------------------------------------- */
+.an-layer-modal {
+  max-width: 26rem;
+  width: 92vw;
+  position: relative;
+}
+.an-layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+.an-layer-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.6rem 0.75rem;
+}
+.an-layer-opt:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-layer-opt:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+.an-layer-opt > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.an-layer-opt-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--primary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.an-past-end-note {
+  font-size: 0.7rem;
+  color: var(--warn);
+  white-space: nowrap;
+}
+/* A selected audio track — in the gutter, in its lane, and in the Media list. */
+.tl-gutter-audio.sel,
+.an-media-track.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-audio.sel {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.an-media-track {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.an-media-track:hover {
+  border-color: var(--primary);
+}
+/* Volume lives in Properties now, so it gets room to breathe there. */
+.an-prop-vol {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+}
+/* --- Export dialog -------------------------------------------------------- */
+.an-export-modal {
+  max-width: 30rem;
+  width: 94vw;
+  position: relative;
+}
+.an-exp-grid {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem 0.8rem;
+  margin-top: 1.1rem;
+}
+.an-exp-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.an-exp-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.an-exp-fixed {
+  line-height: 1.4;
+}
+.an-export-modal .an-select,
+.an-export-modal .an-prop-input {
+  width: 100%;
+}
+/* What you are about to get, stated in facts we actually know. */
+.an-exp-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.55rem 0.75rem;
+  margin-top: 1.1rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.an-exp-summary > span {
+  color: var(--muted);
+}
+.an-exp-note {
+  margin: 0.5rem 0 0;
+  line-height: 1.5;
 }

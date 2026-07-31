@@ -332,7 +332,13 @@ with sync_playwright() as pw:
         return n;
     }""")
     check("waveform has actual pixels (not a blank canvas)", drawn > 500, f"{drawn} lit pixels")
-    check("audio named in the Media pane", "track.wav" in page.locator(".an-media-name").inner_text())
+    check("audio named in the Media pane",
+          "track.wav" in page.locator(".an-media-name").first.inner_text())
+    # Audio is a LAYER now: each track gets its own lane, gutter row and volume.
+    check("one audio lane per track", page.locator(".tl-audio").count() == 1,
+          str(page.locator(".tl-audio").count()))
+    check("the track has its own volume control", page.locator(".an-vol").count() == 1)
+    check("an 'Add layer' control exists", page.locator(".tl-add-layer").count() == 1)
 
     print("\n=== 10. playback ===")
     page.click(".an-play")

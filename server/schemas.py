@@ -425,7 +425,11 @@ class AnimaticFrame(BaseModel):
 
 
 class AnimaticAudio(BaseModel):
-    """The single audio track laid under the whole sequence."""
+    """One audio track laid under the sequence.
+
+    An animatic can carry several — music under a voiceover is the usual pair —
+    and they are MIXED on export, each at its own volume.
+    """
 
     upload_id: str
     filename: str = ""
@@ -434,6 +438,10 @@ class AnimaticAudio(BaseModel):
     duration_ms: int = 0
     # How far into the audio file playback starts (skips an intro). Never negative.
     offset_ms: int = Field(0, ge=0)
+    # 1.0 = as recorded. Above 1 amplifies, which is why the ceiling is low —
+    # a music bed usually wants pulling DOWN under a voice, not pushing up.
+    volume: float = Field(1.0, ge=0.0, le=2.0)
+    muted: bool = False
     url: str | None = None
 
 
@@ -469,6 +477,14 @@ class AnimaticSettings(BaseModel):
 
     aspect_ratio: str = Field("16:9", description="Frame shape, e.g. '16:9', '9:16', '1:1'.")
     fps: int = Field(24, ge=1, le=60)
+    # The SHORT edge of the exported frame, so 1080 means 1920×1080 for 16:9 and
+    # 1080×1920 for 9:16 — the way "1080p" is normally meant.
+    resolution: int = Field(1080, ge=360, le=2160, description="Short edge in pixels.")
+    # Maps to an x264 CRF. Stills compress extremely well, so even "high" stays
+    # small; this mostly matters once there are lots of frames.
+    quality: str = Field("high", description="'high' | 'medium' | 'low'.")
+    # Lets an export be made silent without removing the tracks from the project.
+    include_audio: bool = True
     # "contain" letterboxes (whole image visible — the default, because a
     # storyboard frame you cropped is a frame you can't read); "cover" fills.
     fit: str = Field("contain", description="'contain' (letterbox) or 'cover' (crop to fill).")
@@ -489,7 +505,9 @@ class AnimaticProject(BaseModel):
     # The text layer. Independent of the frames — a clip can start mid-frame and
     # run across a cut.
     texts: list[AnimaticTextClip] = Field(default_factory=list)
-    audio: AnimaticAudio | None = None
+    # Zero or more audio tracks, mixed together on export. Records written before
+    # multi-track carried a single `audio` object; it is migrated on read.
+    audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
     # Sum of the frame durations — the length of the video that will be exported.
     # The FRAMES decide the length; a text clip hanging past the end is simply
     # not seen (and is cut by the exporter).
@@ -529,8 +547,10 @@ class AnimaticSaveRequest(BaseModel):
     settings: AnimaticSettings | None = None
     frames: list[AnimaticFrame] | None = None
     texts: list[AnimaticTextClip] | None = None
-    audio: AnimaticAudio | None = None
-    clear_audio: bool = False
+    # Send the whole list; an empty list removes every track. (This replaced a
+    # single `audio` field plus a `clear_audio` flag — with a list, "none" is
+    # just an empty list and needs no companion flag.)
+    audio_tracks: list[AnimaticAudio] | None = None
 
 
 class AnimaticSummary(BaseModel):
@@ -545,6 +565,7 @@ class AnimaticSummary(BaseModel):
     # Serve path for the first frame — the card's thumbnail.
     cover_url: str | None = None
     text_count: int = 0
+    audio_count: int = 0
     has_audio: bool = False
     has_video: bool = False
     created_at: str

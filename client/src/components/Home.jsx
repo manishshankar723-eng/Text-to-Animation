@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
+import Icon from "./Icon.jsx";
 
 // Home / account dashboard: profile, plan & credits, recent work (with
 // downloads), and account actions (log out / delete account).
@@ -193,7 +194,7 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
                 className="btn danger-btn"
                 onClick={() => setConfirmingDelete(true)}
               >
-                🗑 Delete account
+                <Icon name="trash" /> Delete account
               </button>
             ) : (
               <div className="danger-confirm">

@@ -58,6 +58,9 @@ MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
 # Text clips per animatic. Each boundary splits the timeline into another
 # rendered still, so this also caps how much work an export can be asked to do.
 MAX_ANIMATIC_TEXTS = int(os.environ.get("API_MAX_ANIMATIC_TEXTS", "400"))
+# Audio tracks per animatic (music + voiceover is the usual pair). Every extra
+# track is another ffmpeg input to decode and mix, so this stays small.
+MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
 
 # --- Auth (JWT login + MongoDB user store) -----------------------------------
 # Secret used to sign JWTs. MUST be set in production. A dev fallback is used

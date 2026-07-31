@@ -4,6 +4,7 @@
 // timeline below is where it's dragged. Both write the same milliseconds, so
 // it doesn't matter which one you reach for.
 import { useEffect, useRef, useState } from "react";
+import Icon from "./Icon.jsx";
 
 const MIN_MS = 100;
 const MAX_MS = 600000;
@@ -184,7 +185,7 @@ export default function FrameStrip({
                     onDuplicate(f.id);
                   }}
                 >
-                  ⧉
+                  <Icon name="copy" />
                 </button>
                 <button
                   type="button"
@@ -195,7 +196,7 @@ export default function FrameStrip({
                     onDelete(f.id);
                   }}
                 >
-                  ✕
+                  <Icon name="close" />
                 </button>
               </span>
             </div>

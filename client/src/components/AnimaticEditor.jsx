@@ -13,11 +13,40 @@ import * as api from "../api.js";
 import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
+import Icon from "./Icon.jsx";
 
 const ZOOMS = [8, 16, 32, 64, 128, 256]; // pixels per second
 const DEFAULT_ZOOM = 2;
 const AUTOSAVE_MS = 900;
 const MIN_MS = 100;
+// Mirrors API_MAX_ANIMATIC_AUDIO_TRACKS on the server.
+const MAX_AUDIO_TRACKS = 4;
+
+const RESOLUTIONS = [
+  { id: 720, label: "720p" },
+  { id: 1080, label: "1080p" },
+  { id: 1440, label: "1440p" },
+  { id: 2160, label: "4K" },
+];
+
+// The familiar frame sizes, written for a 1080 short edge and scaled from there
+// — the SAME rule `resolve_size()` uses on the server, so the dialog can show
+// the real output size before anything is encoded. Keep the two in step.
+const BASE_SIZES = {
+  "16:9": [1920, 1080],
+  "9:16": [1080, 1920],
+  "1:1": [1080, 1080],
+  "4:3": [1440, 1080],
+  "3:4": [1080, 1440],
+  "4:5": [1080, 1350],
+  "21:9": [1920, 824],
+};
+const even = (n) => (Math.round(n) % 2 === 0 ? Math.round(n) : Math.round(n) + 1);
+function frameSizeFor(aspect, resolution) {
+  const base = BASE_SIZES[aspect] || BASE_SIZES["16:9"];
+  const scale = (resolution || 1080) / 1080;
+  return [even(base[0] * scale), even(base[1] * scale)];
+}
 
 const ASPECTS = [
   { id: "16:9", label: "16:9", note: "Wide" },
@@ -113,25 +142,31 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // The text layer. Timed independently of the frames, which is why it isn't
   // just a field on a frame.
   const [texts, setTexts] = useState([]);
-  const [audio, setAudio] = useState(null);
+  // Zero or more audio tracks, mixed on export. Music under a voiceover is the
+  // pair this exists for.
+  const [audioTracks, setAudioTracks] = useState([]);
   const [video, setVideo] = useState(null);
   const [sourceBoard, setSourceBoard] = useState(null);
 
   // --- Media ---
   const [urls, setUrls] = useState({}); // frame id → object URL
   const urlsRef = useRef({});
-  const [audioUrl, setAudioUrl] = useState(null);
-  const audioUrlRef = useRef(null);
+  // upload_id → object URL, and upload_id → its <audio> element.
+  const [audioUrls, setAudioUrls] = useState({});
+  const audioUrlsRef = useRef({});
+  const audioElsRef = useRef({});
 
   // --- Playback ---
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const timeRef = useRef(0);
-  const audioRef = useRef(null);
 
   // --- UI ---
   const [selectedId, setSelectedId] = useState(null);
   const [selectedTextId, setSelectedTextId] = useState(null);
+  // An audio track selected for editing — its controls live in Properties, like
+  // everything else that has settings.
+  const [selectedTrackId, setSelectedTrackId] = useState(null);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState("saved"); // saved | dirty | saving | error
@@ -145,6 +180,11 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [saveAsName, setSaveAsName] = useState(null);
   // A file is being dragged over the Media pane.
   const [dropping, setDropping] = useState(false);
+  // The "what kind of layer?" picker opened by ＋ Add layer.
+  const [layerMenu, setLayerMenu] = useState(false);
+  // The export dialog, and the file name it will download as.
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportName, setExportName] = useState("");
 
   const textAreaRef = useRef(null);
   const audioInputRef = useRef(null);
@@ -201,12 +241,39 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // a text clip, else a frame, else the video itself. Selecting one clears the
   // other (see the Timeline handlers), so the pane can never show the wrong one.
   const selectedText = texts.find((c) => c.id === selectedTextId) || null;
-  const selectedFrame = selectedText
+  const selectedTrack = selectedText
     ? null
-    : frames.find((f) => f.id === selectedId) || null;
+    : audioTracks.find((a) => a.upload_id === selectedTrackId) || null;
+  const selectedFrame =
+    selectedText || selectedTrack
+      ? null
+      : frames.find((f) => f.id === selectedId) || null;
+
+  // One helper so every "select this" path clears the other two — the pane can
+  // then never show something that isn't selected.
+  function selectOnly({ frame = null, text = null, track = null }) {
+    setSelectedId(frame);
+    setSelectedTextId(text);
+    setSelectedTrackId(track);
+  }
 
   const exporting = exportJob?.status === "running" || exportBusy;
-  const audioMs = audio?.duration_ms || 0;
+  // The longest track — what "fit frames to audio" matches, and what the
+  // length comparison in the timeline header reports against.
+  const audioMs = audioTracks.reduce(
+    (max, a) => Math.max(max, a.duration_ms || 0),
+    0
+  );
+  // How far the TIMELINE reaches. The video is still only as long as the frames
+  // — that's what exports — but if the audio runs past them the timeline has to
+  // show it, or you can't scrub into your own track to place pictures against it.
+  const spanMs = Math.max(
+    totalMs,
+    audioTracks.reduce(
+      (max, a) => Math.max(max, (a.duration_ms || 0) - (a.offset_ms || 0)),
+      0
+    )
+  );
 
   // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
   // such an animatic throws it away instead of leaving an empty "Untitled" on
@@ -214,7 +281,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const isEmpty =
     !frames.length &&
     !texts.length &&
-    !audio &&
+    !audioTracks.length &&
     !video &&
     (!title.trim() || title.trim() === UNTITLED);
   // Has content but still carries the placeholder name, so Save should ask for
@@ -233,7 +300,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         setFrames(p.frames || []);
         setTexts(p.texts || []);
         setSettings(p.settings);
-        setAudio(p.audio || null);
+        setAudioTracks(p.audio_tracks || []);
         setVideo(p.video || null);
         setSourceBoard(p.source_storyboard_id || null);
         setSelectedId(p.frames?.[0]?.id || null);
@@ -301,42 +368,58 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     };
   }, [frames]);
 
-  // The audio blob, for both the waveform and playback.
+  // One blob per audio track, for the waveforms and for playback.
   useEffect(() => {
     let alive = true;
-    if (!audio) {
-      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-      audioUrlRef.current = null;
-      setAudioUrl(null);
-      return;
+    const wanted = new Set(audioTracks.map((a) => a.upload_id));
+
+    for (const id of Object.keys(audioUrlsRef.current)) {
+      if (!wanted.has(id)) {
+        URL.revokeObjectURL(audioUrlsRef.current[id]);
+        delete audioUrlsRef.current[id];
+      }
     }
-    // Fetched by UPLOAD ID, not through the project's /audio route: the save is
-    // debounced, so straight after an upload the track is on disk but not yet on
-    // the project, and /audio would 404 — which left the waveform blank and
-    // playback silent until a reload.
-    api
-      .fetchAnimaticMedia(`/animatics/${animaticId}/media/${audio.upload_id}`)
-      .then((url) => {
-        if (!alive) {
-          URL.revokeObjectURL(url);
-          return;
+
+    const missing = audioTracks.filter((a) => !audioUrlsRef.current[a.upload_id]);
+    if (!missing.length) {
+      setAudioUrls({ ...audioUrlsRef.current });
+      return undefined;
+    }
+
+    (async () => {
+      for (const track of missing) {
+        try {
+          // Fetched by UPLOAD ID, not the project's /audio route: the save is
+          // debounced, so straight after an upload the file is on disk but not
+          // yet on the project, and /audio would 404 — which left the waveform
+          // blank and playback silent until a reload.
+          const url = await api.fetchAnimaticMedia(
+            `/animatics/${animaticId}/media/${track.upload_id}`
+          );
+          if (!alive) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          audioUrlsRef.current[track.upload_id] = url;
+          setAudioUrls({ ...audioUrlsRef.current });
+        } catch {
+          /* a track that won't load shows no waveform; it isn't an error banner */
         }
-        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-        audioUrlRef.current = url;
-        setAudioUrl(url);
-      })
-      .catch(() => {});
+      }
+    })();
+
     return () => {
       alive = false;
     };
-  }, [audio?.upload_id, animaticId]);
+  }, [audioTracks, animaticId]);
 
   // Object URLs are page-lifetime unless revoked — clean the lot up on the way out.
   useEffect(
     () => () => {
       for (const url of Object.values(urlsRef.current)) URL.revokeObjectURL(url);
       urlsRef.current = {};
-      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      for (const url of Object.values(audioUrlsRef.current)) URL.revokeObjectURL(url);
+      audioUrlsRef.current = {};
     },
     []
   );
@@ -362,8 +445,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           label: f.label || "",
         })),
         texts: doc.texts,
-        audio: doc.audio || undefined,
-        clearAudio: !doc.audio,
+        audioTracks: doc.audioTracks,
       });
       baselineRef.current = sent;
       setSaveState("saved");
@@ -400,15 +482,15 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           label: f.label || "",
         })),
         texts,
-        audio,
+        audioTracks,
       }),
-    [title, settings, frames, texts, audio]
+    [title, settings, frames, texts, audioTracks]
   );
 
   // Keep the latest project in a ref so the unmount flush sees it.
   useEffect(() => {
-    docRef.current = { title, settings, frames, texts, audio, signature };
-  }, [title, settings, frames, texts, audio, signature]);
+    docRef.current = { title, settings, frames, texts, audioTracks, signature };
+  }, [title, settings, frames, texts, audioTracks, signature]);
 
   // Debounced autosave. Blocked during an export (the server refuses a save
   // while ffmpeg is reading these exact frames), and retried once it ends.
@@ -449,51 +531,76 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   );
 
   // ------------------------------------------------------------- playback
-  const offsetMs = audio?.offset_ms || 0;
+  // Every track's <audio>, paired with its project entry. Elements that haven't
+  // mounted yet (a blob still loading) are simply absent.
+  const liveTracks = useCallback(
+    () =>
+      audioTracks
+        .map((track) => ({ track, el: audioElsRef.current[track.upload_id] }))
+        .filter((x) => x.el),
+    [audioTracks]
+  );
+
+  // Put one element at the given video time. `offset_ms` is how far into the
+  // FILE the sequence starts, so file time = video time + offset.
+  function placeTrack(el, track, videoMs) {
+    const at = (videoMs + (track.offset_ms || 0)) / 1000;
+    if (!Number.isFinite(at)) return;
+    el.currentTime = Math.max(0, Math.min(el.duration || at, at));
+  }
 
   const seek = useCallback(
     (ms) => {
-      const t = Math.max(0, Math.min(totalMs, Math.round(ms)));
+      const t = Math.max(0, Math.min(spanMs, Math.round(ms)));
       timeRef.current = t;
       setTimeMs(t);
-      const el = audioRef.current;
-      if (el && audioUrl) {
-        const at = (t + offsetMs) / 1000;
-        if (Number.isFinite(at)) {
-          el.currentTime = Math.max(0, Math.min(el.duration || at, at));
-        }
-      }
+      for (const { track, el } of liveTracks()) placeTrack(el, track, t);
     },
-    [totalMs, audioUrl, offsetMs]
+    [spanMs, liveTracks]
   );
 
+  // Keep the elements' own volume/mute in step with the project. Browser volume
+  // caps at 1, so a track boosted above that previews at 1 — the EXPORT still
+  // applies the real figure via ffmpeg's volume filter.
   useEffect(() => {
-    if (!playing) return;
+    for (const { track, el } of liveTracks()) {
+      el.volume = Math.max(0, Math.min(1, track.volume ?? 1));
+      el.muted = Boolean(track.muted);
+    }
+  }, [audioTracks, audioUrls, liveTracks]);
+
+  useEffect(() => {
+    if (!playing) return undefined;
     let raf = 0;
     let anchorWall = performance.now();
     let anchorT = timeRef.current;
 
     const tick = () => {
       const now = performance.now();
-      const el = audioRef.current;
+      // The FIRST track that is genuinely playing is the master clock, so the
+      // pictures can never drift from the sound. If it ends early (a track
+      // shorter than the sequence) we carry on from the wall clock — the
+      // handover is seamless because the anchor is re-set every frame, and the
+      // video's length is decided by the frames, not by any track.
+      const master = liveTracks().find(
+        ({ el }) => !el.paused && !el.ended && !Number.isNaN(el.currentTime)
+      );
       let t;
-      // Audio is the master clock while it's genuinely playing. If it ends
-      // early (a track shorter than the sequence) we carry on from the wall
-      // clock — the handover is seamless because the anchor is re-set every
-      // frame, and the video's length is decided by the frames, not the track.
-      if (el && audioUrl && !el.paused && !el.ended) {
-        t = el.currentTime * 1000 - offsetMs;
+      if (master) {
+        t = master.el.currentTime * 1000 - (master.track.offset_ms || 0);
       } else {
         t = anchorT + (now - anchorWall);
       }
       anchorT = t;
       anchorWall = now;
 
-      if (t >= totalMs) {
-        timeRef.current = totalMs;
-        setTimeMs(totalMs);
+      // Runs to the end of the TIMELINE, not the end of the video: with a
+      // 2-minute track under 2 seconds of pictures you still want to hear it.
+      if (t >= spanMs) {
+        timeRef.current = spanMs;
+        setTimeMs(spanMs);
         setPlaying(false);
-        audioRef.current?.pause();
+        for (const { el } of liveTracks()) el.pause();
         return;
       }
       timeRef.current = t;
@@ -503,20 +610,20 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, totalMs, audioUrl, offsetMs]);
+  }, [playing, spanMs, liveTracks]);
 
   function togglePlay() {
     if (playing) {
-      audioRef.current?.pause();
+      for (const { el } of liveTracks()) el.pause();
       setPlaying(false);
       return;
     }
     if (!frames.length) return;
-    if (timeRef.current >= totalMs - 30) seek(0);
-    const el = audioRef.current;
-    if (el && audioUrl) {
-      const at = (timeRef.current + offsetMs) / 1000;
-      el.currentTime = Math.max(0, Math.min(el.duration || at, at));
+    if (timeRef.current >= spanMs - 30) seek(0);
+    // Placed, then started, together — starting one before placing another is
+    // what makes two tracks drift apart at the top of playback.
+    for (const { track, el } of liveTracks()) {
+      placeTrack(el, track, timeRef.current);
       el.play().catch(() => {
         /* autoplay policy — the wall clock still drives the pictures */
       });
@@ -675,14 +782,25 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     const others = files.filter((f) => kindOf(f) === "other");
 
     if (images.length) await addFiles(images, insertAt);
-    // One track, so a second audio file would only overwrite the first.
-    if (audios.length) await pickAudio(audios[0]);
+    // Each audio file becomes its OWN track — dropping music and a voiceover
+    // together gives you two layers, which is the point of the layer control.
+    const room = MAX_AUDIO_TRACKS - audioTracks.length;
+    const taking = audios.slice(0, Math.max(0, room));
+    for (const file of taking) await addAudioTrack(file);
 
     const said = [];
     if (images.length) said.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
-    if (audios.length) said.push(`audio “${audios[0].name}”`);
+    if (taking.length)
+      said.push(
+        taking.length === 1
+          ? `audio “${taking[0].name}”`
+          : `${taking.length} audio tracks`
+      );
     const ignored = [];
-    if (audios.length > 1) ignored.push(`${audios.length - 1} extra audio file(s) — only one track is supported`);
+    if (audios.length > taking.length)
+      ignored.push(
+        `${audios.length - taking.length} audio file(s) — at most ${MAX_AUDIO_TRACKS} tracks`
+      );
     if (videos.length) ignored.push(`${videos.length} video file(s) — video isn't supported yet`);
     if (others.length) ignored.push(`${others.length} file(s) that aren't images or audio`);
 
@@ -695,7 +813,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     }
   }
 
-  async function pickAudio(file) {
+  // Adds a NEW track — it never replaces an existing one. The cap is checked by
+  // the caller so a multi-file drop can report what it had to leave out.
+  async function addAudioTrack(file) {
     if (!file) return;
     setError("");
     try {
@@ -703,20 +823,42 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         api.uploadAnimaticAudio(animaticId, file),
         measureAudio(file),
       ]);
-      setAudio({
-        upload_id: res.upload_id,
-        filename: res.filename || file.name,
-        duration_ms: durationMs,
-        offset_ms: 0,
-      });
-      setNotice(
-        durationMs
-          ? `Audio added — ${formatTime(durationMs)} long.`
-          : "Audio added."
-      );
+      setAudioTracks((list) => [
+        ...list,
+        {
+          upload_id: res.upload_id,
+          filename: res.filename || file.name,
+          duration_ms: durationMs,
+          offset_ms: 0,
+          volume: 1,
+          muted: false,
+          url: `/animatics/${animaticId}/media/${res.upload_id}`,
+        },
+      ]);
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  // The Audio layer's ＋ and the "Add layer" control both land here.
+  async function pickAudio(file) {
+    if (!file) return;
+    if (audioTracks.length >= MAX_AUDIO_TRACKS) {
+      setNotice(`That's the limit — an animatic can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
+      return;
+    }
+    await addAudioTrack(file);
+    setNotice(`Audio track added — “${file.name}”.`);
+  }
+
+  const patchTrack = (uploadId, patch) =>
+    setAudioTracks((list) =>
+      list.map((a) => (a.upload_id === uploadId ? { ...a, ...patch } : a))
+    );
+
+  function removeTrack(uploadId) {
+    setAudioTracks((list) => list.filter((a) => a.upload_id !== uploadId));
+    setNotice("Audio track removed.");
   }
 
   // Scale every hold so the sequence lands exactly on the end of the track.
@@ -929,7 +1071,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           <button
             type="button"
             className={`btn small ${video.stale ? "an-stale" : ""}`}
-            onClick={() => api.downloadAnimaticVideo(animaticId, `${title || "animatic"}.mp4`)}
+            onClick={() =>
+              api.downloadAnimaticVideo(animaticId, `${exportName || title || "animatic"}.mp4`)
+            }
             title={
               video.stale
                 ? "This file is from before your latest edits — export again for an up-to-date one"
@@ -938,7 +1082,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                   ).toFixed(1)} MB`
             }
           >
-            {video.stale ? "⬇ MP4 (out of date)" : "⬇ Download MP4"}
+            <Icon name="download" />
+            {video.stale ? " MP4 (out of date)" : " Download MP4"}
           </button>
         )}
 
@@ -962,7 +1107,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               <span className="spinner-inline" /> Saving…
             </>
           ) : (
-            "💾 Save"
+            <>
+              <Icon name="save" /> Save
+            </>
           )}
         </button>
 
@@ -975,10 +1122,13 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             type="button"
             className="btn primary an-export"
             disabled={!frames.length}
-            onClick={startExport}
-            title="Encode an MP4 of exactly what you see here"
+            onClick={() => {
+              setExportName((n) => n || title || "animatic");
+              setExportOpen(true);
+            }}
+            title="Choose the export settings, then encode"
           >
-            ⬇ Export video
+            <Icon name="download" /> Export video
           </button>
         )}
 
@@ -1005,7 +1155,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             onClick={() => setConfirmDelete(true)}
             title="Delete this animatic — the storyboard it came from is untouched"
           >
-            🗑
+            <Icon name="trash" />
           </button>
         )}
       </header>
@@ -1078,8 +1228,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               selectedId={selectedId}
               uploading={uploading}
               onSelect={(id) => {
-                setSelectedId(id);
-                setSelectedTextId(null);
+                selectOnly({ frame: id });
                 const i = frames.findIndex((f) => f.id === id);
                 if (i >= 0) seek(starts[i]);
               }}
@@ -1092,27 +1241,31 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
             {/* Only appears once there IS audio — an empty "Audio" heading with
                 its own add button was the third of the three controls. */}
-            {audio && (
+            {audioTracks.length > 0 && (
               <div className="an-media-audio">
-                <div className="an-media-sub">Audio</div>
-                <div className="an-media-track">
-                  <span className="an-media-ico">♪</span>
-                  <span className="an-media-name" title={audio.filename}>
-                    {audio.filename}
-                  </span>
-                  <span className="tiny muted">{formatTime(audioMs)}</span>
+                <div className="an-media-sub">
+                  Audio <span className="muted">({audioTracks.length})</span>
+                </div>
+                {/* A LIST, not a mixer. Volume and the rest live in Properties
+                    — click a track to edit it, same as a frame or a caption. */}
+                {audioTracks.map((track) => (
                   <button
                     type="button"
-                    className="fs-tool danger"
-                    title="Remove the audio track"
-                    onClick={() => {
-                      setAudio(null);
-                      setNotice("Audio removed.");
-                    }}
+                    className={`an-media-track ${
+                      selectedTrackId === track.upload_id ? "sel" : ""
+                    }`}
+                    key={track.upload_id}
+                    onClick={() => selectOnly({ track: track.upload_id })}
                   >
-                    ✕
+                    <span className="an-media-ico">♪</span>
+                    <span className="an-media-name" title={track.filename}>
+                      {track.filename}
+                    </span>
+                    <span className="tiny muted">
+                      {track.muted ? "muted" : `${Math.round((track.volume ?? 1) * 100)}%`}
+                    </span>
                   </button>
-                </div>
+                ))}
               </div>
             )}
           </div>
@@ -1215,9 +1368,18 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               <button type="button" className="an-tbtn" onClick={() => stepFrame(1)} title="Next frame">
                 ▶
               </button>
+              {/* Counts against the TIMELINE, not the video: with audio running
+                  past the pictures the playhead can legitimately sit beyond the
+                  video's end, and "0:30 / 0:02" just looked broken. The video's
+                  own length is stated in the timeline header. */}
               <span className="an-clock">
-                {formatTime(timeMs)} <span className="muted">/ {formatTime(totalMs)}</span>
+                {formatTime(timeMs)} <span className="muted">/ {formatTime(spanMs)}</span>
               </span>
+              {timeMs > totalMs + 20 && (
+                <span className="an-past-end-note" title="The exported video stops here">
+                  past the end of the video
+                </span>
+              )}
               <span className="an-shotnum">
                 {currentIndex >= 0 ? `Frame ${currentIndex + 1} of ${frames.length}` : ""}
               </span>
@@ -1231,19 +1393,22 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           <div className="an-pane-head">
             <span className="an-pane-title">Properties</span>
             <span className="tiny muted">
-              {selectedText ? "Text" : selectedFrame ? "Frame" : "Video"}
+              {selectedText
+                ? "Text"
+                : selectedTrack
+                  ? "Audio"
+                  : selectedFrame
+                    ? "Frame"
+                    : "Video"}
             </span>
             {/* Without this there is no way back: selecting anything hides the
                 whole-video settings, and nothing deselects. */}
-            {(selectedText || selectedFrame) && (
+            {(selectedText || selectedFrame || selectedTrack) && (
               <button
                 type="button"
                 className="an-pane-back"
                 title="Deselect — show the settings for the whole video"
-                onClick={() => {
-                  setSelectedTextId(null);
-                  setSelectedId(null);
-                }}
+                onClick={() => selectOnly({})}
               >
                 ← Video
               </button>
@@ -1259,6 +1424,13 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                 onDuplicate={duplicateText}
                 onDelete={deleteText}
                 onClose={() => setSelectedTextId(null)}
+              />
+            ) : selectedTrack ? (
+              <AudioProperties
+                track={selectedTrack}
+                index={audioTracks.findIndex((a) => a.upload_id === selectedTrack.upload_id)}
+                onChange={patchTrack}
+                onRemove={removeTrack}
               />
             ) : selectedFrame ? (
               <FrameProperties
@@ -1305,7 +1477,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             onClick={addText}
             title="Add a text clip over the frame at the playhead"
           >
-            T ＋ Text
+            <Icon name="text" /> Text
           </button>
           <button
             type="button"
@@ -1356,31 +1528,251 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           <Timeline
             frames={frames}
             texts={texts}
-            totalMs={totalMs || 1000}
+            totalMs={totalMs}
+            spanMs={spanMs || 1000}
             timeMs={timeMs}
             pxPerSec={pxPerSec}
             selectedId={selectedId}
             selectedTextId={selectedTextId}
-            audioUrl={audioUrl}
-            audioOffsetMs={offsetMs}
-            onSelect={(id) => {
-              setSelectedId(id);
-              setSelectedTextId(null);
-            }}
-            onSelectText={(id) => {
-              setSelectedTextId(id);
-              setSelectedId(null);
-            }}
+            audioTracks={audioTracks}
+            audioUrls={audioUrls}
+            maxAudioTracks={MAX_AUDIO_TRACKS}
+            onToggleMute={(id) =>
+              patchTrack(id, {
+                muted: !audioTracks.find((a) => a.upload_id === id)?.muted,
+              })
+            }
+            onSelect={(id) => selectOnly({ frame: id })}
+            onSelectText={(id) => selectOnly({ text: id })}
+            selectedTrackId={selectedTrackId}
+            onSelectTrack={(id) => selectOnly({ track: id })}
             onSeek={seek}
             onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
             onTextChange={patchText}
             onAddImages={() => imageInputRef.current?.click()}
             onAddText={addText}
             onAddAudio={openAudioPicker}
-            hasAudio={Boolean(audio)}
+            onAddLayer={() => setLayerMenu(true)}
+            onRemoveTrack={removeTrack}
           />
         </div>
       </section>
+
+      {/* Export settings, confirmed before anything is encoded. */}
+      {exportOpen && (
+        <div className="modal-overlay" onClick={() => setExportOpen(false)}>
+          <div className="card an-export-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setExportOpen(false)}>
+              ✕
+            </button>
+            <h2>Export video</h2>
+
+            <div className="an-exp-grid">
+              <label className="an-exp-label" htmlFor="exp-name">
+                File name
+              </label>
+              <span className="an-exp-name">
+                <input
+                  id="exp-name"
+                  className="an-prop-input"
+                  value={exportName}
+                  placeholder="animatic"
+                  onChange={(e) => setExportName(e.target.value)}
+                />
+                <span className="tiny muted">.mp4</span>
+              </span>
+
+              <span className="an-exp-label">Format</span>
+              <span className="tiny muted an-exp-fixed">
+                MP4 · H.264 + AAC — plays everywhere
+              </span>
+
+              <label className="an-exp-label" htmlFor="exp-res">
+                Resolution
+              </label>
+              <select
+                id="exp-res"
+                className="an-select"
+                value={settings.resolution ?? 1080}
+                onChange={(e) =>
+                  setSettings((s) => ({ ...s, resolution: Number(e.target.value) }))
+                }
+              >
+                {RESOLUTIONS.map((r) => {
+                  const [w, h] = frameSizeFor(settings.aspect_ratio, r.id);
+                  return (
+                    <option key={r.id} value={r.id}>
+                      {r.label} — {w}×{h}
+                    </option>
+                  );
+                })}
+              </select>
+
+              <label className="an-exp-label" htmlFor="exp-fps">
+                Frame rate
+              </label>
+              <select
+                id="exp-fps"
+                className="an-select"
+                value={settings.fps}
+                onChange={(e) => setSettings((s) => ({ ...s, fps: Number(e.target.value) }))}
+              >
+                <option value={12}>12 fps</option>
+                <option value={24}>24 fps (film)</option>
+                <option value={25}>25 fps</option>
+                <option value={30}>30 fps</option>
+              </select>
+
+              <label className="an-exp-label" htmlFor="exp-q">
+                Quality
+              </label>
+              <select
+                id="exp-q"
+                className="an-select"
+                value={settings.quality || "high"}
+                onChange={(e) => setSettings((s) => ({ ...s, quality: e.target.value }))}
+              >
+                <option value="high">High — best looking</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low — smallest file</option>
+              </select>
+
+              <span className="an-exp-label">Audio</span>
+              <label className="an-check">
+                <input
+                  type="checkbox"
+                  checked={settings.include_audio !== false}
+                  disabled={!audioTracks.length}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, include_audio: e.target.checked }))
+                  }
+                />
+                {audioTracks.length
+                  ? `Include ${audioTracks.length} track${audioTracks.length === 1 ? "" : "s"}`
+                  : "No audio on this animatic"}
+              </label>
+            </div>
+
+            <div className="an-exp-summary">
+              <strong>{formatTime(totalMs)}</strong>
+              <span>
+                {frameSizeFor(settings.aspect_ratio, settings.resolution ?? 1080).join("×")}
+              </span>
+              <span>{settings.fps} fps</span>
+              <span>
+                {frames.length} frame{frames.length === 1 ? "" : "s"}
+              </span>
+              {texts.length > 0 && <span>{texts.length} text</span>}
+            </div>
+            {/* No size estimate on purpose: an animatic is mostly still frames,
+                which compress far better than normal video, so any figure we
+                printed would be wrong by a wide margin. */}
+            <p className="tiny muted an-exp-note">
+              The video is as long as your frames — {formatTime(totalMs)}.
+              {audioMs > totalMs &&
+                ` Your audio runs to ${formatTime(audioMs)}; use “Fit to audio” first if you want the whole track.`}
+            </p>
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setExportOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!frames.length}
+                onClick={() => {
+                  setExportOpen(false);
+                  startExport();
+                }}
+              >
+                <Icon name="download" /> Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ＋ Add layer — pick what kind. */}
+      {layerMenu && (
+        <div className="modal-overlay" onClick={() => setLayerMenu(false)}>
+          <div className="card an-layer-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setLayerMenu(false)}>
+              ✕
+            </button>
+            <h2>Add a layer</h2>
+            <p className="muted">What do you want to add to the timeline?</p>
+
+            <div className="an-layer-list">
+              <button
+                type="button"
+                className="an-layer-opt"
+                onClick={() => {
+                  setLayerMenu(false);
+                  imageInputRef.current?.click();
+                }}
+              >
+                <span className="an-layer-opt-ico">🖼</span>
+                <span>
+                  <strong>Images</strong>
+                  <span className="tiny muted">
+                    Added to the end of the picture sequence
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="an-layer-opt"
+                onClick={() => {
+                  setLayerMenu(false);
+                  addText();
+                }}
+              >
+                <span className="an-layer-opt-ico">T</span>
+                <span>
+                  <strong>Text</strong>
+                  <span className="tiny muted">
+                    A caption over the frame at the playhead
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="an-layer-opt"
+                disabled={audioTracks.length >= MAX_AUDIO_TRACKS}
+                onClick={() => {
+                  setLayerMenu(false);
+                  openAudioPicker();
+                }}
+              >
+                <span className="an-layer-opt-ico">♪</span>
+                <span>
+                  <strong>Audio</strong>
+                  <span className="tiny muted">
+                    {audioTracks.length >= MAX_AUDIO_TRACKS
+                      ? `You already have the maximum of ${MAX_AUDIO_TRACKS} tracks`
+                      : `Its own track, mixed with the others (${audioTracks.length}/${MAX_AUDIO_TRACKS})`}
+                  </span>
+                </span>
+              </button>
+
+              {/* Listed because it's the obvious fourth thing to look for —
+                  saying "not yet" is better than leaving people hunting. */}
+              <button type="button" className="an-layer-opt" disabled>
+                <span className="an-layer-opt-ico">🎞</span>
+                <span>
+                  <strong>Video</strong>
+                  <span className="tiny muted">
+                    Not supported yet — an animatic is stills plus audio
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save on an unnamed animatic lands here first. */}
       {saveAsName !== null && (
@@ -1416,15 +1808,28 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                 disabled={!saveAsName.trim()}
                 onClick={confirmSaveAs}
               >
-                💾 Save
+                <Icon name="save" /> Save
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* The real clock. Hidden, but it is what the pictures follow. */}
-      {audioUrl && <audio ref={audioRef} src={audioUrl} preload="auto" />}
+      {/* The real clock. Hidden, but it is what the pictures follow — the first
+          track that is actually playing drives the playhead. */}
+      {audioTracks.map((track) =>
+        audioUrls[track.upload_id] ? (
+          <audio
+            key={track.upload_id}
+            ref={(el) => {
+              if (el) audioElsRef.current[track.upload_id] = el;
+              else delete audioElsRef.current[track.upload_id];
+            }}
+            src={audioUrls[track.upload_id]}
+            preload="auto"
+          />
+        ) : null
+      )}
 
       {/* One hidden input per media type, shared by every entry point that
           adds to that layer (the pane, the strip and the timeline's ＋). */}
@@ -1592,13 +1997,89 @@ function TextProperties({ clip, totalMs, textAreaRef, onChange, onDuplicate, onD
 
       <div className="an-prop-actions">
         <button type="button" className="btn small ghost" onClick={() => onDuplicate(clip.id)}>
-          ⧉ Duplicate
+          <Icon name="copy" /> Duplicate
         </button>
         <button type="button" className="btn small danger-btn" onClick={() => onDelete(clip.id)}>
-          ✕ Remove
+          <Icon name="close" /> Remove
         </button>
         <button type="button" className="btn small ghost" onClick={onClose}>
           Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AudioProperties({ track, index, onChange, onRemove }) {
+  const volume = track.volume ?? 1;
+  return (
+    <div className="an-props">
+      <div className="an-prop-row">
+        <span className="an-prop-label">Track {index + 1}</span>
+        <span className="tiny" title={track.filename}>
+          {track.filename}
+        </span>
+      </div>
+
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">Volume in the mix</span>
+        <div className="an-prop-vol">
+          <button
+            type="button"
+            className={`an-mute ${track.muted ? "on" : ""}`}
+            title={track.muted ? "Unmute this track" : "Mute this track"}
+            onClick={() => onChange(track.upload_id, { muted: !track.muted })}
+          >
+            {track.muted ? "🔇" : "🔊"}
+          </button>
+          <input
+            className="an-vol"
+            type="range"
+            min="0"
+            max="1.5"
+            step="0.05"
+            value={volume}
+            disabled={track.muted}
+            onChange={(e) =>
+              onChange(track.upload_id, { volume: Number(e.target.value) })
+            }
+          />
+          <span className="tiny muted an-vol-read">{Math.round(volume * 100)}%</span>
+        </div>
+        <p className="tiny muted an-prop-hint">
+          100% is the file as recorded. Pull a music bed down to sit under a
+          voice — the tracks are mixed together when the video is exported.
+          {volume > 1 && " Above 100% the editor previews at 100%, but the export uses the real figure."}
+        </p>
+      </div>
+
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>Starts at</span>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={((track.offset_ms || 0) / 1000).toFixed(1)}
+            onChange={(e) =>
+              onChange(track.upload_id, {
+                offset_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
+              })
+            }
+            title="How far INTO this file playback starts — use it to skip an intro"
+          />
+          <span className="an-tp-unit">s</span>
+        </label>
+        <span className="tiny muted">of {formatTime(track.duration_ms || 0)}</span>
+      </div>
+
+      <div className="an-prop-actions">
+        <button
+          type="button"
+          className="btn small danger-btn"
+          onClick={() => onRemove(track.upload_id)}
+        >
+          <Icon name="close" /> Remove track
         </button>
       </div>
     </div>
@@ -1651,10 +2132,10 @@ function FrameProperties({ frame, index, url, onChange, onDuplicate, onDelete })
 
       <div className="an-prop-actions">
         <button type="button" className="btn small ghost" onClick={() => onDuplicate(frame.id)}>
-          ⧉ Duplicate
+          <Icon name="copy" /> Duplicate
         </button>
         <button type="button" className="btn small danger-btn" onClick={() => onDelete(frame.id)}>
-          ✕ Remove
+          <Icon name="close" /> Remove
         </button>
       </div>
     </div>

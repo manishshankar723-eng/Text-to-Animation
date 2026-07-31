@@ -12,6 +12,7 @@
 // there too (the shared look lives in the `.lib-*` classes in styles.css).
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+import Icon from "./Icon.jsx";
 import { formatTime } from "./Timeline.jsx";
 
 // The placeholder title a new animatic carries until it is saved with a
@@ -283,7 +284,7 @@ export default function AnimaticLibrary({ onOpen }) {
                   title="Download the exported MP4"
                   onClick={() => download(a)}
                 >
-                  ⬇
+                  <Icon name="download" />
                 </button>
               )}
               <button
@@ -293,7 +294,7 @@ export default function AnimaticLibrary({ onOpen }) {
                 title="Open in the editor"
                 onClick={() => onOpen(a.job_id)}
               >
-                ▶
+                <Icon name="play" />
               </button>
               <button
                 type="button"
@@ -305,7 +306,7 @@ export default function AnimaticLibrary({ onOpen }) {
                   setRenamingId(uid);
                 }}
               >
-                ✏️
+                <Icon name="pencil" />
               </button>
               <button
                 type="button"
@@ -314,7 +315,7 @@ export default function AnimaticLibrary({ onOpen }) {
                 title="Delete this animatic"
                 onClick={() => setConfirmId(uid)}
               >
-                🗑
+                <Icon name="trash" />
               </button>
             </div>
           </div>

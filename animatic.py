@@ -100,13 +100,33 @@ def _even(n: int) -> int:
     return n if n % 2 == 0 else n + 1
 
 
-def resolve_size(aspect_ratio: str) -> tuple[int, int]:
-    """Pixel size for an aspect ratio string like '16:9'.
+# Quality name → x264 CRF. Lower is better and bigger; the range is narrow
+# because an animatic is mostly still frames, which compress very well.
+_CRF = {"high": 18, "medium": 21, "low": 25}
+# The short edge the sizes in `_EXACT_SIZES` are written for.
+BASE_SHORT_EDGE = 1080
+
+
+def resolve_size(aspect_ratio: str, resolution: int = BASE_SHORT_EDGE) -> tuple[int, int]:
+    """Pixel size for an aspect ratio like '16:9' at the given SHORT edge.
+
+    `resolution` is the short edge — 1080 means 1920×1080 for 16:9 and 1080×1920
+    for 9:16, which is how "1080p" is normally meant. The familiar sizes below
+    are written for 1080 and scaled from there, so passing the default returns
+    exactly what it always did.
 
     Known ratios get an exact, familiar size; anything else is derived from the
-    ratio with the long edge at LONG_EDGE. Unparseable input falls back to
-    1920×1080 rather than failing an export over a typo.
+    ratio. Unparseable input falls back to 16:9 rather than failing an export
+    over a typo.
     """
+    base = _base_size(aspect_ratio)
+    scale = max(0.1, (resolution or BASE_SHORT_EDGE) / BASE_SHORT_EDGE)
+    if abs(scale - 1.0) < 1e-6:
+        return base
+    return _even(base[0] * scale), _even(base[1] * scale)
+
+
+def _base_size(aspect_ratio: str) -> tuple[int, int]:
     key = (aspect_ratio or "").strip()
     if key in _EXACT_SIZES:
         return _EXACT_SIZES[key]
@@ -508,9 +528,10 @@ def build_animatic(
     frames: list[dict],
     *,
     texts: list[dict] | None = None,
-    audio_path: str | None = None,
-    audio_offset_ms: int = 0,
+    audio_tracks: list[dict] | None = None,
     aspect_ratio: str = "16:9",
+    resolution: int = BASE_SHORT_EDGE,
+    quality: str = "high",
     fps: int = 24,
     fit: str = "contain",
     background: str = "#000000",
@@ -530,8 +551,10 @@ def build_animatic(
             of the frames. Note that because a missing frame is dropped, text
             timed against a timeline that HAD that frame shifts with everything
             after it; the alternative (holding a blank) would be worse.
-        audio_path: optional audio file laid under the whole sequence.
-        audio_offset_ms: how far into that file playback starts.
+        audio_tracks: [{"path", "offset_ms", "volume"}] laid under the sequence
+            and MIXED together — music under a voiceover is the usual pair.
+            `offset_ms` is how far into that file playback starts; `volume` is
+            1.0 for as-recorded. A track whose file is missing is skipped.
         progress_cb: called with {"percent", "message", "stage"}.
         cancel_check: called between frames and during encoding; True stops.
 
@@ -541,7 +564,7 @@ def build_animatic(
         raise AnimaticError("This animatic has no frames yet — add some images first.")
 
     exe = ffmpeg_exe()  # fail early, before any work is done
-    size = resolve_size(aspect_ratio)
+    size = resolve_size(aspect_ratio, resolution)
     fps = max(1, min(60, int(fps or 24)))
 
     out_root = os.path.join(output_dir, "_animatics", job_id)
@@ -643,30 +666,64 @@ def build_animatic(
     out_path = os.path.join(out_root, "animatic.mp4")
     tmp_path = os.path.join(build_dir, "out.mp4")
 
+    # Tracks whose file has gone are dropped rather than failing the export.
+    tracks = [
+        t for t in (audio_tracks or [])
+        if t.get("path") and os.path.isfile(t["path"])
+    ]
+    has_audio = bool(tracks)
+
     cmd = [exe, "-y", "-hide_banner", "-nostdin", "-loglevel", "error"]
     cmd += ["-f", "concat", "-safe", "0", "-i", list_path]
-    has_audio = bool(audio_path and os.path.isfile(audio_path))
-    if has_audio:
-        if audio_offset_ms > 0:
-            cmd += ["-ss", f"{audio_offset_ms / 1000:.3f}"]
-        cmd += ["-i", audio_path]
+    for track in tracks:
+        # `-ss` BEFORE `-i` seeks the input, i.e. starts this far into the file.
+        offset = max(0, int(track.get("offset_ms") or 0))
+        if offset:
+            cmd += ["-ss", f"{offset / 1000:.3f}"]
+        cmd += ["-i", track["path"]]
 
-    cmd += ["-map", "0:v:0"]
+    # `fps=` FILTER, not just `-r`. The concat demuxer hands over a variable-rate
+    # stream (one image, held for its declared duration), and `-r` alone does NOT
+    # reliably expand those holds into real frames: a single 2s frame came out as
+    # a 0.04s video, and a 14s sequence as 13.46s, depending on the exact
+    # duration pattern. The fps filter resamples from the input TIMESTAMPS, which
+    # is exact. `-r` is kept so the container is tagged with the same rate.
+    volumes = [float(t.get("volume", 1.0) or 0.0) for t in tracks]
+    needs_graph = len(tracks) > 1 or any(abs(v - 1.0) > 1e-3 for v in volumes)
+
+    if not needs_graph:
+        # One track at its recorded level (or none) — the plain path, unchanged.
+        cmd += ["-vf", f"fps={fps}", "-map", "0:v:0"]
+        if has_audio:
+            cmd += ["-map", "1:a:0"]
+    else:
+        # Video goes through the same graph so ffmpeg never has to reconcile a
+        # simple `-vf` with a complex one.
+        parts = [f"[0:v]fps={fps}[vout]"]
+        labels = []
+        for i, volume in enumerate(volumes):
+            parts.append(f"[{i + 1}:a]volume={volume:.3f}[a{i}]")
+            labels.append(f"[a{i}]")
+        if len(tracks) == 1:
+            parts[-1] = f"[1:a]volume={volumes[0]:.3f}[aout]"
+        else:
+            # `normalize=0` is the important bit: amix divides every input by the
+            # number of inputs by default, so a voiceover mixed over music would
+            # come out at half the level the user set. We want the levels the
+            # user chose, not an automatic average.
+            parts.append(
+                "".join(labels)
+                + f"amix=inputs={len(tracks)}:duration=longest:normalize=0[aout]"
+            )
+        cmd += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]"]
+
     if has_audio:
-        cmd += ["-map", "1:a:0", "-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-c:a", "aac", "-b:a", "192k"]
     cmd += [
         "-c:v", "libx264",
         "-preset", "veryfast",
-        "-crf", "20",
+        "-crf", str(_CRF.get((quality or "high").lower(), _CRF["high"])),
         "-pix_fmt", "yuv420p",  # required for playback in browsers / QuickTime
-        # `fps=` FILTER, not just `-r`. The concat demuxer hands over a
-        # variable-rate stream (one image, held for its declared duration), and
-        # `-r` alone does NOT reliably expand those holds into real frames: a
-        # single 2s frame came out as a 0.04s video, and a 14s sequence as 13.46s,
-        # depending on the exact duration pattern. The fps filter resamples from
-        # the input TIMESTAMPS, which is exact. `-r` is kept so the container is
-        # tagged with the same rate. Measured worst-case error: one frame.
-        "-vf", f"fps={fps}",
         "-r", str(fps),
         # The frames decide the length: a short audio file must not truncate the
         # video (which is what -shortest would do), and a long one must not run on.
@@ -680,7 +737,7 @@ def build_animatic(
     logger.info(
         "[animatic %s] encoding %d frame(s) in %d segment(s), %.1fs, %dx%d @%dfps%s",
         job_id, len(usable), len(entries), total_ms / 1000, size[0], size[1], fps,
-        " + audio" if has_audio else "",
+        f" + {len(tracks)} audio track(s)" if has_audio else "",
     )
 
     def _enc_progress(fraction: float):
@@ -714,5 +771,6 @@ def build_animatic(
         "height": size[1],
         "fps": fps,
         "has_audio": has_audio,
+        "audio_track_count": len(tracks),
         "size_bytes": size_bytes,
     }

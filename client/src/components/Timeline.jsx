@@ -11,6 +11,7 @@
 // on the left; only the tracks scroll, so the labels never leave the screen.
 import { useEffect, useRef, useState } from "react";
 import Waveform from "./Waveform.jsx";
+import Icon from "./Icon.jsx";
 
 const MIN_MS = 100; // shortest hold / clip the backend accepts
 
@@ -32,12 +33,22 @@ export default function Timeline({
   frames,
   texts = [],
   totalMs,
+  // How much time the timeline SHOWS. Longer than `totalMs` whenever the audio
+  // outlasts the frames — otherwise the ruler stopped at the last picture and
+  // you couldn't scrub into the rest of your track.
+  spanMs,
   timeMs,
   pxPerSec,
   selectedId,
   selectedTextId,
-  audioUrl,
-  audioOffsetMs = 0,
+  // The audio LAYERS: one lane each, mixed on export. `audioUrls` is keyed by
+  // upload_id so a lane can draw its own waveform.
+  audioTracks = [],
+  audioUrls = {},
+  maxAudioTracks = 4,
+  onToggleMute,
+  selectedTrackId,
+  onSelectTrack,
   onSelect,
   onSelectText,
   onSeek,
@@ -48,7 +59,8 @@ export default function Timeline({
   onAddImages,
   onAddText,
   onAddAudio,
-  hasAudio = false,
+  onAddLayer,
+  onRemoveTrack,
 }) {
   const trackRef = useRef(null);
   // While an edge or a clip is being dragged we show a DRAFT, so things move
@@ -57,10 +69,17 @@ export default function Timeline({
   const [textDraft, setTextDraft] = useState(null); // { id, startMs, durationMs }
   const dragRef = useRef(null);
 
-  const width = Math.max(240, (totalMs / 1000) * pxPerSec);
+  // Everything horizontal is measured against the SPAN, not the video length.
+  const span = Math.max(totalMs, spanMs || 0);
+  const width = Math.max(240, (span / 1000) * pxPerSec);
   const step = tickStep(pxPerSec);
   const ticks = [];
-  for (let s = 0; s <= totalMs / 1000; s += step) ticks.push(s);
+  for (let s = 0; s <= span / 1000; s += step) ticks.push(s);
+  // NB: no "video ends" marker is drawn. The timeline still SPANS the audio —
+  // that's what lets the playhead reach the end of a long track — but the line
+  // and the hatching over the waveform were visual noise on the surface you
+  // actually work on. The header already reports it ("audio 0:59 — video ends
+  // early"), and so does the transport clock past that point.
 
   const durationOf = (f) => (draft && draft.id === f.id ? draft.durationMs : f.duration_ms);
   const clipBox = (c) =>
@@ -72,7 +91,9 @@ export default function Timeline({
   function msFromEvent(e) {
     const rect = trackRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    return Math.round((x / pxPerSec) * 1000);
+    // Clamped to the span as well as the rect: belt and braces against the
+    // element ever being wider than the time it represents again.
+    return Math.min(span, Math.round((x / pxPerSec) * 1000));
   }
 
   function startSeek(e) {
@@ -216,17 +237,55 @@ export default function Timeline({
             ＋
           </button>
         </div>
-        <div className="tl-gutter-row tl-gutter-audio" title="The audio track">
-          <span className="tl-layer-ico">♪</span> Audio
-          <button
-            type="button"
-            className="tl-layer-add"
-            onClick={onAddAudio}
-            title={hasAudio ? "Replace the audio track" : "Add an audio track (MP3)"}
+        {/* One row per audio track — music and a voiceover are separate layers,
+            each with its own waveform and volume. */}
+        {(audioTracks.length ? audioTracks : [null]).map((track, i) => (
+          <div
+            key={track ? track.upload_id : "empty"}
+            className={`tl-gutter-row tl-gutter-audio ${
+              track && selectedTrackId === track.upload_id ? "sel" : ""
+            }`}
+            title={track ? track.filename : "No audio yet"}
+            onClick={() => track && onSelectTrack(track.upload_id)}
           >
-            ＋
-          </button>
-        </div>
+            <span className="tl-layer-ico">♪</span>
+            <span className="tl-layer-name">
+              {track ? track.filename : "Audio"}
+            </span>
+            {track && (
+              <>
+                <button
+                  type="button"
+                  className={`tl-layer-mute ${track.muted ? "on" : ""}`}
+                  onClick={() => onToggleMute(track.upload_id)}
+                  title={track.muted ? "Unmute this track" : "Mute this track"}
+                >
+                  {track.muted ? "🔇" : "🔊"}
+                </button>
+                <button
+                  type="button"
+                  className="tl-layer-del"
+                  onClick={() => onRemoveTrack(track.upload_id)}
+                  title={`Remove ${track.filename}`}
+                >
+                  <Icon name="close" />
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+
+        {/* Adds a whole LAYER rather than a clip. Audio is the only kind that
+            can be stacked today; the menu is where video/overlay layers go when
+            they exist. */}
+        <button
+          type="button"
+          className="tl-add-layer"
+          onClick={onAddLayer}
+          title="Add a layer — pick what kind"
+        >
+          ＋ Add layer
+        </button>
       </div>
 
       <div className="tl-scroll">
@@ -310,22 +369,39 @@ export default function Timeline({
             )}
           </div>
 
-          {/* Audio layer. */}
-          <div className="tl-audio" onPointerDown={startSeek}>
-            {audioUrl ? (
-              <Waveform
-                audioUrl={audioUrl}
-                width={width}
-                /* Matches --tl-track-h (2.6rem) less the track's borders, so the
-                   waveform fills its lane exactly like the other two tracks. */
-                height={38}
-                totalMs={totalMs}
-                offsetMs={audioOffsetMs}
-              />
-            ) : (
-              // The empty band is the obvious place to reach for, so it opens
-              // the picker itself. Nothing is lost: with no waveform there is
-              // nothing here to scrub against, and the ruler still scrubs.
+          {/* Audio layers — one lane per track, mixed together on export. */}
+          {audioTracks.length ? (
+            audioTracks.map((track) => (
+              <div
+                key={track.upload_id}
+                className={`tl-audio ${track.muted ? "muted" : ""} ${
+                  selectedTrackId === track.upload_id ? "sel" : ""
+                }`}
+                onPointerDown={(e) => {
+                  onSelectTrack(track.upload_id);
+                  startSeek(e);
+                }}
+              >
+                {audioUrls[track.upload_id] ? (
+                  <Waveform
+                    audioUrl={audioUrls[track.upload_id]}
+                    width={width}
+                    /* Matches --tl-track-h less the track's borders, so a
+                       waveform fills its lane exactly like the other tracks. */
+                    height={38}
+                    totalMs={totalMs}
+                    offsetMs={track.offset_ms || 0}
+                  />
+                ) : (
+                  <div className="tl-track-empty">Loading {track.filename}…</div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="tl-audio" onPointerDown={startSeek}>
+              {/* The empty band is the obvious place to reach for, so it opens
+                  the picker itself. Nothing is lost: with no waveform there is
+                  nothing here to scrub against, and the ruler still scrubs. */}
               <button
                 type="button"
                 className="tl-track-empty tl-track-add"
@@ -334,8 +410,8 @@ export default function Timeline({
               >
                 ♪ No audio yet — click to add an MP3 to time against
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="tl-playhead" style={{ left: playheadX }}>
             <span className="tl-playhead-grip" onPointerDown={startSeek} />

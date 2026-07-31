@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-30 (Animatic TEXT layer; export-duration bug fixed)
+**Last updated:** 2026-07-31 (export dialog; audio layers + mixing; SVG icons; Playwright suite)
 
 ---
 
@@ -203,6 +203,8 @@ previews require a cloud run (not `local_only`).
 | `API_MAX_AUDIO_BYTES` | Animatic audio upload cap (default 50 MB). |
 | `API_MAX_ANIMATIC_FRAMES` | Frames per animatic (default 500). |
 | `API_MAX_ANIMATIC_TEXTS` | Text clips per animatic (default 400). Each clip boundary splits the timeline into another rendered still, so this also caps export work. |
+| `API_MAX_ANIMATIC_AUDIO_TRACKS` | Audio tracks per animatic (default 4). Each is another ffmpeg input to decode and mix. |
+| — | Export resolution / quality / include-audio are per-project **settings**, not env vars: `AnimaticSettings.resolution` (short edge), `.quality` (CRF), `.include_audio`. |
 
 ---
 
@@ -223,9 +225,15 @@ in `.env` — no code change needed.
 ## 🧪 Browser tests (Playwright)
 
 `tests/e2e_animatic.py` drives a real Chromium against a live API + Vite on
-isolated ports. **Run it after any layout or CSS change** — it has already caught
-four bugs a clean `npm run build` happily shipped. Setup and the three commands
-are in the test's docstring; `pip install -r requirements-dev.txt` first.
+isolated ports. It has caught bugs a clean `npm run build` happily shipped
+(mis-aligned timeline labels, a waveform that never drew, a preview that wasn't
+the exported frame shape, dead space under the workspace).
+
+**Run it when the user ASKS for a browser test — not after every change.** It
+takes minutes (two servers, five viewports) and the user has said plainly they
+don't want it on every tweak. Do keep it *up to date* when behaviour it asserts
+changes, so it still passes when it is run. Setup and the three commands are in
+the test's docstring; `pip install -r requirements-dev.txt` first.
 
 Two Windows gotchas that will waste your time:
 - `pkill -f uvicorn` does **not** kill a Windows python process — the stale
@@ -277,6 +285,236 @@ Standing conventions, not a one-off fix. Check these before adding a screen.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-31 — Export is a dialog now: name, resolution, frame rate, quality
+
+- **Asked for:** an export pop-up like Premiere's, kept simple, with the
+  settings an export actually needs.
+- **Export no longer encodes on click.** It opens a dialog: **file name**
+  (defaults to the title, `.mp4` shown fixed beside it), **format** stated as
+  fixed (MP4 · H.264 + AAC), **resolution**, **frame rate**, **quality**, and an
+  **include-audio** checkbox that reports how many tracks there are. Cancel does
+  nothing at all.
+- **New settings, persisted on the project:**
+  - `resolution` — the **SHORT** edge, so 1080 means 1920×1080 for 16:9 and
+    1080×1920 for 9:16, the way "1080p" is normally meant. 720p / 1080p / 1440p
+    / 4K. `resolve_size()` now scales the familiar size table by
+    `resolution / 1080`, so **the default returns exactly what it always did**.
+  - `quality` — high/medium/low → x264 CRF 18/21/25.
+  - `include_audio` — makes a silent export without removing the tracks.
+- **The dropdown shows the real output size** ("1080p — 1920×1080") and the
+  summary line updates live, because the client mirrors the server's sizing rule
+  in `frameSizeFor()`. **Those two must be kept in step.**
+- **No estimated file size, deliberately.** Premiere shows one, but an animatic
+  is mostly still frames and compresses far better than normal video — measured,
+  the same 3s at "high" was 3.4 MB with detailed frames and 8 KB with flat ones.
+  Any figure would be wrong by orders of magnitude, so the dialog states only
+  what is actually known: length, frame size, fps, frame count.
+- **Verified end to end.** Encoder: 720p/1080p/4K produce 1280×720 / 1920×1080 /
+  3840×2160, 9:16 at 1080 gives 1080×1920, omitting the resolution still gives
+  1920×1080, and duration is still set by the frames. Quality genuinely changes
+  the encode — on detailed frames low/medium/high came out 2.45 / 3.01 / 3.46 MB
+  (the first attempt used flat colour images, where the file is all container
+  overhead and the sizes inverted — a bad test, not a bad encoder). In the
+  browser: the dialog opens without starting an encode, lists exactly the six
+  settings, follows the resolution live, and choosing 720p produced a real file
+  measured at **1280×720** with audio, settings persisted. No console errors.
+
+### 2026-07-31 — "video ends" marker removed from the timeline (user-reported)
+
+- **Reported:** the dashed "video ends" line and the hatched shading over the
+  stretch past it were distracting — and unnecessary, since the user already
+  knows how long their images are.
+- Both are gone (`.tl-past-end`, `.tl-end-mark` and their CSS). **The behaviour
+  behind them is unchanged**: the timeline still SPANS the audio, which is what
+  lets the playhead reach the end of a long track.
+- The same information is still available where it doesn't sit on top of the
+  working surface: the timeline header reads "audio 0:59 — video ends early",
+  and the transport clock says "past the end of the video" once the playhead
+  goes beyond the last frame.
+- `npm run build` clean. Not browser-checked — this only deletes two decorative
+  elements and their rules; the seek/​span logic it sits next to was measured in
+  the previous entry.
+
+### 2026-07-31 — The playhead couldn't reach the end: a width/time mismatch
+
+- **Reported:** the playhead wouldn't travel to the end of the music, plus a
+  standing instruction — **anything with settings belongs in the Properties
+  pane**, so audio volume shouldn't have been a mixer bolted onto Media.
+- **The bug, found by measuring:** `.tl-inner` carried `min-width: 100%`, so
+  whenever the timeline was **narrower than its pane** it stretched to fill —
+  but the time mapping is `x / pxPerSec`, which does **not** stretch with it.
+  The lanes were then drawn wider than the time they represent: measured, a
+  click at the visual half-way point of a 59s track landed at **0:44**, and the
+  playhead physically could not reach the right-hand side because there was no
+  time left to map to. Zoomed IN (timeline wider than the pane) everything was
+  fine, which is why it looked intermittent.
+  → `min-width` removed: **the timeline is now exactly as wide as the time it
+  shows.** `msFromEvent` also clamps to the span as a second line of defence.
+  **Don't re-add a min-width here** — any rule that changes the track width
+  without changing `pxPerSec` reintroduces this.
+- **Audio settings moved into Properties**, where every other selectable thing's
+  settings live. An audio track is now **selectable** — click its lane or its
+  gutter row (or its row in Media) and Properties shows `AudioProperties`:
+  volume with a mute toggle and a % readout, "starts at" (how far into the file
+  playback begins), its length, and Remove. Media is back to being a plain list
+  that shows each track's level. Selection stays exclusive across all four
+  states via one `selectOnly()` helper, so the pane can't show the wrong thing.
+- **Verified by measurement at both zoom levels:** every track is exactly the
+  ruler's width; clicking a waveform at 25% / 50% / 98% seeks to 14s / 29s / 57s
+  of 59s (the 98% case used to be unreachable); the playhead lands under the
+  click to within 2px; dragging the playhead reaches 0:59; and with the timeline
+  scrolled fully right a click still seeks to 0:58 with the playhead under the
+  cursor. Volume set to 15% in Properties shows there and echoes in the Media
+  list. No console errors.
+- **Test-artifact note for next time:** clicking at `boundingBox.x + width*f` on
+  a timeline WIDER than its pane targets an off-screen coordinate and Playwright
+  clamps it — that produced two false failures. Click within `.tl-scroll`'s
+  visible box, or scroll first.
+
+### 2026-07-31 — Timeline spans the audio; delete a layer; ＋ Add layer picker
+
+Three user-reported problems with the new audio layers.
+
+1. **The playhead couldn't reach the end of the audio.** With 2 minutes of music
+   under 2 seconds of pictures, the ruler stopped at 2 seconds — so there was no
+   way to scrub into the track you were trying to time against. **The cause was a
+   deliberate-but-wrong conflation:** the timeline's width came from `totalMs`,
+   the VIDEO length, which is the sum of the frame holds.
+   → The timeline now spans **`spanMs = max(totalMs, longest audio end)`**.
+   Ruler, width, scrubbing and playback all use the span; **the video length is
+   unchanged and still what exports** — the frames decide that, as before. The
+   stretch past the last picture is shaded with a dashed **"video ends"** marker
+   so the difference is visible rather than implied, and the transport clock now
+   counts against the span (it read a nonsensical "0:30 / 0:02" before) with a
+   "past the end of the video" note beyond that point.
+2. **No way to delete an audio layer.** Only the Media pane had a remove. Each
+   audio row in the timeline gutter now carries its own ✕ next to the mute.
+3. **＋ Add layer added audio blindly.** It now opens a picker — **Images /
+   Text / Audio / Video** — and does the right thing for each. Video is listed
+   but disabled with the reason ("an animatic is stills plus audio"), because
+   leaving it out entirely just makes people hunt for it.
+
+- **Verified in the browser** (the user reported these, so a run was warranted):
+  1 frame under a 30s track → ruler reaches 0:30 while the header still reads
+  "Video length 0:02", the end marker and shaded region appear, clicking the far
+  right of the ruler seeks to 0:30 (it used to clamp at 0:02) and the playhead
+  actually moves there; the lane's ✕ removes the track and the timeline snaps
+  back to the video length; the picker offers exactly Images/Text/Audio/Video
+  with Video disabled, and choosing Text really adds a clip. Zero console errors.
+
+### 2026-07-31 — Audio is a LAYER: several tracks, mixed on export
+
+- **Asked for:** "add layer" — the user confirmed they meant **more tracks**,
+  and picked **a second audio track (music + voiceover)** as what they need.
+  (Image-overlay and extra text rows were offered and not chosen; they'd need
+  real compositing, so they're deliberately not built.)
+- **Schema:** `AnimaticAudio` gains `volume` (0–2, default 1) and `muted`.
+  `AnimaticProject.audio` (one object) became **`audio_tracks` (a list)**, and
+  `AnimaticSaveRequest.clear_audio` is gone — with a list, "no audio" is just an
+  empty list, so there's no flag to keep in step.
+  **Old records are migrated on READ** (`_audio_tracks_of` wraps a legacy
+  `audio` object in a one-item list); nothing rewrites them on disk, and a save
+  drops the old key so the migration can't resurrect it.
+- **Upload no longer wipes what's there.** It used to delete every `audio_*`
+  file before writing, because only one track existed. It now just stores the
+  file and returns the id — **which tracks an animatic HAS is decided by the
+  saved project, not by what's on disk.**
+- **`API_MAX_ANIMATIC_AUDIO_TRACKS`** (default 4): every extra track is another
+  ffmpeg input to decode and mix.
+
+**Mixing (`animatic.py`)**
+
+- Each track is its own `-i`, with `-ss` before it for that track's `offset_ms`.
+- With one track at its recorded level, the **old simple path is unchanged** —
+  that path was already verified, and there was no reason to put it through a
+  filter graph.
+- Otherwise a `filter_complex`: `volume=` per track, then `amix`. **Video goes
+  through the same graph** (`[0:v]fps=…[vout]`) so ffmpeg never has to reconcile
+  a simple `-vf` with a complex one.
+- **`amix=…:normalize=0` is the critical bit.** amix divides every input by the
+  number of inputs by default, so a voiceover mixed over music would come out at
+  half the level the user set. Measured: two tracks at full go from −11.7 to
+  −8.7 dBFS (louder, as they should), not quieter.
+- A track whose file has gone is skipped; if they all have, the video exports
+  silent rather than failing.
+
+**Client**
+
+- One `<audio>` element per track. **The first track that is genuinely playing
+  is the clock master**, exactly as the single track used to be; if it ends
+  early the wall clock takes over seamlessly. All elements are *placed then
+  started together* — starting one before placing another is what makes two
+  tracks drift apart at the top of playback.
+- Preview volume is clamped to 1 because that's the browser's ceiling; **the
+  export still applies the real figure** through ffmpeg. Worth knowing if a
+  boosted track sounds quieter in the editor than in the MP4.
+- Timeline: **one lane per track**, each with its own waveform, its own gutter
+  row (filename + mute), and a **"＋ Add layer"** control under them. A muted
+  lane is dimmed, not hidden — it's still part of the edit. The timeline pane
+  now grows with the number of lanes (up to half the window, then scrolls).
+- Media pane: per-track mute, a volume slider with a % readout, and remove.
+  Dropping several audio files at once creates several tracks.
+- `audioMs` (what "fit frames to audio" matches) is now the **longest** track.
+
+- **Verified:** 24 checks against real MP4s, measuring loudness with ffmpeg's
+  `volumedetect` — one track unchanged, two tracks mixed into ONE stream without
+  being halved, `volume: 0.25` measured **12.1 dB** down (theory says 12.04),
+  a ducked bed quieter than two at full, per-track offsets not changing the
+  video length, a missing track skipped while the other still plays, all-missing
+  exporting silently, and four tracks mixing to one stream. `npm run build`
+  clean; backend imports clean.
+**⚠️ I shipped this broken, and `npm run build` said nothing.** Two mistakes,
+both from indent-sensitive string replacements that silently matched nothing:
+
+1. A stale `audioOffsetMs={offsetMs}` was left on `<Timeline>` after `offsetMs`
+   was deleted → **ReferenceError on render → the whole app was a blank page.**
+2. The new `audioTracks` / `audioUrls` props were never actually added to the
+   `<Timeline>` call, so only one empty lane drew and no waveform appeared.
+
+**Vite/esbuild does not check for undefined identifiers inside function bodies**
+— a clean build proves the code *parses*, not that it *runs*. After any rename
+of a variable used in JSX, either load the page or grep the old name; and when
+patching by string replacement, assert the match count (the helper used here now
+prints a warning when a replacement finds 0 occurrences, which is what should
+have caught both).
+
+- **Fixed and verified in a real browser** (the user reported the blank page, so
+  this warranted a run): the app renders, New Animatic opens the editor, three
+  files dropped at once give 1 frame + **2 audio lanes each with its own drawn
+  waveform** and correctly-named gutter rows, mute dims a lane, the volume
+  slider is disabled while muted, moving it to 35% shows "35%" and **persists to
+  the server** (`[0.35, 1.0]`), the library reports `audio_count: 2`, playback
+  advances the clock, and there are zero console errors throughout.
+- The gutter widened 6.6rem → 9rem: at the old width a filename truncated to
+  "m…", which told you nothing about which lane was which.
+
+### 2026-07-31 — Icons are inline SVG, so they finally share one colour
+
+- **Reported:** the ▶ / ✏️ / 🗑 row on a library card was three different
+  colours.
+- **Cause:** ✏️ and 🗑 are **colour emoji** — the font supplies a pink pencil
+  and a teal bin, and **no CSS can recolour them**. ▶ and ⧉ are monochrome text
+  glyphs that do take `color`. Side by side they looked like three different
+  apps.
+- **`Icon.jsx` (new)** is the app's icon set as inline SVG, stroked with
+  `currentColor` and sized in `em`. An icon simply takes the colour and size of
+  the button it sits in, which is what makes the muted default, hover, and the
+  red danger state work on all of them at once. Set: play, pencil, trash,
+  download, link, copy, close, save, text.
+- **Swapped everywhere they act as icons:** both library card action rows
+  (▶ ✏️ 🗑 ⬇ / 🔗 ⧉ ✏️ 🗑), the animatic editor's top bar (save, export,
+  delete), the frame-card tools (⧉ ✕), the properties Duplicate/Remove buttons,
+  the audio remove ✕, the Text-to-Image job list 🗑, and Home's "Delete account".
+- **Deliberately left as emoji:** style-chip labels like "✏️ Rough Sketch",
+  "💥 Comic", "🎬 Cinematic". Those are decorative names in a set, not icon
+  buttons, and their colour is the point.
+- **Verified in the browser before the "don't auto-test" instruction landed:**
+  6 SVG icons in the action row, all rendering `rgb(91,99,119)` at 16px, no
+  emoji left in the row or the top bar, and hovering delete recolours the glyph
+  to red — proving `currentColor` is doing the work. The only non-ASCII glyph
+  left in the top bar is `←` (U+2190) in "← Your Animatics", a plain monochrome
+  arrow that inherits colour correctly.
 
 ### 2026-07-31 — Media pane: one "Add assets" control instead of three (user-reported)
 

@@ -123,14 +123,26 @@ def _texts_of(job: Job) -> list[AnimaticTextClip]:
     return out
 
 
-def _audio_of(job: Job) -> AnimaticAudio | None:
-    raw = (job.params or {}).get("audio")
-    if not raw:
-        return None
-    try:
-        return AnimaticAudio(**raw)
-    except Exception:  # noqa: BLE001
-        return None
+def _audio_tracks_of(job: Job) -> list[AnimaticAudio]:
+    """Every audio track on this animatic, oldest first.
+
+    Migrates records written before multi-track, which carried a single `audio`
+    object rather than a list. Nothing rewrites those on disk — they're read
+    forward, so an old animatic just opens with one track.
+    """
+    params = job.params or {}
+    raw = params.get("audio_tracks")
+    if raw is None:
+        single = params.get("audio")
+        raw = [single] if single else []
+
+    out: list[AnimaticAudio] = []
+    for item in raw or []:
+        try:
+            out.append(AnimaticAudio(**item))
+        except Exception:  # noqa: BLE001 — one bad track must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable audio track %r", job.job_id, item)
+    return out
 
 
 def _settings_of(job: Job) -> AnimaticSettings:
@@ -155,9 +167,11 @@ def _project_of(job: Job) -> AnimaticProject:
     frames = _frames_of(job)
     for f in frames:
         f.url = f"/animatics/{job.job_id}/frame/{f.id}"
-    audio = _audio_of(job)
-    if audio:
-        audio.url = f"/animatics/{job.job_id}/audio"
+    tracks = _audio_tracks_of(job)
+    for track in tracks:
+        # By upload id, not the project-level /audio route: straight after an
+        # upload the file is on disk but not yet saved onto the project.
+        track.url = f"/animatics/{job.job_id}/media/{track.upload_id}"
 
     return AnimaticProject(
         job_id=job.job_id,
@@ -167,7 +181,7 @@ def _project_of(job: Job) -> AnimaticProject:
         settings=_settings_of(job),
         frames=frames,
         texts=_texts_of(job),
-        audio=audio,
+        audio_tracks=tracks,
         duration_ms=_duration_ms(frames),
         video=(job.result or {}).get("video"),
         error=job.error,
@@ -187,7 +201,8 @@ def _summarise(job: Job) -> AnimaticSummary:
         duration_ms=_duration_ms(frames),
         cover_url=f"/animatics/{job.job_id}/frame/{frames[0].id}" if frames else None,
         text_count=len(_texts_of(job)),
-        has_audio=bool(_audio_of(job)),
+        audio_count=len(_audio_tracks_of(job)),
+        has_audio=bool(_audio_tracks_of(job)),
         has_video=bool((job.result or {}).get("video")),
         created_at=job.created_at,
         updated_at=job.updated_at,
@@ -295,7 +310,7 @@ def create_animatic(
             "settings": settings.model_dump(),
             "frames": [f.model_dump(exclude={"url"}) for f in frames],
             "texts": [],
-            "audio": None,
+            "audio_tracks": [],
             "source_storyboard_id": source_id,
         },
     )
@@ -371,10 +386,16 @@ def save_animatic(
             )
         params["texts"] = [t.model_dump() for t in body.texts]
 
-    if body.clear_audio:
-        params["audio"] = None
-    elif body.audio is not None:
-        params["audio"] = body.audio.model_dump(exclude={"url"})
+    if body.audio_tracks is not None:
+        if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_TRACKS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_AUDIO_TRACKS} audio tracks.",
+            )
+        params["audio_tracks"] = [a.model_dump(exclude={"url"}) for a in body.audio_tracks]
+        # Drop the pre-multi-track field so it can't be resurrected by the
+        # migration path on a later read.
+        params.pop("audio", None)
 
     fields["params"] = params
 
@@ -477,11 +498,14 @@ async def upload_audio(
     file: UploadFile = File(..., description="The audio track (MP3, WAV, M4A…)."),
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Upload the animatic's audio track. Replaces any previous one.
+    """Upload an audio track and return its id. ADDS a track; replaces nothing.
 
     The file is stored as-is: ffmpeg reads it directly at export, and the
     browser decodes it for the waveform and for playback. The server never has
     to understand the format, which is why no audio library is needed here.
+
+    Which tracks an animatic HAS is decided by the saved project, not by what
+    is on disk — so this only puts the file there and hands back the id.
     """
     job = _get_owned_animatic(job_id, current)
     if job.status == JobStatus.RUNNING:
@@ -506,21 +530,19 @@ async def upload_audio(
 
     media = _media_dir(job_id)
     os.makedirs(media, exist_ok=True)
-    # Only one track is supported, so old audio is cleared out rather than left
-    # behind to fill the disk.
-    for old in glob.glob(os.path.join(media, "audio_*")):
-        try:
-            os.remove(old)
-        except OSError:
-            logger.debug("[animatic %s] could not remove old audio %s", job_id, old)
-
+    # Deliberately does NOT clear existing audio — several tracks can coexist
+    # now (music under a voiceover). Files belonging to removed tracks are left
+    # on disk and go when the animatic is deleted; the project decides what
+    # actually plays.
     upload_id = uuid.uuid4().hex[:12]
     with open(os.path.join(media, f"audio_{upload_id}{ext}"), "wb") as f:
         f.write(contents)
 
     logger.info("[animatic %s] audio uploaded: %s (%d bytes)", job_id, name, len(contents))
     return AnimaticAudioResponse(
-        upload_id=upload_id, filename=name, url=f"/animatics/{job_id}/audio"
+        upload_id=upload_id, filename=name,
+        # By upload id: usable immediately, before the project is saved.
+        url=f"/animatics/{job_id}/media/{upload_id}"
     )
 
 
@@ -573,8 +595,8 @@ def get_upload(
 def get_audio(job_id: str, current: CurrentUser = Depends(get_current_user)):
     """Serve the animatic's audio track (for the waveform and for playback)."""
     job = _get_owned_animatic(job_id, current)
-    audio = _audio_of(job)
-    path = _audio_file(job_id, audio.upload_id) if audio else None
+    tracks = _audio_tracks_of(job)
+    path = _audio_file(job_id, tracks[0].upload_id) if tracks else None
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="No audio on this animatic.")
     return FileResponse(path)
@@ -602,8 +624,16 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         )
 
     settings = _settings_of(job)
-    audio = _audio_of(job)
-    audio_path = _audio_file(job_id, audio.upload_id) if audio else None
+    # Resolved here, not in the worker: this is the request that knows who is
+    # asking. Muted tracks are dropped rather than mixed in at zero.
+    audio_tracks = []
+    for track in (_audio_tracks_of(job) if settings.include_audio else []):
+        path = _audio_file(job_id, track.upload_id)
+        if not path or track.muted or track.volume <= 0:
+            continue
+        audio_tracks.append(
+            {"path": path, "offset_ms": track.offset_ms, "volume": track.volume}
+        )
 
     resolved = [
         {
@@ -630,9 +660,10 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         {
             "frames": resolved,
             "texts": [t.model_dump() for t in _texts_of(job)],
-            "audio_path": audio_path,
-            "audio_offset_ms": audio.offset_ms if audio else 0,
+            "audio_tracks": audio_tracks,
             "aspect_ratio": settings.aspect_ratio,
+            "resolution": settings.resolution,
+            "quality": settings.quality,
             "fps": settings.fps,
             "fit": settings.fit,
             "background": settings.background,

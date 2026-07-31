@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
+import Icon from "./Icon.jsx";
 
 const STATUS_CLASS = {
   queued: "badge queued",
@@ -92,7 +93,7 @@ export default function JobList({ selectedId, onSelect, refreshKey }) {
                     setConfirmId(confirmId === j.job_id ? null : j.job_id);
                   }}
                 >
-                  🗑
+                  <Icon name="trash" />
                 </button>
               </span>
             </div>

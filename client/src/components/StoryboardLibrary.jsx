@@ -7,6 +7,7 @@
 // shared via a public link, or deleted.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+import Icon from "./Icon.jsx";
 
 // Chip labels for the ids stored on a board. Unknown ids fall through as-is,
 // which is what "Add your own style" / custom genre text needs.
@@ -291,7 +292,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
                       title={b.shared ? "Shared — click to stop sharing" : "Share a public link"}
                       onClick={() => toggleShare(b, uid)}
                     >
-                      🔗
+                      <Icon name="link" />
                     </button>
                     <button
                       type="button"
@@ -300,7 +301,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
                       title="Duplicate — start a new storyboard from these shots"
                       onClick={() => duplicate(b)}
                     >
-                      ⧉
+                      <Icon name="copy" />
                     </button>
                     <button
                       type="button"
@@ -312,7 +313,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
                         setRenamingId(uid);
                       }}
                     >
-                      ✏️
+                      <Icon name="pencil" />
                     </button>
                     <button
                       type="button"
@@ -321,7 +322,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
                       title="Delete this storyboard"
                       onClick={() => setConfirmId(uid)}
                     >
-                      🗑
+                      <Icon name="trash" />
                     </button>
                   </div>
                 </div>
