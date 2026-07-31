@@ -14,6 +14,10 @@ import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import { formatTime } from "./Timeline.jsx";
 
+// The placeholder title a new animatic carries until it is saved with a
+// real one. Exported so the editor knows when to ask for a name.
+export const UNTITLED = "Untitled animatic";
+
 // "Recent Animatics" highlights just the single newest one; everything
 // (including that one) is listed under "All Animatics" below.
 const RECENT_COUNT = 1;
@@ -76,7 +80,7 @@ export default function AnimaticLibrary({ onOpen }) {
   // An animatic exporting in this session should fill in its state without a
   // reload, exactly as a generating board does on the storyboard library.
   const anyRunning = items.some(
-    (a) => a.status === "queued" || a.status === "running"
+    (a) => a.status === "running"
   );
   useEffect(() => {
     if (!anyRunning) return undefined;
@@ -124,11 +128,14 @@ export default function AnimaticLibrary({ onOpen }) {
     );
   }
 
+  // Straight into the editor — naming happens when you Save. An animatic you
+  // open and don't touch is discarded on the way out (see AnimaticEditor's
+  // handleBack), so this can't litter the library.
   async function createBlank() {
     setBusyId("new");
     setError("");
     try {
-      const project = await api.createAnimatic({ title: "Untitled animatic" });
+      const project = await api.createAnimatic({ title: UNTITLED });
       onOpen(project.job_id);
     } catch (e) {
       setError(e.message);
@@ -200,7 +207,11 @@ export default function AnimaticLibrary({ onOpen }) {
   function renderItem(a, section) {
     const uid = `${section}:${a.job_id}`;
     const busy = busyId === a.job_id;
-    const running = a.status === "queued" || a.status === "running";
+    // ONLY `running` is an export in progress. `queued` means "a draft that has
+    // never been exported" for an animatic — unlike a storyboard, where queued
+    // really is work waiting to start. Treating them the same made every
+    // un-exported animatic claim "Exporting…" forever.
+    const running = a.status === "running";
     return (
       <div className="card lib-card" key={uid}>
         <div

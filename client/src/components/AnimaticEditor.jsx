@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
 import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
+import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 
 const ZOOMS = [8, 16, 32, 64, 128, 256]; // pixels per second
@@ -62,6 +63,20 @@ const TEXT_BACKDROPS = [
   { id: "box", label: "Solid box" },
   { id: "none", label: "Outline only" },
 ];
+
+// What a dropped file is, by MIME with an extension fallback (a drag from some
+// file managers arrives with an empty type).
+function kindOf(file) {
+  const type = (file.type || "").toLowerCase();
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("audio/")) return "audio";
+  if (type.startsWith("video/")) return "video";
+  const ext = (file.name || "").split(".").pop().toLowerCase();
+  if (["png", "jpg", "jpeg", "webp", "gif", "bmp"].includes(ext)) return "image";
+  if (["mp3", "wav", "m4a", "aac", "ogg", "oga"].includes(ext)) return "audio";
+  if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) return "video";
+  return "other";
+}
 
 // Read an audio file's length in the browser. The server has no audio decoder
 // (and doesn't need one) — this is what "fit frames to audio" measures against.
@@ -120,17 +135,33 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState("saved"); // saved | dirty | saving | error
+  // True for a couple of seconds after a save lands, so the tick is a moment of
+  // feedback rather than a permanent label.
+  const [savedFlash, setSavedFlash] = useState(false);
   const [exportJob, setExportJob] = useState(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  // The "name this animatic" panel. Null = closed; a string is the typed name.
+  const [saveAsName, setSaveAsName] = useState(null);
+  // A file is being dragged over the Media pane.
+  const [dropping, setDropping] = useState(false);
 
   const textAreaRef = useRef(null);
   const audioInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const assetInputRef = useRef(null);
   const loadedRef = useRef(false);
   const docRef = useRef(null); // latest project, for the unmount flush
   const dirtyRef = useRef(false);
+  // A signature of the project as it is ON THE SERVER. "Dirty" is decided by
+  // comparing content against this — NOT by "did an effect fire", which is what
+  // it used to do via a setTimeout(0) flag. That race was lost whenever React
+  // invoked the load effect twice (StrictMode in dev), so a freshly created
+  // animatic opened as "Unsaved changes" and immediately fired a pointless PUT.
+  // Comparing content also means editing something back to its original value
+  // correctly reads as saved again.
+  const baselineRef = useRef(null);
+  const adoptBaselineRef = useRef(false);
 
   const totalMs = useMemo(
     () => frames.reduce((sum, f) => sum + (f.duration_ms || 0), 0),
@@ -166,10 +197,29 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
       ),
     [texts, timeMs]
   );
+  // Exactly one thing is selected at a time, and the Properties pane follows it:
+  // a text clip, else a frame, else the video itself. Selecting one clears the
+  // other (see the Timeline handlers), so the pane can never show the wrong one.
   const selectedText = texts.find((c) => c.id === selectedTextId) || null;
+  const selectedFrame = selectedText
+    ? null
+    : frames.find((f) => f.id === selectedId) || null;
 
   const exporting = exportJob?.status === "running" || exportBusy;
   const audioMs = audio?.duration_ms || 0;
+
+  // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
+  // such an animatic throws it away instead of leaving an empty "Untitled" on
+  // the library forever.
+  const isEmpty =
+    !frames.length &&
+    !texts.length &&
+    !audio &&
+    !video &&
+    (!title.trim() || title.trim() === UNTITLED);
+  // Has content but still carries the placeholder name, so Save should ask for
+  // a real one first.
+  const needsName = !title.trim() || title.trim() === UNTITLED;
 
   // ---------------------------------------------------------------- loading
   useEffect(() => {
@@ -189,9 +239,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         setSelectedId(p.frames?.[0]?.id || null);
         if (p.status === "running") setExportJob({ status: "running", progress: null });
         setLoading(false);
-        // Mark loaded on the NEXT tick so the state writes above don't look
-        // like user edits and trigger an immediate pointless save.
-        setTimeout(() => (loadedRef.current = true), 0);
+        // Whatever renders next IS the saved state — take it as the baseline.
+        adoptBaselineRef.current = true;
+        loadedRef.current = true;
       })
       .catch((e) => {
         if (!alive) return;
@@ -260,8 +310,12 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
       setAudioUrl(null);
       return;
     }
+    // Fetched by UPLOAD ID, not through the project's /audio route: the save is
+    // debounced, so straight after an upload the track is on disk but not yet on
+    // the project, and /audio would 404 — which left the waveform blank and
+    // playback silent until a reload.
     api
-      .fetchAnimaticMedia(`/animatics/${animaticId}/audio`)
+      .fetchAnimaticMedia(`/animatics/${animaticId}/media/${audio.upload_id}`)
       .then((url) => {
         if (!alive) {
           URL.revokeObjectURL(url);
@@ -293,6 +347,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     const doc = docRef.current;
     if (!doc) return;
     dirtyRef.current = false;
+    // Captured BEFORE the request: if the user edits while it's in flight, the
+    // new signature won't match this and the project correctly stays dirty.
+    const sent = doc.signature;
     setSaveState("saving");
     try {
       await api.saveAnimatic(animaticId, {
@@ -308,7 +365,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         audio: doc.audio || undefined,
         clearAudio: !doc.audio,
       });
+      baselineRef.current = sent;
       setSaveState("saved");
+      setSavedFlash(true);
       // The exported file no longer matches the project — the server flags this
       // too, but saying so immediately is what stops a stale download.
       setVideo((v) => (v ? { ...v, stale: true } : v));
@@ -319,21 +378,67 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     }
   }, [animaticId]);
 
+  // Let the tick fade after a moment. Cleared on any new edit too, via the
+  // autosave effect below.
+  useEffect(() => {
+    if (!savedFlash) return undefined;
+    const t = setTimeout(() => setSavedFlash(false), 2200);
+    return () => clearTimeout(t);
+  }, [savedFlash]);
+
+  // Exactly what a save would send — so comparing it against the baseline
+  // answers "is there anything to save?" honestly.
+  const signature = useMemo(
+    () =>
+      JSON.stringify({
+        title,
+        settings,
+        frames: frames.map((f) => ({
+          id: f.id,
+          src: f.src,
+          duration_ms: f.duration_ms,
+          label: f.label || "",
+        })),
+        texts,
+        audio,
+      }),
+    [title, settings, frames, texts, audio]
+  );
+
   // Keep the latest project in a ref so the unmount flush sees it.
   useEffect(() => {
-    docRef.current = { title, settings, frames, texts, audio };
-  }, [title, settings, frames, texts, audio]);
+    docRef.current = { title, settings, frames, texts, audio, signature };
+  }, [title, settings, frames, texts, audio, signature]);
 
   // Debounced autosave. Blocked during an export (the server refuses a save
   // while ffmpeg is reading these exact frames), and retried once it ends.
   useEffect(() => {
-    if (!loadedRef.current) return;
+    if (!loadedRef.current) return undefined;
+
+    // The first render after a load establishes what "saved" looks like.
+    if (adoptBaselineRef.current) {
+      adoptBaselineRef.current = false;
+      baselineRef.current = signature;
+      dirtyRef.current = false;
+      setSaveState("saved");
+      return undefined;
+    }
+
+    // Content-identical to the server? Then there is nothing to save, however
+    // many times React re-ran this.
+    if (signature === baselineRef.current) {
+      dirtyRef.current = false;
+      setSaveState("saved");
+      return undefined;
+    }
+
     dirtyRef.current = true;
     setSaveState("dirty");
-    if (exporting) return;
+    setSavedFlash(false);
+    if (exporting) return undefined;
     const t = setTimeout(flush, AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [title, settings, frames, texts, audio, exporting, flush]);
+  }, [signature, exporting, flush]);
 
   useEffect(
     () => () => {
@@ -557,6 +662,39 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     audioInputRef.current?.click();
   }
 
+  // ONE way in for everything. Images become frames, an audio file becomes the
+  // track — the user shouldn't have to pick the right button first, and used to
+  // face three of them for the same job.
+  async function addAssets(fileList, insertAt) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    const images = sortFiles(files.filter((f) => kindOf(f) === "image"));
+    const audios = files.filter((f) => kindOf(f) === "audio");
+    const videos = files.filter((f) => kindOf(f) === "video");
+    const others = files.filter((f) => kindOf(f) === "other");
+
+    if (images.length) await addFiles(images, insertAt);
+    // One track, so a second audio file would only overwrite the first.
+    if (audios.length) await pickAudio(audios[0]);
+
+    const said = [];
+    if (images.length) said.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
+    if (audios.length) said.push(`audio “${audios[0].name}”`);
+    const ignored = [];
+    if (audios.length > 1) ignored.push(`${audios.length - 1} extra audio file(s) — only one track is supported`);
+    if (videos.length) ignored.push(`${videos.length} video file(s) — video isn't supported yet`);
+    if (others.length) ignored.push(`${others.length} file(s) that aren't images or audio`);
+
+    if (said.length || ignored.length) {
+      setNotice(
+        [said.length ? `Added ${said.join(" and ")}.` : "", ignored.length ? `Skipped ${ignored.join("; ")}.` : ""]
+          .filter(Boolean)
+          .join(" ")
+      );
+    }
+  }
+
   async function pickAudio(file) {
     if (!file) return;
     setError("");
@@ -664,6 +802,47 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     }
   }
 
+  // Leaving: an animatic you never put anything into is discarded, so "open it,
+  // change your mind, go back" doesn't leave a row in the library. Anything with
+  // content — or a name you chose — is kept.
+  async function handleBack() {
+    if (isEmpty) {
+      dirtyRef.current = false; // nothing worth flushing on the way out
+      try {
+        await api.deleteAnimatic(animaticId);
+      } catch {
+        // If the discard fails it's not worth blocking the exit — worst case an
+        // empty animatic stays and can be deleted from the library.
+      }
+    }
+    onBack();
+  }
+
+  // Save on an unnamed animatic asks for a name first — that's the "save as"
+  // moment. Once it has a real name, Save just writes.
+  function handleSave() {
+    if (needsName) {
+      setSaveAsName(title.trim() === UNTITLED ? "" : title);
+      return;
+    }
+    flush();
+  }
+
+  async function confirmSaveAs() {
+    const name = (saveAsName || "").trim();
+    if (!name) return;
+    setSaveAsName(null);
+    setTitle(name);
+    // The autosave effect will pick the new title up, but don't make the user
+    // wait for the debounce when they've explicitly asked to save.
+    try {
+      await api.saveAnimatic(animaticId, { title: name });
+      baselineRef.current = null; // force the pending debounce to write the rest
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   async function handleDelete() {
     try {
       await api.deleteAnimatic(animaticId);
@@ -699,15 +878,26 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   }
 
   const aspectCss = (settings.aspect_ratio || "16:9").replace(":", " / ");
+  // The same ratio as a plain number. CSS can hold the shape with `aspect-ratio`
+  // alone only when ONE axis is definite; in a box constrained on both (which is
+  // what "fit inside this pane" means) it silently gives up and the preview
+  // stops matching the exported frame. Sizing the width off the container's
+  // height with this number keeps it exact — see `.an-screen-fit`.
+  const [arW, arH] = (settings.aspect_ratio || "16:9").split(":").map(Number);
+  const arNum = arW && arH ? arW / arH : 16 / 9;
   const pxPerSec = ZOOMS[zoom];
   const lengthMatches = audioMs > 0 && Math.abs(audioMs - totalMs) <= 250;
   const progress = exportJob?.progress || {};
 
+  // The workspace is a fixed-height grid — three panes over a full-width
+  // timeline — rather than a page that scrolls. An editor where the picture
+  // slides off screen while you drag a clip isn't usable; every pane scrolls
+  // inside itself instead.
   return (
-    <div className="workflow-head-wrap an-editor">
-      {/* -------------------------------------------------------- top bar */}
-      <div className="an-topbar">
-        <button type="button" className="btn small" onClick={onBack}>
+    <div className="an-nle">
+      {/* ------------------------------------------------------- top bar */}
+      <header className="an-topbar">
+        <button type="button" className="btn small" onClick={handleBack}>
           ← Your Animatics
         </button>
 
@@ -719,18 +909,62 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           aria-label="Animatic title"
         />
 
+        {/* Only speaks when it has something to say. A permanent "✓ Saved" is
+            noise — it's the DEFAULT state, so showing it always tells you
+            nothing. The tick appears for a moment after a save, then goes. */}
         <span className={`an-save an-save-${saveState}`}>
           {saveState === "saving" && (
             <>
               <span className="spinner-inline" /> Saving…
             </>
           )}
-          {saveState === "saved" && "✓ Saved"}
-          {saveState === "dirty" && "• Unsaved"}
+          {saveState === "dirty" && "• Unsaved changes"}
           {saveState === "error" && "⚠ Not saved"}
+          {saveState === "saved" && savedFlash && "✓ Saved"}
         </span>
 
         <span className="an-spacer" />
+
+        {video && !exporting && (
+          <button
+            type="button"
+            className={`btn small ${video.stale ? "an-stale" : ""}`}
+            onClick={() => api.downloadAnimaticVideo(animaticId, `${title || "animatic"}.mp4`)}
+            title={
+              video.stale
+                ? "This file is from before your latest edits — export again for an up-to-date one"
+                : `${formatTime(video.duration_ms)} · ${video.width}×${video.height} · ${(
+                    (video.size_bytes || 0) / 1048576
+                  ).toFixed(1)} MB`
+            }
+          >
+            {video.stale ? "⬇ MP4 (out of date)" : "⬇ Download MP4"}
+          </button>
+        )}
+
+        {/* Saving is automatic, but a Save button is still worth having: it's
+            reassurance, and it's the way to force the write before leaving. */}
+        <button
+          type="button"
+          className="btn small"
+          disabled={saveState === "saving" || (saveState === "saved" && !needsName)}
+          onClick={handleSave}
+          title={
+            needsName
+              ? "Save — you'll be asked for a name"
+              : saveState === "saved"
+                ? "Everything is already saved"
+                : "Save now (it also saves on its own)"
+          }
+        >
+          {saveState === "saving" ? (
+            <>
+              <span className="spinner-inline" /> Saving…
+            </>
+          ) : (
+            "💾 Save"
+          )}
+        </button>
 
         {exporting ? (
           <button type="button" className="btn danger-btn" onClick={stopExport}>
@@ -747,200 +981,332 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             ⬇ Export video
           </button>
         )}
-      </div>
 
-      {error && <div className="error">{error}</div>}
-      {notice && !error && <div className="info-msg an-notice">{notice}</div>}
+        {/* Sits last, past Export: destructive, so it's the furthest thing from
+            the button you actually came here to press. */}
+        {confirmDelete ? (
+          <span className="an-del-confirm">
+            <span className="tiny">Delete this animatic?</span>
+            <button type="button" className="btn small danger-btn" onClick={handleDelete}>
+              Yes, delete
+            </button>
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => setConfirmDelete(false)}
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="btn small an-del-btn"
+            onClick={() => setConfirmDelete(true)}
+            title="Delete this animatic — the storyboard it came from is untouched"
+          >
+            🗑
+          </button>
+        )}
+      </header>
 
-      {exporting && (
-        <div className="job-progress">
-          <div className="jp-row">
-            <span className="jp-msg">
+      {(error || notice || exporting) && (
+        <div className="an-statusbar">
+          {error && <span className="an-status-error">{error}</span>}
+          {!error && notice && <span className="an-status-note">{notice}</span>}
+          {exporting && (
+            <span className="an-status-export">
               <span className="spinner-inline" />
               {progress.message || "Preparing…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${progress.percent ?? 0}%` }} />
+              </span>
+              {progress.percent ?? 0}%
             </span>
-            <span className="jp-pct">{progress.percent ?? 0}%</span>
-          </div>
-          <div className="jp-bar">
-            <div className="jp-fill" style={{ width: `${progress.percent ?? 0}%` }} />
-          </div>
+          )}
         </div>
       )}
 
-      {video && !exporting && (
-        <div className={`an-video-bar ${video.stale ? "stale" : ""}`}>
-          <span>
-            {video.stale
-              ? "⚠ Your last export is out of date — you've edited the animatic since."
-              : `🎬 Video ready — ${formatTime(video.duration_ms)}, ${video.width}×${video.height}, ${(
-                  (video.size_bytes || 0) / 1048576
-                ).toFixed(1)} MB`}
-          </span>
-          <button
-            type="button"
-            className="btn small"
-            onClick={() => api.downloadAnimaticVideo(animaticId, `${title || "animatic"}.mp4`)}
+      {/* ------------------------------------------------- the three panes */}
+      <div className="an-panes">
+        {/* ---- Media: the frames in this animatic, plus the audio ---- */}
+        <section className="an-pane an-pane-media">
+          <div className="an-pane-head">
+            <span className="an-pane-title">Media</span>
+            <span className="tiny muted">{frames.length} frames</span>
+          </div>
+          <div
+            className={`an-pane-body ${dropping ? "an-dropping" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDropping(true);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) setDropping(false);
+            }}
+            onDrop={(e) => {
+              // Only OS file drops — a frame being dragged to reorder carries no
+              // files and must fall through to the strip's own handler.
+              if (e.dataTransfer?.files?.length) {
+                e.preventDefault();
+                addAssets(e.dataTransfer.files);
+              }
+              setDropping(false);
+            }}
           >
-            ⬇ Download MP4
-          </button>
-        </div>
-      )}
+            {/* One control for everything — images, audio, whatever. There were
+                three ("Add images", the drop card, and "Add an MP3") for what is
+                really a single action. */}
+            <button
+              type="button"
+              className="an-asset-drop"
+              disabled={uploading}
+              onClick={() => assetInputRef.current?.click()}
+            >
+              <span className="an-asset-plus">＋</span>
+              <span className="an-asset-text">
+                {uploading ? "Uploading…" : "Add assets or drop them here"}
+              </span>
+              <span className="an-asset-note">Images for frames · an MP3 for the audio track</span>
+            </button>
 
-      {/* ------------------------------------------------------- preview */}
-      <div className="an-stage">
-        <div className="an-screen" style={{ aspectRatio: aspectCss, background: settings.background }}>
-          {currentFrame && urls[currentFrame.id] ? (
-            <img
-              src={urls[currentFrame.id]}
-              alt={currentFrame.label || `Frame ${currentIndex + 1}`}
-              className={settings.fit === "cover" ? "cover" : ""}
+            <FrameStrip
+              vertical
+              showAdd={false}
+              frames={frames}
+              urls={urls}
+              selectedId={selectedId}
+              uploading={uploading}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setSelectedTextId(null);
+                const i = frames.findIndex((f) => f.id === id);
+                if (i >= 0) seek(starts[i]);
+              }}
+              onReorder={reorder}
+              onDuration={(id, ms) => patchFrame(id, { duration_ms: ms })}
+              onDelete={deleteFrame}
+              onDuplicate={duplicateFrame}
+              onAddFiles={addAssets}
             />
-          ) : (
-            <div className="an-screen-empty">
-              {frames.length ? "Loading…" : "Add images to start your animatic"}
-            </div>
-          )}
-          {/* The text layer, over the picture. Sized in `cqh` (a fraction of
-              this box's own height) using the SAME divisors the exporter uses,
-              so the preview and the MP4 agree by construction rather than by
-              two numbers that have to be kept in step by hand. */}
-          {activeTexts.length > 0 && (
-            <div className="an-text-layer">
-              {["top", "middle", "bottom"].map((zone) => {
-                const zoneClips = activeTexts.filter(
-                  (c) => (c.position || "bottom") === zone
-                );
-                if (!zoneClips.length) return null;
-                return (
-                  <div key={zone} className={`an-text-zone an-text-${zone}`}>
-                    {zoneClips.map((c) => (
-                      <span
-                        key={c.id}
-                        className={[
-                          "an-text-clip",
-                          `sz-${c.size || "medium"}`,
-                          `bd-${c.backdrop || "scrim"}`,
-                          `al-${c.align || "center"}`,
-                          selectedTextId === c.id ? "sel" : "",
-                        ].join(" ")}
-                        style={{ color: c.color || "#ffffff" }}
-                      >
-                        {c.text}
-                      </span>
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
-          {settings.show_labels && currentFrame?.label && (
-            <span className="an-screen-label">{currentFrame.label}</span>
-          )}
-        </div>
+            {/* Only appears once there IS audio — an empty "Audio" heading with
+                its own add button was the third of the three controls. */}
+            {audio && (
+              <div className="an-media-audio">
+                <div className="an-media-sub">Audio</div>
+                <div className="an-media-track">
+                  <span className="an-media-ico">♪</span>
+                  <span className="an-media-name" title={audio.filename}>
+                    {audio.filename}
+                  </span>
+                  <span className="tiny muted">{formatTime(audioMs)}</span>
+                  <button
+                    type="button"
+                    className="fs-tool danger"
+                    title="Remove the audio track"
+                    onClick={() => {
+                      setAudio(null);
+                      setNotice("Audio removed.");
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
 
-        <div className="an-transport">
-          <button type="button" className="an-tbtn" onClick={() => seek(0)} title="Back to start">
-            ⏮
-          </button>
-          <button type="button" className="an-tbtn" onClick={() => stepFrame(-1)} title="Previous frame">
-            ◀
-          </button>
-          <button
-            type="button"
-            className="an-tbtn an-play"
-            onClick={togglePlay}
-            disabled={!frames.length}
-            title={playing ? "Pause (space)" : "Play (space)"}
-          >
-            {playing ? "❚❚" : "▶"}
-          </button>
-          <button type="button" className="an-tbtn" onClick={() => stepFrame(1)} title="Next frame">
-            ▶
-          </button>
-          <span className="an-clock">
-            {formatTime(timeMs)} <span className="muted">/ {formatTime(totalMs)}</span>
-          </span>
-          <span className="an-shotnum">
-            {currentIndex >= 0 ? `Frame ${currentIndex + 1} of ${frames.length}` : ""}
-          </span>
-        </div>
+        {/* ---- Program: what the viewer would see right now ---- */}
+        <section className="an-pane an-pane-program">
+          <div className="an-pane-head">
+            <span className="an-pane-title">Program</span>
+            <span className="tiny muted">
+              {settings.aspect_ratio} · {settings.fps} fps
+            </span>
+          </div>
+          <div className="an-pane-body an-program-body">
+            {/* The fitter is a size container; the screen sizes itself off its
+                height, so the frame shape on screen is exactly the frame shape
+                that gets exported. */}
+            <div className="an-screen-fit">
+            <div
+              className="an-screen"
+              style={{
+                aspectRatio: aspectCss,
+                "--ar-num": arNum,
+                background: settings.background,
+              }}
+            >
+              {currentFrame && urls[currentFrame.id] ? (
+                <img
+                  src={urls[currentFrame.id]}
+                  alt={currentFrame.label || `Frame ${currentIndex + 1}`}
+                  className={settings.fit === "cover" ? "cover" : ""}
+                />
+              ) : (
+                <div className="an-screen-empty">
+                  {frames.length ? "Loading…" : "Add images to start your animatic"}
+                </div>
+              )}
+
+              {/* The text layer, over the picture. Sized in `cqh` (a fraction
+                  of this box's own height) using the SAME divisors the exporter
+                  uses, so the preview and the MP4 agree by construction rather
+                  than by two numbers kept in step by hand. */}
+              {activeTexts.length > 0 && (
+                <div className="an-text-layer">
+                  {["top", "middle", "bottom"].map((zone) => {
+                    const zoneClips = activeTexts.filter(
+                      (c) => (c.position || "bottom") === zone
+                    );
+                    if (!zoneClips.length) return null;
+                    return (
+                      <div key={zone} className={`an-text-zone an-text-${zone}`}>
+                        {zoneClips.map((c) => (
+                          <span
+                            key={c.id}
+                            className={[
+                              "an-text-clip",
+                              `sz-${c.size || "medium"}`,
+                              `bd-${c.backdrop || "scrim"}`,
+                              `al-${c.align || "center"}`,
+                              selectedTextId === c.id ? "sel" : "",
+                            ].join(" ")}
+                            style={{ color: c.color || "#ffffff" }}
+                          >
+                            {c.text}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {settings.show_labels && currentFrame?.label && (
+                <span className="an-screen-label">{currentFrame.label}</span>
+              )}
+            </div>
+            </div>
+
+            <div className="an-transport">
+              <button type="button" className="an-tbtn" onClick={() => seek(0)} title="Back to start">
+                ⏮
+              </button>
+              <button
+                type="button"
+                className="an-tbtn"
+                onClick={() => stepFrame(-1)}
+                title="Previous frame"
+              >
+                ◀
+              </button>
+              <button
+                type="button"
+                className="an-tbtn an-play"
+                onClick={togglePlay}
+                disabled={!frames.length}
+                title={playing ? "Pause (space)" : "Play (space)"}
+              >
+                {playing ? "❚❚" : "▶"}
+              </button>
+              <button type="button" className="an-tbtn" onClick={() => stepFrame(1)} title="Next frame">
+                ▶
+              </button>
+              <span className="an-clock">
+                {formatTime(timeMs)} <span className="muted">/ {formatTime(totalMs)}</span>
+              </span>
+              <span className="an-shotnum">
+                {currentIndex >= 0 ? `Frame ${currentIndex + 1} of ${frames.length}` : ""}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* ---- Properties: whatever is selected. One pane, three states,
+                so there is only ever one place to look for a setting. ---- */}
+        <section className="an-pane an-pane-props">
+          <div className="an-pane-head">
+            <span className="an-pane-title">Properties</span>
+            <span className="tiny muted">
+              {selectedText ? "Text" : selectedFrame ? "Frame" : "Video"}
+            </span>
+            {/* Without this there is no way back: selecting anything hides the
+                whole-video settings, and nothing deselects. */}
+            {(selectedText || selectedFrame) && (
+              <button
+                type="button"
+                className="an-pane-back"
+                title="Deselect — show the settings for the whole video"
+                onClick={() => {
+                  setSelectedTextId(null);
+                  setSelectedId(null);
+                }}
+              >
+                ← Video
+              </button>
+            )}
+          </div>
+          <div className="an-pane-body">
+            {selectedText ? (
+              <TextProperties
+                clip={selectedText}
+                totalMs={totalMs}
+                textAreaRef={textAreaRef}
+                onChange={patchText}
+                onDuplicate={duplicateText}
+                onDelete={deleteText}
+                onClose={() => setSelectedTextId(null)}
+              />
+            ) : selectedFrame ? (
+              <FrameProperties
+                frame={selectedFrame}
+                index={frames.findIndex((f) => f.id === selectedFrame.id)}
+                url={urls[selectedFrame.id]}
+                onChange={patchFrame}
+                onDuplicate={duplicateFrame}
+                onDelete={deleteFrame}
+              />
+            ) : (
+              <VideoProperties
+                settings={settings}
+                onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+                sourceBoard={sourceBoard}
+              />
+            )}
+          </div>
+        </section>
       </div>
 
-      {/* The real clock. Hidden, but it is what the pictures follow. */}
-      {audioUrl && <audio ref={audioRef} src={audioUrl} preload="auto" />}
+      {/* ------------------------------------------------------- timeline */}
+      <section className="an-pane an-pane-timeline">
+        <div className="an-pane-head">
+          <span className="an-pane-title">Timeline</span>
+          <span className="an-tl-total tiny">
+            <strong>{formatTime(totalMs)}</strong>
+            {audioMs > 0 && (
+              <span className={`an-match ${lengthMatches ? "ok" : "off"}`}>
+                {lengthMatches
+                  ? "✓ matches the audio"
+                  : `audio ${formatTime(audioMs)} — ${
+                      totalMs > audioMs ? "video runs longer" : "video ends early"
+                    }`}
+              </span>
+            )}
+          </span>
 
-      {/* ---------------------------------------------------- frame strip */}
-      <FrameStrip
-        frames={frames}
-        urls={urls}
-        selectedId={selectedId}
-        uploading={uploading}
-        onSelect={(id) => {
-          setSelectedId(id);
-          const i = frames.findIndex((f) => f.id === id);
-          if (i >= 0) seek(starts[i]);
-        }}
-        onReorder={reorder}
-        onDuration={(id, ms) => patchFrame(id, { duration_ms: ms })}
-        onDelete={deleteFrame}
-        onDuplicate={duplicateFrame}
-        onAddFiles={addFiles}
-      />
+          <span className="an-spacer" />
 
-      {/* --------------------------------------------------- audio + tools */}
-      <div className="an-tools">
-        {/* The "add a layer" row: text and audio sit together, because that is
-            what they are — the two things you lay over the pictures. */}
-        <div className="an-tool-group">
           <button
             type="button"
             className="btn small an-add-text"
             onClick={addText}
             title="Add a text clip over the frame at the playhead"
           >
-            T ＋ Add text
+            T ＋ Text
           </button>
-        </div>
-
-        <div className="an-tool-group">
-          {/* One hidden input for the whole editor: this button AND the ＋ on
-              the Audio layer in the timeline both open it, so there is a single
-              place that turns a chosen file into the track. */}
-          <input
-            ref={audioInputRef}
-            type="file"
-            accept="audio/*"
-            hidden
-            onChange={(e) => {
-              pickAudio(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-          <button type="button" className="btn small" onClick={openAudioPicker}>
-            {audio ? "♪ Replace audio" : "♪ Add audio (MP3)"}
-          </button>
-          {audio && (
-            <>
-              <span className="an-audio-name" title={audio.filename}>
-                {audio.filename}{" "}
-                <span className="muted">({formatTime(audioMs)})</span>
-              </span>
-              <button
-                type="button"
-                className="btn small ghost"
-                onClick={() => {
-                  setAudio(null);
-                  setNotice("Audio removed.");
-                }}
-              >
-                ✕ Remove
-              </button>
-            </>
-          )}
-        </div>
-
-        <div className="an-tool-group">
           <button
             type="button"
             className="btn small"
@@ -948,10 +1314,10 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             onClick={fitToAudio}
             title="Stretch every frame proportionally so the video is exactly as long as the audio"
           >
-            ⇔ Fit frames to audio
+            ⇔ Fit to audio
           </button>
           <span className="an-setall">
-            Set all to
+            Set all
             {[1, 2, 3, 5].map((s) => (
               <button
                 key={s}
@@ -964,347 +1330,422 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               </button>
             ))}
           </span>
-        </div>
-
-        <div className="an-tool-group an-zoom">
-          <span className="muted">Zoom</span>
-          <button
-            type="button"
-            className="an-tbtn small"
-            disabled={zoom === 0}
-            onClick={() => setZoom((z) => Math.max(0, z - 1))}
-          >
-            −
-          </button>
-          <button
-            type="button"
-            className="an-tbtn small"
-            disabled={zoom === ZOOMS.length - 1}
-            onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}
-          >
-            ＋
-          </button>
-        </div>
-      </div>
-
-      {/* ------------------------------------------------------- timeline */}
-      <div className="an-timeline">
-        <div className="an-tl-head">
-          <span className="an-tl-total">
-            Video length <strong>{formatTime(totalMs)}</strong>
-            {audioMs > 0 && (
-              <span className={`an-match ${lengthMatches ? "ok" : "off"}`}>
-                {lengthMatches
-                  ? "✓ matches the audio"
-                  : `audio is ${formatTime(audioMs)} — ${
-                      totalMs > audioMs ? "video runs longer" : "video ends early"
-                    }`}
-              </span>
-            )}
+          <span className="an-zoom">
+            <button
+              type="button"
+              className="an-tbtn small"
+              disabled={zoom === 0}
+              onClick={() => setZoom((z) => Math.max(0, z - 1))}
+              title="Zoom out"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="an-tbtn small"
+              disabled={zoom === ZOOMS.length - 1}
+              onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}
+              title="Zoom in"
+            >
+              ＋
+            </button>
           </span>
         </div>
-        <Timeline
-          frames={frames}
-          texts={texts}
-          totalMs={totalMs || 1000}
-          timeMs={timeMs}
-          pxPerSec={pxPerSec}
-          selectedId={selectedId}
-          selectedTextId={selectedTextId}
-          audioUrl={audioUrl}
-          audioOffsetMs={offsetMs}
-          onSelect={setSelectedId}
-          onSelectText={setSelectedTextId}
-          onSeek={seek}
-          onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
-          onTextChange={patchText}
-          onAddImages={() => imageInputRef.current?.click()}
-          onAddText={addText}
-          onAddAudio={openAudioPicker}
-          hasAudio={Boolean(audio)}
-        />
 
-        {/* The Images layer's ＋ opens this. The frame strip has its own picker
-            for the same job; both end up in addFiles(), which is the single
-            place an upload becomes frames. */}
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files?.length) addFiles(sortFiles(e.target.files));
-            e.target.value = "";
-          }}
-        />
-      </div>
-
-      {/* ------------------------------------------------- text inspector */}
-      {selectedText && (
-        <div className="an-text-panel">
-          <div className="an-tp-head">
-            <strong>Text</strong>
-            <span className="muted">
-              {formatTime(selectedText.start_ms)} → {formatTime(selectedText.start_ms + selectedText.duration_ms)}
-              {selectedText.start_ms + selectedText.duration_ms > totalMs &&
-                " · runs past the end of the video"}
-            </span>
-            <span className="an-spacer" />
-            <button
-              type="button"
-              className="btn small ghost"
-              onClick={() => duplicateText(selectedText.id)}
-              title="Copy this text and place it straight after"
-            >
-              ⧉ Duplicate
-            </button>
-            <button
-              type="button"
-              className="btn small danger-btn"
-              onClick={() => deleteText(selectedText.id)}
-            >
-              ✕ Remove
-            </button>
-            <button
-              type="button"
-              className="btn small ghost"
-              onClick={() => setSelectedTextId(null)}
-            >
-              Done
-            </button>
-          </div>
-
-          <textarea
-            ref={textAreaRef}
-            className="an-tp-text"
-            rows={2}
-            value={selectedText.text}
-            placeholder="Type the caption — press Enter for a second line"
-            onChange={(e) => patchText(selectedText.id, { text: e.target.value })}
+        <div className="an-pane-body an-timeline-body">
+          <Timeline
+            frames={frames}
+            texts={texts}
+            totalMs={totalMs || 1000}
+            timeMs={timeMs}
+            pxPerSec={pxPerSec}
+            selectedId={selectedId}
+            selectedTextId={selectedTextId}
+            audioUrl={audioUrl}
+            audioOffsetMs={offsetMs}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setSelectedTextId(null);
+            }}
+            onSelectText={(id) => {
+              setSelectedTextId(id);
+              setSelectedId(null);
+            }}
+            onSeek={seek}
+            onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
+            onTextChange={patchText}
+            onAddImages={() => imageInputRef.current?.click()}
+            onAddText={addText}
+            onAddAudio={openAudioPicker}
+            hasAudio={Boolean(audio)}
           />
+        </div>
+      </section>
 
-          <div className="an-tp-rows">
-            <label className="an-tp-field">
-              <span>Starts at</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                value={(selectedText.start_ms / 1000).toFixed(1)}
-                onChange={(e) =>
-                  patchText(selectedText.id, {
-                    start_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
-                  })
-                }
-              />
-              <span className="an-tp-unit">s</span>
-            </label>
-
-            <label className="an-tp-field">
-              <span>Stays for</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                value={(selectedText.duration_ms / 1000).toFixed(1)}
-                onChange={(e) =>
-                  patchText(selectedText.id, {
-                    duration_ms: Math.max(
-                      100,
-                      Math.round(parseFloat(e.target.value || 0) * 1000)
-                    ),
-                  })
-                }
-              />
-              <span className="an-tp-unit">s</span>
-            </label>
-
-            <span className="an-tp-group">
-              {TEXT_POSITIONS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={`an-tp-btn ${selectedText.position === p.id ? "on" : ""}`}
-                  onClick={() => patchText(selectedText.id, { position: p.id })}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </span>
-
-            <span className="an-tp-group">
-              {TEXT_ALIGNS.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={`an-tp-btn ${selectedText.align === a.id ? "on" : ""}`}
-                  title={`Align ${a.id}`}
-                  onClick={() => patchText(selectedText.id, { align: a.id })}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </span>
-
-            <span className="an-tp-group">
-              {TEXT_SIZES.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`an-tp-btn ${selectedText.size === s.id ? "on" : ""}`}
-                  title={`${s.id} text`}
-                  onClick={() => patchText(selectedText.id, { size: s.id })}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </span>
-
-            <select
-              className="an-select"
-              value={selectedText.backdrop}
-              onChange={(e) => patchText(selectedText.id, { backdrop: e.target.value })}
-              title="How the text is kept readable over the art"
-            >
-              {TEXT_BACKDROPS.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.label}
-                </option>
-              ))}
-            </select>
-
+      {/* Save on an unnamed animatic lands here first. */}
+      {saveAsName !== null && (
+        <div className="modal-overlay" onClick={() => setSaveAsName(null)}>
+          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setSaveAsName(null)}>
+              ✕
+            </button>
+            <h2>Save animatic as…</h2>
+            <p className="muted">
+              This animatic hasn't got a name yet. Give it one and it'll show up
+              in Your Animatics under that title.
+            </p>
             <input
-              type="color"
-              className="an-colour"
-              value={selectedText.color}
-              onChange={(e) => patchText(selectedText.id, { color: e.target.value })}
-              title="Text colour"
+              className="an-name-input"
+              autoFocus
+              value={saveAsName}
+              placeholder="e.g. Episode 1 — opening scene"
+              maxLength={120}
+              onChange={(e) => setSaveAsName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmSaveAs();
+                if (e.key === "Escape") setSaveAsName(null);
+              }}
             />
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setSaveAsName(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!saveAsName.trim()}
+                onClick={confirmSaveAs}
+              >
+                💾 Save
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ------------------------------------------------------- settings */}
-      <div className="an-settings">
-        <button
-          type="button"
-          className="an-settings-toggle"
-          onClick={() => setShowSettings((s) => !s)}
-        >
-          {showSettings ? "▾" : "▸"} Video settings
-          <span className="muted">
-            {" "}
-            — {settings.aspect_ratio}, {settings.fps} fps,{" "}
-            {settings.fit === "cover" ? "fill frame" : "fit whole image"}
-          </span>
-        </button>
+      {/* The real clock. Hidden, but it is what the pictures follow. */}
+      {audioUrl && <audio ref={audioRef} src={audioUrl} preload="auto" />}
 
-        {showSettings && (
-          <div className="an-settings-body">
-            <div className="an-set-row">
-              <span className="an-set-label">Frame shape</span>
-              <span className="an-set-chips">
-                {ASPECTS.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={`opt-chip ${settings.aspect_ratio === a.id ? "active" : ""}`}
-                    onClick={() => setSettings((s) => ({ ...s, aspect_ratio: a.id }))}
-                  >
-                    {a.label}
-                    <span className="opt-chip-note">{a.note}</span>
-                  </button>
-                ))}
-              </span>
-            </div>
+      {/* One hidden input per media type, shared by every entry point that
+          adds to that layer (the pane, the strip and the timeline's ＋). */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) addFiles(sortFiles(e.target.files));
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={audioInputRef}
+        type="file"
+        accept="audio/*"
+        hidden
+        onChange={(e) => {
+          pickAudio(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      {/* The Media pane's single control — takes both kinds and sorts them out. */}
+      <input
+        ref={assetInputRef}
+        type="file"
+        accept="image/*,audio/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) addAssets(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
 
-            <div className="an-set-row">
-              <span className="an-set-label">Images that don't fit</span>
-              <span className="an-set-chips">
-                <button
-                  type="button"
-                  className={`opt-chip ${settings.fit === "contain" ? "active" : ""}`}
-                  onClick={() => setSettings((s) => ({ ...s, fit: "contain" }))}
-                >
-                  Fit whole image
-                  <span className="opt-chip-note">bars at the edges</span>
-                </button>
-                <button
-                  type="button"
-                  className={`opt-chip ${settings.fit === "cover" ? "active" : ""}`}
-                  onClick={() => setSettings((s) => ({ ...s, fit: "cover" }))}
-                >
-                  Fill the frame
-                  <span className="opt-chip-note">crops the edges</span>
-                </button>
-              </span>
-            </div>
+// ---------------------------------------------------------------------------
+// Properties pane — one component per selection state. Split out so the editor
+// itself stays readable; they are presentational and hold no state of their own.
+// ---------------------------------------------------------------------------
+function TextProperties({ clip, totalMs, textAreaRef, onChange, onDuplicate, onDelete, onClose }) {
+  const overruns = clip.start_ms + clip.duration_ms > totalMs;
+  return (
+    <div className="an-props">
+      <textarea
+        ref={textAreaRef}
+        className="an-tp-text"
+        rows={3}
+        value={clip.text}
+        placeholder="Type the caption — press Enter for a second line"
+        onChange={(e) => onChange(clip.id, { text: e.target.value })}
+      />
 
-            <div className="an-set-row">
-              <span className="an-set-label">Frame rate</span>
-              <select
-                className="an-select"
-                value={settings.fps}
-                onChange={(e) => setSettings((s) => ({ ...s, fps: Number(e.target.value) }))}
-              >
-                <option value={12}>12 fps</option>
-                <option value={24}>24 fps (film)</option>
-                <option value={25}>25 fps</option>
-                <option value={30}>30 fps</option>
-              </select>
-
-              <span className="an-set-label">Bar colour</span>
-              <input
-                type="color"
-                className="an-colour"
-                value={settings.background}
-                onChange={(e) => setSettings((s) => ({ ...s, background: e.target.value }))}
-              />
-
-              <label className="an-check">
-                <input
-                  type="checkbox"
-                  checked={settings.show_labels}
-                  onChange={(e) => setSettings((s) => ({ ...s, show_labels: e.target.checked }))}
-                />
-                Burn shot labels into the video
-              </label>
-            </div>
-
-            <div className="an-set-row an-danger-row">
-              {confirmDelete ? (
-                <>
-                  <span>Delete this animatic and its uploads? The storyboard is untouched.</span>
-                  <button type="button" className="btn small danger-btn" onClick={handleDelete}>
-                    Yes, delete
-                  </button>
-                  <button
-                    type="button"
-                    className="btn small ghost"
-                    onClick={() => setConfirmDelete(false)}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn small ghost"
-                  onClick={() => setConfirmDelete(true)}
-                >
-                  🗑 Delete this animatic
-                </button>
-              )}
-              {sourceBoard && (
-                <span className="muted an-source">
-                  Frames come from a storyboard — re-draw a panel there and it updates here.
-                </span>
-              )}
-            </div>
-          </div>
-        )}
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>Starts at</span>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={(clip.start_ms / 1000).toFixed(1)}
+            onChange={(e) =>
+              onChange(clip.id, {
+                start_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
+              })
+            }
+          />
+          <span className="an-tp-unit">s</span>
+        </label>
+        <label className="an-tp-field">
+          <span>Stays for</span>
+          <input
+            type="number"
+            step="0.1"
+            min="0.1"
+            value={(clip.duration_ms / 1000).toFixed(1)}
+            onChange={(e) =>
+              onChange(clip.id, {
+                duration_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
+              })
+            }
+          />
+          <span className="an-tp-unit">s</span>
+        </label>
       </div>
+
+      {overruns && (
+        <p className="an-prop-warn">
+          ⚠ This runs past the end of the video, so part of it is never seen.
+        </p>
+      )}
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Position</span>
+        <span className="an-tp-group">
+          {TEXT_POSITIONS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`an-tp-btn ${clip.position === p.id ? "on" : ""}`}
+              onClick={() => onChange(clip.id, { position: p.id })}
+            >
+              {p.label}
+            </button>
+          ))}
+        </span>
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Align</span>
+        <span className="an-tp-group">
+          {TEXT_ALIGNS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className={`an-tp-btn ${clip.align === a.id ? "on" : ""}`}
+              title={`Align ${a.id}`}
+              onClick={() => onChange(clip.id, { align: a.id })}
+            >
+              {a.label}
+            </button>
+          ))}
+        </span>
+        <span className="an-tp-group">
+          {TEXT_SIZES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`an-tp-btn ${clip.size === s.id ? "on" : ""}`}
+              title={`${s.id} text`}
+              onClick={() => onChange(clip.id, { size: s.id })}
+            >
+              {s.label}
+            </button>
+          ))}
+        </span>
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Backdrop</span>
+        <select
+          className="an-select"
+          value={clip.backdrop}
+          onChange={(e) => onChange(clip.id, { backdrop: e.target.value })}
+          title="How the text is kept readable over the art"
+        >
+          {TEXT_BACKDROPS.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="color"
+          className="an-colour"
+          value={clip.color}
+          onChange={(e) => onChange(clip.id, { color: e.target.value })}
+          title="Text colour"
+        />
+      </div>
+
+      <div className="an-prop-actions">
+        <button type="button" className="btn small ghost" onClick={() => onDuplicate(clip.id)}>
+          ⧉ Duplicate
+        </button>
+        <button type="button" className="btn small danger-btn" onClick={() => onDelete(clip.id)}>
+          ✕ Remove
+        </button>
+        <button type="button" className="btn small ghost" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FrameProperties({ frame, index, url, onChange, onDuplicate, onDelete }) {
+  return (
+    <div className="an-props">
+      <div className="an-prop-thumb">
+        {url ? <img src={url} alt={frame.label || `Frame ${index + 1}`} /> : <span className="fs-thumb-wait" />}
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Frame</span>
+        <span className="tiny">
+          {index + 1}
+          {frame.label ? ` · ${frame.label}` : ""}
+        </span>
+      </div>
+
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>Held for</span>
+          <input
+            type="number"
+            step="0.1"
+            min="0.1"
+            value={(frame.duration_ms / 1000).toFixed(1)}
+            onChange={(e) =>
+              onChange(frame.id, {
+                duration_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
+              })
+            }
+          />
+          <span className="an-tp-unit">s</span>
+        </label>
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Label</span>
+        <input
+          className="an-prop-input"
+          value={frame.label || ""}
+          placeholder="Shot 1"
+          onChange={(e) => onChange(frame.id, { label: e.target.value })}
+          title="Shown on the timeline, and burned in when 'shot labels' is on"
+        />
+      </div>
+
+      <div className="an-prop-actions">
+        <button type="button" className="btn small ghost" onClick={() => onDuplicate(frame.id)}>
+          ⧉ Duplicate
+        </button>
+        <button type="button" className="btn small danger-btn" onClick={() => onDelete(frame.id)}>
+          ✕ Remove
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VideoProperties({ settings, onChange, sourceBoard }) {
+  return (
+    <div className="an-props">
+      <p className="tiny muted an-prop-hint">
+        Nothing selected — these settings apply to the whole video. Click a frame
+        or a text clip to edit just that.
+      </p>
+
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">Frame shape</span>
+        <span className="an-set-chips">
+          {ASPECTS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className={`opt-chip ${settings.aspect_ratio === a.id ? "active" : ""}`}
+              onClick={() => onChange({ aspect_ratio: a.id })}
+            >
+              {a.label}
+              <span className="opt-chip-note">{a.note}</span>
+            </button>
+          ))}
+        </span>
+      </div>
+
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">Images that don't fit</span>
+        <span className="an-set-chips">
+          <button
+            type="button"
+            className={`opt-chip ${settings.fit === "contain" ? "active" : ""}`}
+            onClick={() => onChange({ fit: "contain" })}
+          >
+            Fit whole image
+            <span className="opt-chip-note">bars at the edges</span>
+          </button>
+          <button
+            type="button"
+            className={`opt-chip ${settings.fit === "cover" ? "active" : ""}`}
+            onClick={() => onChange({ fit: "cover" })}
+          >
+            Fill the frame
+            <span className="opt-chip-note">crops the edges</span>
+          </button>
+        </span>
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Frame rate</span>
+        <select
+          className="an-select"
+          value={settings.fps}
+          onChange={(e) => onChange({ fps: Number(e.target.value) })}
+        >
+          <option value={12}>12 fps</option>
+          <option value={24}>24 fps (film)</option>
+          <option value={25}>25 fps</option>
+          <option value={30}>30 fps</option>
+        </select>
+      </div>
+
+      <div className="an-prop-row">
+        <span className="an-prop-label">Bar colour</span>
+        <input
+          type="color"
+          className="an-colour"
+          value={settings.background}
+          onChange={(e) => onChange({ background: e.target.value })}
+        />
+      </div>
+
+      <label className="an-check">
+        <input
+          type="checkbox"
+          checked={settings.show_labels}
+          onChange={(e) => onChange({ show_labels: e.target.checked })}
+        />
+        Burn shot labels into the video
+      </label>
+
+      {sourceBoard && (
+        <p className="tiny muted an-source">
+          Frames come from a storyboard — re-draw a panel there and it updates here.
+        </p>
+      )}
     </div>
   );
 }

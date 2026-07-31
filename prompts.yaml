@@ -29,15 +29,19 @@ defaults:
   fullbody: >
     COPY this exact character EXACTLY as shown in the reference image — keep the SAME gender/sex, age,
     face, hairstyle, body type, outfit and skin tone. Do NOT change their identity, gender or age; if
-    the reference is a woman keep her a woman, if a man keep him a man. Place them onto a 2×2 grid
-    showing the FULL BODY in four views: top-left = front, top-right = left side, bottom-left =
+    the reference is a woman keep her a woman, if a man keep him a man. Lay the sheet out as EXACTLY
+    TWO ROWS and TWO COLUMNS — four equal cells, two figures on the top row and two on the bottom row.
+    Do NOT line all four up in a single row, and do NOT make some figures large and others small.
+    The four views are: top-left = front, top-right = left side, bottom-left =
     three-quarter angle, bottom-right = back view. Stand in a strict T-pose with arms extended
-    horizontally to the sides. Keep NATURAL, REALISTIC proportions — normal head-to-body ratio, do NOT
+    horizontally to the sides. Draw all four figures at the SAME scale and the SAME height, each one
+    complete from head to feet inside its own cell — never let a figure cross into another cell or run
+    off the edge of the sheet. Keep NATURAL, REALISTIC proportions — normal head-to-body ratio, do NOT
     elongate, stretch or squash; identical height and build in all four panels. Exactly ONE character
     standing alone in each panel, framed head-to-feet with a small even margin. Sample the skin tone and
     all colors directly from the reference. ABSOLUTELY NO text, letters, words, numbers, captions, labels
     or watermarks anywhere (do NOT write FRONT, LEFT, BACK). NO borders, frames, outlines, grid lines,
-    dividers or gutters — the four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF)
+    dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF)
     background. COPY, not create.
 
   hair: >
@@ -49,7 +53,7 @@ defaults:
     the hair is PURE WHITE — no face, no neck, no black shadow. Sample the hair color directly from the
     reference image. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
     anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
-    edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+    separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   face: >
     COPY the exact face features (eyes, nose, mouth, skin tone, facial structure) of the character
@@ -59,7 +63,7 @@ defaults:
     NO shoulders, NO neck, NO body. Keep natural, realistic facial proportions — do NOT stretch or
     distort the head. ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks
     anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views sit
-    edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+    separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   body: >
     COPY the exact face, hairstyle, skin tone and body shape from the reference image as a CLEAN
@@ -72,7 +76,7 @@ defaults:
     proportions — do NOT elongate, stretch or squash; identical height and build in all four panels.
     Exactly ONE body standing in a T-pose in each panel. ABSOLUTELY NO text, letters, words, numbers,
     captions, labels or watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or
-    gutters — the four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY skin
+    gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY skin
     tone directly from the reference.
 
   jacket: >
@@ -82,7 +86,7 @@ defaults:
     side, bottom-left = three-quarter angle, bottom-right = back. Keep the garment's natural shape and
     proportions — do NOT stretch or distort it; the same garment in all panels. ABSOLUTELY NO text,
     letters, words, numbers, captions, labels or watermarks anywhere. NO borders, frames, outlines,
-    grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless pure-white
+    grid lines, dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white
     (#FFFFFF) background. COPY, not create.
 
   pants: >
@@ -93,7 +97,7 @@ defaults:
     three-quarter angle, bottom-right = back. Keep the garment's natural shape and proportions — do
     NOT stretch or distort it; the same single garment in all four panels. ABSOLUTELY NO text, letters,
     words, numbers, captions, labels or watermarks anywhere. NO borders, frames, outlines, grid lines,
-    dividers or gutters — the four views sit edge-to-edge on ONE seamless pure-white (#FFFFFF)
+    dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF)
     background. COPY, not create.
 
   shoe: >
@@ -103,7 +107,7 @@ defaults:
     back. Keep the footwear's natural shape and proportions — do NOT stretch or distort it; the same
     single shoe in all four panels. ABSOLUTELY NO text, letters, words, numbers, captions, labels or
     watermarks anywhere. NO borders, frames, outlines, grid lines, dividers or gutters — the four views
-    sit edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+    sit separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   goggles: >
     Show stylish modern protective goggles / sunglasses on a 2×2 grid in four views: top-left = front,
@@ -111,7 +115,7 @@ defaults:
     goggles in reference image, COPY them; otherwise design matching modern futuristic goggles. Keep
     natural, realistic proportions — do NOT stretch or distort. NO face or head, isolated eyewear only.
     ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
-    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    frames, outlines, grid lines, dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless
     pure-white (#FFFFFF) background.
 
   headphone: >
@@ -120,7 +124,7 @@ defaults:
     headphones in reference image, COPY them; otherwise design matching modern headphones. Keep natural,
     realistic proportions — do NOT stretch or distort. NO head or ears, isolated headphones only.
     ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
-    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    frames, outlines, grid lines, dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless
     pure-white (#FFFFFF) background.
 
   watch: >
@@ -130,7 +134,7 @@ defaults:
     watch in the reference, COPY it; otherwise design a matching modern smartwatch. Keep natural,
     realistic proportions — do NOT stretch or distort. NO hand, wrist or arm — isolated watch only.
     ABSOLUTELY NO text, letters, words, numbers, captions, labels or watermarks anywhere. NO borders,
-    frames, outlines, grid lines, dividers or gutters — the four views sit edge-to-edge on ONE seamless
+    frames, outlines, grid lines, dividers or gutters — the four views sit separated by clear empty white space (never touching or overlapping) on ONE seamless
     pure-white (#FFFFFF) background.
 
 
@@ -165,14 +169,14 @@ templates:
         three-quarter angle, bottom-right = back. Strict T-pose, arms extended horizontally. Keep
         NATURAL, REALISTIC proportions — do NOT stretch or squash; identical in all four panels.
         Exactly ONE character per panel. ABSOLUTELY NO text, letters, captions, labels or watermarks.
-        NO borders, frames, grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white
+        NO borders, frames, grid lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white
         (#FFFFFF) background. COPY, not create.
       face: >
         COPY the exact MALE face (eyes, nose, mouth, skin tone, facial structure) from the reference
         onto a 2×2 grid: top-left = front, top-right = left side, bottom-left = three-quarter,
         bottom-right = back. Head and facial features ONLY — bald scalp, NO shoulders, NO body.
         ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or dividers —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+        separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   # --- Human, forced FEMALE ---
   human_female:
@@ -188,14 +192,14 @@ templates:
         three-quarter angle, bottom-right = back. Strict T-pose, arms extended horizontally. Keep
         NATURAL, REALISTIC proportions — do NOT stretch or squash; identical in all four panels.
         Exactly ONE character per panel. ABSOLUTELY NO text, letters, captions, labels or watermarks.
-        NO borders, frames, grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white
+        NO borders, frames, grid lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white
         (#FFFFFF) background. COPY, not create.
       face: >
         COPY the exact FEMALE face (eyes, nose, mouth, skin tone, facial structure) from the reference
         onto a 2×2 grid: top-left = front, top-right = left side, bottom-left = three-quarter,
         bottom-right = back. Head and facial features ONLY — bald scalp, NO shoulders, NO body.
         ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or dividers —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
+        separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background. COPY, not create.
 
   # --- ROBOT / mecha / armored suit ---
   robot:
@@ -213,27 +217,27 @@ templates:
         small even margin — NOTHING cropped or cut off, especially the three-quarter view. Keep NATURAL,
         realistic proportions — do NOT stretch or distort; identical in all four panels. Exactly ONE
         robot per panel. ABSOLUTELY NO text, letters, captions, labels or watermarks. NO borders, frames,
-        grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        grid lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
         COPY, not create.
       head: >
         COPY the robot's HEAD / helmet as an isolated part (no neck, no body) onto a 2×2 grid: top-left =
         front, top-right = left side, bottom-left = three-quarter, bottom-right = back. Same design and
         glowing accents as the reference. ABSOLUTELY NO text, captions, labels or watermarks. NO borders,
-        frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       torso: >
         COPY ONLY the robot's central TORSO / chest plate as a single detached piece, floating alone in
         the middle of each panel. ABSOLUTELY NO arms, NO shoulders, NO head, NO neck, NO legs, NO limbs
         of any kind — just the chest/torso module by itself. Show it on a 2×2 grid: top-left = front,
         top-right = left side, bottom-left = three-quarter, bottom-right = back. Same design and glowing
         accents as the reference. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames,
-        grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       arms: >
         COPY EXACTLY ONE single robot ARM (one limb only, from the shoulder joint down to the hand) as a
         detached piece floating alone in each panel. ONE arm only — NEVER two arms, NEVER a pair. NO
         chest, NO torso, NO body, NO shoulders plate, NO head, NO legs — just one isolated arm. Show that
         same single arm on a 2×2 grid: top-left = front, top-right = left side, bottom-left =
         three-quarter, bottom-right = back. ABSOLUTELY NO text, captions, labels or watermarks. NO
-        borders, frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF)
+        borders, frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF)
         background.
       legs: >
         COPY EXACTLY ONE single robot LEG (one limb only, from the hip joint down to the foot) as a
@@ -241,7 +245,7 @@ templates:
         torso, NO body, NO hips block, NO head, NO arms — just one isolated leg. Show that same single
         leg on a 2×2 grid: top-left = front, top-right = left side, bottom-left = three-quarter,
         bottom-right = back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid
-        lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
 
   # --- ANIMAL (four-legged creature) ---
   animal:
@@ -256,25 +260,25 @@ templates:
         front, top-right = left side, bottom-left = three-quarter, bottom-right = back. Keep natural,
         realistic animal proportions — do NOT stretch or distort; identical in all four panels. Exactly
         ONE animal per panel. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames,
-        grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        grid lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       head: >
         COPY the animal's HEAD as an isolated part (no body) onto a 2×2 grid: front, left, three-quarter,
         back. Same fur, markings and features as the reference. ABSOLUTELY NO text, captions, labels or
-        watermarks. NO borders, frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white
+        watermarks. NO borders, frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white
         (#FFFFFF) background.
       body: >
         COPY the animal's BODY / torso (with its fur, markings and coloring, no head, no legs) onto a 2×2
         grid: front, left, three-quarter, back. ABSOLUTELY NO text, captions, labels or watermarks. NO
-        borders, frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF)
+        borders, frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF)
         background.
       legs: >
         COPY ONE of the animal's LEGS / paws as an isolated single part onto a 2×2 grid: front, left,
         three-quarter, back. One leg only. ABSOLUTELY NO text, captions, labels or watermarks. NO borders,
-        frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       tail: >
         COPY the animal's TAIL as an isolated single part onto a 2×2 grid: front, left, three-quarter,
         back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or
-        dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
 
   # --- BIRD ---
   bird:
@@ -289,28 +293,28 @@ templates:
         bottom-left = three-quarter, bottom-right = back. Keep natural, realistic bird proportions — do
         NOT stretch or distort; identical in all four panels. Exactly ONE bird per panel. ABSOLUTELY NO
         text, captions, labels or watermarks. NO borders, frames, grid lines, dividers or gutters —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       head: >
         COPY the bird's HEAD as an isolated part (no body) onto a 2×2 grid: front, left, three-quarter,
         back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or
-        dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       wings: >
         COPY ONE of the bird's WINGS, fully spread to show the feathers, as an isolated single part onto
         a 2×2 grid: front, left, three-quarter, back. One wing only. ABSOLUTELY NO text, captions, labels
-        or watermarks. NO borders, frames, grid lines or dividers — edge-to-edge on ONE seamless
+        or watermarks. NO borders, frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless
         pure-white (#FFFFFF) background.
       beak: >
         COPY the bird's BEAK as an isolated part onto a 2×2 grid: front, left, three-quarter, back.
         ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or dividers —
-        edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       feet: >
         COPY ONE of the bird's FEET / talons as an isolated single part onto a 2×2 grid: front, left,
         three-quarter, back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid
-        lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       tail: >
         COPY the bird's TAIL feathers as an isolated part onto a 2×2 grid: front, left, three-quarter,
         back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or
-        dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
 
   # --- MONSTER / CREATURE (generic) ---
   monster:
@@ -325,19 +329,19 @@ templates:
         front, top-right = left side, bottom-left = three-quarter, bottom-right = back. Keep the
         creature's natural proportions — do NOT stretch or distort; identical in all four panels. Exactly
         ONE creature per panel. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames,
-        grid lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        grid lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       head: >
         COPY the creature's HEAD as an isolated part (no body) onto a 2×2 grid: front, left,
         three-quarter, back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid
-        lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       body: >
         COPY the creature's BODY / torso (no head, no limbs) onto a 2×2 grid: front, left, three-quarter,
         back. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid lines or
-        dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
       limbs: >
         COPY ONE of the creature's LIMBS (arm, leg, tentacle or claw) as an isolated single part onto a
         2×2 grid: front, left, three-quarter, back. ABSOLUTELY NO text, captions, labels or watermarks.
-        NO borders, frames, grid lines or dividers — edge-to-edge on ONE seamless pure-white (#FFFFFF)
+        NO borders, frames, grid lines or dividers — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF)
         background.
 
   # --- GHOST / SPIRIT ---
@@ -353,7 +357,7 @@ templates:
         top-left = front, top-right = left side, bottom-left = three-quarter, bottom-right = back. Keep
         its natural proportions — do NOT stretch or distort; identical in all four panels. Exactly ONE
         ghost per panel. ABSOLUTELY NO text, captions, labels or watermarks. NO borders, frames, grid
-        lines, dividers or gutters — edge-to-edge on ONE seamless pure-white (#FFFFFF) background.
+        lines, dividers or gutters — separated by clear empty white space (never touching or overlapping) on ONE seamless pure-white (#FFFFFF) background.
 
 
 # ---------------------------------------------------------------------------

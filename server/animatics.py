@@ -542,17 +542,31 @@ def get_frame_image(
 
 
 @router.get("/{job_id}/media/{upload_id}")
-def get_uploaded_image(
+def get_upload(
     job_id: str,
     upload_id: str,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Serve a just-uploaded image before it's part of the saved sequence."""
+    """Serve a just-uploaded file — image OR audio — by its upload id.
+
+    This is the route the editor uses for media it has only just uploaded, and
+    it exists because the project-level routes can't answer yet: the editor's
+    save is debounced, so for the best part of a second the file is on disk but
+    is not yet ON the project. Serving by upload id has no such dependency.
+    (The audio case was a real bug: the waveform 404'd and never drew until the
+    page was reloaded. Browser-tested — don't route audio through /audio here.)
+    """
     _get_owned_animatic(job_id, current)
-    path = _image_path(job_id, upload_id)
-    if not path or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="Image not found.")
-    return FileResponse(path, media_type="image/png")
+
+    image = _image_path(job_id, upload_id)
+    if image and os.path.isfile(image):
+        return FileResponse(image, media_type="image/png")
+
+    audio = _audio_file(job_id, upload_id)
+    if audio and os.path.isfile(audio):
+        return FileResponse(audio)
+
+    raise HTTPException(status_code=404, detail="Upload not found.")
 
 
 @router.get("/{job_id}/audio")

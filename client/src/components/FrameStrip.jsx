@@ -70,6 +70,13 @@ export default function FrameStrip({
   urls,
   selectedId,
   uploading,
+  // `vertical` is the Media pane in the editor's workspace layout: the same
+  // cards, stacked in a column instead of a scrolling row. Same markup on
+  // purpose — the drag-to-reorder and duration handling shouldn't fork.
+  vertical = false,
+  // The Media pane supplies its own single "add assets" control, so the strip's
+  // own add button and trailing add-card would be duplicates of it.
+  showAdd = true,
   onSelect,
   onReorder,
   onDuration,
@@ -93,7 +100,7 @@ export default function FrameStrip({
   }
 
   return (
-    <div className="fs-wrap">
+    <div className={`fs-wrap ${vertical ? "fs-vertical" : ""}`}>
       <div className="fs-head">
         <h3 className="fs-title">
           Frames <span className="muted">({frames.length})</span>
@@ -110,20 +117,22 @@ export default function FrameStrip({
               e.target.value = "";
             }}
           />
-          <button
-            type="button"
-            className="btn small"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? (
-              <>
-                <span className="spinner-inline" /> Uploading…
-              </>
-            ) : (
-              "＋ Add images"
-            )}
-          </button>
+          {showAdd && (
+            <button
+              type="button"
+              className="btn small"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploading ? (
+                <>
+                  <span className="spinner-inline" /> Uploading…
+                </>
+              ) : (
+                "＋ Add images"
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -194,18 +203,20 @@ export default function FrameStrip({
           </div>
         ))}
 
-        <button
-          type="button"
-          className="fs-card fs-add"
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-        >
-          <span className="fs-add-plus">＋</span>
-          <span className="fs-add-text">
-            Add images
-            <span className="muted"> or drop them here</span>
-          </span>
-        </button>
+        {showAdd && (
+          <button
+            type="button"
+            className="fs-card fs-add"
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            <span className="fs-add-plus">＋</span>
+            <span className="fs-add-text">
+              Add images
+              <span className="muted"> or drop them here</span>
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

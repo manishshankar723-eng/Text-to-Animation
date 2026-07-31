@@ -194,7 +194,7 @@ export default function Timeline({
       {/* Layer names. Outside the scroller, so they stay put. */}
       <div className="tl-gutter">
         <div className="tl-gutter-ruler" />
-        <div className="tl-gutter-row" title="Your frames, in order">
+        <div className="tl-gutter-row tl-gutter-images" title="Your frames, in order">
           <span className="tl-layer-ico">🖼</span> Images
           <button
             type="button"
@@ -205,7 +205,7 @@ export default function Timeline({
             ＋
           </button>
         </div>
-        <div className="tl-gutter-row" title="On-screen text, timed on its own">
+        <div className="tl-gutter-row tl-gutter-text" title="On-screen text, timed on its own">
           <span className="tl-layer-ico">T</span> Text
           <button
             type="button"
@@ -216,7 +216,7 @@ export default function Timeline({
             ＋
           </button>
         </div>
-        <div className="tl-gutter-row" title="The audio track">
+        <div className="tl-gutter-row tl-gutter-audio" title="The audio track">
           <span className="tl-layer-ico">♪</span> Audio
           <button
             type="button"
@@ -316,7 +316,9 @@ export default function Timeline({
               <Waveform
                 audioUrl={audioUrl}
                 width={width}
-                height={48}
+                /* Matches --tl-track-h (2.6rem) less the track's borders, so the
+                   waveform fills its lane exactly like the other two tracks. */
+                height={38}
                 totalMs={totalMs}
                 offsetMs={audioOffsetMs}
               />

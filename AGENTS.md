@@ -99,7 +99,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/JobDetail.jsx` | Live progress bar + per-section skeletons, incremental gallery, per-view/section regenerate, failed-part retry, per-section download + 3D popup. |
 | `client/src/components/StoryboardToAnimatics.jsx` | Animatics workflow shell: library ⇄ one open animatic. |
 | `client/src/components/AnimaticLibrary.jsx` | "Your Animatics": New / From a Storyboard tiles + Recent / All sections. **Mirrors `StoryboardLibrary.jsx` and shares its `.lib-*` styles** — change a card in one, change it in both. |
-| `client/src/components/AnimaticEditor.jsx` | The editor: preview, transport, autosave, export. **Audio is the playback clock** (see the Work Log). |
+| `client/src/components/AnimaticEditor.jsx` | The editor, as an **NLE workspace**: top bar + status strip + Media / Program / Properties panes over a full-width timeline, fixed to the viewport height. Holds all the state (playback, autosave, export). **Audio is the playback clock** (see the Work Log). `TextProperties` / `FrameProperties` / `VideoProperties` at the foot are the three states of the Properties pane. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
 | `client/src/components/Timeline.jsx` | **Three tracks** (🖼 Images / T Text / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
 | `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
@@ -220,6 +220,47 @@ in `.env` — no code change needed.
 
 ---
 
+## 🧪 Browser tests (Playwright)
+
+`tests/e2e_animatic.py` drives a real Chromium against a live API + Vite on
+isolated ports. **Run it after any layout or CSS change** — it has already caught
+four bugs a clean `npm run build` happily shipped. Setup and the three commands
+are in the test's docstring; `pip install -r requirements-dev.txt` first.
+
+Two Windows gotchas that will waste your time:
+- `pkill -f uvicorn` does **not** kill a Windows python process — the stale
+  server keeps the port and you end up testing old code. Use
+  `Get-NetTCPConnection -LocalPort 8124 | Stop-Process -Id $_.OwningProcess`.
+- Add `sys.stdout.reconfigure(encoding='utf-8')` to anything that prints arrows
+  or emoji; the console is cp1252 and will crash the run mid-way.
+
+## 📱 Responsive rules (apply to EVERY page)
+
+Standing conventions, not a one-off fix. Check these before adding a screen.
+
+1. **Never use bare `100vh` for a full-height surface.** Write the `vh` line and
+   a `dvh` line under it:
+   ```css
+   min-height: 100vh;   /* fallback */
+   min-height: 100dvh;  /* follows the real viewport as mobile chrome slides away */
+   ```
+   Every full-height rule in `styles.css` is paired this way (`body`,
+   `.auth-wrap`, `.landing`, `.hero`, `.sb-form`, `.public-wrap`, `.shell`,
+   `.sidebar`, the editor).
+2. **No fixed `width`/`min-width` ≥ 320px on anything that must fit a phone.**
+   Use `clamp()`, `minmax(0, 1fr)` or `min(100%, …)`. Audited: the stylesheet
+   currently has none.
+3. **`min-width: 0` / `min-height: 0` on every grid and flex child** that holds
+   text or a scroller — without it a child refuses to shrink below its content
+   and pushes the page sideways.
+4. **Multi-column layouts get a middle stage**, not just "3 columns → 1". The
+   editor narrows its side panes at 1400px before stacking at 1180px.
+5. **Consider the SHORT screen too**, not only the narrow one. A viewport-height
+   layout needs a `@media (max-height: …)` escape or it becomes unusable slivers
+   with devtools open (the editor releases at 620px tall).
+6. **Wide content scrolls inside its own container** (`overflow-x: auto`), never
+   the page body.
+
 ## 📐 Conventions
 
 - **Python 3.14**, standard library logging (`logging.getLogger(__name__)`).
@@ -236,6 +277,299 @@ in `.env` — no code change needed.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-07-31 — Media pane: one "Add assets" control instead of three (user-reported)
+
+- **Reported:** the Media pane had three add/upload controls — a "＋ Add images"
+  button, an "Add images or drop them here" card, and a separate "♪ Add an MP3"
+  — for what is really one action. Wanted: **one** target that takes anything.
+- **Now one control**, "＋ Add assets or drop them here", which accepts images
+  **and** audio together and sorts them out by file type: images become frames
+  (still filename-sorted), an audio file becomes the track. **The whole pane is
+  the drop target**, not just the little dashed box, and it highlights while a
+  file is over it.
+- `kindOf()` classifies by MIME with an **extension fallback** — a drag from
+  some file managers arrives with an empty `type`.
+- **Nothing is silently dropped.** Unsupported files are named in the status
+  strip: video says so explicitly ("video isn't supported yet" — there is no
+  video path in the backend at all), as do a second audio file (one track only)
+  and anything else.
+- The "Audio" section only appears **once there is audio**; the empty heading
+  with its own button was the third of the three controls.
+- `FrameStrip` gained `showAdd` so the strip's own button and trailing add-card
+  disappear in the Media pane; it keeps them for any other use. Its file-drop
+  path now routes through `addAssets` too, so dropping an MP3 onto the frame
+  list works the same as dropping it on the pane.
+- **Verified in the browser:** exactly one add control in the pane, no
+  "Add images"/"Add an MP3" anywhere, no empty Audio heading; then two images
+  **and** a WAV through that single input in one go → 2 frames + a drawn
+  waveform + "Added 2 images and audio “score.wav”"; and an .mp4 → "Skipped 1
+  video file(s) — video isn't supported yet" with the frame count unchanged.
+  Folded into `tests/e2e_animatic.py` (**99 checks**), which now uploads its
+  images and audio through the one control.
+
+### 2026-07-31 — Top-bar buttons are one size family (user-reported)
+
+- **Reported:** Save, Export video and the delete icon didn't match in size or
+  look.
+- **Cause:** they carried different `.btn` modifiers — `small` for Back, Save
+  and Delete, full-size for `primary` Export — so they sat at different heights
+  with different padding and font sizes, reading as unrelated controls.
+- **Fix:** one rule, `.an-topbar .btn`, gives every button in the bar the same
+  height (2.3rem), padding, font size, radius and border. The icon-only Delete
+  is a square of that same height rather than a wide slab. **Only the FILL
+  distinguishes them** — Export stays gold because it's the primary action.
+- **Verified in the browser, both themes:** all four buttons measure identical
+  height (37px), baseline, font size, corner radius and border width, and the
+  delete button is 37×37. Now asserted permanently in `tests/e2e_animatic.py`
+  (**95 checks**), so a future `btn small` can't quietly break the row again.
+
+### 2026-07-31 — Empty animatics discarded on exit; Save asks for a name
+
+Two user-reported bugs, both visible in one screenshot of a library full of
+junk: seven "Untitled animatic" records, every one of them claiming to export.
+
+1. **Opening a new animatic and leaving without touching it kept the record**,
+   so the library filled with empty "Untitled animatic" rows.
+   → **New Animatic still goes straight into the editor** (no dialog in the
+   way — an earlier attempt that asked for the name up front was rejected as
+   the wrong shape, and rightly: naming a thing before you know if you want it
+   is backwards). Instead, **leaving discards an animatic that has nothing in
+   it** — no frames, no text, no audio, no export, and still the placeholder
+   name. Anything with content is kept, named or not.
+   → **Save on an unnamed animatic opens a "Save animatic as…" panel**; type a
+   name, press Save, and it's written under that title. Once it has a real
+   name, Save just writes with no interruption. Autosave is unchanged.
+   `UNTITLED` is exported from `AnimaticLibrary.jsx` so both sides agree on what
+   "not named yet" means.
+   **Known limit:** the discard runs on the Back button. Closing the tab
+   outright still leaves the empty record (a `beforeunload` request is not
+   reliable enough to depend on).
+2. **Every card said "Exporting…" with a spinner.** `JobStatus.QUEUED` means two
+   different things in this codebase: for a storyboard it's "work waiting to
+   start", but for an animatic it's **"a draft that has never been exported"**.
+   `AnimaticLibrary` was copied from `StoryboardLibrary` and inherited the
+   storyboard reading, so every un-exported animatic looked busy forever.
+   → The library now treats **only `running`** as an export in progress (the
+   export endpoint sets RUNNING before it submits, so nothing is missed).
+   **Remember this whenever you copy something from the storyboard library:
+   the two workflows do not mean the same thing by `queued`.**
+
+- **Verified in the browser** (`tests/e2e_animatic.py`, now **89 checks**): New
+  goes straight into the editor; opening one and leaving without touching it
+  leaves the server count unchanged; Save on an unnamed animatic opens the
+  panel, its Save is disabled until a name is typed, and the title takes; a
+  named animatic saves without asking again; and no card carries a false
+  "Exporting…" or a stuck spinner. A separate five-scenario pass also confirmed
+  an animatic with frames but no name is **kept** (only truly empty ones are
+  discarded), and that a reopened named animatic saves silently.
+- **Not done:** the seven junk animatics already in the user's library are left
+  alone — deleting someone's records isn't mine to do. They can be removed with
+  the 🗑 on each card.
+
+### 2026-07-30 — Editor top bar + full-screen fit + equal layer buttons (user-reported)
+
+Four things reported off one screenshot; the second turned out to be a real
+layout bug and the first uncovered another.
+
+1. **"✓ Saved" was permanently on screen.** It's the DEFAULT state, so showing
+   it always says nothing. Now the indicator is **silent when saved**, shows
+   "• Unsaved changes" while dirty, a spinner while saving, and flashes
+   "✓ Saved" for 2.2s after a save before going quiet. Its width is fixed so the
+   buttons beside it don't jump.
+2. **An explicit 💾 Save button, before Export.** Saving is still automatic; the
+   button is reassurance and a way to force the write. Disabled when there's
+   nothing to save.
+3. **🗑 Delete moved out of Properties and into the top bar, after Export** —
+   destructive, so it sits furthest from the button you came to press. Two-step
+   confirm inline. `VideoProperties` lost its delete props.
+4. **The three layer buttons are now identical.** One `--tl-track-h: 2.6rem`
+   drives all three tracks (they were 35 / 32 / 50px — three sizes read as three
+   different kinds of thing, which they aren't). The waveform height follows.
+
+**⚠️ The real bug: ~390px of dead space under the timeline.** `.an-nle` used
+`grid-template-rows: auto auto minmax(0,1fr) auto`, but **the status strip only
+renders when there's something to say.** On a fresh animatic it isn't there, so
+every child shifted up a row, the *timeline* inherited the `1fr`, and the panes
+were left at content height. My earlier browser test never caught it because a
+notice was always showing by the time it measured.
+→ `.an-nle` is now a **flex column** with `.an-panes { flex: 1 1 auto }`. Flex
+doesn't care how many children there are. **Don't reintroduce a positional row
+template with optional children.**
+Editor padding also tightened to `0.85rem` (the app's usual `1.8rem` is a lot of
+dead margin on a workspace). Measured after: 14px above, 14px below, at 2559,
+1920, 1440 and 1280 wide — symmetric framing, nothing wasted.
+
+**⚠️ Second bug, found by the new assertions: a newly created animatic opened
+DIRTY and fired a pointless save.** The "have we finished loading?" guard was a
+`setTimeout(0)` flag, and that race is lost whenever React invokes the load
+effect twice (StrictMode in dev) — the second `.then` landed after the flag was
+set and looked like user edits. Reopening an existing animatic was fine, which
+is why it hid.
+→ Dirtiness is now decided by **comparing a content signature against a baseline
+of what's on the server**, not by "did an effect fire". Set on load, updated
+after each successful save, and captured *before* the request so an edit mid-
+flight correctly stays dirty. Editing a value back to its original now also
+reads as saved again. Verified: opening a new animatic fires **zero** PUTs.
+
+- **Verified in the browser** (`tests/e2e_animatic.py`, now **80 checks**): the
+  quiet-then-flash-then-quiet save cycle, Save-before-Export and
+  Delete-after-Export by measured x-position, Save disabled when clean, the
+  delete confirm, no dead space + symmetric framing, and all three layer buttons
+  *and* tracks measuring identical. Plus everything it already covered. Backend
+  untouched this turn (`git diff` confirms no Python changed beyond last turn's
+  `server/animatics.py`); imports, `plan_segments` and the audio media route
+  re-smoked green.
+- **Gap to close:** the backend suites (`test_animatic`, `test_text_layer`,
+  `test_text_api`, `test_duration_exact` — ~150 checks) still live in the
+  session scratchpad, which gets wiped between turns. They should be moved into
+  `tests/` beside the e2e one.
+
+### 2026-07-30 — Playwright: the app is finally tested in a REAL browser (4 bugs found)
+
+- **Asked for:** install Playwright and test on a real browser. Every session
+  before this had to sign off with "NOT viewed in a browser"; that gap is closed.
+- **`tests/e2e_animatic.py` (new, 68 checks)** drives Chromium against a live
+  API + Vite on non-default ports (8124 / 5199) so it can never touch real data.
+  `requirements-dev.txt` holds `playwright`; run instructions are in the test's
+  own docstring. Screenshots of every viewport are written to `%TEMP%/pw_test/shots`.
+- **It found four real bugs on the first run — all invisible to the build:**
+  1. **Timeline gutter labels were mis-aligned.** `.tl-gutter-row:nth-of-type(n)`
+     counts *every* sibling `<div>`, and the ruler spacer is the first one — so
+     each label got the NEXT track's height and Audio got none at all. Now
+     explicit `.tl-gutter-images` / `-text` / `-audio` classes. **Never go back
+     to positional selectors there.**
+  2. **The waveform never drew, and playback was silent, until a reload.** The
+     upload returned 200 and then `GET /animatics/{id}/audio` **404'd**: the
+     editor's save is debounced, so for ~900ms the track is on disk but not yet
+     ON the project, and that route reads the project. Images already avoided
+     this via the raw-upload route; audio didn't. `/media/{upload_id}` now serves
+     **image OR audio**, and the client fetches audio by upload id.
+  3. **The preview was not the frame shape being exported** — measured 1.66:1 for
+     a 16:9 project, so a 16:9 image showed false letterbox bars. `aspect-ratio`
+     is silently dropped when a box is constrained on both axes, which is exactly
+     what "fit inside this pane" does. The screen is now sized
+     `width: min(100cqw, 100cqh * --ar-num)` inside a size-container
+     (`.an-screen-fit`), making width definite so the ratio holds. Verified at
+     16:9 (913×514 = 1.778) and 9:16 (309×549 = 0.563).
+  4. **Whole-video settings became unreachable.** Selecting a frame or a caption
+     swapped the Properties pane, and nothing ever deselected — so aspect ratio,
+     fps and Delete were gone for the rest of the session. Added a **"← Video"**
+     button in the pane header.
+- **What the suite covers:** login, the library (two New tiles genuinely side by
+  side, Recent/All), all four workspace regions rendering with real sizes, no
+  page scroll in either axis, timeline track heights, image upload → frames →
+  bars, typing a hold and seeing the bar widen, adding a caption and seeing it
+  over the picture *scaled to the frame*, waveform pixels actually lit, the clock
+  advancing during playback, Properties following the selection, and **five
+  viewports** (1920/1440/1280/1024/390) asserting no horizontal scroll, tracks
+  keeping height, the picture staying visible, panes side-by-side above 1180px
+  and stacked below — plus zero console errors throughout.
+- **Confirmed fixed in the browser:** the reported empty-area-below-the-workspace
+  is gone — `document.scrollHeight == window.innerHeight` at every desktop size.
+- **Gotcha for the next agent:** `pkill -f uvicorn` does **not** kill a Windows
+  python process. The old server keeps the port, the new one fails to bind, and
+  you spend twenty minutes testing stale code. Use
+  `Get-NetTCPConnection -LocalPort <n> | Stop-Process -Id $_.OwningProcess`.
+  Also `sys.stdout.reconfigure(encoding='utf-8')` in any test that prints arrows
+  or emoji — the Windows console is cp1252 and will crash the run.
+
+### 2026-07-30 — Responsive pass; editor stops guessing the viewport (user-reported)
+
+- **Reported:** the editor workspace filled only the top of the screen with a
+  large empty area beneath, plus a standing instruction: **keep every page
+  responsive on every screen**. That's now written up as its own section above
+  ("Responsive rules") so it survives past this session.
+- **Root of the editor problem: it was doing arithmetic on someone else's
+  padding.** `height: calc(100vh - 3.6rem)` hard-coded `.shell-main`'s
+  `1.8rem` top+bottom. Any change to that padding, or anything that makes the
+  document taller than the viewport, and the workspace is the wrong height with
+  dead space under it.
+- **Fix — let it take the space that actually exists.** `.shell:has(.an-nle)`
+  pins the shell to the viewport, clips `.shell-main`, and the editor becomes a
+  flex child with `flex: 1 1 auto; min-height: 0`. No constant, and App.jsx
+  doesn't need to know which page is mounted. The old `calc()` stays as the
+  fallback for a browser without `:has()`.
+- **`100vh` → `100vh` + `100dvh` everywhere** (9 sites). `vh` doesn't shrink as
+  a phone's address bar slides away, so every "full height" screen overshot on
+  mobile — landing, login, the public shared board and the shell included.
+- **Fluid panes:** `clamp(12rem, 15vw, 17rem) / minmax(0,1fr) / clamp(16rem,
+  20vw, 22rem)`. A 4K screen gives the side panes more room; a 1280 laptop stops
+  crushing the picture between two fixed columns. Timeline height likewise
+  `clamp(11.5rem, 24vh, 15rem)`.
+- **Three stages, not two:** side panes narrow at **1400px**, the split stacks
+  at **1180px**, and a new **`max-height: 620px`** rule releases the
+  viewport-pinning entirely — with devtools open, a scrolling workspace beats
+  four unusable slivers.
+- **Honest limit:** I could not reproduce the empty area itself. The CSS was
+  intact, the sidebar scrolls internally, and without a browser I can't tell
+  whether the screenshot was a full-page capture or a real overflow. The change
+  above removes the *class* of bug regardless — the workspace no longer asserts
+  a height, it fills what it is given.
+- **Verified:** a stylesheet audit — no unconditional `width`/`min-width` ≥
+  320px anywhere, every `100vh` paired with a `dvh` line, the three editor
+  breakpoints confirmed by parsing the media blocks, and the primary height path
+  confirmed free of any padding constant. `npm run build` clean.
+  **NOT viewed in a browser at any size.**
+
+### 2026-07-30 — Animatic editor rebuilt as an NLE workspace (Premiere-style)
+
+- **Asked for:** the editing layout of a real NLE (user sent Premiere Pro
+  screenshots) — *"keep now simple, then we go advance"*. So: the shape, not the
+  feature set. No tool palette, no multi-track video, no audio meters.
+- **The page is now a fixed-height grid, not a scrolling page:**
+  ```
+  top bar   ← back · title · saved · Export
+  status    ← errors / notices / export progress, one line, never shifts layout
+  ┌ Media ─┬─ Program ─────────┬─ Properties ─┐
+  │ frames │  the picture      │  selection-  │
+  │ +audio │  ⏮ ◀ ▶ ▶  0:13    │  driven      │
+  └────────┴───────────────────┴──────────────┘
+  Timeline (full width) — 🖼 Images / T Text / ♪ Audio
+  ```
+  `height: calc(100vh - 3.6rem)` (`.shell-main`'s padding), `min-height: 0` on
+  every grid child, and each pane scrolls **inside itself**. That's the whole
+  point: in an editor the picture must not slide off screen while you drag a
+  clip.
+- **Properties is one pane with three states** — text clip / frame / whole video
+  — so there is exactly one place to look for a setting. The old collapsible
+  "Video settings" block and the separate text inspector are both gone into it.
+  Selection is made **exclusive** (`selectedFrame` is null whenever a text clip
+  is selected, and the timeline clears the other on click), so the pane can
+  never show something that isn't selected.
+- **Frame properties gained an editable `label`** — it was only ever settable
+  from a storyboard before, yet it's what the timeline shows and what
+  "burn shot labels" burns in.
+- `FrameStrip` takes a `vertical` prop for the Media pane: same component, same
+  drag-to-reorder and typed hold, just stacked. Deliberately not a second
+  component — the reorder logic must not fork.
+- The download button moved into the top bar and turns amber reading
+  "⬇ MP4 (out of date)" when the project has been edited since the export.
+
+**⚠️ Two traps worth knowing if you move this layout again**
+
+1. **`--tl-ruler-h` / `--tl-img-h` / `--tl-txt-h` / `--tl-aud-h` now live on
+   `.tl-wrap`, the Timeline's OWN root** — they used to be on `.an-timeline`,
+   the wrapper the old layout provided. Deleting that wrapper would have left
+   every track height undefined and collapsed the whole timeline to nothing.
+   Caught by a class audit, not by the build (CSS never errors).
+2. Removing dead CSS with a regex over selectors is dangerous: the pass that
+   cleaned up the old layout also ate the NEW `.an-prop-actions.an-danger-row`,
+   because it matched `.an-danger-row` as a substring of a compound selector.
+   Re-audit after any such cleanup.
+
+- **Verified:** a class audit across every `.jsx` and `styles.css` — no JSX class
+  is left without a rule (bar two intentional no-style hooks), the `--tl-*`
+  variables are confirmed present on `.tl-wrap`, and 19 dead rule-blocks from
+  the old layout are gone (CSS is ~2 kB smaller despite the new workspace). A
+  structural check confirms all four regions and all three Properties states
+  render, and that selection is exclusive. Backend suites still pass;
+  `npm run build` clean. **NOT viewed in a browser** — the pane sizing, the
+  `100vh` fit and the 1180px stacking breakpoint are unexercised by any test.
+- **Deliberately still simple, for the "advance" pass:** one video track and one
+  audio track, no clip trimming on the image layer (a frame is a hold, not a
+  range), no drag-from-Media-to-Timeline, no keyboard shortcuts beyond
+  space/←/→, no snapping, no undo history.
 
 ### 2026-07-30 — Rename icon is a pencil now, not a cog (user-reported)
 

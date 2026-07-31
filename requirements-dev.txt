@@ -1,0 +1,4 @@
+# Development / test-only dependencies (not needed to run the app).
+# Browser end-to-end tests: see tests/e2e_animatic.py
+playwright>=1.40
+requests>=2.28.0
