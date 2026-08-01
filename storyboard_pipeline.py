@@ -59,6 +59,24 @@ def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
     return image.crop((0, top, w, top + new_h))
 
 
+def _dialogue_of(shot: dict) -> list[dict]:
+    """A shot's spoken lines as plain [{character, line}] dicts.
+
+    Shots arrive either as Pydantic-dumped dicts (the API) or as raw dicts (a
+    saved board being re-styled), so entries may be dicts or objects. Anything
+    without a `line` is dropped, which is what keeps a silent shot's list EMPTY
+    — every consumer treats "no dialogue" as "draw no dialogue block".
+    """
+    out: list[dict] = []
+    for item in shot.get("dialogue") or []:
+        if not isinstance(item, dict):
+            item = getattr(item, "__dict__", {}) or {}
+        line = str(item.get("line", "") or "").strip()
+        if line:
+            out.append({"character": str(item.get("character", "") or "").strip(), "line": line})
+    return out
+
+
 def _load_refs(ref_paths: dict | None, kind: str = "reference") -> dict:
     """Load reference images once, keyed by lowercased name.
 
@@ -206,7 +224,10 @@ def run_storyboard(
     Args:
         job_id: owning job id (used for the output folder + panel URLs).
         shots: list of shot dicts {scene_number, shot_number, description,
-               characters[], assets[], location, camera}.
+               characters[], dialogue[], assets[], location, camera}.
+               `dialogue` is carried onto the panel for the board/PDF to show,
+               and is deliberately kept OUT of the image prompt: asked to draw
+               a line of speech, an image model letters it into the panel.
         style / aspect_ratio: chosen on the input page.
         output_dir: base output directory.
         provider: image backend ("vertex" | "gemini"); defaults to IMAGE_PROVIDER.
@@ -222,7 +243,7 @@ def run_storyboard(
 
     Returns:
         {style, aspect_ratio, count, panels: [{index, scene_number, shot_number,
-         description, characters, location, camera, url, failed}]}.
+         description, characters, dialogue, location, camera, url, failed}]}.
     """
     from gemini_client import generate_storyboard_panel
 
@@ -245,6 +266,9 @@ def run_storyboard(
             "shot_number": shot.get("shot_number", i + 1),
             "description": str(shot.get("description", "")).strip(),
             "characters": shot.get("characters", []) or [],
+            # Carried through so the board and the PDF can show what is said in
+            # this panel. NOT part of the image prompt — see below.
+            "dialogue": _dialogue_of(shot),
             "assets": shot.get("assets", []) or [],
             "location": shot.get("location", "") or "",
             "camera": shot.get("camera", "") or "",

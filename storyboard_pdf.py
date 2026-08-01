@@ -20,6 +20,11 @@ PAGE_W, PAGE_H = 1240, 1754
 MARGIN = 64
 GUTTER = 40
 COLS, ROWS = 2, 3
+# A board WITH dialogue prints 2×2. At 2×3 the band of speech has to come out of
+# the picture, which drops a 16:9 panel from ~308px tall to ~215px; at 2×2 the
+# cell is tall enough that the pictures stay exactly the size they always were
+# and the dialogue is simply extra room. Fewer panels per page, same panel size.
+ROWS_DIALOGUE = 2
 
 # Print-friendly palette (white page, dark ink).
 INK = (24, 26, 32)
@@ -33,11 +38,21 @@ CHIP_INK = (255, 255, 255)
 SCENE_BG = (243, 238, 224)
 SCENE_LINE = (214, 199, 160)
 SCENE_INK = (124, 94, 20)
+# Dialogue: a quiet rule down the left with the speaker's name above the line,
+# the way a script prints it. Deliberately not gold — the cast chips are gold,
+# and a spoken line is a different kind of thing from a name tag.
+DIALOGUE_RULE = (176, 132, 26)
+DIALOGUE_NAME = (124, 94, 20)
+DIALOGUE_INK = (44, 47, 56)
 
 # Height reserved UNDER each panel image for shot label, description, camera,
 # location and the cast chips. Grown from the old 96px, which only fitted a
 # two-line description.
 TEXT_H = 196
+# Height of the dialogue band, sized to hold a two-line exchange (the common
+# case: one character speaks, another answers) before it has to say "+N more".
+# Only reserved on a board that actually HAS dialogue.
+DIALOGUE_H = 152
 
 
 def _load_font(size: int, bold: bool = False):
@@ -140,6 +155,63 @@ def _cast_chips(draw, x, y, names, font, max_width):
     return y + h + gap
 
 
+def _dialogue_lines(panel: dict) -> list[dict]:
+    """A panel's spoken lines as [{character, line}], or [] if nobody speaks.
+
+    Older boards were generated before dialogue existed and simply have no key —
+    they get an empty list and print exactly as they always did.
+    """
+    out = []
+    for item in panel.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line", "") or "").strip()
+        if line:
+            out.append({"character": str(item.get("character", "") or "").strip(), "line": line})
+    return out
+
+
+def _dialogue_block(draw, x, y, dialogue, f_name, f_line, max_width, max_h):
+    """Draw the spoken lines under the caption; returns the next y.
+
+    Drawing stops at `max_h` and says how many lines were left over, so a
+    talkative panel can't spill into the cell beneath it. Nothing at all is
+    drawn — not even a heading — when the panel is silent.
+    """
+    if not dialogue:
+        return y
+    top, bottom = y, y + max_h
+    text_x = x + 12  # clears the rule
+    text_w = max_width - 12
+    drawn = 0
+    for i, entry in enumerate(dialogue):
+        name = (entry.get("character") or "").upper()
+        rows = ([name] if name else []) + _wrap(draw, entry["line"], f_line, text_w, 2)
+        needed = (20 if name else 0) + 22 * (len(rows) - (1 if name else 0))
+        # Keep back a row for the "+N more" note while lines remain, so running
+        # out of room can never look like the panel simply had less to say.
+        reserve = 20 if i < len(dialogue) - 1 else 0
+        if y + needed > bottom - reserve:
+            break
+        if name:
+            draw.text((text_x, y), name, font=f_name, fill=DIALOGUE_NAME)
+            y += 20
+        for row in rows[1:] if name else rows:
+            draw.text((text_x, y), row, font=f_line, fill=DIALOGUE_INK)
+            y += 22
+        y += 4
+        drawn += 1
+
+    left = len(dialogue) - drawn
+    if left > 0 and y + 20 <= bottom:
+        draw.text((text_x, y), f"+{left} more line{'' if left == 1 else 's'}", font=f_name, fill=MUTED)
+        y += 20
+    # One rule spanning everything actually drawn — the "someone is speaking" cue.
+    if y > top:
+        draw.line([(x + 2, top), (x + 2, y - 4)], fill=DIALOGUE_RULE, width=3)
+    return y
+
+
 def _fit(img: Image.Image, box_w: int, box_h: int) -> Image.Image:
     """Scale an image to fit inside box preserving aspect (no upscaling blur)."""
     out = img.copy()
@@ -160,7 +232,10 @@ def build_storyboard_pdf(
         job_id: owning job id (locates the panel PNG folder).
         output_dir: base output directory.
         title: storyboard title shown on page 1.
-        panels: list of panel dicts {index, description, camera, location, failed}.
+        panels: list of panel dicts {index, description, dialogue, camera,
+            location, failed}. `dialogue` ([{character, line}]) is optional and
+            empty for a silent shot — a page with no speech on it is laid out
+            exactly as before, at the old panel size.
         subdir: style-variant subfolder holding the PNGs (""=board root / variant 0).
 
     Returns:
@@ -187,8 +262,16 @@ def build_storyboard_pdf(
     f_label = _load_font(15, bold=True)
     f_meta = _load_font(17)
     f_chip = _load_font(15, bold=True)
+    f_dname = _load_font(14, bold=True)
+    f_dline = _load_font(17)
 
-    per_page = COLS * ROWS
+    # The grid is decided ONCE for the whole document, not per page: a board
+    # whose pages alternated between 6-up and 4-up would read as two documents
+    # stapled together. Any dialogue anywhere → the roomier grid throughout.
+    has_dialogue = any(_dialogue_lines(p) for p in drawable)
+    rows = ROWS_DIALOGUE if has_dialogue else ROWS
+    text_h = TEXT_H + (DIALOGUE_H if has_dialogue else 0)
+    per_page = COLS * rows
     pages: list[Image.Image] = []
 
     for start in range(0, len(drawable), per_page):
@@ -205,9 +288,10 @@ def build_storyboard_pdf(
 
         cell_w = (PAGE_W - 2 * MARGIN - (COLS - 1) * GUTTER) // COLS
         grid_h = PAGE_H - top - MARGIN
-        cell_h = (grid_h - (ROWS - 1) * GUTTER) // ROWS
-        img_box_h = cell_h - TEXT_H  # room for shot label, caption, camera,
-        #                              location and the cast chips
+        cell_h = (grid_h - (rows - 1) * GUTTER) // rows
+        # Room for shot label, caption, camera, location, the cast chips — and
+        # the dialogue band when this board has speech in it.
+        img_box_h = cell_h - text_h
 
         for i, p in enumerate(chunk):
             col = i % COLS
@@ -246,6 +330,17 @@ def build_storyboard_pdf(
             for line in _wrap(draw, p.get("description", ""), f_cap, cell_w, 2):
                 draw.text((x, ty), line, font=f_cap, fill=MUTED)
                 ty += 26
+
+            # What is SAID in this panel, straight after the caption — and
+            # nothing at all when the shot is silent.
+            if has_dialogue:
+                d_top = ty + 4
+                ty = _dialogue_block(
+                    draw, x, d_top, _dialogue_lines(p), f_dname, f_dline, cell_w, DIALOGUE_H - 8
+                )
+                # Keep the meta rows on the same baseline across the row of
+                # cells, so a silent panel doesn't pull its Camera line upward.
+                ty = d_top + DIALOGUE_H - 8
 
             # Camera / Location / cast — the shooting detail a board is used for.
             ty += 4

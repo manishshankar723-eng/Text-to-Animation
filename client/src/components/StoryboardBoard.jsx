@@ -4,6 +4,7 @@
 // Text-to-Image workflow's look (WorkflowHeader + progress bar + gallery tiles).
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+import DialogueBox from "./DialogueBox.jsx";
 
 // Styles the user can re-cast the whole board into (kept as switchable variants).
 const RESTYLE_OPTIONS = [
@@ -665,6 +666,9 @@ export default function StoryboardBoard({
                     </div>
                   )}
                 </div>
+                {/* What is spoken in this panel — nothing at all for a silent
+                    shot. Read-only here; dialogue is edited on the shot list. */}
+                <DialogueBox dialogue={p.dialogue} className="board-dialogue" />
                 <textarea
                   className="board-caption-edit"
                   value={editedDesc[p.index] ?? p.description ?? ""}

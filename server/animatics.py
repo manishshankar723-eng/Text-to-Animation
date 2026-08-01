@@ -42,6 +42,7 @@ from .schemas import (
     AnimaticProject,
     AnimaticSaveRequest,
     AnimaticSettings,
+    AnimaticShape,
     AnimaticSummary,
     AnimaticTextClip,
     AnimaticUploadResponse,
@@ -123,6 +124,19 @@ def _texts_of(job: Job) -> list[AnimaticTextClip]:
     return out
 
 
+def _shapes_of(job: Job) -> list[AnimaticShape]:
+    """The shape layer. Absent on every animatic saved before shapes existed,
+    which reads as an empty list and changes nothing about those projects."""
+    raw = (job.params or {}).get("shapes") or []
+    out: list[AnimaticShape] = []
+    for item in raw:
+        try:
+            out.append(AnimaticShape(**item))
+        except Exception:  # noqa: BLE001 — one bad shape must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable shape %r", job.job_id, item)
+    return out
+
+
 def _audio_tracks_of(job: Job) -> list[AnimaticAudio]:
     """Every audio track on this animatic, oldest first.
 
@@ -181,6 +195,7 @@ def _project_of(job: Job) -> AnimaticProject:
         settings=_settings_of(job),
         frames=frames,
         texts=_texts_of(job),
+        shapes=_shapes_of(job),
         audio_tracks=tracks,
         duration_ms=_duration_ms(frames),
         video=(job.result or {}).get("video"),
@@ -310,6 +325,7 @@ def create_animatic(
             "settings": settings.model_dump(),
             "frames": [f.model_dump(exclude={"url"}) for f in frames],
             "texts": [],
+            "shapes": [],
             "audio_tracks": [],
             "source_storyboard_id": source_id,
         },
@@ -385,6 +401,14 @@ def save_animatic(
                 detail=f"An animatic can hold at most {config.MAX_ANIMATIC_TEXTS} text clips.",
             )
         params["texts"] = [t.model_dump() for t in body.texts]
+
+    if body.shapes is not None:
+        if len(body.shapes) > config.MAX_ANIMATIC_SHAPES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_SHAPES} shapes.",
+            )
+        params["shapes"] = [s.model_dump() for s in body.shapes]
 
     if body.audio_tracks is not None:
         if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_TRACKS:
@@ -631,9 +655,12 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         path = _audio_file(job_id, track.upload_id)
         if not path or track.muted or track.volume <= 0:
             continue
-        audio_tracks.append(
-            {"path": path, "offset_ms": track.offset_ms, "volume": track.volume}
-        )
+        audio_tracks.append({
+            "path": path,
+            "offset_ms": track.offset_ms,
+            "trim_ms": track.trim_ms,
+            "volume": track.volume,
+        })
 
     resolved = [
         {
@@ -649,6 +676,24 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             detail="None of these frames have an image any more — re-add them and try again.",
         )
 
+    # How long the video runs. "timeline" holds the last picture while audio or
+    # text plays on, so a music bed longer than the pictures isn't cut off; the
+    # exporter takes max(frames, this), so it can only ever extend.
+    end_ms = 0
+    if settings.end_at != "frames":
+        for track in _audio_tracks_of(job):
+            if track.muted or not settings.include_audio:
+                continue
+            playable = max(0, (track.duration_ms or 0) - (track.offset_ms or 0))
+            if track.trim_ms:
+                playable = min(playable, track.trim_ms)
+            end_ms = max(end_ms, playable)
+        for clip in _texts_of(job):
+            if (clip.text or "").strip():
+                end_ms = max(end_ms, clip.start_ms + clip.duration_ms)
+        for shape in _shapes_of(job):
+            end_ms = max(end_ms, shape.start_ms + shape.duration_ms)
+
     get_store().update(
         job_id,
         status=JobStatus.RUNNING,
@@ -660,10 +705,12 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         {
             "frames": resolved,
             "texts": [t.model_dump() for t in _texts_of(job)],
+            "shapes": [s.model_dump() for s in _shapes_of(job)],
             "audio_tracks": audio_tracks,
             "aspect_ratio": settings.aspect_ratio,
             "resolution": settings.resolution,
             "quality": settings.quality,
+            "end_ms": end_ms or None,
             "fps": settings.fps,
             "fit": settings.fit,
             "background": settings.background,

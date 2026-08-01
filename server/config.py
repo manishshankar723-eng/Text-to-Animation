@@ -58,6 +58,9 @@ MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
 # Text clips per animatic. Each boundary splits the timeline into another
 # rendered still, so this also caps how much work an export can be asked to do.
 MAX_ANIMATIC_TEXTS = int(os.environ.get("API_MAX_ANIMATIC_TEXTS", "400"))
+# Shapes per animatic. Same reasoning as the text cap: every shape boundary is
+# another cut in the timeline and another still to render.
+MAX_ANIMATIC_SHAPES = int(os.environ.get("API_MAX_ANIMATIC_SHAPES", "400"))
 # Audio tracks per animatic (music + voiceover is the usual pair). Every extra
 # track is another ffmpeg input to decode and mix, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))

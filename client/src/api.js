@@ -394,12 +394,17 @@ export function getAnimatic(id) {
 
 // Save the edited project. Every field is optional; removing the audio needs
 // `clear_audio: true`, because `audio: null` can't be told apart from "not sent".
-export function saveAnimatic(id, { title, settings, frames, texts, audioTracks } = {}) {
+export function saveAnimatic(
+  id,
+  { title, settings, frames, texts, shapes, audioTracks } = {}
+) {
   const body = {};
   if (title !== undefined) body.title = title;
   if (settings !== undefined) body.settings = settings;
   if (frames !== undefined) body.frames = frames;
   if (texts !== undefined) body.texts = texts;
+  // Whole list, like the audio tracks — an empty array removes every shape.
+  if (shapes !== undefined) body.shapes = shapes;
   // The whole list, every time. An empty array removes every track, so there's
   // no companion "clear" flag to keep in step.
   if (audioTracks !== undefined) body.audio_tracks = audioTracks;

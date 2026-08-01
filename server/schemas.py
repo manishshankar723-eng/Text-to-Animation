@@ -216,6 +216,17 @@ class ScriptBreakdownRequest(BaseModel):
     )
 
 
+class DialogueLine(BaseModel):
+    """One spoken line in a shot: who says it, and what they say.
+
+    `character` may be empty (a voice off, or a line the breakdown couldn't
+    attribute); `line` never is — a speaker with no words isn't dialogue.
+    """
+
+    character: str = ""
+    line: str = ""
+
+
 class Shot(BaseModel):
     """One storyboard panel produced by the script breakdown."""
 
@@ -223,6 +234,11 @@ class Shot(BaseModel):
     shot_number: int = 1
     description: str
     characters: list[str] = Field(default_factory=list)
+    # What is SPOKEN in this shot, in order. Empty for a shot where nobody
+    # speaks — the review card, the board and the PDF then show no dialogue
+    # block at all. Never fed into the image prompt (image models would draw
+    # the words into the picture as speech bubbles).
+    dialogue: list[DialogueLine] = Field(default_factory=list)
     # Names of props / backgrounds visible in this shot (match Asset.name).
     assets: list[str] = Field(default_factory=list)
     location: str = ""
@@ -438,6 +454,11 @@ class AnimaticAudio(BaseModel):
     duration_ms: int = 0
     # How far into the audio file playback starts (skips an intro). Never negative.
     offset_ms: int = Field(0, ge=0)
+    # How long the track PLAYS from `offset_ms`. None = to the end of the file.
+    # This is the trim you get by dragging the clip's right edge, and it's what
+    # lets a 4-minute song sit under a 40-second animatic without being cut by
+    # the export instead of by you.
+    trim_ms: int | None = Field(None, ge=100)
     # 1.0 = as recorded. Above 1 amplifies, which is why the ceiling is low —
     # a music bed usually wants pulling DOWN under a voice, not pushing up.
     volume: float = Field(1.0, ge=0.0, le=2.0)
@@ -472,6 +493,35 @@ class AnimaticTextClip(BaseModel):
         return self.start_ms + self.duration_ms
 
 
+class AnimaticShape(BaseModel):
+    """One shape drawn over the picture, with its OWN start and length.
+
+    Geometry is stored as FRACTIONS of the frame (0–1), never pixels: the same
+    project exports at 720p or 4K, and the preview box is a few hundred pixels
+    wide. A fraction means the shape lands in the same place in all of them.
+    `x`/`y` are the shape's CENTRE, which is what makes rotation behave.
+    """
+
+    id: str
+    kind: str = Field("rect", description="'rect' | 'ellipse' | 'pentagon' | 'star'.")
+    # Where it sits on the timeline, in video time — same as a text clip.
+    start_ms: int = Field(0, ge=0)
+    duration_ms: int = Field(2000, ge=100, le=600_000)
+    # Where it sits on the frame. Centre and size, as fractions of width/height.
+    # Allowed slightly outside 0–1 so a shape can be run off the edge on purpose.
+    x: float = Field(0.5, ge=-1.0, le=2.0)
+    y: float = Field(0.5, ge=-1.0, le=2.0)
+    w: float = Field(0.25, gt=0.0, le=4.0)
+    h: float = Field(0.25, gt=0.0, le=4.0)
+    color: str = Field("#c2185b", description="Fill colour, #rrggbb.")
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    rotation: float = Field(0.0, ge=-360.0, le=360.0, description="Degrees, clockwise.")
+
+    @property
+    def end_ms(self) -> int:
+        return self.start_ms + self.duration_ms
+
+
 class AnimaticSettings(BaseModel):
     """Everything about an animatic that isn't a frame or the audio."""
 
@@ -485,6 +535,12 @@ class AnimaticSettings(BaseModel):
     quality: str = Field("high", description="'high' | 'medium' | 'low'.")
     # Lets an export be made silent without removing the tracks from the project.
     include_audio: bool = True
+    # How long the exported video is:
+    #   "timeline" — to the end of the LONGEST layer, holding the last picture
+    #                while audio or text runs on (the default: if the music is
+    #                longer than the pictures you almost always want to hear it)
+    #   "frames"   — stop at the last picture, cutting anything after it
+    end_at: str = Field("timeline", description="'timeline' | 'frames'.")
     # "contain" letterboxes (whole image visible — the default, because a
     # storyboard frame you cropped is a frame you can't read); "cover" fills.
     fit: str = Field("contain", description="'contain' (letterbox) or 'cover' (crop to fill).")
@@ -505,6 +561,9 @@ class AnimaticProject(BaseModel):
     # The text layer. Independent of the frames — a clip can start mid-frame and
     # run across a cut.
     texts: list[AnimaticTextClip] = Field(default_factory=list)
+    # The shape layer — rectangles, ellipses, pentagons and stars drawn over the
+    # picture. Timed like the text layer and, like it, independent of the frames.
+    shapes: list[AnimaticShape] = Field(default_factory=list)
     # Zero or more audio tracks, mixed together on export. Records written before
     # multi-track carried a single `audio` object; it is migrated on read.
     audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
@@ -547,6 +606,9 @@ class AnimaticSaveRequest(BaseModel):
     settings: AnimaticSettings | None = None
     frames: list[AnimaticFrame] | None = None
     texts: list[AnimaticTextClip] | None = None
+    # Send the whole list; an empty list removes every shape (same rule as the
+    # audio tracks below, and for the same reason).
+    shapes: list[AnimaticShape] | None = None
     # Send the whole list; an empty list removes every track. (This replaced a
     # single `audio` field plus a `clear_audio` flag — with a list, "none" is
     # just an empty list and needs no companion flag.)

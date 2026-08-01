@@ -800,6 +800,7 @@ def regenerate_storyboard_panel(
                 "shot_number": s.get("shot_number", body.index + 1),
                 "description": s.get("description", ""),
                 "characters": s.get("characters", []) or [],
+                "dialogue": s.get("dialogue", []) or [],
                 "assets": s.get("assets", []) or [],
                 "location": s.get("location", "") or "",
                 "camera": s.get("camera", "") or "",
@@ -952,6 +953,9 @@ def insert_storyboard_panel(
         "shot_number": at + 1,
         "description": body.description or "",
         "characters": [],
+        # A hand-inserted panel has no script behind it, so nothing is spoken in
+        # it until the user types a line on the review step.
+        "dialogue": [],
         "assets": [],
         "location": "",
         "camera": "",

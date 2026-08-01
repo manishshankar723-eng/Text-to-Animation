@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-07-31 (export dialog; audio layers + mixing; SVG icons; Playwright suite)
+**Last updated:** 2026-08-02 (Premiere-style shortcuts, tools, undo/redo)
 
 ---
 
@@ -101,8 +101,11 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/AnimaticLibrary.jsx` | "Your Animatics": New / From a Storyboard tiles + Recent / All sections. **Mirrors `StoryboardLibrary.jsx` and shares its `.lib-*` styles** — change a card in one, change it in both. |
 | `client/src/components/AnimaticEditor.jsx` | The editor, as an **NLE workspace**: top bar + status strip + Media / Program / Properties panes over a full-width timeline, fixed to the viewport height. Holds all the state (playback, autosave, export). **Audio is the playback clock** (see the Work Log). `TextProperties` / `FrameProperties` / `VideoProperties` at the foot are the three states of the Properties pane. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
-| `client/src/components/Timeline.jsx` | **Three tracks** (🖼 Images / T Text / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
+| `client/src/components/Shapes.jsx` | The shape layer's vocabulary: the unit-square polygons (**mirrored in `animatic.py`**), the CSS for them, and the picker gallery. |
+| `client/src/components/Timeline.jsx` | **Four tracks** (🖼 Images / T Text / ◆ Shapes / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
 | `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
+| `client/src/components/DialogueBox.jsx` | A shot's spoken lines, read-only (board tiles). Renders **nothing** when the shot is silent. |
+| `client/src/components/DialogueEditor.jsx` | The same lines, editable, on the review step. A silent shot shows only a "＋ Add dialogue" link. |
 | `client/src/styles.css` | Dark + champagne-gold theme. |
 
 ### API endpoints
@@ -124,7 +127,7 @@ Pipeline stages (see `pipeline.py`):
 - `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
 - `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
 - **Storyboard → Animatic (`server/animatics.py`, kind `animatic`):**
-  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts` (the text layer), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
+  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts` (the text layer), `shapes` (the shape layer), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - `GET /templates` · `GET /health` (also reports `ffmpeg`)
@@ -203,6 +206,7 @@ previews require a cloud run (not `local_only`).
 | `API_MAX_AUDIO_BYTES` | Animatic audio upload cap (default 50 MB). |
 | `API_MAX_ANIMATIC_FRAMES` | Frames per animatic (default 500). |
 | `API_MAX_ANIMATIC_TEXTS` | Text clips per animatic (default 400). Each clip boundary splits the timeline into another rendered still, so this also caps export work. |
+| `API_MAX_ANIMATIC_SHAPES` | Shapes per animatic (default 400). Same reasoning as the text cap — every shape boundary is another cut and another still. |
 | `API_MAX_ANIMATIC_AUDIO_TRACKS` | Audio tracks per animatic (default 4). Each is another ffmpeg input to decode and mix. |
 | — | Export resolution / quality / include-audio are per-project **settings**, not env vars: `AnimaticSettings.resolution` (short edge), `.quality` (CRF), `.include_audio`. |
 
@@ -285,6 +289,214 @@ Standing conventions, not a one-off fix. Check these before adding a screen.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-02 — Premiere's keyboard: tools, shuttle, marks, undo/redo
+
+- **Asked for:** the standard Premiere shortcut set in the animatic editor.
+- **Implemented, with each key doing a REAL thing on this timeline:**
+
+  | Key | Does |
+  |-----|------|
+  | `V` `C` `B` `N` `H` `Z` | Selection · Razor · Ripple · Rolling · Hand · Zoom |
+  | `Space` | Play / pause |
+  | `J` `K` `L` | Shuttle back / stop / forward — press again for 2×, 4× |
+  | `←` `→` | One VIDEO frame (1/fps), not one picture |
+  | `↑` `↓` | Previous / next edit point |
+  | `Ctrl+K` | Add edit — splits the picture at the playhead |
+  | `I` `O` | Mark in / out · `Ctrl+Shift+X` clears them |
+  | `Ctrl+S` | Save (works from inside a text field too) |
+  | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+  | `Del` / `Backspace` | Delete the selection (frame · text · shape · audio track) |
+  | `S` | Snapping on/off · `~` maximizes the pane under the pointer |
+
+- **NOT built: the Pen tool (P).** A pen pulls keyframes and an animatic has
+  none — there is no property that varies over time. Saying so beats a tool that
+  does nothing.
+- **Ripple vs rolling is a real distinction here**, not a label: dragging a cut
+  with **B** moves everything after it (the video gets longer — what edge-drag
+  always did), with **N** the next frame absorbs exactly what this one gains, so
+  **the video stays the same length**. Rolling declines on the last frame:
+  nothing follows it to absorb the change. Measured: 12000ms → 12000ms rolling,
+  12000 → 13800 rippling.
+- **Undo is one stack over the WHOLE document** (title, settings, frames, texts,
+  shapes, audio) — that is the unit a person means by "undo". It lives in a ref,
+  not state, so pushing an entry doesn't re-render; a tick counter re-renders
+  the buttons. Bursts inside 500ms share one entry, or undoing a drag would
+  take fifty presses.
+- **⚠ Bug the browser test caught, and the reason to keep testing this:
+  the first `Ctrl+Z` wiped the animatic.** An editor mounts with empty
+  frames/texts/shapes and fills them from the server a moment later; that fill
+  was recorded as an edit, so the empty document became an undo target. History
+  now starts only once `loadedRef` is set, and the load handler RESETS the
+  stack. The regression is asserted first in the test.
+- **Marks bound PLAYBACK, not the export.** Play starts at In and stops at Out;
+  the export dialog still says (correctly) that it encodes the whole timeline.
+  Drawn as a band on the ruler, under the tick labels.
+- **Shuttle detail:** only 1× uses the audio as master clock. Faster rates set
+  `el.playbackRate`; reverse pauses audio entirely, because **no browser can
+  play an `<audio>` element backwards**. The pictures still run in reverse.
+- **Snapping (`S`, on by default)** pulls a dragged edge to the nearest cut,
+  the playhead, another clip's edge or a mark within 8px. The clip's own edges
+  are excluded from its targets or it would stick to where it already is. Off,
+  drags round to the 100ms grid exactly as before.
+- **Verified in a real browser: 39 checks**, covering all six tools by key, the
+  shuttle actually running faster and backwards, arrows stepping one fps-frame
+  vs edit points, Ctrl+K and razor-click both splitting (halves sharing one
+  source, total length unchanged), undo/redo, the marks band, snapping toggle,
+  `~` maximize/restore, rolling vs ripple by measured total duration, Ctrl+S
+  from inside a text field, and that **typing "Voice CBN keys" into the title
+  neither switched tools nor cut anything**. Zero console errors.
+  `npm run build` clean.
+- **`Del` / `Backspace` delete the SELECTION**, resolved in the same order the
+  Properties pane picks what to show — so Delete always removes the thing the
+  pane is describing, which is the only reading of "the selection" a person can
+  act on. Deleting a frame then selects its neighbour, so Delete-Delete-Delete
+  walks a sequence without reaching for the mouse. With nothing selected it says
+  so rather than silently doing nothing. Backspace is included because on a Mac
+  keyboard that IS the delete key — and unhandled it navigates the page back,
+  which loses the editor. Undo restores anything deleted (it is an ordinary
+  document edit). Verified with 18 more browser checks, including that Delete
+  while typing in a caption edits the caption and that Backspace in the title
+  field edits the title rather than removing a frame.
+- **Still in the scratchpad, not in `tests/`:** this suite and the shape one.
+
+### 2026-08-02 — SHAPES: a fourth layer in the animatic editor
+
+- **Asked for:** shapes in the animatic editor, with a picker panel like the
+  reference editor the user sent (square / circle / pentagon / star).
+- **A shape is a CLIP, not a frame decoration.** `AnimaticShape` has its own
+  `start_ms` / `duration_ms`, exactly like a text clip, so it can appear
+  part-way through a held image and run across a cut. It is stored on the
+  project as `shapes` and is absent on every animatic saved before this, which
+  reads as an empty list and changes nothing about them.
+- **⚠ Geometry is FRACTIONS of the frame (0–1), never pixels**, and `x`/`y` are
+  the shape's CENTRE (which is what makes rotation not move it). The preview box
+  is a few hundred pixels wide and the export can be 4K — a fraction is the only
+  thing that means the same in both. Verified: identical coverage at 320×180 and
+  1920×1080.
+- **⚠ The polygons live in TWO files and must match:** `_SHAPE_POINTS` in
+  `animatic.py` and `POINTS` in `client/src/components/Shapes.jsx` (as CSS
+  clip-paths). That pair is what makes the preview and the MP4 agree. Both carry
+  a comment pointing at the other.
+- **Exporter:** `draw_shapes()` gives every shape its own RGBA layer — the only
+  way to rotate an ellipse (Pillow can't draw one rotated) and it keeps opacity
+  exact. Rotation is NEGATED going into Pillow, which turns anticlockwise while
+  the editor and CSS treat a positive angle as clockwise. Shapes are drawn UNDER
+  the text, same as the preview stacks them: a shape is a highlight ON the art,
+  and a caption you can't read over it would be pointless.
+  `plan_segments()` now cuts on shape boundaries too, **and the render cache key
+  gained the shape ids** — without them two segments differing only in which
+  shapes are up would share one still and a shape would pop at the wrong moment.
+- **Client:** the Media pane has **Media / Shapes tabs** (the picker is a library
+  you take from, not this animatic's footage — under the frames it sat below a
+  60-panel board and would never be found). A shape is **dragged on the picture**
+  to place it and **resized by its corner handle**, with the opposite corner
+  pinned. Timeline gained a **Shapes lane**; `ShapeProperties` covers kind,
+  timing, position, size, opacity, rotation and colour.
+- **⚠ The clipped fill is a CHILD of the shape element.** `clip-path` on the
+  outer box cuts off the selection outline and the resize handle — on a star
+  they sit exactly where the clipping is.
+- **Text and shape clips share ONE drag implementation** (`startClipDrag(e, clip,
+  mode, kind)` in `Timeline.jsx`). They are the same object on a timeline; two
+  copies would drift.
+- **Bug fixed while here (pre-existing, all three drags):** every pointerup
+  handler called the parent's `onChange` **inside a `setDraft(current => …)`
+  updater**. React runs updaters during the render phase, so that is a
+  setState-in-render — it logged "Cannot update a component while rendering a
+  different component", and in StrictMode the updater runs twice, firing the
+  parent write twice. All three now remember the value in `dragRef.current.latest`
+  while moving and write it on pointerup. **Keep that pattern.**
+- **Verified.** 28 exporter checks (polygon vs bounding box, opacity blending,
+  clockwise rotation, resolution independence, segment cutting, and a real MP4
+  whose decoded frames show the shape absent at 0.2s and present at 0.9s); 13
+  checks through the **real API** (round-trip, a partial save leaving shapes
+  alone, an empty list clearing them, out-of-range opacity 422'd, then export →
+  download → decode); and a **short browser smoke** (one viewport, not the
+  five-viewport suite) covering the tabs, the gallery, add, drag, resize,
+  persistence, and that text clips still re-time — 22 checks, zero console
+  errors. `npm run build` clean.
+- Also fixed a visible glitch next door: `.tl-track-empty` prompts wrapped to a
+  second line and were sliced by the lane's `overflow: hidden`; they now
+  ellipsise on one line.
+- **Not done:** shapes are not in `tests/e2e_animatic.py` yet — the smoke above
+  lives in the session scratchpad, which is wiped between turns. Folding it in
+  is the obvious next step (same gap the backend suites have).
+
+### 2026-08-01 — Shots carry DIALOGUE (breakdown → review → board → PDF)
+
+- **Asked for:** the shot panel should show what is SPOKEN in that shot, worked
+  out during the script breakdown, and shown on the review page, the board and
+  the PDF — **and shown nowhere at all when the shot has no dialogue.**
+- **`dialogue` is a list of `{character, line}` on every shot and panel**, empty
+  for a shot where nobody speaks. Every consumer returns null / draws nothing on
+  an empty list, so a silent establishing shot looks exactly as it did before —
+  no heading, no empty box. That "empty means invisible" rule is the whole
+  feature; don't add a placeholder row to any of the three surfaces.
+- **Breakdown** (`script_breakdown.py`): new prompt block + schema + `_coerce_dialogue`
+  (caps 6 lines/shot at 300 chars, drops a speaker with no words, tolerates a
+  bare string or a lone object). Quoted speech is copied verbatim; **reported
+  speech is converted to first person as spoken** ("he declares they will be
+  kings" → "We will be kings") — the first live run returned the narrator's
+  third person, which reads wrong on a board, so the prompt now says so
+  explicitly. Invented dialogue is forbidden in the prompt.
+- **⚠️ `_PROMPT_TEMPLATE` goes through `str.format`** — the literal braces in
+  `{{character, line}}` MUST be doubled. A single brace raises
+  `KeyError: 'character, line'` at call time, which no import or build catches.
+- **PDF** (`storyboard_pdf.py`): a board WITH dialogue prints **2×2 instead of
+  2×3**. Taking the dialogue band out of the picture at 2×3 dropped a 16:9 panel
+  from ~308px to ~215px tall; at 2×2 the cell is tall enough that **the pictures
+  stay exactly the size they always were** and the band is simply extra room.
+  The grid is chosen once for the whole document (mixed 6-up/4-up pages read as
+  two documents stapled together). A board with no dialogue is byte-for-byte the
+  old layout. Overflow says "+N more lines" and reserves the row to say it.
+- **Client:** `DialogueBox.jsx` (read-only, used on the board) and
+  `DialogueEditor.jsx` (review step: speaker + line + ✕, "＋ Add a line", and
+  only a quiet "＋ Add dialogue" link when the shot is silent). Speaker fields
+  autocomplete from the cast via a `<datalist id="sb-cast-names">`.
+- **Dialogue is deliberately NOT in the image prompt.** Asked to draw a line of
+  speech, an image model letters it into the panel as a caption or speech
+  bubble. It travels beside the prompt, never inside it.
+- **Verified.** 23 backend checks green (coercion incl. junk input, `Shot`
+  defaulting so an old client payload without the key still validates, dialogue
+  reaching real `run_storyboard` panels with the image call stubbed, legacy
+  panels with no key). PDF rendered and **inspected as images**: silent shots
+  draw nothing, a two-line exchange fits, "+4 more lines" appears on a
+  six-speaker panel, an unattributed line drops the name and keeps the rule, and
+  Camera/Location stay on one baseline across a row. **One live breakdown call**
+  on a prose script: 2 of 9 shots got dialogue, the tea-stall scene stayed
+  silent, nothing was invented, no blank lines. `npm run build` clean.
+- **Not browser-checked** (standing instruction: Playwright on request only).
+
+### 2026-07-31 — Audio can be TRIMMED; the export covers the whole timeline
+
+Two user-reported gaps, both about length.
+
+1. **Audio had no trim.** Images and text could be dragged to length; audio was
+   stuck at whatever the file was. `AnimaticAudio.trim_ms` (None = whole file
+   from `offset_ms`) is now set by **dragging the clip's right edge**, exactly
+   like a frame hold or a text clip, or by typing it under **Plays for** in
+   Properties (with a "Use whole track" reset). The audio lane is a real CLIP
+   now — as wide as the track actually plays — not a band spanning the timeline.
+   ffmpeg gets `-t` before that input, so only the trimmed part is read.
+2. **The export was cut to the images.** 29s of pictures under a minute of music
+   exported 29s. **The video now runs to the end of the LONGEST layer** and the
+   last picture is HELD while the audio (or a late caption) plays on.
+   `plan_segments()` takes `end_ms` and simply extends the final frame's span,
+   so a text clip landing in that tail is still cut in correctly.
+   `AnimaticSettings.end_at` = `"timeline"` (default) or `"frames"`, offered in
+   the export dialog as **"Whole timeline — 0:20" / "Just the images — 0:03"**
+   with the real numbers in the labels.
+   **The default changes behaviour only in the case that was reported** — when
+   nothing runs past the pictures, both options are identical.
+
+- **Verified end to end.** Dragging the handle shortened the clip 960→656px and
+  saved `trim_ms=20500`; exporting then produced a video measured at **20.50s**,
+  matching the trim rather than the 3s of images, and switching to "Just the
+  images" produced exactly **3.00s**. Decoding frames of a held export: red
+  image at 1s, green at 2.5s, and **green still held at 15s** — the last picture
+  is held, not black — with audio present throughout. No console errors.
+- **Note:** `end_ms` only ever EXTENDS (the exporter takes
+  `max(frames_total, end_ms)`), so it can't accidentally truncate a sequence.
 
 ### 2026-07-31 — Export is a dialog now: name, resolution, frame rate, quality
 

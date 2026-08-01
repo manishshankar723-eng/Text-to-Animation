@@ -16,6 +16,7 @@ import StoryboardLibrary from "./StoryboardLibrary.jsx";
 import BreakdownProgress from "./BreakdownProgress.jsx";
 import PreflightModal from "./PreflightModal.jsx";
 import ScriptLineBox from "./ScriptLineBox.jsx";
+import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
 
@@ -387,6 +388,9 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
       shot_number: 0,
       description: "",
       characters: [],
+      // A hand-added shot has no script behind it, so nothing is spoken in it
+      // until the user writes a line.
+      dialogue: [],
       location: "",
       camera: "",
       // A shot the user added by hand came from no script line.
@@ -808,6 +812,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         {/* The whole script, numbered — this is what each shot's "LINE n" points at. */}
         <ScriptPanel script={scriptText} />
 
+        {/* Every speaker field autocompletes against the cast, so a line
+            re-attributed by hand keeps the name spelling the panels use. */}
+        <datalist id="sb-cast-names">
+          {computeCast().map((c) => (
+            <option key={c.name} value={c.name} />
+          ))}
+        </datalist>
+
         <div className="shot-list">
           {shots.map((sh, i) => (
             /* A full-width divider wherever the scene changes, so the script's
@@ -902,6 +914,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                   />
                 </div>
               </div>
+
+              {/* What is SAID in this shot. Empty for a silent shot, which
+                  shows only the "＋ Add dialogue" link. */}
+              <DialogueEditor
+                dialogue={sh.dialogue}
+                characters={sh.characters}
+                onChange={(dialogue) => updateShot(i, { dialogue })}
+              />
 
               {sh.characters?.length > 0 && (
                 <div className="shot-chars">

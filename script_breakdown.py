@@ -161,6 +161,21 @@ _PROMPT_TEMPLATE = (
     "point at the exact words that became this panel, so a short exact quote is "
     "far better than a long or rewritten one.\n"
     "  - characters: list of character names visible in the shot (empty if none)\n"
+    # NOTE: this template goes through str.format, so the literal braces below
+    # are DOUBLED. A single {character, line} raises KeyError at format time.
+    "  - dialogue: the lines SPOKEN in this shot, in the order they are said, "
+    "each as {{character, line}}. Use the character's name as it appears in the "
+    "cast list. Copy the spoken words VERBATIM when the script quotes them. When "
+    "the script reports speech instead of quoting it ('he declares that the "
+    "armour will make them kings'), write the line as the character actually "
+    "SAYS it — first person, present tense, addressed to the person in the "
+    "scene ('This armour will make us kings') — never the narrator's third "
+    "person ('they will be kings'). Stay as close to the script's own words as "
+    "you can while doing that. Return an "
+    "EMPTY list whenever nothing is spoken in this shot — a silent establishing "
+    "shot, an action beat, a reaction. NEVER invent dialogue the script does not "
+    "contain, never turn narration or a description of the scene into a spoken "
+    "line, and never repeat the same line in two shots.\n"
     "  - assets: list of asset names visible in the shot — the key recurring "
     "props/objects AND the background/location — using the SAME names as the "
     "asset list below (empty if none)\n"
@@ -227,6 +242,17 @@ def _breakdown_schema() -> types.Schema:
                         "script_excerpt": types.Schema(type=types.Type.STRING),
                         "characters": types.Schema(
                             type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)
+                        ),
+                        "dialogue": types.Schema(
+                            type=types.Type.ARRAY,
+                            items=types.Schema(
+                                type=types.Type.OBJECT,
+                                required=["line"],
+                                properties={
+                                    "character": types.Schema(type=types.Type.STRING),
+                                    "line": types.Schema(type=types.Type.STRING),
+                                },
+                            ),
                         ),
                         "assets": types.Schema(
                             type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)
@@ -403,6 +429,48 @@ def _attach_script_lines(shots: list[dict], script_text: str) -> None:
         cursor = span[1]
 
 
+# Spoken lines per shot. A panel is one drawable moment, so a shot carrying more
+# than a few lines is the model merging a whole conversation into one picture —
+# the extras are dropped rather than allowed to bury the panel.
+MAX_DIALOGUE_PER_SHOT = 6
+MAX_DIALOGUE_CHARS = 300
+
+
+def _coerce_dialogue(raw) -> list[dict]:
+    """Normalise a shot's spoken lines to [{character, line}, …].
+
+    A shot with nothing spoken in it returns an EMPTY list, and every consumer
+    (review card, board caption, PDF) shows nothing at all for it — an empty
+    "Dialogue" heading on a silent establishing shot is noise, not information.
+    Entries with no `line` are dropped: a speaker with no words isn't dialogue.
+    """
+    if isinstance(raw, dict):  # a lone {character, line} object
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, str):
+            # A bare string: keep it as an unattributed line rather than lose it.
+            item = {"line": item}
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line", "") or "").strip()
+        if not line:
+            continue
+        if len(line) > MAX_DIALOGUE_CHARS:
+            line = line[:MAX_DIALOGUE_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+        out.append(
+            {
+                "character": str(item.get("character", "") or "").strip(),
+                "line": line,
+            }
+        )
+        if len(out) >= MAX_DIALOGUE_PER_SHOT:
+            break
+    return out
+
+
 def _coerce_shots(raw) -> list[dict]:
     """Validate/normalise the model's JSON into a clean list of shot dicts."""
     if not isinstance(raw, list):
@@ -427,6 +495,8 @@ def _coerce_shots(raw) -> list[dict]:
                 "shot_number": int(item.get("shot_number", i) or i),
                 "description": desc,
                 "characters": [str(c).strip() for c in chars if str(c).strip()],
+                # Empty whenever nothing is spoken in this shot — see _coerce_dialogue.
+                "dialogue": _coerce_dialogue(item.get("dialogue")),
                 "assets": [str(a).strip() for a in assets if str(a).strip()],
                 "location": str(item.get("location", "")).strip(),
                 "camera": str(item.get("camera", "")).strip(),
@@ -581,8 +651,9 @@ def break_down_script(
         genre: Optional genre — shapes the tone / pacing of the breakdown.
 
     Returns:
-        {"shots": [{scene_number, shot_number, description, characters[], assets[],
-        location, camera, script_line, script_line_start, script_line_end}, …],
+        {"shots": [{scene_number, shot_number, description, characters[],
+        dialogue[], assets[], location, camera, script_line, script_line_start,
+        script_line_end}, …],
         "characters": [{name, description}, …],
         "assets": [{name, category, description}, …],
         "world": {setting, culture, ethnicity, wardrobe, environment, notes}}.
@@ -595,6 +666,11 @@ def break_down_script(
         `script_line` is the VERBATIM script text this shot was drawn from, with
         its 1-based line range — empty when the model's quote couldn't be found
         in the script.
+
+        `dialogue` is the lines spoken in that shot as [{character, line}, …],
+        and is EMPTY for a shot where nobody speaks. It is shown to the user on
+        the review card, the board and the PDF, but is deliberately NOT fed into
+        the image prompt — image models draw the words as speech bubbles.
 
     Raises:
         ScriptBreakdownError: with a human-readable reason on any failure.
@@ -666,11 +742,13 @@ def break_down_script(
             characters = _coerce_characters(chars_raw)
             assets = _coerce_assets(assets_raw)
             traced = sum(1 for s in shots if s.get("script_line"))
+            spoken = sum(1 for s in shots if s.get("dialogue"))
             scenes = shots[-1]["scene_number"] if shots else 0
             logger.info(
                 "[breakdown] Produced %d shots in %d scene(s) (%d traced to "
-                "script lines), %d characters, %d assets. World: %s / %s",
-                len(shots), scenes, traced, len(characters), len(assets),
+                "script lines, %d with dialogue), %d characters, %d assets. "
+                "World: %s / %s",
+                len(shots), scenes, traced, spoken, len(characters), len(assets),
                 world.get("culture") or "—", world.get("ethnicity") or "—",
             )
             return {

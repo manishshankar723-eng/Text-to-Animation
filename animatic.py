@@ -333,6 +333,73 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
             y += block["height"] + margin * 0.25
 
 
+# --- Shapes -----------------------------------------------------------------
+# Each shape is defined as points on the UNIT SQUARE (0–1), scaled into its box.
+# ⚠ The SAME polygons are in client/src/components/Shapes.jsx as CSS clip-paths —
+# that is what makes the preview and the exported frame agree. Change one, change
+# the other. 'ellipse' has no point list: it is drawn as an ellipse.
+_SHAPE_POINTS: dict[str, tuple[tuple[float, float], ...]] = {
+    "rect": ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+    "pentagon": ((0.5, 0.0), (1.0, 0.38), (0.82, 1.0), (0.18, 1.0), (0.0, 0.38)),
+    "star": (
+        (0.5, 0.0), (0.61, 0.35), (0.98, 0.35), (0.68, 0.57),
+        (0.79, 0.91), (0.5, 0.7), (0.21, 0.91), (0.32, 0.57),
+        (0.02, 0.35), (0.39, 0.35),
+    ),
+}
+SHAPE_KINDS = ("rect", "ellipse", "pentagon", "star")
+
+
+def draw_shapes(canvas: Image.Image, shapes: list[dict]) -> None:
+    """Draw the shapes that are on screen for this moment, in order.
+
+    Geometry arrives as FRACTIONS of the frame, so the same project draws the
+    same picture at 720p and at 4K. Each shape gets its own RGBA layer: that is
+    what makes rotation work for every kind (Pillow can't draw a rotated
+    ellipse) and keeps opacity exact, since the layer is composited once rather
+    than blended shape-by-shape.
+    """
+    if not shapes:
+        return
+    width, height = canvas.size
+
+    for shape in shapes:
+        opacity = float(shape.get("opacity", 1.0) or 0.0)
+        if opacity <= 0:
+            continue
+        box_w = max(1, int(round(abs(float(shape.get("w", 0.25))) * width)))
+        box_h = max(1, int(round(abs(float(shape.get("h", 0.25))) * height)))
+        # A shape bigger than the frame is legal (a wash over the whole picture),
+        # but there is no reason to allocate a layer larger than one can be seen.
+        box_w, box_h = min(box_w, width * 3), min(box_h, height * 3)
+
+        layer = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(layer)
+        alpha = max(0, min(255, int(round(opacity * 255))))
+        fill = (*_parse_colour(shape.get("color", "#c2185b")), alpha)
+        kind = (shape.get("kind") or "rect").lower()
+
+        if kind == "ellipse":
+            pen.ellipse([0, 0, box_w - 1, box_h - 1], fill=fill)
+        else:
+            points = _SHAPE_POINTS.get(kind, _SHAPE_POINTS["rect"])
+            pen.polygon([(px * (box_w - 1), py * (box_h - 1)) for px, py in points], fill=fill)
+
+        rotation = float(shape.get("rotation", 0.0) or 0.0) % 360
+        if rotation:
+            # NEGATED because Pillow rotates anticlockwise and the editor (like
+            # CSS) treats a positive angle as clockwise.
+            layer = layer.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+
+        # x/y are the CENTRE, which is why rotation doesn't move the shape.
+        cx = float(shape.get("x", 0.5)) * width
+        cy = float(shape.get("y", 0.5)) * height
+        at = (int(round(cx - layer.width / 2)), int(round(cy - layer.height / 2)))
+        # The layer is its own mask, so the transparent corners of a star stay
+        # transparent and a part-opaque shape blends with the art underneath.
+        canvas.paste(layer, at, layer)
+
+
 def render_frame(
     src_path: str,
     size: tuple[int, int],
@@ -340,6 +407,7 @@ def render_frame(
     background: str = "#000000",
     label: str = "",
     texts: list[dict] | None = None,
+    shapes: list[dict] | None = None,
 ) -> Image.Image:
     """Fit one source image onto the video frame.
 
@@ -369,6 +437,10 @@ def render_frame(
     left = (target_w - new.width) // 2
     top = (target_h - new.height) // 2
     canvas.paste(new, (left, top))
+    # Shapes go UNDER the text: a shape is usually a highlight or a mask placed
+    # on the art, and a caption you can't read over it would be pointless.
+    if shapes:
+        draw_shapes(canvas, shapes)
     # Text goes on before the shot label, so the label always stays legible in
     # its corner even if a caption is placed at the bottom too.
     if texts:
@@ -381,19 +453,29 @@ def render_frame(
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
-def plan_segments(frames: list[dict], texts: list[dict]) -> tuple[list[dict], int]:
-    """Cut the timeline into stretches where the picture AND the text are constant.
+def plan_segments(
+    frames: list[dict],
+    texts: list[dict],
+    end_ms: int | None = None,
+    shapes: list[dict] | None = None,
+) -> tuple[list[dict], int]:
+    """Cut the timeline into stretches where the picture, text AND shapes hold still.
 
-    Text clips have their own start and length, so one can appear half-way
-    through a held image or run across a cut. Rather than fight that in an ffmpeg
-    filter graph, the timeline is split at every text boundary and each piece is
-    rendered as its own still. With no text there is exactly one segment per
-    frame, so nothing changes for an animatic that has none.
+    Text clips and shapes have their own start and length, so one can appear
+    half-way through a held image or run across a cut. Rather than fight that in
+    an ffmpeg filter graph, the timeline is split at every clip boundary and each
+    piece is rendered as its own still. With no text and no shapes there is
+    exactly one segment per frame, so nothing changes for an animatic with
+    neither.
+
+    `end_ms` extends the video past the last picture — the LAST FRAME IS HELD
+    for the remainder. That's what makes an export cover a music bed that
+    outlasts the pictures instead of stopping dead at the final image. Passing
+    None (or anything shorter than the frames) keeps the old behaviour exactly.
 
     Returns (segments, total_ms) where each segment is
-    {"frame": index into `frames`, "start_ms", "duration_ms", "texts": [clip…]}.
-    A clip running past the last frame is cut there — the FRAMES decide the
-    length of the video.
+    {"frame": index into `frames`, "start_ms", "duration_ms", "texts": [clip…],
+    "shapes": [shape…]}.
     """
     spans: list[tuple[int, int, int]] = []  # (start, end, frame index)
     clock = 0
@@ -401,9 +483,14 @@ def plan_segments(frames: list[dict], texts: list[dict]) -> tuple[list[dict], in
         length = max(100, int(frame.get("duration_ms") or 2000))
         spans.append((clock, clock + length, i))
         clock += length
-    total_ms = clock
     if not spans:
         return [], 0
+    # Hold the last picture out to `end_ms` when something else runs longer.
+    if end_ms and end_ms > clock:
+        start, _end, index = spans[-1]
+        spans[-1] = (start, end_ms, index)
+        clock = end_ms
+    total_ms = clock
 
     # Normalise the clips once, and drop any that fall entirely off the end.
     clips: list[tuple[int, int, dict]] = []
@@ -416,11 +503,23 @@ def plan_segments(frames: list[dict], texts: list[dict]) -> tuple[list[dict], in
             continue
         clips.append((start, min(end, total_ms), clip))
 
+    # The same treatment for shapes. An invisible shape (fully transparent) is
+    # dropped here rather than drawn as nothing, so it can't cost a segment.
+    figures: list[tuple[int, int, dict]] = []
+    for shape in shapes or []:
+        if float(shape.get("opacity", 1.0) or 0.0) <= 0:
+            continue
+        start = max(0, int(shape.get("start_ms") or 0))
+        end = start + max(100, int(shape.get("duration_ms") or 0))
+        if start >= total_ms:
+            continue
+        figures.append((start, min(end, total_ms), shape))
+
     cuts = {0, total_ms}
     for start, end, _ in spans:
         cuts.add(start)
         cuts.add(end)
-    for start, end, _ in clips:
+    for start, end, _ in clips + figures:
         cuts.add(start)
         cuts.add(end)
     ordered = sorted(c for c in cuts if 0 <= c <= total_ms)
@@ -433,8 +532,15 @@ def plan_segments(frames: list[dict], texts: list[dict]) -> tuple[list[dict], in
         if frame_index is None:
             continue
         active = [clip for (s, e, clip) in clips if s <= a < e]
+        on_screen = [shape for (s, e, shape) in figures if s <= a < e]
         segments.append(
-            {"frame": frame_index, "start_ms": a, "duration_ms": b - a, "texts": active}
+            {
+                "frame": frame_index,
+                "start_ms": a,
+                "duration_ms": b - a,
+                "texts": active,
+                "shapes": on_screen,
+            }
         )
 
     # A boundary landing exactly on a frame edge can leave a sliver too short for
@@ -528,10 +634,12 @@ def build_animatic(
     frames: list[dict],
     *,
     texts: list[dict] | None = None,
+    shapes: list[dict] | None = None,
     audio_tracks: list[dict] | None = None,
     aspect_ratio: str = "16:9",
     resolution: int = BASE_SHORT_EDGE,
     quality: str = "high",
+    end_ms: int | None = None,
     fps: int = 24,
     fit: str = "contain",
     background: str = "#000000",
@@ -551,6 +659,10 @@ def build_animatic(
             of the frames. Note that because a missing frame is dropped, text
             timed against a timeline that HAD that frame shifts with everything
             after it; the alternative (holding a blank) would be worse.
+        shapes: [{"id", "kind", "start_ms", "duration_ms", "x", "y", "w", "h",
+            "color", "opacity", "rotation"}] — the shape layer, drawn UNDER the
+            text. Geometry is in fractions of the frame, so it is resolution
+            independent (see `draw_shapes`).
         audio_tracks: [{"path", "offset_ms", "volume"}] laid under the sequence
             and MIXED together — music under a voiceover is the usual pair.
             `offset_ms` is how far into that file playback starts; `volume` is
@@ -606,7 +718,7 @@ def build_animatic(
             "None of the frames could be read — their images may have been deleted."
         )
 
-    segments, total_ms = plan_segments(usable, texts or [])
+    segments, total_ms = plan_segments(usable, texts or [], end_ms, shapes or [])
 
     # --- 2. Render one PNG per segment -------------------------------------
     # A text clip can start or end part-way through a held image, so the unit of
@@ -623,7 +735,14 @@ def build_animatic(
             return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
 
         frame = usable[segment["frame"]]
-        key = (segment["frame"], tuple(t.get("id") for t in segment["texts"]))
+        # The shape ids are part of the key: without them two segments differing
+        # ONLY in which shapes are up would share one rendered still, and a
+        # shape would appear or vanish at the wrong moment.
+        key = (
+            segment["frame"],
+            tuple(t.get("id") for t in segment["texts"]),
+            tuple(s.get("id") for s in segment.get("shapes") or ()),
+        )
         name = rendered.get(key)
 
         if name is None:
@@ -636,6 +755,7 @@ def build_animatic(
                     background=background,
                     label=frame.get("label", "") if show_labels else "",
                     texts=segment["texts"],
+                    shapes=segment.get("shapes") or [],
                 )
                 image.save(os.path.join(build_dir, name), "PNG")
             except AnimaticError:
@@ -680,6 +800,11 @@ def build_animatic(
         offset = max(0, int(track.get("offset_ms") or 0))
         if offset:
             cmd += ["-ss", f"{offset / 1000:.3f}"]
+        # `-t` BEFORE `-i` limits how much of the input is read — this is the
+        # clip's trimmed length, set by dragging its right edge.
+        trim = track.get("trim_ms")
+        if trim:
+            cmd += ["-t", f"{max(100, int(trim)) / 1000:.3f}"]
         cmd += ["-i", track["path"]]
 
     # `fps=` FILTER, not just `-r`. The concat demuxer hands over a variable-rate
@@ -766,6 +891,7 @@ def build_animatic(
         "frame_count": len(usable),
         "segment_count": len(entries),
         "text_count": len([t for t in (texts or []) if (t.get("text") or "").strip()]),
+        "shape_count": len(shapes or []),
         "skipped_frames": skipped,
         "width": size[0],
         "height": size[1],

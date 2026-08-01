@@ -30,6 +30,13 @@
   --gold-bar: linear-gradient(90deg, #d4aa3b 0%, #e5c158 50%, #f3d67b 100%);
   --gold-fill: #e5c158;
   --gold-ink: #141005;
+  /* Timeline image clips. On --panel-2 alone a shot bar was the same colour as
+     the track behind it, so the layer read as an empty band — these tint it the
+     way the text clips and the waveform are already tinted. The two shades
+     alternate so neighbouring shots stay tellable apart at a glance. */
+  --tl-clip-bg: rgba(229, 193, 88, 0.13);
+  --tl-clip-bg-alt: rgba(229, 193, 88, 0.2);
+  --tl-clip-seam: rgba(229, 193, 88, 0.34);
   --disabled-opacity: 0.45;
   /* Plain-button surface — see the .btn comment. */
   --btn-bg: var(--panel-2);
@@ -76,6 +83,11 @@
   --gold-bar: linear-gradient(90deg, #a87914 0%, #bd8d1e 50%, #cba02c 100%);
   --gold-fill: #b0841a;
   --gold-ink: #ffffff;
+  /* Same tints in the deeper light-mode gold — the dark theme's #e5c158 all but
+     disappears on a white track. */
+  --tl-clip-bg: rgba(138, 107, 23, 0.1);
+  --tl-clip-bg-alt: rgba(138, 107, 23, 0.17);
+  --tl-clip-seam: rgba(138, 107, 23, 0.34);
   /* 0.45 washes a disabled button out to nothing on a light surface. */
   --disabled-opacity: 0.6;
   --btn-bg: var(--panel);
@@ -3963,6 +3975,99 @@ input[type="checkbox"] {
 }
 
 /* =========================================================================
+   DIALOGUE — what is SPOKEN in a shot. Read-only on the board (DialogueBox),
+   editable on the review step (DialogueEditor).
+
+   Nothing here has a visible container of its own when a shot is silent: the
+   components return null for an empty list, so a shot with no speech shows no
+   heading, no rule and no blank row — most shots on a board are silent, and an
+   empty box on each of them would be pure noise.
+   ========================================================================= */
+.dialogue {
+  margin: 0.15rem 0 0.6rem;
+  padding-left: 0.6rem;
+  /* The one persistent cue that someone is speaking here. */
+  border-left: 3px solid var(--border-gold);
+}
+.dialogue-line {
+  margin: 0 0 0.4rem;
+}
+.dialogue-line:last-child {
+  margin-bottom: 0;
+}
+/* The speaker sits ABOVE the line, the way a script prints it. */
+.dialogue-who {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.dialogue-text {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+/* On a board tile the caption is tight — keep the block from crowding out the
+   prompt box under it. */
+.board-dialogue {
+  margin: 0.35rem 0 0.5rem;
+}
+.board-dialogue .dialogue-text {
+  font-size: 0.78rem;
+}
+
+/* --- Editing dialogue on the review step -------------------------------- */
+.dialogue-edit {
+  margin: 0.7rem 0 0.2rem;
+}
+.dialogue-row {
+  display: grid;
+  /* Who / what they say / remove. The name column is fluid so it can't push
+     the line input off a narrow card. */
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.dialogue-row input {
+  min-width: 0;
+}
+.dialogue-who-input {
+  text-transform: uppercase;
+}
+/* A quiet link, not a button: adding a line is an option on every shot, and
+   thirty outlined buttons down the page would read as the main action. */
+.dialogue-add {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dialogue-add:hover {
+  color: var(--primary);
+}
+.dialogue-add.empty {
+  display: block;
+  margin-top: 0.7rem;
+}
+
+@media (max-width: 560px) {
+  /* Two columns would leave the line input a few characters wide. */
+  .dialogue-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .dialogue-who-input {
+    grid-column: 1 / -1;
+  }
+}
+
+/* =========================================================================
    WORLD OF YOUR STORY — region / period / culture, prefixed onto every image
    prompt. Editable, because the writer is the authority on their own world.
    ========================================================================= */
@@ -4584,9 +4689,10 @@ input[type="checkbox"] {
 .tl-bar {
   position: relative;
   flex: 0 0 auto;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-right: none;
+  background: var(--tl-clip-bg);
+  border: 1px solid var(--border-gold);
+  /* The seam between two shots, so the strip doesn't read as one long block. */
+  border-right: 1px solid var(--tl-clip-seam);
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -4595,22 +4701,38 @@ input[type="checkbox"] {
   cursor: pointer;
   min-width: 3px;
 }
+/* Alternating shades: at 2s a shot the seam alone is a thin cue, this makes the
+   boundary readable even when the timeline is zoomed out. */
+.tl-bar:nth-child(even) {
+  background: var(--tl-clip-bg-alt);
+}
+.tl-bar:hover {
+  border-color: var(--primary);
+  z-index: 1;
+}
 .tl-bar:first-child {
   border-radius: 6px 0 0 6px;
 }
 .tl-bar:last-child {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-gold);
   border-radius: 0 6px 6px 0;
 }
+/* Matches the selected TEXT clip — one selection language across the layers. */
 .tl-bar.sel {
-  background: rgba(229, 193, 88, 0.16);
+  background: var(--gold-grad);
   border-color: var(--primary);
+  z-index: 2;
+}
+.tl-bar.sel .tl-bar-label,
+.tl-bar.sel .tl-bar-secs {
+  color: var(--gold-ink);
 }
 .tl-bar-label {
   font-size: 0.7rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text);
 }
 .tl-bar-secs {
   font-size: 0.66rem;
@@ -4816,6 +4938,7 @@ input[type="checkbox"] {
   --tl-track-h: 2.6rem;
   --tl-img-h: var(--tl-track-h);
   --tl-txt-h: var(--tl-track-h);
+  --tl-shp-h: var(--tl-track-h);
   --tl-aud-h: var(--tl-track-h);
   --tl-row-gap: 0.3rem;
   display: flex;
@@ -4855,6 +4978,10 @@ input[type="checkbox"] {
 }
 .tl-gutter-text {
   height: var(--tl-txt-h);
+  margin-top: var(--tl-row-gap);
+}
+.tl-gutter-shapes {
+  height: var(--tl-shp-h);
   margin-top: var(--tl-row-gap);
 }
 .tl-gutter-audio {
@@ -4958,11 +5085,74 @@ input[type="checkbox"] {
   text-overflow: ellipsis;
   color: var(--text);
 }
+/* --- Shape track --------------------------------------------------------- */
+/* Structurally identical to the text track above — same free-floating clips,
+   same drag code — so it inherits the same geometry. What differs is the tint:
+   a shape clip is neutral, because the swatch inside it carries the shape's own
+   colour and a gold clip around a pink swatch reads as two unrelated things. */
+.tl-shapes {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--tl-shp-h);
+  margin-top: var(--tl-row-gap);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  cursor: default;
+}
+.tl-shape {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-shape:active {
+  cursor: grabbing;
+}
+.tl-shape.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-shape.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+/* The clip's own miniature of the shape, in the shape's colour — a lane of six
+   is then readable without opening any of them. */
+.tl-shape-swatch {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+}
+.tl-shape-label {
+  font-size: 0.68rem;
+  text-transform: capitalize;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
 .tl-track-empty {
   font-size: 0.72rem;
   color: var(--muted);
   padding: 0.45rem 0.6rem;
   user-select: none;
+  /* A lane is one track high. Without this the prompt wrapped to a second line
+     and was sliced in half by the lane's own `overflow: hidden`. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The empty band of a layer IS its add button — the obvious thing to click. */
 .tl-track-add {
@@ -4990,6 +5180,49 @@ input[type="checkbox"] {
    uses (30 / 21 / 14), so what you see here is what gets burned in. */
 .an-screen {
   container-type: size;
+}
+/* --- Shapes over the preview --------------------------------------------- */
+/* Everything is positioned in % of this box, which is the same fraction the
+   project stores and `draw_shapes` scales into the exported frame — so dragging
+   a shape here places it exactly there in the MP4, at any resolution.
+   The layer sits UNDER `.an-text-layer` (it is rendered first) for the same
+   reason the exporter draws it first: a caption has to stay readable. */
+.an-shape-layer {
+  position: absolute;
+  inset: 0;
+  /* The layer itself is inert; only the shapes in it take the pointer, so a
+     drag on empty picture still reaches whatever is underneath. */
+  pointer-events: none;
+}
+.an-shape {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+}
+.an-shape:active {
+  cursor: grabbing;
+}
+/* The FILL is a child so clip-path can't cut off the selection outline or the
+   resize handle — on a star those sit exactly where the clipping is. */
+.an-shape-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.an-shape.sel {
+  outline: 1px dashed var(--primary);
+  outline-offset: 2px;
+}
+.an-shape-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--primary);
+  border: 1px solid var(--gold-ink);
+  cursor: nwse-resize;
 }
 .an-text-layer {
   position: absolute;
@@ -5840,6 +6073,190 @@ input[type="checkbox"] {
 .an-media-track:hover {
   border-color: var(--primary);
 }
+/* =========================================================================
+   TOOLS, SHORTCUTS AND THE MARKED RANGE (Premiere's keys)
+   ========================================================================= */
+.an-tools {
+  display: flex;
+  gap: 0.15rem;
+  margin-right: 0.3rem;
+}
+.an-tool {
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.an-tool:hover:not(:disabled) {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+.an-tool.on {
+  background: var(--gold-grad);
+  border-color: var(--primary);
+  color: var(--gold-ink);
+}
+.an-tool:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* The tool decides what the pointer over the timeline MEANS, so it has to look
+   different — a razor that still shows an I-beam is a razor nobody trusts. */
+.tl-inner.tool-razor,
+.tl-inner.tool-razor .tl-bar,
+.tl-inner.tool-razor .tl-ruler {
+  cursor: crosshair;
+}
+.tl-inner.tool-hand,
+.tl-inner.tool-hand .tl-bar,
+.tl-inner.tool-hand .tl-ruler {
+  cursor: grab;
+}
+.tl-inner.tool-hand:active {
+  cursor: grabbing;
+}
+.tl-inner.tool-zoom,
+.tl-inner.tool-zoom .tl-bar,
+.tl-inner.tool-zoom .tl-ruler {
+  cursor: zoom-in;
+}
+/* With an edit tool armed, the grab strip is the thing you want, so make it
+   obvious it is what the pointer is for. */
+.tl-inner.tool-rolling .tl-handle,
+.tl-inner.tool-ripple .tl-handle {
+  background: var(--primary);
+}
+
+/* The marked range (I / O). Sits UNDER the tick labels — it marks time, and
+   the numbers have to stay readable over it. */
+.tl-marks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(229, 193, 88, 0.18);
+  border-left: 2px solid var(--primary);
+  border-right: 2px solid var(--primary);
+  pointer-events: none;
+  z-index: 0;
+}
+.tl-tick {
+  z-index: 1;
+}
+
+/* --- Maximize a panel (~) ------------------------------------------------ */
+/* The maximized pane fills the workspace and the rest are taken out of the
+   layout entirely. `display: none` rather than opacity, so a hidden pane can't
+   still be tabbed into or keep its scroll position on screen. */
+.an-nle.an-has-max .an-panes > .an-pane:not(.an-maxed),
+.an-nle.an-has-max > .an-pane-timeline:not(.an-maxed) {
+  display: none;
+}
+.an-nle.an-has-max .an-panes {
+  display: block;
+}
+.an-nle.an-has-max .an-pane.an-maxed {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+}
+/* When the timeline is the maximized one the panes row goes entirely, so the
+   timeline gets the height the three panes were using. */
+.an-nle.an-max-timeline .an-panes {
+  display: none;
+}
+.an-nle.an-max-timeline .an-pane-timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* --- The Shapes tab in the Media pane ------------------------------------ */
+/* Two tabs, because the picker is a LIBRARY you take from rather than part of
+   this animatic's footage — stacked under the frames it sat below a 60-panel
+   board and was never found. */
+.an-tabs {
+  display: flex;
+  gap: 0.15rem;
+}
+.an-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.15rem 0.4rem 0.25rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.an-tab:hover {
+  color: var(--text);
+}
+.an-tab.on {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.shape-gallery {
+  display: grid;
+  /* Fluid, so the pane can narrow to one column on a phone without a shape
+     tile ever forcing a horizontal scroll. */
+  grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr));
+  gap: 0.5rem;
+}
+.shape-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.55rem 0.3rem 0.4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text);
+}
+.shape-tile:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.shape-swatch {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+}
+.shape-tile-art {
+  width: 2.1rem;
+  height: 2.1rem;
+}
+.an-shape-hint {
+  margin: 0.6rem 0 0.9rem;
+  line-height: 1.45;
+}
+/* The kind picker in Properties: swatches, not words — four names in a row of
+   buttons is unreadable at this width, and the shape IS the label. */
+.an-shape-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.4rem;
+}
+.an-shape-pick .shape-swatch {
+  width: 0.9rem;
+  height: 0.9rem;
+  background: currentColor;
+}
+
 /* Volume lives in Properties now, so it gets room to breathe there. */
 .an-prop-vol {
   display: flex;
@@ -5896,4 +6313,15 @@ input[type="checkbox"] {
 .an-exp-note {
   margin: 0.5rem 0 0;
   line-height: 1.5;
+}
+/* An audio CLIP: as wide as the track actually plays, with a trim handle on its
+   right edge — the same gesture as a frame hold or a text clip. */
+.tl-audio-clip {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-right: 2px solid var(--border-gold);
+}
+.tl-audio-clip .tl-handle {
+  z-index: 2;
 }
