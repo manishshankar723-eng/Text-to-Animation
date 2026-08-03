@@ -184,6 +184,13 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // The shape layer — boxes, circles, pentagons and stars drawn over the
   // picture. Timed like the text layer, and like it, independent of the frames.
   const [shapes, setShapes] = useState([]);
+  // Lanes the USER added. "+ Add layer" creates one of these and nothing else —
+  // it is a blank row, filled afterwards by that row's own ＋. Every kind also
+  // has an implicit DEFAULT lane (clips whose layer_id is ""), which is what an
+  // animatic saved before layers is made of, and what a new one starts with.
+  const [layers, setLayers] = useState([]);
+  // Pictures composited over the sequence — the content of image layers.
+  const [overlays, setOverlays] = useState([]);
   // Zero or more audio tracks, mixed on export. Music under a voiceover is the
   // pair this exists for.
   const [audioTracks, setAudioTracks] = useState([]);
@@ -193,6 +200,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // --- Media ---
   const [urls, setUrls] = useState({}); // frame id → object URL
   const urlsRef = useRef({});
+  // upload_id → object URL, for the overlay pictures.
+  const [overlayUrls, setOverlayUrls] = useState({});
+  const overlayUrlsRef = useRef({});
   // upload_id → object URL, and upload_id → its <audio> element.
   const [audioUrls, setAudioUrls] = useState({});
   const audioUrlsRef = useRef({});
@@ -215,6 +225,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [selectedId, setSelectedId] = useState(null);
   const [selectedTextId, setSelectedTextId] = useState(null);
   const [selectedShapeId, setSelectedShapeId] = useState(null);
+  const [selectedOverlayId, setSelectedOverlayId] = useState(null);
   // Which half of the Media pane is showing: the footage, or the shape picker.
   const [mediaTab, setMediaTab] = useState("media");
   // An audio track selected for editing — its controls live in Properties, like
@@ -223,6 +234,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   // The active tool (V / C / B / N / H / Z) and whether clip edges snap (S).
   const [tool, setTool] = useState("select");
+  // Which shape lane the picker will drop the next shape onto ("" = default).
+  const [pendingShapeLane, setPendingShapeLane] = useState("");
   const [snapping, setSnapping] = useState(true);
   // Which pane is filling the workspace (~), and which one the pointer is over
   // so ~ knows which to maximize — exactly how Premiere decides.
@@ -250,6 +263,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const audioInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const assetInputRef = useRef(null);
+  const overlayInputRef = useRef(null);
+  // Which audio lane a just-picked file belongs to ("" = a lane of its own).
+  const pendingAudioLane = useRef("");
   const loadedRef = useRef(false);
   const docRef = useRef(null); // latest project, for the unmount flush
   const dirtyRef = useRef(false);
@@ -309,6 +325,17 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
       ),
     [shapes, timeMs]
   );
+  // The overlay pictures on screen now. Same rule, and the exporter uses it too.
+  const activeOverlays = useMemo(
+    () =>
+      overlays.filter(
+        (o) =>
+          (o.opacity ?? 1) > 0 &&
+          timeMs >= o.start_ms &&
+          timeMs < o.start_ms + o.duration_ms
+      ),
+    [overlays, timeMs]
+  );
   // Exactly one thing is selected at a time, and the Properties pane follows it:
   // a text clip, else a shape, else a track, else a frame, else the video
   // itself. Selecting one clears the others (see `selectOnly`), so the pane can
@@ -317,22 +344,33 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const selectedShape = selectedText
     ? null
     : shapes.find((s) => s.id === selectedShapeId) || null;
-  const selectedTrack =
+  const selectedOverlay =
     selectedText || selectedShape
+      ? null
+      : overlays.find((o) => o.id === selectedOverlayId) || null;
+  const selectedTrack =
+    selectedText || selectedShape || selectedOverlay
       ? null
       : audioTracks.find((a) => a.upload_id === selectedTrackId) || null;
   const selectedFrame =
-    selectedText || selectedShape || selectedTrack
+    selectedText || selectedShape || selectedOverlay || selectedTrack
       ? null
       : frames.find((f) => f.id === selectedId) || null;
 
-  // One helper so every "select this" path clears the other three — the pane can
+  // One helper so every "select this" path clears the others — the pane can
   // then never show something that isn't selected.
-  function selectOnly({ frame = null, text = null, track = null, shape = null }) {
+  function selectOnly({
+    frame = null,
+    text = null,
+    track = null,
+    shape = null,
+    overlay = null,
+  }) {
     setSelectedId(frame);
     setSelectedTextId(text);
     setSelectedTrackId(track);
     setSelectedShapeId(shape);
+    setSelectedOverlayId(overlay);
   }
 
   const exporting = exportJob?.status === "running" || exportBusy;
@@ -352,7 +390,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     totalMs,
     audioMs,
     texts.reduce((max, c) => Math.max(max, c.start_ms + c.duration_ms), 0),
-    shapes.reduce((max, s) => Math.max(max, s.start_ms + s.duration_ms), 0)
+    shapes.reduce((max, s) => Math.max(max, s.start_ms + s.duration_ms), 0),
+    overlays.reduce((max, o) => Math.max(max, o.start_ms + o.duration_ms), 0)
   );
 
   // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
@@ -362,6 +401,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     !frames.length &&
     !texts.length &&
     !shapes.length &&
+    !layers.length &&
+    !overlays.length &&
     !audioTracks.length &&
     !video &&
     (!title.trim() || title.trim() === UNTITLED);
@@ -381,6 +422,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         setFrames(p.frames || []);
         setTexts(p.texts || []);
         setShapes(p.shapes || []);
+        setLayers(p.layers || []);
+        setOverlays(p.overlays || []);
         setSettings(p.settings);
         setAudioTracks(p.audio_tracks || []);
         setVideo(p.video || null);
@@ -454,6 +497,45 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     };
   }, [frames]);
 
+  // One blob per overlay picture, keyed by UPLOAD ID — several overlays can
+  // point at the same file (a logo used four times), so keying by clip id would
+  // fetch and hold the same bytes over and over.
+  useEffect(() => {
+    let alive = true;
+    const wanted = new Set(overlays.map((o) => o.upload_id));
+    for (const id of Object.keys(overlayUrlsRef.current)) {
+      if (!wanted.has(id)) {
+        URL.revokeObjectURL(overlayUrlsRef.current[id]);
+        delete overlayUrlsRef.current[id];
+      }
+    }
+    const missing = [...wanted].filter((id) => !overlayUrlsRef.current[id]);
+    if (!missing.length) {
+      setOverlayUrls({ ...overlayUrlsRef.current });
+      return undefined;
+    }
+    (async () => {
+      for (const uploadId of missing) {
+        try {
+          const url = await api.fetchAnimaticMedia(
+            `/animatics/${animaticId}/media/${uploadId}`
+          );
+          if (!alive) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          overlayUrlsRef.current[uploadId] = url;
+          setOverlayUrls({ ...overlayUrlsRef.current });
+        } catch {
+          /* a picture that won't load shows as an empty box, not a banner */
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [overlays, animaticId]);
+
   // One blob per audio track, for the waveforms and for playback.
   useEffect(() => {
     let alive = true;
@@ -504,6 +586,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     () => () => {
       for (const url of Object.values(urlsRef.current)) URL.revokeObjectURL(url);
       urlsRef.current = {};
+      for (const url of Object.values(overlayUrlsRef.current)) URL.revokeObjectURL(url);
+      overlayUrlsRef.current = {};
       for (const url of Object.values(audioUrlsRef.current)) URL.revokeObjectURL(url);
       audioUrlsRef.current = {};
     },
@@ -532,6 +616,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         })),
         texts: doc.texts,
         shapes: doc.shapes,
+        layers: doc.layers,
+        overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
         audioTracks: doc.audioTracks,
       });
       baselineRef.current = sent;
@@ -570,15 +656,19 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         })),
         texts,
         shapes,
+        layers,
+        overlays,
         audioTracks,
       }),
-    [title, settings, frames, texts, shapes, audioTracks]
+    [title, settings, frames, texts, shapes, layers, overlays, audioTracks]
   );
 
   // Keep the latest project in a ref so the unmount flush sees it.
   useEffect(() => {
-    docRef.current = { title, settings, frames, texts, shapes, audioTracks, signature };
-  }, [title, settings, frames, texts, shapes, audioTracks, signature]);
+    docRef.current = {
+      title, settings, frames, texts, shapes, layers, overlays, audioTracks, signature,
+    };
+  }, [title, settings, frames, texts, shapes, layers, overlays, audioTracks, signature]);
 
   // Debounced autosave. Blocked during an export (the server refuses a save
   // while ffmpeg is reading these exact frames), and retried once it ends.
@@ -816,6 +906,63 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     [frames, currentIndex, starts, seek]
   );
 
+  // ----------------------------------------------------------------- lanes
+  // ONE list describing every row on the timeline, in top-to-bottom order. The
+  // gutter labels and the tracks are both generated from it, so a label can
+  // never end up beside the wrong lane (which is exactly what happened when the
+  // two were written out separately and matched by position).
+  //
+  // Order is by KIND — pictures, images over them, text, shapes, audio — and
+  // within a kind the DEFAULT lane comes first, then the ones the user added.
+  const lanes = useMemo(() => {
+    const of = (kind) => layers.filter((l) => l.kind === kind);
+    const out = [
+      { key: "frames", kind: "frames", name: "Images", layerId: null, removable: false },
+    ];
+    for (const l of of("image")) {
+      out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
+    }
+    out.push({ key: "text:", kind: "text", name: "Text", layerId: "", removable: false });
+    for (const l of of("text")) {
+      out.push({ key: l.id, kind: "text", name: l.name, layerId: l.id, removable: true });
+    }
+    out.push({ key: "shape:", kind: "shape", name: "Shapes", layerId: "", removable: false });
+    for (const l of of("shape")) {
+      out.push({ key: l.id, kind: "shape", name: l.name, layerId: l.id, removable: true });
+    }
+    // Audio: a track saved before layers owns its own lane (that is how it has
+    // always been drawn); a track added to a layer sits on that layer's lane,
+    // which exists even while it is still empty.
+    const loose = audioTracks.filter((a) => !a.layer_id);
+    for (const track of loose) {
+      out.push({
+        key: track.upload_id,
+        kind: "audio",
+        name: track.filename,
+        layerId: "",
+        track,
+        removable: false,
+      });
+    }
+    for (const l of of("audio")) {
+      const track = audioTracks.find((a) => a.layer_id === l.id) || null;
+      out.push({
+        key: l.id,
+        kind: "audio",
+        name: track ? track.filename : l.name,
+        layerId: l.id,
+        track,
+        removable: true,
+      });
+    }
+    // With no audio at all, keep the empty band that has always been there —
+    // it is the obvious place to click to add some.
+    if (!loose.length && !of("audio").length) {
+      out.push({ key: "audio:", kind: "audio", name: "Audio", layerId: "", track: null, removable: false });
+    }
+    return out;
+  }, [layers, audioTracks]);
+
   // ------------------------------------------------------------ undo / redo
   // History of the whole document, because that is the unit a person means by
   // "undo": one stack, not one per layer. Entries hold the actual state arrays
@@ -825,8 +972,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // state re-renders — the stack itself lives in the ref.
   const [historyTick, setHistoryTick] = useState(0);
   const doc = useMemo(
-    () => ({ title, settings, frames, texts, shapes, audioTracks }),
-    [title, settings, frames, texts, shapes, audioTracks]
+    () => ({ title, settings, frames, texts, shapes, layers, overlays, audioTracks }),
+    [title, settings, frames, texts, shapes, layers, overlays, audioTracks]
   );
 
   useEffect(() => {
@@ -864,6 +1011,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     setFrames(snapshot.frames);
     setTexts(snapshot.texts);
     setShapes(snapshot.shapes);
+    setLayers(snapshot.layers);
+    setOverlays(snapshot.overlays);
     setAudioTracks(snapshot.audioTracks);
   }, []);
 
@@ -949,6 +1098,9 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     } else if (selectedShape) {
       deleteShape(selectedShape.id);
       setNotice("Shape deleted.");
+    } else if (selectedOverlay) {
+      deleteOverlay(selectedOverlay.id);
+      setNotice("Picture removed from the layer.");
     } else if (selectedTrack) {
       removeTrack(selectedTrack.upload_id);
     } else if (selectedFrame) {
@@ -962,7 +1114,7 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     } else {
       setNotice("Nothing is selected — click a frame, clip or shape first.");
     }
-  }, [selectedText, selectedShape, selectedTrack, selectedFrame, frames]);
+  }, [selectedText, selectedShape, selectedOverlay, selectedTrack, selectedFrame, frames]);
 
   // ------------------------------------------------------------- shortcuts
   // Premiere's keys, for the things this editor actually has. Deliberately NO
@@ -1133,11 +1285,16 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // A new clip covers the frame the playhead is sitting on — "add text to this
   // shot" is what people mean nine times out of ten — but it is a free-floating
   // clip from that moment on, so it can be dragged and stretched anywhere.
-  function addText() {
+  // Anything that isn't a string is not a lane id — most likely a React event
+  // from a handler passed bare to onClick. Orphaning a clip on a lane that
+  // doesn't exist makes it invisible AND unreachable, so it is worth refusing.
+  const laneId = (value) => (typeof value === "string" ? value : "");
+
+  function addText(layerId = "") {
     const i = currentIndex >= 0 ? currentIndex : 0;
     const start = frames.length ? starts[i] : 0;
     const length = frames.length ? frames[i].duration_ms : 2000;
-    const clip = newTextClip(start, length);
+    const clip = { ...newTextClip(start, length), layer_id: laneId(layerId) };
     setTexts((list) => [...list, clip]);
     setSelectedTextId(clip.id);
     seek(start);
@@ -1162,14 +1319,143 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     });
   }
 
+  // ---------------------------------------------------------------- layers
+  // "+ Add layer" makes a BLANK lane and stops there. It used to add content —
+  // an upload dialog for images, a caption, a shape — which is not what adding
+  // a layer means: you add the row, then you put things on it.
+  const LAYER_NAMES = { image: "Images", text: "Text", shape: "Shapes", audio: "Audio" };
+
+  function addLayer(kind) {
+    const taken = layers.filter((l) => l.kind === kind).length;
+    const layer = {
+      id: newId(),
+      kind,
+      // Numbered from 2 because the default lane of that kind is already "Text",
+      // "Shapes", … on screen — so the first ADDED one reads as the second row.
+      name: `${LAYER_NAMES[kind] || "Layer"} ${taken + 2}`,
+    };
+    setLayers((list) => [...list, layer]);
+    setNotice(
+      `Empty ${LAYER_NAMES[kind]?.toLowerCase() || ""} layer added — use its ＋ to put something on it.`
+    );
+    return layer;
+  }
+
+  // Removing a lane takes its contents with it: they have nowhere else to live,
+  // and silently moving them to another row would be worse than saying so.
+  function removeLayer(layerId) {
+    const layer = layers.find((l) => l.id === layerId);
+    if (!layer) return;
+    setLayers((list) => list.filter((l) => l.id !== layerId));
+    if (layer.kind === "text") setTexts((list) => list.filter((c) => c.layer_id !== layerId));
+    if (layer.kind === "shape") setShapes((list) => list.filter((s) => s.layer_id !== layerId));
+    if (layer.kind === "image") setOverlays((list) => list.filter((o) => o.layer_id !== layerId));
+    if (layer.kind === "audio")
+      setAudioTracks((list) => list.filter((a) => a.layer_id !== layerId));
+    setNotice("Layer removed.");
+  }
+
+  // The ＋ on a lane. ONE entry point, so "add to this row" behaves the same
+  // whether it is pressed in the gutter or on the empty band of the track.
+  // Which lane it was pressed on decides what gets added, and where.
+  const pendingOverlayLane = useRef("");
+
+  function addToLane(lane) {
+    if (lane.kind === "frames") {
+      imageInputRef.current?.click();
+      return;
+    }
+    if (lane.kind === "text") {
+      addText(lane.layerId || "");
+      return;
+    }
+    if (lane.kind === "shape") {
+      // No sensible "default shape" — open the picker and let them choose.
+      setPendingShapeLane(lane.layerId || "");
+      setMediaTab("shapes");
+      setNotice("Pick a shape to put on this layer.");
+      return;
+    }
+    if (lane.kind === "image") {
+      pendingOverlayLane.current = lane.layerId || "";
+      overlayInputRef.current?.click();
+      return;
+    }
+    if (lane.kind === "audio") {
+      pendingAudioLane.current = lane.layerId || "";
+      openAudioPicker();
+    }
+  }
+
+  // -------------------------------------------------------- image overlays
+  // A picture composited over the sequence. Same geometry as a shape, because
+  // it is placed with the same handles — only the fill differs.
+  const patchOverlay = (id, patch) =>
+    setOverlays((list) => list.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+
+  function deleteOverlay(id) {
+    setOverlays((list) => list.filter((o) => o.id !== id));
+    setSelectedOverlayId((s) => (s === id ? null : s));
+  }
+
+  function duplicateOverlay(id) {
+    setOverlays((list) => {
+      const source = list.find((o) => o.id === id);
+      if (!source) return list;
+      const copy = { ...source, id: newId(), start_ms: source.start_ms + source.duration_ms };
+      setSelectedOverlayId(copy.id);
+      return [...list, copy];
+    });
+  }
+
+  // Upload pictures INTO an image layer. They land at the playhead, a third of
+  // the frame wide, and are dragged from there — unlike a frame, an overlay has
+  // no place in the sequence to be added to.
+  async function addOverlayFiles(files, layerId) {
+    const images = [...files].filter((f) => kindOf(f) === "image");
+    if (!images.length) {
+      setNotice("An image layer takes pictures — that file isn't one.");
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      const res = await api.uploadAnimaticImages(animaticId, images);
+      const start = Math.round(timeRef.current);
+      const added = (res.items || []).map((item, i) => ({
+        id: newId(),
+        layer_id: laneId(layerId),
+        upload_id: item.upload_id,
+        start_ms: start + i * 2000,
+        duration_ms: 2000,
+        x: 0.5,
+        y: 0.5,
+        w: 0.3,
+        h: 0.3,
+        opacity: 1,
+        rotation: 0,
+        url: `/animatics/${animaticId}/media/${item.upload_id}`,
+      }));
+      setOverlays((list) => [...list, ...added]);
+      if (added.length) selectOnly({ overlay: added[added.length - 1].id });
+      setNotice(
+        `Added ${added.length} picture${added.length === 1 ? "" : "s"} to this layer — drag to place ${added.length === 1 ? "it" : "them"} on the frame.`
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   // ---------------------------------------------------------- shape layer
   // Like a caption, a new shape covers the frame the playhead is on, and is a
   // free-floating clip from that moment on.
-  function addShape(kind) {
+  function addShape(kind, layerId = "") {
     const i = currentIndex >= 0 ? currentIndex : 0;
     const start = frames.length ? starts[i] : 0;
     const length = frames.length ? frames[i].duration_ms : 2000;
-    const shape = newShape(kind, start, length);
+    const shape = { ...newShape(kind, start, length), layer_id: laneId(layerId) };
     setShapes((list) => [...list, shape]);
     selectOnly({ shape: shape.id });
     seek(start);
@@ -1199,11 +1485,15 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   // draws in — so what you drag to is what gets encoded, at any resolution.
   const screenRef = useRef(null);
 
-  function startShapeDrag(e, shape, mode) {
+  // `kind` is "shape" or "overlay": the geometry and the handles are identical
+  // (that is the point — a picture is placed exactly like a box), so one drag
+  // implementation serves both and they cannot drift apart.
+  function startShapeDrag(e, shape, mode, kind = "shape") {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    selectOnly({ shape: shape.id });
+    const patch = kind === "overlay" ? patchOverlay : patchShape;
+    selectOnly(kind === "overlay" ? { overlay: shape.id } : { shape: shape.id });
     const box = screenRef.current?.getBoundingClientRect();
     if (!box || !box.width || !box.height) return;
 
@@ -1221,14 +1511,14 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
       if (mode === "move") {
         // Clamped so a shape can be run half off the frame but never lost
         // entirely off it, which would leave an unreachable clip on the timeline.
-        patchShape(shape.id, {
+        patch(shape.id, {
           x: clamp(from.x + dx, -0.5, 1.5),
           y: clamp(from.y + dy, -0.5, 1.5),
         });
       } else {
         const w = clamp(from.w + dx, 0.02, 4);
         const h = clamp(from.h + dy, 0.02, 4);
-        patchShape(shape.id, { w, h, x: anchorX + w / 2, y: anchorY + h / 2 });
+        patch(shape.id, { w, h, x: anchorX + w / 2, y: anchorY + h / 2 });
       }
     };
     const up = () => {
@@ -1337,10 +1627,18 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         api.uploadAnimaticAudio(animaticId, file),
         measureAudio(file),
       ]);
+      // The lane the ＋ was pressed on, if any — so the file lands on THAT row
+      // rather than making a new one. Consumed here, so a later drop onto the
+      // pane can't inherit it.
+      const layerId = pendingAudioLane.current;
+      pendingAudioLane.current = "";
       setAudioTracks((list) => [
-        ...list,
+        // A lane holds one track: dropping a second file on it replaces what
+        // was there, which is what "add audio to this row" has to mean.
+        ...list.filter((a) => !layerId || a.layer_id !== layerId),
         {
           upload_id: res.upload_id,
+          layer_id: layerId,
           filename: res.filename || file.name,
           duration_ms: durationMs,
           offset_ms: 0,
@@ -1738,7 +2036,12 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
 
           {mediaTab === "shapes" ? (
             <div className="an-pane-body">
-              <ShapeGallery onAdd={addShape} />
+              <ShapeGallery
+                onAdd={(kind) => {
+                  addShape(kind, pendingShapeLane);
+                  setPendingShapeLane("");
+                }}
+              />
               <p className="an-shape-hint tiny muted">
                 A shape lands on the frame at the playhead, then moves and
                 re-times like any other clip. Drag it on the picture to place it.
@@ -1935,6 +2238,46 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                 </div>
               )}
 
+              {/* Overlay pictures — composited over the video and UNDER the
+                  text. ⚠ Rendered AFTER the shapes so they sit ON TOP of them,
+                  which is the order `render_frame` composites in — the preview
+                  has to be what gets exported. Placed and
+                  dragged exactly like a shape, because they are the same box
+                  with a picture in it instead of a colour. */}
+              {activeOverlays.length > 0 && (
+                <div className="an-shape-layer">
+                  {activeOverlays.map((o) => (
+                    <div
+                      key={o.id}
+                      className={`an-shape an-overlay ${selectedOverlayId === o.id ? "sel" : ""}`}
+                      style={{
+                        left: `${o.x * 100}%`,
+                        top: `${o.y * 100}%`,
+                        width: `${o.w * 100}%`,
+                        height: `${o.h * 100}%`,
+                        transform: `translate(-50%, -50%) rotate(${o.rotation || 0}deg)`,
+                        opacity: o.opacity ?? 1,
+                      }}
+                      onPointerDown={(e) => startShapeDrag(e, o, "move", "overlay")}
+                      title="Drag to move · drag the corner to resize"
+                    >
+                      {overlayUrls[o.upload_id] && (
+                        // `contain`, matching the exporter: a logo dropped into
+                        // a square box must not be stretched into a new logo.
+                        <img className="an-overlay-img" src={overlayUrls[o.upload_id]} alt="" />
+                      )}
+                      {selectedOverlayId === o.id && (
+                        <span
+                          className="an-shape-handle"
+                          onPointerDown={(e) => startShapeDrag(e, o, "resize", "overlay")}
+                          title="Drag to resize"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* The text layer, over the picture. Sized in `cqh` (a fraction
                   of this box's own height) using the SAME divisors the exporter
                   uses, so the preview and the MP4 agree by construction rather
@@ -2028,15 +2371,21 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                 ? "Text"
                 : selectedShape
                   ? "Shape"
-                  : selectedTrack
-                    ? "Audio"
-                    : selectedFrame
-                      ? "Frame"
-                      : "Video"}
+                  : selectedOverlay
+                    ? "Picture"
+                    : selectedTrack
+                      ? "Audio"
+                      : selectedFrame
+                        ? "Frame"
+                        : "Video"}
             </span>
             {/* Without this there is no way back: selecting anything hides the
                 whole-video settings, and nothing deselects. */}
-            {(selectedText || selectedShape || selectedFrame || selectedTrack) && (
+            {(selectedText ||
+              selectedShape ||
+              selectedOverlay ||
+              selectedFrame ||
+              selectedTrack) && (
               <button
                 type="button"
                 className="an-pane-back"
@@ -2057,6 +2406,16 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
                 onDuplicate={duplicateText}
                 onDelete={deleteText}
                 onClose={() => setSelectedTextId(null)}
+              />
+            ) : selectedOverlay ? (
+              <ShapeProperties
+                shape={selectedOverlay}
+                totalMs={totalMs}
+                picture={overlayUrls[selectedOverlay.upload_id]}
+                onChange={patchOverlay}
+                onDuplicate={duplicateOverlay}
+                onDelete={deleteOverlay}
+                onClose={() => setSelectedOverlayId(null)}
               />
             ) : selectedShape ? (
               <ShapeProperties
@@ -2161,7 +2520,12 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
           <button
             type="button"
             className="btn small an-add-text"
-            onClick={addText}
+            onClick={
+              // NOT `onClick={addText}` — React would pass the click event as
+              // the layer id and the caption would land on a lane that doesn't
+              // exist. The header button always means the default text lane.
+              () => addText("")
+            }
             title="Add a text clip over the frame at the playhead"
           >
             <Icon name="text" /> Text
@@ -2223,9 +2587,11 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             selectedId={selectedId}
             selectedTextId={selectedTextId}
             selectedShapeId={selectedShapeId}
-            audioTracks={audioTracks}
+            selectedOverlayId={selectedOverlayId}
+            overlays={overlays}
+            overlayUrls={overlayUrls}
+            lanes={lanes}
             audioUrls={audioUrls}
-            maxAudioTracks={MAX_AUDIO_TRACKS}
             onToggleMute={(id) =>
               patchTrack(id, {
                 muted: !audioTracks.find((a) => a.upload_id === id)?.muted,
@@ -2235,20 +2601,16 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             onSelect={(id) => selectOnly({ frame: id })}
             onSelectText={(id) => selectOnly({ text: id })}
             onSelectShape={(id) => selectOnly({ shape: id })}
+            onSelectOverlay={(id) => selectOnly({ overlay: id })}
             selectedTrackId={selectedTrackId}
             onSelectTrack={(id) => selectOnly({ track: id })}
             onSeek={seek}
             onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
             onTextChange={patchText}
             onShapeChange={patchShape}
-            onAddShape={
-              // Opens the picker rather than guessing which of the four you
-              // wanted — there is no sensible "default shape".
-              () => setMediaTab("shapes")
-            }
-            onAddImages={() => imageInputRef.current?.click()}
-            onAddText={addText}
-            onAddAudio={openAudioPicker}
+            onOverlayChange={patchOverlay}
+            onAddToLane={addToLane}
+            onRemoveLayer={removeLayer}
             onAddLayer={() => setLayerMenu(true)}
             onRemoveTrack={removeTrack}
             tool={tool}
@@ -2416,6 +2778,10 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
       )}
 
       {/* ＋ Add layer — pick what kind. */}
+      {/* Adds an EMPTY lane and nothing else. It used to add content — an
+          upload dialog for images, a caption, a shape — which is not what
+          "add a layer" means: you add the row, then you put things on it with
+          that row's own ＋. */}
       {layerMenu && (
         <div className="modal-overlay" onClick={() => setLayerMenu(false)}>
           <div className="card an-layer-modal" onClick={(e) => e.stopPropagation()}>
@@ -2423,81 +2789,61 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
               ✕
             </button>
             <h2>Add a layer</h2>
-            <p className="muted">What do you want to add to the timeline?</p>
+            <p className="muted">
+              A new, empty row on the timeline. Fill it afterwards with the ＋ on
+              the layer itself.
+            </p>
 
             <div className="an-layer-list">
-              <button
-                type="button"
-                className="an-layer-opt"
-                onClick={() => {
-                  setLayerMenu(false);
-                  imageInputRef.current?.click();
-                }}
-              >
-                <span className="an-layer-opt-ico">🖼</span>
-                <span>
-                  <strong>Images</strong>
-                  <span className="tiny muted">
-                    Added to the end of the picture sequence
+              {[
+                {
+                  kind: "image",
+                  ico: "🖼",
+                  label: "Images",
+                  note: "Pictures composited OVER the video — a logo, an inset, a cut-in",
+                },
+                {
+                  kind: "text",
+                  ico: "T",
+                  label: "Text",
+                  note: "Another row of captions, timed on their own",
+                },
+                {
+                  kind: "shape",
+                  ico: "◆",
+                  label: "Shape",
+                  note: "Another row for boxes, circles, pentagons and stars",
+                },
+                {
+                  kind: "audio",
+                  ico: "♪",
+                  label: "Audio",
+                  note: `An empty track, mixed with the others (${audioTracks.length}/${MAX_AUDIO_TRACKS})`,
+                  disabled: audioTracks.length >= MAX_AUDIO_TRACKS,
+                  disabledNote: `You already have the maximum of ${MAX_AUDIO_TRACKS} tracks`,
+                },
+              ].map((opt) => (
+                <button
+                  key={opt.kind}
+                  type="button"
+                  className="an-layer-opt"
+                  disabled={opt.disabled}
+                  onClick={() => {
+                    setLayerMenu(false);
+                    addLayer(opt.kind);
+                  }}
+                >
+                  <span className="an-layer-opt-ico">{opt.ico}</span>
+                  <span>
+                    <strong>{opt.label}</strong>
+                    <span className="tiny muted">
+                      {opt.disabled ? opt.disabledNote : opt.note}
+                    </span>
                   </span>
-                </span>
-              </button>
+                </button>
+              ))}
 
-              <button
-                type="button"
-                className="an-layer-opt"
-                onClick={() => {
-                  setLayerMenu(false);
-                  addText();
-                }}
-              >
-                <span className="an-layer-opt-ico">T</span>
-                <span>
-                  <strong>Text</strong>
-                  <span className="tiny muted">
-                    A caption over the frame at the playhead
-                  </span>
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className="an-layer-opt"
-                onClick={() => {
-                  setLayerMenu(false);
-                  setMediaTab("shapes");
-                }}
-              >
-                <span className="an-layer-opt-ico">◆</span>
-                <span>
-                  <strong>Shape</strong>
-                  <span className="tiny muted">
-                    A box, circle, pentagon or star over the picture
-                  </span>
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className="an-layer-opt"
-                disabled={audioTracks.length >= MAX_AUDIO_TRACKS}
-                onClick={() => {
-                  setLayerMenu(false);
-                  openAudioPicker();
-                }}
-              >
-                <span className="an-layer-opt-ico">♪</span>
-                <span>
-                  <strong>Audio</strong>
-                  <span className="tiny muted">
-                    {audioTracks.length >= MAX_AUDIO_TRACKS
-                      ? `You already have the maximum of ${MAX_AUDIO_TRACKS} tracks`
-                      : `Its own track, mixed with the others (${audioTracks.length}/${MAX_AUDIO_TRACKS})`}
-                  </span>
-                </span>
-              </button>
-
-              {/* Listed because it's the obvious fourth thing to look for —
+              {/* Listed because it's the obvious fifth thing to look for —
                   saying "not yet" is better than leaving people hunting. */}
               <button type="button" className="an-layer-opt" disabled>
                 <span className="an-layer-opt-ico">🎞</span>
@@ -2590,6 +2936,22 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
         hidden
         onChange={(e) => {
           pickAudio(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      {/* Pictures for an IMAGE LAYER. Separate from the asset input because
+          these become overlays on one lane, not frames in the sequence. */}
+      <input
+        ref={overlayInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) {
+            addOverlayFiles(e.target.files, pendingOverlayLane.current);
+          }
+          pendingOverlayLane.current = "";
           e.target.value = "";
         }}
       />
@@ -2753,7 +3115,19 @@ function TextProperties({ clip, totalMs, textAreaRef, onChange, onDuplicate, onD
 // because that is what they are — the project stores fractions so the same
 // shape lands identically at 720p and 4K, and showing pixels here would be a
 // number that means nothing outside this preview.
-function ShapeProperties({ shape, totalMs, onChange, onDuplicate, onDelete, onClose }) {
+// Serves BOTH a shape and an overlay picture: they are the same box, placed
+// with the same handles and the same numbers. `picture` (a blob url) is what
+// says which — an overlay has no shape kind to pick and no fill to colour.
+function ShapeProperties({
+  shape,
+  totalMs,
+  picture,
+  onChange,
+  onDuplicate,
+  onDelete,
+  onClose,
+}) {
+  const isPicture = picture !== undefined;
   const overruns = shape.start_ms + shape.duration_ms > totalMs;
   const pct = (v) => Math.round(v * 100);
   const setPct = (field, value, lo, hi) =>
@@ -2762,20 +3136,28 @@ function ShapeProperties({ shape, totalMs, onChange, onDuplicate, onDelete, onCl
   return (
     <div className="an-props">
       <div className="an-prop-row">
-        <span className="an-prop-label">Shape</span>
-        <span className="an-tp-group">
-          {SHAPE_KINDS.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              className={`an-tp-btn an-shape-pick ${shape.kind === k.id ? "on" : ""}`}
-              title={k.label}
-              onClick={() => onChange(shape.id, { kind: k.id })}
-            >
-              <ShapeSwatch kind={k.id} />
-            </button>
-          ))}
-        </span>
+        <span className="an-prop-label">{isPicture ? "Picture" : "Shape"}</span>
+        {isPicture ? (
+          picture ? (
+            <img className="an-prop-thumb" src={picture} alt="" />
+          ) : (
+            <span className="tiny muted">Loading…</span>
+          )
+        ) : (
+          <span className="an-tp-group">
+            {SHAPE_KINDS.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                className={`an-tp-btn an-shape-pick ${shape.kind === k.id ? "on" : ""}`}
+                title={k.label}
+                onClick={() => onChange(shape.id, { kind: k.id })}
+              >
+                <ShapeSwatch kind={k.id} />
+              </button>
+            ))}
+          </span>
+        )}
       </div>
 
       <div className="an-prop-row">
@@ -2893,13 +3275,15 @@ function ShapeProperties({ shape, totalMs, onChange, onDuplicate, onDelete, onCl
           }
         />
         <span className="an-tp-unit">°</span>
-        <input
-          type="color"
-          className="an-colour"
-          value={shape.color}
-          onChange={(e) => onChange(shape.id, { color: e.target.value })}
-          title="Fill colour"
-        />
+        {!isPicture && (
+          <input
+            type="color"
+            className="an-colour"
+            value={shape.color}
+            onChange={(e) => onChange(shape.id, { color: e.target.value })}
+            title="Fill colour"
+          />
+        )}
       </div>
 
       <div className="an-prop-actions">

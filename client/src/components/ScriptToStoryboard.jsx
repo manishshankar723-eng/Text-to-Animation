@@ -896,6 +896,17 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 onChange={(e) => updateShot(i, { description: e.target.value })}
               />
 
+              {/* What is SAID in this shot. Empty for a silent shot, which
+                  shows only the "＋ Add dialogue" link.
+                  ⚠ ORDER: image prompt → dialogue → camera/location → cast.
+                  The board tile and the PDF print the same order; a panel that
+                  reads differently in three places reads as three tools. */}
+              <DialogueEditor
+                dialogue={sh.dialogue}
+                characters={sh.characters}
+                onChange={(dialogue) => updateShot(i, { dialogue })}
+              />
+
               <div className="grid2 shot-meta">
                 <div>
                   <label>Camera</label>
@@ -914,14 +925,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                   />
                 </div>
               </div>
-
-              {/* What is SAID in this shot. Empty for a silent shot, which
-                  shows only the "＋ Add dialogue" link. */}
-              <DialogueEditor
-                dialogue={sh.dialogue}
-                characters={sh.characters}
-                onChange={(dialogue) => updateShot(i, { dialogue })}
-              />
 
               {sh.characters?.length > 0 && (
                 <div className="shot-chars">

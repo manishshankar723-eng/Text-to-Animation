@@ -4004,6 +4004,12 @@ input[type="checkbox"] {
   text-transform: uppercase;
   color: var(--primary);
 }
+/* "Dialogue" before the first speaker, in the muted label voice the Camera and
+   Location rows use — the name alone doesn't say what it is. */
+.dialogue-tag {
+  color: var(--muted);
+  margin-right: 0.4rem;
+}
 .dialogue-text {
   display: block;
   font-size: 0.82rem;
@@ -4972,22 +4978,11 @@ input[type="checkbox"] {
    too, so nth-of-type counted it and handed every label the NEXT track's
    height — Audio got none at all. Browser-tested; don't go back to positional
    selectors here. */
-.tl-gutter-images {
-  height: var(--tl-img-h);
-  margin-top: 0.25rem;
-}
-.tl-gutter-text {
-  height: var(--tl-txt-h);
-  margin-top: var(--tl-row-gap);
-}
-.tl-gutter-shapes {
-  height: var(--tl-shp-h);
-  margin-top: var(--tl-row-gap);
-}
-.tl-gutter-audio {
-  height: var(--tl-aud-h);
-  margin-top: var(--tl-row-gap);
-}
+/* Per-kind heights used to live here, one rule per lane. They are gone on
+   purpose: with the lanes generated from a list there can be any number of each
+   kind, so EVERY row takes its box from `.tl-lane-row` (gutter) and `.tl-lane`
+   (track) instead. Those two rules are now the only thing keeping the columns
+   in step — see the LANES section further down. */
 .tl-layer-ico {
   display: inline-flex;
   align-items: center;
@@ -6073,6 +6068,92 @@ input[type="checkbox"] {
 .an-media-track:hover {
   border-color: var(--primary);
 }
+/* =========================================================================
+   LANES — the timeline is now as many rows as the project has, not four.
+
+   ⚠ The gutter labels and the tracks are two COLUMNS that must line up, and
+   they are generated from the same `lanes` list. Alignment is kept by giving
+   BOTH the same box: one height, one gap, on every row without exception. Do
+   not give one kind of lane its own height — that is what put every label
+   beside the wrong track once before.
+   ========================================================================= */
+.tl-lane,
+.tl-lane-row {
+  box-sizing: border-box;
+  height: var(--tl-track-h);
+  margin-top: var(--tl-row-gap);
+}
+.tl-lane {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+/* The picture sequence is a row of butted-up bars, not a band with clips in it. */
+.tl-lane.tl-bars {
+  display: flex;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+
+/* An overlay clip: the same box as a shape clip, carrying a thumbnail of the
+   picture instead of a swatch. */
+.tl-overlay {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-overlay:active {
+  cursor: grabbing;
+}
+.tl-overlay.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-overlay.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+.tl-overlay-thumb {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 0.85rem;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--panel-2);
+}
+
+/* An overlay ON THE PREVIEW. `contain` matches the exporter exactly: a logo
+   dropped into a square box must not be stretched into a different logo. */
+.an-overlay-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.an-prop-thumb {
+  max-width: 5rem;
+  max-height: 2.6rem;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
 /* =========================================================================
    TOOLS, SHORTCUTS AND THE MARKED RANGE (Premiere's keys)
    ========================================================================= */

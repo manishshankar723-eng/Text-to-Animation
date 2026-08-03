@@ -25,6 +25,10 @@ COLS, ROWS = 2, 3
 # cell is tall enough that the pictures stay exactly the size they always were
 # and the dialogue is simply extra room. Fewer panels per page, same panel size.
 ROWS_DIALOGUE = 2
+# A panel drawn smaller than this has stopped being a storyboard. It is what
+# decides 6-up vs 4-up for a page: if the rows on this page can't keep their
+# pictures at least this tall once their text is reserved, fewer rows go on it.
+MIN_PIC_H = 210
 
 # Print-friendly palette (white page, dark ink).
 INK = (24, 26, 32)
@@ -51,8 +55,13 @@ DIALOGUE_INK = (44, 47, 56)
 TEXT_H = 196
 # Height of the dialogue band, sized to hold a two-line exchange (the common
 # case: one character speaks, another answers) before it has to say "+N more".
-# Only reserved on a board that actually HAS dialogue.
+# Only reserved on a board that actually HAS dialogue. NB this reserves SPACE in
+# the cell; it is not a fixed baseline — the rows below flow up to meet whatever
+# is actually there, so a silent shot shows no gap.
 DIALOGUE_H = 152
+# What Camera / Location / the cast chips need under the dialogue. Kept back so
+# a talkative panel can't push them off the bottom of its cell.
+META_H = 84
 
 
 def _load_font(size: int, bold: bool = False):
@@ -171,8 +180,13 @@ def _dialogue_lines(panel: dict) -> list[dict]:
     return out
 
 
-def _dialogue_block(draw, x, y, dialogue, f_name, f_line, max_width, max_h):
+def _dialogue_block(draw, x, y, dialogue, f_label, f_name, f_line, max_width, max_h):
     """Draw the spoken lines under the caption; returns the next y.
+
+    The first speaker is prefixed with the word **Dialogue**, in the same
+    label style as the Camera and Location rows below — a bare "VIVAN" doesn't
+    say what it is, and the rest of the card labels everything it prints.
+    Later speakers in the same panel need no repeat of the label.
 
     Drawing stops at `max_h` and says how many lines were left over, so a
     talkative panel can't spill into the cell beneath it. Nothing at all is
@@ -194,7 +208,11 @@ def _dialogue_block(draw, x, y, dialogue, f_name, f_line, max_width, max_h):
         if y + needed > bottom - reserve:
             break
         if name:
-            draw.text((text_x, y), name, font=f_name, fill=DIALOGUE_NAME)
+            name_x = text_x
+            if drawn == 0:
+                draw.text((text_x, y + 2), "Dialogue", font=f_label, fill=MUTED)
+                name_x += draw.textlength("Dialogue", font=f_label) + 10
+            draw.text((name_x, y), name, font=f_name, fill=DIALOGUE_NAME)
             y += 20
         for row in rows[1:] if name else rows:
             draw.text((text_x, y), row, font=f_line, fill=DIALOGUE_INK)
@@ -264,18 +282,32 @@ def build_storyboard_pdf(
     f_chip = _load_font(15, bold=True)
     f_dname = _load_font(14, bold=True)
     f_dline = _load_font(17)
+    # The word "Dialogue", in the same weight and colour as Camera / Location.
+    f_dlabel = f_label
 
-    # The grid is decided ONCE for the whole document, not per page: a board
-    # whose pages alternated between 6-up and 4-up would read as two documents
-    # stapled together. Any dialogue anywhere → the roomier grid throughout.
-    has_dialogue = any(_dialogue_lines(p) for p in drawable)
-    rows = ROWS_DIALOGUE if has_dialogue else ROWS
-    text_h = TEXT_H + (DIALOGUE_H if has_dialogue else 0)
-    per_page = COLS * rows
+    def _row_text_h(row: list[dict]) -> int:
+        """Height to keep back under a row's pictures for its text.
+
+        Reserved PER ROW: a row of silent shots gives the dialogue band back
+        instead of printing it blank, which is what left a hole in the middle of
+        every card.
+        """
+        return TEXT_H + (DIALOGUE_H if any(_dialogue_lines(p) for p in row) else 0)
+
+    def _fits(chunk: list[dict], grid_h: int, count: int) -> bool:
+        """Would `count` rows of `chunk` still leave a usable picture?"""
+        cell = (grid_h - (count - 1) * GUTTER) // count
+        for r in range(count):
+            row = chunk[r * COLS : (r + 1) * COLS]
+            if row and cell - _row_text_h(row) < MIN_PIC_H:
+                return False
+        return True
+
     pages: list[Image.Image] = []
+    cell_w = (PAGE_W - 2 * MARGIN - (COLS - 1) * GUTTER) // COLS
+    start = 0
 
-    for start in range(0, len(drawable), per_page):
-        chunk = drawable[start : start + per_page]
+    while start < len(drawable):
         page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
         draw = ImageDraw.Draw(page)
 
@@ -286,34 +318,77 @@ def build_storyboard_pdf(
             draw.line([(MARGIN, top), (PAGE_W - MARGIN, top)], fill=LINE, width=2)
             top += 24
 
-        cell_w = (PAGE_W - 2 * MARGIN - (COLS - 1) * GUTTER) // COLS
         grid_h = PAGE_H - top - MARGIN
+        # How many rows fit on THIS page, given what is on it. A page of silent
+        # shots prints 6-up as it always did; one carrying an exchange drops to
+        # 4-up rather than squeezing the pictures down to nothing for it.
+        rows = ROWS
+        for candidate in (ROWS, ROWS_DIALOGUE, 1):
+            if _fits(drawable[start : start + COLS * candidate], grid_h, candidate):
+                rows = candidate
+                break
+
+        chunk = drawable[start : start + COLS * rows]
+        start += len(chunk)
         cell_h = (grid_h - (rows - 1) * GUTTER) // rows
-        # Room for shot label, caption, camera, location, the cast chips — and
-        # the dialogue band when this board has speech in it.
-        img_box_h = cell_h - text_h
+        # The tallest a picture may be drawn on this page. Each row then takes
+        # only what its own text needs, so the slack ends up at the foot of the
+        # page rather than inside a card.
+        img_box_h = cell_h - TEXT_H
+
+        # Fit every picture FIRST, so each row can be given the height its
+        # pictures actually need. A 16:9 panel in a tall cell is width-limited
+        # and leaves ~100px of nothing under it otherwise; packing the rows
+        # collects that slack at the foot of the page, where it reads as a
+        # margin instead of a hole in every card.
+        fitted_by_index: dict[int, Image.Image] = {}
+        for p in chunk:
+            try:
+                with Image.open(os.path.join(src_dir, f"panel_{p['index']:02d}.png")) as im:
+                    fitted_by_index[p["index"]] = _fit(im.convert("RGB"), cell_w - 4, img_box_h - 4)
+            except OSError:
+                pass  # drawn as "(panel missing)" at the reserved height below
+
+        row_pic_h, row_text_h = [], []
+        for r in range(rows):
+            row = chunk[r * COLS : (r + 1) * COLS]
+            heights = [
+                fitted_by_index[p["index"]].height + 4
+                for p in row
+                if p["index"] in fitted_by_index
+            ]
+            row_pic_h.append(max(heights) if heights else img_box_h)
+            row_text_h.append(_row_text_h(row))
 
         for i, p in enumerate(chunk):
             col = i % COLS
             row = i // COLS
             x = MARGIN + col * (cell_w + GUTTER)
-            y = top + row * (cell_h + GUTTER)
+            y = top + sum(row_pic_h[r] + row_text_h[r] + GUTTER for r in range(row))
 
-            # Image frame
-            draw.rectangle([x, y, x + cell_w, y + img_box_h], fill=CELL_BG, outline=LINE)
-            panel_path = os.path.join(src_dir, f"panel_{p['index']:02d}.png")
-            try:
-                img = Image.open(panel_path).convert("RGB")
-                fitted = _fit(img, cell_w - 4, img_box_h - 4)
-                page.paste(
-                    fitted,
-                    (x + (cell_w - fitted.width) // 2, y + (img_box_h - fitted.height) // 2),
+            # The frame is drawn around the picture at the size it ACTUALLY
+            # comes out, not around the whole reserved box. Framing the box left
+            # grey bars above and below a 16:9 panel and pushed every caption
+            # down past them — dead space in the middle of the card.
+            fitted = fitted_by_index.get(p["index"])
+            drawn_h = row_pic_h[row]
+            if fitted is not None:
+                fx = x + (cell_w - fitted.width) // 2
+                draw.rectangle(
+                    [fx - 2, y, fx + fitted.width + 2, y + fitted.height + 4],
+                    fill=CELL_BG,
+                    outline=LINE,
                 )
-            except OSError:
+                page.paste(fitted, (fx, y + 2))
+            else:
+                draw.rectangle([x, y, x + cell_w, y + drawn_h], fill=CELL_BG, outline=LINE)
                 draw.text((x + 12, y + 12), "(panel missing)", font=f_cap, fill=MUTED)
 
-            # Shot label + a SCENE n pill, mirroring the shot card in the app.
-            ty = y + img_box_h + 10
+            # Everything below FLOWS: each row is drawn straight after the one
+            # above it, so a shot with no dialogue has no gap where dialogue
+            # would have gone. Whatever is left over ends up at the foot of the
+            # cell, where it reads as ordinary spacing rather than a hole.
+            ty = y + drawn_h + 10
             shot_label = f"Shot {p['index'] + 1}"
             draw.text((x, ty), shot_label, font=f_shot, fill=INK)
             scene = p.get("scene_number")
@@ -331,16 +406,17 @@ def build_storyboard_pdf(
                 draw.text((x, ty), line, font=f_cap, fill=MUTED)
                 ty += 26
 
-            # What is SAID in this panel, straight after the caption — and
-            # nothing at all when the shot is silent.
-            if has_dialogue:
-                d_top = ty + 4
+            # What is SAID in this panel, straight after the caption. A silent
+            # shot draws nothing here and its Camera row moves up to meet the
+            # description.
+            spoken = _dialogue_lines(p)
+            if spoken:
+                # Room left in the cell, keeping back what Camera / Location and
+                # the cast chips still need underneath.
+                room = (y + drawn_h + row_text_h[row] - META_H) - (ty + 4)
                 ty = _dialogue_block(
-                    draw, x, d_top, _dialogue_lines(p), f_dname, f_dline, cell_w, DIALOGUE_H - 8
+                    draw, x, ty + 4, spoken, f_dlabel, f_dname, f_dline, cell_w, room
                 )
-                # Keep the meta rows on the same baseline across the row of
-                # cells, so a silent panel doesn't pull its Camera line upward.
-                ty = d_top + DIALOGUE_H - 8
 
             # Camera / Location / cast — the shooting detail a board is used for.
             ty += 4

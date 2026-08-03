@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-02 (Premiere-style shortcuts, tools, undo/redo)
+**Last updated:** 2026-08-03 (PDF: dialogue labelled, blank band removed)
 
 ---
 
@@ -102,7 +102,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/AnimaticEditor.jsx` | The editor, as an **NLE workspace**: top bar + status strip + Media / Program / Properties panes over a full-width timeline, fixed to the viewport height. Holds all the state (playback, autosave, export). **Audio is the playback clock** (see the Work Log). `TextProperties` / `FrameProperties` / `VideoProperties` at the foot are the three states of the Properties pane. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
 | `client/src/components/Shapes.jsx` | The shape layer's vocabulary: the unit-square polygons (**mirrored in `animatic.py`**), the CSS for them, and the picker gallery. |
-| `client/src/components/Timeline.jsx` | **Four tracks** (🖼 Images / T Text / ◆ Shapes / ♪ Audio) + fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
+| `client/src/components/Timeline.jsx` | **As many lanes as the project has** — the editor passes ONE `lanes` list and both the gutter labels and the tracks render from it. Kinds: 🖼 sequence · 🖼 image overlay · T text · ◆ shapes · ♪ audio. Fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
 | `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
 | `client/src/components/DialogueBox.jsx` | A shot's spoken lines, read-only (board tiles). Renders **nothing** when the shot is silent. |
 | `client/src/components/DialogueEditor.jsx` | The same lines, editable, on the review step. A silent shot shows only a "＋ Add dialogue" link. |
@@ -127,7 +127,7 @@ Pipeline stages (see `pipeline.py`):
 - `POST /jobs/{id}/regenerate-part` — redo one part · `POST /jobs/{id}/regenerate-view` — redo one view
 - `POST /jobs/{id}/meshy` — submit part(s) for 3D; body accepts `provider` (`meshy`|`tripo`) + optional `api_key` (falls back to saved key)
 - **Storyboard → Animatic (`server/animatics.py`, kind `animatic`):**
-  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts` (the text layer), `shapes` (the shape layer), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
+  `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts`, `shapes`, `layers` (the lanes), `overlays` (pictures composited over the video), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - `GET /templates` · `GET /health` (also reports `ffmpeg`)
@@ -206,7 +206,8 @@ previews require a cloud run (not `local_only`).
 | `API_MAX_AUDIO_BYTES` | Animatic audio upload cap (default 50 MB). |
 | `API_MAX_ANIMATIC_FRAMES` | Frames per animatic (default 500). |
 | `API_MAX_ANIMATIC_TEXTS` | Text clips per animatic (default 400). Each clip boundary splits the timeline into another rendered still, so this also caps export work. |
-| `API_MAX_ANIMATIC_SHAPES` | Shapes per animatic (default 400). Same reasoning as the text cap — every shape boundary is another cut and another still. |
+| `API_MAX_ANIMATIC_SHAPES` | Shapes per animatic (default 400). Same reasoning as the text cap — every shape boundary is another cut and another still. Also caps overlay pictures. |
+| `API_MAX_ANIMATIC_LAYERS` | Lanes on the timeline (default 24). This is a rough cut, not a compositing suite. |
 | `API_MAX_ANIMATIC_AUDIO_TRACKS` | Audio tracks per animatic (default 4). Each is another ffmpeg input to decode and mix. |
 | — | Export resolution / quality / include-audio are per-project **settings**, not env vars: `AnimaticSettings.resolution` (short edge), `.quality` (CRF), `.include_audio`. |
 
@@ -289,6 +290,98 @@ Standing conventions, not a one-off fix. Check these before adding a screen.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-03 — PDF: dialogue is LABELLED, and the blank band is gone
+
+- **Reported, off a real export:** the PDF printed a bare "VIVAN" (say
+  *Dialogue Vivan*, not just the name), and every card had a hole in it —
+  description, then a blank strip, then Camera / Location / the name tags. It
+  showed on silent shots AND on speaking ones.
+- **Cause of the hole:** the dialogue band was a **fixed baseline**. Every cell
+  reserved `DIALOGUE_H` and jumped the Camera row past it so the rows lined up
+  across a page — which meant a shot with no dialogue printed the reservation as
+  white space, and a shot with one short line printed the remainder.
+- **The card FLOWS now.** Each row is drawn straight after the one above it, so
+  the details sit together: description → dialogue (if any) → Camera → Location
+  → cast. Measured on a rendered page: the longest blank run inside a card is
+  **11px** (silent) and **15px** (speaking), down from ~150px.
+- **The picture frame is drawn around the PICTURE**, not around the reserved
+  box. A 16:9 panel in a tall cell used to sit in a grey box with bars above and
+  below it, pushing the caption down past them.
+- **Rows are packed, and reserved per row:** a row of silent shots doesn't
+  reserve the dialogue band at all, and each row is only as tall as its own
+  pictures plus its own text. Leftover space collects at the foot of the page,
+  where it reads as a margin instead of a hole.
+- **6-up vs 4-up is now decided PER PAGE** (it was per document): a page whose
+  rows all fit with pictures at least `MIN_PIC_H` (210px) prints 6-up as it
+  always did; a page carrying a two-line exchange drops to 4-up rather than
+  squeezing its panels to 138px. A board with no dialogue is unchanged — still
+  6 to a page.
+- **"Dialogue" now labels the first speaker**, in the same muted label voice as
+  the Camera and Location rows beneath it. `DialogueBox.jsx` prints the same tag
+  on the board so the app and the PDF read alike.
+- **Verified by rendering pages and measuring pixels** (6 checks): no blank band
+  inside a silent card, none inside a speaking card, a silent board still fits 6
+  panels to a page, and nothing prints off the bottom. Pages inspected as images
+  at each step. `npm run build` clean; backend imports clean.
+- **Not browser-checked:** the `Dialogue` tag on the board page. It is a
+  three-line JSX addition and the build is clean, but the storyboard board needs
+  a generated board (AI quota) to exercise, unlike the animatic suites.
+
+**Follow-up the same day — ONE field order everywhere.** A panel read
+differently in each of the three places that show it: the board tile put
+dialogue ABOVE the image prompt, the review card put it BELOW camera/location,
+and the PDF put it between the two. The order is now **image prompt → dialogue
+→ camera / location → cast tags** on all three, with a comment saying so at each
+site. There is no shared component to enforce it (the three are a textarea, an
+editor and Pillow drawing calls), so it is pinned by a source-order check
+instead — that is what silently drifted.
+
+### 2026-08-02 — "+ Add layer" makes a BLANK lane; image layers composite
+
+- **Reported:** "+ Add layer" created content — an upload dialog for Images, a
+  caption for Text, a shape for Shapes — and everything piled onto the single
+  lane of its kind. Wanted: **an empty row**, filled afterwards, for all four.
+- **`layers` is now a first-class list** (`{id, kind, name}`), and every clip
+  carries a `layer_id`. `""` means the **default lane** of that kind — which is
+  what every project saved before this is made of, so old animatics open showing
+  exactly the lanes they always did. `frames` is not a layer: it is the video.
+- **The timeline is no longer four hard-coded lanes.** The editor builds ONE
+  `lanes` list and the gutter labels *and* the tracks are generated from it.
+  ⚠ That is also the alignment contract now: every row takes its box from
+  `.tl-lane-row` / `.tl-lane` — one height, one gap, no exceptions. The per-kind
+  height rules are deleted; with any number of lanes per kind they could only go
+  wrong, which is how labels ended up beside the wrong tracks once before.
+- **Image layers are OVERLAYS** (chosen by the user over "extra lanes, one
+  sequence"): `AnimaticOverlay` is a picture with a shape's geometry — fractions
+  of the frame, `x`/`y` the centre — placed with the same drag handles, because
+  it IS the same box with a picture in it instead of a colour. `draw_overlays()`
+  composites them, `plan_segments` cuts on their boundaries, and the render cache
+  key includes their ids.
+- **⚠ Stacking is frame → shapes → pictures → text**, and the PREVIEW had it
+  backwards at first: it painted overlays under shapes while the exporter drew
+  them over. The browser test caught it by hit-testing the centre of the
+  preview. Change one order, change both.
+- **⚠ `thumbnail()` never upscales.** Overlays used it, so a small logo dragged
+  out to half the frame stayed small in the export while the preview showed it
+  big. It is `resize()` with an explicit contain-scale now, which goes both ways.
+- **⚠ `onClick={addText}` passes the CLICK EVENT as the first argument.** Once
+  `addText` took a `layerId`, that event became the lane id and the caption
+  landed on a lane that doesn't exist — invisible AND unreachable. Fixed at the
+  call site, plus a `laneId()` guard that refuses anything that isn't a string,
+  because the next handler wired up will make the same mistake.
+- Each lane's ＋ adds to THAT lane (`addToLane`); a lane the user made carries a
+  ✕ that removes it *with its contents* (undoable — it is an ordinary document
+  edit). `API_MAX_ANIMATIC_LAYERS` (default 24) caps the rows.
+- **Verified: 35 browser checks** — the default lanes unchanged, Add-layer
+  creating an empty row of each kind *without* creating content, each lane's ＋
+  filling only that lane, clips saving with the right `layer_id`, an overlay
+  dragged on the preview and **composited into a real exported MP4 at the
+  dragged position**, lane removal + undo, and gutter/track row counts staying
+  equal throughout. Plus **24 exporter checks** (aspect preserved, cut-out alpha
+  kept when faded, clockwise rotation, upscaling, missing file skipped), and the
+  three earlier suites re-run green (shapes 22, shortcuts 39, delete 18).
+  `npm run build` clean.
 
 ### 2026-08-02 — Premiere's keyboard: tools, shuttle, marks, undo/redo
 

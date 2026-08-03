@@ -400,6 +400,67 @@ def draw_shapes(canvas: Image.Image, shapes: list[dict]) -> None:
         canvas.paste(layer, at, layer)
 
 
+def draw_overlays(canvas: Image.Image, overlays: list[dict]) -> None:
+    """Composite the overlay PICTURES that are on screen for this moment.
+
+    Geometry is identical to a shape's — fractions of the frame, `x`/`y` the
+    centre — because they are placed with the same handles in the editor. The
+    difference is only the fill: a file rather than a colour.
+
+    Each picture is fitted INSIDE its box preserving aspect ratio ("contain"),
+    so a logo dropped into a square box isn't stretched into a different logo.
+    A file that has gone is skipped: one missing overlay must not kill a whole
+    export.
+    """
+    if not overlays:
+        return
+    width, height = canvas.size
+
+    for item in overlays:
+        opacity = float(item.get("opacity", 1.0) or 0.0)
+        path = item.get("path")
+        if opacity <= 0 or not path or not os.path.isfile(path):
+            continue
+        box_w = max(1, min(int(round(abs(float(item.get("w", 0.3))) * width)), width * 3))
+        box_h = max(1, min(int(round(abs(float(item.get("h", 0.3))) * height)), height * 3))
+
+        try:
+            with Image.open(path) as source:
+                picture = source.convert("RGBA")
+        except OSError:
+            logger.warning("[animatic] overlay image unreadable (%s) — skipped", path)
+            continue
+
+        # `resize`, NOT `thumbnail`: thumbnail only ever shrinks, so a small
+        # logo dragged out to fill half the frame would stubbornly stay small
+        # in the export while the preview showed it big. Scale is the same
+        # "contain" rule the frames use, and it goes both ways.
+        scale = min(box_w / picture.width, box_h / picture.height)
+        picture = picture.resize(
+            (max(1, int(round(picture.width * scale))), max(1, int(round(picture.height * scale)))),
+            Image.LANCZOS,
+        )
+        if opacity < 1:
+            # Scale the EXISTING alpha rather than replacing it, so a cut-out
+            # PNG stays cut out when it is faded.
+            alpha = picture.getchannel("A").point(lambda a: int(a * opacity))
+            picture.putalpha(alpha)
+
+        rotation = float(item.get("rotation", 0.0) or 0.0) % 360
+        if rotation:
+            # NEGATED: Pillow rotates anticlockwise, the editor (like CSS)
+            # treats a positive angle as clockwise. Same as draw_shapes.
+            picture = picture.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+
+        cx = float(item.get("x", 0.5)) * width
+        cy = float(item.get("y", 0.5)) * height
+        canvas.paste(
+            picture,
+            (int(round(cx - picture.width / 2)), int(round(cy - picture.height / 2))),
+            picture,
+        )
+
+
 def render_frame(
     src_path: str,
     size: tuple[int, int],
@@ -408,6 +469,7 @@ def render_frame(
     label: str = "",
     texts: list[dict] | None = None,
     shapes: list[dict] | None = None,
+    overlays: list[dict] | None = None,
 ) -> Image.Image:
     """Fit one source image onto the video frame.
 
@@ -437,10 +499,14 @@ def render_frame(
     left = (target_w - new.width) // 2
     top = (target_h - new.height) // 2
     canvas.paste(new, (left, top))
-    # Shapes go UNDER the text: a shape is usually a highlight or a mask placed
-    # on the art, and a caption you can't read over it would be pointless.
+    # Stacking order, bottom to top: picture → shapes → overlay images → text.
+    # Shapes sit under the overlays because a shape is usually a highlight or a
+    # mask ON the art, while an overlay is a picture element (a logo, an inset)
+    # that belongs above it. Text is last so a caption is always readable.
     if shapes:
         draw_shapes(canvas, shapes)
+    if overlays:
+        draw_overlays(canvas, overlays)
     # Text goes on before the shot label, so the label always stays legible in
     # its corner even if a caption is placed at the bottom too.
     if texts:
@@ -458,6 +524,7 @@ def plan_segments(
     texts: list[dict],
     end_ms: int | None = None,
     shapes: list[dict] | None = None,
+    overlays: list[dict] | None = None,
 ) -> tuple[list[dict], int]:
     """Cut the timeline into stretches where the picture, text AND shapes hold still.
 
@@ -503,23 +570,29 @@ def plan_segments(
             continue
         clips.append((start, min(end, total_ms), clip))
 
-    # The same treatment for shapes. An invisible shape (fully transparent) is
-    # dropped here rather than drawn as nothing, so it can't cost a segment.
-    figures: list[tuple[int, int, dict]] = []
-    for shape in shapes or []:
-        if float(shape.get("opacity", 1.0) or 0.0) <= 0:
-            continue
-        start = max(0, int(shape.get("start_ms") or 0))
-        end = start + max(100, int(shape.get("duration_ms") or 0))
-        if start >= total_ms:
-            continue
-        figures.append((start, min(end, total_ms), shape))
+    # The same treatment for shapes and overlay pictures. An invisible one
+    # (fully transparent) is dropped here rather than drawn as nothing, so it
+    # can't cost a segment.
+    def _timed(items) -> list[tuple[int, int, dict]]:
+        out: list[tuple[int, int, dict]] = []
+        for item in items or []:
+            if float(item.get("opacity", 1.0) or 0.0) <= 0:
+                continue
+            start = max(0, int(item.get("start_ms") or 0))
+            end = start + max(100, int(item.get("duration_ms") or 0))
+            if start >= total_ms:
+                continue
+            out.append((start, min(end, total_ms), item))
+        return out
+
+    figures = _timed(shapes)
+    pictures = _timed(overlays)
 
     cuts = {0, total_ms}
     for start, end, _ in spans:
         cuts.add(start)
         cuts.add(end)
-    for start, end, _ in clips + figures:
+    for start, end, _ in clips + figures + pictures:
         cuts.add(start)
         cuts.add(end)
     ordered = sorted(c for c in cuts if 0 <= c <= total_ms)
@@ -531,15 +604,14 @@ def plan_segments(
         frame_index = next((i for (s, e, i) in spans if s <= a < e), None)
         if frame_index is None:
             continue
-        active = [clip for (s, e, clip) in clips if s <= a < e]
-        on_screen = [shape for (s, e, shape) in figures if s <= a < e]
         segments.append(
             {
                 "frame": frame_index,
                 "start_ms": a,
                 "duration_ms": b - a,
-                "texts": active,
-                "shapes": on_screen,
+                "texts": [clip for (s, e, clip) in clips if s <= a < e],
+                "shapes": [shape for (s, e, shape) in figures if s <= a < e],
+                "overlays": [pic for (s, e, pic) in pictures if s <= a < e],
             }
         )
 
@@ -635,6 +707,7 @@ def build_animatic(
     *,
     texts: list[dict] | None = None,
     shapes: list[dict] | None = None,
+    overlays: list[dict] | None = None,
     audio_tracks: list[dict] | None = None,
     aspect_ratio: str = "16:9",
     resolution: int = BASE_SHORT_EDGE,
@@ -663,6 +736,9 @@ def build_animatic(
             "color", "opacity", "rotation"}] — the shape layer, drawn UNDER the
             text. Geometry is in fractions of the frame, so it is resolution
             independent (see `draw_shapes`).
+        overlays: the same, but each carries a "path" to a picture instead of a
+            colour — the image layers. Composited over the shapes and under the
+            text; one whose file has gone is skipped.
         audio_tracks: [{"path", "offset_ms", "volume"}] laid under the sequence
             and MIXED together — music under a voiceover is the usual pair.
             `offset_ms` is how far into that file playback starts; `volume` is
@@ -718,7 +794,9 @@ def build_animatic(
             "None of the frames could be read — their images may have been deleted."
         )
 
-    segments, total_ms = plan_segments(usable, texts or [], end_ms, shapes or [])
+    segments, total_ms = plan_segments(
+        usable, texts or [], end_ms, shapes or [], overlays or []
+    )
 
     # --- 2. Render one PNG per segment -------------------------------------
     # A text clip can start or end part-way through a held image, so the unit of
@@ -742,6 +820,7 @@ def build_animatic(
             segment["frame"],
             tuple(t.get("id") for t in segment["texts"]),
             tuple(s.get("id") for s in segment.get("shapes") or ()),
+            tuple(o.get("id") for o in segment.get("overlays") or ()),
         )
         name = rendered.get(key)
 
@@ -756,6 +835,7 @@ def build_animatic(
                     label=frame.get("label", "") if show_labels else "",
                     texts=segment["texts"],
                     shapes=segment.get("shapes") or [],
+                    overlays=segment.get("overlays") or [],
                 )
                 image.save(os.path.join(build_dir, name), "PNG")
             except AnimaticError:
@@ -892,6 +972,7 @@ def build_animatic(
         "segment_count": len(entries),
         "text_count": len([t for t in (texts or []) if (t.get("text") or "").strip()]),
         "shape_count": len(shapes or []),
+        "overlay_count": len(overlays or []),
         "skipped_frames": skipped,
         "width": size[0],
         "height": size[1],

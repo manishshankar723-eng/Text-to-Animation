@@ -38,7 +38,9 @@ from .schemas import (
     AnimaticAudioResponse,
     AnimaticCreateRequest,
     AnimaticFrame,
+    AnimaticLayer,
     AnimaticMediaItem,
+    AnimaticOverlay,
     AnimaticProject,
     AnimaticSaveRequest,
     AnimaticSettings,
@@ -124,6 +126,31 @@ def _texts_of(job: Job) -> list[AnimaticTextClip]:
     return out
 
 
+def _layers_of(job: Job) -> list[AnimaticLayer]:
+    """The lanes the user added. Absent (empty) on every pre-layers project,
+    which then shows exactly the default lanes it always did."""
+    raw = (job.params or {}).get("layers") or []
+    out: list[AnimaticLayer] = []
+    for item in raw:
+        try:
+            out.append(AnimaticLayer(**item))
+        except Exception:  # noqa: BLE001 — one bad lane must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable layer %r", job.job_id, item)
+    return out
+
+
+def _overlays_of(job: Job) -> list[AnimaticOverlay]:
+    """Pictures composited over the sequence (the image layers)."""
+    raw = (job.params or {}).get("overlays") or []
+    out: list[AnimaticOverlay] = []
+    for item in raw:
+        try:
+            out.append(AnimaticOverlay(**item))
+        except Exception:  # noqa: BLE001 — one bad overlay must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable overlay %r", job.job_id, item)
+    return out
+
+
 def _shapes_of(job: Job) -> list[AnimaticShape]:
     """The shape layer. Absent on every animatic saved before shapes existed,
     which reads as an empty list and changes nothing about those projects."""
@@ -181,6 +208,11 @@ def _project_of(job: Job) -> AnimaticProject:
     frames = _frames_of(job)
     for f in frames:
         f.url = f"/animatics/{job.job_id}/frame/{f.id}"
+    overlays = _overlays_of(job)
+    for overlay in overlays:
+        # Same url shape as a frame's picture — the editor fetches both the
+        # same way, and an overlay is servable the moment it is uploaded.
+        overlay.url = f"/animatics/{job.job_id}/media/{overlay.upload_id}"
     tracks = _audio_tracks_of(job)
     for track in tracks:
         # By upload id, not the project-level /audio route: straight after an
@@ -196,6 +228,8 @@ def _project_of(job: Job) -> AnimaticProject:
         frames=frames,
         texts=_texts_of(job),
         shapes=_shapes_of(job),
+        layers=_layers_of(job),
+        overlays=overlays,
         audio_tracks=tracks,
         duration_ms=_duration_ms(frames),
         video=(job.result or {}).get("video"),
@@ -326,6 +360,8 @@ def create_animatic(
             "frames": [f.model_dump(exclude={"url"}) for f in frames],
             "texts": [],
             "shapes": [],
+            "layers": [],
+            "overlays": [],
             "audio_tracks": [],
             "source_storyboard_id": source_id,
         },
@@ -409,6 +445,23 @@ def save_animatic(
                 detail=f"An animatic can hold at most {config.MAX_ANIMATIC_SHAPES} shapes.",
             )
         params["shapes"] = [s.model_dump() for s in body.shapes]
+
+    if body.layers is not None:
+        if len(body.layers) > config.MAX_ANIMATIC_LAYERS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_LAYERS} layers.",
+            )
+        params["layers"] = [layer.model_dump() for layer in body.layers]
+
+    if body.overlays is not None:
+        if len(body.overlays) > config.MAX_ANIMATIC_SHAPES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_SHAPES} overlays.",
+            )
+        # `url` is filled on read, so it is never stored — see AnimaticOverlay.
+        params["overlays"] = [o.model_dump(exclude={"url"}) for o in body.overlays]
 
     if body.audio_tracks is not None:
         if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_TRACKS:
@@ -670,6 +723,21 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         }
         for f in frames
     ]
+
+    # Overlay pictures. Resolved here for the same reason the frames are: this
+    # is the request that knows who is asking. One whose file has gone is
+    # dropped rather than failing the whole export.
+    overlays = []
+    for overlay in _overlays_of(job):
+        path = _image_path(job_id, overlay.upload_id)
+        if not path or not os.path.isfile(path):
+            logger.warning(
+                "[animatic %s] overlay %s has no image — skipped", job_id, overlay.id
+            )
+            continue
+        item = overlay.model_dump(exclude={"url"})
+        item["path"] = path
+        overlays.append(item)
     if not any(f["path"] for f in resolved):
         raise HTTPException(
             status_code=409,
@@ -693,6 +761,8 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
                 end_ms = max(end_ms, clip.start_ms + clip.duration_ms)
         for shape in _shapes_of(job):
             end_ms = max(end_ms, shape.start_ms + shape.duration_ms)
+        for overlay in overlays:
+            end_ms = max(end_ms, overlay["start_ms"] + overlay["duration_ms"])
 
     get_store().update(
         job_id,
@@ -706,6 +776,7 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             "frames": resolved,
             "texts": [t.model_dump() for t in _texts_of(job)],
             "shapes": [s.model_dump() for s in _shapes_of(job)],
+            "overlays": overlays,
             "audio_tracks": audio_tracks,
             "aspect_ratio": settings.aspect_ratio,
             "resolution": settings.resolution,

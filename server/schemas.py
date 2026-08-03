@@ -448,6 +448,9 @@ class AnimaticAudio(BaseModel):
     """
 
     upload_id: str
+    # The lane this track sits on. "" = a lane of its own, which is how every
+    # track written before layers existed is laid out.
+    layer_id: str = ""
     filename: str = ""
     # Measured in the BROWSER (decodeAudioData) and sent up — the server has no
     # audio decoder of its own, and ffmpeg doesn't need to be told.
@@ -466,6 +469,50 @@ class AnimaticAudio(BaseModel):
     url: str | None = None
 
 
+class AnimaticLayer(BaseModel):
+    """One lane the USER added to the timeline, empty until they fill it.
+
+    "Add a layer" makes one of these and nothing else — no upload dialog, no
+    clip. Content is then added INTO a lane, so several captions or shapes can
+    be organised on separate rows instead of piling into one.
+
+    Every kind also has an implicit DEFAULT lane (clips with `layer_id == ""`),
+    which is what every animatic saved before layers existed is made of. The
+    base picture sequence (`frames`) is not a layer: it is the video.
+    """
+
+    id: str
+    kind: str = Field(..., description="'image' | 'text' | 'shape' | 'audio'.")
+    name: str = ""
+
+
+class AnimaticOverlay(BaseModel):
+    """A picture composited OVER the sequence — a logo, an inset, a cut-in.
+
+    Geometry matches AnimaticShape exactly (fractions of the frame, `x`/`y` the
+    centre) because it is placed the same way and by the same drag handles; the
+    only difference is that the fill is an uploaded image rather than a colour.
+    """
+
+    id: str
+    layer_id: str = ""
+    upload_id: str
+    start_ms: int = Field(0, ge=0)
+    duration_ms: int = Field(2000, ge=100, le=600_000)
+    x: float = Field(0.5, ge=-1.0, le=2.0)
+    y: float = Field(0.5, ge=-1.0, le=2.0)
+    w: float = Field(0.3, gt=0.0, le=4.0)
+    h: float = Field(0.3, gt=0.0, le=4.0)
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    rotation: float = Field(0.0, ge=-360.0, le=360.0)
+    # Filled by the server on read, like a frame's. Ignored on write.
+    url: str | None = None
+
+    @property
+    def end_ms(self) -> int:
+        return self.start_ms + self.duration_ms
+
+
 class AnimaticTextClip(BaseModel):
     """One piece of on-screen text, with its OWN start and length.
 
@@ -475,6 +522,9 @@ class AnimaticTextClip(BaseModel):
     """
 
     id: str
+    # Which lane it sits on. "" is the default text lane — what every clip
+    # written before layers existed belongs to.
+    layer_id: str = ""
     text: str = ""
     # Where it sits on the timeline, in video time.
     start_ms: int = Field(0, ge=0)
@@ -503,6 +553,7 @@ class AnimaticShape(BaseModel):
     """
 
     id: str
+    layer_id: str = ""
     kind: str = Field("rect", description="'rect' | 'ellipse' | 'pentagon' | 'star'.")
     # Where it sits on the timeline, in video time — same as a text clip.
     start_ms: int = Field(0, ge=0)
@@ -564,6 +615,11 @@ class AnimaticProject(BaseModel):
     # The shape layer — rectangles, ellipses, pentagons and stars drawn over the
     # picture. Timed like the text layer and, like it, independent of the frames.
     shapes: list[AnimaticShape] = Field(default_factory=list)
+    # Lanes the user added. Empty on every project that predates layers, which
+    # then shows exactly the default lanes it always did.
+    layers: list[AnimaticLayer] = Field(default_factory=list)
+    # Pictures composited over the sequence (image layers).
+    overlays: list[AnimaticOverlay] = Field(default_factory=list)
     # Zero or more audio tracks, mixed together on export. Records written before
     # multi-track carried a single `audio` object; it is migrated on read.
     audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
@@ -609,6 +665,8 @@ class AnimaticSaveRequest(BaseModel):
     # Send the whole list; an empty list removes every shape (same rule as the
     # audio tracks below, and for the same reason).
     shapes: list[AnimaticShape] | None = None
+    layers: list[AnimaticLayer] | None = None
+    overlays: list[AnimaticOverlay] | None = None
     # Send the whole list; an empty list removes every track. (This replaced a
     # single `audio` field plus a `clear_audio` flag — with a list, "none" is
     # just an empty list and needs no companion flag.)

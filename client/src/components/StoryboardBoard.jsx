@@ -666,9 +666,6 @@ export default function StoryboardBoard({
                     </div>
                   )}
                 </div>
-                {/* What is spoken in this panel — nothing at all for a silent
-                    shot. Read-only here; dialogue is edited on the shot list. */}
-                <DialogueBox dialogue={p.dialogue} className="board-dialogue" />
                 <textarea
                   className="board-caption-edit"
                   value={editedDesc[p.index] ?? p.description ?? ""}
@@ -678,6 +675,13 @@ export default function StoryboardBoard({
                   rows={2}
                   placeholder="Describe what we see in this shot…"
                 />
+                {/* What is spoken in this panel — nothing at all for a silent
+                    shot. Read-only here; dialogue is edited on the shot list.
+                    ⚠ ORDER: image prompt → dialogue → camera/location → cast.
+                    The review card and the PDF print the same order; a panel
+                    that reads differently in three places reads as three
+                    different tools. */}
+                <DialogueBox dialogue={p.dialogue} className="board-dialogue" />
                 <button
                   type="button"
                   className={`btn small board-regen-btn ${isNew ? "secondary" : ""}`}

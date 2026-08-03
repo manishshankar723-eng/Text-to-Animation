@@ -61,6 +61,9 @@ MAX_ANIMATIC_TEXTS = int(os.environ.get("API_MAX_ANIMATIC_TEXTS", "400"))
 # Shapes per animatic. Same reasoning as the text cap: every shape boundary is
 # another cut in the timeline and another still to render.
 MAX_ANIMATIC_SHAPES = int(os.environ.get("API_MAX_ANIMATIC_SHAPES", "400"))
+# Lanes on the timeline. This is a rough cut, not a compositing suite — past a
+# couple of dozen rows nothing is legible anyway.
+MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
 # Audio tracks per animatic (music + voiceover is the usual pair). Every extra
 # track is another ffmpeg input to decode and mix, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))

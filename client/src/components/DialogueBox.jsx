@@ -14,7 +14,12 @@ export default function DialogueBox({ dialogue, className = "" }) {
       {lines.map((d, i) => (
         <p className="dialogue-line" key={i}>
           {(d.character || "").trim() && (
-            <span className="dialogue-who">{d.character.trim()}</span>
+            <span className="dialogue-who">
+              {/* Labelled, like every other field on the card. A bare name
+                  doesn't say what it is — and the PDF prints it the same way. */}
+              {i === 0 && <span className="dialogue-tag">Dialogue</span>}
+              {d.character.trim()}
+            </span>
           )}
           <span className="dialogue-text">{d.line.trim()}</span>
         </p>
