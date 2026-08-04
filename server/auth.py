@@ -44,10 +44,71 @@ class TokenResponse(BaseModel):
     email: EmailStr
 
 
+# What a profile holds, and why each field earns its place. Kept deliberately
+# small: a field nobody reads is a field that goes stale and lies.
+#
+#   Identity      — who you are. `full_name` is the real name; `display_name` is
+#                   what the UI shows (people often want to be "Manish", not
+#                   "Manish Shankar"). `email` is the LOGIN, so it is read-only
+#                   here — changing it is an account migration, not an edit.
+#   Work          — this is a studio tool used by teams; `company` and `role`
+#                   are what make a shared board attributable to a person.
+#   Creative      — the storyboard form asks for style / aspect / genre EVERY
+#                   time. Holding the usual answers here lets the form arrive
+#                   pre-filled. This is the part that actually saves clicks.
+#   Locale        — `timezone` so "created 2 hours ago" means the user's hours.
+#   Read-only     — `created_at`, `disabled`: shown, never edited by the user.
+#
+# Deliberately NOT here: avatar uploads (a file-storage feature, and the initial
+# already works), phone numbers and addresses (this app has no use for them —
+# collecting personal data nothing reads is a liability, not a feature), and
+# plan/credits, which belong to billing rather than to the person.
 class UserProfile(BaseModel):
+    """The authenticated user's profile, as returned by GET /auth/me."""
+
     email: EmailStr
+    # --- identity ---
+    full_name: str = ""
+    display_name: str = ""
+    # --- work ---
+    company: str = ""
+    role: str = ""
+    # --- creative defaults (prefill the storyboard form) ---
+    default_style: str = ""
+    default_aspect_ratio: str = ""
+    default_genre: str = ""
+    # --- locale ---
+    timezone: str = ""
+    # --- read-only ---
     created_at: str | None = None
     disabled: bool = False
+
+
+# Fields a user may edit about themselves. Anything absent is left alone, so a
+# form that only touches one section can't blank the others.
+class UserProfileUpdate(BaseModel):
+    """Body for PATCH /auth/me."""
+
+    full_name: str | None = Field(None, max_length=120)
+    display_name: str | None = Field(None, max_length=60)
+    company: str | None = Field(None, max_length=120)
+    role: str | None = Field(None, max_length=60)
+    default_style: str | None = Field(None, max_length=60)
+    default_aspect_ratio: str | None = Field(None, max_length=20)
+    default_genre: str | None = Field(None, max_length=60)
+    timezone: str | None = Field(None, max_length=60)
+
+
+class PasswordChangeRequest(BaseModel):
+    """Body for POST /auth/me/password.
+
+    The CURRENT password is required even though the caller already holds a
+    valid token: a token can be a borrowed laptop, and a password change locks
+    the real owner out.
+    """
+
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class CurrentUser(BaseModel):
@@ -135,11 +196,73 @@ def me(current: CurrentUser = Depends(get_current_user)):
     user = users.get_user_by_email(current.email)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
+    return _to_profile(user)
+
+
+def _to_profile(user: dict) -> UserProfile:
+    """User document → UserProfile. Missing fields become "" rather than null,
+    so the client can bind them straight to inputs without null-checking each."""
     return UserProfile(
         email=user["email"],
+        full_name=user.get("full_name") or "",
+        display_name=user.get("display_name") or "",
+        company=user.get("company") or "",
+        role=user.get("role") or "",
+        default_style=user.get("default_style") or "",
+        default_aspect_ratio=user.get("default_aspect_ratio") or "",
+        default_genre=user.get("default_genre") or "",
+        timezone=user.get("timezone") or "",
         created_at=user.get("created_at"),
         disabled=user.get("disabled", False),
     )
+
+
+@router.patch("/me", response_model=UserProfile)
+def update_me(
+    body: UserProfileUpdate,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Update the caller's own profile.
+
+    Partial: only the fields present in the body are written, so the identity
+    form and the creative-defaults form can save independently. Values are
+    trimmed; the email is NOT editable here (it is the login).
+    """
+    fields = {
+        k: (v.strip() if isinstance(v, str) else v)
+        for k, v in body.model_dump(exclude_unset=True).items()
+    }
+    if not users.update_profile(current.email, fields):
+        raise HTTPException(status_code=404, detail="User not found.")
+    user = users.get_user_by_email(current.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    logger.info("Updated profile for %s (%s)", current.email, ", ".join(sorted(fields)) or "no fields")
+    return _to_profile(user)
+
+
+@router.post("/me/password", status_code=204)
+def change_password(
+    body: PasswordChangeRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Change the caller's password, verifying the current one first.
+
+    Holding a valid token isn't enough: an unattended session must not be able
+    to lock the real owner out of their account.
+    """
+    user = users.get_user_by_email(current.email)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not security.verify_password(body.current_password, user.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Your current password is incorrect.")
+    if body.current_password == body.new_password:
+        raise HTTPException(
+            status_code=400, detail="The new password must be different from the current one."
+        )
+    users.update_password(current.email, security.hash_password(body.new_password))
+    logger.info("Password changed for %s", current.email)
+    return None
 
 
 @router.delete("/me", status_code=204)

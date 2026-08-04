@@ -1,5 +1,6 @@
 // Left navigation rail. Home + a Workflows section (the live Text-to-Image
 // pipeline plus placeholders for future workflows) + an Upgrade CTA.
+import Avatar from "./Avatar.jsx";
 
 // Workflow nav items. `status: "live"` is the working pipeline; "soon" items
 // are placeholders for the roadmap the user is building toward.
@@ -15,20 +16,32 @@ export default function Sidebar({
   active,
   onNavigate,
   email,
+  displayName,
   theme,
   onToggleTheme,
   onUpgrade,
   onProfileClick,
 }) {
-  const initial = (email || "?").trim().charAt(0).toUpperCase();
-  const workspace = (email || "My workspace").split("@")[0];
+  const who = displayName || email || "";
+  const initial = (who || "?").trim().charAt(0).toUpperCase();
+  const workspace = displayName || (email || "My workspace").split("@")[0];
 
   return (
     <aside className="sidebar">
-      {/* Brand */}
+      {/* Brand + the account avatar. The avatar sits here because the top-left
+          is where people look for "me" — clicking it opens the profile. */}
       <div className="sb-brand">
         <span className="sb-logo">🎭</span>
         <span className="sb-brand-name">Character Studio</span>
+        <button
+          type="button"
+          className={`sb-brand-avatar ${active === "profile" ? "active" : ""}`}
+          onClick={() => onNavigate("profile")}
+          title="Your profile"
+          aria-label="Your profile"
+        >
+          <Avatar size={30} initial={initial === "?" ? "" : initial} />
+        </button>
       </div>
 
       {/* Home */}
@@ -74,12 +87,14 @@ export default function Sidebar({
           <span className={`sb-theme-switch ${theme === "light" ? "on" : ""}`} />
         </button>
 
+        {/* Same face as the header, so both read as "you". This one opens the
+            account menu (profile / log out) rather than jumping straight in. */}
         <button
           className="sb-workspace"
           onClick={onProfileClick}
           title="Account"
         >
-          <span className="sb-avatar">{initial}</span>
+          <Avatar size={30} initial={initial === "?" ? "" : initial} />
           <span className="sb-ws-text">
             <span className="sb-ws-name">{workspace}</span>
             <span className="sb-ws-sub">Account</span>

@@ -26,9 +26,14 @@ OUTPUT_DIR = os.environ.get("API_OUTPUT_DIR", "output")
 CONFIG_PATH = os.environ.get("API_CONFIG_PATH", "prompts.yaml")
 
 # --- Job store ---------------------------------------------------------------
-# "firestore" (default) persists jobs in Firestore; "memory" keeps them in
-# process only (handy for local dev with no Firestore access).
-JOB_STORE = os.environ.get("API_JOB_STORE", "firestore").lower()
+# Where the record of everything the app produces lives — character runs,
+# storyboards, animatics, and any workflow added later. Only the image/video
+# BYTES live elsewhere (disk, or GCS); their URLs are stored in the job record.
+#   "mongo"     (default) MongoDB — the system of record.
+#   "firestore" legacy, kept for existing deployments.
+#   "memory"    in-process dict + JSON mirror. Dev only; not multi-process safe.
+JOB_STORE = os.environ.get("API_JOB_STORE", "mongo").lower()
+JOBS_COLLECTION = os.environ.get("API_JOBS_COLLECTION", "jobs")
 FIRESTORE_COLLECTION = os.environ.get("API_FIRESTORE_COLLECTION", "character_jobs")
 # When JOB_STORE == "memory", jobs are ALSO mirrored to this JSON file so a
 # backend restart (e.g. uvicorn --reload picking up a code change) doesn't wipe
@@ -85,6 +90,16 @@ LOCAL_USERS_PATH = os.environ.get("API_LOCAL_USERS_PATH", ".local_users.json")
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB = os.environ.get("MONGODB_DB", "character_api")
 USERS_COLLECTION = os.environ.get("API_USERS_COLLECTION", "users")
+
+# --- Script drafts ------------------------------------------------------------
+# The script being written in the text panel, autosaved so a refresh can't lose
+# it. One draft per user; stored alongside the accounts (same backend as
+# USER_STORE), so there is nothing extra to configure.
+DRAFTS_COLLECTION = os.environ.get("API_DRAFTS_COLLECTION", "script_drafts")
+LOCAL_DRAFTS_PATH = os.environ.get("API_LOCAL_DRAFTS_PATH", ".local_drafts.json")
+# Upper bound on an autosaved script. Generous — a feature screenplay is well
+# under this — but bounded so a paste accident can't push megabytes per keystroke.
+MAX_SCRIPT_CHARS = int(os.environ.get("API_MAX_SCRIPT_CHARS", str(400_000)))
 
 # True while running on the insecure dev JWT secret (set in security.py).
 JWT_SECRET_IS_DEV = False

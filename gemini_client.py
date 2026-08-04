@@ -20,6 +20,7 @@ job (the `provider` form field). Model IDs are overridable per provider via
 VERTEX_IMAGE_MODEL / GEMINI_IMAGE_MODEL.
 """
 
+import hashlib
 import io
 import os
 import random
@@ -177,6 +178,76 @@ def _backoff_delay(attempt: int, error: Exception | None = None) -> float:
     return base * random.uniform(0.5, 1.5)
 
 
+# ---------------------------------------------------------------------------
+# Image determinism — seeding
+# ---------------------------------------------------------------------------
+# MEASURED, 2026-08-03, gemini-3.1-flash-image on Vertex — read this before
+# relying on it:
+#   - The API ACCEPTS `seed` and it does influence the output. Two back-to-back
+#     calls with seed=42 returned a PIXEL-IDENTICAL image (max channel diff 0);
+#     seed=999 returned a clearly different one (max diff 223).
+#   - It is NOT a reproducibility guarantee. The same experiment on storyboard
+#     panel requests — seed verified identical and present in the config —
+#     returned DIFFERENT images both times. The runs that reproduced were
+#     back-to-back; the ones that didn't were spread out by quota backoff.
+#     Best guess: you reproduce while you land on the same serving replica.
+# So: seeding is a best-effort improvement, not a promise. Do not tell users a
+# board will redraw identically.
+#
+# When testing this, compare PIXELS, never PNG bytes — the encoder is not
+# byte-stable, so two identical pictures hash differently and a bytes comparison
+# reports "not reproducible" when it is.
+#
+# The seed is derived from WHAT IS BEING DRAWN, not fixed globally. One constant
+# seed for every call would quietly break every Retry button in the app: they
+# resend an identical request, so they would get back the identical picture
+# forever. Deriving it per-request means different panels still differ naturally
+# (different prompt → different seed) while a re-run of the same board
+# reproduces.
+#
+#   variation=0     (default) reproducible — same request, same picture
+#   variation=None  send no seed; the backend varies it. This is what the
+#                   Retry/regenerate paths pass to guarantee a NEW picture.
+#   variation=n     a different, still-reproducible picture from one request.
+#
+# A `redraw` counter is mixed in as well, incremented ONLY when an image came
+# back and was REJECTED (wrong shape / too small). That one has to change the
+# seed, or a rejected image would be redrawn identically until the retries ran
+# out. It deliberately does NOT count transport failures: a 429 is not the
+# picture's fault, and counting those would mean any quota blip silently
+# produced a different board. (Learned the hard way — the first version keyed on
+# the retry attempt number and a single 429 broke reproducibility.)
+#
+# IMAGE_SEED sets the base (any integer) or "none"/"off" to disable seeding and
+# restore the previous always-varying behaviour.
+DEFAULT_IMAGE_SEED = 42
+_SEED_MODULUS = 2**31 - 1  # keep the value in signed-32-bit range
+
+
+def _seed_for(*parts: object, variation: int | None = 0) -> int | None:
+    """Stable seed for one image request, or None to let the backend vary it."""
+    base = (os.environ.get("IMAGE_SEED") or str(DEFAULT_IMAGE_SEED)).strip()
+    if variation is None or base.lower() in ("", "none", "off", "random"):
+        return None
+    material = "|".join([base, str(variation), *(str(p) for p in parts)])
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % _SEED_MODULUS
+
+
+def _image_config(seed: int | None, **extra) -> types.GenerateContentConfig:
+    """Image-generation config, carrying `seed` only when we have one to send."""
+    kwargs: dict = {"response_modalities": ["IMAGE"], **extra}
+    if seed is not None:
+        if "seed" in types.GenerateContentConfig.model_fields:
+            kwargs["seed"] = seed
+        else:  # older google-genai — degrade to the old varying behaviour
+            logger.warning(
+                "google-genai has no `seed` field; image generation will not be "
+                "reproducible. Upgrade the SDK."
+            )
+    return types.GenerateContentConfig(**kwargs)
+
+
 def _resolve_provider(provider: str | None = None) -> str:
     """Resolve the effective provider: explicit arg > IMAGE_PROVIDER env > 'vertex'."""
     p = (provider or os.environ.get("IMAGE_PROVIDER", "vertex")).strip().lower()
@@ -251,6 +322,7 @@ def generate_turnaround_sheet(
     prompt: str,
     part_name: str = "unknown",
     provider: str | None = None,
+    variation: int | None = 0,
 ) -> Image.Image | None:
     """
     Send a reference image + prompt to Gemini and get back a 2×2 turnaround sheet.
@@ -261,6 +333,9 @@ def generate_turnaround_sheet(
         prompt: The text prompt describing what to generate.
         part_name: Name of the part (for logging only).
         provider: "vertex" or "gemini". Defaults to IMAGE_PROVIDER env (or "vertex").
+        variation: seeding control — 0 reproduces the same sheet for the same
+                   prompt, None lets the backend vary it (what regeneration
+                   passes), n gives a different reproducible sheet. See _seed_for.
 
     Returns:
         PIL Image of the 2×2 sheet, or None if generation failed
@@ -269,6 +344,8 @@ def generate_turnaround_sheet(
     provider = _resolve_provider(provider)
     client = get_client(provider)
     model_id = _model_id(provider)
+
+    redraw = 0  # bumped only when a returned sheet is REJECTED — see _seed_for
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -281,8 +358,8 @@ def generate_turnaround_sheet(
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[prompt, reference_image],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
+                    config=_image_config(
+                        _seed_for(prompt, part_name, redraw, variation=variation)
                     ),
                 )
 
@@ -304,6 +381,7 @@ def generate_turnaround_sheet(
                             )
                             return image
                         else:
+                            redraw += 1  # new seed next time, or we redraw this exact sheet
                             logger.warning(
                                 "[%s] Sheet looks wrong (%dx%d), retrying...",
                                 part_name, image.width, image.height,
@@ -537,6 +615,7 @@ def generate_storyboard_panel(
     composition_reference_image: "Image.Image | None" = None,
     provider: str | None = None,
     world: dict | None = None,
+    variation: int | None = 0,
 ) -> Image.Image | None:
     """Generate ONE storyboard panel image from a shot description.
 
@@ -610,6 +689,8 @@ def generate_storyboard_panel(
     if composition_reference_image is not None:
         contents.append(composition_reference_image)
 
+    redraw = 0  # bumped only when a returned panel is REJECTED — see _seed_for
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
@@ -622,7 +703,9 @@ def generate_storyboard_panel(
                 response = client.models.generate_content(
                     model=model_id,
                     contents=contents,
-                    config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                    config=_image_config(
+                        _seed_for(prompt, redraw, variation=variation)
+                    ),
                 )
 
             if (
@@ -636,6 +719,7 @@ def generate_storyboard_panel(
                         if image.width >= 256 and image.height >= 256:
                             logger.info("[panel] Got panel (%dx%d)", image.width, image.height)
                             return image
+                        redraw += 1  # new seed next time, or we redraw this exact panel
                         logger.warning("[panel] Panel too small (%dx%d), retrying…", image.width, image.height)
                         continue
 
@@ -664,6 +748,7 @@ def generate_character_reference(
     description: str,
     provider: str | None = None,
     world: dict | None = None,
+    variation: int | None = 0,
 ) -> Image.Image | None:
     """
     Generate a single T-pose character reference image from a text description.
@@ -693,6 +778,7 @@ def generate_character_reference(
 
     # Track the most specific reason so the caller can report the ACTUAL cause.
     last_reason = "Unknown error generating the reference image."
+    redraw = 0  # bumped only when a returned image is REJECTED — see _seed_for
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -705,8 +791,8 @@ def generate_character_reference(
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[prompt],
-                    config=types.GenerateContentConfig(
-                        response_modalities=["IMAGE"],
+                    config=_image_config(
+                        _seed_for(prompt, redraw, variation=variation)
                     ),
                 )
 
@@ -728,6 +814,7 @@ def generate_character_reference(
                             )
                             return image
                         else:
+                            redraw += 1  # new seed, or we redraw this exact image
                             last_reason = (
                                 f"The model returned an unexpected image ({image.width}×"
                                 f"{image.height}px), not a single centered character."
@@ -782,6 +869,7 @@ def generate_asset_reference(
     category: str = "prop",
     provider: str | None = None,
     world: dict | None = None,
+    variation: int | None = 0,
 ) -> Image.Image | None:
     """Generate a reference image for a prop or a background/location.
 
@@ -816,6 +904,7 @@ def generate_asset_reference(
         prompt = f"{world_txt} {prompt}"
 
     last_reason = "Unknown error generating the asset reference image."
+    redraw = 0  # bumped only when a returned image is REJECTED — see _seed_for
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -828,7 +917,9 @@ def generate_asset_reference(
                 response = client.models.generate_content(
                     model=model_id,
                     contents=[prompt],
-                    config=types.GenerateContentConfig(response_modalities=["IMAGE"]),
+                    config=_image_config(
+                        _seed_for(prompt, cat, redraw, variation=variation)
+                    ),
                 )
 
             if (
@@ -845,6 +936,7 @@ def generate_asset_reference(
                                 cat, image.width, image.height,
                             )
                             return image
+                        redraw += 1  # new seed, or we redraw this exact image
                         last_reason = (
                             f"The model returned an unexpected image ({image.width}×"
                             f"{image.height}px)."

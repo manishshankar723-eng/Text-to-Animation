@@ -5,6 +5,8 @@ import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
+import Profile from "./components/Profile.jsx";
+import Avatar from "./components/Avatar.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
@@ -44,8 +46,10 @@ export default function App() {
   const [email, setEmail] = useState(api.getEmail());
   const [authed, setAuthed] = useState(Boolean(api.getToken()));
   const [authView, setAuthView] = useState("landing");
-  // Land on the working page by default (both fresh login and returning session).
-  const [nav, setNav] = useState("text-to-image"); // "home" | workflow id
+  // Land on HOME by default — both a fresh login and a returning session. Home
+  // is the dashboard (profile, plan, recent work), so opening the app shows
+  // where things stand rather than dropping you mid-workflow.
+  const [nav, setNav] = useState("home"); // "home" | "profile" | workflow id
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Set by the board's "Make animatic" button: the animatic already exists, so
@@ -56,8 +60,31 @@ export default function App() {
   // main.jsx already applied the stored theme before the first paint; this only
   // has to re-stamp <html> when the user flips the switch.
   const [theme, setTheme] = useState(getTheme);
+  // The name the user chose on their profile, so the sidebar shows it instead
+  // of the local part of their email. Refreshed whenever they leave the profile
+  // page, which is the only place it can change.
+  const [displayName, setDisplayName] = useState("");
 
   useEffect(() => applyTheme(theme), [theme]);
+
+  useEffect(() => {
+    if (!authed) {
+      setDisplayName("");
+      return;
+    }
+    let cancelled = false;
+    api
+      .me()
+      .then((p) => {
+        if (!cancelled) setDisplayName(p?.display_name || p?.full_name || "");
+      })
+      .catch(() => {
+        // Cosmetic only — the sidebar falls back to the email.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authed, nav]);
 
   // Stable identity: children list this in effect deps, so a fresh function on
   // every render would re-fire those effects (and, for the one that calls back
@@ -69,7 +96,7 @@ export default function App() {
   function onAuthed(mail) {
     setEmail(mail);
     setAuthed(true);
-    setNav("text-to-image");
+    setNav("home");
   }
 
   function logout() {
@@ -120,11 +147,13 @@ export default function App() {
     content = (
       <Home
         email={email}
-        onLogout={logout}
         onOpenJob={openJobInWorkflow}
         onUpgrade={() => setUpgradeOpen(true)}
+        onOpenProfile={() => setNav("profile")}
       />
     );
+  } else if (nav === "profile") {
+    content = <Profile email={email} onLogout={logout} />;
   } else if (nav === "text-to-image") {
     content = (
       <div className="workflow-head-wrap">
@@ -180,6 +209,7 @@ export default function App() {
         active={nav}
         onNavigate={setNav}
         email={email}
+        displayName={displayName}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onUpgrade={() => setUpgradeOpen(true)}
@@ -193,10 +223,23 @@ export default function App() {
             <button className="modal-close" onClick={() => setAccountOpen(false)}>
               ✕
             </button>
-            <span className="account-modal-avatar">
-              {(email || "?").trim().charAt(0).toUpperCase()}
-            </span>
-            <h2>{email}</h2>
+            <Avatar
+              size={64}
+              initial={(displayName || email || "").trim().charAt(0).toUpperCase()}
+            />
+            <h2>{displayName || email}</h2>
+            {displayName && <p className="muted tiny">{email}</p>}
+            {/* The sidebar avatar is where people look for account settings, so
+                offer the profile here rather than only from Home. */}
+            <button
+              className="btn"
+              onClick={() => {
+                setAccountOpen(false);
+                setNav("profile");
+              }}
+            >
+              👤 Your profile
+            </button>
             <p className="muted">Are you sure you want to log out of your account?</p>
             <button className="btn primary" onClick={logout}>
               ⎋ Log out

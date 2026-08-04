@@ -3,6 +3,7 @@
 // in a grid as they finish (each fetched as an authed blob). Matches the
 // Text-to-Image workflow's look (WorkflowHeader + progress bar + gallery tiles).
 import { useEffect, useRef, useState } from "react";
+import ScriptPanel from "./ScriptPanel.jsx";
 import * as api from "../api.js";
 import DialogueBox from "./DialogueBox.jsx";
 
@@ -117,6 +118,11 @@ export default function StoryboardBoard({
   const progress = job?.progress || {};
   const panels = job?.result?.panels || [];
   const total = job?.result?.count || job?.params?.count || panels.length || 0;
+  // The board's saved title and source script. Both live on the job record, so
+  // they're here whether the board was just generated or reopened from the
+  // library. Falls back while the first poll is still in flight.
+  const boardTitle = job?.character_name || "Your storyboard";
+  const boardScript = job?.params?.script || "";
   const running = status === "queued" || status === "running" || !status;
   // The run ended early because the user pressed Stop (server-reported, so it
   // survives a reload) — the board says so instead of looking half-finished.
@@ -371,7 +377,10 @@ export default function StoryboardBoard({
       <div className="workflow-header">
         <span className="wf-icon">🎬</span>
         <div>
-          <h1 className="wf-title">Your storyboard</h1>
+          {/* The board's OWN title, not a generic heading — it's what names the
+              library card, the PDF and the ZIP, so seeing it here is how you
+              know which board you're looking at. */}
+          <h1 className="wf-title">{boardTitle}</h1>
           <p className="muted">
             {styleLabel} · {aspect} · {total} panel{total === 1 ? "" : "s"}
           </p>
@@ -732,6 +741,11 @@ export default function StoryboardBoard({
           </button>
         )}
       </div>
+
+      {/* The script this board was drawn from, under the panels. Collapsed:
+          it's reference material here, not the subject of the page. The shot
+          cards cite line numbers, and this is where they're looked up. */}
+      <ScriptPanel script={boardScript} defaultOpen={false} />
 
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>

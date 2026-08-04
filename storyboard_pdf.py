@@ -237,12 +237,66 @@ def _fit(img: Image.Image, box_w: int, box_h: int) -> Image.Image:
     return out
 
 
+def _script_pages(title: str, script: str, f_title, f_num, f_line) -> list[Image.Image]:
+    """Render the source script as line-numbered pages, appended after the board.
+
+    Appended rather than placed on page 1 so the panel layout — including the
+    per-page 6-up/4-up decision — is left exactly as it was. Line numbers are
+    printed because every shot card cites one ("FROM YOUR SCRIPT · LINE 12");
+    without them the citation has nothing to point at.
+
+    Long lines wrap, and the wrapped remainder is left un-numbered so the
+    numbering still matches the writer's own file.
+    """
+    text = (script or "").replace("\r\n", "\n").rstrip()
+    if not text.strip():
+        return []
+
+    NUM_W = 62          # gutter holding the line number
+    LINE_H = 26
+    pages: list[Image.Image] = []
+    page = draw = None
+    y = 0
+
+    def _new_page(first: bool) -> None:
+        nonlocal page, draw, y
+        page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
+        draw = ImageDraw.Draw(page)
+        y = MARGIN
+        heading = "Script" if first else "Script (cont.)"
+        draw.text((MARGIN, y), heading, font=f_title, fill=INK)
+        y += 52
+        if first and title:
+            draw.text((MARGIN, y), title, font=f_line, fill=MUTED)
+            y += 30
+        draw.line([(MARGIN, y), (PAGE_W - MARGIN, y)], fill=LINE, width=2)
+        y += 22
+        pages.append(page)
+
+    _new_page(True)
+    text_w = PAGE_W - 2 * MARGIN - NUM_W
+
+    for i, raw in enumerate(text.split("\n"), start=1):
+        # A blank line still takes a row, so the numbering stays readable.
+        wrapped = _wrap(draw, raw, f_line, text_w, 40) if raw.strip() else [""]
+        for j, seg in enumerate(wrapped):
+            if y + LINE_H > PAGE_H - MARGIN:
+                _new_page(False)
+            if j == 0:
+                draw.text((MARGIN, y), str(i), font=f_num, fill=MUTED)
+            draw.text((MARGIN + NUM_W, y), seg, font=f_line, fill=INK)
+            y += LINE_H
+
+    return pages
+
+
 def build_storyboard_pdf(
     job_id: str,
     output_dir: str,
     title: str,
     panels: list[dict],
     subdir: str = "",
+    script: str = "",
 ) -> str:
     """Render the storyboard panels into a PDF and return its path.
 
@@ -255,6 +309,9 @@ def build_storyboard_pdf(
             empty for a silent shot — a page with no speech on it is laid out
             exactly as before, at the old panel size.
         subdir: style-variant subfolder holding the PNGs (""=board root / variant 0).
+        script: the source script. When given, it is printed line-numbered on
+            pages APPENDED after the board, so the panel layout is untouched and
+            the shot cards' "LINE n" citations can be looked up in the export.
 
     Returns:
         Absolute path to the written PDF.
@@ -426,6 +483,9 @@ def build_storyboard_pdf(
             _cast_chips(draw, x, ty, p.get("characters") or [], f_chip, cell_w)
 
         pages.append(page)
+
+    # The script the board was drawn from, after the panels.
+    pages.extend(_script_pages(title, script, f_title, f_label, f_meta))
 
     pdf_path = os.path.join(board_dir, "storyboard.pdf")
     pages[0].save(

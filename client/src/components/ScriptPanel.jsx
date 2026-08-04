@@ -3,7 +3,9 @@
 // Line-numbered on purpose: each shot card says "FROM YOUR SCRIPT · LINE 12",
 // and this is where that number can be looked up. Read-only — the script is the
 // source, and editing it here would not re-run the breakdown.
-export default function ScriptPanel({ script }) {
+// `defaultOpen` is false on the finished board: the board is about the panels,
+// so the script rides along collapsed and opens on demand.
+export default function ScriptPanel({ script, defaultOpen = true }) {
   const text = (script || "").replace(/\s+$/, "");
   if (!text.trim()) return null;
 
@@ -11,7 +13,7 @@ export default function ScriptPanel({ script }) {
   const words = text.trim().split(/\s+/).length;
 
   return (
-    <details className="card script-panel" open>
+    <details className="card script-panel" open={defaultOpen}>
       <summary className="script-panel-head">
         <span className="script-panel-title">📄 Your script</span>
         <span className="script-panel-meta">

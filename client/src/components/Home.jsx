@@ -1,63 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
-import Icon from "./Icon.jsx";
+import Avatar from "./Avatar.jsx";
 
-// Home / account dashboard: profile, plan & credits, recent work (with
-// downloads), and account actions (log out / delete account).
-export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
+// Home — the DASHBOARD: who you are at a glance, plan & credits, recent work.
+// Anything you CHANGE (details, storyboard defaults, 3D keys, password, delete
+// account) lives on the Profile page; Home links to it.
+export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile }) {
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
-  const [apiKeys, setApiKeys] = useState({}); // { meshy:true, tripo:true }
   const [error, setError] = useState("");
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [p, j, k] = await Promise.all([
+      const [p, j] = await Promise.all([
         api.me(),
         // Character work only: "Recent work" opens the Text-to-Image job detail
         // and offers its asset ZIP, neither of which a storyboard job can serve.
         api.listJobs(api.CHARACTER_JOB_KINDS),
-        api.getApiKeys().catch(() => ({})),
       ]);
       setProfile(p);
       setJobs(Array.isArray(j) ? j : j.jobs || []);
-      setApiKeys(k || {});
     } catch (e) {
       setError(e.message);
     }
   }, []);
 
-  async function removeKey(provider) {
-    try {
-      await api.deleteApiKey(provider);
-      setApiKeys((prev) => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      });
-    } catch (e) {
-      setError(e.message);
-    }
-  }
-
   useEffect(() => {
     load();
   }, [load]);
-
-  async function handleDelete() {
-    setDeleting(true);
-    setError("");
-    try {
-      await api.deleteAccount();
-      api.clearSession();
-      onLogout();
-    } catch (e) {
-      setError(e.message);
-      setDeleting(false);
-    }
-  }
 
   const memberSince = profile?.created_at
     ? new Date(profile.created_at).toLocaleDateString(undefined, {
@@ -66,7 +36,9 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
         day: "numeric",
       })
     : "—";
-  const initial = (email || "?").trim().charAt(0).toUpperCase();
+  // Prefer what the user asked to be called; fall back to their email.
+  const displayName = profile?.display_name || profile?.full_name || email;
+  const initial = (displayName || "?").trim().charAt(0).toUpperCase();
   const recent = jobs.slice(0, 6);
 
   return (
@@ -79,15 +51,21 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
       {error && <div className="error">{error}</div>}
 
       <div className="home-grid">
-        {/* Profile */}
+        {/* Profile summary — the details themselves live on the Profile page. */}
         <section className="card home-card profile-card">
           <div className="profile-top">
-            <span className="profile-avatar">{initial}</span>
+            <Avatar size={56} initial={initial === "?" ? "" : initial} />
             <div>
-              <h2 className="profile-email">{email}</h2>
+              <h2 className="profile-email">{displayName}</h2>
+              <p className="muted tiny">{email}</p>
               <p className="muted tiny">Member since {memberSince}</p>
             </div>
           </div>
+          {onOpenProfile && (
+            <button className="btn small" onClick={onOpenProfile}>
+              Edit profile
+            </button>
+          )}
         </section>
 
         {/* Plan & credits */}
@@ -154,72 +132,26 @@ export default function Home({ email, onLogout, onOpenJob, onUpgrade }) {
           )}
         </section>
 
-        {/* Account actions */}
+        {/* Account settings live on the Profile page now — 3D API keys, password
+            and Delete account were all here, which made Home half dashboard and
+            half settings screen. Home shows status; Profile is where you change
+            things. */}
         <section className="card home-card account-card">
           <h2>Account</h2>
           <p className="muted tiny">
+            Your details, storyboard defaults, 3D API keys and password all live
+            on your profile.
+          </p>
+          <div className="home-account-actions">
+            {onOpenProfile && (
+              <button className="btn" onClick={onOpenProfile}>
+                Open profile
+              </button>
+            )}
+          </div>
+          <p className="muted tiny">
             To log out, click your name at the bottom of the sidebar.
           </p>
-
-          {/* Saved 3D API keys */}
-          <div className="api-keys-block">
-            <h3 className="api-keys-title">3D API keys</h3>
-            {Object.keys(apiKeys).filter((p) => apiKeys[p]).length === 0 ? (
-              <p className="muted tiny">
-                No keys saved. You'll be asked for one when you generate a 3D model.
-              </p>
-            ) : (
-              <ul className="api-keys-list">
-                {Object.keys(apiKeys)
-                  .filter((p) => apiKeys[p])
-                  .map((p) => (
-                    <li key={p} className="api-key-item">
-                      <span>
-                        <strong style={{ textTransform: "capitalize" }}>{p}</strong>{" "}
-                        <span className="badge ok">saved</span>
-                      </span>
-                      <button className="btn small danger-btn" onClick={() => removeKey(p)}>
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="danger-zone">
-            <h3 className="danger-title">Danger zone</h3>
-            {!confirmingDelete ? (
-              <button
-                className="btn danger-btn"
-                onClick={() => setConfirmingDelete(true)}
-              >
-                <Icon name="trash" /> Delete account
-              </button>
-            ) : (
-              <div className="danger-confirm">
-                <p className="tiny">
-                  This permanently deletes your account. This cannot be undone.
-                </p>
-                <div className="danger-actions">
-                  <button
-                    className="btn danger-btn"
-                    disabled={deleting}
-                    onClick={handleDelete}
-                  >
-                    {deleting ? "Deleting…" : "Yes, delete permanently"}
-                  </button>
-                  <button
-                    className="btn ghost small"
-                    disabled={deleting}
-                    onClick={() => setConfirmingDelete(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </section>
       </div>
     </div>

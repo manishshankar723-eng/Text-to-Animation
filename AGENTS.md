@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-03 (PDF: dialogue labelled, blank band removed)
+**Last updated:** 2026-08-04 (sidebar account avatar → Profile)
 
 ---
 
@@ -274,6 +274,34 @@ Standing conventions, not a one-off fix. Check these before adding a screen.
 6. **Wide content scrolls inside its own container** (`overflow-x: auto`), never
    the page body.
 
+## 🗄️ Storage rule — READ BEFORE ADDING A WORKFLOW
+
+**MongoDB is the system of record for everything the app produces, except the
+binary files themselves.**
+
+| What | Where | How |
+|------|-------|-----|
+| Accounts | Mongo `users` | `server/users.py` |
+| The script being typed | Mongo `script_drafts` | `server/drafts.py` |
+| **Every job: character runs, storyboards, animatics, and anything added later** | **Mongo `jobs`** | **`server/jobs.py` → `get_store()`** |
+| Image / video BYTES | disk (`output/`, `uploads/`) — GCS when enabled | `storage.py` |
+| **URLs of those files** | **Mongo, inside the job's `result`** | written by the pipeline |
+
+**Adding a workflow to the sidebar?** You do not write storage code. Add a value
+to `JobKind`, call `get_store().create(..., kind=JobKind.YOURS)`, and update it
+through the same store. It is then persisted, owner-scoped, listable and
+share-linkable for free. **Never** invent a per-workflow storage path, and never
+write app state to a JSON file next to the code.
+
+When GCS is switched on, `storage.save_character_assets` returns public GCS URLs
+and the pipeline writes them into `result` — so the URLs land in Mongo with no
+extra plumbing. Verified by a test in `tests/mongo_job_store_check.py`.
+
+All three stores share ONE MongoClient via `server/mongo.py` — do not open your
+own.
+
+---
+
 ## 📐 Conventions
 
 - **Python 3.14**, standard library logging (`logging.getLogger(__name__)`).
@@ -290,6 +318,337 @@ Standing conventions, not a one-off fix. Check these before adding a screen.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-04 — Account avatar in the sidebar header → Profile
+
+- **Asked (with a reference image):** the round person avatar in the sidebar next
+  to "Character Studio", clicking it opens the profile page.
+- **New `client/src/components/Avatar.jsx`** — the glyph as an SVG, not an emoji
+  or a PNG: crisp at any size, no network request (so it can't flash in late),
+  same silhouette in both themes. Colours match the reference (`#4f52c9` circle,
+  `#9aa3f5` figure).
+- **Shows the user's INITIAL once we know their name**, falling back to the
+  neutral figure — a personalised avatar reads faster than a generic one. The
+  initial comes from `display_name` → `full_name` → email, in that order.
+- **Placed in the sidebar brand row** (`margin-left:auto`, so it sits at the far
+  right of the "🎭 Character Studio" line) and highlights when the profile page
+  is open. The SAME avatar is now used in the sidebar footer chip, the account
+  modal, Home and the Profile header, so all five read as one identity.
+- `App.jsx` fetches `display_name` and passes it to the sidebar, refreshing on
+  every nav change — the profile page is the only place it can change, so
+  leaving that page picks the new name up.
+- **Removed three now-dead CSS rules** (`.sb-avatar`, `.profile-avatar`,
+  `.account-modal-avatar`) rather than leaving them to rot.
+- **Verified by RENDERING the exact SVG shapes** at high resolution and looking
+  at both variants (figure and initial) — the silhouette matches the reference.
+  `npm run build` clean; profile / draft / job-store suites still pass.
+
+### 2026-08-04 — Home is the landing page + a real user Profile
+
+- **Asked:** open on Home rather than a workflow; build a proper profile holding
+  name/email/etc; move Delete account into it; research what a profile should
+  hold.
+- **Landing:** `App.jsx` defaulted `nav` to `"text-to-image"` AND `onAuthed()`
+  set the same on login — both now `"home"`, so a fresh login and a returning
+  session both open the dashboard.
+- **What a profile holds, and why** (each field earns its place; a field nobody
+  reads goes stale and lies):
+  - *Identity* — `full_name`, `display_name` (people want to be "Manish", not
+    "Manish Shankar"), `timezone`. **Email is shown read-only**: it is the
+    login, so changing it is an account migration, not a profile edit.
+  - *Work* — `company`, `role`. This is a studio tool; a shared board is more
+    useful when it's attributable to a person.
+  - *Storyboard defaults* — `default_style`, `default_aspect_ratio`,
+    `default_genre`. **The part that actually saves work**: the storyboard form
+    asked these every single time. Empty = "ask me each time".
+  - Deliberately NOT included: avatar uploads (a file-storage feature; the
+    initial already works), phone/address (nothing reads them — collecting
+    personal data no feature uses is a liability), plan/credits (billing, not
+    person).
+- **`PATCH /auth/me` is an ALLOW-LIST**, not a passthrough (`users.PROFILE_FIELDS`).
+  Without it a crafted body could set `password_hash`, `disabled` or `email` and
+  take over or lock out the account. There are explicit tests that a PATCH
+  carrying all four is ignored while the legitimate field still applies.
+- **`POST /auth/me/password` requires the CURRENT password** even though the
+  caller holds a valid token — an unattended session must not be able to lock
+  the real owner out.
+- **Options extracted to `client/src/storyboardOptions.js`** (styles, aspects,
+  genres, roles). Profile and the storyboard form now import the same lists; two
+  copies would drift the moment a style was added.
+- **Home is now purely a dashboard.** 3D API keys, Delete account and the
+  account block moved to Profile — Home was half dashboard, half settings.
+  Delete now needs the word **DELETE** typed, not one click.
+- **Defaults are applied only to an UNTOUCHED form**, and a resumed storyboard
+  draft beats them: reopening a 9:16 draft must not snap back to your usual
+  16:9. Guarded with a ref set by whichever effect resolves first, since both
+  are async.
+- **Verified:** `tests/profile_check.py` — 40 checks: empty-not-null defaults,
+  trimming, partial PATCH not blanking siblings, the allow-list cases above,
+  length limits (422), owner isolation, 401s, password change (wrong current →
+  400, same password → 400, short → 422, success → old fails / new works,
+  profile survives), delete account. Draft/job-store/grounding suites still
+  pass; `npm run build` clean; 65 endpoints.
+- **Not browser-tested** — backend is covered and the build is clean, but the
+  Profile page hasn't been rendered in a browser.
+
+### 2026-08-04 — Board page and PDF show the title and the script
+
+- **Reported (with a screenshot):** the finished board page said "Your
+  storyboard" and showed no script; wanted the real title and the script there
+  and in the PDF.
+- **Board page title was HARDCODED** — `StoryboardBoard.jsx` printed a literal
+  "Your storyboard" regardless of the board. Now renders `job.character_name`
+  (falls back to the old string while the first poll is in flight). That name is
+  what labels the library card, the PDF and the ZIP, so the board is now
+  identifiable at a glance.
+- **Script on the board:** reused the existing `ScriptPanel` rather than writing
+  a second viewer, with a new `defaultOpen` prop — `true` on review (unchanged),
+  `false` on the board, where the script is reference material and not the
+  subject of the page. Reads `job.params.script`, so it's there for a freshly
+  generated board AND one reopened from the library.
+- **PDF already printed the title** on page 1 (verified by rendering it) — the
+  missing half was the script. New `_script_pages()` appends it line-numbered
+  AFTER the panels. Appended rather than put on page 1 so the panel layout,
+  including the tested per-page 6-up/4-up decision, is untouched.
+- **Line numbers are the point:** every shot card cites "FROM YOUR SCRIPT ·
+  LINE n", and without numbers in the export that citation points at nothing.
+  Wrapped continuation lines are left un-numbered so numbering still matches the
+  writer's own file, and blank lines keep their number.
+- **Verified by rendering and LOOKING at the pages** (not just page counts):
+  script page correct — heading, title subtitle, numbering 1-17 matching the
+  source, wrapping, blank lines preserved; page 1 header shows "Shorts_1".
+  Counts: 3 panel pages → 4 with the script, i.e. exactly the 1 page rendered,
+  so nothing was displaced. Empty and whitespace-only scripts add NO pages.
+  Draft + job-store suites still pass; `npm run build` clean.
+- **Known cosmetic limit:** emoji in a script render as tofu boxes in the PDF —
+  the bundled font has no emoji glyphs. Pre-existing, affects captions too.
+- **Older boards have no script** (`params.script` empty) — they predate it
+  being stored. Their PDFs simply get no script pages; nothing breaks.
+
+### 2026-08-04 — The review step is now backed by Mongo (storyboard DRAFTs)
+
+- **The gap:** script autosave covered the text panel, but the REVIEW step —
+  reviewed shots, cast, assets, world edits, generated references — still lived
+  only in React state. Refresh there and it all went, and unlike a script that
+  work had already **cost AI quota** (the breakdown call, plus any reference
+  images). The least-protected thing was the most expensive one.
+- **Chose the architectural fix over a bigger client draft:** the breakdown is
+  saved as a **`JobStatus.DRAFT` storyboard job the moment it returns**, so the
+  review step is backed by the same store as everything else instead of a
+  parallel one. Follows the storage rule rather than working around it.
+- **Promotion, not duplication.** `POST /storyboards` takes an optional
+  `draft_job_id` and promotes that record to `QUEUED`. Same job id from
+  breakdown through to finished board — no orphan draft, no showing the same
+  work twice. An unknown/foreign/already-generated id logs a warning and falls
+  back to creating a job, so an older client still works.
+- **Drafts are hidden from the library** (`GET /storyboards` filters
+  `status != DRAFT`) — a draft has no panels and isn't a board yet. It's resumed
+  through `GET /storyboards/draft`, which returns `job_id: null` rather than 404
+  when there's nothing in progress.
+- **`PATCH /storyboards/draft/{id}` is partial** (`exclude_unset`), so saving an
+  edited shot list can't wipe references chosen on a different step. Tested
+  explicitly — a refs-only PATCH must leave shots/title/world intact.
+- **Two mount races guarded.** `shots` is `[]` on mount, so an unguarded
+  autosave would PATCH an empty shot list over a good draft before the resume
+  request returned (`draftHydrated`), and the restore refuses to overwrite
+  anything typed while it was in flight. Same class of bug as `draftReady`.
+- **A breakdown that can't be saved is still returned.** Storing the draft is
+  wrapped in try/except: never lose a breakdown the user just paid for because
+  of a storage hiccup. `draft_job_id: null` then, and the client behaves as
+  before.
+- **Verified:** `tests/storyboard_draft_check.py` — 43 checks covering
+  auto-create, hidden-from-library, resume, edit persistence, partial-PATCH
+  safety, owner scoping (a stranger gets 404 on PATCH and DELETE), 401 without a
+  token, promotion keeping the same job id with no extra record, 409 on
+  PATCHing a promoted board, bad-id fallback, and discard. `npm run build` clean.
+- **MISTAKE WORTH NOT REPEATING:** the first version of that test did not stub
+  `worker.submit_storyboard_job`, so `POST /storyboards` really generated panels
+  and **burned image quota** on two runs. The worker is stubbed now. Any test
+  that posts to `/storyboards` MUST stub the worker. Stray boards and their
+  panel folders were cleaned up; 9 OLDER orphaned panel folders in
+  `output/_storyboards/` (10-11 days, no job record) were left alone — they
+  predate this work and are the user's data.
+- **Not browser-tested.** Backend is covered by the checks above and the build
+  is clean, but the resume-on-refresh flow hasn't been exercised in a browser.
+
+### 2026-08-04 — MongoDB is now the system of record for ALL workflows
+
+- **User's rule:** "other than images and media, whatever I make should go into
+  Mongo — and once I give it GCS access those URLs too — and this holds for
+  anything I add to this workflow later." Written up as the **Storage rule**
+  section near the top of this file.
+- **The architecture already had the choke point.** Character runs, storyboards
+  AND animatics all persist through the single `JobStore` interface
+  (`get_store()`), so ONE backend covers every workflow present and future. No
+  per-workflow storage code exists or should be written.
+- **New `MongoJobStore`** in `server/jobs.py` — `_id` IS the job_id (duplicate
+  ids impossible by construction). Indexes: `(owner, kind, created_at desc)` for
+  the library screens, sparse `params.share_token` for public links.
+- **`update()` validates the merged record through `Job` but writes only the
+  CHANGED keys with `$set`.** This is the one real improvement over the other
+  backends: the worker writes `progress` continuously while a request may be
+  writing `result`, and a whole-document read-modify-write lets one silently
+  erase the other. Covered by a test that asserts `result` survives a later
+  progress write, plus 12 concurrent writers.
+- **GCS URLs need no new plumbing** — `storage.save_character_assets` already
+  returns public URLs and the pipeline writes them into `result`, which is now
+  in Mongo. Asserted explicitly in the tests rather than assumed.
+- **Unlike Firestore, the kind filter runs in the QUERY.** Firestore needed
+  over-fetch-and-trim to dodge a composite-index requirement; Mongo doesn't, so
+  `limit` is applied after filtering and a page is always full.
+- **`API_JOB_STORE` default changed `firestore` → `mongo`**; `.env` switched from
+  `memory`. Mongo failure falls back to the local store but logs at **ERROR** —
+  a silent fallback means work is being written where nobody will look for it.
+- **`server/mongo.py`**: one shared `MongoClient` for users + drafts + jobs
+  (was: each opening its own pool). Verified all three now share one object.
+- **Migration:** `migrate_jobs_to_mongo.py` moved all **18** existing jobs
+  (11 storyboards, 4 character runs, 3 animatics). Validates every record before
+  writing anything, skips ids already present so re-runs can't clobber newer
+  work, and never modifies the source file. Verified idempotent (second run:
+  0 inserted). `.local_jobs.json` deliberately left in place as a backup.
+- **Verified:** `tests/mongo_job_store_check.py` runs the SAME 29-check contract
+  against MemoryJobStore and MongoJobStore so they're proven equivalent, not just
+  plausible — CRUD, owner scoping, kind filtering, share tokens, concurrency,
+  GCS-url round trip, delete. Both pass. Auth (16) and drafts (25) re-run clean
+  after the shared-client refactor. Post-migration counts confirmed against the
+  live API layer: 8 boards + 4 runs + 3 animatics for the real user, 3 boards for
+  `z@t.dev` = the original 18.
+- **Not done:** GCS itself is still off (no bucket keys in `.env`), so URLs in
+  `result` remain local paths until it's enabled — the storage path for them is
+  tested and ready. Job records are not yet browser-verified end to end.
+
+### 2026-08-04 — Script autosave (Mongo) + user store switched to Mongo
+
+- **Reported:** a script typed into the text panel was lost on refresh. Confirmed:
+  the script only became durable once it had been turned into a board (saved on
+  the job as `script`). Before that it was React state only — no localStorage,
+  no server. `grep localStorage client/src/` finds only the auth token and theme.
+- **New `server/drafts.py`** — ONE autosaved draft per user, `/scripts/draft`
+  (GET / PUT / DELETE), owner-scoped. `GET` never 404s: "nothing saved yet" is an
+  empty draft, so the client has no special case to write.
+- **Backend follows `API_USER_STORE`**, deliberately — no second switch, so
+  accounts and their drafts can never land in different stores. Mongo collection
+  `script_drafts` (unique index on email), local JSON fallback mirroring
+  `users.py`. Reuses `users._client` rather than opening a second pool.
+- **Client:** `api.js` gets `getScriptDraft` / `saveScriptDraft` /
+  `clearScriptDraft`; `ScriptToStoryboard.jsx` loads the draft on mount and
+  autosaves on a 1.2s debounce, with a quiet "✓ Draft saved" line under the box.
+- **The bug that mattered, guarded with `draftReady`:** `script` starts as `""`,
+  so a naive debounce fires on mount and OVERWRITES the saved draft with an empty
+  string before the GET returns — autosave that eats your work. Nothing saves
+  until the load settles. The load also refuses to clobber text typed while it
+  was in flight.
+- **Also switched `API_USER_STORE=local` → `mongo`** (user asked). Verified
+  register → login → `/auth/me` → wrong-password-401 through the real API, and
+  that `lib@test.dev` (local-file-only) is now invisible — proving it isn't
+  falling back. `.env` backed up to `.env.bak.20260803235007`.
+- **Dropped the `sample_mflix` database** (67,661 docs, 123 MB of Atlas sample
+  data — nothing to do with this project; its 185-doc `users` collection was what
+  made Atlas look full of strangers). Guarded: asserted the target wasn't
+  `config.MONGODB_DB` and re-counted the real users collection either side.
+- **Verified:** 25 draft checks (empty read, save/read-back, overwrite, one doc
+  per user in Mongo, owner isolation between two accounts, 401 without a token,
+  413 oversize with the previous draft surviving, delete, full cleanup) + 16 auth
+  checks. `npm run build` clean. 60 endpoints in the OpenAPI spec.
+- **Gotcha for the next agent:** enumerate routes with `app.openapi()['paths']`,
+  NOT by walking `app.routes` — included routers appear as `_IncludedRouter`
+  objects with no `.methods`, so a naive walk silently drops `/auth/*`,
+  `/animatics/*` and `/scripts/*` and reports 41 endpoints instead of 60.
+- **Not done:** a multi-script library (list/rename/delete) — user chose the
+  single-draft scope. Not browser-tested; backend is covered by the checks above
+  and the client build is clean, but the "✓ Draft saved" line hasn't been seen
+  in a real browser.
+
+### 2026-08-03 — Image seeding: measured, wired in, and NOT a guarantee
+
+- **Question:** are the varying faces/framing fixable with a seed?
+- **Measured live** (`gemini-3.1-flash-image`, Vertex). The API **accepts
+  `seed` and it does influence output**: two back-to-back calls at seed 42 came
+  back **pixel-identical** (max channel diff 0), seed 999 came back clearly
+  different (max diff 223).
+- **But it does NOT reproduce reliably.** The same test against real
+  `generate_storyboard_panel` requests returned different images both times,
+  with the seed instrumented and confirmed identical in the sent config. The
+  runs that reproduced were back-to-back; the ones that failed were separated by
+  429 backoff. Best guess: reproducibility holds while you land on the same
+  serving replica. **Do not tell users a board redraws identically.**
+- **Methodology note that changes the answer:** compare **pixels, not PNG
+  bytes**. The encoder isn't byte-stable — the first probe hashed file bytes and
+  wrongly concluded "seed ignored" when the images were pixel-identical.
+- **Wired in anyway** (harmless, sometimes helps): `_seed_for()` + `_image_config()`
+  in `gemini_client.py`, applied to all four generators. The seed is derived
+  **per request from the prompt**, never fixed globally.
+- **Why not one global seed:** every Retry button resends an *identical*
+  request, so a constant seed would hand back the identical picture forever.
+  `variation=None` (no seed) is passed by `regenerate_panel`,
+  `regenerate_single_part`, `regenerate_single_view`, and both reference
+  endpoints — for references, re-running IS how the user asks for a different
+  face, and downstream consistency comes from the SAVED reference file anyway.
+- **Bug caught by testing, worth not reintroducing:** the first version mixed the
+  retry `attempt` number into the seed (so a rejected sheet wouldn't redraw
+  identically). That meant **any transient 429 changed the seed** and destroyed
+  reproducibility. Replaced with a `redraw` counter bumped ONLY when an image is
+  returned and rejected by `_is_valid_sheet` / `_is_valid_reference` / the size
+  check — transport failures never touch it.
+- **Verified:** seed-derivation logic (8 cases: reproducible, prompt-sensitive,
+  `variation=None` → no seed, redraw bumps it, explicit variation, `IMAGE_SEED=none`
+  kill switch, range, config carries/omits). Live: 8 image calls. All modules import
+  clean. **Quota was exhausted by the end** — the teapot re-test could not be
+  repeated, so the "same replica" explanation is a hypothesis, not a finding.
+- **Not changed:** `run_character.py`'s CLI Step 0 reference stays seeded (it's a
+  pipeline run, and `IMAGE_SEED=none` is the escape hatch).
+
+### 2026-08-03 — Breakdown determinism + a grounding (hallucination) report
+
+- **Asked:** what temperature do we use, is the same script reproducible, how is
+  hallucination handled, and is the model hallucinating?
+- **Found:** exactly ONE temperature existed in the repo — `temperature=0.4` on
+  the breakdown call. Every image call (`gemini_client.py` ×4) sent only
+  `response_modalities=["IMAGE"]`, i.e. provider defaults. No `top_p`, no seed
+  anywhere. Grounding covered ONE field (`script_line`, via `_find_span`);
+  `description`, the cast list and the asset list were taken on trust — and
+  `description` is what actually gets drawn.
+- **Determinism.** The breakdown is extraction, not invention, so it now defaults
+  to **greedy decoding with a fixed seed**: `TEXT_TEMPERATURE=0.0`,
+  `TEXT_TOP_P=1.0`, `TEXT_SEED=42`, all env-overridable via `_sampling_kwargs()`
+  (`TEXT_SEED=none` restores per-run variation). Unknown kwargs are dropped with
+  a warning rather than crashing on an older google-genai. Verified against
+  google-genai 2.12.1: `seed`/`top_p`/`temperature` all exist on
+  `GenerateContentConfig`.
+- **Honest limits, stated in `.env.example`:** no Gemini endpoint promises
+  bit-exact reproducibility (serving-side batching), `gemini-2.5-flash` is a
+  rolling ALIAS so pin a dated snapshot for cross-week comparability, and
+  **image generation has no seed parameter at all** — panels and character refs
+  vary run to run no matter what. Default model id left ALONE rather than
+  guessing a snapshot id that might 404.
+- **New `build_grounding_report()`** in `script_breakdown.py` — measures what the
+  script actually supports and REPORTS (never deletes; a low score is evidence,
+  not proof). It covers: quote match kind, description/script content-word
+  overlap (`MIN_DESCRIPTION_OVERLAP = 0.30`, with camera vocabulary excluded so
+  framing words don't count either way), cast + asset names absent from the
+  script, names used in a shot but missing from the cast/asset list (that
+  spelling drift also breaks Stage B reference lookup), and dialogue attributed
+  to non-cast speakers.
+- **The fuzzy match is no longer invisible.** `_find_span` returns `(start, end,
+  kind)` and each shot carries `script_line_match` = `"exact"` | `"fuzzy"` |
+  `""`. The ≥50%-coverage fallback can resolve a half-paraphrased quote, and
+  that used to look identical to a verbatim one on the card.
+- **Deliberately NOT checked:** whether `dialogue` is verbatim. The prompt asks
+  the model to turn reported speech into first-person spoken lines, so rewording
+  there is the feature working. Documented in the code so nobody "fixes" it.
+- **Surfaced through the API:** `Grounding` + `WeakDescription` schemas,
+  `ScriptBreakdownResponse.grounding`, `Shot.script_line_match`. Both new fields
+  default, so existing clients and stored boards still validate. A per-breakdown
+  summary + one warning per issue now goes to the log.
+- **Verified:** `python tests/grounding_check.py` — 30 checks, all pass (no
+  network, no AI quota). Covers env override + junk-value fallback, exact vs
+  fuzzy vs invented quotes, and every report field, including that a CLEAN
+  breakdown emits zero warnings (a report that cries wolf is worthless). Also
+  confirmed the real `GenerateContentConfig` constructs with the new kwargs, the
+  response model round-trips, and `server.main` imports clean.
+- **Not done:** the React client doesn't display `grounding` yet — it's in the
+  API response and the logs only. Left out deliberately (UI work + browser
+  testing wasn't asked for).
 
 ### 2026-08-03 — PDF: dialogue is LABELLED, and the blank band is gone
 
@@ -3214,6 +3573,39 @@ mesh, zip cache-bust.
 board is saved and re-openable, with rename / duplicate / delete / public share
 link per card. Note that persistence follows the job store — under
 `API_JOB_STORE=memory` the library empties when the backend restarts.
+
+**Profile (2026-08-04):** the app opens on **Home**. A Profile page holds
+identity (name, display name, timezone), work (company, role) and **storyboard
+defaults** (style / aspect / genre) that pre-fill the new-storyboard form.
+3D API keys, password change and Delete account moved there from Home.
+`PATCH /auth/me` is allow-listed — it can never write `password_hash`,
+`disabled` or `email`.
+
+**Review step is durable (2026-08-04):** a breakdown is saved immediately as a
+`DRAFT` storyboard job, so reviewed shots / cast / assets / world survive a
+refresh; Generate PROMOTES that same record into the board. Drafts are hidden
+from the library and resumed via `GET /storyboards/draft`.
+
+**Storage (2026-08-04):** MongoDB is now the system of record for EVERYTHING
+except image/video bytes — accounts, script drafts, and every job (character
+runs, storyboards, animatics, and any workflow added later) via the one
+`JobStore` interface. 18 existing jobs migrated. GCS URLs land in the job's
+`result`, so they persist in Mongo the moment GCS is enabled. See the
+**Storage rule** section near the top before adding a workflow.
+
+**Script autosave (2026-08-04):** the text panel now saves what you type to
+MongoDB on a debounce (`/scripts/draft`, one draft per user) and restores it on
+load, so a refresh no longer loses an ungenerated script. User accounts moved to
+Mongo too (`API_USER_STORE=mongo`). Generated WORK is still not in Mongo: jobs
+and storyboards remain `API_JOB_STORE=memory` + `.local_jobs.json`, and images
+stay on local disk under `output/` and `uploads/`.
+
+**Breakdown trust (2026-08-03):** the script breakdown runs greedy with a fixed
+seed (`TEXT_TEMPERATURE` / `TEXT_TOP_P` / `TEXT_SEED`), and every breakdown now
+returns a `grounding` report saying which panels the script actually supports.
+Image generation stays non-reproducible — that API exposes no seed.
+**Open follow-up:** show `grounding.warnings` on the shot-review screen (it's in
+the API response and the logs today, but invisible in the UI).
 
 **Not yet verified live** (needs real keys / steady backend):
 - **3D generation** — Meshy path is coded but not run live; **Tripo is entirely

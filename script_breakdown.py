@@ -44,6 +44,23 @@ INITIAL_BACKOFF_SECONDS = 4  # doubles each retry: 4s, 8s, 16s
 # Hard cap so a huge script can't produce a runaway number of panels.
 MAX_SHOTS = 60
 
+# ---------------------------------------------------------------------------
+# Sampling — the breakdown is EXTRACTION, not invention
+# ---------------------------------------------------------------------------
+# Reading a script into shots has a right answer, so the same script should give
+# the same shot list twice. Temperature 0 with a fixed seed is as close to that
+# as this API gets. Two caveats worth knowing:
+#   - Gemini exposes no bit-exact reproducibility. Serving-side batching means
+#     even temperature 0 can differ occasionally. This makes runs COMPARABLE,
+#     not identical.
+#   - `gemini-2.5-flash` is a rolling ALIAS. If you need runs to stay comparable
+#     across weeks, pin VERTEX_TEXT_MODEL / GEMINI_TEXT_MODEL to a dated
+#     snapshot — the sampling settings below can't hold a moving model still.
+# Raise TEXT_TEMPERATURE if you deliberately want varied readings of one script.
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_TOP_P = 1.0
+DEFAULT_SEED = 42
+
 
 class ScriptBreakdownError(Exception):
     """Raised when a script can't be broken down into shots.
@@ -74,6 +91,48 @@ def _model_id(provider: str) -> str:
     if provider == "gemini":
         return os.environ.get("GEMINI_TEXT_MODEL", DEFAULT_TEXT_MODEL)
     return os.environ.get("VERTEX_TEXT_MODEL", DEFAULT_TEXT_MODEL)
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var, falling back to `default` when unset or junk."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("[breakdown] %s=%r is not a number — using %s.", name, raw, default)
+        return default
+
+
+def _sampling_kwargs() -> dict:
+    """Determinism settings for the breakdown call (see DEFAULT_TEMPERATURE).
+
+    Set TEXT_SEED to "none"/"off" to let the backend pick a seed — i.e. to get a
+    different reading of the same script on each run.
+    """
+    kwargs: dict = {
+        "temperature": _env_float("TEXT_TEMPERATURE", DEFAULT_TEMPERATURE),
+        "top_p": _env_float("TEXT_TOP_P", DEFAULT_TOP_P),
+    }
+
+    raw_seed = (os.environ.get("TEXT_SEED") or str(DEFAULT_SEED)).strip()
+    if raw_seed.lower() not in ("", "none", "off", "random"):
+        try:
+            kwargs["seed"] = int(raw_seed)
+        except ValueError:
+            logger.warning("[breakdown] TEXT_SEED=%r is not an integer — ignoring.", raw_seed)
+
+    # Older google-genai builds don't carry every generation field. Drop what
+    # this SDK doesn't know rather than fail the whole breakdown on a kwarg.
+    supported = types.GenerateContentConfig.model_fields
+    dropped = [k for k in kwargs if k not in supported]
+    if dropped:
+        logger.warning(
+            "[breakdown] google-genai does not support %s — upgrade the SDK for "
+            "reproducible runs.", ", ".join(dropped),
+        )
+    return {k: v for k, v in kwargs.items() if k in supported}
 
 
 def _create_client(provider: str):
@@ -347,14 +406,23 @@ def _flatten_script(text: str) -> tuple[str, list[int]]:
     return "".join(flat), origin
 
 
-def _find_span(flat: str, excerpt: str, since: int = 0) -> tuple[int, int] | None:
+def _find_span(flat: str, excerpt: str, since: int = 0) -> tuple[int, int, str] | None:
     """Character span of `excerpt` within `flat`, or None if it isn't really there.
+
+    Returns `(start, end, kind)` where kind is "exact" (the model quoted the
+    script word for word) or "fuzzy" (only the head and tail of the quote were
+    findable — the model paraphrased the middle, and the span was widened to the
+    real text between them).
 
     Exact match first. Failing that, anchor on the longest word-PREFIX that does
     appear (models drift at the tail of a quote more than at its head) and
     stretch to the longest word-SUFFIX still findable after it. The result is
     rejected unless it covers at least half the quote, so a single coincidental
     phrase can't pass as a match.
+
+    That fuzzy path is a real leniency: half a quote can be paraphrase and still
+    resolve. The kind is reported back so a caller can tell a verbatim quote from
+    a reconstructed one instead of both looking equally solid on a shot card.
 
     `since` is where the PREVIOUS shot's quote ended. Shots run in reading order,
     so a match at or after that point is preferred; we only fall back to a global
@@ -369,7 +437,7 @@ def _find_span(flat: str, excerpt: str, since: int = 0) -> tuple[int, int] | Non
     for frm in (since, 0) if since else (0,):
         pos = _exact(frm)
         if pos >= 0:
-            return pos, pos + len(excerpt)
+            return pos, pos + len(excerpt), "exact"
 
     words = excerpt.split(" ")
     if len(words) < 5:  # too short to anchor safely
@@ -394,7 +462,7 @@ def _find_span(flat: str, excerpt: str, since: int = 0) -> tuple[int, int] | Non
                 end = max(end, p + len(probe))
                 break
         if (end - start) >= len(excerpt) * 0.5:
-            return start, end
+            return start, end, "fuzzy"
     return None
 
 
@@ -404,8 +472,10 @@ def _attach_script_lines(shots: list[dict], script_text: str) -> None:
     Sets `script_line` to EXACTLY the matched passage as it appears in the script
     — the sentence(s) that became this shot, not the whole line containing them,
     so shots from one long paragraph each get their own text. Also sets the
-    1-based `script_line_start` / `script_line_end` for display. Unlocatable
-    quotes leave the fields blank.
+    1-based `script_line_start` / `script_line_end` for display, and
+    `script_line_match` to "exact" or "fuzzy" so a paraphrased quote that only
+    half-matched is distinguishable from one the model really copied.
+    Unlocatable quotes leave the fields blank.
     """
     text = script_text or ""
     flat, origin = _flatten_script(text)
@@ -416,8 +486,9 @@ def _attach_script_lines(shots: list[dict], script_text: str) -> None:
         span = _find_span(flat, excerpt, since=cursor)
         if not span:
             continue
-        start = origin[span[0]]
-        end = origin[min(span[1], len(origin)) - 1] + 1
+        start_flat, end_flat, kind = span
+        start = origin[start_flat]
+        end = origin[min(end_flat, len(origin)) - 1] + 1
         passage = text[start:end].strip()
         if not passage:
             continue
@@ -426,7 +497,8 @@ def _attach_script_lines(shots: list[dict], script_text: str) -> None:
         shot["script_line"] = passage
         shot["script_line_start"] = text.count("\n", 0, start) + 1
         shot["script_line_end"] = text.count("\n", 0, end - 1) + 1
-        cursor = span[1]
+        shot["script_line_match"] = kind
+        cursor = end_flat
 
 
 # Spoken lines per shot. A panel is one drawable moment, so a shot carrying more
@@ -505,6 +577,9 @@ def _coerce_shots(raw) -> list[dict]:
                 "script_line": "",
                 "script_line_start": None,
                 "script_line_end": None,
+                # "exact" | "fuzzy" | "" — how well the quote matched. See
+                # _find_span; "" means it was never found in the script at all.
+                "script_line_match": "",
                 "script_excerpt": str(item.get("script_excerpt", "")).strip(),
             }
         )
@@ -634,6 +709,203 @@ def _coerce_assets(raw) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Grounding report — what, if anything, the model made up
+# ---------------------------------------------------------------------------
+# The quote check above protects ONE field (`script_line`). Everything else the
+# model returns was taken on trust: a shot's `description` is what actually gets
+# drawn, and the cast / asset lists drive reference generation. This section
+# checks those against the script too and reports what doesn't line up.
+#
+# It REPORTS rather than deletes. A weak overlap score is evidence, not proof —
+# a description legitimately adds framing words the script never used — so the
+# call on whether a shot is wrong stays with the person reviewing the board.
+#
+# Deliberately NOT checked: whether `dialogue` lines are verbatim. The prompt
+# asks the model to turn reported speech into spoken first person ("he declares
+# the armour will make them kings" → "This armour will make us kings"), so
+# rewording there is the feature working, not a hallucination. What IS checked
+# is who the line is attributed to.
+
+# Words a storyboard description legitimately contains that no script would —
+# camera, framing and rendering vocabulary. Counting these as "grounded" would
+# flatter every shot; counting them as invented would condemn every shot.
+_CRAFT_WORDS = frozenset(
+    """
+    shot close closeup close-up wide medium long establishing extreme angle
+    camera frame framing foreground background midground left right centre center
+    over shoulder point view pov pan tilt zoom track dolly crane aerial overhead
+    high low eye level dutch reverse two-shot insert cutaway silhouette profile
+    focus blurred sharp light lighting lit shadow shadows dark bright dim glow
+    warm cool colour color tone contrast composition scene panel visible seen
+    shows showing sits stands stood standing sitting looks looking holds holding
+    face faces facing behind front near beside across toward towards
+    """.split()
+)
+
+# Ordinary English that carries no evidence either way.
+_STOPWORDS = frozenset(
+    """
+    the and that with from into onto they them their there this these those
+    have has had been being was were will would could should must about above
+    after again against because before below between both down during each few
+    more most other some such than then they very what when where which while
+    who whom why your yours himself herself itself themselves what's
+    """.split()
+)
+
+_WORD_RE = re.compile(r"[a-z']{3,}")
+
+# Below this share of its content words appearing anywhere in the script, a
+# description is flagged for review. Deliberately low: descriptions rephrase.
+MIN_DESCRIPTION_OVERLAP = 0.30
+
+
+def _content_words(text: str) -> set[str]:
+    """Meaningful lowercase words in `text` — no stopwords, no craft vocabulary."""
+    words = set(_WORD_RE.findall(_norm(text)))
+    return {w for w in words if w not in _STOPWORDS and w not in _CRAFT_WORDS}
+
+
+def _describes_script(description: str, script_words: set[str]) -> float:
+    """Share of a description's content words that occur anywhere in the script.
+
+    A blunt lexical measure, not comprehension: it catches a shot built out of
+    nouns the script never contains (an invented character, an invented place),
+    and stays quiet about rephrasing. Returns 1.0 for a description with no
+    content words at all, so pure camera directions aren't flagged.
+    """
+    words = _content_words(description)
+    if not words:
+        return 1.0
+    return len(words & script_words) / len(words)
+
+
+def _in_script(name: str, flat_script: str) -> bool:
+    """True when every substantial token of `name` appears in the script.
+
+    Substring rather than whole-word matching, so a possessive or inflected
+    mention ("Lubdhaka's bow") still grounds the name "Lubdhaka".
+    """
+    tokens = [t for t in _WORD_RE.findall(_norm(name)) if t not in _STOPWORDS]
+    if not tokens:
+        return True  # nothing checkable — don't manufacture a warning
+    return all(t in flat_script for t in tokens)
+
+
+def build_grounding_report(
+    shots: list[dict],
+    characters: list[dict],
+    assets: list[dict],
+    script_text: str,
+) -> dict:
+    """Measure how much of the breakdown is actually supported by the script.
+
+    Returns counts plus the specific items that look invented. `warnings` is a
+    short human-readable list suitable for showing to the writer; everything
+    else is there for logging and debugging.
+    """
+    flat_script, _ = _flatten_script(script_text or "")
+    script_words = _content_words(script_text or "")
+
+    exact = sum(1 for s in shots if s.get("script_line_match") == "exact")
+    fuzzy = sum(1 for s in shots if s.get("script_line_match") == "fuzzy")
+    missing = len(shots) - exact - fuzzy
+
+    weak: list[dict] = []
+    for shot in shots:
+        overlap = _describes_script(shot.get("description", ""), script_words)
+        if overlap < MIN_DESCRIPTION_OVERLAP:
+            weak.append(
+                {
+                    "scene_number": shot.get("scene_number"),
+                    "shot_number": shot.get("shot_number"),
+                    "overlap": round(overlap, 2),
+                }
+            )
+
+    cast = {c["name"].lower() for c in characters}
+    listed_assets = {a["name"].lower() for a in assets}
+
+    unknown_characters = sorted(
+        c["name"] for c in characters if not _in_script(c["name"], flat_script)
+    )
+    unknown_assets = sorted(
+        a["name"] for a in assets if not _in_script(a["name"], flat_script)
+    )
+
+    # Names used inside a shot that never made it into the cast/asset list. The
+    # prompt asks for the SAME spelling in both, so a mismatch means either an
+    # invented name or a spelling drift — both break reference lookup at Stage B.
+    uncast: set[str] = set()
+    unlisted: set[str] = set()
+    speakers: set[str] = set()
+    for shot in shots:
+        uncast.update(n for n in shot.get("characters", []) if n.lower() not in cast)
+        unlisted.update(n for n in shot.get("assets", []) if n.lower() not in listed_assets)
+        speakers.update(
+            d["character"]
+            for d in shot.get("dialogue", [])
+            if d.get("character") and d["character"].lower() not in cast
+        )
+
+    report = {
+        "shots_total": len(shots),
+        "quotes_exact": exact,
+        "quotes_fuzzy": fuzzy,
+        "quotes_missing": missing,
+        "quote_rate": round((exact + fuzzy) / len(shots), 3) if shots else 0.0,
+        "weak_descriptions": weak,
+        "unknown_characters": unknown_characters,
+        "unknown_assets": unknown_assets,
+        "uncast_shot_characters": sorted(uncast),
+        "unlisted_shot_assets": sorted(unlisted),
+        "uncast_speakers": sorted(speakers),
+        "warnings": [],
+    }
+
+    warnings: list[str] = []
+    if missing:
+        warnings.append(
+            f"{missing} of {len(shots)} shots quote text that isn't in the script — "
+            f"those panels show no script line."
+        )
+    if fuzzy:
+        warnings.append(
+            f"{fuzzy} shot(s) only partly matched the script; their quote was "
+            f"reconstructed from the surrounding text."
+        )
+    if weak:
+        warnings.append(
+            f"{len(weak)} shot description(s) share little wording with the script "
+            f"and may contain invented detail."
+        )
+    if unknown_characters:
+        warnings.append(
+            "Cast not found in the script: " + ", ".join(unknown_characters) + "."
+        )
+    if unknown_assets:
+        warnings.append(
+            "Assets not found in the script: " + ", ".join(unknown_assets) + "."
+        )
+    if uncast:
+        warnings.append(
+            "Characters used in shots but missing from the cast list: "
+            + ", ".join(sorted(uncast)) + "."
+        )
+    if unlisted:
+        warnings.append(
+            "Assets used in shots but missing from the asset list: "
+            + ", ".join(sorted(unlisted)) + "."
+        )
+    if speakers:
+        warnings.append(
+            "Dialogue attributed to non-cast speakers: " + ", ".join(sorted(speakers)) + "."
+        )
+    report["warnings"] = warnings
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 def break_down_script(
@@ -656,7 +928,14 @@ def break_down_script(
         script_line_end}, …],
         "characters": [{name, description}, …],
         "assets": [{name, category, description}, …],
-        "world": {setting, culture, ethnicity, wardrobe, environment, notes}}.
+        "world": {setting, culture, ethnicity, wardrobe, environment, notes},
+        "grounding": {…}}.
+
+        `grounding` is the hallucination report — how many quotes matched the
+        script exactly vs. were reconstructed vs. weren't found, which shot
+        descriptions share almost no wording with the script, and which cast /
+        asset names don't appear in it. See build_grounding_report. Its
+        `warnings` list is written for a human; the rest is for logs.
 
         `world` is the story's region/period/culture read from the script. It is
         prefixed onto EVERY image prompt (cast, props, backgrounds, panels) so a
@@ -665,7 +944,9 @@ def break_down_script(
 
         `script_line` is the VERBATIM script text this shot was drawn from, with
         its 1-based line range — empty when the model's quote couldn't be found
-        in the script.
+        in the script. `script_line_match` says how it matched ("exact",
+        "fuzzy", or "" when it wasn't found), so a reconstructed quote is
+        distinguishable from one the model really copied.
 
         `dialogue` is the lines spoken in that shot as [{character, line}, …],
         and is EMPTY for a shot where nobody speaks. It is shown to the user on
@@ -707,7 +988,7 @@ def break_down_script(
                     system_instruction=_SYSTEM_INSTRUCTION,
                     response_mime_type="application/json",
                     response_schema=_breakdown_schema(),
-                    temperature=0.4,
+                    **_sampling_kwargs(),
                 ),
             )
 
@@ -741,6 +1022,7 @@ def break_down_script(
             _attach_script_lines(shots, text)
             characters = _coerce_characters(chars_raw)
             assets = _coerce_assets(assets_raw)
+            grounding = build_grounding_report(shots, characters, assets, text)
             traced = sum(1 for s in shots if s.get("script_line"))
             spoken = sum(1 for s in shots if s.get("dialogue"))
             scenes = shots[-1]["scene_number"] if shots else 0
@@ -751,11 +1033,21 @@ def break_down_script(
                 len(shots), scenes, traced, spoken, len(characters), len(assets),
                 world.get("culture") or "—", world.get("ethnicity") or "—",
             )
+            logger.info(
+                "[breakdown] Grounding: quotes %d exact / %d fuzzy / %d missing "
+                "(rate %.0f%%), %d weak description(s).",
+                grounding["quotes_exact"], grounding["quotes_fuzzy"],
+                grounding["quotes_missing"], grounding["quote_rate"] * 100,
+                len(grounding["weak_descriptions"]),
+            )
+            for warning in grounding["warnings"]:
+                logger.warning("[breakdown] %s", warning)
             return {
                 "shots": shots,
                 "characters": characters,
                 "assets": assets,
                 "world": world,
+                "grounding": grounding,
             }
 
         except ScriptBreakdownError:

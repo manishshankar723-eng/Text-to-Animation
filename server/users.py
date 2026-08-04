@@ -89,9 +89,10 @@ def get_collection():
     with _lock:
         if _collection is not None:  # re-check inside the lock
             return _collection
-        from pymongo import MongoClient
+        from .mongo import get_client
 
-        _client = MongoClient(config.MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # One shared client across users / drafts / jobs — see mongo.py.
+        _client = get_client()
         db = _client[config.MONGODB_DB]
         col = db[config.USERS_COLLECTION]
         col.create_index("email", unique=True)
@@ -158,6 +159,46 @@ def update_password(email: str, password_hash: str) -> bool:
     result = get_collection().update_one(
         {"email": key}, {"$set": {"password_hash": password_hash}}
     )
+    return result.matched_count > 0
+
+
+# Profile fields a user is allowed to change about themselves. An allow-list,
+# not a passthrough: without it a crafted PATCH could set `password_hash`,
+# `disabled` or `email` and take over or lock out the account.
+PROFILE_FIELDS = frozenset(
+    {
+        "full_name",
+        "display_name",
+        "company",
+        "role",
+        "default_style",
+        "default_aspect_ratio",
+        "default_genre",
+        "timezone",
+    }
+)
+
+
+def update_profile(email: str, fields: dict) -> bool:
+    """Write profile fields onto the user record. Returns True if updated.
+
+    Only keys in PROFILE_FIELDS are written; anything else is dropped silently.
+    Values are stored as given (already length-capped by the request model).
+    """
+    key = _normalize_email(email)
+    clean = {k: v for k, v in (fields or {}).items() if k in PROFILE_FIELDS}
+    if not clean:
+        return True  # nothing to do is success, not failure
+
+    if _use_local():
+        with _lock:
+            data = _local_load()
+            if key not in data:
+                return False
+            data[key].update(clean)
+            _local_save(data)
+            return True
+    result = get_collection().update_one({"email": key}, {"$set": clean})
     return result.matched_count > 0
 
 

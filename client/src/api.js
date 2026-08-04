@@ -99,6 +99,17 @@ export function login(email, password) {
 export function me() {
   return request("/auth/me");
 }
+// Partial: send only the fields being edited. Anything omitted is left alone,
+// and privilege fields (email / disabled / password_hash) are ignored server-side.
+export function updateProfile(fields) {
+  return request("/auth/me", { method: "PATCH", body: fields });
+}
+export function changePassword(currentPassword, newPassword) {
+  return request("/auth/me/password", {
+    method: "POST",
+    body: { current_password: currentPassword, new_password: newPassword },
+  });
+}
 export function deleteAccount() {
   return request("/auth/me", { method: "DELETE" });
 }
@@ -117,13 +128,48 @@ export function deleteApiKey(provider) {
   return request(`/auth/me/api-keys/${provider}`, { method: "DELETE" });
 }
 
+// --- Script draft (autosave) ---
+// The script currently being written, so a refresh can't lose it. ONE draft per
+// account; saving overwrites it. Reading never 404s — a user who has never
+// saved gets an empty draft back.
+export function getScriptDraft() {
+  return request("/scripts/draft"); // → { text, title, updated_at }
+}
+export function saveScriptDraft({ text, title } = {}) {
+  return request("/scripts/draft", {
+    method: "PUT",
+    body: { text: text || "", title: title || "" },
+  });
+}
+export function clearScriptDraft() {
+  return request("/scripts/draft", { method: "DELETE" });
+}
+
+// --- Storyboard draft (the review step's backing store) ---
+// A breakdown is saved server-side the moment it returns, so the reviewed
+// shots / cast / assets / world survive a refresh. `getStoryboardDraft` returns
+// { job_id: null, … } when there is nothing to resume — not an error.
+export function getStoryboardDraft() {
+  return request("/storyboards/draft");
+}
+export function saveStoryboardDraft(jobId, fields) {
+  // PATCH is partial: send only what changed. Omitted fields are left alone.
+  return request(`/storyboards/draft/${jobId}`, { method: "PATCH", body: fields });
+}
+export function discardStoryboardDraft(jobId) {
+  return request(`/storyboards/draft/${jobId}`, { method: "DELETE" });
+}
+
 // --- Script → Storyboard ---
 // Stage A: break a script into an ordered shot list. Returns { shots, count,
 // style, aspect_ratio }. `provider` is optional ("vertex" | "gemini").
-export function breakdownScript(script, { style, aspectRatio, genre, provider } = {}) {
+// Also returns `draft_job_id`: the breakdown is saved as a DRAFT job so the
+// review step is backed by the database. Pass `title` so the saved draft is
+// named something better than its opening words.
+export function breakdownScript(script, { style, aspectRatio, genre, provider, title } = {}) {
   return request("/storyboards/breakdown", {
     method: "POST",
-    body: { script, style, aspect_ratio: aspectRatio, genre, provider },
+    body: { script, style, aspect_ratio: aspectRatio, genre, provider, title },
   });
 }
 
@@ -142,6 +188,7 @@ export function createStoryboard({
   world,
   script,
   provider,
+  draftJobId,
 } = {}) {
   return request("/storyboards", {
     method: "POST",
@@ -151,6 +198,9 @@ export function createStoryboard({
       aspect_ratio: aspectRatio,
       title,
       genre,
+      // Promotes the draft this board was reviewed as, instead of creating a
+      // second record. Harmless to omit.
+      draft_job_id: draftJobId || null,
       // The script's region/period/culture — prefixed onto every panel prompt.
       world: world || null,
       // Saved so a re-opened / duplicated board can still show the source script.

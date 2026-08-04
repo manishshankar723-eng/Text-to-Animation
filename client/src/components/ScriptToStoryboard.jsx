@@ -19,42 +19,26 @@ import ScriptLineBox from "./ScriptLineBox.jsx";
 import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
-
-// Visual styles. The first 7 show as chips; the rest live behind "＋ More".
-// "custom" ("Add Your Own Style") reveals a free-text box.
+// Style / aspect / genre lists live in one module so the Profile page's
+// "usual choices" and this form can never offer different options.
 //
 // "rough-sketch" is the DEFAULT and is deliberately first: a plain grey
 // storyboard thumbnail is what a board is FOR (staging and timing), it reads
 // instantly, and because there's no rendered detail there's nothing for the
 // model to get wrong — so it needs far fewer expensive re-draws. Anyone who
 // wants a polished look just picks another style and gets the full flow.
-const STYLES = [
-  { id: "rough-sketch", label: "✏️ Rough Sketch" },
-  { id: "sketch", label: "🖊️ Sketch" },
-  { id: "comic", label: "💥 Comic" },
-  { id: "cinematic", label: "🎬 Cinematic" },
-  { id: "animation-3d", label: "🧸 Animation 3D" },
-  { id: "watercolor", label: "🎨 Watercolor Paint" },
-];
-const MORE_STYLES = [
-  { id: "photo-commercial", label: "📷 Photo / Commercial" },
-  { id: "charcoal", label: "🖤 Charcoal Sketch" },
-  { id: "dark-anime", label: "🌃 Dark Anime" },
-  { id: "flat-vector", label: "🔷 Flat / Vector" },
-  { id: "noir", label: "🎞️ Noir" },
-  { id: "stick-figure", label: "🏃 Stick Figure" },
-  { id: "graphic-novel", label: "📖 Graphic Novel" },
-  { id: "custom", label: "＋ Custom" },
-];
-const ALL_STYLES = [...STYLES, ...MORE_STYLES];
-const DEFAULT_STYLE = "rough-sketch"; // pre-selected default (highlighted)
-
-// Styles that draw straight from the shot prompts, with NO locked character /
-// prop / background reference images — so the cast and props steps are skipped
-// entirely. A rough thumbnail has no rendered faces or sets to keep consistent,
-// which is exactly why it's cheap: no reference images to generate either.
-// Every other style keeps the full cast → props → panels flow unchanged.
-const REFERENCE_FREE_STYLES = new Set(["rough-sketch"]);
+import {
+  STYLES,
+  MORE_STYLES,
+  ALL_STYLES,
+  DEFAULT_STYLE,
+  REFERENCE_FREE_STYLES,
+  ASPECTS,
+  DEFAULT_ASPECT,
+  GENRES,
+  MORE_GENRES,
+  ALL_GENRES,
+} from "../storyboardOptions.js";
 
 // A shot's position WITHIN its scene, derived from the current list rather than
 // read off the stored `shot_number`. Moving, inserting or deleting a shot never
@@ -67,40 +51,6 @@ function sceneShotNo(list, index) {
   return n;
 }
 
-const ASPECTS = [
-  { id: "21:9", note: "Ultra-wide" },
-  { id: "16:9", note: "Standard HD" },
-  { id: "9:16", note: "Mobile" },
-  { id: "2:3", note: "Comic page" },
-  { id: "1:1", note: "Square" },
-];
-const DEFAULT_ASPECT = "16:9"; // pre-selected standard frame
-
-// Genre shapes the story's tone / pacing in the shot breakdown. The first 7 show
-// as chips; the rest live behind "＋ More". "default" = no genre bias (let the
-// story decide); "custom" = type your own.
-const GENRES = [
-  { id: "default", label: "✨ Default" },
-  { id: "animation", label: "🎨 Animation" },
-  { id: "commercial", label: "📢 Commercial" },
-  { id: "documentary", label: "🎥 Documentary" },
-  { id: "educational", label: "📚 Educational" },
-  { id: "mythology", label: "🏛️ Mythology" },
-];
-const MORE_GENRES = [
-  { id: "action", label: "💥 Action" },
-  { id: "comedy", label: "😄 Comedy" },
-  { id: "drama", label: "🎭 Drama" },
-  { id: "fantasy", label: "🐉 Fantasy" },
-  { id: "horror", label: "👻 Horror" },
-  { id: "music-video", label: "🎵 Music Video" },
-  { id: "mystery", label: "🔍 Mystery" },
-  { id: "romance", label: "💕 Romance" },
-  { id: "sci-fi", label: "🚀 Science Fiction" },
-  { id: "thriller", label: "⚡ Thriller" },
-  { id: "custom", label: "＋ Custom" },
-];
-const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 
 // How many opening words of the script to use when the user types no title.
 // Four keeps two boards from the same script distinguishable while still
@@ -174,6 +124,165 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     () => () => previewUrls.current.forEach((u) => URL.revokeObjectURL(u)),
     []
   );
+
+  // --- Profile defaults ----------------------------------------------------
+  // The user's usual style / aspect / genre, set once on their profile. Applied
+  // only to an UNTOUCHED form: once they've picked something on this form, or a
+  // draft has been resumed into it, their choice wins over the default. An
+  // empty profile field means "ask me each time" and changes nothing.
+  const profileDefaultsApplied = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await api.me();
+        if (cancelled || profileDefaultsApplied.current) return;
+        if (p?.default_style) setStyle((cur) => (cur === DEFAULT_STYLE ? p.default_style : cur));
+        if (p?.default_aspect_ratio)
+          setAspect((cur) => (cur === DEFAULT_ASPECT ? p.default_aspect_ratio : cur));
+        if (p?.default_genre) setGenre((cur) => (cur === "default" ? p.default_genre : cur));
+        profileDefaultsApplied.current = true;
+      } catch {
+        // No profile / offline — the built-in defaults are already in place.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // --- Script autosave -----------------------------------------------------
+  // A script only became durable once it had been turned into a board, so
+  // anything typed and not yet generated died with a refresh. The draft is now
+  // saved server-side (Mongo) on a debounce, and restored on mount.
+  //
+  // `draftReady` is the important bit: `script` starts as "", so without it the
+  // debounce would fire on mount and OVERWRITE the saved draft with an empty
+  // string before the GET ever came back. Nothing saves until the load settles.
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
+  const draftLastSaved = useRef(null); // last text we actually persisted
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.getScriptDraft();
+        if (cancelled) return;
+        // Only seed an untouched box — never clobber something already typed
+        // (the load is async; the user may have started writing meanwhile).
+        if (d?.text) {
+          setScript((cur) => (cur.trim() ? cur : d.text));
+          if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
+        }
+        draftLastSaved.current = d?.text || "";
+        if (d?.updated_at) setDraftSavedAt(d.updated_at);
+      } catch {
+        // Autosave is a convenience — a failed load must never block the form.
+      } finally {
+        if (!cancelled) setDraftReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    if (script === draftLastSaved.current) return; // nothing changed
+    const id = setTimeout(async () => {
+      try {
+        const saved = await api.saveScriptDraft({ text: script, title });
+        draftLastSaved.current = script;
+        setDraftSavedAt(saved?.updated_at || new Date().toISOString());
+      } catch {
+        // Stay quiet: the text is still on screen, and the next keystroke
+        // retries. Shouting about a failed autosave helps nobody mid-sentence.
+      }
+    }, 1200);
+    return () => clearTimeout(id);
+  }, [script, title, draftReady]);
+
+  // --- Storyboard draft (the REVIEW step's backing store) ------------------
+  // A breakdown costs quota, and everything after it — edited shots, cast,
+  // world, generated references — is hand-work. The server saves the breakdown
+  // as a DRAFT job; this keeps that record in step with what's on screen.
+  const [draftJobId, setDraftJobId] = useState(null);
+  const [reviewSavedAt, setReviewSavedAt] = useState(null);
+  // Same guard as the script draft, and it matters more here: `shots` is [] on
+  // mount, so an unguarded autosave would PATCH an empty shot list over a
+  // perfectly good draft before the resume request had even returned.
+  const draftHydrated = useRef(false);
+  const reviewLastSaved = useRef("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.getStoryboardDraft();
+        if (cancelled || !d?.job_id) return;
+        // A resumed draft carries the settings it was reviewed with. Those beat
+        // the profile defaults — block that effect whichever order they finish
+        // in, or reopening a 9:16 draft could snap it back to your usual 16:9.
+        profileDefaultsApplied.current = true;
+        setDraftJobId(d.job_id);
+        // Restore only into an untouched session — never stamp on work the
+        // user has already started while this was in flight.
+        setShots((cur) => (cur.length ? cur : d.shots || []));
+        setCharacters((cur) => (cur.length ? cur : d.characters || []));
+        setAssets((cur) => (cur.length ? cur : d.assets || []));
+        setWorld((cur) => (Object.keys(cur).length ? cur : d.world || {}));
+        setScriptText((cur) => cur || d.script || "");
+        setScript((cur) => (cur.trim() ? cur : d.script || ""));
+        if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
+        if (d.style) setStyle(d.style);
+        if (d.aspect_ratio) setAspect(d.aspect_ratio);
+        if (d.genre) setGenre(d.genre);
+        if (d.character_refs) setCharacterRefs(d.character_refs);
+        if (d.updated_at) setReviewSavedAt(d.updated_at);
+        // Land them back on the work, not on the library.
+        if ((d.shots || []).length) setStep("review");
+      } catch {
+        // No draft, or the server is unreachable — start clean.
+      } finally {
+        if (!cancelled) draftHydrated.current = true;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydrated.current || !draftJobId) return;
+    if (!shots.length) return; // never save an empty shot list over real work
+    const payload = {
+      shots,
+      characters,
+      assets,
+      world,
+      title: effectiveTitle(),
+      style: effectiveStyle(),
+      aspect_ratio: effectiveAspect(),
+      genre: effectiveGenre(),
+      character_refs: characterRefs || {},
+    };
+    const sig = JSON.stringify(payload);
+    if (sig === reviewLastSaved.current) return;
+    const id = setTimeout(async () => {
+      try {
+        const saved = await api.saveStoryboardDraft(draftJobId, payload);
+        reviewLastSaved.current = sig;
+        setReviewSavedAt(saved?.updated_at || new Date().toISOString());
+      } catch {
+        // A promoted draft answers 409 — expected once Generate has run, and
+        // not something to bother the user about mid-edit.
+      }
+    }, 1000);
+    return () => clearTimeout(id);
+  }, [draftJobId, shots, characters, assets, world, characterRefs, title, style, aspect, genre]);
 
   function refKey(name) {
     return (name || "").trim().toLowerCase();
@@ -336,6 +445,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         style: effectiveStyle(),
         aspectRatio: effectiveAspect(),
         genre: effectiveGenre(),
+        title: effectiveTitle(),
       });
       // Hold the result and let the ring finish to 100%. finishBreakdown()
       // (called by the ring on completion) applies it and moves to Review.
@@ -358,6 +468,11 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     setCharacters(res.characters || []);
     setAssets(res.assets || []);
     setWorld(res.world || {});
+    // The server saved this breakdown as a DRAFT job. Holding its id is what
+    // lets every later edit be written back, so a refresh on the review step no
+    // longer throws away work the breakdown had to be paid for.
+    setDraftJobId(res.draft_job_id || null);
+    draftHydrated.current = true;
     // A new breakdown is a new cast — drop refs saved for the previous script
     // so a same-named character can't inherit the old picture.
     clearSavedRefs();
@@ -546,8 +661,15 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         assetCategories,
         world,
         script: scriptText,
+        // Promote the draft this board was reviewed as, rather than leaving it
+        // behind as a second record of the same work.
+        draftJobId,
       });
       setJobId(res.job_id);
+      // The draft has become the board — stop autosaving to it (further PATCHes
+      // would 409) and stop offering it as something to resume.
+      setDraftJobId(null);
+      setReviewSavedAt(null);
       setGeneratedSig(currentSig()); // remember what this board was drawn from
       setBoardOrigin("review");
       setPreflight(null); // confirmed and away — drop the modal
@@ -565,6 +687,15 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
 
   // Wipe the in-flight storyboard so the form / library starts clean.
   function resetWorkflow() {
+    // Starting over means the saved draft is dead — discard it server-side too,
+    // or it would be offered back on the next load. Fire-and-forget: failing to
+    // delete it must not block the user from starting again.
+    if (draftJobId) {
+      api.discardStoryboardDraft(draftJobId).catch(() => {});
+    }
+    setDraftJobId(null);
+    setReviewSavedAt(null);
+    reviewLastSaved.current = "";
     setJobId(null);
     setGeneratedSig(null);
     setShots([]);
@@ -731,6 +862,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               Edit, reorder or delete panels before generating — this is your
               chance to fix the AI before it draws.
             </p>
+            {/* This step used to be lost on refresh, and the breakdown behind it
+                had already cost quota. Say plainly that it's safe now. */}
+            {reviewSavedAt && (
+              <p className="sts-draft-status sts-draft-inline" title={reviewSavedAt}>
+                ✓ Saved — you can close this and come back to it
+              </p>
+            )}
           </div>
         </div>
 
@@ -1006,12 +1144,24 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           </div>
 
           {tab === "paste" ? (
-            <textarea
-              className="prompt-textarea sts-script-area"
-              placeholder="Paste or type your script here…"
-              value={script}
-              onChange={(e) => setScript(e.target.value)}
-            />
+            <>
+              <textarea
+                className="prompt-textarea sts-script-area"
+                placeholder="Paste or type your script here…"
+                value={script}
+                onChange={(e) => setScript(e.target.value)}
+              />
+              {/* Quiet confirmation that the typing is safe. Only appears once
+                  something has actually been saved — an idle "not saved" badge
+                  on an empty box is noise. */}
+              {draftSavedAt && (
+                <div className="sts-draft-status" title={draftSavedAt}>
+                  {script === draftLastSaved.current
+                    ? "✓ Draft saved"
+                    : "Saving…"}
+                </div>
+              )}
+            </>
           ) : (
             <div
               className={`dropzone ${dragOver ? "over" : ""}`}

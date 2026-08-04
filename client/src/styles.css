@@ -1532,6 +1532,45 @@ input[type="checkbox"] {
   letter-spacing: -0.01em;
 }
 
+/* ---- Account avatar ----------------------------------------------------- */
+/* The round person glyph (Avatar.jsx). Same face in the sidebar header, the
+   footer chip and the account modal, so all three read as "you". */
+.avatar-svg {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.avatar-bg {
+  fill: #4f52c9;
+}
+.avatar-fg {
+  fill: #9aa3f5;
+}
+.avatar-initial {
+  fill: #fff;
+  font-family: inherit;
+}
+
+/* Sits at the far right of the brand row — the top-left corner is where people
+   look for "me", and this is the shortest path to the profile. */
+.sb-brand-avatar {
+  margin-left: auto;
+  padding: 2px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 0;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.sb-brand-avatar:hover {
+  border-color: var(--border-gold);
+  transform: scale(1.05);
+}
+.sb-brand-avatar.active {
+  border-color: var(--primary);
+}
+
 .sb-workspace {
   display: flex;
   align-items: center;
@@ -1549,17 +1588,6 @@ input[type="checkbox"] {
 .sb-workspace:hover,
 .sb-workspace.active {
   border-color: var(--border-gold);
-}
-.sb-avatar {
-  flex-shrink: 0;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  color: var(--gold-ink);
-  background: var(--gold-grad);
 }
 .sb-ws-text {
   display: flex;
@@ -1801,18 +1829,6 @@ input[type="checkbox"] {
   align-items: center;
   gap: 1rem;
 }
-.profile-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--gold-ink);
-  background: var(--gold-grad);
-  box-shadow: var(--gold-glow);
-}
 .profile-email {
   font-size: 1.05rem;
   word-break: break-all;
@@ -1976,6 +1992,50 @@ input[type="checkbox"] {
   color: #fff;
   border-color: var(--fail);
 }
+/* ---- Profile page ------------------------------------------------------- */
+/* Stacked cards rather than the Home dashboard grid: these are forms, and a
+   form that changes width between sections is harder to fill in. */
+.profile-page .home-card {
+  margin-bottom: 1rem;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.9rem 1.1rem;
+  margin-top: 0.9rem;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.field-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.profile-save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.profile-saved {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.home-account-actions {
+  margin: 0.7rem 0;
+}
+
 .danger-confirm {
   background: rgba(248, 113, 113, 0.06);
   border: 1px solid rgba(248, 113, 113, 0.25);
@@ -2083,19 +2143,6 @@ input[type="checkbox"] {
   word-break: break-all;
   margin-top: 0.3rem;
 }
-.account-modal-avatar {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  margin: 0 auto 0.6rem;
-  font-size: 1.6rem;
-  font-weight: 700;
-  color: var(--gold-ink);
-  background: var(--gold-grad);
-  box-shadow: var(--gold-glow);
-}
 .account-modal .btn.primary {
   width: 100%;
 }
@@ -2129,6 +2176,21 @@ input[type="checkbox"] {
 }
 .sts-script-area {
   min-height: 150px;
+}
+/* Autosave confirmation under the script box. Deliberately quiet — it should
+   reassure at a glance without competing with the form. */
+.sts-draft-status {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--muted, #8b8b8b);
+  text-align: right;
+  user-select: none;
+}
+/* Same badge under a heading rather than under an input — reads left-aligned
+   there, and needs no top gap because the paragraph above already has one. */
+.sts-draft-inline {
+  text-align: left;
+  margin-top: 4px;
 }
 .sts-clear-file {
   color: var(--primary);

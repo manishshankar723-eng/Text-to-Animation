@@ -1,10 +1,15 @@
 # Secrets — NEVER commit
 .env
+# ...including backups. A copy of .env is still a copy of your credentials.
+.env.bak*
+.env.*.bak
 
 # Local dev user store (contains bcrypt password hashes)
 .local_users.json
 .local_jobs.json
 .local_jobs.json.tmp
+# Autosaved script drafts (local fallback store — the user's own writing)
+.local_drafts.json
 
 # Python
 __pycache__/

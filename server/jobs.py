@@ -2,12 +2,23 @@
 jobs.py — Job persistence.
 
 A JobStore records the lifecycle of each pipeline run so clients can poll
-GET /jobs/{id}. Two backends are available (selected by API_JOB_STORE):
+GET /jobs/{id}. Backends are selected by API_JOB_STORE:
 
-    firestore  — persists jobs in Firestore (survives restarts, multi-process)
-    memory     — in-process dict (no external deps; lost on restart)
+    mongo      — MongoDB (DEFAULT). The system of record for everything the app
+                 produces except the binary files themselves.
+    firestore  — persists jobs in Firestore (legacy; kept for existing deploys)
+    memory     — in-process dict, optionally mirrored to a JSON file. Dev only.
 
-Both share the same interface: create / get / update_status / list.
+All share the same interface: create / get / update / list / delete /
+find_by_share_token.
+
+ARCHITECTURE RULE — every workflow's metadata belongs in Mongo. Character runs,
+storyboards, animatics, and whatever gets added to the sidebar next all create
+their records through this one interface, so a new workflow is persisted simply
+by calling `get_store().create(...)` with a new JobKind. Do NOT invent a
+per-workflow storage path. The only things that do NOT go in Mongo are the image
+and video BYTES; those live on disk (or GCS), and their URLs are stored in the
+job's `result`.
 """
 
 import json
@@ -274,6 +285,136 @@ class FirestoreJobStore(JobStore):
         return Job(**snaps[0].to_dict()) if snaps else None
 
 
+class MongoJobStore(JobStore):
+    """Persists jobs as documents in a MongoDB collection.
+
+    This is the system of record for EVERYTHING the app produces except the
+    binary files themselves: character runs, storyboards, animatics, and any
+    workflow added later. All of them already funnel through JobStore, so a new
+    workflow is persisted here the moment it calls `create()` — there is no
+    per-workflow storage code to remember to write.
+
+    What lives in a job document:
+      - `params`  — the inputs (script text, style, aspect, cast/asset refs, …)
+      - `result`  — the outputs, INCLUDING asset URLs. When GCS is switched on,
+                    `storage.save_character_assets` returns public GCS URLs and
+                    they are written straight into `result`, so the URLs are
+                    persisted here with no extra plumbing.
+      - `progress`, `status`, `error` — the live lifecycle.
+    The image/video BYTES stay in object storage (disk today, GCS when enabled);
+    Mongo holds the record that points at them.
+
+    `_id` is the job_id, so lookups hit the primary key and a duplicate job id
+    is impossible by construction.
+    """
+
+    def __init__(self, collection: str):
+        from .mongo import get_db
+
+        self._col = get_db()[collection]
+        self._ensure_indexes()
+        logger.info("MongoJobStore ready (collection=%s)", collection)
+
+    def _ensure_indexes(self) -> None:
+        """Indexes for the three ways jobs are actually read.
+
+        Created on startup and idempotent — Mongo ignores a create_index for an
+        index that already exists.
+        """
+        try:
+            # The library screens: newest-first, filtered by owner and kind.
+            self._col.create_index(
+                [("owner", 1), ("kind", 1), ("created_at", -1)], name="owner_kind_created"
+            )
+            # Public share links resolve a token to a job.
+            self._col.create_index(
+                "params.share_token", name="share_token", sparse=True
+            )
+        except Exception as e:  # noqa: BLE001 — indexes are an optimisation
+            logger.warning("Could not create job indexes (%s). Queries still work.", e)
+
+    @staticmethod
+    def _to_doc(job: Job) -> dict:
+        """Job → Mongo document. `_id` is the job id."""
+        doc = job.model_dump(mode="json")
+        doc["_id"] = job.job_id
+        return doc
+
+    @staticmethod
+    def _to_job(doc: dict | None) -> Job | None:
+        if not doc:
+            return None
+        doc = dict(doc)
+        doc.pop("_id", None)  # `job_id` carries it; _id is storage detail
+        return Job(**doc)
+
+    def create(self, character_name, kind=JobKind.GENERATE, template=None, params=None, owner=None):
+        now = _now_iso()
+        job = Job(
+            job_id=_new_job_id(),
+            kind=kind,
+            status=JobStatus.QUEUED,
+            owner=owner,
+            character_name=character_name,
+            template=template,
+            params=params or {},
+            created_at=now,
+            updated_at=now,
+        )
+        self._col.insert_one(self._to_doc(job))
+        return job
+
+    def get(self, job_id):
+        return self._to_job(self._col.find_one({"_id": job_id}))
+
+    def update(self, job_id, **fields):
+        """Merge `fields` into the job.
+
+        Validates the merged record through `Job` (same guarantee the other
+        backends give) but then writes ONLY the changed keys with `$set`. That
+        matters because the worker writes `progress` continuously while a
+        request may be writing `result` or `status`: a read-modify-write of the
+        whole document would let one silently overwrite the other.
+        """
+        current = self._col.find_one({"_id": job_id})
+        if current is None:
+            return None
+
+        merged = dict(current)
+        merged.pop("_id", None)
+        merged.update(fields)
+        merged["updated_at"] = _now_iso()
+        job = Job(**merged)  # validate, and normalise enums/None
+
+        # Re-read the validated values so enums and nested models are stored as
+        # plain JSON rather than Python objects pymongo can't encode.
+        full = job.model_dump(mode="json")
+        changed = {k: full[k] for k in fields if k in full}
+        changed["updated_at"] = full["updated_at"]
+        self._col.update_one({"_id": job_id}, {"$set": changed})
+        return job
+
+    def list(self, limit=50, owner=None, kinds=None):
+        query: dict = {}
+        if owner is not None:
+            query["owner"] = owner
+        # Unlike Firestore, Mongo needs no composite index permission slip to
+        # combine these, so the kind filter runs in the QUERY and `limit` is
+        # applied after it — no over-fetch-and-trim needed.
+        if kinds:
+            query["kind"] = {"$in": [JobKind(k).value for k in kinds]}
+        cursor = self._col.find(query).sort("created_at", -1).limit(limit)
+        return [self._to_job(d) for d in cursor]
+
+    def delete(self, job_id):
+        return self._col.delete_one({"_id": job_id}).deleted_count > 0
+
+    def find_by_share_token(self, token):
+        if not token:
+            return None
+        return self._to_job(self._col.find_one({"params.share_token": token}))
+
+
 # ---------------------------------------------------------------------------
 # Singleton accessor
 # ---------------------------------------------------------------------------
@@ -298,6 +439,21 @@ def get_store() -> JobStore:
         )
         _store = MemoryJobStore(persist_path=path)
         return _store
+
+    if config.JOB_STORE == "mongo":
+        try:
+            _store = MongoJobStore(collection=config.JOBS_COLLECTION)
+            return _store
+        except Exception as e:  # noqa: BLE001 — never leave the API unable to boot
+            # Deliberately LOUD: falling back means work is being written
+            # somewhere it will not be looked for later. Better a screaming log
+            # than a user quietly saving boards into a file nobody reads.
+            logger.error(
+                "MongoDB job store unavailable (%s). Falling back to the local "
+                "store — JOBS WILL NOT BE IN MONGO until this is fixed.", e,
+            )
+            _store = MemoryJobStore(persist_path=getattr(config, "LOCAL_JOBS_PATH", "") or None)
+            return _store
 
     try:
         _store = FirestoreJobStore(

@@ -186,6 +186,10 @@ def regenerate_panel(
             asset_reference_images=shot_asset_refs or None,
             provider=provider,
             world=world,
+            # This is the Retry button: the request is otherwise IDENTICAL to
+            # the one that produced the panel being replaced, so it must go
+            # unseeded or it would redraw the exact same picture every click.
+            variation=None,
         )
 
     if image is not None:

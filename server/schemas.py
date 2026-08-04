@@ -13,6 +13,14 @@ from pydantic import BaseModel, Field
 
 
 class JobStatus(str, Enum):
+    # Work in progress that has NOT been submitted yet — currently a storyboard
+    # sitting on the review step. It exists so the reviewed shot list, cast,
+    # assets and world edits are backed by the database instead of living only
+    # in the browser, where a refresh destroyed them (and the breakdown that
+    # produced them had already cost AI quota).
+    # A draft is deliberately hidden from the storyboard library: it isn't a
+    # board yet. It is promoted to QUEUED when the user hits Generate.
+    DRAFT = "draft"
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -214,6 +222,9 @@ class ScriptBreakdownRequest(BaseModel):
         None,
         description="Text backend: 'vertex' or 'gemini'. Defaults to server TEXT_PROVIDER.",
     )
+    # Only used to name the DRAFT job this breakdown is saved as, so a resumed
+    # draft isn't called "Storyboard". Falls back to the script's opening words.
+    title: str | None = Field(None, description="Optional title for the saved draft.")
 
 
 class DialogueLine(BaseModel):
@@ -250,6 +261,10 @@ class Shot(BaseModel):
     script_line: str = ""
     script_line_start: int | None = None
     script_line_end: int | None = None
+    # How the quote matched: "exact" (copied word for word), "fuzzy" (only its
+    # head and tail were findable — the middle was rebuilt from the real text),
+    # or "" (never found). Diagnostic only; nothing is drawn from it.
+    script_line_match: str = ""
 
 
 class Character(BaseModel):
@@ -268,6 +283,58 @@ class Asset(BaseModel):
     description: str = ""
 
 
+class ScriptDraft(BaseModel):
+    """The script the user is currently writing, autosaved (see drafts.py).
+
+    All fields default, so "nothing saved yet" is an empty draft rather than a
+    404 the client has to special-case.
+    """
+
+    text: str = ""
+    title: str = ""
+    # ISO-8601, set server-side on every save. Empty when never saved.
+    updated_at: str = ""
+
+
+class ScriptDraftUpdate(BaseModel):
+    """Body for PUT /scripts/draft — overwrites the caller's draft."""
+
+    text: str = ""
+    title: str = ""
+
+
+class WeakDescription(BaseModel):
+    """A shot whose description shares almost no wording with the script."""
+
+    scene_number: int | None = None
+    shot_number: int | None = None
+    # 0..1 — share of the description's content words found in the script.
+    overlap: float = 0.0
+
+
+class Grounding(BaseModel):
+    """How much of the breakdown the script actually supports.
+
+    Built by `script_breakdown.build_grounding_report`. Advisory: nothing here
+    blocks a storyboard, it tells the writer which panels to check. `warnings`
+    is the human-readable summary; the counts are for logs and debugging.
+    """
+
+    shots_total: int = 0
+    quotes_exact: int = 0
+    quotes_fuzzy: int = 0
+    quotes_missing: int = 0
+    # (exact + fuzzy) / total — the headline "is it hallucinating" number.
+    quote_rate: float = 0.0
+    weak_descriptions: list[WeakDescription] = Field(default_factory=list)
+    unknown_characters: list[str] = Field(default_factory=list)
+    unknown_assets: list[str] = Field(default_factory=list)
+    uncast_shot_characters: list[str] = Field(default_factory=list)
+    unlisted_shot_assets: list[str] = Field(default_factory=list)
+    uncast_speakers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ScriptBreakdownResponse(BaseModel):
     """Returned from POST /storyboards/breakdown."""
 
@@ -279,6 +346,58 @@ class ScriptBreakdownResponse(BaseModel):
     count: int
     style: str | None = None
     aspect_ratio: str | None = None
+    # Hallucination report for this breakdown — see Grounding.
+    grounding: Grounding = Field(default_factory=Grounding)
+    # Id of the DRAFT job this breakdown was saved as. The review step PATCHes
+    # its edits back to it, so a refresh no longer throws the work away. None
+    # when the draft couldn't be stored — the client then behaves as before.
+    draft_job_id: str | None = None
+
+
+class StoryboardDraft(BaseModel):
+    """A storyboard being reviewed but not yet generated.
+
+    Everything the review step holds, so a refresh (or a different machine) can
+    pick up exactly where the user left off. `job_id` is None when there is no
+    draft to resume — an absent draft is a normal state, not an error.
+    """
+
+    job_id: str | None = None
+    title: str = ""
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    script: str = ""
+    shots: list[Shot] = Field(default_factory=list)
+    characters: list[Character] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
+    world: World = Field(default_factory=World)
+    # name → reference_id for cast and props chosen on the reference steps, so a
+    # resumed draft keeps the references already generated (they cost quota).
+    character_refs: dict[str, str] = Field(default_factory=dict)
+    asset_refs: dict[str, str] = Field(default_factory=dict)
+    asset_categories: dict[str, str] = Field(default_factory=dict)
+    updated_at: str = ""
+
+
+class StoryboardDraftUpdate(BaseModel):
+    """Body for PATCH /storyboards/draft/{job_id}.
+
+    Every field is optional: the review step saves whatever the user just
+    changed, and omitted fields are left as they are.
+    """
+
+    title: str | None = None
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    shots: list[Shot] | None = None
+    characters: list[Character] | None = None
+    assets: list[Asset] | None = None
+    world: World | None = None
+    character_refs: dict[str, str] | None = None
+    asset_refs: dict[str, str] | None = None
+    asset_categories: dict[str, str] | None = None
 
 
 class StoryboardCreateRequest(BaseModel):
@@ -298,6 +417,11 @@ class StoryboardCreateRequest(BaseModel):
     # POST /assets/reference). Those prop/background refs are fed into every panel
     # the asset appears in, so props and locations stay visually consistent.
     asset_refs: dict[str, str] = Field(default_factory=dict)
+    # The DRAFT this board was reviewed as (from POST /storyboards/breakdown).
+    # When present and still a draft, that record is PROMOTED into the board
+    # instead of a second job being created. Omit it and a new job is made, as
+    # before — so an older client keeps working.
+    draft_job_id: str | None = None
     # asset name → "prop" | "background". Not used for drawing — it's what lets
     # the assets ZIP file them into props/ and backgrounds/ folders.
     asset_categories: dict[str, str] = Field(default_factory=dict)

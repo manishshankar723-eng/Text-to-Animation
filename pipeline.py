@@ -471,7 +471,11 @@ def regenerate_single_part(
                 pass
 
     logger.info("[%s] Regenerating single part with prompt: %s", part_name, final_prompt)
-    sheet = generate_turnaround_sheet(ref_image, final_prompt, part_name=part_name, provider=provider)
+    # Unseeded: the request matches the one that drew the sheet being replaced,
+    # so a seeded call would hand back the identical sheet (see _seed_for).
+    sheet = generate_turnaround_sheet(
+        ref_image, final_prompt, part_name=part_name, provider=provider, variation=None
+    )
 
     if sheet is None:
         raise RuntimeError(f"Failed to generate turnaround sheet for '{part_name}'")
@@ -565,7 +569,10 @@ def regenerate_single_view(
                 pass
 
     logger.info("[%s/%s] Regenerating single view.", part_name, view_name)
-    sheet = generate_turnaround_sheet(ref_image, final_prompt, part_name=part_name, provider=provider)
+    # Unseeded — same reason as regenerate_single_part above.
+    sheet = generate_turnaround_sheet(
+        ref_image, final_prompt, part_name=part_name, provider=provider, variation=None
+    )
     if sheet is None:
         raise RuntimeError(f"Failed to generate turnaround sheet for '{part_name}'")
 

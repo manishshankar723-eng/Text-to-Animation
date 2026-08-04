@@ -32,6 +32,7 @@ from . import config
 from . import users
 from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
+from .drafts import router as drafts_router
 # Shared with the animatics router — they live in common.py so the two route
 # modules don't have to import each other. Aliased to the names used below.
 from .common import (
@@ -60,6 +61,8 @@ from .schemas import (
     ScriptBreakdownRequest,
     ScriptBreakdownResponse,
     StoryboardCreateRequest,
+    StoryboardDraft,
+    StoryboardDraftUpdate,
     StoryboardProject,
     StoryboardRenameRequest,
     StoryboardSummary,
@@ -101,6 +104,9 @@ app.include_router(auth_router)
 # Storyboard → Animatic (/animatics/…). Its own module: it shares nothing with
 # the image pipeline and spends no AI quota.
 app.include_router(animatics_router)
+# Autosaved script drafts (/scripts/draft) — what the user is typing, kept safe
+# from a page refresh. Spends no AI quota.
+app.include_router(drafts_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]
@@ -253,6 +259,10 @@ def generate_reference(
             provider=body.provider,
             # Draw them as a person of the script's world, not the model's default.
             world=body.world.model_dump() if body.world else None,
+            # Unseeded: calling this again with the same description IS how the
+            # user asks for a different-looking character. Consistency later
+            # comes from the SAVED reference image, not from redrawing it.
+            variation=None,
         )
     except ReferenceGenerationError as e:
         # Surface the ACTUAL reason (API error / block / bad image), not a guess.
@@ -309,6 +319,8 @@ def generate_asset_reference_image(
             provider=body.provider,
             # A hut, a cooking pot and a temple all differ by culture.
             world=body.world.model_dump() if body.world else None,
+            # Unseeded — same re-roll reasoning as /characters/reference above.
+            variation=None,
         )
     except ReferenceGenerationError as e:
         logger.warning("[asset-ref] generation failed: %s", e)
@@ -397,6 +409,18 @@ def get_reference_image(
     return FileResponse(image_path, media_type="image/png")
 
 
+# How many opening words of the script name an untitled draft. Mirrors the
+# client's own fallback so a draft and the board it becomes read the same.
+_TITLE_WORDS = 4
+
+
+def _title_from_script(script: str) -> str:
+    """Name a draft after the script's opening words (never just 'Storyboard')."""
+    first = next((ln.strip() for ln in (script or "").splitlines() if ln.strip()), "")
+    words = first.split()[:_TITLE_WORDS]
+    return " ".join(words) or "Untitled storyboard"
+
+
 # ---------------------------------------------------------------------------
 # Script → Storyboard — Stage A: break a script into a shot list
 # ---------------------------------------------------------------------------
@@ -430,6 +454,39 @@ def breakdown_script(
         raise HTTPException(status_code=502, detail=f"Script breakdown error: {e}")
 
     shots = result["shots"]
+
+    # Persist the breakdown IMMEDIATELY as a DRAFT job, before the user sees it.
+    # This call costs AI quota and everything downstream of it (edited shots,
+    # cast, world) is hand-work; until now all of it lived only in the browser
+    # and a refresh destroyed it. The draft is the review step's backing store —
+    # it becomes the real board when the user hits Generate.
+    # A failure here must NOT lose the breakdown the user just paid for, so it
+    # degrades to the old stateless behaviour with a loud log.
+    draft_job_id = None
+    try:
+        draft = get_store().create(
+            character_name=(body.title or "").strip() or _title_from_script(body.script),
+            kind=JobKind.STORYBOARD,
+            params={
+                "style": body.style,
+                "aspect_ratio": body.aspect_ratio,
+                "genre": body.genre,
+                "count": len(shots),
+                "provider": body.provider,
+                "shots": shots,
+                "characters": result.get("characters", []),
+                "assets": result.get("assets", []),
+                "world": result.get("world") or {},
+                "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
+            },
+            owner=current.email,
+        )
+        get_store().update(draft.job_id, status=JobStatus.DRAFT)
+        draft_job_id = draft.job_id
+        logger.info("[breakdown] saved draft %s (%d shots)", draft_job_id, len(shots))
+    except Exception:  # noqa: BLE001 — never lose a paid breakdown over storage
+        logger.exception("[breakdown] could not save draft; returning it unsaved")
+
     return ScriptBreakdownResponse(
         shots=shots,
         characters=result.get("characters", []),
@@ -438,7 +495,105 @@ def breakdown_script(
         count=len(shots),
         style=body.style,
         aspect_ratio=body.aspect_ratio,
+        # Advisory only — which panels aren't backed by the script. Never blocks
+        # the breakdown; the writer decides what to do about it.
+        grounding=result.get("grounding") or {},
+        # The review step saves back to this. None means the draft couldn't be
+        # stored — the client just works statelessly, as it did before.
+        draft_job_id=draft_job_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Script → Storyboard — Stage A2: the DRAFT being reviewed
+# ---------------------------------------------------------------------------
+# The review step's backing store. A breakdown costs AI quota and everything
+# done to it afterwards is hand-work, so it lives in Mongo from the moment it
+# exists rather than only in the browser.
+def _draft_to_response(job: Job) -> StoryboardDraft:
+    p = job.params or {}
+    return StoryboardDraft(
+        job_id=job.job_id,
+        title=job.character_name or "",
+        style=p.get("style"),
+        aspect_ratio=p.get("aspect_ratio"),
+        genre=p.get("genre"),
+        script=p.get("script") or "",
+        shots=p.get("shots") or [],
+        characters=p.get("characters") or [],
+        assets=p.get("assets") or [],
+        world=p.get("world") or {},
+        character_refs=p.get("character_refs") or {},
+        asset_refs=p.get("asset_refs") or {},
+        asset_categories=p.get("asset_categories") or {},
+        updated_at=job.updated_at,
+    )
+
+
+def _get_owned_draft(job_id: str, current: CurrentUser) -> Job:
+    """A draft the caller owns, or 404. Refuses jobs that aren't drafts."""
+    job = _get_owned_board(job_id, current)
+    if job.status != JobStatus.DRAFT:
+        raise HTTPException(
+            status_code=409,
+            detail="This storyboard has already been generated — it is no longer a draft.",
+        )
+    return job
+
+
+@app.get("/storyboards/draft", response_model=StoryboardDraft)
+def get_storyboard_draft(current: CurrentUser = Depends(get_current_user)):
+    """The caller's most recent unfinished storyboard, for resuming after a refresh.
+
+    Never 404s: no draft is a normal state, and the client shouldn't have to
+    treat "nothing in progress" as an error. Returns `job_id: null` then.
+    """
+    jobs = get_store().list(limit=50, owner=current.email, kinds=[JobKind.STORYBOARD])
+    drafts = [j for j in jobs if j.status == JobStatus.DRAFT]
+    if not drafts:
+        return StoryboardDraft()
+    # `list` is newest-first, so the first draft is the one to resume.
+    return _draft_to_response(drafts[0])
+
+
+@app.patch("/storyboards/draft/{job_id}", response_model=StoryboardDraft)
+def update_storyboard_draft(
+    job_id: str,
+    body: StoryboardDraftUpdate,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Save review-step edits (shots, cast, assets, world, refs) onto the draft.
+
+    Partial: only the fields present in the body are written, so saving an edited
+    shot list can't wipe references chosen on another step.
+    """
+    job = _get_owned_draft(job_id, current)
+    params = dict(job.params or {})
+
+    incoming = body.model_dump(exclude_unset=True, mode="json")
+    title = incoming.pop("title", None)
+    for key, value in incoming.items():
+        params[key] = value
+    if "shots" in incoming:
+        params["count"] = len(incoming["shots"] or [])
+
+    fields: dict = {"params": params}
+    if title is not None and title.strip():
+        fields["character_name"] = title.strip()
+
+    updated = get_store().update(job_id, **fields)
+    return _draft_to_response(updated)
+
+
+@app.delete("/storyboards/draft/{job_id}", status_code=204)
+def delete_storyboard_draft(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Discard a draft (the user started over). Only ever deletes a DRAFT."""
+    _get_owned_draft(job_id, current)
+    get_store().delete(job_id)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -484,33 +639,63 @@ def create_storyboard(
     # The script's world rides along with every panel prompt, and is stored so a
     # later re-style / single-panel redraw stays in the same culture and period.
     world = body.world.model_dump() if body.world else {}
-    job = get_store().create(
-        character_name=title,
-        kind=JobKind.STORYBOARD,
-        params={
-            "style": body.style,
-            "aspect_ratio": body.aspect_ratio,
-            # Not used for drawing — labels the card in the storyboard library.
-            "genre": body.genre,
-            "count": len(body.shots),
-            "provider": body.provider,
-            "character_count": len(character_ref_paths),
-            "asset_count": len(asset_ref_paths),
-            # Kept so a single panel can be regenerated later with the same refs.
-            "character_ref_paths": character_ref_paths,
-            "asset_ref_paths": asset_ref_paths,
-            # Only used to sort the assets ZIP into props/ and backgrounds/.
-            "asset_categories": body.asset_categories,
-            # Kept so a panel can always be re-drawn (even if it's missing from the
-            # streamed result) and so edited prompts have a source of truth.
-            "shots": shot_dicts,
-            "world": world,
-            # Display only. Capped so a pasted novel can't bloat the job record
-            # (Firestore documents have a hard size limit).
-            "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
-        },
-        owner=current.email,
-    )
+    params = {
+        "style": body.style,
+        "aspect_ratio": body.aspect_ratio,
+        # Not used for drawing — labels the card in the storyboard library.
+        "genre": body.genre,
+        "count": len(body.shots),
+        "provider": body.provider,
+        "character_count": len(character_ref_paths),
+        "asset_count": len(asset_ref_paths),
+        # Kept so a single panel can be regenerated later with the same refs.
+        "character_ref_paths": character_ref_paths,
+        "asset_ref_paths": asset_ref_paths,
+        # Only used to sort the assets ZIP into props/ and backgrounds/.
+        "asset_categories": body.asset_categories,
+        # Kept so a panel can always be re-drawn (even if it's missing from the
+        # streamed result) and so edited prompts have a source of truth.
+        "shots": shot_dicts,
+        "world": world,
+        # Display only. Capped so a pasted novel can't bloat the job record
+        # (Firestore documents have a hard size limit).
+        "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
+    }
+
+    # PROMOTE the draft this board was reviewed as, rather than creating a
+    # second record. The draft already holds this script and shot list; making a
+    # new job would leave the draft orphaned and show the same work twice.
+    # An unknown/foreign//already-generated draft id is ignored rather than
+    # fatal — the user still gets their board.
+    job = None
+    if body.draft_job_id:
+        existing = get_store().get(body.draft_job_id)
+        if (
+            existing is not None
+            and existing.owner == current.email
+            and existing.kind == JobKind.STORYBOARD
+            and existing.status == JobStatus.DRAFT
+        ):
+            job = get_store().update(
+                body.draft_job_id,
+                character_name=title,
+                params=params,
+                status=JobStatus.QUEUED,
+            )
+            logger.info("[storyboard] promoted draft %s to a board", job.job_id)
+        else:
+            logger.warning(
+                "[storyboard] draft_job_id %s is not a promotable draft — "
+                "creating a new job instead.", body.draft_job_id,
+            )
+
+    if job is None:
+        job = get_store().create(
+            character_name=title,
+            kind=JobKind.STORYBOARD,
+            params=params,
+            owner=current.email,
+        )
 
     kwargs = {
         "shots": shot_dicts,
@@ -599,7 +784,10 @@ def list_storyboards(
     jobs = get_store().list(
         limit=limit, owner=current.email, kinds=[JobKind.STORYBOARD]
     )
-    return [_summarise_board(j) for j in jobs]
+    # DRAFT jobs are storyboards-in-progress sitting on the review step — no
+    # panels drawn, nothing to show on a card. They're resumed via
+    # GET /storyboards/draft, not listed here as if they were finished boards.
+    return [_summarise_board(j) for j in jobs if j.status != JobStatus.DRAFT]
 
 
 @app.get("/storyboards/{job_id}/project", response_model=StoryboardProject)
@@ -1151,6 +1339,9 @@ def download_storyboard_pdf(
             title=job.character_name,
             panels=panels,
             subdir="" if not active else f"v{active}",
+            # Printed after the board so the "FROM YOUR SCRIPT · LINE n"
+            # citations on the shot cards can be looked up in the export.
+            script=(job.params or {}).get("script") or "",
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
