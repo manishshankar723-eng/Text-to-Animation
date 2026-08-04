@@ -15,6 +15,12 @@ python-multipart>=0.0.6
 # Override with FFMPEG_BINARY if you'd rather use your own build.
 imageio-ffmpeg>=0.4.9
 
+# --- Plan & Script (content calendar export) ---
+# The planner hands back a schedule the user takes away and works from, so it
+# exports to the formats they already live in rather than only to our screen.
+openpyxl>=3.1.0      # .xlsx
+python-docx>=1.1.0   # .docx
+
 # --- Auth (JWT login + MongoDB user store) ---
 pyjwt>=2.8.0
 bcrypt>=4.1.0

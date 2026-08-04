@@ -32,6 +32,10 @@ class JobKind(str, Enum):
     MESHY = "meshy"            # 3D submission for an already-generated character
     STORYBOARD = "storyboard"  # script → storyboard panel generation
     ANIMATIC = "animatic"      # timed image sequence + audio → video
+    # "Plan & Script": the conversation with the content-planning agent plus the
+    # calendar it produced. A new workflow needs no storage code of its own —
+    # adding the kind is the whole job. See the Storage rule in AGENTS.md.
+    PLAN = "plan"              # content plan / script planning session
 
 
 class Job(BaseModel):
@@ -281,6 +285,74 @@ class Asset(BaseModel):
     # "prop" (a specific object) or "background" (a location/set).
     category: str = "prop"
     description: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Plan & Script
+# ---------------------------------------------------------------------------
+class PlanMessage(BaseModel):
+    """One turn of the conversation with the planning agent."""
+
+    # "user" or "agent" — stored in the client's vocabulary, not the SDK's, so
+    # the transcript stays readable in the database.
+    role: str = "user"
+    text: str = ""
+    at: str = ""
+
+
+class PlanCreateRequest(BaseModel):
+    title: str | None = Field(None, max_length=120)
+
+
+class PlanRenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+
+
+class PlanChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=8000)
+
+
+class PlanChannelRequest(BaseModel):
+    """A YouTube channel link, handle, or bare channel name."""
+
+    url: str = Field(..., min_length=1, max_length=400)
+
+
+class PlanGenerateRequest(BaseModel):
+    months: int = Field(1, ge=1, le=12, description="How many months to cover.")
+    cadence: str | None = Field(
+        None, max_length=120, description="How often they publish, in their own words."
+    )
+
+
+class PlanSummary(BaseModel):
+    """A row in the planning-session library."""
+
+    job_id: str
+    title: str
+    message_count: int = 0
+    item_count: int = 0
+    months: int = 0
+    channel_title: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class PlanDetail(BaseModel):
+    """A whole planning session.
+
+    `channel` and `plan` are free-form dicts on purpose: they are produced by
+    youtube_research and plan_agent, which own their own shapes. Pinning them
+    here would mean changing three files to add one field.
+    """
+
+    job_id: str
+    title: str
+    messages: list[PlanMessage] = Field(default_factory=list)
+    channel: dict = Field(default_factory=dict)
+    plan: dict = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class ScriptDraft(BaseModel):

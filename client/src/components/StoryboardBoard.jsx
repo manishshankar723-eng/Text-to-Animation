@@ -606,6 +606,12 @@ export default function StoryboardBoard({
         </div>
       )}
 
+      {/* The source script, ABOVE the panels and collapsed. It's reference for
+          reading the board (the shot cards cite "LINE n"), so it belongs with
+          the board's other context — not wedged under the grid where it pushed
+          the download buttons off the end of the page. */}
+      <ScriptPanel script={boardScript} defaultOpen={false} />
+
       <div className="board-grid">
         {panels.map((p) => {
           // A new panel the user inserted: no image yet, board not generating.
@@ -741,11 +747,6 @@ export default function StoryboardBoard({
           </button>
         )}
       </div>
-
-      {/* The script this board was drawn from, under the panels. Collapsed:
-          it's reference material here, not the subject of the page. The shot
-          cards cite line numbers, and this is where they're looked up. */}
-      <ScriptPanel script={boardScript} defaultOpen={false} />
 
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>

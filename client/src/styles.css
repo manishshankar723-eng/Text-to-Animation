@@ -1992,6 +1992,175 @@ input[type="checkbox"] {
   color: #fff;
   border-color: var(--fail);
 }
+/* ---- Plan & Script ------------------------------------------------------ */
+.plan-page > .card {
+  margin-bottom: 1rem;
+}
+.plan-channel-row {
+  display: flex;
+  gap: 0.6rem;
+}
+.plan-channel-row input {
+  flex: 1;
+}
+
+/* The conversation. Capped height with its own scroll so the calendar below
+   stays reachable however long the chat gets. */
+.plan-chat-log {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-right: 0.3rem;
+}
+.plan-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 82%;
+}
+.plan-msg.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.plan-msg-who {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.plan-msg-text {
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.plan-msg.is-user .plan-msg-text {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: transparent;
+}
+.plan-chat-input {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+  margin-top: 0.9rem;
+}
+.plan-chat-input .prompt-textarea {
+  flex: 1;
+  min-height: 0;
+}
+.plan-starters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.plan-starter {
+  text-align: left;
+  white-space: normal;
+}
+
+.plan-generate-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+.plan-generate-row .field {
+  min-width: 190px;
+}
+/* The Custom box appears under its dropdown, so the row doesn't jump sideways
+   when it opens. Wider for the cadence one, which takes a phrase not a number. */
+.plan-generate-row .field input {
+  margin-top: 0.4rem;
+}
+.plan-generate-row .field:has(> select + input) {
+  min-width: 230px;
+}
+
+.plan-pillars {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  line-height: 1.7;
+}
+.plan-assumptions {
+  margin-top: 0.8rem;
+}
+
+/* The calendar itself. Cards rather than a table: each upload carries a hook,
+   an outline and tags, which a table row cannot hold legibly. */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.plan-item {
+  margin: 0;
+}
+.plan-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+.plan-slot {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.plan-chip {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.goal-reach { border-color: #4f83c9; color: #7aa9e6; }
+.goal-engagement { border-color: #c98f4f; color: #e6b47a; }
+.goal-conversion { border-color: #4fc98a; color: #7ae6b0; }
+.goal-retention { border-color: #9a7ae6; color: #b49ae6; }
+
+.plan-item-title {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+.plan-label {
+  display: inline-block;
+  margin-right: 0.4rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.plan-hook {
+  margin: 0 0 0.4rem;
+  font-style: italic;
+  line-height: 1.45;
+}
+.plan-outline {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.plan-keywords {
+  margin-top: 0.5rem;
+  word-break: break-word;
+}
+
 /* ---- Profile page ------------------------------------------------------- */
 /* Stacked cards rather than the Home dashboard grid: these are forms, and a
    form that changes width between sections is harder to fill in. */

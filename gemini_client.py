@@ -676,6 +676,16 @@ def generate_storyboard_panel(
         )
     parts.append(f"Scene: {description}")
     parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
+    # Asked for one panel, the model otherwise oscillates between drawing edge to
+    # edge and dropping a small sketch onto a big blank page — measured at 64% to
+    # 96% frame coverage across one board, which is what made a finished board
+    # look like a jumble of sizes. normalise_panel() cleans up what still slips
+    # through; this reduces how often it has to.
+    parts.append(
+        "The artwork must FILL the entire frame edge to edge. No blank margins, "
+        "no white border, no drawn frame or paper edge around the picture, and "
+        "no letterboxing — the scene runs right to all four edges."
+    )
     # Keep borderline (mild-conflict) shots from tripping the safety filter.
     parts.append(
         "Non-graphic, family-friendly storyboard illustration suitable for a "

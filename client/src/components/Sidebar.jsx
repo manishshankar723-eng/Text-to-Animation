@@ -5,6 +5,8 @@ import Avatar from "./Avatar.jsx";
 // Workflow nav items. `status: "live"` is the working pipeline; "soon" items
 // are placeholders for the roadmap the user is building toward.
 export const WORKFLOWS = [
+  // FIRST in the pipeline: decide what to make before making any of it.
+  { id: "plan-and-script", label: "Plan & Script", icon: "🗓️", status: "live" },
   { id: "text-to-image", label: "Text to Image", icon: "🖼️", status: "live" },
   { id: "script-to-storyboard", label: "Script to Storyboard", icon: "📝", status: "live" },
   { id: "storyboard-to-animatics", label: "Storyboard to Animatics", icon: "🎬", status: "live" },

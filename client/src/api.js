@@ -145,6 +145,71 @@ export function clearScriptDraft() {
   return request("/scripts/draft", { method: "DELETE" });
 }
 
+// --- Plan & Script ---
+// A planning session is a conversation with the strategist agent plus the
+// calendar it produced. Text quota only — nothing here generates an image.
+export function listPlans() {
+  return request("/plans");
+}
+export function createPlan(title) {
+  return request("/plans", { method: "POST", body: { title: title || null } });
+}
+export function getPlan(planId) {
+  return request(`/plans/${planId}`);
+}
+export function renamePlan(planId, title) {
+  return request(`/plans/${planId}`, { method: "PATCH", body: { title } });
+}
+export function deletePlan(planId) {
+  return request(`/plans/${planId}`, { method: "DELETE" });
+}
+export function sendPlanMessage(planId, message) {
+  return request(`/plans/${planId}/chat`, { method: "POST", body: { message } });
+}
+export function attachPlanChannel(planId, url) {
+  return request(`/plans/${planId}/channel`, { method: "POST", body: { url } });
+}
+export function generatePlan(planId, { months, cadence } = {}) {
+  return request(`/plans/${planId}/generate`, {
+    method: "POST",
+    body: { months: months || 1, cadence: cadence || null },
+  });
+}
+export function youtubeConfigured() {
+  return request("/plans/config/youtube"); // → { configured: bool }
+}
+// Exports are binary — fetched as an authed blob and handed to the browser,
+// the same way the storyboard PDF/ZIP downloads work. The server names the
+// file from the plan title; `serverFilename` reads that back off the header.
+export async function downloadPlan(planId, format) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetchWithRetry(`${BASE}/plans/${planId}/export?format=${format}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = serverFilename(res, `plan.${format}`);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // --- Storyboard draft (the review step's backing store) ---
 // A breakdown is saved server-side the moment it returns, so the reviewed
 // shots / cast / assets / world survive a refresh. `getStoryboardDraft` returns

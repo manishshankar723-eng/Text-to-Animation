@@ -7,6 +7,7 @@ import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
 import Profile from "./components/Profile.jsx";
 import Avatar from "./components/Avatar.jsx";
+import PlanAndScript from "./components/PlanAndScript.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
@@ -154,6 +155,8 @@ export default function App() {
     );
   } else if (nav === "profile") {
     content = <Profile email={email} onLogout={logout} />;
+  } else if (nav === "plan-and-script") {
+    content = <PlanAndScript />;
   } else if (nav === "text-to-image") {
     content = (
       <div className="workflow-head-wrap">

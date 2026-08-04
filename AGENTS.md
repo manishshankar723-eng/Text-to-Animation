@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-04 (sidebar account avatar → Profile)
+**Last updated:** 2026-08-04 (Plan & Script + shared library layout rule)
 
 ---
 
@@ -282,6 +282,7 @@ binary files themselves.**
 | What | Where | How |
 |------|-------|-----|
 | Accounts | Mongo `users` | `server/users.py` |
+| Plan & Script sessions (chat + calendar) | Mongo `jobs` (`JobKind.PLAN`) | `server/plans.py` |
 | The script being typed | Mongo `script_drafts` | `server/drafts.py` |
 | **Every job: character runs, storyboards, animatics, and anything added later** | **Mongo `jobs`** | **`server/jobs.py` → `get_store()`** |
 | Image / video BYTES | disk (`output/`, `uploads/`) — GCS when enabled | `storage.py` |
@@ -302,6 +303,41 @@ own.
 
 ---
 
+## 🎨 UI rule — REUSE THE EXISTING LAYOUT FOR A NEW WORKFLOW
+
+**User's instruction, after a workflow shipped with its own bespoke gallery:**
+*"when I create new workflow so you keep in mind first you use my UI layout, so
+simple for user understanding."*
+
+Every workflow looks the same because it uses the same parts. Before writing any
+new screen, copy the structure from `StoryboardLibrary.jsx` — do not invent one.
+
+**A workflow library is always:**
+
+1. `workflow-head-wrap sb-library` → `workflow-header` (icon + `wf-title` + `muted` subtitle)
+2. `lib-grid lib-new-row` → one `card lib-new` tile: `lib-new-plus` (+),
+   `lib-new-title` ("New X"), and a `tiny muted` count line
+3. **`Recent X`** section — the newest `RECENT_COUNT` (1)
+4. **`All X`** section — everything, with a `N in total` hint
+
+**Each section** (`renderSection`) is `lib-section` → `lib-section-head`
+(`lib-section-title` + `tiny muted` hint) → one of: shimmering `lib-ghost` cards
+while loading, a single `lib-ghost-empty` card with `lib-empty-ico` +
+`lib-empty-text` when empty, or `lib-grid` of cards.
+
+**Each card** is `card lib-card` → `lib-cover` (thumbnail or `lib-cover-empty`
+emoji, optional `lib-badge`) → `lib-body` (`lib-title`, `lib-meta` with `chip`s,
+`lib-foot` with a date and `lib-icon` action buttons using `Icon`).
+
+`renderSection` must be a render FUNCTION, not a nested component — a component
+declared inside the parent gets a new identity every render and remounts the
+section on each keystroke, which makes an inline rename field lose focus.
+
+If a new class name starting with `lib-` is needed, the layout is probably being
+reinvented. Plan & Script reuses **27** of these and invents **0**.
+
+---
+
 ## 📐 Conventions
 
 - **Python 3.14**, standard library logging (`logging.getLogger(__name__)`).
@@ -318,6 +354,113 @@ own.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-04 — NEW WORKFLOW: Plan & Script (first in the pipeline)
+
+- **Asked for:** a workflow ABOVE Text to Image where the user chats with an
+  agent (Gemini-chat style), asks for a 1/3/6/12-month content plan for their
+  channel, pastes a YouTube link for the agent to research, and exports to
+  Excel/Word. Aimed at creators, 2D/3D artists, editors, influencers, business.
+- **Sits first in the sidebar** (`plan-and-script`) — decide what to make before
+  making any of it. Spends TEXT quota only; never generates an image.
+- **`plan_agent.py`** — two capabilities kept deliberately apart:
+  `chat()` (multi-turn; the agent ASKS the questions a strategist would rather
+  than guessing) and `generate_plan()` (structured calendar via
+  `response_schema`, so it renders as cards and exports as a table — never free
+  text pretending to be a schedule). Reuses script_breakdown's provider switch,
+  retry policy and greedy sampling rather than growing a second copy.
+- **`youtube_research.py`** — resolves every channel URL shape (`/@handle`,
+  `/channel/UC…`, legacy `/c/`, `/user/`, bare handle or id), then reads the
+  channel by whichever of TWO paths is available:
+  1. **YouTube Data API v3** (`YOUTUBE_API_KEY`) — EXACT subscriber/view counts,
+     measured publishing rhythm, best performers.
+  2. **Gemini `url_context` tool** (NO key — uses the Vertex/Gemini credentials
+     already configured). The model opens the channel page and reads it.
+     **Verified live against a real channel** (@MSKBhaktisagar): returned the
+     channel name, an accurate description of the content, and 12 real recent
+     video titles including Devanagari ones.
+  The user asked "is the API key the only option?" — it is not, and the key is
+  now the optional upgrade for exact figures rather than the requirement.
+  Tested: `google_search` alone answers CANNOT ACCESS on a channel URL, and
+  `url_context` + `google_search` together blow the 100k tool-output limit — so
+  `url_context` is used ALONE. Don't "improve" it by adding search back.
+  **THE RULE, per source: it never invents channel data.** Every result carries
+  a `source`, and `as_context()` grants exactly the claims that source supports —
+  exact figures only from the Data API; name/topics/titles from a page read with
+  an explicit "Subscriber and view counts were NOT available: do not state,
+  estimate or imply any"; and "ask the user" when neither path worked. All three
+  branches asserted in the tests, not just the one this machine is configured for.
+- **`plan_export.py`** — xlsx (frozen header, auto-filter, set column widths, a
+  second Strategy sheet so the thinking travels with the schedule), docx (laid
+  out per upload, not one unreadable 40-row table), csv (UTF-8 BOM so Excel
+  opens it cleanly). Added `openpyxl` + `python-docx` to requirements.
+- **Storage: nothing new.** A session is a `JobKind.PLAN` job — adding the enum
+  value was the whole persistence job, exactly as the Storage rule promises.
+  Owner-scoping, listing, rename and delete came for free.
+- **A failed reply does not corrupt the transcript**: the user's message is only
+  saved once the agent has answered. Otherwise the conversation grows a question
+  that was never answered and re-sends it on the next turn. Tested explicitly.
+- **Verified:** `tests/plan_check.py` — 66 checks with the model STUBBED (no AI
+  quota): session CRUD, transcript persistence both sides, auto-titling, failed
+  reply leaving history intact, the no-invented-data rule, all six channel-URL
+  shapes, generation, all three exports (valid zip/BOM/filename), export-before-
+  generate → 409, owner isolation across five endpoints, 401s, cleanup.
+  Exporters separately opened back with openpyxl/python-docx. **One live chat
+  turn run for real** — the agent asked clarifying questions instead of dumping
+  a generic plan, which is the behaviour the system prompt is built around.
+  `npm run build` clean; 75 endpoints.
+- **Follow-up the same day — library rebuilt on the SHARED layout.** It first
+  shipped with a bespoke gallery (flat grid, plain Delete buttons); the user
+  asked for the New / Recent / All layout the other workflows use. Now reuses
+  **27** `lib-*` classes from `StoryboardLibrary` and invents **0** — same New
+  tile with a count, Recent + All sections, loading ghosts, empty-state card,
+  cover/badge/chips/date/icon-actions cards. Dead `.plan-card` CSS removed.
+  Written up as the **UI rule** section near the top of this file so the next
+  workflow starts from the shared layout instead of a new one.
+- **Not done / next sections:** the plan doesn't yet flow INTO Script to
+  Storyboard (a "write the script for this upload" button is the obvious next
+  link). Not browser-tested.
+
+### 2026-08-04 — Panels now fill their frame consistently + board layout
+
+- **Reported:** generated panels looked different sizes — "some small and some
+  full cover page". **Measured, not guessed:** every panel is already the same
+  1365×768 16:9 file. The variance is the blank margin the MODEL bakes in — the
+  drawing covered 64%-96% of the frame across one board (borders 0%-11% a side).
+- **New `normalise_panel()`** in `storyboard_pipeline.py`, applied wherever a
+  panel is written (`run_storyboard` and `regenerate_panel`): measure the blank
+  margin, remove it, then grow the content box back to the target aspect using
+  REAL pixels wherever the source still has them (never invented bars), leaving
+  a uniform 2% margin. Output keeps the original frame size so a board stays
+  pixel-uniform.
+- **The bug the tests caught, worth not reintroducing:** the first version read
+  the paper colour from the four CORNERS. On a panel drawn edge to edge the
+  corners ARE the picture, so it treated artwork as paper and cropped the frame
+  down to whatever happened to be brightest. Now the whole outer ring is checked
+  for UNIFORMITY (`_BORDER_UNIFORMITY`); a textured ring means the art reaches
+  the edge and the panel is returned untouched. Plus a `_MAX_TRIM` rail: a
+  content box under 65% of a side is treated as a misread, not a margin.
+- **Prompt strengthened too** so fewer bordered panels are produced at source
+  ("artwork must FILL the entire frame edge to edge… no paper edge").
+  `normalise_panel` cleans up what still slips through.
+- **Verified** on synthetic panels AND all **16 real boards on disk**: the three
+  with a wide spread improved (39.0→25.2, 31.7→16.5, 31.2→13.8 points) and
+  **none got worse** — that's the asserted invariant, since a board that is
+  already uniform has nothing to narrow. Before/after images inspected by eye:
+  content preserved, no crop into the picture.
+- **Board layout** (also reported): the script panel had been added UNDER the
+  grid, which pushed the export buttons off the end of the page. **Only the
+  script moved** — up above the grid, still collapsed. Order is now:
+  style bar → **script (collapsed)** → panel grid.
+  **The toolbar stays exactly where it always was, above the grid**, with every
+  button in its original order: Stop / Generate remaining / Retry all failed /
+  Download PDF / Download assets (ZIP) / Make animatic.
+  **Do not move the toolbar below the grid.** That was tried and the user
+  rejected it immediately — on a long board the buttons end up far from the
+  controls they sit with, and the page bottom is nowhere near the eye while
+  work is happening at the top.
+- **Existing boards keep their old look** — normalisation happens at generation
+  time. Re-style or regenerate a panel to apply it.
 
 ### 2026-08-04 — Account avatar in the sidebar header → Profile
 

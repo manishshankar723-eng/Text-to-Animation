@@ -33,6 +33,171 @@ PANEL_CONCURRENCY = max(1, int(os.environ.get("STORYBOARD_PANEL_CONCURRENCY", "2
 from cancel import clear_cancel, is_cancelled, request_cancel  # noqa: E402,F401
 
 
+# How much clear margin a normalised panel keeps around its drawing, as a
+# fraction of the frame's short side. Small but non-zero: a board reads better
+# when the art isn't flush to the edge, and it hides a stray stroke at the rim.
+PANEL_MARGIN = 0.02
+# How far a pixel may differ from the paper colour and still count as blank.
+# Generous enough for the faint grain in a sketch, tight enough that pale
+# pencil work still registers as content.
+_BLANK_TOLERANCE = 30
+
+
+# How much the outer ring may vary and still count as blank paper rather than
+# artwork. A printed sketch's margin is near-uniform; a picture that runs to the
+# edge is not.
+_BORDER_UNIFORMITY = 14
+# Never trim away more than this share of a side. A safety rail: if the maths
+# ever wants to cut a third of the picture off, something has been misread.
+_MAX_TRIM = 0.35
+
+
+def _paper_colour(image: "Image.Image") -> tuple | None:
+    """The blank border's colour, or None when the artwork reaches the edges.
+
+    Sampling the corners alone is not enough — on a panel drawn edge to edge the
+    corners ARE the picture, and treating them as "paper" makes everything that
+    differs from them look like content, cropping the frame down to whatever
+    happens to be brightest. (That is a real bug this returns None to avoid.)
+
+    So the whole outer ring is examined: only if it is near-uniform is it a
+    margin, and then its median colour is the paper.
+    """
+    w, h = image.size
+    k = max(2, min(w, h) // 60)
+
+    # The outer ring, as four thin strips.
+    strips = [
+        image.crop((0, 0, w, k)),
+        image.crop((0, h - k, w, h)),
+        image.crop((0, 0, k, h)),
+        image.crop((w - k, 0, w, h)),
+    ]
+    pixels: list[tuple] = []
+    for s in strips:
+        # Downsample: enough samples to judge uniformity, few enough to be quick.
+        small = s.resize((min(48, max(1, s.width)), min(48, max(1, s.height))))
+        pixels.extend(small.convert("RGB").getdata())
+    if not pixels:
+        return None
+
+    lums = [0.299 * r + 0.587 * g + 0.114 * b for r, g, b in pixels]
+    mean = sum(lums) / len(lums)
+    var = sum((x - mean) ** 2 for x in lums) / len(lums)
+    if var**0.5 > _BORDER_UNIFORMITY:
+        return None  # the picture runs to the edge — nothing to trim
+
+    return tuple(
+        sorted(p[i] for p in pixels)[len(pixels) // 2] for i in range(3)
+    )
+
+
+def normalise_panel(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
+    """Make every panel fill its frame by the same amount.
+
+    The image model is inconsistent about this: asked for one storyboard panel it
+    sometimes draws edge to edge and sometimes drops a small sketch in the middle
+    of a big blank page. Measured across one real board, the drawing occupied
+    anywhere from 78% to 100% of the frame — which is why a finished board looked
+    like a jumble of different-sized pictures.
+
+    So the blank margin is measured and removed, then the content box is grown
+    back out to the target aspect using REAL pixels wherever the original still
+    has them (never invented bars), leaving a uniform `PANEL_MARGIN`.
+
+    A panel that is already full-bleed, or one with a dark background where there
+    is no blank margin to find, passes through unchanged.
+    """
+    try:
+        w_ratio, h_ratio = (float(x) for x in aspect_ratio.split(":"))
+        if w_ratio <= 0 or h_ratio <= 0:
+            return image
+    except (ValueError, AttributeError):
+        return image
+
+    from PIL import ImageChops
+
+    rgb = image.convert("RGB")
+    w, h = rgb.size
+    paper = _paper_colour(rgb)
+    if paper is None:
+        # Artwork already reaches the edges — this is what we want, leave it.
+        return _crop_to_aspect(image, aspect_ratio)
+
+    bg = Image.new("RGB", rgb.size, paper)
+    mask = ImageChops.difference(rgb, bg).convert("L").point(
+        lambda p: 255 if p > _BLANK_TOLERANCE else 0
+    )
+    box = mask.getbbox()
+    if not box:
+        return _crop_to_aspect(image, aspect_ratio)  # blank panel — nothing to find
+
+    left, top, right, bottom = box
+    content_w, content_h = right - left, bottom - top
+    if content_w <= 0 or content_h <= 0:
+        return _crop_to_aspect(image, aspect_ratio)
+
+    # Already filling the frame? Leave it alone rather than shave a few pixels.
+    if content_w >= w * 0.97 and content_h >= h * 0.97:
+        return _crop_to_aspect(image, aspect_ratio)
+
+    # Safety rail: a content box this small means the blank-margin read went
+    # wrong (a pale panel, a vignette). Trimming to it would destroy the panel,
+    # so leave the image as the model drew it.
+    if content_w < w * (1 - _MAX_TRIM) or content_h < h * (1 - _MAX_TRIM):
+        logger.info(
+            "[storyboard] panel content box %dx%d of %dx%d — too small to be a "
+            "margin, leaving the panel untrimmed.", content_w, content_h, w, h,
+        )
+        return _crop_to_aspect(image, aspect_ratio)
+
+    target = w_ratio / h_ratio
+    margin = PANEL_MARGIN * min(content_w, content_h)
+    want_w = content_w + 2 * margin
+    want_h = content_h + 2 * margin
+    # Grow the short dimension until the box matches the target aspect.
+    if want_w / want_h < target:
+        want_w = want_h * target
+    else:
+        want_h = want_w / target
+
+    cx, cy = (left + right) / 2, (top + bottom) / 2
+    x0, x1 = cx - want_w / 2, cx + want_w / 2
+    y0, y1 = cy - want_h / 2, cy + want_h / 2
+
+    # Slide back inside the source before resorting to padding, so we keep real
+    # pixels instead of manufacturing bars at the edge.
+    if x0 < 0:
+        x1, x0 = x1 - x0, 0
+    if x1 > w:
+        x0, x1 = x0 - (x1 - w), w
+    if y0 < 0:
+        y1, y0 = y1 - y0, 0
+    if y1 > h:
+        y0, y1 = y0 - (y1 - h), h
+
+    x0, y0 = max(0, int(round(x0))), max(0, int(round(y0)))
+    x1, y1 = min(w, int(round(x1))), min(h, int(round(y1)))
+    cropped = rgb.crop((x0, y0, x1, y1))
+
+    # If the box still doesn't match the target (the source ran out), pad with
+    # the paper colour so the panel is the right shape without losing content.
+    cw, ch = cropped.size
+    if abs(cw / ch - target) > 0.01:
+        if cw / ch < target:
+            pad_w = int(round(ch * target))
+            canvas = Image.new("RGB", (pad_w, ch), paper)
+            canvas.paste(cropped, ((pad_w - cw) // 2, 0))
+        else:
+            pad_h = int(round(cw / target))
+            canvas = Image.new("RGB", (cw, pad_h), paper)
+            canvas.paste(cropped, (0, (pad_h - ch) // 2))
+        cropped = canvas
+
+    # Back to the original frame size so every panel in a board matches exactly.
+    return cropped.resize((w, h), Image.LANCZOS)
+
+
 def _crop_to_aspect(image: "Image.Image", aspect_ratio: str) -> "Image.Image":
     """Centre-crop an image to the given W:H ratio (e.g. '16:9')."""
     try:
@@ -193,7 +358,9 @@ def regenerate_panel(
         )
 
     if image is not None:
-        image = _crop_to_aspect(image, aspect_ratio)
+        # Normalise BEFORE saving so a redrawn panel matches the rest of the
+        # board rather than standing out as a differently-sized picture.
+        image = normalise_panel(image, aspect_ratio)
         image.save(os.path.join(write_dir, f"panel_{i:02d}.png"), "PNG")
         updated["url"] = _panel_url(job_id, i, variant)
         updated["failed"] = False
@@ -336,7 +503,9 @@ def run_storyboard(
             )
 
         if image is not None:
-            image = _crop_to_aspect(image, aspect_ratio)
+            # Every panel gets the same treatment, so a finished board reads as
+            # one set of pictures instead of a jumble of sizes. See normalise_panel.
+            image = normalise_panel(image, aspect_ratio)
             image.save(os.path.join(write_dir, f"panel_{i:02d}.png"), "PNG")
             with state_lock:
                 panel["url"] = _panel_url(job_id, i, variant)

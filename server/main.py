@@ -33,6 +33,7 @@ from . import users
 from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
+from .plans import router as plans_router
 # Shared with the animatics router — they live in common.py so the two route
 # modules don't have to import each other. Aliased to the names used below.
 from .common import (
@@ -107,6 +108,9 @@ app.include_router(animatics_router)
 # Autosaved script drafts (/scripts/draft) — what the user is typing, kept safe
 # from a page refresh. Spends no AI quota.
 app.include_router(drafts_router)
+# Plan & Script (/plans/…) — the conversational content planner that sits BEFORE
+# the storyboard workflow. Spends text quota only, never image quota.
+app.include_router(plans_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]
