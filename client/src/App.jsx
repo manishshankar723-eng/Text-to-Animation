@@ -51,6 +51,13 @@ export default function App() {
   // is the dashboard (profile, plan, recent work), so opening the app shows
   // where things stand rather than dropping you mid-workflow.
   const [nav, setNav] = useState("home"); // "home" | "profile" | workflow id
+  // Bumped when the user clicks the workflow they are ALREADY in. Every
+  // workflow keeps its own screen in local state (library → session → board),
+  // so re-selecting it in the sidebar did nothing — you stayed wherever you
+  // were. This is fed into the content's `key`, which remounts it and drops it
+  // back on its first page. Nothing is lost by that: drafts, plans, boards and
+  // jobs all live server-side and are re-read on mount.
+  const [navResetKey, setNavResetKey] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Set by the board's "Make animatic" button: the animatic already exists, so
@@ -110,6 +117,23 @@ export default function App() {
     setAccountOpen(false);
   }
 
+  // Sidebar clicks. Selecting a DIFFERENT entry navigates; selecting the one
+  // you're already in sends you back to that workflow's first page, so the
+  // sidebar name doubles as "start over here" without hunting for a Back
+  // button deep in the flow.
+  function navigate(id) {
+    if (id === nav) {
+      // Anything the SHELL holds for a workflow has to be cleared too — a
+      // remount alone wouldn't drop these, and Text-to-Image would reopen on
+      // the job you were just looking at instead of its first page.
+      setSelectedId(null);
+      setPendingAnimaticId(null);
+      setNavResetKey((k) => k + 1);
+      return;
+    }
+    setNav(id);
+  }
+
   function onJobCreated(jobId) {
     setSelectedId(jobId);
     refreshJobs();
@@ -151,6 +175,8 @@ export default function App() {
         onOpenJob={openJobInWorkflow}
         onUpgrade={() => setUpgradeOpen(true)}
         onOpenProfile={() => setNav("profile")}
+        // "View all" on a workflow group jumps into that workflow.
+        onNavigate={setNav}
       />
     );
   } else if (nav === "profile") {
@@ -210,7 +236,7 @@ export default function App() {
     <div className="shell">
       <Sidebar
         active={nav}
-        onNavigate={setNav}
+        onNavigate={navigate}
         email={email}
         displayName={displayName}
         theme={theme}
@@ -218,7 +244,11 @@ export default function App() {
         onUpgrade={() => setUpgradeOpen(true)}
         onProfileClick={() => setAccountOpen(true)}
       />
-      <main className="shell-main">{content}</main>
+      {/* Keyed by nav + reset counter: clicking the current workflow again
+          changes the key, React remounts it, and it opens on its first page. */}
+      <main className="shell-main" key={`${nav}-${navResetKey}`}>
+        {content}
+      </main>
 
       {accountOpen && (
         <div className="modal-overlay" onClick={() => setAccountOpen(false)}>

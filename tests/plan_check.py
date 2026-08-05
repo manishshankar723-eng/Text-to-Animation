@@ -118,8 +118,24 @@ check("two messages stored", len(msgs), 2)
 check("first is the user's", msgs[0]["role"], "user")
 check("second is the agent's", msgs[1]["role"], "agent")
 check("timestamps recorded", bool(msgs[0]["at"] and msgs[1]["at"]), True)
-check("session auto-titled from the first message",
-      r.json()["title"].startswith("I run a mythology channel"), True)
+# The title is a NAME, not a transcript of the opening line: filler stripped,
+# a few words about the subject. "I run a mythology channel, plan me 3 months"
+# must not land on a card as a whole sentence.
+title = r.json()["title"]
+check("auto-title names the subject", title, "Mythology channel")
+check("auto-title is short", len(title) <= 42, True)
+check("auto-title drops the request filler", title.lower().startswith("i run"), False)
+
+from server.plans import MAX_TITLE_CHARS, _short_title
+
+for opening, want_max in [
+    ("I run a YouTube channel about mythology. Plan my next 3 months.", MAX_TITLE_CHARS),
+    ("Hi, can you please plan my next 6 months of shorts for my cooking channel?", MAX_TITLE_CHARS),
+    ("A really extremely long opening sentence that keeps going and going forever", MAX_TITLE_CHARS),
+]:
+    got = _short_title(opening)
+    check(f"'{opening[:28]}…' -> short", len(got) <= want_max + 1, True)
+check("empty message still yields a name", _short_title(""), "Untitled plan")
 
 r = client.post(f"/plans/{pid}/chat", headers=auth, json={"message": "Twice a week"})
 check("history grows", len(r.json()["messages"]), 4)

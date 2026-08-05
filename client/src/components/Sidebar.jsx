@@ -62,6 +62,13 @@ export default function Sidebar({
             key={w.id}
             className={`sb-item ${active === w.id ? "active" : ""}`}
             onClick={() => onNavigate(w.id)}
+            /* Clicking the one you're in takes you back to its first page, so
+               say so rather than leaving it to be discovered. */
+            title={
+              active === w.id
+                ? `${w.label} — click again to go back to the start`
+                : w.label
+            }
           >
             <span className="sb-ico">{w.icon}</span>
             <span className="sb-item-label">{w.label}</span>

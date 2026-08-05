@@ -23,7 +23,7 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-04 (Plan & Script + shared library layout rule)
+**Last updated:** 2026-08-04 (Plan & Script: shared library layout + export previews)
 
 ---
 
@@ -305,6 +305,32 @@ own.
 
 ## 🎨 UI rule — REUSE THE EXISTING LAYOUT FOR A NEW WORKFLOW
 
+**Two traps that have already been hit, both reported by the user:**
+
+1. **`.btn.primary` carries a global `margin-top: 1.1rem`** (it is normally the
+   last control in a form). Put one in a ROW and the gold button sits lower than
+   its neighbours and reads as a different size. EVERY button row in the app
+   resets it — `.top-actions`, `.review-actions-right`, `.board-toolbar`,
+   `.account-modal`, and now the Plan & Script rows. **A new row of buttons must
+   reset it too**, and should set `display:inline-flex; align-items:center;
+   min-height` so a ghost / icon-bearing button matches a solid one.
+2. **`min-height` is not enough to make buttons match.** A gold `.btn.primary`
+   carries its own glow shadow and heavier weight, so beside a ghost button it
+   still reads as bigger. Give every button in a row an IDENTICAL box:
+   `height` (not min-height), `padding-top/bottom: 0`, `box-sizing: border-box`.
+3. **A scrolling element must not also be width-capped.** `max-width` on the
+   scroller parks its scrollbar at that width — i.e. in the MIDDLE of a wider
+   panel. The scroller goes full width; cap the line length on a page element
+   INSIDE it (`.export-doc` / `.export-doc-page`).
+4. **Never nest two scrolling containers.** A scrollable panel holding a
+   scrollable table means the inner one grows to the full content height, so its
+   horizontal scrollbar sits at the bottom of the CONTENT — off-screen until you
+   scroll all the way down. Exactly one element in the chain gets
+   `overflow:auto`; its ancestor gets `overflow:hidden` + `display:flex` +
+   `min-height:0`, and the scroller gets `flex:1; min-height:0`. Then the bar is
+   pinned to the visible bottom and stays put.
+
+
 **User's instruction, after a workflow shipped with its own bespoke gallery:**
 *"when I create new workflow so you keep in mind first you use my UI layout, so
 simple for user understanding."*
@@ -417,6 +443,22 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
   cover/badge/chips/date/icon-actions cards. Dead `.plan-card` CSS removed.
   Written up as the **UI rule** section near the top of this file so the next
   workflow starts from the shared layout instead of a new one.
+- **Follow-up — exports PREVIEW before they download.** Clicking XLSX/DOCX/CSV
+  used to download immediately, so the only way to check an export was to open
+  it in Excel or Word. Each button now opens a large modal
+  (`PlanExportPreview.jsx`, reusing `modal-overlay` / `modal-close` / `Icon`)
+  showing what THAT format will contain, laid out the way that format lays it
+  out: xlsx gets a Calendar/Strategy sheet switcher with a sticky header and
+  sticky row numbers (mirroring frozen panes), docx renders as a document, csv
+  shows the grid and says plainly that it holds the calendar only. Download sits
+  in a pinned footer; Escape and the overlay close it.
+- **The preview's columns are GUARDED, not hoped for.** It renders client-side
+  from data the browser already has, so `EXPORT_COLUMNS` in the JSX mirrors
+  `plan_export.COLUMNS`. `tests/plan_export_columns_check.py` parses the JS list
+  and asserts it matches Python exactly, in order — and I verified the guard by
+  deliberately renaming a column and confirming it fails with the offending
+  index and the file to fix. A preview that disagrees with the file is worse
+  than no preview.
 - **Not done / next sections:** the plan doesn't yet flow INTO Script to
   Storyboard (a "write the script for this upload" button is the obvious next
   link). Not browser-tested.

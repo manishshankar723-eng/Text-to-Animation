@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+import PlanExportPreview from "./PlanExportPreview.jsx";
 
 // Same shape as the storyboard library: "Recent" highlights the newest, "All"
 // lists everything (including that one).
@@ -98,6 +99,10 @@ export default function PlanAndScript() {
   const [customCadence, setCustomCadence] = useState("");
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState("");
+  // Which format's preview is open ("" / null = none), and which xlsx sheet
+  // that preview is showing.
+  const [previewFormat, setPreviewFormat] = useState(null);
+  const [previewSheet, setPreviewSheet] = useState("Calendar");
 
   // What actually gets sent. Note the upper bound is clamped but the LOWER one
   // deliberately is not: an empty or junk Custom box must fall through as 0 so
@@ -132,6 +137,17 @@ export default function PlanAndScript() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [plan?.messages?.length, sending]);
 
+  // Escape closes the export preview — expected of any modal, and the overlay
+  // click alone isn't enough for keyboard users.
+  useEffect(() => {
+    if (!previewFormat) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setPreviewFormat(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewFormat]);
+
   function open(detail) {
     setPlan(detail);
     setChannelUrl(detail?.channel?.input || "");
@@ -161,17 +177,35 @@ export default function PlanAndScript() {
     setNotice("");
   }
 
-  async function newSession() {
-    setBusy(true);
+  // "New Plan" opens an UNSAVED session — nothing is written until the user
+  // actually does something. Creating the record on the button click meant
+  // opening the screen, changing your mind, and leaving an empty "Untitled
+  // plan" behind in the library every time.
+  const EMPTY_SESSION = {
+    job_id: null,
+    title: "",
+    messages: [],
+    channel: {},
+    plan: {},
+  };
+
+  function newSession() {
     setError("");
-    try {
-      open(await api.createPlan());
-      await loadSessions();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
+    setNotice("");
+    setChannelUrl("");
+    setDraft("");
+    open({ ...EMPTY_SESSION });
+  }
+
+  // Called by the first action that needs somewhere to store itself. Returns
+  // the session id, creating the record on the spot the first time.
+  async function ensureSession() {
+    if (plan?.job_id) return plan.job_id;
+    const created = await api.createPlan();
+    // Keep whatever the user has already put on screen; take the identity.
+    setPlan((cur) => ({ ...created, ...cur, job_id: created.job_id, title: created.title }));
+    loadSessions();
+    return created.job_id;
   }
 
   async function openSession(id) {
@@ -200,7 +234,9 @@ export default function PlanAndScript() {
     setPlan(optimistic);
     setDraft("");
     try {
-      const updated = await api.sendPlanMessage(plan.job_id, message);
+      // First message is what makes the session real.
+      const id = await ensureSession();
+      const updated = await api.sendPlanMessage(id, message);
       setPlan(updated);
       loadSessions();
     } catch (e) {
@@ -220,7 +256,9 @@ export default function PlanAndScript() {
     setError("");
     setNotice("");
     try {
-      const updated = await api.attachPlanChannel(plan.job_id, channelUrl.trim());
+      // Attaching a channel counts as doing something, so save the session.
+      const id = await ensureSession();
+      const updated = await api.attachPlanChannel(id, channelUrl.trim());
       setPlan(updated);
       const ch = updated.channel || {};
       setNotice(
@@ -249,12 +287,16 @@ export default function PlanAndScript() {
     }
   }
 
-  async function exportAs(format) {
-    if (!plan) return;
-    setExporting(format);
+  // Clicking a format opens the PREVIEW; the download happens from inside it.
+  // Downloading straight away meant the only way to check an export was to open
+  // it in Excel or Word first.
+  async function confirmDownload() {
+    if (!plan || !previewFormat) return;
+    setExporting(previewFormat);
     setError("");
     try {
-      await api.downloadPlan(plan.job_id, format);
+      await api.downloadPlan(plan.job_id, previewFormat);
+      setPreviewFormat(null); // job done — get out of the way
     } catch (e) {
       setError(e.message);
     } finally {
@@ -270,7 +312,9 @@ export default function PlanAndScript() {
     const next = window.prompt("Name this plan", subject.title || "");
     if (next === null || !next.trim()) return;
     try {
-      const updated = await api.renamePlan(subject.job_id, next.trim());
+      // Naming it is intent too — an unsaved session becomes real here.
+      const id = subject.job_id || (await ensureSession());
+      const updated = await api.renamePlan(id, next.trim());
       // Only re-point the open session if that's what was renamed.
       if (plan?.job_id === subject.job_id) setPlan(updated);
       loadSessions();
@@ -637,6 +681,15 @@ export default function PlanAndScript() {
             )}
           </label>
 
+          {/* The buttons sit in the SAME column structure as the selects — an
+              invisible label on top, control underneath — so they land in the
+              identical band instead of being aligned across two different
+              structures and ending up a few pixels out. */}
+          <div className="field plan-actions-field">
+          <span className="field-label" aria-hidden="true">
+            &nbsp;
+          </span>
+          <div className="plan-actions">
           <button
             className="btn primary"
             onClick={generate}
@@ -661,8 +714,44 @@ export default function PlanAndScript() {
               "Generate plan"
             )}
           </button>
+
+          {/* Exports sit in the SAME row as Generate, so everything you do to
+              the calendar is in one place instead of a stray row further down
+              the page. They only appear once there is a plan to export. */}
+          {items.length > 0 && (
+            <>
+              <span className="plan-row-sep" aria-hidden="true" />
+              {["xlsx", "docx", "csv"].map((f) => (
+                <button
+                  key={f}
+                  className="btn"
+                  onClick={() => {
+                    setPreviewSheet("Calendar"); // always open on the calendar
+                    setPreviewFormat(f);
+                  }}
+                  title={`Preview the ${f.toUpperCase()} before downloading`}
+                >
+                  <Icon name="download" /> {f.toUpperCase()}
+                </button>
+              ))}
+            </>
+          )}
+          </div>
+          </div>
         </div>
       </section>
+
+      {/* Mounted outside the calendar block so it survives a regenerate. */}
+      <PlanExportPreview
+        format={previewFormat}
+        plan={built}
+        title={plan?.title}
+        sheet={previewSheet}
+        onSheet={setPreviewSheet}
+        onClose={() => setPreviewFormat(null)}
+        onDownload={confirmDownload}
+        downloading={Boolean(exporting)}
+      />
 
       {/* The calendar */}
       {items.length > 0 && (
@@ -698,21 +787,6 @@ export default function PlanAndScript() {
               )}
             </section>
           )}
-
-          <div className="review-actions top-actions">
-            <div className="review-actions-right">
-              {["xlsx", "docx", "csv"].map((f) => (
-                <button
-                  key={f}
-                  className="btn"
-                  onClick={() => exportAs(f)}
-                  disabled={Boolean(exporting)}
-                >
-                  {exporting === f ? "Preparing…" : `⬇ ${f.toUpperCase()}`}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="plan-grid">
             {items.map((it, i) => (

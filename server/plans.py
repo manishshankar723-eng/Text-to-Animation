@@ -16,6 +16,7 @@ Spends TEXT quota only — this workflow never generates an image.
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -46,6 +47,63 @@ MAX_MESSAGES = 200
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Naming a session from its opening message
+# ---------------------------------------------------------------------------
+# A session used to be named with the first 60 characters of whatever the user
+# typed, which put a whole sentence on the library card — "I run a YouTube
+# channel about myt…". A name should be a NAME: a few words about the subject.
+#
+# So: take the first sentence, drop the filler people open a request with, drop
+# leading articles, and keep a handful of words. "I run a YouTube channel about
+# mythology. Plan my next 3 months." becomes "YouTube channel about mythology".
+MAX_TITLE_WORDS = 5
+MAX_TITLE_CHARS = 42
+
+# Openings that describe the REQUEST rather than the subject.
+_TITLE_FILLER = re.compile(
+    r"^(?:hi|hello|hey|ok|okay)?[\s,.!]*"
+    r"(?:"
+    r"i\s+(?:run|have|own|make|do|need|want|manage|post|edit|create|shoot|design|sell|teach)\b|"
+    r"i'?m\b|i\s+am\b|i'?d\s+like\b|i\s+would\s+like\b|"
+    r"can\s+you\b|could\s+you\b|please\b|help\s+me\b|"
+    r"plan\s+(?:me|my|out)\b|give\s+me\b|make\s+me\b|create\s+me\b|"
+    r"build\s+me\b|write\s+me\b|suggest\b"
+    r")\s*",
+    re.I,
+)
+# Words that shouldn't start a name.
+_TITLE_LEADING_STOP = {"a", "an", "the", "some", "my", "our", "for", "to", "of", "about", "on"}
+
+
+def _short_title(text: str) -> str:
+    """A few words naming the subject, from the user's opening message."""
+    # Strip filler FIRST, then cut the clause. The other order truncates
+    # "Hi, can you please plan my 6 months…" to "Hi" — the comma that ends the
+    # greeting is not the end of the subject.
+    stripped = (text or "").strip()
+    previous = None
+    while previous != stripped:
+        previous = stripped
+        stripped = _TITLE_FILLER.sub("", stripped).strip()
+
+    # A comma ends the clause too: "I run a mythology channel, plan me 3 months"
+    # is about the channel, not about the request that follows it.
+    first = re.split(r"[.!?\n,;]", stripped, maxsplit=1)[0].strip()
+
+    words = first.split()
+    while words and words[0].lower().strip(",;:'\"") in _TITLE_LEADING_STOP:
+        words.pop(0)
+
+    title = " ".join(words[:MAX_TITLE_WORDS]).strip(" ,;:-—")
+    if len(title) > MAX_TITLE_CHARS:
+        title = title[:MAX_TITLE_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
+    if not title:
+        # Nothing usable (all filler, or emoji) — fall back to the raw opening.
+        title = (text or "").strip()[:MAX_TITLE_CHARS] or "Untitled plan"
+    return title[0].upper() + title[1:] if title else "Untitled plan"
 
 
 def _get_owned_plan(job_id: str, current: CurrentUser):
@@ -193,10 +251,10 @@ def chat_to_plan(
     params["messages"] = messages[-MAX_MESSAGES:]
 
     fields = {"params": params}
-    # Name the session after the user's opening line, so the library isn't a
-    # column of "Untitled plan".
+    # Name the session after what the opening message is ABOUT, so the library
+    # isn't a column of "Untitled plan" — or of full sentences.
     if (job.character_name or "").strip() in ("", "Untitled plan"):
-        fields["character_name"] = text[:60] + ("…" if len(text) > 60 else "")
+        fields["character_name"] = _short_title(text)
 
     return _detail(get_store().update(job_id, **fields))
 
