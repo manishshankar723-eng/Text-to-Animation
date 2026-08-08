@@ -61,7 +61,7 @@ export default function AnimaticLibrary({ onOpen }) {
       try {
         const [list, sbs] = await Promise.all([
           api.listAnimatics(),
-          api.listStoryboards(),
+          api.listStoryboards("*"),
         ]);
         if (!alive) return;
         setItems(list);

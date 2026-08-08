@@ -284,8 +284,20 @@ export function createStoryboard({
 // the board itself uses — nothing can drift out of sync.
 
 // Every storyboard this user has generated, newest first.
-export function listStoryboards() {
-  return request("/storyboards");
+// Boards belong to a workflow. Script to Storyboard's own boards carry no tag
+// (pass nothing); Image to Animatic Image asks for its copies by name, so
+// neither library shows the other's.
+export function listStoryboards(workflow = "") {
+  const q = workflow ? `?workflow=${encodeURIComponent(workflow)}` : "";
+  return request(`/storyboards${q}`);
+}
+
+// Deep-copy a board — its own record AND its own panel files, so drawing or
+// restyling the copy can never reach back into the original. This is what
+// "From a Storyboard" does in Image to Animatic Image.
+export function copyStoryboard(jobId, workflow = "") {
+  const q = workflow ? `?workflow=${encodeURIComponent(workflow)}` : "";
+  return request(`/storyboards/${jobId}/copy${q}`, { method: "POST" });
 }
 
 // A saved board's shots + settings, for re-opening it as a new storyboard.

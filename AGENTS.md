@@ -119,7 +119,8 @@ Pipeline stages (see `pipeline.py`):
 - `POST /storyboards/breakdown` — Script→Storyboard Stage A: script → shot list (auth'd, sync; `TEXT_PROVIDER` backend)
 - `POST /storyboards` — Stage D: generate panels from reviewed shots (async job; poll `GET /jobs/{id}`) · `GET /storyboards/{id}/panel/{index}` — serve a panel PNG · `GET /storyboards/{id}/pdf` — Stage F: export the board as PDF
 - **Board editing:** `POST /storyboards/{id}/panels/insert` (`{at, description}`) — add a blank panel, shifting the rest down · `DELETE /storyboards/{id}/panels/{index}` — remove a panel, shifting up. Both renumber files+indices+urls across ALL style variants so `index == position` stays true; the new panel is drawn with the normal `regenerate-panel` call.
-- **Library (Stage G):** `GET /storyboards` — the caller's saved boards (lean summaries: title, genre, aspect, cover) · `GET /storyboards/{id}/project` — saved shots+settings for Duplicate · `PATCH /storyboards/{id}` — rename · `DELETE /storyboards/{id}` — delete record + panel files
+- **Board copies:** `POST /storyboards/{id}/copy?workflow=…` — deep-copy a board (new record + its own panel FILES, urls re-pointed, share token dropped). This is how Image to Animatic Image takes a board in, so editing it can never change the original. Refused while the source is RUNNING or a DRAFT.
+- **Library (Stage G):** `GET /storyboards?workflow=` — the caller's saved boards (lean summaries: title, genre, aspect, cover). `workflow` scopes them: unset = Script to Storyboard's originals, `animatic-image` = the copies, `*` = all (what the animatic/video pickers use) · `GET /storyboards/{id}/project` — saved shots+settings for Duplicate · `PATCH /storyboards/{id}` — rename · `DELETE /storyboards/{id}` — delete record + panel files
 - **Share links:** `POST/DELETE /storyboards/{id}/share` — mint / revoke a public token · `GET /public/storyboards/{token}` · `GET /public/storyboards/{token}/panel/{index}` — **the only unauthenticated routes**; token-gated, serve drawn panels only
 - `POST /characters/reference` — generate T-pose reference from text (surfaces the REAL error via `ReferenceGenerationError`)
 - `GET /characters/reference/{id}/image` — serve generated reference for preview
@@ -405,27 +406,128 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-07 — "Create Animatic Image" wired: it opens the BOARD page (user spec)
+### 2026-08-09 — Image to Animatic Image works on COPIES, never the original board
 
-- **Asked for:** the tile should pick a storyboard like "From a Storyboard"
-  does, but instead of making a video project it opens *"only Show Storyboard
-  last page"* — i.e. the board screen the Script to Storyboard workflow ends on
-  (restyle, redraw a panel, PDF, ZIP, Make animatic).
-- **Mounted, not copied.** `StoryboardBoard.jsx` is rendered directly by
-  `AnimaticsToVideo`, which is now a THREE-state shell: library ⇄ video
-  workspace ⇄ board. The component already fetches its own job, so it needed no
-  changes beyond exporting `styleLabelFor` (so the style names here can't drift
-  from the ones on the board itself). **Do not fork this screen** — there is one
-  board page in the app and both workflows show the same one.
-- `onOpenAnimatic` is threaded through from `App.jsx`. Without it the board's
-  "Make animatic" button hides itself (it is guarded), so the page would have
-  been subtly *different* from the one reached via Script to Storyboard — which
-  is exactly the kind of near-miss this project keeps getting reported for.
-- **One picker serves both board tiles.** They list the same boards; only the
-  blurb and the row's action differ, switched on `picking` being `"storyboard"`
-  vs `"animatic-image"`. Two modals would be two copies of the board list.
+**Read this before touching either board workflow.** The requirement, in the
+owner's words: *"when user create new From A storyboard and add/generate more
+image so not update in real Script to Storyboard project — change should only in
+Image to Animatic image."*
+
+- **The old behaviour was wrong and would have corrupted work.** The library
+  listed EVERY storyboard and opened the source board directly, so redrawing or
+  restyling a panel there edited the Script to Storyboard board itself.
+- **`POST /storyboards/{id}/copy?workflow=…`** (`server/main.py`) deep-copies a
+  board: a new job record **and** `shutil.copytree` of its panel folder,
+  variants included. The copy is a normal `STORYBOARD` job, so every existing
+  endpoint, the animatic and the video workflows all keep working on it.
+  - **Panel urls are re-pointed at the new id, keeping `?v=<variant>`.** Miss
+    this and the copy serves the ORIGINAL's files — it looks correct while being
+    a live link back into the board it is supposed to be independent of.
+  - The **share token is deliberately dropped** (a copy is not published because
+    its source was) and `copied_from` is recorded for information only —
+    **nothing resolves through it**, or independence is lost again.
+  - Copying a RUNNING or DRAFT board is refused: a half-drawn board is a moving
+    target. If the file copy fails the new record is deleted, so a copy is never
+    left without its panels.
+- **`GET /storyboards?workflow=`** decides whose boards a library shows.
+  Untagged = Script to Storyboard's originals; `animatic-image` = the copies;
+  **`*` = everything**, which is what the downstream animatic/video pickers ask
+  for — a board refined here is exactly what you then want to animate, and
+  filtering it out would have made copies a dead end.
+- `Home.jsx` fetches BOTH lists; its two board groups are different sets.
+- **Tested** (`smoke_copy.py`, scratch) on files, not just status codes:
+  copytree includes the `v1` variant, urls repoint and keep `?v=1`, the share
+  token does not ride along; then **overwriting a copy's PNG, deleting one of
+  its panels, renaming it, and deleting the copy outright all leave the source
+  record and files untouched**; and each library sees only its own boards while
+  `*` sees both.
+
+### 2026-08-07 — Same "+ From a Storyboard" tile in both board workflows (user request)
+
+- Image to AI Video's tile lost its 📝 for a **+** (it is the only way in now, so
+  it should read as the create button every other library uses), and the same
+  tile was added to **Image to Animatic Image**.
+- `StoryboardLibrary` gained `newLabel` / `newHint` so the tile can be worded per
+  workflow, and **`onNew` is now handed the fetched `boards`**. That last bit
+  matters: the caller's picker gets the list the library ALREADY loaded, so the
+  modal costs no second request and can never disagree with the cards beneath
+  it. Defaults are unchanged, so Script to Storyboard still shows
+  "New Storyboard" / "N storyboards created" with no props passed.
+- **Verified by rendering:** both tiles measured 213×280 — identical.
+
+### 2026-08-07 — Image to AI Video has ONE way in (user request)
+
+- **"Create Video" (blank project) tile removed.** The library now offers only
+  **From a Storyboard**, which is the route that arrives with the pictures AND
+  the prompts already written — a blank project was a slower path to the same
+  place. `createBlank` deleted with it.
+- **`FinalVideoWorkspace`'s `isEmpty` / discard-on-back guard is now
+  UNREACHABLE but deliberately KEPT** (commented as such). Every project now
+  starts from a board, so it always has shots and a real title. The guard stays
+  because the junk-library bug it prevents was user-reported once already —
+  restore any blank-create path and the protection is already there.
+- `POST /final-videos` still accepts a bare `title` (and `source_animatic_id`);
+  only the UI route is gone. Nothing server-side was removed.
+
+### 2026-08-07 — Sidebar rows are OUTLINED panels now (user-reported)
+
+- **Reported:** *"workflow name panel merge in bg ui"* — the nav rows were
+  `border: none` on `background: transparent`, so they dissolved into the
+  sidebar and read as one dark block.
+- **Fix:** each `.sb-item` is now a panel — `1px` stroke plus a `--panel-2`
+  background. Its own token pair, **`--nav-stroke` / `--nav-stroke-hover`**,
+  NOT `--border`: the rows sit on `--panel`, where `--border` is nearly
+  invisible, and changing `--border` would have restyled every card and input in
+  the app. Cool near-white in dark, cool dark-blue in light — defined in BOTH
+  theme blocks, so light mode isn't an afterthought.
+- The **active** row takes `--border-gold`, so "selected" is never confused with
+  "hovered" (hover only brightens the stroke).
+- `.sb-nav` gap went 0.15rem → 0.35rem: at the old spacing two outlined
+  neighbours read as one doubled line.
+- Row height is UNCHANGED (41px measured) — the padding sheds the 1px the border
+  adds, so nothing below shifted.
+- **Verified by rendering**, not by eye: screenshots in both themes, computed
+  border/background/height read back from the DOM, and every label confirmed to
+  fit at the real 264px sidebar width without truncating.
+
+### 2026-08-07 — NEW WORKFLOW: Image to Animatic Image (promoted out of Image to Video)
+
+- **Asked for:** open a storyboard and land on *"only Show Storyboard last
+  page"* — the board screen Script to Storyboard ends on (restyle, redraw a
+  panel, PDF, ZIP, Make animatic). First built as a tile inside Image to Video,
+  then **promoted to a workflow of its own**.
+- Shown as **"Image to Animatic Image"** (briefly "Create Animatic Image"). Its
+  nav id stays `create-animatic-image` and its file stays
+  `CreateAnimaticImage.jsx` — ids and filenames are internal keys; a rename
+  changes the `label` only. Final rail order:
+  Plan & Script · Text to Turnaround Image · Script to Storyboard ·
+  **Image to Animatic Image** · **Image to AI Video** · Storyboard to Animatics.
+  (The video workflow's label went Animatics to Final Video → Image to Video →
+  Image to AI Video; its id is still `animatics-to-video`.)
+- `client/src/components/CreateAnimaticImage.jsx` — a two-state shell (board
+  library ⇄ board page) and **nothing else**. Both screens are the components
+  the storyboard workflow already uses.
+- **`StoryboardLibrary` is now shared by two workflows.** It gained optional
+  `icon` / `title` / `subtitle`, and its **"New Storyboard" tile renders only
+  when `onNew` is passed**, its **Duplicate button only when `onDuplicate` is**.
+  Create Animatic Image passes neither, because creating a board belongs to
+  Script to Storyboard and a second front door to it would be confusing.
+  Defaults reproduce the old behaviour exactly, so Script to Storyboard is
+  untouched. **Don't fork this component** — parameterise it.
+- `StoryboardBoard` is likewise mounted, not copied; it already fetches its own
+  job. It only had to export `styleLabelFor` so the style names can't drift.
+  **There is ONE board page in the app.**
+- `onOpenAnimatic` is threaded from `App.jsx`. Without it the board's "Make
+  animatic" button hides itself (it is guarded), so the page would have been
+  subtly *different* from the one reached via Script to Storyboard — exactly the
+  near-miss this project keeps getting reported for.
 - The board summary is held whole (not just its id) so style and aspect come
   from the list already fetched, with no second request.
+- Image to Video is back to a **two-state** shell and its third tile is gone.
+- Added to `Home.jsx`'s `groups` in the same position as the sidebar (see the
+  note on that file — it is a second workflow list and does not read the first).
+  It lists the same boards as Script to Storyboard on purpose: it is a second
+  door to them, not a separate store.
 
 ### 2026-08-07 — Sidebar: "Image to Video" + Storyboard to Animatics moved up (user request)
 

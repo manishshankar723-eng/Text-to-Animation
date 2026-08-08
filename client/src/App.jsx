@@ -11,6 +11,7 @@ import PlanAndScript from "./components/PlanAndScript.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
 import AnimaticsToVideo from "./components/AnimaticsToVideo.jsx";
+import CreateAnimaticImage from "./components/CreateAnimaticImage.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
@@ -228,9 +229,14 @@ export default function App() {
       <AnimaticsToVideo
         openId={pendingFinalVideoId}
         onOpened={() => setPendingFinalVideoId(null)}
-        /* "Create Animatic Image" mounts the real board page, so its "Make
-           animatic" button needs the same hand-off the storyboard workflow
-           gets — without it that button is hidden. */
+      />
+    );
+  } else if (nav === "create-animatic-image") {
+    content = (
+      <CreateAnimaticImage
+        /* This workflow mounts the real board page, so its "Make animatic"
+           button needs the same hand-off Script to Storyboard gives it —
+           without the callback that button hides itself. */
         onOpenAnimatic={(id) => {
           setPendingAnimaticId(id);
           setNav("storyboard-to-animatics");

@@ -30,16 +30,14 @@ function formatDate(iso) {
   });
 }
 
-export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
+export default function FinalVideoLibrary({ onOpen }) {
   const [items, setItems] = useState([]);
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [covers, setCovers] = useState({});
-  // Which picker is open, and therefore what picking a board DOES:
-  //   "storyboard"     → make a video project from it
-  //   "animatic-image" → open the board page itself
-  //   null             → closed
+  // Which picker is open: "storyboard" | null. Kept as a name rather than a
+  // boolean so another source can be added without reworking the state.
   const [picking, setPicking] = useState(null);
   // Keyed by CARD id ("<section>:<job_id>"): the same project renders in both
   // Recent and All, and a shared key would let both copies fight for focus.
@@ -57,7 +55,7 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
       try {
         const [list, sbs] = await Promise.all([
           api.listFinalVideos(),
-          api.listStoryboards()
+          api.listStoryboards("*")
         ]);
         if (!alive) return;
         setItems(list);
@@ -124,20 +122,10 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
     );
   }
 
-  async function createBlank() {
-    setBusyId("new");
-    setError("");
-    try {
-      const project = await api.createFinalVideo({ title: UNTITLED });
-      onOpen(project.job_id);
-    } catch (e) {
-      setError(e.message);
-      setBusyId(null);
-    }
-  }
-
-  // Straight from the board: every drawn panel becomes a shot carrying BOTH its
-  // picture and its description, so the prompt boxes arrive filled in.
+  // The ONLY way a project is created. (There was a "Create Video" tile making
+  // a blank one; it was removed — see the tiles below.)
+  // Every drawn panel becomes a shot carrying BOTH its picture and its
+  // description, so the prompt boxes arrive filled in.
   async function createFromBoard(board) {
     setBusyId(board.job_id);
     setError("");
@@ -417,61 +405,26 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
 
       {error && <div className="error">{error}</div>}
 
-      {/* Create first, then the "start from something" tile — the same order
-          "Your Animatics" puts its tiles in, so both libraries read the same
-          way round. From a Storyboard is the route worth taking: it is the only
-          one that arrives with the pictures AND the prompts already written. */}
+      {/* ONE way in, on purpose. A blank project was possible before and is
+          gone: a video needs pictures, and starting from the board is the only
+          route that arrives with the pictures AND the prompts already written,
+          so an empty project was just a slower path to the same place. */}
       <div className="lib-grid lib-new-row">
-        <button
-          type="button"
-          className="card lib-new"
-          disabled={busyId === "new"}
-          onClick={createBlank}
-        >
-          <span className="lib-new-plus">+</span>
-          <span className="lib-new-title">Create Video</span>
-          <span className="tiny muted">
-            {loading
-              ? "Loading your projects…"
-              : `${items.length} project${items.length === 1 ? "" : "s"} created`}
-          </span>
-        </button>
-
-        {/* Straight from the board — the shortest route to a rendered shot,
-            because a panel carries its DESCRIPTION as well as its picture, so
-            the prompt boxes arrive filled in rather than empty. */}
         <button
           type="button"
           className="card lib-new"
           onClick={() => setPicking("storyboard")}
         >
-          <span className="lib-new-plus">📝</span>
+          {/* A "+" like every other library's create tile — this is the only
+              way to start a project here, so it should read as the New button
+              it now is, not as a document. */}
+          <span className="lib-new-plus">+</span>
           <span className="lib-new-title">From a Storyboard</span>
           <span className="tiny muted">
             {loading
               ? "Looking for your boards…"
               : boards.length
                 ? `${boards.length} board${boards.length === 1 ? "" : "s"} ready`
-                : "No drawn boards yet"}
-          </span>
-        </button>
-
-        {/* Opens the board itself — the same last page the Script to Storyboard
-            workflow ends on (restyle, redraw a panel, PDF, ZIP) — rather than
-            creating a video project. It picks from the same list as the tile
-            above; only what happens on click differs. */}
-        <button
-          type="button"
-          className="card lib-new"
-          onClick={() => setPicking("animatic-image")}
-        >
-          <span className="lib-new-plus">🖼️</span>
-          <span className="lib-new-title">Create Animatic Image</span>
-          <span className="tiny muted">
-            {loading
-              ? "Looking for your boards…"
-              : boards.length
-                ? "Open a board to draw its panels"
                 : "No drawn boards yet"}
           </span>
         </button>
@@ -490,10 +443,7 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
         items
       )}
 
-      {/* ONE picker for both board tiles — same list, same rows; only the
-          blurb and what a row DOES differ. Two modals would be two places to
-          keep the board list in step. */}
-      {picking && (
+      {picking === "storyboard" && (
         <div className="modal-overlay" onClick={() => setPicking(null)}>
           <div
             className="card an-pick-modal"
@@ -508,21 +458,10 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
             </button>
             <h2>Pick a storyboard</h2>
             <p className="muted">
-              {picking === "animatic-image" ? (
-                <>
-                  Opens the board itself — the same page Script to Storyboard
-                  ends on. Restyle it, redraw a panel, or export it. Drawing
-                  panels spends image credits; opening the board is free.
-                </>
-              ) : (
-                <>
-                  Every drawn panel becomes a shot carrying{" "}
-                  <strong>both</strong> its picture and its description — so the
-                  prompt boxes arrive filled in and you only edit what should
-                  MOVE. Nothing renders until you press Render; creating the
-                  project is free.
-                </>
-              )}
+              Every drawn panel becomes a shot carrying <strong>both</strong>{" "}
+              its picture and its description — so the prompt boxes arrive
+              filled in and you only edit what should MOVE. Nothing renders
+              until you press Render; creating the project is free.
             </p>
             {!boards.length && (
               <p className="muted">
@@ -537,11 +476,7 @@ export default function FinalVideoLibrary({ onOpen, onOpenBoard }) {
                   type="button"
                   className="an-pick-row"
                   disabled={busyId === b.job_id}
-                  onClick={() =>
-                    picking === "animatic-image"
-                      ? onOpenBoard?.(b)
-                      : createFromBoard(b)
-                  }
+                  onClick={() => createFromBoard(b)}
                 >
                   <span className="an-pick-title">{b.title}</span>
                   <span className="muted">

@@ -28,10 +28,18 @@ function statusClass(status) {
   return "queued";
 }
 
-export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNavigate }) {
+export default function Home({
+  email,
+  onOpenJob,
+  onUpgrade,
+  onOpenProfile,
+  onNavigate
+}) {
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [boards, setBoards] = useState([]);
+  // Image to Animatic Image's own copies — a different set from `boards`.
+  const [copiedBoards, setCopiedBoards] = useState([]);
   const [animatics, setAnimatics] = useState([]);
   const [videos, setVideos] = useState([]);
   const [plans, setPlans] = useState([]);
@@ -43,17 +51,22 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
     try {
       // One workflow being unreachable must not blank the whole dashboard, so
       // each list settles on its own and falls back to empty.
-      const [p, j, b, a, v, pl] = await Promise.all([
+      // TWO board lists, because the two board workflows own different sets:
+      // Script to Storyboard has the originals (untagged), Image to Animatic
+      // Image has its independent copies. See list_storyboards' `workflow`.
+      const [p, j, b, cb, a, v, pl] = await Promise.all([
         api.me().catch(() => null),
         api.listJobs(api.CHARACTER_JOB_KINDS).catch(() => []),
         api.listStoryboards().catch(() => []),
+        api.listStoryboards("animatic-image").catch(() => []),
         api.listAnimatics().catch(() => []),
         api.listFinalVideos().catch(() => []),
-        api.listPlans().catch(() => []),
+        api.listPlans().catch(() => [])
       ]);
       setProfile(p);
       setJobs(Array.isArray(j) ? j : j.jobs || []);
       setBoards(Array.isArray(b) ? b : []);
+      setCopiedBoards(Array.isArray(cb) ? cb : []);
       setAnimatics(Array.isArray(a) ? a : []);
       setVideos(Array.isArray(v) ? v : []);
       setPlans(Array.isArray(pl) ? pl : []);
@@ -72,7 +85,7 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
     ? new Date(profile.created_at).toLocaleDateString(undefined, {
         year: "numeric",
         month: "long",
-        day: "numeric",
+        day: "numeric"
       })
     : "—";
   const displayName = profile?.display_name || profile?.full_name || email;
@@ -92,8 +105,8 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
         key: p.job_id,
         title: p.title || "Untitled plan",
         meta: p.item_count > 0 ? `${p.item_count} uploads` : "no plan yet",
-        date: p.updated_at || p.created_at,
-      })),
+        date: p.updated_at || p.created_at
+      }))
     },
     {
       id: "text-to-image",
@@ -110,10 +123,14 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
           j.status === "succeeded"
             ? () =>
                 api
-                  .downloadZip(j.job_id, `${j.character_name}_assets.zip`, j.result?.zip)
+                  .downloadZip(
+                    j.job_id,
+                    `${j.character_name}_assets.zip`,
+                    j.result?.zip
+                  )
                   .catch((e) => setError(e.message))
-            : null,
-      })),
+            : null
+      }))
     },
     {
       id: "script-to-storyboard",
@@ -124,22 +141,39 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
         title: b.title || "Storyboard",
         status: b.status,
         meta: b.panel_count ? `${b.panel_count} panels` : "",
-        date: b.created_at,
-      })),
+        date: b.created_at
+      }))
+    },
+    {
+      // Its OWN boards — independent copies made by its "From a Storyboard"
+      // tile, not the originals. Drawing in a copy must never change the
+      // storyboard it came from, so the two sets are kept apart everywhere.
+      id: "create-animatic-image",
+      icon: "🖼️",
+      label: "Image to Animatic Image",
+      items: copiedBoards.map((b) => ({
+        key: b.job_id,
+        title: b.title || "Storyboard",
+        status: b.status,
+        meta: b.panel_count ? `${b.panel_count} panels` : "",
+        date: b.updated_at || b.created_at
+      }))
     },
     {
       id: "animatics-to-video",
       icon: "🎞️",
-      label: "Image to Video",
+      label: "Image to AI Video",
       items: videos.map((v) => ({
         key: v.job_id,
         title: v.title || "Final video",
         status: v.status,
         // How much is DONE, not just how much is in it — this is the only
         // workflow where the remainder costs money to finish.
-        meta: v.shot_count ? `${v.rendered_count}/${v.shot_count} rendered` : "",
-        date: v.updated_at || v.created_at,
-      })),
+        meta: v.shot_count
+          ? `${v.rendered_count}/${v.shot_count} rendered`
+          : "",
+        date: v.updated_at || v.created_at
+      }))
     },
     {
       id: "storyboard-to-animatics",
@@ -151,9 +185,9 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
         status: a.status,
         // Same shape of hint as the others: how much is in it.
         meta: a.frame_count ? `${a.frame_count} frames` : "",
-        date: a.updated_at || a.created_at,
-      })),
-    },
+        date: a.updated_at || a.created_at
+      }))
+    }
   ];
 
   const totalItems = groups.reduce((n, g) => n + g.items.length, 0);
@@ -162,7 +196,9 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
     <div className="home">
       <header className="home-head">
         <h1>Welcome back 👋</h1>
-        <p className="muted">Your profile, your plan, and where you left off.</p>
+        <p className="muted">
+          Your profile, your plan, and where you left off.
+        </p>
       </header>
 
       {error && <div className="error">{error}</div>}
@@ -248,18 +284,28 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
                     <li key={it.key} className="wf-item">
                       <button
                         className="wf-open"
-                        onClick={() => (it.onOpen ? it.onOpen() : onNavigate?.(g.id))}
+                        onClick={() =>
+                          it.onOpen ? it.onOpen() : onNavigate?.(g.id)
+                        }
                         title={it.title}
                       >
                         <span className="wf-name">{it.title}</span>
                         <span className="wf-sub">
-                          {it.meta && <span className="muted tiny">{it.meta}</span>}
-                          {it.date && <span className="muted tiny">{formatDate(it.date)}</span>}
+                          {it.meta && (
+                            <span className="muted tiny">{it.meta}</span>
+                          )}
+                          {it.date && (
+                            <span className="muted tiny">
+                              {formatDate(it.date)}
+                            </span>
+                          )}
                         </span>
                       </button>
                       <div className="wf-actions">
                         {it.status && (
-                          <span className={`badge ${statusClass(it.status)}`}>{it.status}</span>
+                          <span className={`badge ${statusClass(it.status)}`}>
+                            {it.status}
+                          </span>
                         )}
                         {it.zip && (
                           <button className="btn small" onClick={it.zip}>
@@ -281,8 +327,8 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
       <section className="card home-card account-card">
         <h2>Account</h2>
         <p className="muted tiny">
-          Your details, storyboard defaults, 3D API keys and password all live on
-          your profile.
+          Your details, storyboard defaults, 3D API keys and password all live
+          on your profile.
         </p>
         <div className="home-card-foot">
           {onOpenProfile && (

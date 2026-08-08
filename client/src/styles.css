@@ -9,6 +9,13 @@
   --panel: #13161f;
   --panel-2: #1b1e2b;
   --border: #272c3d;
+  /* Outline on each sidebar workflow row. Its own token, NOT --border: the
+     nav sits on --panel, and a border the same value as everything else was
+     too close to the background to see, so the rows read as one dark block
+     (user-reported). A cool near-white lifts them off it. Changing --border
+     instead would have restyled every card and input in the app. */
+  --nav-stroke: rgba(186, 209, 255, 0.26);
+  --nav-stroke-hover: rgba(200, 222, 255, 0.55);
   --border-gold: rgba(229, 193, 88, 0.35);
   --text: #f4f6fa;
   --muted: #9aa2b4;
@@ -59,6 +66,10 @@
   --panel: #ffffff;
   --panel-2: #eceff5;
   --border: #d8dde8;
+  /* Same job as in dark, opposite direction: a near-white stroke would vanish
+     on a white sidebar, so this goes cool and DARK to lift the rows off it. */
+  --nav-stroke: rgba(72, 100, 150, 0.28);
+  --nav-stroke-hover: rgba(56, 84, 134, 0.55);
   --border-gold: rgba(150, 116, 27, 0.4);
   --text: #141824;
   --muted: #5b6377;
@@ -1610,7 +1621,10 @@ input[type="checkbox"] {
 .sb-nav {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  /* Was 0.15rem, which was fine for borderless rows. Now that each row is
+     outlined, two neighbours that close together read as one doubled line —
+     this is the gap that keeps them looking like separate panels. */
+  gap: 0.35rem;
   overflow-y: auto;
   flex: 1;
 }
@@ -1622,28 +1636,37 @@ input[type="checkbox"] {
   font-weight: 600;
   padding: 0.9rem 0.7rem 0.35rem;
 }
+/* Each workflow is its own PANEL: an outline plus a lifted background, so the
+   rows read as separate controls instead of merging into the sidebar (they
+   were transparent and border-less, which is what was reported). The padding
+   drops by the 1px the border adds, so the row height is unchanged. */
 .sb-item {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   width: 100%;
-  padding: 0.55rem 0.7rem;
-  border: none;
-  background: transparent;
+  padding: calc(0.55rem - 1px) calc(0.7rem - 1px);
+  border: 1px solid var(--nav-stroke);
+  background: var(--panel-2);
   color: var(--text);
   border-radius: 10px;
   cursor: pointer;
   font-size: 0.88rem;
   font-weight: 500;
   text-align: left;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .sb-item:hover {
   background: var(--panel-2);
+  border-color: var(--nav-stroke-hover);
 }
-.sb-item.active {
+/* The one you're in is gold-outlined, so "selected" never has to be told apart
+   from "just hovered". */
+.sb-item.active,
+.sb-item.active:hover {
   background: rgba(229, 193, 88, 0.12);
   color: var(--primary);
+  border-color: var(--border-gold);
   box-shadow: inset 2px 0 0 var(--primary);
 }
 .sb-ico {

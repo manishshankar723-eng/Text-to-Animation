@@ -27,7 +27,7 @@ const GENRE_LABELS = {
   mystery: "Mystery",
   romance: "Romance",
   "sci-fi": "Sci-Fi",
-  thriller: "Thriller",
+  thriller: "Thriller"
 };
 
 // "Recent Storyboards" highlights just the single newest board; every board
@@ -52,11 +52,36 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, {
     day: "numeric",
     month: "short",
-    year: "numeric",
+    year: "numeric"
   });
 }
 
-export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
+// Shared by TWO workflows: Script to Storyboard (which can create and duplicate
+// boards) and Image to Animatic Image (which only opens them). The header and the
+// two creating actions are therefore optional — omit `onNew` and the "New
+// Storyboard" tile is not rendered, omit `onDuplicate` and the Duplicate button
+// isn't either, so neither workflow offers a button that belongs to the other.
+// Defaults reproduce exactly what Script to Storyboard showed before.
+export default function StoryboardLibrary({
+  onNew,
+  onOpen,
+  onDuplicate,
+  icon = "🎬",
+  title = "Your Storyboards",
+  subtitle = "All your stories in one place.",
+  // What the create tile says. `newHint` is given the board COUNT because only
+  // this component knows it — that is also why `onNew` is handed the boards:
+  // a caller that wants to show its own picker gets the list already fetched
+  // instead of asking the server for it a second time.
+  newLabel = "New Storyboard",
+  newHint = (n) => `${n} storyboard${n === 1 ? "" : "s"} created`,
+  // Whose boards to show. "" is Script to Storyboard's own; a workflow that
+  // works on COPIES passes its own name so the two libraries never mix.
+  workflow = "",
+  // Bumped by the caller to force a re-fetch — e.g. after it has copied a new
+  // board in and wants it to appear without a page reload.
+  refreshKey = 0
+}) {
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -80,7 +105,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
     let alive = true;
     (async () => {
       try {
-        const list = await api.listStoryboards();
+        const list = await api.listStoryboards(workflow);
         if (alive) setBoards(list);
       } catch (e) {
         if (alive) setError(e.message);
@@ -91,7 +116,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [workflow, refreshKey]);
 
   // A board generated in this session lands here still running, so refresh
   // until nothing is in flight — otherwise its card would say "Generating…"
@@ -103,13 +128,15 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
     if (!anyRunning) return undefined;
     const t = setInterval(async () => {
       try {
-        setBoards(await api.listStoryboards());
+        // Same filter as the first load — without it a poll would swap this
+        // library's boards for the other workflow's.
+        setBoards(await api.listStoryboards(workflow));
       } catch {
         // A blip shouldn't spam the card with errors — the next tick retries.
       }
     }, 5000);
     return () => clearInterval(t);
-  }, [anyRunning]);
+  }, [anyRunning, workflow]);
 
   // Cover panels are owner-scoped, so they can't be an <img src> — fetch each
   // as an authed blob once its board appears in the list.
@@ -141,7 +168,9 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
   );
 
   function patchBoard(jobId, fields) {
-    setBoards((bs) => bs.map((b) => (b.job_id === jobId ? { ...b, ...fields } : b)));
+    setBoards((bs) =>
+      bs.map((b) => (b.job_id === jobId ? { ...b, ...fields } : b))
+    );
   }
 
   async function saveRename(board, uid) {
@@ -174,7 +203,7 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
         : await api.shareStoryboard(board.job_id);
       patchBoard(board.job_id, {
         shared: res.shared,
-        share_token: res.share_token,
+        share_token: res.share_token
       });
       if (res.shared) copyLink(uid, res.share_token);
     } catch (e) {
@@ -231,142 +260,148 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
     const running = b.status === "queued" || b.status === "running";
     const genre = genreLabel(b.genre);
     return (
-            <div className="card lib-card" key={uid}>
-              <div
-                className="lib-cover"
-                onClick={() => onOpen(b)}
-                title="Open this storyboard"
+      <div className="card lib-card" key={uid}>
+        <div
+          className="lib-cover"
+          onClick={() => onOpen(b)}
+          title="Open this storyboard"
+        >
+          {covers[b.job_id] ? (
+            <img src={covers[b.job_id]} alt={b.title} />
+          ) : (
+            <div className="lib-cover-empty">
+              {running ? <span className="spinner" /> : "🎞️"}
+            </div>
+          )}
+          {running && <span className="lib-badge">Generating…</span>}
+          {b.status === "failed" && (
+            <span className="lib-badge failed">Failed</span>
+          )}
+        </div>
+
+        <div className="lib-body">
+          {renamingId === uid ? (
+            <input
+              className="lib-rename"
+              autoFocus
+              value={renameValue}
+              disabled={busy}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={() => saveRename(b, uid)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveRename(b, uid);
+                if (e.key === "Escape") setRenamingId(null);
+              }}
+            />
+          ) : (
+            <div
+              className="lib-title"
+              onClick={() => onOpen(b)}
+              title={b.title}
+            >
+              {b.title}
+            </div>
+          )}
+
+          <div className="lib-meta">
+            {genre && <span className="chip">{genre}</span>}
+            {b.aspect_ratio && <span className="chip">{b.aspect_ratio}</span>}
+            {b.panel_count > 0 && (
+              <span className="chip">{b.panel_count} panels</span>
+            )}
+          </div>
+
+          <div className="lib-foot">
+            <span className="tiny muted">{formatDate(b.created_at)}</span>
+            <div className="lib-actions">
+              <button
+                type="button"
+                className={`lib-icon ${b.shared ? "on" : ""}`}
+                disabled={busy}
+                title={
+                  b.shared
+                    ? "Shared — click to stop sharing"
+                    : "Share a public link"
+                }
+                onClick={() => toggleShare(b, uid)}
               >
-                {covers[b.job_id] ? (
-                  <img src={covers[b.job_id]} alt={b.title} />
-                ) : (
-                  <div className="lib-cover-empty">
-                    {running ? <span className="spinner" /> : "🎞️"}
-                  </div>
-                )}
-                {running && <span className="lib-badge">Generating…</span>}
-                {b.status === "failed" && (
-                  <span className="lib-badge failed">Failed</span>
-                )}
-              </div>
+                <Icon name="link" />
+              </button>
+              {onDuplicate && (
+                <button
+                  type="button"
+                  className="lib-icon"
+                  disabled={busy}
+                  title="Duplicate — start a new storyboard from these shots"
+                  onClick={() => duplicate(b)}
+                >
+                  <Icon name="copy" />
+                </button>
+              )}
+              <button
+                type="button"
+                className="lib-icon"
+                disabled={busy}
+                title="Rename this storyboard"
+                onClick={() => {
+                  setRenameValue(b.title);
+                  setRenamingId(uid);
+                }}
+              >
+                <Icon name="pencil" />
+              </button>
+              <button
+                type="button"
+                className="lib-icon danger"
+                disabled={busy}
+                title="Delete this storyboard"
+                onClick={() => setConfirmId(uid)}
+              >
+                <Icon name="trash" />
+              </button>
+            </div>
+          </div>
 
-              <div className="lib-body">
-                {renamingId === uid ? (
-                  <input
-                    className="lib-rename"
-                    autoFocus
-                    value={renameValue}
-                    disabled={busy}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={() => saveRename(b, uid)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") saveRename(b, uid);
-                      if (e.key === "Escape") setRenamingId(null);
-                    }}
-                  />
-                ) : (
-                  <div
-                    className="lib-title"
-                    onClick={() => onOpen(b)}
-                    title={b.title}
-                  >
-                    {b.title}
-                  </div>
-                )}
+          {b.shared && b.share_token && (
+            <div className="lib-share">
+              <input readOnly value={api.shareUrl(b.share_token)} />
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => copyLink(uid, b.share_token)}
+              >
+                {copiedId === uid ? "Copied" : "Copy"}
+              </button>
+            </div>
+          )}
 
-                <div className="lib-meta">
-                  {genre && <span className="chip">{genre}</span>}
-                  {b.aspect_ratio && <span className="chip">{b.aspect_ratio}</span>}
-                  {b.panel_count > 0 && (
-                    <span className="chip">{b.panel_count} panels</span>
-                  )}
-                </div>
-
-                <div className="lib-foot">
-                  <span className="tiny muted">{formatDate(b.created_at)}</span>
-                  <div className="lib-actions">
-                    <button
-                      type="button"
-                      className={`lib-icon ${b.shared ? "on" : ""}`}
-                      disabled={busy}
-                      title={b.shared ? "Shared — click to stop sharing" : "Share a public link"}
-                      onClick={() => toggleShare(b, uid)}
-                    >
-                      <Icon name="link" />
-                    </button>
-                    <button
-                      type="button"
-                      className="lib-icon"
-                      disabled={busy}
-                      title="Duplicate — start a new storyboard from these shots"
-                      onClick={() => duplicate(b)}
-                    >
-                      <Icon name="copy" />
-                    </button>
-                    <button
-                      type="button"
-                      className="lib-icon"
-                      disabled={busy}
-                      title="Rename this storyboard"
-                      onClick={() => {
-                        setRenameValue(b.title);
-                        setRenamingId(uid);
-                      }}
-                    >
-                      <Icon name="pencil" />
-                    </button>
-                    <button
-                      type="button"
-                      className="lib-icon danger"
-                      disabled={busy}
-                      title="Delete this storyboard"
-                      onClick={() => setConfirmId(uid)}
-                    >
-                      <Icon name="trash" />
-                    </button>
-                  </div>
-                </div>
-
-                {b.shared && b.share_token && (
-                  <div className="lib-share">
-                    <input readOnly value={api.shareUrl(b.share_token)} />
-                    <button
-                      type="button"
-                      className="btn small"
-                      onClick={() => copyLink(uid, b.share_token)}
-                    >
-                      {copiedId === uid ? "Copied" : "Copy"}
-                    </button>
-                  </div>
-                )}
-
-                {confirmId === uid && (
-                  <div className="lib-confirm">
-                    <span className="tiny">
-                      Delete “{b.title}”? Its panels are removed for good.
-                    </span>
-                    <div className="lib-confirm-btns">
-                      <button
-                        type="button"
-                        className="btn small"
-                        disabled={busy}
-                        onClick={() => setConfirmId(null)}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="btn small lib-delete"
-                        disabled={busy}
-                        onClick={() => doDelete(b)}
-                      >
-                        {busy ? "Deleting…" : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-                )}
+          {confirmId === uid && (
+            <div className="lib-confirm">
+              <span className="tiny">
+                Delete “{b.title}”? Its panels are removed for good.
+              </span>
+              <div className="lib-confirm-btns">
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => setConfirmId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn small lib-delete"
+                  disabled={busy}
+                  onClick={() => doDelete(b)}
+                >
+                  {busy ? "Deleting…" : "Delete"}
+                </button>
               </div>
             </div>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -389,7 +424,11 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
           // Shimmering skeletons shaped like real cards while the list loads.
           <div className="lib-grid lib-ghosts is-loading">
             {Array.from({ length: ghosts }, (_, i) => (
-              <div className="card lib-card lib-ghost" key={i} aria-hidden="true">
+              <div
+                className="card lib-card lib-ghost"
+                key={i}
+                aria-hidden="true"
+              >
                 <div className="lib-cover lib-ghost-cover" />
                 <div className="lib-body">
                   <div className="lib-ghost-line lib-ghost-title" />
@@ -408,8 +447,8 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
             <div className="card lib-card lib-ghost-empty">
               <span className="lib-empty-ico">🎬</span>
               <p className="lib-empty-text">
-                No storyboards yet — hit <strong>New Storyboard</strong> and your
-                board appears here.
+                No storyboards yet — hit <strong>New Storyboard</strong> and
+                your board appears here.
               </p>
             </div>
           </div>
@@ -427,27 +466,32 @@ export default function StoryboardLibrary({ onNew, onOpen, onDuplicate }) {
   return (
     <div className="workflow-head-wrap sb-library">
       <div className="workflow-header">
-        <span className="wf-icon">🎬</span>
+        <span className="wf-icon">{icon}</span>
         <div>
-          <h1 className="wf-title">Your Storyboards</h1>
-          <p className="muted">All your stories in one place.</p>
+          <h1 className="wf-title">{title}</h1>
+          <p className="muted">{subtitle}</p>
         </div>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      {/* New storyboard — always first, so starting a story is one click. */}
-      <div className="lib-grid lib-new-row">
-        <button type="button" className="card lib-new" onClick={onNew}>
-          <span className="lib-new-plus">+</span>
-          <span className="lib-new-title">New Storyboard</span>
-          <span className="tiny muted">
-            {loading
-              ? "Loading your storyboards…"
-              : `${boards.length} storyboard${boards.length === 1 ? "" : "s"} created`}
-          </span>
-        </button>
-      </div>
+      {/* New storyboard — first, so starting a story is one click. Only where
+          boards can actually be created; see the props comment. */}
+      {onNew && (
+        <div className="lib-grid lib-new-row">
+          <button
+            type="button"
+            className="card lib-new"
+            onClick={() => onNew(boards)}
+          >
+            <span className="lib-new-plus">+</span>
+            <span className="lib-new-title">{newLabel}</span>
+            <span className="tiny muted">
+              {loading ? "Loading your storyboards…" : newHint(boards.length)}
+            </span>
+          </button>
+        </div>
+      )}
 
       {renderSection(
         "recent",

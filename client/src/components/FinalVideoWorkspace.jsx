@@ -313,10 +313,16 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
     }
   }
 
-  // Nothing in it and never named — i.e. you pressed New, looked, and left.
-  // Same test AnimaticEditor makes, for the same reason: without it the library
-  // fills with "Untitled final video" rows nobody asked for. A project started
-  // FROM AN ANIMATIC arrives with shots, so it is never empty by this test.
+  // Nothing in it and never named — i.e. you made one, looked, and left. Same
+  // test AnimaticEditor makes, for the same reason: without it the library
+  // fills with "Untitled final video" rows nobody asked for.
+  //
+  // CURRENTLY UNREACHABLE, and kept deliberately. Every project now starts
+  // From a Storyboard, so it arrives with shots and a real title and can never
+  // be empty by this test. It stays as a guard because the junk-library bug it
+  // prevents was user-reported once already: restore any path that creates a
+  // blank project and the protection is here waiting, rather than having to be
+  // remembered.
   const isEmpty =
     !!project &&
     !project.shots.length &&

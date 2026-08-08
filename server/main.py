@@ -17,6 +17,7 @@ Run locally:
     uvicorn server.main:app --reload
 """
 
+import copy as copy_module
 import logging
 import os
 import shutil
@@ -785,9 +786,22 @@ def _get_owned_board(job_id: str, current: CurrentUser) -> Job:
 @app.get("/storyboards", response_model=list[StoryboardSummary])
 def list_storyboards(
     limit: int = 100,
+    workflow: str = "",
     current: CurrentUser = Depends(get_current_user),
 ):
-    """List the caller's saved storyboards, newest first (the library grid)."""
+    """List the caller's saved storyboards, newest first (the library grid).
+
+    `workflow` decides WHOSE boards these are. Boards made in Script to
+    Storyboard carry no tag; a copy made by Image to Animatic Image carries
+    `params["workflow"]` (see `copy_storyboard`). Each library asks for its own,
+    so a copy doesn't clutter the workflow it was copied out of, and the
+    originals don't appear in the workflow that only works on copies.
+
+    `workflow="*"` returns EVERY board whatever its tag. That is what the
+    downstream workflows (animatics, video) ask for: a board refined in Image
+    to Animatic Image is exactly the thing you then want to animate, and
+    filtering it out would make the copies a dead end.
+    """
     # Filtered in the store, so a burst of character-generation jobs can't push
     # older boards out of the page before they're even considered.
     jobs = get_store().list(
@@ -796,7 +810,15 @@ def list_storyboards(
     # DRAFT jobs are storyboards-in-progress sitting on the review step — no
     # panels drawn, nothing to show on a card. They're resumed via
     # GET /storyboards/draft, not listed here as if they were finished boards.
-    return [_summarise_board(j) for j in jobs if j.status != JobStatus.DRAFT]
+    return [
+        _summarise_board(j)
+        for j in jobs
+        if j.status != JobStatus.DRAFT
+        and (
+            workflow == "*"
+            or ((j.params or {}).get("workflow") or "") == workflow
+        )
+    ]
 
 
 @app.get("/storyboards/{job_id}/project", response_model=StoryboardProject)
@@ -861,6 +883,108 @@ def delete_storyboard(
             logger.exception("[storyboard %s] could not remove %s", job_id, board_dir)
     get_store().delete(job_id)
     return None
+
+
+def _repoint_panel_url(url: str, job_id: str, index: int) -> str:
+    """Rewrite a panel's serve url onto `job_id`, keeping its ?v=<variant>.
+
+    Used when copying a board. The variant query matters: drop it and a copy of
+    a re-styled board would serve variant 0 while claiming to be variant 2.
+    """
+    suffix = ""
+    if "?" in url:
+        suffix = "?" + url.split("?", 1)[1]
+    return f"/storyboards/{job_id}/panel/{index}{suffix}"
+
+
+@app.post("/storyboards/{job_id}/copy", response_model=StoryboardSummary, status_code=201)
+def copy_storyboard(
+    job_id: str,
+    workflow: str = "",
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Deep-copy a board into a NEW, fully independent one.
+
+    This is what "From a Storyboard" does in Image to Animatic Image, and the
+    independence is the whole point: the copy gets its own job record AND its
+    own panel FILES, so redrawing, restyling, inserting or deleting a panel in
+    it can never reach back into the board it came from. A reference (the way
+    animatics and final videos point at a board by id) would have done exactly
+    that, which is why this copies bytes instead.
+
+    `workflow` tags which library the copy belongs to, so each workflow lists
+    only its own boards — see `list_storyboards`.
+
+    NOT copied on purpose:
+      - the share token: a copy is not published just because its source was.
+      - RUNNING state: a half-drawn board would copy a moving target, so it is
+        refused; and the copy always lands terminal.
+    """
+    source = _get_owned_board(job_id, current)
+    if source.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="That storyboard is still generating — wait for it to finish, then copy it.",
+        )
+    if source.status == JobStatus.DRAFT:
+        raise HTTPException(
+            status_code=409,
+            detail="That storyboard is still a draft — finish generating it first.",
+        )
+
+    params = dict(source.params or {})
+    params.pop("share_token", None)
+    if workflow:
+        params["workflow"] = workflow
+    # Where it came from. Informational only — nothing resolves through it, or
+    # the copy would stop being independent.
+    params["copied_from"] = job_id
+
+    copy = get_store().create(
+        character_name=source.character_name or "Storyboard",
+        kind=JobKind.STORYBOARD,
+        template=source.template,
+        owner=current.email,
+        params=params,
+    )
+
+    # Copy the panel PNGs, including every style-variant subfolder.
+    src_dir = _board_dir(job_id)
+    dst_dir = _board_dir(copy.job_id)
+    if os.path.isdir(src_dir):
+        try:
+            shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+        except OSError:
+            # Without the files the copy is an empty board, which is worse than
+            # no copy at all — take the record back out rather than leave one.
+            logger.exception("[storyboard %s] could not copy panels to %s", job_id, dst_dir)
+            get_store().delete(copy.job_id)
+            raise HTTPException(
+                status_code=500,
+                detail="The board's panels couldn't be copied. Nothing was created.",
+            ) from None
+
+    # Re-point every panel url at the NEW job. Missing this would leave the copy
+    # serving the ORIGINAL's files — it would look right and be a live link back
+    # into the board this is supposed to be independent of.
+    result = copy_module.deepcopy(source.result or {})
+    for variant in result.get("variants") or []:
+        for i, panel in enumerate(variant.get("panels") or []):
+            if panel and panel.get("url"):
+                panel["url"] = _repoint_panel_url(panel["url"], copy.job_id, i)
+    for i, panel in enumerate(result.get("panels") or []):
+        if panel and panel.get("url"):
+            panel["url"] = _repoint_panel_url(panel["url"], copy.job_id, i)
+
+    updated = get_store().update(
+        copy.job_id, status=source.status, result=result or None, error=None
+    ) or copy
+
+    logger.info(
+        "[storyboard %s] copied to %s for %s (workflow=%s)",
+        job_id, copy.job_id, current.email, workflow or "-",
+    )
+    return _summarise_board(updated)
 
 
 @app.post("/storyboards/{job_id}/share", response_model=ShareResponse)
