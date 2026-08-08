@@ -596,6 +596,132 @@ export async function downloadAnimaticVideo(id, filename) {
   URL.revokeObjectURL(url);
 }
 
+// --- Animatics → Final Video -----------------------------------------------
+// A project IS a job (kind "final_video"), like every other workflow. Unlike the
+// animatic, this one SPENDS: each shot is a Veo render billed per second of
+// output. Anything below that can spend says so in its comment.
+
+// Start a project. Pass `sourceAnimaticId` alone and the server fills the shot
+// list from that animatic's frames (the animatic's "Make final video").
+export function createFinalVideo({
+  title,
+  sourceAnimaticId,
+  sourceStoryboardId,
+  settings,
+  shots,
+} = {}) {
+  return request("/final-videos", {
+    method: "POST",
+    body: {
+      title: title || null,
+      source_animatic_id: sourceAnimaticId || null,
+      source_storyboard_id: sourceStoryboardId || null,
+      settings: settings || null,
+      shots: shots || [],
+    },
+  });
+}
+
+export function listFinalVideos() {
+  return request("/final-videos");
+}
+export function getFinalVideo(id) {
+  return request(`/final-videos/${id}`);
+}
+
+// Save the edited project. Sending `shots` or `art` replaces the whole list, so
+// removing one is sending the list without it. Render STATE on a shot (status,
+// cost, timings) is server-owned and ignored here — an autosave racing a
+// finished render can't roll it back and lose a clip you paid for.
+export function saveFinalVideo(id, { title, settings, shots, art } = {}) {
+  const body = {};
+  if (title !== undefined) body.title = title;
+  if (settings !== undefined) body.settings = settings;
+  if (shots !== undefined) body.shots = shots;
+  if (art !== undefined) body.art = art;
+  return request(`/final-videos/${id}`, { method: "PUT", body });
+}
+
+export function deleteFinalVideo(id) {
+  return request(`/final-videos/${id}`, { method: "DELETE" });
+}
+
+// Is Veo reachable at all? Called before the first paid click so a missing key
+// is a banner, not a failed render.
+export function getVideoBackend() {
+  return request("/final-videos/backend");
+}
+
+// Upload stills into the art tray (step 1). Stored but not attached to any
+// shot — the caller appends the returned refs to `art` and saves.
+export function uploadFinalArt(id, files) {
+  const fd = new FormData();
+  for (const file of files) fd.append("files", file);
+  return request(`/final-videos/${id}/art`, { method: "POST", body: fd, isForm: true });
+}
+
+// What would this render cost? Free to call; drives the confirm dialog so the
+// price is on screen before the button that spends it.
+export function estimateFinalVideo(id, { shotIds, force } = {}) {
+  return request(`/final-videos/${id}/estimate`, {
+    method: "POST",
+    body: { shot_ids: shotIds || [], force: !!force },
+  });
+}
+
+// SPENDS MONEY. Renders shots with Veo, async — poll getJob(id) for progress.
+// Empty `shotIds` means "everything not already rendered".
+export function renderFinalVideoShots(id, { shotIds, force } = {}) {
+  return request(`/final-videos/${id}/render`, {
+    method: "POST",
+    body: { shot_ids: shotIds || [], force: !!force },
+  });
+}
+
+// Free. Joins the rendered clips into the cut (async — poll getJob(id)).
+export function assembleFinalVideo(id) {
+  return request(`/final-videos/${id}/assemble`, { method: "POST" });
+}
+
+// Stops whichever of the two is running. Keeps every clip already paid for.
+export function stopFinalVideo(id) {
+  return request(`/final-videos/${id}/stop`, { method: "POST" });
+}
+
+// Stills and clips sit behind the bearer token, so an <img>/<video> src can't
+// point straight at them. Reuses fetchAnimaticMedia — same problem, same fix.
+// The CALLER owns the returned URL and must revoke it.
+export const fetchFinalVideoMedia = fetchAnimaticMedia;
+
+export async function downloadFinalVideo(id, filename) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetchWithRetry(`${BASE}/final-videos/${id}/video`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "final.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // --- Metadata ---
 export function listTemplates() {
   return request("/templates");

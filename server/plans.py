@@ -236,7 +236,7 @@ def chat_to_plan(
     from plan_agent import PlanError, chat
 
     try:
-        reply = chat(messages, channel_context=_context(job))
+        result = chat(messages, channel_context=_context(job))
     except PlanError as e:
         # The user's message is NOT saved when the reply fails — otherwise the
         # transcript grows a question that was never answered, and the next turn
@@ -247,7 +247,16 @@ def chat_to_plan(
         logger.exception("[plan %s] unexpected chat error", job_id)
         raise HTTPException(status_code=502, detail=f"Planning agent error: {e}")
 
-    messages.append({"role": "agent", "text": reply, "at": _now()})
+    # Questions ride along on the agent's turn, so the clickable panel survives
+    # a refresh and an OLD question can never be mistaken for the live one.
+    messages.append(
+        {
+            "role": "agent",
+            "text": result.get("reply", ""),
+            "questions": result.get("questions") or [],
+            "at": _now(),
+        }
+    )
     params["messages"] = messages[-MAX_MESSAGES:]
 
     fields = {"params": params}
@@ -312,6 +321,7 @@ def generate(
             months=body.months,
             cadence=body.cadence or "",
             channel_context=_context(job),
+            language=body.language or "",
         )
     except PlanError as e:
         logger.warning("[plan %s] generate failed: %s", job_id, e)

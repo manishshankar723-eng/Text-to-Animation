@@ -23,7 +23,10 @@ const RESTYLE_OPTIONS = [
   { id: "stick-figure", label: "🏃 Stick Figure" },
   { id: "graphic-novel", label: "📖 Graphic Novel" },
 ];
-const styleLabelFor = (id) =>
+// Exported so anywhere that mounts this board (Image to Video's "Create
+// Animatic Image") shows the SAME style names, instead of a second copy of the
+// list that drifts.
+export const styleLabelFor = (id) =>
   RESTYLE_OPTIONS.find((s) => s.id === id)?.label || id || "Style";
 
 export default function StoryboardBoard({

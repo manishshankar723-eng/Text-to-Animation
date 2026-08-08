@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 import PlanExportPreview from "./PlanExportPreview.jsx";
+import PlanQuestions from "./PlanQuestions.jsx";
+import PlanLanguageModal, { LANGUAGES } from "./PlanLanguageModal.jsx";
 
 // Same shape as the storyboard library: "Recent" highlights the newest, "All"
 // lists everything (including that one).
@@ -62,6 +64,13 @@ const STARTERS = [
   "I edit videos for clients. Help me build an audience on Instagram.",
 ];
 
+// A stored language is either one of the presets or whatever the user typed,
+// so an unknown value is shown as-is rather than swallowed.
+function languageLabel(id) {
+  const known = LANGUAGES.find((l) => l.id === id);
+  return known ? known.label : id;
+}
+
 const GOAL_TONE = {
   reach: "goal-reach",
   engagement: "goal-engagement",
@@ -84,6 +93,9 @@ export default function PlanAndScript() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef(null);
+  // Set when the user dismisses a question panel, so it stays dismissed until
+  // the agent asks something new rather than reappearing on every render.
+  const [dismissedAt, setDismissedAt] = useState(null);
 
   // Channel
   const [channelUrl, setChannelUrl] = useState("");
@@ -103,6 +115,14 @@ export default function PlanAndScript() {
   // that preview is showing.
   const [previewFormat, setPreviewFormat] = useState(null);
   const [previewSheet, setPreviewSheet] = useState("Calendar");
+  // The language currently chosen, held in state so it's visible in the row
+  // BEFORE anything has been generated and stays visible afterwards.
+  const [language, setLanguage] = useState("english");
+  // The picker is opened two ways and does different things:
+  //   "generate" — from the Generate button; confirming builds the plan.
+  //   "pick"     — from the Language field; confirming just sets the language.
+  // null = closed.
+  const [langMode, setLangMode] = useState(null);
 
   // What actually gets sent. Note the upper bound is clamped but the LOWER one
   // deliberately is not: an empty or junk Custom box must fall through as 0 so
@@ -172,6 +192,9 @@ export default function PlanAndScript() {
         setCustomCadence(c);
       }
     }
+    // Reopen on the language this plan was written in, so the row reflects the
+    // board on screen rather than resetting to English.
+    setLanguage(detail?.plan?.language || "english");
     setStep("session");
     setError("");
     setNotice("");
@@ -250,6 +273,16 @@ export default function PlanAndScript() {
     }
   }
 
+  // Picked answers become an ordinary chat message. Composing them into plain
+  // prose (rather than posting a hidden structured payload) keeps the
+  // transcript readable and means the agent handles them like any other reply.
+  function submitAnswers(answers) {
+    const text = answers
+      .map((a) => `${a.header}: ${a.value}`)
+      .join("\n");
+    send(text);
+  }
+
   async function researchChannel() {
     if (!channelUrl.trim() || !plan) return;
     setChannelBusy(true);
@@ -273,12 +306,17 @@ export default function PlanAndScript() {
     }
   }
 
-  async function generate() {
+  // Generate asks for the language first — the plan's titles and hooks get
+  // published as written, so the language isn't a detail to bury in settings.
+  async function generate(chosen) {
     if (!plan) return;
+    const lang = chosen || language;
+    setLanguage(lang); // keep the row showing what was actually used
     setGenerating(true);
     setError("");
     try {
-      setPlan(await api.generatePlan(plan.job_id, { months, cadence }));
+      setPlan(await api.generatePlan(plan.job_id, { months, cadence, language: lang }));
+      setLangMode(null);
       loadSessions();
     } catch (e) {
       setError(e.message);
@@ -486,6 +524,14 @@ export default function PlanAndScript() {
 
   // ---- Session ------------------------------------------------------------
   const messages = plan?.messages || [];
+  // Only the NEWEST agent turn can be answered. An older question has already
+  // been moved past, and offering it again would send a stale answer.
+  const lastAgent =
+    messages.length && messages[messages.length - 1].role === "agent"
+      ? messages[messages.length - 1]
+      : null;
+  const liveQuestions =
+    lastAgent && lastAgent.at !== dismissedAt ? lastAgent.questions || [] : [];
   // Declared here rather than with the other derived values because it needs
   // `messages`. A half-filled Custom box must not reach the server as a silent
   // default — better a disabled button than a plan for the wrong span.
@@ -502,7 +548,16 @@ export default function PlanAndScript() {
           <h1 className="wf-title">{plan?.title || "Plan & Script"}</h1>
           <p className="muted">
             {items.length > 0
-              ? `${items.length} uploads · ${built.months} month${built.months === 1 ? "" : "s"} · ${built.cadence}`
+              ? [
+                  `${items.length} uploads`,
+                  `${built.months} month${built.months === 1 ? "" : "s"}`,
+                  built.cadence,
+                  // Shown so it's obvious what the board was written in, and
+                  // that regenerating in another language is possible.
+                  built.language ? languageLabel(built.language) : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : "Tell the agent what you make and who it's for."}
           </p>
         </div>
@@ -600,6 +655,18 @@ export default function PlanAndScript() {
           )}
         </div>
 
+        {/* The agent's questions as clickable answers, directly above the box
+            you'd otherwise type into. Dismissable — it's a shortcut, never a
+            gate; you can always answer in your own words instead. */}
+        {!sending && (
+          <PlanQuestions
+            questions={liveQuestions}
+            busy={sending}
+            onDismiss={() => setDismissedAt(lastAgent?.at || null)}
+            onSubmit={submitAnswers}
+          />
+        )}
+
         <div className="plan-chat-input">
           <textarea
             className="prompt-textarea"
@@ -681,6 +748,22 @@ export default function PlanAndScript() {
             )}
           </label>
 
+          {/* The language sits in the row with the other choices, not only
+              inside the popup — otherwise the plan comes back in Hinglish and
+              nothing on the page says so. Clicking it reopens the picker. */}
+          <label className="field">
+            <span className="field-label">Language</span>
+            <button
+              type="button"
+              className="btn plan-lang-btn"
+              onClick={() => setLangMode("pick")}
+              title="Change the language the plan is written in"
+            >
+              <span className="plan-lang-name">{languageLabel(language)}</span>
+              <span className="plan-lang-caret" aria-hidden="true">▾</span>
+            </button>
+          </label>
+
           {/* The buttons sit in the SAME column structure as the selects — an
               invisible label on top, control underneath — so they land in the
               identical band instead of being aligned across two different
@@ -692,7 +775,7 @@ export default function PlanAndScript() {
           <div className="plan-actions">
           <button
             className="btn primary"
-            onClick={generate}
+            onClick={() => setLangMode("generate")}
             disabled={generating || !canGenerate}
             title={
               messages.length === 0
@@ -705,8 +788,11 @@ export default function PlanAndScript() {
             }
           >
             {generating ? (
+              // Say WHAT it's writing, not just that it's busy — a 36-item plan
+              // takes a while and "Planning…" alone left the user unsure the
+              // language had even been applied.
               <>
-                <span className="spinner-inline" /> Planning…
+                <span className="spinner-inline" /> Writing in {languageLabel(language)}…
               </>
             ) : items.length ? (
               "Regenerate plan"
@@ -741,6 +827,23 @@ export default function PlanAndScript() {
         </div>
       </section>
 
+      <PlanLanguageModal
+        open={Boolean(langMode)}
+        // The language CURRENTLY selected in the row — not the one the last
+        // plan happened to be built in. Seeding it from the old plan meant
+        // picking Hinglish in the row, hitting Regenerate, and the popup
+        // quietly reopening on English, so the plan came back English.
+        initial={language}
+        mode={langMode}
+        busy={generating}
+        onClose={() => setLangMode(null)}
+        onConfirm={(lang) => {
+          setLanguage(lang);
+          if (langMode === "generate") generate(lang);
+          else setLangMode(null);
+        }}
+      />
+
       {/* Mounted outside the calendar block so it survives a regenerate. */}
       <PlanExportPreview
         format={previewFormat}
@@ -758,7 +861,16 @@ export default function PlanAndScript() {
         <>
           {built.summary && (
             <section className="card">
-              <h2>Strategy</h2>
+              <div className="plan-strategy-head">
+                <h2>Strategy</h2>
+                {/* States plainly what this calendar is written in — the whole
+                    board below is in that language. */}
+                {built.language && (
+                  <span className="plan-chip plan-lang-chip">
+                    ✍️ {languageLabel(built.language)}
+                  </span>
+                )}
+              </div>
               <p>{built.summary}</p>
               {built.pillars?.length > 0 && (
                 <ul className="plan-pillars">
@@ -799,31 +911,36 @@ export default function PlanAndScript() {
                   {it.effort && <span className="plan-chip">{it.effort} effort</span>}
                 </header>
                 <h3 className="plan-item-title">{it.title}</h3>
-                {it.hook && (
-                  <p className="plan-hook">
-                    <span className="plan-label">Hook</span>
-                    {it.hook}
+                {/* Every card is the same size; the detail scrolls inside when
+                    there's more of it. The slot, chips and title stay pinned so
+                    a scrolled card is still identifiable at a glance. */}
+                <div className="plan-item-body">
+                  {it.hook && (
+                    <p className="plan-hook">
+                      <span className="plan-label">Hook</span>
+                      {it.hook}
+                    </p>
+                  )}
+                  <p className="muted tiny">
+                    {[it.format, it.pillar].filter(Boolean).join(" · ")}
                   </p>
-                )}
-                <p className="muted tiny">
-                  {[it.format, it.pillar].filter(Boolean).join(" · ")}
-                </p>
-                {it.outline?.length > 0 && (
-                  <ol className="plan-outline">
-                    {it.outline.map((b, j) => (
-                      <li key={j}>{b}</li>
-                    ))}
-                  </ol>
-                )}
-                {it.cta && (
-                  <p className="tiny">
-                    <span className="plan-label">CTA</span>
-                    {it.cta}
-                  </p>
-                )}
-                {it.keywords?.length > 0 && (
-                  <p className="muted tiny plan-keywords">{it.keywords.join(" · ")}</p>
-                )}
+                  {it.outline?.length > 0 && (
+                    <ol className="plan-outline">
+                      {it.outline.map((b, j) => (
+                        <li key={j}>{b}</li>
+                      ))}
+                    </ol>
+                  )}
+                  {it.cta && (
+                    <p className="tiny">
+                      <span className="plan-label">CTA</span>
+                      {it.cta}
+                    </p>
+                  )}
+                  {it.keywords?.length > 0 && (
+                    <p className="muted tiny plan-keywords">{it.keywords.join(" · ")}</p>
+                  )}
+                </div>
               </article>
             ))}
           </div>

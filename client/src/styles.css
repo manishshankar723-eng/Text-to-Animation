@@ -2139,6 +2139,293 @@ input[type="checkbox"] {
   color: var(--gold-ink);
   border-color: transparent;
 }
+/* The language shown IN the controls row — same box as the selects beside it,
+   with a caret so it reads as a chooser rather than an action. */
+.plan-lang-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 150px;
+  padding-left: 0.75rem;
+  padding-right: 0.65rem;
+  background: var(--panel-2);
+  text-align: left;
+}
+.plan-lang-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-lang-caret {
+  color: var(--muted);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+.plan-strategy-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.plan-strategy-head h2 {
+  margin: 0;
+}
+.plan-lang-chip {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+
+/* ---- Language picker (shown on Generate) -------------------------------- */
+.lang-modal {
+  position: relative;
+  width: min(620px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  text-align: left;
+  border-color: var(--border-gold);
+}
+.lang-head h2 {
+  margin: 0 2rem 0.3rem 0;
+  font-size: 1.05rem;
+}
+.lang-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.9rem 0;
+}
+.lang-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.lang-opt:hover {
+  border-color: var(--border-gold);
+}
+.lang-opt.on {
+  border-color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
+}
+.lang-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.lang-opt-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.lang-opt-label {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+.lang-opt-native {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.lang-opt-hint {
+  font-size: 0.79rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+/* A real sample title is worth more than any description — you can see what
+   your board will read like before spending a generation on it. */
+.lang-opt-sample {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text);
+  opacity: 0.85;
+}
+.lang-custom {
+  margin-bottom: 0.9rem;
+}
+.lang-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.lang-foot > .tiny {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lang-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.lang-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  box-sizing: border-box;
+}
+
+/* ---- The agent's clickable questions ------------------------------------ */
+/* Sits between the transcript and the chat box: the answer is right where you
+   were about to type, not somewhere you have to go looking for. */
+.pq {
+  margin-top: 0.9rem;
+  padding: 0.85rem 0.95rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+}
+.pq-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.pq-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.pq-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pq-tab:hover {
+  color: var(--text);
+}
+.pq-tab.on {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  background: rgba(229, 193, 88, 0.08);
+}
+.pq-tick {
+  color: var(--ok);
+  font-size: 0.7rem;
+}
+.pq-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+  padding: 0.2rem;
+}
+.pq-close:hover {
+  color: var(--text);
+}
+.pq-question {
+  margin: 0 0 0.7rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.pq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+/* An option is a big target with its consequence written underneath — the
+   description is what makes a choice informed rather than a guess. */
+.pq-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pq-opt:hover {
+  border-color: var(--border-gold);
+}
+.pq-opt.on {
+  border-color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
+}
+.pq-radio {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 0.15rem;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+}
+.pq-opt.on .pq-radio {
+  border-color: var(--primary);
+  background:
+    radial-gradient(circle, var(--primary) 0 45%, transparent 46%);
+}
+.pq-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.pq-opt-label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.pq-opt-desc {
+  font-size: 0.79rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.pq-other {
+  margin-top: 0.1rem;
+}
+.pq-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.pq-foot .btn {
+  margin-top: 0;
+}
+
 .plan-chat-input {
   display: flex;
   gap: 0.6rem;
@@ -2252,10 +2539,48 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1rem;
-  align-items: start;
+  /* Every card the same size. `start` let each take its natural height, so a
+     shot with a four-beat outline towered over a three-beat one and the grid
+     read as broken. */
+  align-items: stretch;
+  /* One card height for the whole calendar. Fixed rather than "as tall as the
+     tallest in the row", so a single long entry can't stretch every card on
+     its row into a wall of whitespace. */
+  --plan-card-h: 400px;
 }
 .plan-item {
   margin: 0;
+  height: var(--plan-card-h);
+  display: flex;
+  flex-direction: column;
+}
+/* Slot, chips and title stay put; only the detail below them scrolls, so a
+   scrolled card is still identifiable. */
+.plan-item-head,
+.plan-item-title {
+  flex-shrink: 0;
+}
+.plan-item-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  /* Room for the bar so text doesn't run under it. */
+  padding-right: 0.15rem;
+}
+.plan-item-body::-webkit-scrollbar {
+  width: 10px;
+}
+.plan-item-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.plan-item-body::-webkit-scrollbar-thumb {
+  background: #454a5e;
+  border: 3px solid var(--panel);
+  border-radius: 8px;
+}
+.plan-item-body::-webkit-scrollbar-thumb:hover {
+  background: #5c6278;
 }
 .plan-item-head {
   display: flex;
@@ -3821,6 +4146,16 @@ input[type="checkbox"] {
   color: var(--gold-ink);
   background: var(--gold-grad);
   box-shadow: var(--gold-glow);
+  /* A flex child's min-height defaults to `auto`, so an EMOJI tile (🎬, 🎞️)
+     whose line box is taller than 4.5rem grew this box and pushed the title and
+     subtitle a few pixels lower than the neighbouring "+" tile — the two tiles
+     visibly failed to line up. Rule 3 of the Responsive rules: min-height: 0 on
+     every flex child. `overflow: hidden` keeps an oversized glyph inside the
+     square instead of letting it bleed over the corners. */
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .lib-new-title {
   font-weight: 700;
@@ -7075,4 +7410,716 @@ input[type="checkbox"] {
 }
 .tl-audio-clip .tl-handle {
   z-index: 2;
+}
+
+/* ===========================================================================
+   Animatics → Final Video
+   ---------------------------------------------------------------------------
+   The three-step workspace. Reuses `.card`, `.chip`, `.btn`, `.lib-*` and the
+   modal classes wherever the shape matches an existing screen — what follows is
+   only what this workflow genuinely does differently: a step tab strip, a shot
+   grid that holds video, and the SPEND treatments.
+
+   Spend is styled deliberately. `~$x.xx` takes the gold accent everywhere it
+   appears, so the number that can cost money always looks like the same thing
+   whether it is on a library card, in the header, or on the confirm button.
+   =========================================================================== */
+.fv-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem clamp(0.75rem, 3vw, 2rem) 2.5rem;
+  min-height: 100vh;  /* fallback */
+  min-height: 100dvh; /* follows the real viewport as mobile chrome slides away */
+  min-width: 0;
+}
+
+.fv-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 3rem 0;
+  color: var(--muted);
+}
+
+/* --- Header ---------------------------------------------------------------- */
+.fv-top {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-top-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fv-title,
+.fv-title-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  min-width: 0;
+  max-width: min(100%, 34rem);
+}
+.fv-title:hover {
+  border-color: var(--border);
+}
+.fv-title .icon {
+  color: var(--muted);
+}
+.fv-title-input {
+  cursor: text;
+  border-color: var(--border-gold);
+  background: var(--panel-2);
+}
+
+/* The running spend. Always visible — it is the number that can surprise you. */
+.fv-spend {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.12);
+  border: 1px solid var(--border-gold);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.85rem;
+}
+.fv-save-state {
+  min-width: 4.5rem;
+  text-align: right;
+}
+
+/* BUTTON SIZING — read this before adding a button anywhere in this workflow.
+   `.btn.primary` carries `margin-top: 1.1rem` (it is designed to sit at the
+   bottom of a form), so dropping one into a ROW of buttons pushes it lower
+   than its neighbours and it reads as a different, bigger control. Every row
+   below therefore states one size family and zeroes that margin — the same fix
+   `.an-topbar .btn` made for the animatic editor's top bar after exactly this
+   was reported. Match these values; don't add a lone `btn small` to a row. */
+.fv-top .btn,
+.fv-section-actions .btn,
+.fv-batch .btn,
+.fv-final-actions .btn,
+.fv-shot-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 2.3rem;
+  padding: 0 0.95rem;
+  font-size: 0.84rem;
+  line-height: 1;
+  margin-top: 0;
+  white-space: nowrap;
+}
+/* The back arrow is icon-only, so it is a square of that same height rather
+   than a wide slab — same rule the delete button follows in the top bar. */
+.fv-top .btn.ghost.small {
+  width: 2.3rem;
+  padding: 0;
+}
+
+/* --- Step tabs ------------------------------------------------------------- */
+.fv-steps {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+  min-width: 0;
+}
+.fv-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.fv-step:hover {
+  color: var(--text);
+}
+.fv-step.active {
+  color: var(--primary-ink);
+  background: var(--gold-grad);
+  border-color: transparent;
+  font-weight: 600;
+}
+.fv-step-dot {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex: none;
+}
+.fv-step.active .fv-step-dot {
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--primary-ink);
+}
+/* The long label on wide screens, the short one once it stops fitting — the
+   middle stage the responsive rules ask for, rather than 3 tabs collapsing to 1. */
+.fv-step-short {
+  display: none;
+}
+@media (max-width: 900px) {
+  .fv-step-label {
+    display: none;
+  }
+  .fv-step-short {
+    display: inline;
+  }
+}
+
+/* --- Status strip ---------------------------------------------------------- */
+.fv-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.chip.failed {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.chip.stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.chip.spend {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  font-variant-numeric: tabular-nums;
+}
+.fv-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+.fv-progress-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  min-width: 0;
+}
+.fv-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--gold-bar);
+  transition: width 0.4s ease;
+}
+
+/* --- Banners --------------------------------------------------------------- */
+.fv-banner {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.fv-banner.warn {
+  border-left-color: var(--warn);
+}
+
+/* --- Step panes ------------------------------------------------------------ */
+.fv-body {
+  min-width: 0;
+}
+.fv-step-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+.fv-pane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-pane-head h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+.fv-pane-head p {
+  margin: 0;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+.fv-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.4rem;
+  min-width: 0;
+}
+.fv-section-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.fv-section-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.fv-empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  line-height: 1.55;
+}
+
+/* --- Fields ---------------------------------------------------------------- */
+.fv-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 0.7rem;
+  align-items: end;
+  min-width: 0;
+}
+.fv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.fv-field.wide {
+  grid-column: 1 / -1;
+}
+.fv-field select,
+.fv-field input {
+  width: 100%;
+  min-width: 0;
+}
+.fv-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  line-height: 1.4;
+  min-width: 0;
+}
+.fv-check input {
+  flex: none;
+}
+.fv-batch {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding-top: 0.3rem;
+}
+
+/* --- Step 1: the art tray -------------------------------------------------- */
+.fv-art-tray {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-art {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem;
+  background: var(--panel);
+  min-width: 0;
+}
+.fv-art-thumb,
+.fv-shot-mini-thumb,
+.fv-order-thumb {
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--frame-bg);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.fv-art-thumb img,
+.fv-shot-mini-thumb img,
+.fv-order-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.fv-art-placeholder {
+  font-size: 1.4rem;
+  opacity: 0.5;
+}
+.fv-art-name {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.fv-art-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.fv-shot-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-shot-mini {
+  padding: 0.55rem;
+  min-width: 0;
+}
+.fv-shot-mini.open {
+  grid-column: 1 / -1;
+}
+.fv-shot-mini-head {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+.fv-shot-mini-label {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.fv-shot-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.fv-ref-picker {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.82rem;
+  max-width: 100%;
+  min-width: 0;
+}
+.fv-ref-chip.on {
+  border-color: var(--primary);
+  color: var(--text);
+  background: rgba(229, 193, 88, 0.12);
+}
+.fv-ref-chip img {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.fv-ref-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fv-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 1fr));
+  gap: 0.5rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  min-width: 0;
+}
+.fv-asset-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.fv-asset-pick:hover {
+  border-color: var(--primary);
+}
+.fv-asset-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* --- Step 2: the shot grid ------------------------------------------------- */
+.fv-shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.85rem;
+  min-width: 0;
+}
+.fv-shot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.65rem;
+  min-width: 0;
+}
+.fv-shot.failed {
+  border-color: var(--fail);
+}
+.fv-shot.ready {
+  border-color: var(--border-gold);
+}
+.fv-shot-media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--frame-bg);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.fv-shot-media img,
+.fv-shot-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.fv-shot-placeholder {
+  font-size: 1.8rem;
+  opacity: 0.4;
+}
+.fv-shot-working {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 0.8rem;
+}
+.fv-shot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.fv-shot-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-shot-head strong {
+  margin-right: auto;
+}
+.chip.ready {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.chip.rendering,
+.chip.queued {
+  color: var(--running);
+  border-color: var(--running);
+}
+.fv-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  min-width: 0;
+  line-height: 1.5;
+}
+.fv-shot-error {
+  border-left: 3px solid var(--fail);
+  background: rgba(248, 113, 113, 0.08);
+  padding: 0.45rem 0.6rem;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.fv-shot-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-shot-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+/* --- The confirm dialog: the last thing before money moves ----------------- */
+.fv-confirm {
+  position: relative;
+  width: min(30rem, 92vw);
+  padding: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.fv-confirm h2 {
+  margin: 0;
+  padding-right: 2rem;
+  font-size: 1.15rem;
+}
+.fv-confirm p {
+  margin: 0;
+  line-height: 1.55;
+}
+.fv-confirm-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: rgba(229, 193, 88, 0.1);
+}
+.fv-confirm-usd {
+  font-size: 1.85rem;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* --- Step 3: order + the finished cut -------------------------------------- */
+.fv-order {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.fv-order-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  min-width: 0;
+}
+.fv-order-row.excluded {
+  opacity: var(--disabled-opacity);
+}
+.fv-order-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+.fv-order-move {
+  display: flex;
+  gap: 0.2rem;
+}
+.fv-final-player {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 10px;
+  background: var(--frame-bg);
+}
+.fv-final-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  max-height: 40vh;
+  border-radius: 10px;
+  background: var(--frame-bg);
+  color: var(--muted);
+}
+.fv-final-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .fv-order-row {
+    grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  }
+  .fv-order-row > .tiny {
+    display: none;
+  }
+  .fv-shot-mini-head {
+    grid-template-columns: 4rem minmax(0, 1fr) auto;
+  }
 }

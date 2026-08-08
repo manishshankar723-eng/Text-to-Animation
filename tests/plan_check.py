@@ -56,19 +56,53 @@ chat_calls: list[dict] = []
 fail_next_chat = {"on": False}
 
 
+FAKE_QUESTIONS = [
+    {
+        "id": "q1",
+        "header": "Cadence",
+        "question": "How often can you realistically publish?",
+        "options": [
+            {"label": "2 per week (Recommended)", "description": "One long, one short."},
+            {"label": "1 per week", "description": "Sustainable solo."},
+        ],
+    }
+]
+
+
 def fake_chat(messages, channel_context=""):
     chat_calls.append({"messages": list(messages), "context": channel_context})
     if fail_next_chat["on"]:
         raise plan_agent.PlanError("simulated model failure")
-    return f"Reply #{len(chat_calls)} (ctx={'yes' if channel_context else 'no'})"
+    return {
+        "reply": f"Reply #{len(chat_calls)} (ctx={'yes' if channel_context else 'no'})",
+        "questions": [dict(q) for q in FAKE_QUESTIONS],
+    }
 
 
-def fake_generate(messages, months=1, cadence="", channel_context=""):
-    return {**FAKE_PLAN, "months": months, "cadence": cadence or "2 per week"}
+generate_calls: list[dict] = []
+
+
+def fake_generate(messages, months=1, cadence="", channel_context="", language=""):
+    generate_calls.append({"months": months, "cadence": cadence, "language": language})
+    return {
+        **FAKE_PLAN,
+        "months": months,
+        "cadence": cadence or "2 per week",
+        "language": language or "english",
+    }
 
 
 plan_agent.chat = fake_chat
 plan_agent.generate_plan = fake_generate
+
+# --- Stub the channel PAGE READ too ------------------------------------------
+# research_channel() falls back to Gemini's url_context tool when there's no
+# YouTube API key, which is a real model call over the network. This suite is
+# about the plan lifecycle, so that is stubbed out: it kept the run neither
+# free nor deterministic (it depends on a third party's page being reachable).
+import youtube_research
+
+youtube_research._read_with_gemini = lambda url: None
 
 from server import config
 from server.jobs import get_store
@@ -136,6 +170,39 @@ for opening, want_max in [
     got = _short_title(opening)
     check(f"'{opening[:28]}…' -> short", len(got) <= want_max + 1, True)
 check("empty message still yields a name", _short_title(""), "Untitled plan")
+
+print("\n[3b] clickable questions ride along on the agent's turn")
+msgs = r.json()["messages"]
+agent_turn = msgs[-1]
+check("agent turn carries questions", len(agent_turn["questions"]), 1)
+check("question has a tab header", agent_turn["questions"][0]["header"], "Cadence")
+check("options came through", len(agent_turn["questions"][0]["options"]), 2)
+check("option has a description",
+      bool(agent_turn["questions"][0]["options"][0]["description"]), True)
+check("user turns carry none", msgs[-2]["questions"], [])
+check("questions persist across a reload",
+      len(client.get(f"/plans/{pid}", headers=auth).json()["messages"][-1]["questions"]), 1)
+
+# The model's shape is never trusted directly — malformed questions must be
+# dropped rather than rendered as a broken panel.
+from plan_agent import MAX_OPTIONS, MAX_QUESTIONS, _coerce_questions
+
+check("a question with one option is dropped",
+      _coerce_questions([{"question": "Pick", "options": [{"label": "only"}]}]), [])
+check("a question with no text is dropped",
+      _coerce_questions([{"question": "  ", "options": [{"label": "a"}, {"label": "b"}]}]), [])
+check("duplicate options are deduped",
+      len(_coerce_questions([{"question": "Q", "options": [
+          {"label": "Same"}, {"label": "same"}, {"label": "Other"}]}])[0]["options"]), 2)
+check("too many questions are capped",
+      len(_coerce_questions([{"question": f"Q{i}", "options": [{"label": "a"}, {"label": "b"}]}
+                             for i in range(9)])), MAX_QUESTIONS)
+check("too many options are capped",
+      len(_coerce_questions([{"question": "Q", "options": [
+          {"label": f"opt{i}"} for i in range(9)]}])[0]["options"]), MAX_OPTIONS)
+check("bare strings work as options",
+      len(_coerce_questions([{"question": "Q", "options": ["one", "two"]}])[0]["options"]), 2)
+check("junk input yields no questions", _coerce_questions("not a list"), [])
 
 r = client.post(f"/plans/{pid}/chat", headers=auth, json={"message": "Twice a week"})
 check("history grows", len(r.json()["messages"]), 4)
@@ -217,6 +284,34 @@ check("items returned", len(plan["items"]), 2)
 check("months carried through", plan["months"], 3)
 check("assumptions surfaced", len(plan["assumptions"]), 1)
 check("plan persisted", len(store.get(pid).params["plan"]["items"]), 2)
+
+print("\n[7b] the plan is written in the language the user picks")
+from plan_agent import DEFAULT_LANGUAGE, LANGUAGES, language_instruction
+
+r = client.post(f"/plans/{pid}/generate", headers=auth,
+                json={"months": 1, "cadence": "2 per week", "language": "hinglish"})
+check("generate with a language -> 200", r.status_code, 200)
+check("language reached the agent", generate_calls[-1]["language"], "hinglish")
+check("language stored on the plan", r.json()["plan"]["language"], "hinglish")
+
+r = client.post(f"/plans/{pid}/generate", headers=auth,
+                json={"months": 1, "cadence": "2 per week", "language": "Tamil"})
+check("a typed language passes through", generate_calls[-1]["language"], "Tamil")
+
+r = client.post(f"/plans/{pid}/generate", headers=auth, json={"months": 1})
+check("no language -> defaults to english", r.json()["plan"]["language"], DEFAULT_LANGUAGE)
+
+# The instruction is what actually makes the model comply, so assert its content
+# rather than just that a string came back.
+hing = language_instruction("hinglish")
+check("hinglish demands LATIN script", "LATIN" in hing, True)
+check("hinglish rules out Devanagari", "NOT Devanagari" in hing, True)
+check("hindi asks for Devanagari", "Devanagari" in language_instruction("hindi"), True)
+check("an unknown language is used verbatim", "Bhojpuri" in language_instruction("Bhojpuri"), True)
+check("empty language adds no instruction", language_instruction(""), "")
+for field in ("goal", "effort"):
+    check(f"`{field}` is protected from translation", field in hing, True)
+check("three presets offered", sorted(LANGUAGES), ["english", "hindi", "hinglish"])
 
 print("\n[8] exports")
 for fmt, is_zip in (("xlsx", True), ("docx", True), ("csv", False)):

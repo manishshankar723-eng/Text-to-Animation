@@ -22,10 +22,18 @@ _executor = ThreadPoolExecutor(
     max_workers=config.MAX_WORKERS, thread_name_prefix="pipeline"
 )
 
+# Video renders get their OWN pool. A Veo call holds its thread for minutes, so
+# sharing the pipeline pool would let one final-video project starve every
+# storyboard and character run on the server behind it.
+_video_executor = ThreadPoolExecutor(
+    max_workers=config.MAX_VIDEO_WORKERS, thread_name_prefix="video"
+)
+
 
 def shutdown():
     """Stop accepting new jobs and let running ones finish."""
     _executor.shutdown(wait=False)
+    _video_executor.shutdown(wait=False)
 
 
 def submit_generate_job(job_id: str, pipeline_kwargs: dict):
@@ -60,6 +68,23 @@ def submit_restyle_job(job_id: str, kwargs: dict):
 def submit_animatic_export(job_id: str, kwargs: dict):
     """Enqueue an animatic MP4 export (Storyboard → Animatic)."""
     _executor.submit(_run_animatic_export, job_id, kwargs)
+
+
+def submit_shot_renders(job_id: str, shot_ids: list[str]):
+    """Enqueue Veo renders for named shots of a final-video project.
+
+    Runs on the VIDEO pool, not the pipeline pool — see _video_executor.
+    """
+    _video_executor.submit(_run_shot_renders, job_id, shot_ids)
+
+
+def submit_final_assemble(job_id: str, kwargs: dict):
+    """Enqueue the assembly of a final video's rendered clips (step 3).
+
+    Assembly is ffmpeg, not AI, so it belongs on the ordinary pipeline pool
+    alongside the animatic export it closely resembles.
+    """
+    _executor.submit(_run_final_assemble, job_id, kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +324,167 @@ def _run_animatic_export(job_id: str, kwargs: dict):
     except Exception as e:  # noqa: BLE001
         store.update(job_id, status=JobStatus.FAILED, error=f"{type(e).__name__}: {e}", progress=None)
         logger.exception("[job %s] animatic export crashed.", job_id)
+    finally:
+        clear_cancel(job_id)
+
+
+def _run_shot_renders(job_id: str, shot_ids: list[str]):
+    """Render each named shot with Veo, one at a time, updating the SAME job.
+
+    Shots are rendered SEQUENTIALLY on purpose. Veo's concurrency quota is small
+    and each clip is billed, so firing a whole board at once is how you turn one
+    project into twenty 429s — and pay for the few that got through anyway.
+    Parallelism, where it is safe, is the pool's job (MAX_VIDEO_WORKERS) plus
+    video_client's own semaphore.
+
+    Every shot's outcome is written back the moment it lands, so a batch stopped
+    half way keeps the clips it already paid for.
+    """
+    from cancel import clear_cancel, is_cancelled
+    from video_client import VideoGenerationError
+
+    from .videos import render_one_shot, update_shot
+
+    store = get_store()
+    store.mark_running(job_id)
+    clear_cancel(job_id)
+    total = len(shot_ids)
+    logger.info("[job %s] shot renders started (%d shot(s))", job_id, total)
+
+    done = 0
+    failed = 0
+    for shot_id in shot_ids:
+        if is_cancelled(job_id):
+            logger.info("[job %s] shot renders STOPPED by user after %d", job_id, done)
+            # Shots never reached keep whatever state they had; the one in
+            # flight is handled by render_one_shot's own cancel check.
+            update_shot(job_id, shot_id, status="pending")
+            break
+
+        def _progress(update: dict, _sid=shot_id, _done=done):
+            """Blend the shot's own progress into the batch's percentage."""
+            within = max(0, min(100, int(update.get("percent", 0))))
+            try:
+                store.update(job_id, progress={
+                    "percent": int((_done * 100 + within) / max(1, total)),
+                    "stage": "rendering",
+                    "message": update.get("message", ""),
+                    "current_shot": _sid,
+                    "done_parts": _done,
+                    "total_parts": total,
+                })
+            except Exception:  # noqa: BLE001 — progress writes must not kill the batch
+                logger.debug("[job %s] render progress update failed (ignored)", job_id, exc_info=True)
+
+        try:
+            update_shot(job_id, shot_id, status="rendering", error="")
+            render_one_shot(
+                job_id, shot_id,
+                progress_cb=_progress,
+                cancel_check=lambda: is_cancelled(job_id),
+            )
+            logger.info("[job %s] shot %s rendered.", job_id, shot_id)
+        except VideoGenerationError as e:
+            # Written for the user (quota, safety, credentials) — show verbatim.
+            failed += 1
+            update_shot(job_id, shot_id, status="failed", error=str(e))
+            logger.error("[job %s] shot %s failed: %s", job_id, shot_id, e)
+        except Exception as e:  # noqa: BLE001 — one bad shot must not kill the batch
+            failed += 1
+            update_shot(job_id, shot_id, status="failed", error=f"{type(e).__name__}: {e}")
+            logger.exception("[job %s] shot %s crashed.", job_id, shot_id)
+        done += 1
+
+    clear_cancel(job_id)
+    # The batch is finished either way: the shots that rendered are real and
+    # assemblable, and the ones that didn't say why on themselves. Dropping the
+    # PROJECT to failed because one shot was refused would hide the rest.
+    job = store.get(job_id)
+    store.update(
+        job_id,
+        status=JobStatus.SUCCEEDED if (job and (job.result or {}).get("video")) else JobStatus.QUEUED,
+        progress=None,
+    )
+    logger.info("[job %s] shot renders done: %d ok, %d failed.", job_id, done - failed, failed)
+
+
+def _run_final_assemble(job_id: str, kwargs: dict):
+    """Join a final video's rendered clips into one MP4 (step 3).
+
+    Mirrors _run_animatic_export: the job status describes the ASSEMBLY, so a
+    failed join leaves every paid-for clip untouched and re-assemblable.
+    """
+    from datetime import datetime, timezone
+
+    from animatic import AnimaticError
+    from cancel import clear_cancel, is_cancelled
+    from video_assemble import assemble_final_video
+
+    store = get_store()
+    clear_cancel(job_id)
+    store.mark_running(job_id)
+    logger.info("[job %s] final assembly started (%d clip(s))", job_id, len(kwargs.get("clips") or []))
+
+    def _progress(update: dict):
+        try:
+            store.update(job_id, progress=update)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the assembly
+            logger.debug("[job %s] assemble progress update failed (ignored)", job_id, exc_info=True)
+
+    try:
+        summary = assemble_final_video(
+            job_id=job_id,
+            progress_cb=_progress,
+            cancel_check=lambda: is_cancelled(job_id),
+            **kwargs,
+        )
+
+        if summary.get("stopped"):
+            # Nothing was written, so the PREVIOUS cut (if any) is still the truth.
+            job = store.get(job_id)
+            previous = dict((job.result if job else None) or {})
+            store.update(
+                job_id,
+                status=JobStatus.SUCCEEDED if previous.get("video") else JobStatus.QUEUED,
+                result=previous or None,
+                progress=None,
+            )
+            logger.info("[job %s] final assembly STOPPED by user", job_id)
+            return
+
+        store.update(
+            job_id,
+            status=JobStatus.SUCCEEDED,
+            error=None,
+            progress=None,
+            result={
+                "video": {
+                    "url": f"/final-videos/{job_id}/video",
+                    "assembled_at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": summary.get("duration_ms", 0),
+                    "clip_count": summary.get("clip_count", 0),
+                    "skipped": summary.get("skipped") or [],
+                    "width": summary.get("width"),
+                    "height": summary.get("height"),
+                    "fps": summary.get("fps"),
+                    "size_bytes": summary.get("size_bytes", 0),
+                    # False until a shot or setting changes again (see save).
+                    "stale": False,
+                }
+            },
+        )
+        logger.info(
+            "[job %s] final video assembled: %d clip(s), %.1fs",
+            job_id, summary.get("clip_count", 0), summary.get("duration_ms", 0) / 1000,
+        )
+
+    except AnimaticError as e:
+        # Covers AssembleError too — these messages are written for the user.
+        store.update(job_id, status=JobStatus.FAILED, error=str(e), progress=None)
+        logger.error("[job %s] final assembly failed: %s", job_id, e)
+    except Exception as e:  # noqa: BLE001
+        store.update(job_id, status=JobStatus.FAILED, error=f"{type(e).__name__}: {e}", progress=None)
+        logger.exception("[job %s] final assembly crashed.", job_id)
     finally:
         clear_cancel(job_id)
 

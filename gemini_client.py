@@ -23,8 +23,6 @@ VERTEX_IMAGE_MODEL / GEMINI_IMAGE_MODEL.
 import hashlib
 import io
 import os
-import random
-import re
 import threading
 import time
 import logging
@@ -34,6 +32,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from PIL import Image
+
+import retry_policy
 
 load_dotenv()
 
@@ -45,13 +45,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL_ID = "gemini-3.1-flash-image"
 DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
-# Total attempts per image call. Quota (429) errors get the full budget because
-# a per-minute quota REFILLS — waiting through it is the whole point.
-MAX_RETRIES = max(1, int(os.environ.get("IMAGE_MAX_RETRIES", "5")))
-INITIAL_BACKOFF_SECONDS = 3  # generic transient ladder: 3s, 6s, 12s, 24s…
-# Quota errors need a per-minute refill, so they wait longer between tries.
-QUOTA_BACKOFF_SECONDS = 15   # 15s, 30s, then capped — catches a minute refill
-QUOTA_BACKOFF_CAP = 50.0
+# Attempt budget and backoff ladder — see retry_policy.py for why they are what
+# they are. Re-exported here because callers and tests read them off this module.
+MAX_RETRIES = retry_policy.MAX_RETRIES
+INITIAL_BACKOFF_SECONDS = retry_policy.INITIAL_BACKOFF_SECONDS
+QUOTA_BACKOFF_SECONDS = retry_policy.QUOTA_BACKOFF_SECONDS
+QUOTA_BACKOFF_CAP = retry_policy.QUOTA_BACKOFF_CAP
 
 
 # ---------------------------------------------------------------------------
@@ -118,64 +117,13 @@ def _throttle():
 # ---------------------------------------------------------------------------
 # Error classification — only retry what can actually succeed on a retry
 # ---------------------------------------------------------------------------
-_RETRYABLE_MARKERS = (
-    "429", "resource_exhausted", "rate limit", "quota",
-    "500", "internal error",
-    "503", "unavailable", "overloaded",
-    "504", "deadline", "timeout",
-)
-# Permanent: retrying burns time and never succeeds.
-_PERMANENT_MARKERS = (
-    "400", "invalid argument", "invalid_argument",
-    "401", "403", "permission denied", "unauthenticated",
-    "404", "not found",
-    "safety", "blocked", "prohibited_content",
-)
-
-
-def _is_retryable(error: Exception) -> bool:
-    """True if re-issuing this request has a real chance of succeeding."""
-    text = str(error).lower()
-    if any(m in text for m in _PERMANENT_MARKERS):
-        return False
-    return any(m in text for m in _RETRYABLE_MARKERS)
-
-
-_QUOTA_MARKERS = ("429", "resource_exhausted", "quota", "rate limit")
-
-
-def _is_quota_error(error: Exception) -> bool:
-    """True for a rate/quota error (429 / RESOURCE_EXHAUSTED) specifically.
-
-    These REFILL over time, so they deserve longer, more patient backoff than a
-    one-off 500/503 blip.
-    """
-    return any(m in str(error).lower() for m in _QUOTA_MARKERS)
-
-
-def _retry_after_seconds(error: Exception) -> float | None:
-    """Honour a server-provided Retry-After / retryDelay hint when present."""
-    match = re.search(r"retry[- _]?(?:after|delay)\D{0,10}(\d+(?:\.\d+)?)", str(error), re.I)
-    if match:
-        try:
-            return min(float(match.group(1)), 120.0)
-        except ValueError:
-            return None
-    return None
-
-
-def _backoff_delay(attempt: int, error: Exception | None = None) -> float:
-    """Backoff with jitter. Quota errors wait longer (they refill per-minute);
-    a server Retry-After/retryDelay hint always wins when present."""
-    if error is not None:
-        hinted = _retry_after_seconds(error)
-        if hinted is not None:
-            return hinted
-        if _is_quota_error(error):
-            base = min(QUOTA_BACKOFF_SECONDS * (2 ** (attempt - 1)), QUOTA_BACKOFF_CAP)
-            return base * random.uniform(0.8, 1.2)
-    base = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
-    return base * random.uniform(0.5, 1.5)
+# The policy itself lives in retry_policy.py so the VIDEO backend obeys the same
+# rules instead of keeping a second copy that drifts. These aliases keep the
+# call sites in this file unchanged.
+_is_retryable = retry_policy.is_retryable
+_is_quota_error = retry_policy.is_quota_error
+_retry_after_seconds = retry_policy.retry_after_seconds
+_backoff_delay = retry_policy.backoff_delay
 
 
 # ---------------------------------------------------------------------------

@@ -4,14 +4,22 @@ import Avatar from "./Avatar.jsx";
 
 // Workflow nav items. `status: "live"` is the working pipeline; "soon" items
 // are placeholders for the roadmap the user is building toward.
+// The `id`s are internal nav keys, NOT labels — renaming a workflow changes its
+// `label` only. `animatics-to-video` keeps its historical id (it is now shown as
+// "Image to Video") so a rename can't strand anyone mid-session or break the
+// deep links App.jsx sets when one workflow hands off to another.
+//
+// ORDER IS THE OWNER'S CHOICE and is deliberately not pipeline order — don't
+// "fix" it. Every entry is currently `live`; `status: "soon"` is still honoured
+// by the badge below, but adding one again also means restoring the
+// `WorkflowSoon` branch in App.jsx, or the item will navigate to a blank page.
 export const WORKFLOWS = [
   // FIRST in the pipeline: decide what to make before making any of it.
   { id: "plan-and-script", label: "Plan & Script", icon: "🗓️", status: "live" },
-  { id: "text-to-image", label: "Text to Image", icon: "🖼️", status: "live" },
+  { id: "text-to-image", label: "Text to Turnaround Image", icon: "🖼️", status: "live" },
   { id: "script-to-storyboard", label: "Script to Storyboard", icon: "📝", status: "live" },
+  { id: "animatics-to-video", label: "Image to Video", icon: "🎞️", status: "live" },
   { id: "storyboard-to-animatics", label: "Storyboard to Animatics", icon: "🎬", status: "live" },
-  { id: "animatics-to-video", label: "Animatics to Final Video", icon: "🎞️", status: "soon" },
-  { id: "final-video-export", label: "Final Video Export", icon: "🎥", status: "soon" },
 ];
 
 export default function Sidebar({

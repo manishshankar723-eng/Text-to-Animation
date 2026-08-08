@@ -36,6 +36,8 @@ class JobKind(str, Enum):
     # calendar it produced. A new workflow needs no storage code of its own —
     # adding the kind is the whole job. See the Storage rule in AGENTS.md.
     PLAN = "plan"              # content plan / script planning session
+    # "Animatics to Final Video": per-shot Veo renders, then one assembled cut.
+    FINAL_VIDEO = "final_video"
 
 
 class Job(BaseModel):
@@ -290,6 +292,26 @@ class Asset(BaseModel):
 # ---------------------------------------------------------------------------
 # Plan & Script
 # ---------------------------------------------------------------------------
+class PlanOption(BaseModel):
+    """One clickable answer to a planning question."""
+
+    label: str = ""
+    description: str = ""
+
+
+class PlanQuestion(BaseModel):
+    """A question the agent asks with pickable answers.
+
+    Rendered above the chat box as tabs + options, so the creator clicks an
+    answer instead of writing a paragraph. `header` is the short tab label.
+    """
+
+    id: str = ""
+    header: str = ""
+    question: str = ""
+    options: list[PlanOption] = Field(default_factory=list)
+
+
 class PlanMessage(BaseModel):
     """One turn of the conversation with the planning agent."""
 
@@ -298,6 +320,10 @@ class PlanMessage(BaseModel):
     role: str = "user"
     text: str = ""
     at: str = ""
+    # Only ever set on an agent turn, and empty when it isn't asking anything.
+    # Stored with the message so the panel survives a refresh and so an OLD
+    # question can't be mistaken for the live one.
+    questions: list[PlanQuestion] = Field(default_factory=list)
 
 
 class PlanCreateRequest(BaseModel):
@@ -322,6 +348,12 @@ class PlanGenerateRequest(BaseModel):
     months: int = Field(1, ge=1, le=12, description="How many months to cover.")
     cadence: str | None = Field(
         None, max_length=120, description="How often they publish, in their own words."
+    )
+    # A creator writes titles in the language their audience speaks, so the plan
+    # is written in whatever they choose. "english" | "hinglish" | "hindi", or
+    # any language name they type — see plan_agent.LANGUAGES.
+    language: str | None = Field(
+        None, max_length=60, description="Language to write the plan in."
     )
 
 
@@ -912,6 +944,236 @@ class AnimaticAudioResponse(BaseModel):
     upload_id: str
     filename: str = ""
     url: str
+
+
+# ---------------------------------------------------------------------------
+# Animatics → Final Video
+# ---------------------------------------------------------------------------
+# Three steps, in the order the workflow screen shows them:
+#   1. Apply final art & characters — attach the stills that lock the look
+#   2. Render shots                 — one Veo clip per shot
+#   3. Assemble the sequence        — concatenate the clips into the cut
+#
+# The project is a job (JobKind.FINAL_VIDEO), like every other workflow, and the
+# job's STATUS describes the assembly — the same convention an animatic uses for
+# its export. Per-shot render state lives on the shot.
+class ShotStatus(str, Enum):
+    """Purely RENDER state, and therefore entirely server-owned.
+
+    Whether a shot belongs in the cut is a separate, user-owned decision — see
+    `FinalVideoShot.include`. Keeping the two apart matters: excluding a shot
+    from the edit must not erase the record of a render that was paid for.
+    """
+
+    PENDING = "pending"      # never rendered
+    QUEUED = "queued"        # accepted, waiting for a render worker
+    RENDERING = "rendering"  # Veo is working on it
+    READY = "ready"          # a clip exists
+    FAILED = "failed"        # last render failed; `error` says why
+
+
+class RenderSettings(BaseModel):
+    """What a Veo render costs and looks like. See video_client.render_shot.
+
+    Used as the project default and, optionally, overridden per shot — a hero
+    shot can be rendered at 1080p standard while the rest stay fast/720p.
+    """
+
+    # Price/quality point: 'lite' | 'fast' | 'standard'. Roughly 1× / 4× / 13×.
+    tier: str = Field("fast", description="'lite' | 'fast' | 'standard'.")
+    resolution: str = Field("720p", description="'720p' | '1080p'.")
+    # Veo offers a fixed menu of lengths, not a free-form number.
+    duration_seconds: int = Field(8, description="4, 6 or 8.")
+    # Veo generates sound with the picture. Off is cheaper and is what you want
+    # when the animatic already carries a scratch voiceover.
+    generate_audio: bool = True
+    negative_prompt: str = Field("", description="What must NOT appear or happen.")
+
+
+class FinalArtRef(BaseModel):
+    """One still that tells Veo what the world and its people look like.
+
+    These are Flow's "ingredients". Three of them can ride along with a render,
+    and feeding our OWN generated turnaround sheets in is the whole reason this
+    workflow sits downstream of Text-to-Image: the character is already drawn,
+    so it need not be described in words and guessed at again per shot.
+
+    `kind` says where the picture comes from — nothing is copied except uploads,
+    so re-drawing a panel or regenerating a character sheet updates every shot
+    that references it.
+    """
+
+    id: str
+    kind: str = Field("upload", description="'upload' | 'panel' | 'asset'.")
+    name: str = Field("", description="Label shown in the art tray, e.g. 'Shiva'.")
+    # kind == "upload": a file dropped into this project.
+    upload_id: str | None = None
+    # kind == "panel": a drawn storyboard panel.
+    storyboard_id: str | None = None
+    index: int | None = None
+    # kind == "asset": one view of one part of a Text-to-Image character run.
+    asset_job_id: str | None = None
+    part: str | None = None
+    view: str | None = None
+    # Filled by the server on read so the client has ONE url shape. Ignored on write.
+    url: str | None = None
+
+
+class FinalVideoShot(BaseModel):
+    """One shot: a starting picture, what should move, and the clip it became."""
+
+    id: str = Field(..., description="Stable client-side id (survives reordering).")
+    # Where the FIRST frame comes from. Same vocabulary as an animatic frame, so
+    # a project built from an animatic keeps its panels live-linked to the board.
+    src: AnimaticFrameSource
+    label: str = Field("", description="e.g. 'Sc 2 / Sh 4'. Shown in the UI only.")
+    # What should MOVE. Describing the picture again is wasted prompt — the
+    # picture is already the input. Empty means the shot can't be rendered yet.
+    prompt: str = ""
+    # None inherits the project settings; set to override for this shot alone.
+    settings: RenderSettings | None = None
+    # Ids of FinalArtRef entries in the project's art tray (max 3 reach Veo).
+    reference_ids: list[str] = Field(default_factory=list)
+    # Interpolate towards this art ref instead of letting Veo invent an ending.
+    # Pointing it at the NEXT shot's panel is what makes cuts line up.
+    last_frame_ref_id: str | None = None
+    # Is this shot part of the film? USER-owned, unlike `status`. Excluding a
+    # shot keeps its clip and its cost on the record — it just doesn't reach the
+    # cut, and isn't re-rendered by "render remaining".
+    include: bool = True
+
+    # --- Render state (server-owned; the client sends these back untouched) ---
+    status: ShotStatus = ShotStatus.PENDING
+    error: str = ""
+    # Set once a clip exists on disk. The clip is named from the shot id.
+    rendered_at: str = ""
+    duration_ms: int = 0
+    size_bytes: int = 0
+    # What this shot's last successful render was estimated to cost, kept so the
+    # project can show a running total instead of only a forecast.
+    cost_usd: float = 0.0
+    # Filled by the server on read. Ignored on write.
+    url: str | None = None
+    image_url: str | None = None
+
+
+class FinalVideoSettings(BaseModel):
+    """Project-wide settings: the render default plus how the cut is assembled."""
+
+    aspect_ratio: str = Field("16:9", description="'16:9' or '9:16' — Veo supports these.")
+    # The default every shot inherits unless it overrides.
+    render: RenderSettings = Field(default_factory=RenderSettings)
+    # --- Assembly (step 3) ---
+    transition: str = Field("cut", description="'cut' or 'crossfade'.")
+    transition_ms: int = Field(400, ge=100, le=2000)
+    # Keep the sound Veo generated with each clip. Off gives a silent cut you
+    # can lay the animatic's existing voiceover under.
+    include_clip_audio: bool = True
+    fps: int = Field(24, ge=1, le=60)
+
+
+class FinalVideoProject(BaseModel):
+    """A saved final-video project: the shots, their clips, and the assembled cut."""
+
+    job_id: str
+    title: str
+    # Describes the ASSEMBLY, not the renders — a failed assemble leaves every
+    # rendered clip intact, exactly as a failed animatic export does.
+    status: JobStatus
+    # Where the shots came from, for 'back to' navigation and Duplicate.
+    source_animatic_id: str | None = None
+    source_storyboard_id: str | None = None
+    settings: FinalVideoSettings = Field(default_factory=FinalVideoSettings)
+    shots: list[FinalVideoShot] = Field(default_factory=list)
+    # The art tray shared by every shot (step 1).
+    art: list[FinalArtRef] = Field(default_factory=list)
+    # Last assembly: {url, size_bytes, assembled_at, duration_ms, stale}.
+    video: dict | None = None
+    # Sum of cost_usd across rendered shots — what this project has actually spent.
+    spent_usd: float = 0.0
+    error: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class FinalVideoCreateRequest(BaseModel):
+    """Body for POST /final-videos — start a project.
+
+    With `source_animatic_id` and no shots, the server fills the shot list from
+    that animatic's frames, in order, carrying each frame's label across. Same
+    for `source_storyboard_id` and its drawn panels.
+    """
+
+    title: str | None = None
+    source_animatic_id: str | None = None
+    source_storyboard_id: str | None = None
+    settings: FinalVideoSettings | None = None
+    shots: list[FinalVideoShot] = Field(default_factory=list)
+
+
+class FinalVideoSaveRequest(BaseModel):
+    """Body for PUT /final-videos/{id} — every field optional (partial save).
+
+    Sending `shots` or `art` replaces the whole list, so removing one is sending
+    the list without it (same rule as an animatic's audio tracks).
+    """
+
+    title: str | None = None
+    settings: FinalVideoSettings | None = None
+    shots: list[FinalVideoShot] | None = None
+    art: list[FinalArtRef] | None = None
+
+
+class RenderShotsRequest(BaseModel):
+    """Body for POST /final-videos/{id}/render — render one or more shots.
+
+    An empty `shot_ids` means "every shot that isn't already ready", which is
+    the "Render remaining" button. `force` re-renders shots that already have a
+    clip — it costs money again, so the client confirms first.
+    """
+
+    shot_ids: list[str] = Field(default_factory=list)
+    force: bool = False
+
+
+class FinalVideoSummary(BaseModel):
+    """One saved project, as shown on the library grid (deliberately lean)."""
+
+    job_id: str
+    title: str
+    status: JobStatus
+    aspect_ratio: str = "16:9"
+    shot_count: int = 0
+    rendered_count: int = 0
+    duration_ms: int = 0
+    cover_url: str | None = None
+    has_video: bool = False
+    spent_usd: float = 0.0
+    created_at: str
+    updated_at: str
+
+
+class CostEstimate(BaseModel):
+    """What a render request is expected to cost, before it is made.
+
+    Advisory: list prices drift and only Google bills. It exists so a 40-shot
+    "render all" states its price BEFORE the click rather than after.
+    """
+
+    shots: int = 0
+    seconds: int = 0
+    usd: float = 0.0
+    tier: str = "fast"
+    resolution: str = "720p"
+
+
+class VideoBackendStatus(BaseModel):
+    """Whether Veo is actually reachable — surfaced before the first paid call."""
+
+    provider: str = ""
+    model: str = ""
+    ok: bool = False
+    error: str | None = None
 
 
 class PublicStoryboard(BaseModel):

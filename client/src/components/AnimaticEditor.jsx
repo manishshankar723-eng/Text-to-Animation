@@ -163,7 +163,12 @@ function measureAudio(file) {
   });
 }
 
-export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
+export default function AnimaticEditor({
+  animaticId,
+  onBack,
+  onDeleted,
+  onMakeFinalVideo,
+}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -248,6 +253,8 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
   const [savedFlash, setSavedFlash] = useState(false);
   const [exportJob, setExportJob] = useState(null);
   const [exportBusy, setExportBusy] = useState(false);
+  // True while the final-video project is being created and navigated to.
+  const [makingVideo, setMakingVideo] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The "name this animatic" panel. Null = closed; a string is the typed name.
   const [saveAsName, setSaveAsName] = useState(null);
@@ -1756,6 +1763,24 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
     }
   }
 
+  // Hand this animatic to Animatics → Final Video. Its frames become shots,
+  // still unrendered: creating the project spends nothing, so this is a
+  // navigation, not a commitment.
+  async function makeFinalVideo() {
+    setMakingVideo(true);
+    setError("");
+    try {
+      // Flush first, or shots are built from the frames as they were last
+      // saved rather than as they are on screen.
+      await flush();
+      const project = await api.createFinalVideo({ sourceAnimaticId: animaticId });
+      onMakeFinalVideo(project.job_id);
+    } catch (e) {
+      setError(e.message);
+      setMakingVideo(false);
+    }
+  }
+
   // Leaving: an animatic you never put anything into is discarded, so "open it,
   // change your mind, go back" doesn't leave a row in the library. Anything with
   // content — or a name you chose — is kept.
@@ -1954,6 +1979,22 @@ export default function AnimaticEditor({ animaticId, onBack, onDeleted }) {
             title="Choose the export settings, then encode"
           >
             <Icon name="download" /> Export video
+          </button>
+        )}
+
+        {/* Hands this animatic to the next workflow. Creating the project is
+            free — nothing renders until a motion prompt is written over there
+            and the price is confirmed — so this can sit next to Export without
+            being a trap. */}
+        {onMakeFinalVideo && (
+          <button
+            type="button"
+            className="btn"
+            disabled={!frames.length || makingVideo}
+            onClick={makeFinalVideo}
+            title="Turn these frames into real footage with Veo (free to start)"
+          >
+            {makingVideo ? "Creating…" : "🎞️ Make final video"}
           </button>
         )}
 

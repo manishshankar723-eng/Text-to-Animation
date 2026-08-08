@@ -34,6 +34,7 @@ from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
 from .plans import router as plans_router
+from .videos import router as videos_router
 # Shared with the animatics router — they live in common.py so the two route
 # modules don't have to import each other. Aliased to the names used below.
 from .common import (
@@ -111,6 +112,10 @@ app.include_router(drafts_router)
 # Plan & Script (/plans/…) — the conversational content planner that sits BEFORE
 # the storyboard workflow. Spends text quota only, never image quota.
 app.include_router(plans_router)
+# Animatics → Final Video (/final-videos/…) — the only workflow that calls Veo.
+# Rendering is billed per second of output, so every spending path in there
+# estimates first and caps the batch. See server/videos.py.
+app.include_router(videos_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

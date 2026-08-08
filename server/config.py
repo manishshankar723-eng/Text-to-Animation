@@ -73,6 +73,26 @@ MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
 # track is another ffmpeg input to decode and mix, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
 
+# --- Final video (Animatics → Final Video) -----------------------------------
+# Veo renders one clip per shot, then the clips are concatenated. Every number
+# here bounds SPEND as much as it bounds work: a render is billed per second of
+# output, so a 40-shot project at 8s is a real bill. See video_client.py.
+#
+# Shots per final-video project. Deliberately lower than MAX_ANIMATIC_FRAMES —
+# an animatic frame is free to add, a shot is not free to render.
+MAX_VIDEO_SHOTS = int(os.environ.get("API_MAX_VIDEO_SHOTS", "60"))
+# Reference stills ("ingredients") per shot. Veo itself accepts at most 3.
+MAX_VIDEO_REFERENCES = 3
+# How many shots one "Render all" may submit in a single batch. Past this the
+# user is asked to render in passes, which keeps a mis-click from spending
+# hundreds of dollars in one press.
+MAX_VIDEO_BATCH = int(os.environ.get("API_MAX_VIDEO_BATCH", "12"))
+# Concurrent RENDER jobs. Separate from MAX_WORKERS on purpose: a Veo render
+# blocks its thread for minutes, and sharing the pipeline pool would let one
+# video project starve every storyboard on the server.
+MAX_VIDEO_WORKERS = int(os.environ.get("API_MAX_VIDEO_WORKERS", "2"))
+# Uploaded final-art stills use the same allow-list as every other image upload.
+
 # --- Auth (JWT login + MongoDB user store) -----------------------------------
 # Secret used to sign JWTs. MUST be set in production. A dev fallback is used
 # if unset (with a loud warning at startup) so local runs work out of the box.

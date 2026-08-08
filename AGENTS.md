@@ -23,7 +23,8 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-04 (Plan & Script: shared library layout + export previews)
+**Last updated:** 2026-08-07 (NEW WORKFLOW: Animatics to Final Video — Veo. First
+workflow that costs money per click; read its Work Log entry before touching it.)
 
 ---
 
@@ -68,13 +69,17 @@ Pipeline stages (see `pipeline.py`):
 | `prompts.yaml` | Prompt templates + per-template `parts_order`. Subject types: `default` (human, gender inferred), `human_male`, `human_female`, `robot`, `animal`, `bird`, `monster`, `ghost`. Global `parts_order` fallback. |
 | `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
 | `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
-| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. The ONLY module that knows ffmpeg exists. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
+| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. Owns the ffmpeg integration: `ffmpeg_exe()` and `run_ffmpeg()` are public so `video_assemble.py` reuses them. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
+| `video_client.py` | **Animatics → Final Video.** Veo image→video. The ONLY module that knows Veo exists. **Switchable backend (`VIDEO_PROVIDER`): Vertex AI or Gemini API** — same shape as `gemini_client.py`. **BILLED PER SECOND OF OUTPUT.** `estimate_cost_usd()` lives here. There is no Google Flow API — read the module docstring. |
+| `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
+| `retry_policy.py` | When to retry a Google AI call and how long to wait. Shared by `gemini_client.py` and `video_client.py` so one tuned policy governs both. Pure functions over an exception. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
 | File | Responsibility |
 |------|----------------|
 | `server/main.py` | FastAPI app, most endpoints, provider validation. |
 | `server/animatics.py` | `/animatics` router: animatic CRUD, media upload, frame/audio serving, export, stop. |
+| `server/videos.py` | `/final-videos` router: Animatics → Final Video. Project CRUD, art tray, per-shot Veo render, assembly, serving, stop. **The only router that can spend money** — every such path estimates first and caps the batch. Also exports `render_one_shot` / `update_shot` for the worker. |
 | `server/common.py` | Helpers shared by `main.py` and `animatics.py` (`get_owned_job`, `board_dir`, `variants_of`, `panel_path`). They live here so the two route modules don't import each other. |
 | `server/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
 | `server/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
@@ -130,6 +135,14 @@ Pipeline stages (see `pipeline.py`):
   `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts`, `shapes`, `layers` (the lanes), `overlays` (pictures composited over the video), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
+- **Animatics → Final Video (`server/videos.py`, kind `final_video`):**
+  `POST /final-videos` — new project; with `source_animatic_id` and no shots it fills the shot list from that animatic's frames (the editor's "🎞️ Make final video"); `source_storyboard_id` does the same from drawn panels · `GET /final-videos` — library · `GET/PUT /final-videos/{id}` — read / save (`shots`, `art`, `settings`, `title`; PUT is the workspace autosave, 409 while busy) · `DELETE /final-videos/{id}`
+  `GET /final-videos/backend` — is Veo reachable? Checked before the first paid call so a missing key is a banner, not a two-minute wait for a failure
+  `POST /final-videos/{id}/art` (multi-file) — upload stills into the art tray · `GET /final-videos/{id}/art/{ref_id}` — serve a reference (upload, board panel, or one view of a Text-to-Image character run) · `GET /final-videos/{id}/media/{upload_id}` — a just-uploaded still, before the project is saved
+  `POST /final-videos/{id}/estimate` — **free**; what a render request would cost. The client calls this to fill the confirm dialog, so the price is on screen before the button that spends it
+  `POST /final-videos/{id}/render` — **SPENDS MONEY.** 202, renders off-request (poll `GET /jobs/{id}`). Empty `shot_ids` = every included shot without a clip. Refuses prompt-less shots, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`
+  `GET /final-videos/{id}/shot/{shot_id}/image` — the source still · `GET /final-videos/{id}/shot/{shot_id}/clip` — that shot's rendered MP4
+  `POST /final-videos/{id}/assemble` — **free**; 202, joins the clips (poll `GET /jobs/{id}`) · `POST /final-videos/{id}/stop` — stops a render batch or an assembly, keeping every clip already paid for · `GET /final-videos/{id}/video` — the final cut
 - `GET /templates` · `GET /health` (also reports `ffmpeg`)
 
 ---
@@ -196,6 +209,11 @@ previews require a cloud run (not `local_only`).
 | `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` | Vertex AI (location MUST be `global`). |
 | `GEMINI_API_KEY` | Required when `IMAGE_PROVIDER=gemini`. |
 | `VERTEX_IMAGE_MODEL` / `GEMINI_IMAGE_MODEL` | Optional model overrides (default `gemini-3.1-flash-image`). |
+| `VIDEO_PROVIDER` | `vertex` (default) or `gemini`. Which **Veo** backend (Animatics → Final Video). Independent of the image/text switches. **Renders are billed per second of output.** |
+| `GOOGLE_CLOUD_VIDEO_LOCATION` | Vertex region for Veo (default `us-central1`). NOT `global` — that serves the image models, not Veo. |
+| `VERTEX_VIDEO_MODEL` / `GEMINI_VIDEO_MODEL` | Pin an exact Veo model. Unset picks by the project's quality tier (lite/fast/standard). |
+| `VIDEO_MAX_CONCURRENCY` / `VIDEO_POLL_TIMEOUT` / `VIDEO_POLL_INTERVAL` | In-flight renders (default 2 — Veo's quota is tight), give-up seconds (900), poll gap (10). |
+| `API_MAX_VIDEO_SHOTS` / `API_MAX_VIDEO_BATCH` / `API_MAX_VIDEO_WORKERS` | Spend guards: shots per project (60), shots one "Render all" may submit (12), parallel render jobs on their own pool (2). These bound **money**, not just work. |
 | `MESHY_API_KEY` | Meshy 3D generation. |
 | `JWT_SECRET` | **Required in prod.** JWT signing key. Dev fallback warns loudly. |
 | `JWT_ALGORITHM` / `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT config (defaults HS256 / 1440). |
@@ -307,6 +325,12 @@ own.
 
 **Two traps that have already been hit, both reported by the user:**
 
+0. **`align-items: start` on a card grid makes ragged rows.** It has caused a
+   reported bug THREE times (storyboard library, Home dashboard, plan calendar).
+   Use `stretch`, give the card `height: 100%` (or a fixed height), let the body
+   take the slack with `flex: 1`, and push the footer down with
+   `margin-top: auto`. If a card's content varies a lot, fix the height and
+   scroll the body rather than letting one long card stretch its whole row.
 1. **`.btn.primary` carries a global `margin-top: 1.1rem`** (it is normally the
    last control in a form). Put one in a ROW and the gold button sits lower than
    its neighbours and reads as a different size. EVERY button row in the app
@@ -380,6 +404,386 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-07 — "Create Animatic Image" wired: it opens the BOARD page (user spec)
+
+- **Asked for:** the tile should pick a storyboard like "From a Storyboard"
+  does, but instead of making a video project it opens *"only Show Storyboard
+  last page"* — i.e. the board screen the Script to Storyboard workflow ends on
+  (restyle, redraw a panel, PDF, ZIP, Make animatic).
+- **Mounted, not copied.** `StoryboardBoard.jsx` is rendered directly by
+  `AnimaticsToVideo`, which is now a THREE-state shell: library ⇄ video
+  workspace ⇄ board. The component already fetches its own job, so it needed no
+  changes beyond exporting `styleLabelFor` (so the style names here can't drift
+  from the ones on the board itself). **Do not fork this screen** — there is one
+  board page in the app and both workflows show the same one.
+- `onOpenAnimatic` is threaded through from `App.jsx`. Without it the board's
+  "Make animatic" button hides itself (it is guarded), so the page would have
+  been subtly *different* from the one reached via Script to Storyboard — which
+  is exactly the kind of near-miss this project keeps getting reported for.
+- **One picker serves both board tiles.** They list the same boards; only the
+  blurb and the row's action differ, switched on `picking` being `"storyboard"`
+  vs `"animatic-image"`. Two modals would be two copies of the board list.
+- The board summary is held whole (not just its id) so style and aspect come
+  from the list already fetched, with no second request.
+
+### 2026-08-07 — Sidebar: "Image to Video" + Storyboard to Animatics moved up (user request)
+
+- Renamed **Animatics to Final Video → Image to Video**, reordered the rail, and
+  **removed Final Video Export**. It now reads, and this is the owner's chosen
+  order — deliberately NOT pipeline order, don't "fix" it back:
+  1. Plan & Script
+  2. Text to Turnaround Image
+  3. Script to Storyboard
+  4. Image to Video
+  5. Storyboard to Animatics
+- With Final Video Export gone, **every sidebar entry is `live`**, so the `SOON`
+  map, its `else if (SOON[nav])` branch and the `WorkflowSoon` import are all
+  removed from `App.jsx`. `components/WorkflowSoon.jsx` is KEPT for the next
+  roadmap item — but adding a `status: "soon"` entry now also means restoring
+  that branch, or the item navigates to a blank page. Noted in both files.
+- Also renamed **Text to Image → Text to Turnaround Image**. A workflow's name
+  appears in FOUR places, not one — the sidebar, its `WorkflowHeader` title in
+  `App.jsx`, its section label on `Home.jsx`, and the character-run picker in
+  `FinalVideoArtStep.jsx`. All four were updated together; grep the label before
+  calling a rename done.
+- **`Home.jsx`'s `groups` array is a SECOND list of the workflows** and it does
+  not read from `Sidebar.WORKFLOWS`. Image to Video was missing from "Recent
+  work" for exactly that reason (user-reported). When a workflow is added,
+  renamed, moved or removed in `Sidebar.jsx`, do the same in `Home.jsx`: its
+  `id` must be the real nav key (the "View all" button passes it to
+  `onNavigate`), its `label` must match, and its list needs a fetch in `load()`.
+  Both files now say so.
+- **The `id` did NOT change** — `animatics-to-video` and `text-to-image` are nav
+  keys, not labels.
+  Renaming it would strand anyone mid-session and break the hand-off deep links
+  App.jsx sets (`setNav("animatics-to-video")` from the animatic editor). The
+  same rule applies to the `AnimaticsToVideo` / `FinalVideo*` component and file
+  names: they are internal. **Rename `label`, leave `id` alone.**
+- The library's own title stays **"Your Final Videos"** — it names the artifacts,
+  matching "Your Storyboards" / "Your Animatics", not the workflow.
+
+### 2026-08-07 — Final-video tiles: storyboard only (user request)
+
+- **Asked for:** drop "From an Animatic" (*"i not need animatic project only From
+  a Storyboard project"*), rename "New Final Video" → **Create Video**, and add
+  a third tile **Create Animatic Image**.
+- Tiles are now: **Create Video** · **From a Storyboard** · **Create Animatic
+  Image**. The animatic picker, its `animatics` state and the `listAnimatics()`
+  fetch are gone from this library, and the two user-facing strings that still
+  said "animatic" (the page blurb and the delete confirm) now say storyboard.
+- **Create Animatic Image is a PLACEHOLDER on purpose.** The owner asked for the
+  panel now and will specify the behaviour later; clicking it shows a dismissible
+  line rather than doing nothing, which would read as a broken button. To wire
+  it up, replace its `onClick` and subtitle — nothing else moves.
+- **Deliberately NOT removed:** `source_animatic_id` on `POST /final-videos`, and
+  the animatic editor's "🎞️ Make final video" button that uses it. The request
+  was about the library's tiles; that button is a different entry point and
+  removing it wasn't asked for. Say the word if it should go too.
+
+### 2026-08-07 — "From a Storyboard" tile + shots arrive WITH their prompt (user request)
+
+- **Asked for:** a third way in — *"add From A Storyboard panel … so storyboard
+  image with prompt show in panel … i want in this page both image and prompt so
+  user generate easily."*
+- **The tile:** `FinalVideoLibrary` now has three New tiles (New / From an
+  Animatic / From a Storyboard) and two pickers, switched by one
+  `picking: "animatic" | "storyboard" | null` state so both modals can't open at
+  once. The board picker offers only boards with a drawn cover — an undrawn
+  panel has no picture to animate and could only produce a *paid* failure.
+- **The real fix was on the server**, and it also repairs the ANIMATIC route the
+  user was already using: their project showed *"24 without a prompt"*, because
+  `_shots_from_animatic` copied the picture but not the text. An animatic frame
+  usually points at a storyboard panel, and that panel still has its
+  `description` — so the animatic dropped the words only because nobody looked
+  them up. `_shots_from_animatic` now resolves the board (owner-checked, and
+  **cached per board** so 26 frames are one fetch, not 26) and brings the
+  description across as the starting prompt. `_starting_prompt()` is shared with
+  `_shots_from_board`.
+- **A description is not a motion prompt** — it says what the picture IS, and Veo
+  wants what MOVES. It is deliberately offered as an editable first draft, which
+  the textarea placeholder explains. Better than an empty box; not a finished
+  prompt.
+- **Tested** (`smoke_prompts.py`, scratch): a synthetic board → both routes.
+  Straight from the board and via an animatic built from it, all shots come back
+  with `image_url` AND a non-empty `prompt`, and the estimate then prices every
+  shot instead of skipping prompt-less ones.
+
+### 2026-08-07 — Veo model ids were WRONG for Vertex (user-reported: first real render 404'd)
+
+- **Reported:** the first live render failed —
+  `Publisher model .../veo-3.1-lite-generate-preview was not found or your
+  project does not have access to it`.
+- **Cause:** I used the **Gemini Developer API's** model names on **Vertex AI**.
+  They are not the same:
+  | tier | Vertex AI | Gemini Developer API |
+  |---|---|---|
+  | lite | `veo-3.1-lite-generate-001` | `veo-3.1-lite-generate-preview` |
+  | fast | `veo-3.1-fast-generate-001` | `veo-3.1-fast-generate-preview` |
+  | standard | `veo-3.1-generate-001` | `veo-3.1-generate-preview` |
+  Google's 404 blames *project access*, which sends you hunting IAM for what is
+  really a wrong string. **Don't copy an id between the two backends.**
+- **Verified against the live project** with `client.models.list()` — it has
+  `veo-2.0-generate-001`, `veo-3.0-{,fast-}generate-001`,
+  `veo-3.1-{,fast-,lite-}generate-001` in `us-central1`. All three tiers now
+  resolve to ids that exist, and `verify_access()` returns ok.
+- **So it can't recur:** `video_client.available_models()` asks the backend what
+  it has. `verify_access()` (which fills the workflow's setup banner) now checks
+  the configured model against that list and **names the usable ids** if it
+  isn't there — so a bad id is caught on page load, not after a two-minute
+  render. The 404 branch of `_friendly()` does the same. Guessing model names is
+  what caused this; the code now asks instead.
+- The per-provider table lives in `_MODEL_IDS` in `video_client.py`. `.env.example`
+  documents both naming schemes.
+
+### 2026-08-07 — Empty final videos discarded on exit; the two New tiles line up (user-reported)
+
+Both of these were **already-solved problems** that the new workflow failed to
+inherit. If you add a workflow, walk the sibling workflow's fixes first.
+
+1. **"New Final Video" created a permanent project even if you did nothing.**
+   Exactly the junk-library bug fixed for animatics on 2026-07-31, not carried
+   across — the user's library filled with "Untitled final video" rows and their
+   folders. → `FinalVideoWorkspace` now has the same `isEmpty` test and
+   `handleBack` discard as `AnimaticEditor`: no shots, no art, no cut, not
+   running, still the placeholder name ⇒ deleted on the way out. A project
+   started **From an Animatic** arrives with shots, so it is never empty by this
+   test and is always kept.
+   → `create_final_video` also **no longer pre-creates any folder**. Every writer
+   (`upload_art`, `render_one_shot`, `_copy_animatic_uploads`,
+   `assemble_final_video`) already does `makedirs(exist_ok=True)` when it has
+   something to store, so pressing New and leaving now touches the disk zero
+   times. Asserted in the API smoke test.
+   → **Note:** this stops NEW junk. Projects created before this fix are still
+   in the library and must be deleted from their cards.
+
+2. **The two "New" tiles didn't line up** — the title and subtitle of the emoji
+   tile sat ~3px lower than the "+" tile. `.lib-new-plus` is a **flex child**,
+   whose `min-height` defaults to `auto`, so an emoji with a taller line box
+   than `4.5rem` grew the square and pushed everything under it down. This is
+   Responsive rule 3 (`min-height: 0` on every flex child) simply not applied.
+   → Fixed on the shared `.lib-new-plus`, so **Your Storyboards** and **Your
+   Animatics** get the same alignment fix.
+
+### 2026-08-07 — Buttons: match the existing workflow, don't invent (user-reported, AGAIN)
+
+- **Reported:** the render confirm dialog's Cancel and Render buttons were
+  different sizes and didn't line up. Plus the standing instruction, said again:
+  *"when you generate new button, panel, x cross, popup and arrange etc you first
+  see my whole workflow and keep same to same."* This is the same class of thing
+  as the 2026-07-31 top-bar report. **Read this section before adding any UI.**
+- **Causes — four separate mistakes, all mine:**
+  1. The modal used **`.lib-confirm-btns` + `btn small`**. That pair is the
+     inline confirm strip INSIDE a library card, not a modal footer. The modal
+     footer in this app is **`.an-name-actions`** with a full-size `btn ghost`
+     Cancel and a full-size `btn primary` action + `<Icon>` — see the animatic
+     Export dialog.
+  2. **`.btn.primary` carries `margin-top: 1.1rem`** (it is designed to end a
+     form). Dropped into a ROW it hangs lower than its neighbour and reads as a
+     bigger, unrelated control. `.an-name-actions .btn.primary` zeroes it; my
+     container didn't.
+  3. **Invented classes that don't exist:** `btn tiny ghost` and
+     `btn small danger` / `btn small ghost danger`. There is no `.btn.tiny` and
+     no `.btn.danger` — the destructive class is **`danger-btn`**. They silently
+     rendered full-size and un-red.
+  4. **26 buttons were missing `type="button"`**, which the rest of the codebase
+     sets on every non-submit button.
+- **Fix:** modal footer switched to `.an-name-actions`; a commented
+  BUTTON SIZING block in `styles.css` gives `.fv-top`, `.fv-section-actions`,
+  `.fv-batch`, `.fv-final-actions` and `.fv-shot-actions` **one size family**
+  (height 2.3rem, padding 0 0.95rem, font-size 0.84rem, `margin-top: 0`) —
+  the same shape as the `.an-topbar .btn` fix; real classes everywhere;
+  `type="button"` on all 41.
+- **Also:** there is **no prettier config in this repo**. Running prettier with
+  defaults adds trailing commas the codebase doesn't use. If you format, use
+  `--trailing-comma none --print-width 80` (measured against existing files).
+- **Not browser-verified** — the standing rule is to run Playwright only when
+  asked. Checked by reading the computed rules and by build.
+
+### 2026-08-07 — NEW WORKFLOW: Animatics to Final Video (Veo). Spends money.
+
+**The workflow the sidebar has promised since day one.** Each animatic frame
+becomes real footage via Veo, then the clips are cut together. Three steps, as
+the placeholder screen advertised: *Apply final art & characters* → *Render
+shots* → *Assemble the sequence*.
+
+**First, the finding that shaped everything: THERE IS NO GOOGLE FLOW API.**
+The user asked to send storyboards to Flow and get results back. Flow is a Google
+*Labs web app* — no public API, no OAuth scope, no service account. Its credits
+are a separate ledger from the API, and a Google AI Pro subscription grants no
+API access at all. Scripting its UI with a session cookie would breach Google's
+terms and break on every redesign. But Flow is only a front-end over **Veo**, and
+everything it does for image→video (reference "ingredients", first/last-frame
+interpolation, scene extension) is on the Gemini API and Vertex AI. So this calls
+Veo directly. Told the user before building.
+
+**MONEY is the design constraint, not a footnote.** Veo bills per second of
+output: ~$0.24 for an 8s lite/720p clip, over $3 for standard/1080p with sound. A
+20-shot project is 20 clips. So:
+- No button renders anything directly. Every path goes through a confirm dialog
+  that asks `POST /final-videos/{id}/estimate` FIRST and shows the number.
+- A shot with no motion prompt is never submitted — it could only produce a *paid*
+  failure. Its Render button is disabled and says why.
+- A rendered shot is never silently re-rendered; "Re-render" is a separate action
+  with different wording.
+- Batch capped at `API_MAX_VIDEO_BATCH` (12) so a mis-click can't spend hundreds.
+- Running spend (`~$x.xx`) is in the workspace header and on every library card,
+  in the gold accent, so the number that can surprise you always looks the same.
+- The estimate is *labelled* an estimate. List prices drift and only Google bills.
+
+**New modules**
+- `video_client.py` — the ONLY module that knows Veo exists. Dual backend
+  (`VIDEO_PROVIDER=vertex|gemini`) mirroring `gemini_client.py` exactly, so the
+  switch is already familiar. Long-running-operation submit→poll→download, both
+  response shapes (Vertex inline bytes, Gemini file handle). `estimate_cost_usd`
+  lives here because the rate table belongs with the model knowledge. Errors are
+  translated for humans (`_friendly`) — quota, safety, credentials and the
+  "your Pro subscription is not API access" case each get their own sentence.
+- `video_assemble.py` — clips → one MP4. `cut` = stream copy (instant, lossless);
+  `crossfade` = xfade/acrossfade re-encode. Spends nothing, so re-cutting is free
+  and unlimited. Reuses `animatic.ffmpeg_exe` / `run_ffmpeg` / `AnimaticError`
+  rather than growing a second ffmpeg integration.
+- `retry_policy.py` — **extracted** the retry/backoff policy out of
+  `gemini_client.py` so the video backend obeys the same tuned rules instead of a
+  second copy that drifts. `gemini_client` now aliases to it; behaviour unchanged.
+- `server/videos.py` — `/final-videos` router, 13 endpoints. Also exports
+  `render_one_shot` / `update_shot`, which the worker calls.
+
+**Wiring:** `JobKind.FINAL_VIDEO` (a project IS a job, per the Storage rule — no
+new store). `worker.py` gains a **separate** `_video_executor`: a Veo call holds
+its thread for minutes, and sharing the pipeline pool would starve every
+storyboard behind one video project. Shots render *sequentially* within a batch —
+Veo's concurrency quota is small and firing a board at once turns it into twenty
+429s while still paying for the few that got through.
+
+**Client:** `AnimaticsToVideo` (shell) → `FinalVideoLibrary` (mirrors
+`AnimaticLibrary`, same `.lib-*` classes) → `FinalVideoWorkspace` + three step
+components. The steps are **tabs, not a wizard**: the real loop is render a few,
+look, fix a prompt, render again, and a one-way wizard would mean walking the
+whole thing per retry. The animatic editor gains "🎞️ Make final video".
+
+**The reuse that makes this pipeline worth having:** step 1 can pull references
+straight from a **Text-to-Image character run** (`kind: "asset"` → that job's
+`part_view.png`). The character is already drawn, so it doesn't have to be
+described in words and re-guessed per shot. That is the thing Flow cannot do.
+
+**Two real bugs found and fixed while testing — both worth remembering:**
+1. **"Leave this shot out" was modelled as a `status`.** But render state is
+   *server-owned* (so an autosave racing a finished render can't roll it back and
+   lose a paid clip), which meant the toggle silently never persisted — and
+   excluding a rendered shot would have erased the record of a render you paid
+   for. Fixed with a separate, user-owned `FinalVideoShot.include: bool`.
+   `ShotStatus` is now purely render state. **Keep these two apart.**
+2. **`ffprobe` does not exist on this install.** `imageio-ffmpeg` ships the
+   ffmpeg binary ONLY, so the assembler's duration probe returned 0 and fell back
+   to a guess: a 6s cut reported itself as 12s, and — far worse — crossfade
+   offsets are computed *from* those durations, so joins would have landed on
+   black frames. Fixed by passing `durations_ms` from the router, which knows what
+   it asked Veo for. ffprobe is now only a refinement. **Don't reintroduce a
+   probe dependency.**
+
+**Testing (both suites green; scripts were scratch, not committed):**
+- API, via `TestClient` on a temp memory store: create → save → estimate →
+  assemble-guard → batch cap. Verified the promptless shot is excluded from
+  pricing, `include` survives the round-trip, a path-traversal shot id
+  (`../../evil`) is refused 400, and **another account gets 404 and an empty
+  library**.
+- Assembler, against **real ffmpeg** with synthetic `testsrc` clips (Veo costs
+  money; the assembler can't tell the difference): stream-copy 6000ms exact;
+  mismatched clips correctly fall over to a re-encode instead of erroring;
+  crossfade measured **4950ms against 5000ms predicted** — the offset arithmetic
+  is right; silent cut; a missing clip is skipped not fatal; no-clips raises the
+  user-facing message.
+- `npm run build` clean; verified `fv-*` CSS and the workflow strings are in the
+  bundle. **No browser test run** (per the standing rule — ask first).
+- **Never called Veo.** Not once. See Current State.
+
+**Config:** `VIDEO_PROVIDER`, `GOOGLE_CLOUD_VIDEO_LOCATION` (Veo needs a *region*
+— `global`, which the image models require, does not serve it),
+`VERTEX_VIDEO_MODEL` / `GEMINI_VIDEO_MODEL`, `VIDEO_MAX_CONCURRENCY`,
+`VIDEO_POLL_*`, and the `API_MAX_VIDEO_*` spend guards. All in `.env.example`
+with the pricing warning.
+
+### 2026-08-04 — Plan & Script: pick the plan's LANGUAGE on Generate
+
+- **Asked for:** "I want any user use my workflow, no language barrier." Clicking
+  Generate now opens a picker — English / Hinglish / Hindi / any typed language —
+  and the calendar is written in that language.
+- **Hinglish had to be spelled out.** Left to itself the model writes Devanagari
+  and calls it Hinglish. `LANGUAGES["hinglish"]` demands **LATIN (Roman) script,
+  NOT Devanagari**, with a worked example. Verified live: it returned
+  *"Shiv ji ka teesra netra kyu khula? Asli wajah jaan kar hairan reh jaoge!"* —
+  which is what Indian creators actually publish. Hindi returned proper
+  Devanagari.
+- **`goal` and `effort` are explicitly EXEMPT** from translation: the app reads
+  them as data (chip colours, `_coerce_items` validates them against English
+  enums), so a translated "reach" would silently blank the field. Confirmed live
+  that both stayed English while everything else translated.
+- **The instruction is appended LAST**, after the plan brief — the most reliable
+  position for a hard rule.
+- **Unknown languages pass through verbatim**, so "Tamil", "Bhojpuri" or
+  "Spanish" work with no code change; the picker's "Other" box feeds that path.
+- The chosen language is stored on the plan, shown in the session header, and
+  offered as the default next time — regenerating in another language is one
+  click.
+- **Verified:** 13 new checks (language reaches the agent, is stored, typed
+  languages pass through, default is English, the Hinglish instruction demands
+  Latin and rules out Devanagari, Hindi asks for Devanagari, goal/effort
+  protected) plus live generations in both Hinglish and Hindi.
+- **Also fixed while here:** the suite was making a REAL model call —
+  `research_channel()` falls back to Gemini's `url_context` when there's no
+  YouTube key, so `/plans/{id}/channel` hit the network. Now stubbed, so the
+  suite is genuinely quota-free and doesn't depend on a third party's page being
+  reachable. Any test touching that endpoint must stub `_read_with_gemini`.
+
+### 2026-08-04 — Calendar cards: one fixed size, overflow scrolls inside
+
+- **Reported:** the generated calendar's cards were all different heights (a
+  four-beat outline towered over a three-beat one), so the grid looked broken.
+- `.plan-grid` was `align-items: start` — the same trap already fixed twice, in
+  the storyboard library and on the Home dashboard. Now `stretch`, PLUS a fixed
+  `--plan-card-h: 400px`. Fixed rather than "as tall as the tallest in the row",
+  because one long entry would otherwise stretch every card beside it into a
+  wall of whitespace.
+- **Slot, chips and title stay pinned; only the detail scrolls** (new
+  `.plan-item-body`), so a scrolled card is still identifiable at a glance.
+- Measured against the user's real 36-item plan: content per card runs 361-611
+  characters (median 448), so 400px fits the median comfortably and only the
+  longest few scroll.
+- **THIRD time `align-items: start` has caused this.** It is now called out in
+  the UI rule section — check for it before adding any new card grid.
+
+### 2026-08-04 — Plan & Script: the agent asks in CLICKABLE questions
+
+- **Asked for (with reference screenshots):** when the agent needs to know
+  something, show a panel above the chat with pickable options, so the user
+  clicks instead of typing a paragraph.
+- **One call returns both.** `plan_agent.chat()` now answers
+  `{reply, questions[]}` through `response_schema` — the prose reply AND the
+  clickable questions in the same turn. A second "now generate some options"
+  call would double the cost of every turn and let the two drift apart (a reply
+  asking one thing, buttons offering another).
+- **Bounded on purpose:** `MAX_QUESTIONS=3`, `MAX_OPTIONS=4`. More than that is
+  a form, not a conversation. `_coerce_questions()` drops anything malformed —
+  a question with fewer than two options isn't a choice — dedupes options, and
+  caps both lists. The model's shape is never trusted straight through.
+- **`header` is REQUIRED in the schema.** Left optional, the model skipped it
+  and every tab read "Question 1". Verified live: it now returns 'Audience',
+  'Cadence'.
+- **Questions ride on the agent MESSAGE**, so the panel survives a refresh and
+  only the NEWEST agent turn is answerable — an older question can't be
+  answered again and send a stale reply.
+- **Answers become an ordinary chat message** ("Cadence: 2 per week"), not a
+  hidden structured payload. The transcript stays readable and the agent handles
+  them like any other reply, with no separate answer channel to keep in sync.
+- **Always dismissable, and always an "Other" box.** The panel is a shortcut,
+  never a gate: the options are the model's guesses and the creator knows their
+  own situation better than the list does.
+- **Verified:** 13 new checks in `tests/plan_check.py` (questions persist across
+  a reload, user turns carry none, one-option/no-text questions dropped,
+  duplicates deduped, both caps enforced, bare strings accepted, junk input
+  safe) plus a live call confirming real options with consequences and a
+  '(Recommended)' marker. Whole suite passes; `npm run build` clean.
 
 ### 2026-08-04 — NEW WORKFLOW: Plan & Script (first in the pipeline)
 
@@ -3792,7 +4196,23 @@ Image generation stays non-reproducible — that API exposes no seed.
 **Open follow-up:** show `grounding.warnings` on the shot-review screen (it's in
 the API response and the logs today, but invisible in the UI).
 
+**Animatics → Final Video is BUILT but NOT run against Veo (2026-08-07):** the
+whole workflow is wired end-to-end — art tray, per-shot motion prompts, render,
+assemble, download — and the API + assembler are tested (see the Work Log entry).
+**No real Veo call has ever been made from this code.** It needs a
+billing-enabled project (or a `GEMINI_API_KEY`) and the first render is the real
+test. Read the money notes in that entry before running one.
+
+**There is no Google Flow API** — researched 2026-08-07. Flow is a Labs *web app*:
+no public API, no OAuth scope, no service account, and its credits are a separate
+ledger from the API. A Google AI Pro/Ultra subscription grants **zero** API
+access. Flow is a front-end over Veo, so we call Veo directly and get the same
+models. Do not add "Flow integration" to the roadmap; it isn't a thing that
+exists. (Driving the Flow UI with a session cookie would breach Google's terms
+and break on any redesign.)
+
 **Not yet verified live** (needs real keys / steady backend):
+- **Veo video rendering** — see above. Coded, typed, unit-tested, never called.
 - **3D generation** — Meshy path is coded but not run live; **Tripo is entirely
   unverified** (built from public docs, no test key — adjust request shape when tried).
 - The shirtless-mannequin `body` prompt may still occasionally be safety-filtered

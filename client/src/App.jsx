@@ -8,32 +8,19 @@ import Home from "./components/Home.jsx";
 import Profile from "./components/Profile.jsx";
 import Avatar from "./components/Avatar.jsx";
 import PlanAndScript from "./components/PlanAndScript.jsx";
-import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
+import AnimaticsToVideo from "./components/AnimaticsToVideo.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
 
-// Descriptions for the roadmap (not-yet-built) workflows.
-const SOON = {
-  "animatics-to-video": {
-    icon: "🎞️",
-    title: "Animatics to Final Video",
-    description:
-      "Render animatics into a polished final video with your characters, backgrounds and effects.",
-    steps: ["Apply final art & characters", "Render shots", "Assemble the sequence"],
-  },
-  "final-video-export": {
-    icon: "🎥",
-    title: "Final Video Export",
-    description:
-      "Add voiceover, music and captions, then export your finished video in multiple formats.",
-    steps: ["Add audio & captions", "Choose export presets", "Download the final cut"],
-  },
-};
+// Every workflow in the sidebar is BUILT, so there is no roadmap placeholder to
+// render any more. `WorkflowSoon.jsx` is kept for the next one that needs it:
+// re-add a `SOON` map here plus the `else if (SOON[nav])` branch below, or a
+// `status: "soon"` item will navigate to a blank page.
 
 // A shared storyboard link is `?s=<token>`. Read it once at boot: the app has
 // no router, and this is the only route that must render logged OUT.
@@ -63,6 +50,10 @@ export default function App() {
   // Set by the board's "Make animatic" button: the animatic already exists, so
   // the animatics workflow opens straight into its editor instead of the library.
   const [pendingAnimaticId, setPendingAnimaticId] = useState(null);
+  // Same idea one workflow further down: the animatic editor's "Make final
+  // video" creates the project, then hands its id over so this workflow opens
+  // straight into the workspace instead of its library.
+  const [pendingFinalVideoId, setPendingFinalVideoId] = useState(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   // main.jsx already applied the stored theme before the first paint; this only
@@ -188,7 +179,7 @@ export default function App() {
       <div className="workflow-head-wrap">
         <WorkflowHeader
           icon="🖼️"
-          title="Text to Image"
+          title="Text to Turnaround Image"
           subtitle="Generate turnaround character asset sheets from a prompt or photo."
         />
         <div className="layout">
@@ -226,10 +217,26 @@ export default function App() {
       <StoryboardToAnimatics
         openId={pendingAnimaticId}
         onOpened={() => setPendingAnimaticId(null)}
+        onMakeFinalVideo={(id) => {
+          setPendingFinalVideoId(id);
+          setNav("animatics-to-video");
+        }}
       />
     );
-  } else if (SOON[nav]) {
-    content = <WorkflowSoon {...SOON[nav]} />;
+  } else if (nav === "animatics-to-video") {
+    content = (
+      <AnimaticsToVideo
+        openId={pendingFinalVideoId}
+        onOpened={() => setPendingFinalVideoId(null)}
+        /* "Create Animatic Image" mounts the real board page, so its "Make
+           animatic" button needs the same hand-off the storyboard workflow
+           gets — without it that button is hidden. */
+        onOpenAnimatic={(id) => {
+          setPendingAnimaticId(id);
+          setNav("storyboard-to-animatics");
+        }}
+      />
+    );
   }
 
   return (

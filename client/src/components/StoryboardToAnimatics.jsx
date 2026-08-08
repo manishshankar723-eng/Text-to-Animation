@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import AnimaticEditor from "./AnimaticEditor.jsx";
 import AnimaticLibrary from "./AnimaticLibrary.jsx";
 
-export default function StoryboardToAnimatics({ openId, onOpened }) {
+export default function StoryboardToAnimatics({ openId, onOpened, onMakeFinalVideo }) {
   const [current, setCurrent] = useState(openId || null);
 
   // The board's "Make animatic" button navigates here with an id already
@@ -24,6 +24,7 @@ export default function StoryboardToAnimatics({ openId, onOpened }) {
         animaticId={current}
         onBack={() => setCurrent(null)}
         onDeleted={() => setCurrent(null)}
+        onMakeFinalVideo={onMakeFinalVideo}
       />
     );
   }

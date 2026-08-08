@@ -643,7 +643,7 @@ def _write_concat_list(path: str, entries: list[tuple[str, float]]) -> None:
         f.write("\n".join(lines) + "\n")
 
 
-def _run_ffmpeg(
+def run_ffmpeg(
     cmd: list[str],
     total_ms: int,
     progress_cb=None,
@@ -653,6 +653,9 @@ def _run_ffmpeg(
 
     Progress comes from `-progress pipe:1`, which emits plain `key=value` lines
     — stable across ffmpeg versions, unlike scraping the human-readable stderr.
+
+    Public because video_assemble.py drives ffmpeg too and must handle progress,
+    cancellation and error reporting identically — one runner, one behaviour.
     """
     proc = subprocess.Popen(
         cmd,
@@ -948,7 +951,7 @@ def build_animatic(
     def _enc_progress(fraction: float):
         _report(58 + int(40 * fraction), "Encoding video…")
 
-    finished = _run_ffmpeg(cmd, total_ms, _enc_progress, cancel_check)
+    finished = run_ffmpeg(cmd, total_ms, _enc_progress, cancel_check)
     if not finished:
         shutil.rmtree(build_dir, ignore_errors=True)
         logger.info("[animatic %s] export STOPPED by user", job_id)

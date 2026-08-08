@@ -50,6 +50,51 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Output language
+# ---------------------------------------------------------------------------
+# A creator writes titles and hooks in the language their audience actually
+# speaks. An English-only planner is unusable for a Hindi channel, so the plan
+# is generated in whatever language they pick.
+#
+# Hinglish needs spelling out: left to itself the model writes Devanagari and
+# calls it Hinglish, when what Indian creators actually publish is Hindi in
+# LATIN script, mixed with English words.
+LANGUAGES = {
+    "english": "English",
+    "hinglish": (
+        "Hinglish — Hindi and English mixed the way Indian creators actually "
+        "write titles and captions, in LATIN (Roman) script, NOT Devanagari. "
+        "For example: 'Shiv ji ki ye kahani aapne kabhi nahi suni hogi'."
+    ),
+    "hindi": "Hindi, written in Devanagari script (देवनागरी)",
+}
+DEFAULT_LANGUAGE = "english"
+
+
+def language_instruction(language: str | None) -> str:
+    """The 'write it in this language' block appended to the plan request.
+
+    An unknown value is treated as the user's own free-text language name, so
+    'Tamil', 'Bhojpuri' or 'Spanish' all work without a code change.
+    """
+    key = (language or "").strip()
+    if not key:
+        return ""
+    described = LANGUAGES.get(key.lower(), key)
+    return (
+        f"\n\nWRITE THE PLAN IN: {described}\n"
+        "Every piece of text a human reads — title, hook, outline beats, call to "
+        "action, keywords, pillar names, the summary and the assumptions — must "
+        "be in that language. Titles and hooks especially: they are published as "
+        "written, so they must read naturally to that audience, not like a "
+        "translation.\n"
+        "EXCEPTIONS, which stay exactly as specified in English because the app "
+        "reads them as data, not prose: `goal` (reach/engagement/conversion/"
+        "retention) and `effort` (low/medium/high)."
+    )
+
+
 # Guard rails. A plan longer than a year stops being a plan and starts being a
 # wish; a conversation longer than this is re-sending a novel on every turn.
 MAX_MONTHS = 12
@@ -82,6 +127,21 @@ _SYSTEM_INSTRUCTION = (
     "often they can realistically publish, or what has already worked for them, "
     "ask — one or two focused questions at a time, never an interrogation. A "
     "specific plan needs specific inputs.\n"
+    "- Whenever you ask something, ALSO offer it as a multiple-choice question "
+    "in `questions`, so the creator can click an answer instead of typing an "
+    "essay. Give 2-4 realistic, mutually exclusive options, each with one line "
+    "explaining what choosing it means for their plan. Write options in THEIR "
+    "language, with concrete numbers where it helps ('2 per week — one long "
+    "video plus one short'), not vague labels ('moderate'). Put the option you "
+    "would recommend first and mark it '(Recommended)' when you genuinely have "
+    "a view. Ask at most 3 questions at once. Give every question a `header` of "
+    "ONE or TWO words naming what it is about — 'Audience', 'Cadence', "
+    "'Video length', 'Goal'. It is used as a tab label, so 'Question 1' is "
+    "useless there.\n"
+    "- Your `reply` still carries the human answer. Do NOT restate the options "
+    "as a numbered list in the reply — they are shown as buttons.\n"
+    "- When you have enough to plan and are not asking anything, return an "
+    "EMPTY `questions` list.\n"
     "- Be concrete. 'Post more shorts' is useless. 'Tuesday: 45s short — the "
     "one Shiva Purana detail everyone gets wrong — hook in the first 2 seconds' "
     "is a plan.\n"
@@ -123,6 +183,91 @@ _PLAN_INSTRUCTION = (
     "Also return `assumptions`: anything you had to assume because it wasn't "
     "stated. Be honest here; an empty list is fine if nothing was assumed.\n"
 )
+
+
+# Clickable questions the agent asks alongside its reply. Bounded on purpose:
+# more than 3 questions or 4 options is a form, not a conversation.
+MAX_QUESTIONS = 3
+MAX_OPTIONS = 4
+
+
+def _chat_schema() -> types.Schema:
+    """Structured chat turn: the prose reply PLUS any clickable questions.
+
+    One call returns both, rather than a second call to "also generate some
+    options" — that would double the cost of every turn and let the two drift
+    apart (a reply asking one thing, buttons offering another).
+    """
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["reply"],
+        properties={
+            "reply": types.Schema(type=types.Type.STRING),
+            "questions": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    # `header` is REQUIRED: left optional the model skipped it
+                    # and every tab read "Question 1", "Question 2".
+                    required=["header", "question", "options"],
+                    properties={
+                        # Short tab label, e.g. "Cadence" or "Audience".
+                        "header": types.Schema(type=types.Type.STRING),
+                        "question": types.Schema(type=types.Type.STRING),
+                        "options": types.Schema(
+                            type=types.Type.ARRAY,
+                            items=types.Schema(
+                                type=types.Type.OBJECT,
+                                required=["label"],
+                                properties={
+                                    "label": types.Schema(type=types.Type.STRING),
+                                    "description": types.Schema(type=types.Type.STRING),
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
+
+
+def _coerce_questions(raw) -> list[dict]:
+    """Normalise the model's questions into clean, renderable ones.
+
+    A question with fewer than two options isn't a choice, so it's dropped — the
+    user can always just type instead.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for i, q in enumerate(raw[:MAX_QUESTIONS]):
+        if not isinstance(q, dict):
+            continue
+        text = str(q.get("question", "")).strip()
+        if not text:
+            continue
+        options: list[dict] = []
+        seen: set[str] = set()
+        for o in (q.get("options") or [])[: MAX_OPTIONS + 2]:
+            if isinstance(o, str):
+                o = {"label": o}
+            if not isinstance(o, dict):
+                continue
+            label = str(o.get("label", "")).strip()
+            if not label or label.lower() in seen:
+                continue
+            seen.add(label.lower())
+            options.append(
+                {"label": label, "description": str(o.get("description", "")).strip()}
+            )
+            if len(options) >= MAX_OPTIONS:
+                break
+        if len(options) < 2:
+            continue
+        header = str(q.get("header", "")).strip() or f"Question {i + 1}"
+        out.append({"id": f"q{i + 1}", "header": header[:24], "question": text, "options": options})
+    return out
 
 
 def _plan_schema() -> types.Schema:
@@ -314,7 +459,7 @@ def _call(contents, config, what: str) -> str:
     raise PlanError(last_reason)
 
 
-def chat(messages: list[dict], channel_context: str = "") -> str:
+def chat(messages: list[dict], channel_context: str = "") -> dict:
     """One conversational turn. `messages` is the whole transcript so far.
 
     Args:
@@ -325,7 +470,11 @@ def chat(messages: list[dict], channel_context: str = "") -> str:
             it — and so it never has to invent numbers.
 
     Returns:
-        The agent's reply as plain text.
+        {"reply": str, "questions": [{id, header, question, options[]}]}
+
+        `questions` is what the UI renders as clickable answers; it is empty
+        whenever the agent isn't asking anything. A malformed or empty question
+        list is never fatal — the user can always just type.
     """
     convo = [m for m in (messages or []) if str(m.get("text", "") or "").strip()]
     if not convo:
@@ -340,11 +489,31 @@ def chat(messages: list[dict], channel_context: str = "") -> str:
         )
 
     config = types.GenerateContentConfig(
-        system_instruction=system, **_sampling_kwargs()
+        system_instruction=system,
+        response_mime_type="application/json",
+        response_schema=_chat_schema(),
+        **_sampling_kwargs(),
     )
-    reply = _call(_to_contents(convo), config, "replying").strip()
-    logger.info("[plan] reply: %d chars over %d message(s)", len(reply), len(convo))
-    return reply
+    payload = _call(_to_contents(convo), config, "replying")
+
+    try:
+        raw = json.loads(payload)
+    except json.JSONDecodeError:
+        # Structured output failed but the model still said something useful —
+        # keep the words rather than failing the turn over its wrapper.
+        logger.warning("[plan] reply wasn't valid JSON; using it as plain text")
+        return {"reply": payload.strip(), "questions": []}
+
+    reply = str((raw or {}).get("reply", "")).strip()
+    questions = _coerce_questions((raw or {}).get("questions"))
+    if not reply and not questions:
+        raise PlanError("The model returned an empty reply. Try rephrasing.")
+
+    logger.info(
+        "[plan] reply: %d chars, %d question(s) over %d message(s)",
+        len(reply), len(questions), len(convo),
+    )
+    return {"reply": reply, "questions": questions}
 
 
 def generate_plan(
@@ -352,6 +521,7 @@ def generate_plan(
     months: int = 1,
     cadence: str = "2 videos per week",
     channel_context: str = "",
+    language: str | None = None,
 ) -> dict:
     """Turn the conversation into a structured content calendar.
 
@@ -360,10 +530,13 @@ def generate_plan(
         months: how many months to cover (1-12).
         cadence: how often they publish, in the user's own words.
         channel_context: researched channel facts, if any.
+        language: what to WRITE the plan in — a key from LANGUAGES
+            ("english" / "hinglish" / "hindi") or any language name the user
+            typed. Empty means English.
 
     Returns:
         {"summary": str, "pillars": [{name, why}], "items": [{…}],
-         "assumptions": [str], "months": int, "cadence": str}
+         "assumptions": [str], "months": int, "cadence": str, "language": str}
 
     Raises:
         PlanError: with a human-readable reason on any failure.
@@ -382,6 +555,9 @@ def generate_plan(
     instruction = _PLAN_INSTRUCTION.format(
         max_items=MAX_ITEMS, months=months, cadence=cadence
     )
+    # Appended LAST so the language requirement is the final thing the model
+    # reads before it answers — the most reliable position for a hard rule.
+    instruction += language_instruction(language)
     contents = _to_contents(convo) + [
         types.Content(role="user", parts=[types.Part(text=instruction)])
     ]
@@ -406,9 +582,14 @@ def generate_plan(
         "assumptions": _clean_list((raw or {}).get("assumptions"), 12),
         "months": months,
         "cadence": cadence,
+        # Stored so reopening a plan shows what it was written in, and so
+        # regenerating defaults to the same language.
+        "language": (language or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE,
     }
     logger.info(
-        "[plan] produced %d item(s) across %d month(s), %d pillar(s), %d assumption(s)",
-        len(items), months, len(plan["pillars"]), len(plan["assumptions"]),
+        "[plan] produced %d item(s) across %d month(s) in %s, %d pillar(s), "
+        "%d assumption(s)",
+        len(items), months, plan["language"], len(plan["pillars"]),
+        len(plan["assumptions"]),
     )
     return plan

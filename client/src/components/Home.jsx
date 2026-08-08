@@ -33,6 +33,7 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
   const [jobs, setJobs] = useState([]);
   const [boards, setBoards] = useState([]);
   const [animatics, setAnimatics] = useState([]);
+  const [videos, setVideos] = useState([]);
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,17 +43,19 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
     try {
       // One workflow being unreachable must not blank the whole dashboard, so
       // each list settles on its own and falls back to empty.
-      const [p, j, b, a, pl] = await Promise.all([
+      const [p, j, b, a, v, pl] = await Promise.all([
         api.me().catch(() => null),
         api.listJobs(api.CHARACTER_JOB_KINDS).catch(() => []),
         api.listStoryboards().catch(() => []),
         api.listAnimatics().catch(() => []),
+        api.listFinalVideos().catch(() => []),
         api.listPlans().catch(() => []),
       ]);
       setProfile(p);
       setJobs(Array.isArray(j) ? j : j.jobs || []);
       setBoards(Array.isArray(b) ? b : []);
       setAnimatics(Array.isArray(a) ? a : []);
+      setVideos(Array.isArray(v) ? v : []);
       setPlans(Array.isArray(pl) ? pl : []);
     } catch (e) {
       setError(e.message);
@@ -75,8 +78,11 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
   const displayName = profile?.display_name || profile?.full_name || email;
   const initial = (displayName || "?").trim().charAt(0).toUpperCase();
 
-  // One shape for every workflow, so the four groups render from one component
-  // instead of four near-identical blocks.
+  // One shape for every workflow, so the groups render from one component
+  // instead of five near-identical blocks. ORDER MATCHES THE SIDEBAR — when a
+  // workflow is added, renamed or moved in Sidebar.jsx, it has to be added,
+  // renamed or moved here too, or Recent work quietly stops showing it (which
+  // is exactly how Image to Video went missing).
   const groups = [
     {
       id: "plan-and-script",
@@ -92,7 +98,7 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
     {
       id: "text-to-image",
       icon: "🖼️",
-      label: "Text to Image",
+      label: "Text to Turnaround Image",
       items: jobs.map((j) => ({
         key: j.job_id,
         title: j.character_name || "Untitled",
@@ -122,6 +128,20 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
       })),
     },
     {
+      id: "animatics-to-video",
+      icon: "🎞️",
+      label: "Image to Video",
+      items: videos.map((v) => ({
+        key: v.job_id,
+        title: v.title || "Final video",
+        status: v.status,
+        // How much is DONE, not just how much is in it — this is the only
+        // workflow where the remainder costs money to finish.
+        meta: v.shot_count ? `${v.rendered_count}/${v.shot_count} rendered` : "",
+        date: v.updated_at || v.created_at,
+      })),
+    },
+    {
       id: "storyboard-to-animatics",
       icon: "🎬",
       label: "Storyboard to Animatics",
@@ -129,7 +149,7 @@ export default function Home({ email, onOpenJob, onUpgrade, onOpenProfile, onNav
         key: a.job_id,
         title: a.title || "Animatic",
         status: a.status,
-        // Same shape of hint as the other three: how much is in it.
+        // Same shape of hint as the others: how much is in it.
         meta: a.frame_count ? `${a.frame_count} frames` : "",
         date: a.updated_at || a.created_at,
       })),
