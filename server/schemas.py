@@ -513,6 +513,18 @@ class StoryboardCreateRequest(BaseModel):
     title: str | None = Field(None, description="Optional storyboard title.")
     # Stored (not used for drawing) so the library can label a saved board.
     genre: str | None = Field(None, description="Genre chosen on the form, for the library card.")
+    # THE WRITTEN CONTINUITY BIBLE. The reviewed cast and asset lists, each with
+    # the visual description the breakdown wrote. Every panel is told what the
+    # people and props IN IT look like, which is what stops the same character
+    # being drawn as a different person in shot 7.
+    #
+    # This matters most where there are NO reference images: the rough-sketch
+    # style skips the cast step by design, so `character_refs` is empty and the
+    # bible is the only thing holding the film together. It costs nothing — the
+    # breakdown already produced these words — and both lists are optional, so
+    # an older client that omits them keeps working exactly as before.
+    characters: list[Character] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
     # Character consistency (Stage B): map character name → reference_id (from
     # POST /characters/reference). Those refs are fed into every panel the
     # character appears in, so they stay visually consistent.
@@ -566,6 +578,67 @@ class PanelInsertRequest(BaseModel):
 
     at: int = Field(..., ge=0, description="Position to insert the new panel at.")
     description: str = Field("", description="Optional starting prompt for the new panel.")
+
+
+class PanelSequenceRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/panels/{index}/sequence.
+
+    Turns ONE drawn panel into the key poses for a shot of `duration_seconds`.
+    The COUNT is not sent: it is derived from the duration server-side
+    (panel_sequence.frame_count_for), so the client can't ask for hundreds.
+    """
+
+    duration_seconds: int = Field(
+        4, description="Shot length: 2, 4, 6, 8 or 10 seconds."
+    )
+    # Continue a stopped run instead of starting again. Frames already on disk
+    # are kept and only the missing ones are drawn — a stop then Generate costs
+    # only what was never drawn.
+    resume: bool = True
+    # PREVIEW: draw only the first couple of poses, then stop, so the user can
+    # see whether the character is actually moving before paying for the rest.
+    # A 10s shot is 40 drawings; finding out it didn't work should not cost 40.
+    # Continuing afterwards is just an ordinary resume — nothing is redrawn.
+    preview: bool = False
+    # REDO these exact poses, even though they already exist — the per-drawing
+    # "this one came out wrong" button. Takes precedence over resume/preview:
+    # only these are drawn, and they reuse the sequence's stored pose plan so
+    # pose 7 is redrawn as the same pose 7. Fixing one bad drawing in sixteen
+    # costs one image.
+    redraw: list[int] = Field(default_factory=list)
+
+
+class PanelSequenceInfo(BaseModel):
+    """What a panel's key-pose sequence currently is."""
+
+    index: int
+    frames: int = 0
+    planned: int = 0
+    duration_seconds: int = 0
+    fps: int = 24
+    stopped: bool = False
+    failed: list[int] = Field(default_factory=list)
+    # The planned poses that have NO picture — holes, wherever they fall. A
+    # sequence is not "the frames up to the first gap": one refused drawing in
+    # the middle used to hide every good one after it. Pressing Generate again
+    # fills exactly these.
+    missing: list[int] = Field(default_factory=list)
+    # Serve paths for the frames that exist, in order. Filled on read.
+    urls: list[str] = Field(default_factory=list)
+    # Which pose each url IS (`urls[k]` is pose `frame_numbers[k]`), so the
+    # strip can label drawing 11 as 11 even when 10 is missing.
+    frame_numbers: list[int] = Field(default_factory=list)
+    # What each pose was PLANNED to show, in pose order. Lets the strip say what
+    # a drawing was meant to be, which is what makes "this one is wrong"
+    # judgeable rather than a hunch. Pose 1 is always the panel itself — it is
+    # copied in rather than drawn, so the sequence opens on the picture already
+    # approved on the board.
+    poses: list[str] = Field(default_factory=list)
+    # The shot's INVARIANT: one sentence naming what is true in every drawing —
+    # "Kabir stays asleep under the quilt, he never wakes or sits up". Handed to
+    # every drawing and kept here so a later single-pose redraw is fenced by the
+    # same rule the rest of the shot was drawn under.
+    hold: str = ""
 
 
 class RestyleRequest(BaseModel):
@@ -649,9 +722,17 @@ class AnimaticFrameSource(BaseModel):
     user dropped into this animatic, stored under its own id.
     """
 
-    kind: str = Field("panel", description="'panel' (a storyboard panel) or 'upload'.")
-    storyboard_id: str | None = Field(None, description="Board job id (kind='panel').")
-    index: int | None = Field(None, description="Panel index on that board (kind='panel').")
+    kind: str = Field(
+        "panel",
+        description="'panel' (a storyboard panel), 'pose' (one key pose of a panel's sequence), or 'upload'.",
+    )
+    storyboard_id: str | None = Field(None, description="Board job id (kind='panel'/'pose').")
+    index: int | None = Field(None, description="Panel index on that board (kind='panel'/'pose').")
+    # WHICH KEY POSE. A shot that has been through Image to Animatic Image has
+    # ~4 drawings per second of screen time; referencing them individually is
+    # what makes an animatic actually MOVE instead of being a slideshow of
+    # stills. Referenced, never copied — redrawing the pose updates the animatic.
+    frame: int | None = Field(None, description="Key-pose number within that panel's sequence (kind='pose').")
     upload_id: str | None = Field(None, description="Uploaded image id (kind='upload').")
 
 

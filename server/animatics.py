@@ -29,9 +29,11 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
+import panel_sequence
+
 from . import config, worker
 from .auth import CurrentUser, get_current_user
-from .common import get_owned_job, panel_path, variants_of
+from .common import board_dir, get_owned_job, panel_path, variants_of
 from .jobs import get_store
 from .schemas import (
     AnimaticAudio,
@@ -270,7 +272,7 @@ def _resolve_frame_path(job: Job, frame: AnimaticFrame) -> str | None:
         path = _image_path(job.job_id, src.upload_id or "")
         return path if path and os.path.isfile(path) else None
 
-    if src.kind == "panel":
+    if src.kind in ("panel", "pose"):
         board_id = src.storyboard_id or ""
         if not board_id or not _ID_RE.match(board_id) or src.index is None:
             return None
@@ -279,6 +281,13 @@ def _resolve_frame_path(job: Job, frame: AnimaticFrame) -> str | None:
         # crafted board id could read another account's panels.
         if board is None or board.owner != job.owner or board.kind != JobKind.STORYBOARD:
             return None
+        if src.kind == "pose":
+            if src.frame is None:
+                return None
+            path = panel_sequence.frame_path(
+                board_dir(board_id), int(src.index), int(src.frame)
+            )
+            return path if os.path.isfile(path) else None
         _, active = variants_of(board.result or {})
         path = panel_path(board_id, int(src.index), active)
         return path if os.path.isfile(path) else None
@@ -289,19 +298,80 @@ def _resolve_frame_path(job: Job, frame: AnimaticFrame) -> str | None:
 # ---------------------------------------------------------------------------
 # Create / list / read / save / delete
 # ---------------------------------------------------------------------------
-def _frames_from_board(board: Job, default_duration_ms: int) -> list[AnimaticFrame]:
-    """Every drawn panel of a board, in order, as frames.
+def _drawn_board_panels(board: Job) -> list[tuple[int, dict]]:
+    """(index, panel) for the board panels that actually have a picture.
 
     Failed and not-yet-drawn panels are skipped — an animatic made of gaps is
     worse than a shorter one, and the user can add them later.
     """
     variants, active = variants_of(board.result or {})
-    panels = variants[active].get("panels") or []
+    return [
+        (i, panel or {})
+        for i, panel in enumerate(variants[active].get("panels") or [])
+        if (panel or {}).get("url") and not (panel or {}).get("failed")
+    ]
+
+
+def _panel_frames_only(board: Job, default_duration_ms: int) -> list[AnimaticFrame]:
+    """One held frame per drawn shot — the animatic as it was before key poses.
+
+    The fallback when expanding every pose would blow the frame cap.
+    """
+    return [
+        AnimaticFrame(
+            id=uuid.uuid4().hex[:12],
+            src={"kind": "panel", "storyboard_id": board.job_id, "index": i},
+            duration_ms=default_duration_ms,
+            label=f"Shot {i + 1}",
+        )
+        for i, _ in _drawn_board_panels(board)
+    ]
+
+
+def _frames_from_board(board: Job, default_duration_ms: int) -> list[AnimaticFrame]:
+    """A board, in order, as animatic frames — a shot's KEY POSES where it has
+    them, otherwise the single panel.
+
+    THE FLIPBOOK. A shot that has been through Image to Animatic Image already
+    has ~4 drawings per second of screen time, blocked out to carry its motion.
+    This used to ignore every one of them and lay down the one still panel, so
+    the work the user paid for never reached the animatic and the animatic was
+    a slideshow. Now those poses come across at their real rate
+    (1000/KEY_POSES_PER_SECOND ms each, so the shot runs for the length it was
+    planned as), and only shots with no sequence fall back to a held panel.
+
+    Poses are REFERENCED, never copied, exactly as panels are: redrawing a pose
+    on the board updates the animatic with nothing to re-import.
+
+    Failed and not-yet-drawn panels are skipped — see _drawn_board_panels.
+    """
+    sequences = (board.result or {}).get("sequences") or {}
+    # A pose is a QUARTER of a second at the rate the sequence was planned at,
+    # not `default_duration_ms` — holding each drawing for two seconds would
+    # turn four seconds of animation into half a minute of stills.
+    pose_ms = max(100, round(1000 / panel_sequence.KEY_POSES_PER_SECOND))
+
     frames: list[AnimaticFrame] = []
-    for i, panel in enumerate(panels):
-        panel = panel or {}
-        if not panel.get("url") or panel.get("failed"):
+    for i, _panel in _drawn_board_panels(board):
+        planned = int((sequences.get(str(i)) or {}).get("planned") or 0)
+        poses = panel_sequence.frames_on_disk(board_dir(board.job_id), i, planned)
+        if poses:
+            for position, n in enumerate(poses, start=1):
+                frames.append(
+                    AnimaticFrame(
+                        id=uuid.uuid4().hex[:12],
+                        src={
+                            "kind": "pose",
+                            "storyboard_id": board.job_id,
+                            "index": i,
+                            "frame": n,
+                        },
+                        duration_ms=pose_ms,
+                        label=f"Shot {i + 1}.{position}",
+                    )
+                )
             continue
+
         frames.append(
             AnimaticFrame(
                 id=uuid.uuid4().hex[:12],
@@ -339,6 +409,17 @@ def create_animatic(
                     status_code=409,
                     detail="That storyboard has no drawn panels yet — generate some first.",
                 )
+            # A long board whose shots all have key poses can out-run the frame
+            # cap. Falling back to one frame per shot beats refusing to make the
+            # animatic at all — the user can add the poses of the shots they
+            # care about by hand.
+            if len(frames) > config.MAX_ANIMATIC_FRAMES:
+                logger.info(
+                    "[animatic] board %s expands to %d key-pose frames (cap %d) — "
+                    "falling back to one frame per shot.",
+                    source_id, len(frames), config.MAX_ANIMATIC_FRAMES,
+                )
+                frames = _panel_frames_only(board, body.default_duration_ms)
         if not title:
             title = f"{board.character_name or 'Storyboard'} — animatic"
         # Inherit the board's frame shape so panels aren't letterboxed by default.

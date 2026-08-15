@@ -25,6 +25,9 @@ import uuid
 import zipfile
 
 import yaml
+# Only the paths + the duration→pose arithmetic are needed at request time; the
+# heavy generation runs in the worker, so importing this costs nothing.
+import panel_sequence
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
@@ -59,6 +62,8 @@ from .schemas import (
     RegenerateViewRequest,
     PanelInsertRequest,
     PanelRegenerateRequest,
+    PanelSequenceInfo,
+    PanelSequenceRequest,
     RestyleRequest,
     ActiveVariantRequest,
     ScriptBreakdownRequest,
@@ -646,6 +651,11 @@ def create_storyboard(
 
     title = (body.title or "Storyboard").strip() or "Storyboard"
     shot_dicts = [s.model_dump() for s in body.shots]
+    # The written continuity bible — see StoryboardCreateRequest.characters.
+    # Stored on the job, so a re-style, a single-panel redraw or a key-pose run
+    # months later still knows what these people look like.
+    cast_dicts = [c.model_dump() for c in body.characters]
+    asset_dicts = [a.model_dump() for a in body.assets]
     # The script's world rides along with every panel prompt, and is stored so a
     # later re-style / single-panel redraw stays in the same culture and period.
     world = body.world.model_dump() if body.world else {}
@@ -666,6 +676,8 @@ def create_storyboard(
         # Kept so a panel can always be re-drawn (even if it's missing from the
         # streamed result) and so edited prompts have a source of truth.
         "shots": shot_dicts,
+        "cast": cast_dicts,
+        "assets": asset_dicts,
         "world": world,
         # Display only. Capped so a pasted novel can't bloat the job record
         # (Firestore documents have a hard size limit).
@@ -716,6 +728,8 @@ def create_storyboard(
         "character_ref_paths": character_ref_paths,
         "asset_ref_paths": asset_ref_paths,
         "world": world,
+        "cast": cast_dicts,
+        "assets": asset_dicts,
     }
     worker.submit_storyboard_job(job.job_id, kwargs)
 
@@ -1083,6 +1097,398 @@ def get_storyboard_panel(
     return FileResponse(path, media_type="image/png")
 
 
+# ---------------------------------------------------------------------------
+# Image to Animatic Image — one panel → its key-pose sequence (the "flipbook")
+# ---------------------------------------------------------------------------
+def _panel_for_index(job: Job, index: int) -> dict | None:
+    """The panel dict at `index` on the ACTIVE variant, or None.
+
+    Same three-step lookup the regenerate endpoint does — by `index` field, then
+    by position, then rebuilt from the stored shots — so a panel that never made
+    it into the streamed result can still be worked on.
+    """
+    variants, active = _variants_of(job.result or {})
+    panels = list(variants[active].get("panels") or [])
+    panel = next((p for p in panels if p.get("index") == index), None)
+    if panel is None and 0 <= index < len(panels):
+        panel = panels[index]
+    if panel is not None:
+        return dict(panel)
+    shots = (job.params or {}).get("shots") or []
+    if 0 <= index < len(shots):
+        s = shots[index]
+        return {
+            "index": index,
+            "description": s.get("description", ""),
+            "characters": s.get("characters", []) or [],
+            "assets": s.get("assets", []) or [],
+            "location": s.get("location", "") or "",
+            "camera": s.get("camera", "") or "",
+        }
+    return None
+
+
+def _sequence_info(job: Job, index: int) -> PanelSequenceInfo:
+    """This panel's sequence as the client sees it, urls filled from DISK.
+
+    Counting files rather than trusting the stored summary matters for RESUME:
+    after a stop the job says "8 frames" and the disk agrees, but if a run
+    crashed mid-write the disk is the honest answer.
+
+    EVERY planned index is checked, not a `while` loop from zero. That loop was
+    a real bug: one refused frame in the middle of a sixteen-pose run hid the
+    ten good drawings after it, reported the sequence as short, and made the
+    next Generate redraw pictures that had already been paid for. `missing`
+    names the holes so the strip can show them as gaps to fill rather than
+    pretending the sequence simply ended early.
+    """
+    stored = ((job.result or {}).get("sequences") or {}).get(str(index)) or {}
+    board_dir = _board_dir(job.job_id)
+    planned = int(stored.get("planned") or 0)
+    # A sequence with no stored summary (an older board) is still discoverable:
+    # scan up to the largest run this endpoint could ever have produced.
+    on_disk = panel_sequence.frames_on_disk(
+        board_dir, index, planned or panel_sequence.MAX_FRAMES
+    )
+    return PanelSequenceInfo(
+        index=index,
+        frames=len(on_disk),
+        planned=planned,
+        duration_seconds=int(stored.get("duration_seconds") or 0),
+        fps=int(stored.get("fps") or panel_sequence.FPS),
+        stopped=bool(stored.get("stopped")),
+        failed=list(stored.get("failed") or []),
+        missing=[n for n in range(planned) if n not in set(on_disk)],
+        # `?v=<mtime>` so a REDRAWN pose is a different URL. Without it the
+        # client — which caches one object URL per path and never re-fetches a
+        # path it already holds — kept showing the old drawing, and both "redraw
+        # this pose" and a full regenerate looked like they did nothing.
+        urls=[
+            f"/storyboards/{job.job_id}/panels/{index}/frames/{n}"
+            f"?v={panel_sequence.frame_version(board_dir, index, n)}"
+            for n in on_disk
+        ],
+        frame_numbers=on_disk,
+        poses=[str(p) for p in (stored.get("poses") or [])],
+        hold=str(stored.get("hold") or ""),
+    )
+
+
+@app.get("/storyboards/{job_id}/panels/{index}/sequence", response_model=PanelSequenceInfo)
+def get_panel_sequence(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """What key poses this panel has so far (the strip under the shot)."""
+    job = _get_owned_board(job_id, current)
+    return _sequence_info(job, index)
+
+
+@app.post(
+    "/storyboards/{job_id}/panels/{index}/sequence",
+    response_model=JobCreatedResponse,
+    status_code=202,
+)
+def generate_panel_sequence(
+    job_id: str,
+    index: int,
+    body: PanelSequenceRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Draw the key poses for ONE shot, off-request. Poll GET /jobs/{id}.
+
+    This is Image to Animatic Image's Generate button. `duration_seconds` is
+    the shot length; the number of drawings is derived from it (4 per second, so
+    4s = 16), because the model is asked to block out the motion the way an
+    animator would rather than render every one of the 96 real frames.
+
+    Stop with POST /storyboards/{id}/stop; pressing Generate again RESUMES from
+    the frames already on disk, so nothing already drawn is paid for twice.
+    """
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="This board is already busy — wait for it to finish, or stop it first.",
+        )
+
+    try:
+        duration = panel_sequence.validate_duration(body.duration_seconds)
+    except panel_sequence.SequenceError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+    panel = _panel_for_index(job, index)
+    if panel is None:
+        raise HTTPException(status_code=404, detail=f"Shot {index} not found.")
+    panel["index"] = index
+
+    variants, active = _variants_of(job.result or {})
+    params = job.params or {}
+
+    total = panel_sequence.frame_count_for(duration)
+    # How many drawings this run will actually pay for. On a resume that is the
+    # HOLES, wherever they fall — not "everything after the last one", which
+    # both skipped gaps in the middle and re-bought frames already on disk.
+    if body.resume:
+        have = len(panel_sequence.frames_on_disk(_board_dir(job_id), index, total))
+    else:
+        have = 0
+
+    # A redraw reuses the plan this sequence was already built from, so the pose
+    # that comes back is the same pose — a fresh planning call would invent a
+    # different one and the drawing would no longer fit its neighbours.
+    stored_seq = ((job.result or {}).get("sequences") or {}).get(str(index)) or {}
+    stored_poses = list(stored_seq.get("poses") or [])
+    redraw = sorted({n for n in (body.redraw or []) if 0 <= n < total})
+    beats = None
+    # The shot's invariant travels with the plan. Redrawing one pose without it
+    # would redraw the single drawing that is NOT fenced by the rule the other
+    # fifteen were drawn under — and that one is then free to wander back out of
+    # the shot, which is the whole bug this fences off.
+    hold = str(stored_seq.get("hold") or "")
+    if redraw and len(stored_poses) >= total:
+        beats = [
+            {"frame": round(i * (duration * panel_sequence.FPS - 1) / max(1, total - 1)),
+             "pose": stored_poses[i]}
+            for i in range(total)
+        ]
+
+    worker.submit_panel_sequence(job_id, {
+        "panel": panel,
+        "duration_seconds": duration,
+        "style": variants[active].get("style") or params.get("style", "custom"),
+        "aspect_ratio": params.get("aspect_ratio", "16:9"),
+        "output_dir": config.OUTPUT_DIR,
+        "character_ref_paths": params.get("character_ref_paths") or {},
+        "asset_ref_paths": params.get("asset_ref_paths") or {},
+        "provider": params.get("provider"),
+        "world": params.get("world") or {},
+        # The written bible, so a face holds still across sixteen drawings.
+        "cast": params.get("cast") or [],
+        "assets": params.get("assets") or [],
+        "variant": active,
+        "resume": bool(body.resume),
+        "limit": panel_sequence.PREVIEW_POSES if body.preview else None,
+        "redraw": redraw or None,
+        "beats": beats,
+        "hold": hold,
+        # THE WHOLE BOARD, so the pose planner can see which shots run either
+        # side of this one. A shot planned from its own sentence alone animates
+        # straight on into the next one — an establishing wide of a sleeping man
+        # came back as eight drawings of him waking up, immediately before the
+        # close-up that shows him still asleep. See panel_sequence.plan_beats.
+        "board_panels": list(variants[active].get("panels") or []),
+    })
+
+    if redraw:
+        wanted = len(redraw)
+    elif body.preview:
+        wanted = min(total - have, panel_sequence.PREVIEW_POSES)
+    else:
+        wanted = total - have
+    logger.info(
+        "[storyboard %s] panel %d sequence queued: %ss → %d poses, drawing %d "
+        "(%d already drawn)%s",
+        job_id, index, duration, total, wanted, have,
+        f" [REDRAW {redraw}]" if redraw else (" [PREVIEW]" if body.preview else ""),
+    )
+    message = (
+        f"Drawing {wanted} key pose(s) for a {duration}s shot "
+        f"({duration}s × {panel_sequence.FPS}fps = {duration * panel_sequence.FPS} frames)."
+    )
+    if redraw:
+        which = ", ".join(str(n + 1) for n in redraw)
+        message = f"Re-drawing key pose{'' if len(redraw) == 1 else 's'} {which}."
+    elif body.preview:
+        message = (
+            f"Drawing the first {wanted} key pose(s) so you can check the motion "
+            f"before paying for all {total}."
+        )
+    return JobCreatedResponse(
+        job_id=job_id,
+        status=JobStatus.RUNNING,
+        kind=JobKind.STORYBOARD,
+        character_name=job.character_name,
+        message=message,
+    )
+
+
+@app.get("/storyboards/{job_id}/panels/{index}/frames/{n}")
+def get_panel_frame(
+    job_id: str,
+    index: int,
+    n: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve one key-pose frame PNG (owner-scoped)."""
+    _get_owned_job(job_id, current)
+    path = panel_sequence.frame_path(_board_dir(job_id), index, n)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Frame {n} not found.")
+    return FileResponse(path, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Panel VERSIONS — every render is kept, so a redraw you dislike is undoable
+# ---------------------------------------------------------------------------
+@app.get("/storyboards/{job_id}/panels/{index}/versions")
+def get_panel_versions(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """How many renders this panel has, and which is showing.
+
+    Counted from DISK, not from the job record: a board drawn before versions
+    existed has none, and a crashed run can leave the two disagreeing. Disk is
+    the honest answer, and it makes the feature work on old boards without a
+    migration (they simply start collecting versions from their next redraw).
+    """
+    job = _get_owned_board(job_id, current)
+    from storyboard_pipeline import adopt_existing_as_version, count_versions
+
+    variants, active = _variants_of(job.result or {})
+    # Adopt a pre-versions picture on READ as well as before a write. It is
+    # idempotent and cheap, and it means a board drawn before this feature
+    # reports "1 / 1" honestly instead of "0 versions" — and, more usefully, its
+    # original is archived from the moment it is looked at rather than only when
+    # something is about to overwrite it. Skipped while the board is generating,
+    # where a panel file may be half written.
+    if job.status != JobStatus.RUNNING:
+        adopt_existing_as_version(_board_dir(job_id), active, index)
+    total = count_versions(_board_dir(job_id), active, index)
+    panels = variants[active].get("panels") or []
+    panel = next((p for p in panels if p.get("index") == index), None) or {}
+    shown = int(panel.get("active_version", max(0, total - 1)) or 0)
+    return {
+        "index": index,
+        "versions": total,
+        "active_version": min(shown, max(0, total - 1)),
+        "urls": [
+            f"/storyboards/{job_id}/panels/{index}/versions/{n}" for n in range(total)
+        ],
+    }
+
+
+@app.get("/storyboards/{job_id}/panels/{index}/versions/{n}")
+def get_panel_version(
+    job_id: str,
+    index: int,
+    n: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve one archived render of a panel."""
+    job = _get_owned_board(job_id, current)
+    from storyboard_pipeline import version_path
+
+    _, active = _variants_of(job.result or {})
+    path = version_path(_board_dir(job_id), active, index, n)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Version {n} not found.")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.post("/storyboards/{job_id}/panels/{index}/versions/{n}", response_model=StoryboardSummary)
+def activate_panel_version(
+    job_id: str,
+    index: int,
+    n: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Make version `n` this panel's picture again.
+
+    Copies it over `panel_NN.png`, so everything downstream — the PDF, the ZIP,
+    the key-pose generator, the animatic — picks it up with no knowledge that
+    versions exist. Nothing is deleted: the version you were on is still there
+    to switch back to.
+    """
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This board is busy.")
+    from storyboard_pipeline import activate_panel_version as _activate
+
+    result = job.result or {}
+    variants, active = _variants_of(result)
+    if not _activate(_board_dir(job_id), active, index, n):
+        raise HTTPException(status_code=404, detail=f"Version {n} not found.")
+
+    panels = list(variants[active].get("panels") or [])
+    for i, p in enumerate(panels):
+        if p.get("index") == index:
+            panels[i] = {**p, "active_version": n, "failed": False}
+            break
+    variants[active]["panels"] = panels
+    result["variants"] = variants
+    result["panels"] = panels
+    updated = get_store().update(job_id, result=result)
+    logger.info("[storyboard %s] panel %d switched to version %d", job_id, index, n)
+    return _summarise_board(updated or job)
+
+
+@app.get("/storyboards/{job_id}/panels/{index}/frames.zip")
+def download_panel_frames(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Download one shot's key poses as a ZIP.
+
+    Named `pose_001.png` … in play order, so unzipping gives a folder that
+    already flips in the right sequence — drop it straight into an editor.
+    """
+    job = _get_owned_board(job_id, current)
+    info = _sequence_info(job, index)
+    if not info.frames:
+        raise HTTPException(status_code=404, detail="This shot has no key poses yet.")
+
+    board_dir = _board_dir(job_id)
+    stem = _safe_filename(job.character_name, "storyboard")
+    tmp = os.path.join(board_dir, f"_frames_{index:02d}.zip")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+        # Numbered by PLAY ORDER, not by pose number: a sequence with a hole in
+        # it must still unzip into a folder that flips without a stutter in the
+        # file names. `info.frame_numbers` says which pose each one really is.
+        for position, n in enumerate(info.frame_numbers, start=1):
+            path = panel_sequence.frame_path(board_dir, index, n)
+            if os.path.isfile(path):
+                zf.write(path, f"pose_{position:03d}.png")
+
+    return FileResponse(
+        tmp,
+        media_type="application/zip",
+        filename=f"{stem} - shot {index + 1} key poses.zip",
+    )
+
+
+@app.delete("/storyboards/{job_id}/panels/{index}/sequence", status_code=204)
+def delete_panel_sequence(
+    job_id: str,
+    index: int,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Throw away a panel's key poses so Generate starts clean.
+
+    Needed because Generate RESUMES by default: without this there would be no
+    way to redo a sequence you didn't like.
+    """
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This board is busy.")
+    folder = panel_sequence.sequence_dir(_board_dir(job_id), index)
+    if os.path.isdir(folder):
+        try:
+            shutil.rmtree(folder)
+        except OSError:
+            logger.exception("[storyboard %s] could not remove %s", job_id, folder)
+    result = dict(job.result or {})
+    sequences = dict(result.get("sequences") or {})
+    sequences.pop(str(index), None)
+    result["sequences"] = sequences
+    get_store().update(job_id, result=result)
+    return None
+
+
 @app.post("/storyboards/{job_id}/regenerate-panel")
 def regenerate_storyboard_panel(
     job_id: str,
@@ -1154,6 +1560,12 @@ def regenerate_storyboard_panel(
             variant=active,
             provider=job.params.get("provider"),
             world=job.params.get("world") or {},
+            # A redraw gets the same continuity the first draw had: who these
+            # people are, and where this shot sits in the film. Without them the
+            # Regenerate button was the easiest way to knock a panel off-model.
+            cast=job.params.get("cast") or [],
+            assets=job.params.get("assets") or [],
+            board_panels=panels,
         )
     except Exception as e:  # noqa: BLE001 — report clearly
         logger.exception("[storyboard %s] panel %d regen failed", job_id, body.index)
@@ -1374,8 +1786,10 @@ def restyle_storyboard(
         "provider": job.params.get("provider"),
         "character_ref_paths": job.params.get("character_ref_paths") or {},
         "asset_ref_paths": job.params.get("asset_ref_paths") or {},
-        # A re-style changes the art style, never the story's world.
+        # A re-style changes the art style, never the story's world or its cast.
         "world": job.params.get("world") or {},
+        "cast": job.params.get("cast") or [],
+        "assets": job.params.get("assets") or [],
         "variant": new_index,
         "composition_ref_dir": composition_ref_dir,
         "existing_variants": variants,
@@ -2154,6 +2568,57 @@ def submit_meshy(
     )
 
 
+def _reap_orphaned_jobs() -> None:
+    """Close out jobs that were mid-flight when the process last died.
+
+    Work runs in this process's thread pool, so a job still marked RUNNING or
+    QUEUED at startup has NO worker behind it and never will — the pool it
+    belonged to went away with the previous process. Left alone the record says
+    "generating" for ever, and the board it belongs to is permanently frozen:
+    the toolbar shows "Stop generation", every Regenerate button stays hidden
+    because the board thinks it is busy, and nothing the user clicks can help.
+    Reported exactly that way ("i cant see regenarte buttun and i see nothing
+    happen") after a restart mid-board; four animatics from previous days were
+    still sitting QUEUED from the same cause.
+
+    Marked SUCCEEDED, not FAILED, and the `result` is left untouched: the panels
+    that WERE drawn are real and the user should keep them. `error` carries the
+    explanation, and the board's normal "draw the remaining" / per-panel
+    Regenerate buttons finish the job.
+
+    ONE API PROCESS PER JOB STORE is assumed — with two sharing a database this
+    would reap the other's live work, so it is behind API_REAP_ORPHANED_JOBS.
+    """
+    if not config.REAP_ORPHANED_JOBS:
+        return
+    try:
+        store = get_store()
+        stale = [
+            j for j in store.list(limit=500)
+            if j.status in (JobStatus.RUNNING, JobStatus.QUEUED)
+        ]
+        for job in stale:
+            store.update(
+                job.job_id,
+                status=JobStatus.SUCCEEDED,
+                progress=None,
+                error=(
+                    "The server restarted while this was generating, so it "
+                    "stopped early. Anything already generated has been kept — "
+                    "use Regenerate to finish the rest."
+                ),
+            )
+            logger.warning(
+                "[startup] job %s (%s, %s) was still %s with no worker — closed "
+                "it out so its page isn't stuck showing 'generating'.",
+                job.job_id, job.kind, job.character_name, job.status,
+            )
+        if stale:
+            logger.warning("[startup] closed out %d interrupted job(s).", len(stale))
+    except Exception:  # noqa: BLE001 — never stop the API booting over this
+        logger.exception("[startup] could not check for interrupted jobs (ignored)")
+
+
 @app.on_event("startup")
 def _on_startup():
     # Import triggers security.py's secret resolution, which sets this flag.
@@ -2165,6 +2630,7 @@ def _on_startup():
             "before exposing this API."
         )
     logger.info("Auth: JWT (email+password) | User store: MongoDB (%s)", config.MONGODB_DB)
+    _reap_orphaned_jobs()
 
 
 @app.on_event("shutdown")

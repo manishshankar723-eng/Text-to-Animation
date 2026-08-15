@@ -54,6 +54,9 @@ export default function CreateAnimaticImage({ onOpenAnimatic }) {
         onBack={() => setBoard(null)}
         onRestart={() => setBoard(null)}
         onOpenAnimatic={onOpenAnimatic}
+        /* THE workflow: shots stacked in one column, each with a Generate
+           button that blocks its motion out as key poses. */
+        sequenceMode
       />
     );
   }

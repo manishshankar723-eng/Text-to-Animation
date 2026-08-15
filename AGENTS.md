@@ -23,8 +23,28 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-07 (NEW WORKFLOW: Animatics to Final Video — Veo. First
-workflow that costs money per click; read its Work Log entry before touching it.)
+**Last updated:** 2026-08-11 — public landing page rewritten to cover all six
+workflows (see the top Work Log entry; the workflow list there is the third copy
+of `Sidebar.jsx`'s `WORKFLOWS` and must be kept in step with it).
+
+Before that: 2026-08-09 — three passes, all from user reports on the same
+board. Read the top three Work Log entries, and the CONTINUITY one below them,
+before touching any panel prompt, key-pose prompt, or panel-image cache.
+
+- **(a) KEY-POSE SCOPE.** Pose 1 is now the panel COPIED, not generated, and a
+  shot may no longer animate its way into the next one — the pose planner gets
+  the neighbouring shots plus a written `hold` invariant.
+- **(b) REGENERATE NOW REDRAWS, and looks like it.** It sent `resume=true` and
+  so did nothing at all on a finished shot; a redrawn pose kept its URL so the
+  new picture could never show; and no loading state ever appeared over a
+  picture that already existed.
+- **(c) REFRESH ONLY WHAT CHANGED.** `reloadBoard()` was wired to the panel
+  version arrows, so switching one shot's version blanked and re-downloaded
+  every tile. `refreshPanelImage` is the single-panel tool; `reloadBoard` is for
+  insert/delete only.
+- **(d) NO DRAWN FRAME.** Asking for a "panel" got us the BOX as well as the
+  picture, on 138 of 371 real panels. The prompt now asks for a full-bleed
+  IMAGE, and `strip_drawn_border()` crops any frame that still gets drawn.
 
 ---
 
@@ -59,7 +79,7 @@ Pipeline stages (see `pipeline.py`):
 |------|----------------|
 | `run_character.py` | CLI entry point (argparse → `run_pipeline`). |
 | `pipeline.py` | Orchestrates all stages. `run_pipeline(...)`. |
-| `gemini_client.py` | Image generation. **Switchable backend: Vertex AI or Gemini API.** |
+| `gemini_client.py` | Image generation. **Switchable backend: Vertex AI or Gemini API.** Also owns the storyboard panel prompt and its **three continuity channels** — `build_cast_context` / `build_set_context` (the written bible), the scene look-anchor, and `build_flow_context` (what runs either side of this shot). `resolve_name()` is the shared alias-tolerant name matcher; a tie deliberately returns None. |
 | `script_breakdown.py` | Script→Storyboard Stage A: script → shot list (LLM). **Switchable text backend (`TEXT_PROVIDER`): Vertex AI or Gemini API.** |
 | `splitter.py` | Split 2×2 sheet → 4 views. |
 | `postprocess.py` | Clean white bg + crop + normalize. |
@@ -72,6 +92,7 @@ Pipeline stages (see `pipeline.py`):
 | `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. Owns the ffmpeg integration: `ffmpeg_exe()` and `run_ffmpeg()` are public so `video_assemble.py` reuses them. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
 | `video_client.py` | **Animatics → Final Video.** Veo image→video. The ONLY module that knows Veo exists. **Switchable backend (`VIDEO_PROVIDER`): Vertex AI or Gemini API** — same shape as `gemini_client.py`. **BILLED PER SECOND OF OUTPUT.** `estimate_cost_usd()` lives here. There is no Google Flow API — read the module docstring. |
 | `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
+| `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
 | `retry_policy.py` | When to retry a Google AI call and how long to wait. Shared by `gemini_client.py` and `video_client.py` so one tuned policy governs both. Pure functions over an exception. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
@@ -109,6 +130,8 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/Shapes.jsx` | The shape layer's vocabulary: the unit-square polygons (**mirrored in `animatic.py`**), the CSS for them, and the picker gallery. |
 | `client/src/components/Timeline.jsx` | **As many lanes as the project has** — the editor passes ONE `lanes` list and both the gutter labels and the tracks render from it. Kinds: 🖼 sequence · 🖼 image overlay · T text · ◆ shapes · ♪ audio. Fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
 | `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
+| `client/src/components/PanelSequenceStrip.jsx` | One shot's KEY POSES under its panel: the duration dialog, the thumbnail strip, per-pose ↻ redraw, the lightbox, Stop/resume/clear. **Regenerate sends `resume=false` (redraw); "Draw the remaining N" sends `resume=true`** — they cost different amounts, don't merge them. Knows a redraw has landed by the frame URL's `?v=<mtime>` changing, and blurs the poses being replaced under `.redraw-veil` until then. |
+| `client/src/components/PanelVersions.jsx` | The "‹ 2 / 3 ›" pill on a panel: every redraw is archived, so you can step back to the version you preferred. Renders nothing until a shot has been redrawn once. |
 | `client/src/components/DialogueBox.jsx` | A shot's spoken lines, read-only (board tiles). Renders **nothing** when the shot is silent. |
 | `client/src/components/DialogueEditor.jsx` | The same lines, editable, on the review step. A silent shot shows only a "＋ Add dialogue" link. |
 | `client/src/styles.css` | Dark + champagne-gold theme. |
@@ -119,6 +142,7 @@ Pipeline stages (see `pipeline.py`):
 - `POST /storyboards/breakdown` — Script→Storyboard Stage A: script → shot list (auth'd, sync; `TEXT_PROVIDER` backend)
 - `POST /storyboards` — Stage D: generate panels from reviewed shots (async job; poll `GET /jobs/{id}`) · `GET /storyboards/{id}/panel/{index}` — serve a panel PNG · `GET /storyboards/{id}/pdf` — Stage F: export the board as PDF
 - **Board editing:** `POST /storyboards/{id}/panels/insert` (`{at, description}`) — add a blank panel, shifting the rest down · `DELETE /storyboards/{id}/panels/{index}` — remove a panel, shifting up. Both renumber files+indices+urls across ALL style variants so `index == position` stays true; the new panel is drawn with the normal `regenerate-panel` call.
+- **Key poses (Image to Animatic Image):** `POST /storyboards/{id}/panels/{index}/sequence` — block one shot's motion out as key drawings (body: `duration_seconds` 2/4/6/8/10, `resume`). Async on the BOARD job; stop with `/storyboards/{id}/stop`, and calling it again RESUMES from the frames on disk. `GET` the same path for what exists, `DELETE` it to start over, `GET …/frames/{n}` serves one PNG, `GET …/frames.zip` serves the lot as `pose_001.png…` in play order. Count is derived from the duration (4 per second), never sent by the client
 - **Board copies:** `POST /storyboards/{id}/copy?workflow=…` — deep-copy a board (new record + its own panel FILES, urls re-pointed, share token dropped). This is how Image to Animatic Image takes a board in, so editing it can never change the original. Refused while the source is RUNNING or a DRAFT.
 - **Library (Stage G):** `GET /storyboards?workflow=` — the caller's saved boards (lean summaries: title, genre, aspect, cover). `workflow` scopes them: unset = Script to Storyboard's originals, `animatic-image` = the copies, `*` = all (what the animatic/video pickers use) · `GET /storyboards/{id}/project` — saved shots+settings for Duplicate · `PATCH /storyboards/{id}` — rename · `DELETE /storyboards/{id}` — delete record + panel files
 - **Share links:** `POST/DELETE /storyboards/{id}/share` — mint / revoke a public token · `GET /public/storyboards/{token}` · `GET /public/storyboards/{token}/panel/{index}` — **the only unauthenticated routes**; token-gated, serve drawn panels only
@@ -405,6 +429,825 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-11 — Landing page now pitches ALL SIX workflows, not just turnarounds
+
+Reported: *"Change landing Page of my all workflow i see it show only Text to
+turnaround image / make beautifull page"* — the public page sold one workflow
+(*"Turn a photo or a sentence into game-ready character assets"*), so a visitor
+who hadn't signed in had no way to know Plan & Script, storyboards, key poses,
+animatics or AI video existed. Same blind spot Home had before it grew
+per-workflow groups.
+
+`client/src/components/Landing.jsx` rewritten, `client/src/styles.css` LANDING
+block extended:
+
+- **Hero re-pitched to the pipeline** — *"From a sentence to a finished animated
+  cut"* — plus a `.lp-flow` chip line (Plan → Characters → Storyboard → Key
+  poses → Video) so the claim is concrete above the fold.
+- **New "Every workflow in the studio" section** — six `.lp-wf-card`s, each with
+  its icon tile, a Live dot, a real description and three capability tags. The
+  cards MIRROR `Sidebar.jsx`'s `WORKFLOWS` — same labels, same icons, SAME ORDER
+  — so the page matches the nav a visitor lands in. Deliberately unnumbered:
+  sidebar order is the owner's choice and is not pipeline order, so the pipeline
+  story is told separately in "How it works". **Renaming/adding a workflow in
+  `Sidebar.jsx` means editing this list too** (the `Home.jsx` `groups` rule, now
+  with a third copy).
+- **"How it works" is now four beats** (Plan it / Draw it / Move it / Ship it)
+  instead of the three Text-to-Image-only steps, and sits on a `.lp-section-alt`
+  band so it separates the two grids. `.steps` went 3-col → 4-col with 2-col and
+  1-col breakpoints.
+- **Features** re-cut to what the studio actually does — cast/set continuity and
+  "nothing spent by surprise" (video renders are estimated and capped) replaced
+  two turnaround-only cards.
+- **Hero art** is now `PipelineArt`: the existing 2×2 turnaround sheet plus a
+  key-pose strip (same figure, arms stepping down) and a "Veo render · 4s" chip,
+  i.e. three real outputs stacked. Reuses the old `.art-*` classes; all new
+  classes are `lp-`-prefixed to avoid the `.wf-*` names Home already owns.
+
+Verified: `npm run build` clean (79 modules). **Not** browser-tested — no
+Playwright run, per the standing "only on request" rule.
+
+### 2026-08-09 (latest+3) — NO DRAWN FRAME. The model was drawing the box, not just the picture
+
+Reported (for the second time): *"look image draw frame not match each other, i
+see many shot image frame issue … i decide remove frame in image so gemini start
+draw full image … i not need frame line in storyboard panel image and key poses
+image and when i regenerate"*.
+
+**Root cause: we were asking for a "panel".** The prompt opened with *"A single
+storyboard panel:"* and four style strings said "panel" too — and in comics /
+storyboard training data a panel IS a bordered rectangle. So the model drew the
+box as well as the picture: a sketchy frame just inside the edge with white paper
+around it. Every one freehand, so no two match — different thickness, different
+inset, different wobble — and a board of them reads as mismatched Polaroids.
+**Measured: 138 of 371 real panels on disk carry one.**
+
+Fixed on both sides, the way `GREYSCALE_STYLES` already handles the same class of
+problem ("no amount of prompt wording fixes it reliably, so it is enforced in
+code instead"):
+
+- **Prompt.** The lead is now *"A single full-bleed storyboard IMAGE — the
+  picture itself with NO border, NO frame and NO box drawn around it"*, the four
+  style strings say "artwork" instead of "panel", and the closing rule is a much
+  harder ABSOLUTELY NO BORDER paragraph. The old one-line version was buried
+  mid-prompt and lost to the word "panel" above it.
+- **`strip_drawn_border()` (storyboard_pipeline).** The reliable half. THE SIGNAL:
+  a drawn frame line sits at a near-constant depth from its edge for the whole
+  length of that edge, and picture content does not. Walk in from every column,
+  record the depth of the first ink pixel — a border clusters those depths
+  tightly, a picture scatters them. **Measured on the reported image: 7px of
+  spread for the border, 319px for the picture on the same edge.** Gates against
+  false positives: the line must run ≥95% of its side, sit within the outer 12%,
+  have genuinely blank paper outside it (or a roofline against sky reads as a
+  frame), and appear on at least THREE edges. Each edge is cut on its own.
+- **Wired in ONE place** — the first step of `normalise_panel`, which panels, key
+  poses and every redraw already call. That is what covers all three things the
+  report asked for without three separate patches.
+
+**Two things this shook out, both now fixed:**
+- `normalise_panel`'s half-dozen early returns never honoured its own documented
+  contract ("output keeps the SOURCE frame size, so a board stays uniform") —
+  harmless while nothing before them changed the size, and immediately visible
+  once a framed panel got 40% cropped. It now has ONE exit and one resize, so a
+  cropped panel is scaled back up to the board's frame size. That is also
+  literally the "use full image size" that was asked for.
+- The cut was capped at the search band, which left the inner half of a thick
+  frame drawn deep in that band still on the picture.
+
+**Verified.** New `tests/panel_border_check.py`: synthetic frames at three
+insets/thicknesses are removed with no fringe left on the rim; full-bleed art, a
+blank page, an all-dark night panel and a dark band along ONE edge are all left
+untouched; and it reports over every real board on disk (138/371 carry a frame,
+worst case 44.6% of the file was margin+border, all within the safety rail).
+`panel_normalise_check.py` still passes — it caught two contract breaks during
+this work, which is exactly what it is for.
+
+### 2026-08-09 (latest+2) — Refreshing ONE panel re-downloaded the WHOLE board
+
+Reported: *"i change panel image 1/2 to 2/2 … but rest those panel image
+flicker … i only regenerate this panel so why all image refresh"*.
+
+**Root cause: `reloadBoard()` was doing the job of a single-panel refresh.** It
+revokes every cached blob, clears `panelUrls` wholesale and re-reads the job —
+which is *correct and necessary* for INSERT and DELETE, because those shift every
+later index and a blob keyed by `/panel/2` then belongs to a different shot. It
+was also wired to `PanelVersions.onSwitched`, so every ‹ › press blanked all N
+tiles and re-downloaded all N pictures to change ONE.
+
+- **`refreshPanelImage(index, url)`** — new, and now what a version switch and a
+  single redraw both use. Touches exactly one cache key. Crucially it fetches the
+  new bytes BEFORE changing anything on screen, so the tile goes old picture →
+  new picture with no empty frame between. `fetchStoryboardPanel` already
+  cache-busts its request, which is what makes this work for a version switch:
+  the panel's URL is UNCHANGED there (the same `panel_NN.png`), only the pixels
+  behind it differ.
+- **`dropPanelImage(url)`** — forget one key, for the case where a redraw moved
+  the panel to a different url. Called only after `setJob`, when nothing renders
+  the old key any more.
+- **`retryPanel` no longer blanks its own tile.** It used to revoke + delete the
+  cache entry and let the fetch effect pick it up, so a redraw rendered at least
+  once with no picture at all. It now primes the cache, then sets the job.
+- **Retired blobs** (`retiredBlobs` ref) — a blob replaced by a fresher render
+  can't be revoked at swap time, because the `<img>` is still showing it until
+  React commits. They're parked and freed on unmount with the rest.
+- **Race closed:** the first-load fetch effect now checks its slot still says
+  `"loading"` before writing. Without it, a version switch during the initial
+  load would be silently overwritten by the older in-flight fetch.
+- `reloadBoard` keeps its two legitimate callers (insert / delete) and now says
+  in a comment that it is not for refreshing one panel.
+
+**Verified:** `npm run build` clean. Not browser-tested — the flicker is a
+visual, and the user tests in the browser.
+
+### 2026-08-09 (latest+1) — "I press Regenerate and nothing happens" — three stacked faults
+
+Reported against the key-pose strip: *"i click generate again … i can't see any
+changes"*, plus "when I regenerate, blur/hide the old image so I can see the new
+one is being made", "the blank loading UI only shows the first time", and "keep
+one button name — Regenerate".
+
+Three genuinely separate bugs, each of which alone would produce that report:
+
+1. **REGENERATE RESUMED INSTEAD OF REDRAWING — so it really did nothing.** Both
+   the strip button and the dialog sent `resume=true`. On a finished 8/8 shot the
+   server has nothing missing, hits `if not todo: return "already complete"`, and
+   draws zero images. Measured, not guessed: `tests/key_pose_refresh_check.py`
+   asserts the old path draws **0**. Regenerate now sends `resume=false`, which
+   redraws the shot. **Resuming is the separate "▶ Draw the remaining N" button**
+   — don't merge the two back together, they cost different amounts.
+2. **A REDRAWN POSE KEPT ITS URL, so the new drawing could never be seen.**
+   `PanelSequenceStrip` caches one object URL per path and never re-fetches a
+   path it already holds — correct, and fatal when the path is stable across a
+   redraw. The per-pose ↻ button therefore could not visibly work *at all*.
+   `panel_sequence.frame_version()` (mtime_ns) is now stamped into the frame URLs
+   as `?v=…`, the same trick the panel URLs use with `?v=<variant>`. A changed
+   path is also what tells the client a redraw has LANDED — see below.
+3. **NOTHING ON SCREEN CHANGED WHILE IT WORKED.** The shimmer only ever rendered
+   for a slot with NO picture, so it showed on a first run and never on a
+   regenerate. New `.is-redrawing` + `.redraw-veil`: the old picture blurs under
+   a "Redrawing…" veil from the click until its replacement arrives. Blurred, not
+   blanked, so the layout holds still and you can see WHICH pose is being redone.
+   Poses un-blur **one at a time** as each new drawing lands, so a 16-pose run is
+   watchable rather than a frozen strip followed by a jump.
+
+**THE SAME FAULT (3) WAS IN TWO MORE PLACES, and both are fixed with the same
+veil** — the user asked for it "anywhere it runs":
+- `StoryboardBoard.jsx` — redrawing a panel that already had a picture showed
+  that picture, unchanged, for the whole 30–60s synchronous redraw. Its spinner
+  branches only ever covered FAILED and NEW panels.
+- `JobDetail.jsx` — per-view and per-part regenerate in Text to Image had only a
+  14px spinner inside the corner button.
+
+**Naming:** "✨ Generate again" → **"✨ Regenerate"** (and the dialog's heading,
+body and primary button follow). "Generate" is kept for a shot with no poses
+yet, because that one is not a re-anything. The dialog now also states what it
+costs and points at "Draw the remaining N" as the cheaper option.
+
+**Verified.** `python tests/key_pose_refresh_check.py` — 11 checks: versions
+change on the redrawn pose and only that pose; resume-on-complete draws nothing
+and re-versions nothing; regenerate draws 7 of 8 (pose 1 is the copied panel) and
+re-versions all 8 including pose 1. `tests/key_pose_scope_check.py` still passes;
+`npm run build` clean. Not browser-tested — the user tests in the browser.
+
+### 2026-08-09 (latest) — A SHOT MAY NOT OUTRUN ITS OWN DESCRIPTION, and pose 1 IS the panel
+
+Traced against a real failing set the user sent: `TTBB_EP_One - shot 1 key
+poses.zip`, eight poses of **shot 1**, "A wide shot establishes Kabir's cramped,
+sunlit bedroom in a middle-class Indian home, showing a simple bed with a quilt"
+— sitting immediately before **shot 2**, "A close-up shows Kabir lying fast
+asleep under his quilt, his face peaceful."
+
+- **Reported:** "first image totally different — always take the first image
+  which shows in panel"; and "you see 8 image kabir awake up on bed, this is
+  wrong because shot 2 already told kabir sleeping". Plus: make this production
+  level so this class of bug stops recurring.
+- **Both confirmed by looking at the zip.** `pose_001.png` is a different
+  drawing from the panel on the board (figure turned away, different bedding).
+  By `pose_008.png` Kabir is awake and sitting on the edge of the bed, feet on
+  the floor — while the next panel still shows him asleep.
+
+**FAULT 1 — pose 1 was GENERATED, so it was never the panel.** Every pose,
+including the first, went through the image model with the panel as a
+composition reference and `composition_purpose="repose"` — which says in as many
+words that *"re-drawing the reference pose is a failed drawing"*. Pose 1 was
+therefore **forbidden** from being the panel. No prompt fixes this: asking a
+model to reproduce a picture exactly is the one thing it cannot promise.
+**`run_panel_sequence` now COPIES the panel in as pose 1** (`normalise_panel`
+only, no model call) and draws from pose 2 on. Exact, instant, free, and the
+flipbook opens on the picture the user approved. `plan_beats` pins pose 1's line
+to `OPENING_POSE` so a planner that ignores the rule can't mislabel the strip.
+`PREVIEW_POSES` now counts **drawings**, so a preview still buys two real
+pictures and gets the panel free in front of them.
+
+**FAULT 2 — the pose planner was blind to the rest of the board.** `plan_beats`
+got the shot's own sentence and nothing else, while the *panel* prompt has had
+`build_flow_context` (what runs either side) since the CONTINUITY pass. An
+establishing wide has no written action, and the planner was under a hard rule
+that **every** pose must change the silhouette — so with nowhere legitimate to
+put the motion it went and found some, and the only action available was the
+next shot's. Three changes, all of which must stay:
+1. **`story_context` reaches the planner** — `storyboard_pipeline.story_context_for`
+   is now public (factored out of `_continuity_for_redraw`), the server passes
+   `board_panels`, and `_flow_lines` states the next shot's description as *the
+   wall this shot's action stops at*. Blunter than the image model's version of
+   the same facts on purpose: the planner's failure mode is not drawing the
+   neighbouring shots, it is **animating its way into them**.
+2. **`hold` — the shot's INVARIANT.** The planner now also returns one sentence
+   naming what is true in every drawing ("Kabir stays lying down, fast asleep
+   under the quilt … he never wakes, never sits up, never leaves the bed"). It
+   is stored with the pose plan, handed to **every** drawing, and appended to
+   the repose prompt as the last word — *"this overrides everything above about
+   movement"*. Needed because a pose line is a fragment: "his shoulder drops an
+   inch" never mentions that the man is asleep. A redraw of one pose reuses the
+   stored `hold`, or that one drawing is the only unfenced one in the shot.
+3. **Rules that give a held shot somewhere to put the motion** —
+   "A SHOT WHERE NOTHING HAPPENS IS STILL A SHOT" (breathing, the quilt sliding,
+   a shoulder settling *is* the animation), "STAY INSIDE THE SHOT AS WRITTEN",
+   and "MATCH THE MOVEMENT TO THE FRAMING" (a 15° head turn on a figure forty
+   pixels tall is noise; a wide shot moves the whole body). The old
+   head-and-shoulders demand — in both `_SYSTEM` and the `repose` branch of
+   `gemini_client` — now follows **the part the pose names**, because it was
+   right for a close-up and wrong for everything else.
+
+**Verified.** `python tests/key_pose_scope_check.py` — 30 offline checks (pose 1
+costs no image call and matches the panel pixel for pixel; the invariant reaches
+every drawing and outranks the movement push; preview budget; a board-less
+caller still works). `--live` spends one text call and re-plans the exact
+reported shot; it now returns breathing, the quilt settling and the head easing
+into the pillow, with `hold` = "he never wakes, never opens his eyes, never sits
+up and never leaves the bed" — **no pose wakes him**. `tests/panel_normalise_check.py`
+still passes. No images were generated for any of this.
+
+**API:** `PanelSequenceInfo` gained `hold`; `generate_storyboard_panel` gained
+`shot_invariant`; `plan_beats` now returns `(beats, hold)` — it had no other
+callers.
+
+### 2026-08-09 (later) — Key poses that don't move, and colour that won't stay put
+
+Traced against a REAL failing set the user sent —
+`output/_storyboards/284759b3ff034687a8bb5814b16cdcf5/seq/panel_01`, eight poses
+of a reaction close-up. **Keep that folder: it is the known-bad reference set.**
+
+- **Reported:** "there are no head movements, colours change, the image size is
+  also cropped — we can't keep running our head only on this."
+- **MEASURED FIRST, then fixed.** The head ink centroid across all eight poses
+  sits within **3 pixels of 1365** — the head does not move at all. Only the
+  eyebrows, eyes and mouth change. Mean frame brightness swings **37.9 grey
+  levels** and total ink swings **3.4×** between poses.
+- **ROOT CAUSE of the frozen head: two opposite instructions in one prompt, and
+  the wrong one won.** `composition_reference_image` had a single fixed wording,
+  written for RE-STYLING: *"Keep its composition… and the positions of
+  everything in frame the same — ONLY re-render it in the new art style… Do not
+  change the layout or what is happening."* The key-pose generator passes the
+  source panel through that same parameter, so every pose request said "change
+  the pose" and "do not change what is happening" in the same breath. The
+  absolute one wins, and the model returns the same drawing re-shaded.
+  **`composition_purpose` ("restyle" | "repose") now picks the wording**; the
+  repose branch keeps camera/design/palette and demands the head, neck and
+  shoulders sit in a visibly different position. `panel_sequence` passes
+  `"repose"`; everything else defaults to `"restyle"` and is unchanged.
+- **ROOT CAUSE of "colours change": the style prompt is a wish, and the model
+  ignores it ~20% of the time.** On this rough-sketch board — whose style text
+  says "greyscale only… absolutely no colour" — **panels 1 and 4 of 15 came back
+  as full-colour illustrations**, and one pose in the eight-pose flipbook did
+  too. No wording fixes this; the model either complies or it doesn't. So it is
+  **enforced in code**: `GREYSCALE_STYLES` + `conform_to_style()` desaturate
+  after generation (free, instant, cannot fail), and `conform_to_reference()`
+  makes each key pose match its SOURCE PANEL's palette — the panel is the
+  authority there, which also covers freeform "Add Your Own Style" boards.
+  The anchor panel is conformed in memory before being used as a reference too,
+  so a legacy coloured panel doesn't teach every pose the wrong medium.
+- **The beat planner was writing expressions, not movement.** Asked to block out
+  a reaction close-up it returned eight beats of "his brow furrows" / "his eyes
+  narrow", which is not animation. `_SYSTEM` now requires every pose to change
+  the SILHOUETTE, states that a face-only change is a failed key drawing, and
+  says that in a close-up the head must move because nothing else is in frame.
+- **NO automatic "did it move?" check — and this is deliberate, don't add one
+  casually.** The obvious ink-threshold diff was written and thrown away: run
+  against this known-bad set where the head provably does not move, it reported
+  **75–100% "change" on every pair**, because re-shading pushes far more pixels
+  over any fixed threshold (40% of a *static wooden crate* "changed"). A
+  rank-based threshold just picks different structures instead. Separating
+  re-shaded from re-posed is a vision problem, not a heuristic, and a motion
+  gate that cries wolf would spend money retrying frames that were fine.
+  Colour conformance IS reliably measurable, so that one is enforced. **Judge
+  any future candidate metric against that folder before trusting it.**
+- **The "cropped" report is NOT a file-size or aspect problem** — all eight
+  poses and the source panel are 1365×768, full-bleed, content spanning the same
+  region, `normalise_panel` a no-op (1365/768 is within 0.01 of 16:9), and a
+  scale search against the panel returns 1.00 for every frame. It is the MODEL
+  re-composing: pose 1 draws the man larger and the crates smaller than the
+  others, so his torso runs out of the bottom of the frame sooner. Same cause as
+  the frozen head — the panel was being re-interpreted instead of re-posed — so
+  the `repose` wording ("keep the camera position and framing… the background
+  and every object in it") is the fix to judge it by.
+- **PREVIEW, so a failure costs 2 images instead of 40.** This was the user's
+  actual ask — "we can't keep running our head only on this". `limit` on
+  `run_panel_sequence` draws the first `PREVIEW_POSES` (2) and stops;
+  `POST …/sequence` takes `preview: bool`; the dialog offers "👁 Preview 2
+  first" alongside Generate, and the strip's continue button became "▶ Draw the
+  remaining N". Continuing is the ORDINARY RESUME path, so nothing is redrawn —
+  verified: preview buys 2, continue buys 14, a third run buys 0.
+  **Two drawings, not one: movement can only be judged by comparison.**
+- **A contact sheet is the fastest way to see what a strip is doing wrong.** The
+  eight poses read as fine one at a time and the defects were obvious the moment
+  they were tiled next to the panel. Worth building into the UI.
+- **STOP and per-pose REDRAW on the key-pose strip** (user-asked, same session).
+  While a sequence ran, every button on the strip was a disabled one — a run you
+  could see going wrong at pose 2 had to be watched to the end. The strip now
+  has its own **⏹ Stop** (the board's `POST /storyboards/{id}/stop`, mirroring
+  `StoryboardBoard.handleStop`: same `danger-btn`, same latched "Stopping…"),
+  and every drawn tile has a hover **↻** that redraws THAT pose only.
+  - `run_panel_sequence(redraw=[…], beats=[…])`. `redraw` overrides
+    resume/limit and draws exactly those poses; `beats` supplies the plan so
+    **pose 7 is redrawn as the same pose 7** instead of whatever a fresh
+    planning call invents. Verified: a one-pose redraw costs exactly 1 image,
+    two poses cost 2, and the reused plan comes back identical.
+  - The pose plan is now STORED (`sequences[i].poses`) and exposed on
+    `PanelSequenceInfo`, which is what makes a faithful redraw possible — and
+    it gives each thumbnail a tooltip saying what the drawing was meant to show,
+    without which "is this one wrong?" is a hunch.
+  - `worker._store_sequence` MERGES onto the existing entry rather than
+    replacing it: a redraw run reports no plan of its own, and a wholesale
+    write would erase the plan the sequence was built from.
+
+### 2026-08-09 — A SHOT MUST OPEN AT THE START OF ITS OWN ACTION (user-reported)
+
+The user's diagnosis, and it was the right one: the key poses were weak because
+the **shot breakdown** was wrong, not the key-pose generator.
+
+- **Reported:** shot 2 was "A simple Indian slipper (chappal) is seen mid-air,
+  flying towards the camera." The slipper is ALREADY IN FLIGHT, so the flipbook
+  built from that panel opens mid-throw and there is no throw to animate. What
+  he wanted: the slipper **in the thrower's hand** first, then in the air, then
+  the impact, then the reaction — "gemini divide shot like capture small small
+  thing and main start pose each generate".
+- **Why it matters mechanically:** every panel is later animated FORWARD from
+  the moment it draws. A panel showing the middle or the end of a movement has
+  nothing left to move. **This is the single highest-leverage rule in the whole
+  pipeline** — no amount of key-pose prompt tuning can rescue a panel that opens
+  on a follow-through.
+- **`_SYSTEM_INSTRUCTION` now requires:** open on the instant BEFORE the
+  movement (the wind-up, the hand still holding the object); split an action
+  into preparation → action → impact → reaction, each its own shot; prefer more,
+  smaller shots ("if your description needs 'then', 'as' or 'while', it is two
+  shots"); a shot showing only a result with no cause and nobody reacting is a
+  mistake. The thrown-slipper case is written into the prompt as the worked
+  example, WRONG and RIGHT side by side.
+- **Verified on the reported script.** Four sentences → **10 shots**, in exactly
+  the order the user asked for: Kabir asleep → Madanlal in the doorway → his
+  hand pulling off the chappal → **arm drawn back, chappal in hand, poised** →
+  chappal in flight → impact on the cheek → eyes snap open → hand to the cheek →
+  Madanlal pointing at Kabir → Madanlal mid-shout.
+- **The second reported bug: "father told but kabir not view".** Shot 4's
+  description was "…pointing an angry finger at Kabir's bed", so the artist drew
+  Madanlal pointing at an EMPTY BED. The artist sees only that one sentence.
+  The prompt now demands every person in frame be named AND given an action,
+  explicitly including whoever is being spoken to, pointed at or reacted to, and
+  states that **naming somebody's bed/chair/door does not put that person in the
+  picture**. The re-run produced "Madanlal's arm is extended, his finger
+  pointing directly at Kabir, who is now sitting up in bed."
+- **`_add_characters_named_in_descriptions()` — the deterministic half.** The
+  `characters` list drives reference images and the written bible, and the model
+  still occasionally names someone in the sentence while leaving the list empty
+  ("flying directly towards Kabir's face", characters: []). Such a person is
+  drawn from nothing and comes back a stranger. The back-fill is deliberately
+  CONSERVATIVE, because adding someone NOT in frame is the worse error: a bare
+  mention counts, a possessive counts only for a BODY PART (`_BODY_PARTS`), so
+  "Kabir's cheek" adds Kabir and **"Kabir's bedroom" does not**. Word-boundary
+  matched, so "Ram" never matches "Rama". Unit-tested on all five cases.
+- **`MAX_SHOTS` 60 → 120.** Beat-level splitting roughly doubles the count and
+  `raw[:MAX_SHOTS]` truncates SILENTLY, which would have cut scripts off
+  mid-story. Truncation now logs loudly that the end of the script is missing.
+  Still a ceiling — a shot is an image.
+- **Colour detector rebuilt: FRACTION of coloured pixels, not the mean.** The
+  mean was too blunt for art whose colour is one bright accent — a shot built
+  around a glowing blue object averaged ~3, indistinguishable from grey art, so
+  the whole set read as "grey" and **pose 11, which came back with the accent
+  missing entirely, went undetected**. By fraction the same data is unambiguous:
+  greyscale 0.00–0.69%, grey-with-accent 1.5–4.4%, fully coloured 11.9–20.1%.
+  Threshold 1.0%. Also added `lost_the_colour()` for the reverse failure —
+  colour can be removed but not invented, so a grey pose under a coloured panel
+  now gets one retry instead of being silently kept.
+
+### 2026-08-09 — FOUR CONTINUITY FAULTS FOUND BY READING A REAL 18-PANEL BOARD
+
+The user marked shots 1,2,3,4,5,7,9,10,12,13,14,18 good and named four faults.
+Each is now a rule, and each rule states the failure it exists to prevent —
+these are the exact mistakes to regression-test any prompt change against.
+
+- **"Madanlal in the doorway panel missing before shot 3."** Even with "open at
+  the start of the action", the board went Kabir asleep → wide of the room →
+  SLIPPER ALREADY IN FLIGHT. The thrower never appeared. That rule is too
+  abstract for the model to self-check, so it is now a testable one:
+  **NOTHING MOVES ON ITS OWN** — before any shot where something is already
+  moving there must be an earlier shot of the PERSON setting it moving, and the
+  model is told to walk its finished list pointing at the cause of every moving
+  thing. Re-run: doorway → hand pulling off the chappal → arm drawn back → in
+  flight. Cause precedes motion, checked programmatically.
+- **"shot 6 kabir look stand on bed but see shot 8 so he is sleeping."** Neither
+  sentence said which, so the artist chose freely each time. **Posture must now
+  be stated in every shot** ("lying on his back asleep under the quilt",
+  "sitting up in bed") and **carries forward** — nobody is on their feet in one
+  shot and asleep in the next without a shot showing them rise. Re-run: asleep →
+  jolts → "now sitting up in bed" → still sitting.
+- **"shot 11 background student missing not consistance same in shot 16."**
+  Background people are continuity: a room with thirty students in the wide shot
+  still has them in the close-up, and every shot of that scene must say so.
+  Re-run: 5 of 6 classroom shots carry "other students"; the sixth is a
+  close-up of a tablet screen, where none should be visible.
+- **"shot 17 face and school banch marge face hide of banch."** A composition
+  fault, so it belongs in the PANEL prompt, not the breakdown: nothing in the
+  foreground may cross, cover or merge with a face; furniture goes below the
+  chin; no cropped heads in a close-up. **A storyboard exists to show who is
+  doing what** — a face swallowed by a bench communicates neither.
+- **`_add_characters_named_in_descriptions` widened to look three words past a
+  possessive.** It checked only the adjacent word, so "Kabir's **sleeping**
+  form" and "Kabir's **left** hand" both slipped through and left the character
+  unlisted. Three words covers the adjectives that occur while still, correctly,
+  finding nothing in "Kabir's bedroom floor by the bed". Seven-case unit test.
+
+### 2026-08-09 — A RESTART USED TO FREEZE A BOARD FOR EVER (user-reported)
+
+Reported after restarting the server and reopening a board: "i cant see
+regenarte buttun and i see nothing happen" — the toolbar showed "Stop
+generation", the progress bar sat at 98%, and every button was inert.
+
+- **Cause 1 (server): nothing ever closed out interrupted jobs.** Work runs in
+  THIS process's thread pool, so a job still `RUNNING`/`QUEUED` at startup has
+  no worker and never will. The record said "generating" for ever, and a board
+  that believes it is busy hides every Regenerate button and offers only Stop —
+  which does nothing, because Stop just sets a cancel flag that no worker is
+  left to read. **Four animatics had been stuck QUEUED since 30 July** from the
+  same cause; nobody had noticed because nothing surfaces it.
+  **`_reap_orphaned_jobs()`** now runs at startup and closes them out. Marked
+  SUCCEEDED, not FAILED, with `result` LEFT ALONE — the panels that were drawn
+  are real and the user keeps them; `error` explains what happened and the
+  normal Regenerate / "draw the remaining" buttons finish the job. Verified: it
+  closed all four on the next boot, kept their 26 frames, and left the finished
+  42-panel board untouched. Behind `API_REAP_ORPHANED_JOBS` (default on) —
+  **turn it off if two API processes ever share a job store**, or one will reap
+  the other's live work.
+- **Cause 2 (client): `running = … || !status`.** "We don't know the status yet"
+  was treated as "it is generating", so ANY board whose job could not be
+  fetched — server restarting, dropped request, errored poll — rendered as a
+  live run with Stop up and Regenerate hidden, and nothing could recover it.
+  Unknown status now counts as running only while the FIRST fetch is genuinely
+  in flight (`!job && !error`), which still stops the toolbar flashing on load
+  but lets the buttons come back the moment a fetch fails.
+- **Cause 3 (client): the poll set errors and never cleared them.** One slow
+  request pinned "The server didn't respond within 120s" over a board that had
+  recovered and was visibly drawing panels — and it sent this session hunting a
+  server fault that had already fixed itself. A successful poll now clears it.
+- **Lesson for any future long-running job:** the store is the only thing that
+  outlives the process, so anything that reads `status` must assume the process
+  that wrote it is gone. Terminal-state-on-boot is the cheap insurance.
+
+### 2026-08-09 — THE IMAGE RATE LIMIT NOW FINDS ITSELF (quota storm, user-reported)
+
+- **Reported** as "why this happen while generating storyboard images" — a red
+  "server didn't respond within 120s" banner, and a panel reading "Couldn't draw
+  this panel", while the board sat at 26 of 42.
+- **The banner was a red herring** and partly self-inflicted: every `GET /jobs`
+  in the log returned 200 and the board kept progressing throughout. It was a
+  STALE error from a poll that died when the server was restarted mid-run (see
+  the entry below — restarting while a board generates kills the run and hangs
+  the client's in-flight request). The client sets that banner once and never
+  clears it, so it stays on screen over a board that is working. **Worth fixing
+  in the UI: clear the error as soon as a poll succeeds.**
+- **The real fault: 90 × `429 RESOURCE_EXHAUSTED` in twenty minutes.** Each
+  panel then sat through five backoff attempts (12s, 27s, 48s, 56s) before
+  giving up; six panels failed outright and the board crawled.
+- **Two causes, one of them ours.** (1) `IMAGE_RPM` defaulted to **60**, which
+  was never a measured number and is far above what the Vertex image model
+  grants. (2) The beat-splitting breakdown from earlier today roughly **tripled
+  the panel count** — 42 panels where the old breakdown gave ~15 — so the same
+  quota is hit three times as hard. Finer shots are the right call, but they
+  changed the load profile and the limiter had to change with them.
+- **Fix: the token bucket is now ADAPTIVE (AIMD, as TCP does it).** A quota
+  rejection HALVES the rate (floor `MIN_RPM` 3); each success creeps it back up
+  by 1 rpm toward the configured ceiling and never past it. A board therefore
+  settles at whatever the project actually allows, within about a minute,
+  **without anyone tuning an env var** — which matters because the right value
+  differs by project, model, region and time of day, so any constant we ship is
+  wrong for somebody. Defaults also lowered to `IMAGE_RPM=12`,
+  `IMAGE_MAX_CONCURRENCY=2` as a safer starting point for the ramp.
+- **The feedback lives in `_throttle()`, not at the call sites.** All four image
+  entry points already funnel through that one context manager, so it classifies
+  the exception and calls `note_quota_error()` / `note_success()` itself. Four
+  copies would have meant one that got missed, and the missed one is the one
+  still hammering the quota.
+- Verified: 12 → 6 → 3 → 3 rpm on successive 429s (floors correctly), recovers
+  to exactly 12 after 60 successes and never exceeds the ceiling; a real 429
+  string is classified by `retry_policy.is_quota_error`; and `_throttle` moves
+  the rate on both a raised quota error and a clean call.
+- **NOT restarted to pick this up** — the user's board was still generating and
+  restarting would have killed a third run. Needs a restart when the board is
+  idle.
+
+### 2026-08-09 — DEV ENV: uvicorn `--reload` wedges on Windows (cost a session)
+
+Reported as "see not load fix it any workflow" — every workflow's library stuck
+on skeletons, and the UI's own "server didn't respond within 120s" banner.
+
+- **Not the database.** Mongo answered a direct ping in **0.6s** with all 30 jobs.
+  Check that first; it is the tempting wrong answer.
+- **The signature to recognise: TCP connects, HTTP never answers.**
+  `Test-NetConnection 127.0.0.1 -Port 8000` succeeded while every request hung
+  to the client's timeout. That combination means **a live port with a dead
+  worker behind it** — never a routing, CORS or auth problem.
+- **Cause:** the API was running `python -m uvicorn server.main:app --reload`.
+  The reloader PARENT holds the listening socket and a CHILD serves. Editing
+  source files (this session's own edits) respawned the child at 13:22; it
+  imported the app fine — 140MB resident, 12 threads, idle at 6.47s CPU — but
+  never took over the socket. The parent kept accepting connections into
+  nothing. Generations were in flight (key poses, 12:59–13:05) while files were
+  being saved, which is the collision.
+- **Fix:** kill both PIDs and restart. **Do not run `--reload` while a board or
+  a pose sequence is generating.** It is currently started WITHOUT `--reload`,
+  so Python changes need a manual restart — `--reload` is fine to put back for
+  pure UI work.
+- Diagnosis order that works, next time: `curl /health` (1s answer or not) →
+  `Get-NetTCPConnection` for the port → is the owning PID the reload PARENT
+  (few threads, ~20MB) or a real worker? → only then look at Mongo.
+
+### 2026-08-09 — CONTINUITY: the board is one film, not twelve pictures (user-reported)
+
+- **Reported**, with screenshots of a rough-sketch board and its key-pose strips:
+  "the storyboard is sometimes missing some frames… in animatics the character is
+  getting changed… make it like a storyline how every frame should flow — think
+  like a movie but made through flipbook and low cost."
+- **Root cause of the changing character: the panel prompt never received the
+  cast's DESCRIPTIONS, only their names.** `generate_storyboard_panel` got
+  `characters: list[str]` and emitted "Characters present: Lead Thug." — which
+  tells an image model nothing, so it invented a new man per panel. Character
+  consistency rested entirely on reference IMAGES… and **`REFERENCE_FREE_STYLES`
+  (Rough Sketch, the default) skips the cast step on purpose**, so the normal
+  board had *zero* references and *zero* description. The breakdown had already
+  written every character's look, for free, and threw it away.
+- **The fix is words, not more image calls** (the "low cost" the user asked for).
+  A written **continuity bible** — `{name: visual description}` for the cast and
+  the locked props/sets — now rides in every panel prompt, scoped to the
+  characters actually in that panel. `build_cast_context` / `build_set_context`
+  in `gemini_client.py`. Sent for EVERY style, including the reference-free ones:
+  skipping the cast step means skipping reference *images*, not forgetting who
+  the characters are. **Zero extra API calls, zero extra wall clock.**
+- **`resolve_name()` (gemini_client) — alias-tolerant name matching.** A shot
+  saying "Lead Thug" against a cast entry called "Thug Leader" used to match
+  nothing and silently drop both the description and the reference image. Exact
+  normalised match, then most-shared-identifying-words; **a tie returns None on
+  purpose** — with "Thug 1" and "Thug 2" both half-matching, guessing puts the
+  wrong face in the panel, which is the bug it exists to prevent. `_gather_refs`
+  uses it too, so reference images benefit from the same matching.
+- **Panels are no longer drawn as independent pictures.** `run_storyboard` now
+  renders in TWO WAVES: wave 1 draws the first shot of every scene (those become
+  the scene's **look anchor**), wave 2 draws the rest with their scene's anchor
+  attached as `scene_reference_image` — "same people, same room, same light,
+  same style; DIFFERENT moment and camera, do not copy the composition". One
+  fixed anchor per scene, **never chained panel→panel** — chaining compounds
+  drift, exactly as `panel_sequence`'s docstring says about frames. Both waves
+  stay concurrent, so the wall clock barely moves.
+- **Every panel now knows where it sits in the film.** `story_context`
+  {previous, next, scene, shot N of M} goes in as context the model must NOT
+  draw. This is what makes shot 5 continue shot 4's action instead of being a
+  fresh illustration of a sentence.
+- **Holes get one automatic retry.** A refused panel used to just sit there as a
+  gap — and "Make animatic" *silently drops gaps*, so a missing panel quietly
+  became a missing BEAT. After both waves, each failed panel is redrawn once at
+  a different seed (now with its scene anchor available). One retry, not a loop.
+- **`regenerate_panel` was the easiest way to knock a panel off-model** — the one
+  call that knew nothing about the rest of the board. It now takes `cast`,
+  `assets` and `board_panels`, and picks the nearest already-drawn panel of the
+  same scene as its anchor.
+- **THE MISSING FRAMES BUG, exactly as reported.** `_sequence_info` counted key
+  poses with `while os.path.isfile(frame_path(n)): n += 1` — **it stopped at the
+  first hole.** One refused drawing in a 16-pose run hid the ten good drawings
+  after it, reported the sequence as short, and made the next Generate *re-buy
+  frames already on disk*. Now `panel_sequence.frames_on_disk()` checks every
+  planned index; `PanelSequenceInfo` gained `missing` (the holes) and
+  `frame_numbers` (which pose each url IS). Resume takes a `resume: bool` and
+  fills **exactly the holes**, wherever they fall — verified offline: a hole at
+  pose 3 of 8 leaves `frames: 7, missing: [3]` with poses 4–7 intact, the resume
+  costs **one** image call, and a third run costs zero.
+- **Key poses no longer cut the camera mid-shot.** `panel_sequence._SYSTEM` used
+  to say "describe the pose and the CAMERA… where the camera is now", and the
+  model took the invitation: half way through a close-up of a sleeping man it
+  called for a wide of the bedroom and the image model drew it — visible in the
+  user's screenshot as pose 5 of shot 1. **A CUT IS A NEW SHOT.** The camera is
+  now nailed down for the whole sequence, and consecutive poses must be a
+  quarter-second apart, not a new action.
+- **"Make animatic" is a real flipbook now.** `_frames_from_board` used to lay
+  down one still per shot and ignore the key poses entirely — the motion the user
+  paid for never reached the animatic. A shot WITH a sequence now contributes
+  each pose at 250ms (`1000/KEY_POSES_PER_SECOND`), so it plays for the length it
+  was planned as; shots without one still fall back to a held panel. New frame
+  source `kind: "pose"` (+ `frame`), referenced not copied, so redrawing a pose
+  updates the animatic. Over `MAX_ANIMATIC_FRAMES` it degrades to panels-only
+  rather than 413-ing.
+- **The breakdown is told the shot list is a FILM.** `_SYSTEM_INSTRUCTION` gained
+  the flow rules — each shot picks up where the last left off, nothing changes
+  between shots of a scene except what the story changes, vary the framing
+  between neighbours, keep screen direction — and descriptions must **name
+  characters every time, never "he" or "the man"**, because the artist drawing
+  that panel sees only that one sentence.
+- **Tested offline** (stubbed image model, scratch scripts): wave order, anchor
+  attachment, alias resolution, per-shot asset scoping, hole retry (5/5 panels
+  recovered from one induced failure), and the three key-pose resume cases above.
+  Client `vite build` passes; the FastAPI app imports with the new schemas.
+  **Not yet run against the real image API — the prompt changes are the whole
+  point of this entry and only a live board will show whether they hold.**
+
+### 2026-08-09 — Every panel redraw is KEPT as a version (user-reported)
+
+- **Reported:** "when i generate image shot so my older image hide" — redrawing
+  a panel replaced it and the previous picture was gone. With an image model you
+  frequently want the one before.
+- **`panel_NN.png` still exists and is still THE picture** — that was the design
+  constraint. Renders are archived to
+  `versions/panel_NN/v000.png, v001.png, …` and the active one is COPIED over
+  `panel_NN.png`. So the PDF, the ZIP, the key-pose generator and the animatic
+  need no changes whatsoever: they read the current picture and never learn that
+  versions exist. **Keep it that way** — resolving versions at read time would
+  mean touching all four.
+- `save_panel_version()` in `storyboard_pipeline.py` is the ONE writer; both
+  `run_storyboard` (first draw = v0) and `regenerate_panel` go through it, so
+  the archive can't be bypassed by one path.
+- **Endpoints:** `GET /storyboards/{id}/panels/{i}/versions` (counted from DISK,
+  so boards drawn before this feature work — they just start collecting from
+  their next redraw), `GET …/versions/{n}` serves one, `POST …/versions/{n}`
+  makes it current again. Nothing is ever deleted.
+- **UI:** `PanelVersions` — a "‹ 2 / 3 ›" pill on the panel, hidden until a shot
+  has two versions, so an untouched board looks exactly as before. Stepping
+  WRAPS (same reasoning as the pose viewer) and **switches the panel**, not just
+  a preview: "you can see the old one but can't have it back" would be worse
+  than not showing it. It calls the board's `reloadBoard()` afterwards, because
+  the bytes behind `panel_NN.png` change while its URL does not — without that
+  the cached blob would keep showing the old picture.
+- **The bug this shipped with, and the lesson.** First cut archived only NEW
+  renders, so on a board drawn BEFORE the feature the first redraw overwrote the
+  existing `panel_NN.png` and archived just the replacement — one version, no
+  arrows, original gone. Reported immediately ("i generate new shot panel image
+  but i not see my older image"). My test had drawn a panel from scratch and
+  never covered a board that already had one. **`adopt_existing_as_version()`**
+  now rescues a pre-versions picture as v0 before anything overwrites it; it is
+  idempotent and also runs on the versions GET, so an old board archives its
+  original the moment it is looked at. **When a feature changes how existing
+  data is written, test against data created BEFORE the feature.**
+- **Tested** (`smoke_versions.py`, scratch) on PIXELS, with each stubbed render
+  a different flat colour. Case A — fresh panel: three redraws give three
+  distinct versions, switching back restores the exact first picture,
+  `GET /panel/0` serves it too, a later redraw appends without damaging v1.
+  Case B — legacy board: reports 1 version on first look, 2 after one redraw,
+  and version 1 is byte-for-byte the picture the user already had.
+
+### 2026-08-09 — Lightbox controls were invisible on a white panel (user-reported)
+
+- **Reported:** "arrow keys merger in with image" — the ✕ and the ‹ › arrows
+  disappeared into the picture, and the fix was asked for **across all
+  workflows**.
+- **Cause:** they were `rgba(255,255,255,0.12)` on a thin gold border. Over a
+  storyboard panel — near-white paper — a translucent WHITE fill is
+  approximately nothing.
+- **Fix:** one shared shell for `.lightbox-close` and `.lightbox-nav` — solid
+  dark fill (`rgba(12,14,18,0.88)`), a full 2px gold ring, and a drop shadow
+  plus a dark halo so the picture can't bleed into the button's edge. Reads on
+  white paper and on a night exterior alike.
+- **It is deliberately ONE rule for every lightbox in the app** — the board's
+  panel viewer and the key-pose viewer share these classes. Don't add a
+  per-workflow variant; fix it here and it is fixed everywhere, which is what
+  was asked for.
+- The disabled arrow dims via **colour, not `opacity`** — opacity would fade the
+  dark fill too and put the button straight back into the white picture.
+- **Verified by rendering over a pure-white panel**, the case that failed.
+
+### 2026-08-09 — A silent server left every screen shimmering forever (user-reported)
+
+- **Reported:** "why all workflow panel look like [ghost cards]" — the board
+  library stuck on "Loading your storyboards…" with skeleton cards, no error.
+- **Cause, and it was app-wide:** `fetch()` has **no timeout**. `fetchWithRetry`
+  retried a *failed connection*, but a connection that is ACCEPTED and then goes
+  quiet simply never settles — so `loading` stayed true, no `catch` ever ran,
+  and the page shimmered until it was reloaded. Every request in the app had
+  this. The usual way to trigger it here is `GET /storyboards` waiting on
+  **MongoDB Atlas**, which this project already documents as intermittently
+  unreachable from the owner's machine (SSL handshake) — and both
+  `API_JOB_STORE` and `API_USER_STORE` are `mongo`.
+- **Fixed in `api.js`:** an `AbortController` gives every request a 120s ceiling.
+  Generous because two calls are legitimately slow (the script breakdown and a
+  single-panel redraw are synchronous AI calls), but finite. A **timeout is not
+  retried** — re-sending only waits another two minutes on the same wedged
+  server — and its message survives `request()`'s catch instead of being
+  flattened into the generic "can't reach the server", because "up but stuck"
+  and "not running" need different fixes.
+- **`StoryboardLibrary` also says something after 10s** rather than making the
+  user wait out the full timeout wondering.
+- **To diagnose it live:** `GET /health` reports MongoDB connectivity and flips
+  `status` to `degraded` when it is down (`?check_db=false` skips the ping).
+
+### 2026-08-09 — Image to Animatic Image: one panel → its KEY POSES (the flipbook)
+
+The feature the workflow exists for. The owner is an animator and asked for it
+in those terms: *"i know this in 24fps means 1 sec in 24 images … so gemini
+culculate 4 sec = 96 image then separete 10/20 image shot scene required"*.
+
+- **The arithmetic, which IS the feature.** Generate asks for a shot length
+  (2/4/6/8/10s). The model is told the real budget — 4s × 24fps = **96 frames** —
+  and asked for the **key drawings** that carry that motion, the poses an
+  animator blocks out first. `KEY_POSES_PER_SECOND = 4`, so 2s=8, 4s=16, 6s=24,
+  8s=32, 10s=40 (owner's choice; 4s=16 lands in the "10/20" he described).
+  It is NOT a video and NOT all 96 frames. The dialog shows the sum, because
+  that is what makes it make sense.
+- **`panel_sequence.py`** — two calls, two backends: `plan_beats()` uses the
+  TEXT model to split the shot into N ordered poses (JSON schema, falls back to
+  even spacing if it can't be reached — a rough sequence beats no images), then
+  `generate_frame()` draws each with the IMAGE model.
+- **EVERY frame is anchored on the SOURCE PANEL** via
+  `generate_storyboard_panel(composition_reference_image=…)`, never on the
+  previous frame. Chaining frame→frame is the obvious idea and a trap: errors
+  compound and by frame 12 the character has drifted into someone else in
+  another room. One fixed anchor keeps staging, character and lighting still so
+  only the pose moves. **Don't "improve" this into a chain.**
+- **Endpoints:** `POST|GET|DELETE /storyboards/{id}/panels/{index}/sequence` and
+  `GET …/frames/{n}`. The count is derived server-side from the duration, so the
+  client can never order hundreds of images. Frames live in
+  `_storyboards/{id}/seq/panel_NN/frame_NNN.png`, per panel, so regenerating one
+  shot can't touch another's.
+- **The board job carries it**, like a panel draw or a re-style — so the
+  existing progress bar and `POST /storyboards/{id}/stop` work with no new
+  plumbing, and the PANELS are never modified: a stopped or failed run leaves
+  the board exactly as it was plus whatever frames it drew.
+- **STOP → RESUME never pays twice.** `GET …/sequence` counts files on DISK
+  rather than trusting the stored summary (a crashed run makes them disagree),
+  and Generate resumes from that count. Verified: stopped at 5/16, resume issued
+  **exactly 11** image calls. `DELETE` is the explicit "start over".
+- **UI:** `sequenceMode` on `StoryboardBoard` — off by default, so Script to
+  Storyboard's board is untouched. It stacks shots in ONE column (shot 2 below
+  shot 1, as asked — a grid would squeeze the strip into a third of the page),
+  relabels Regenerate → **Generate**, and hangs a `PanelSequenceStrip` under each
+  shot.
+- **The strip must SHOW THE WORK** (user-reported: "i click generate 16 image so
+  i see nothing"). All N tiles appear as shimmering placeholders **the moment
+  the button is pressed** and fill in one by one — the same skeleton treatment
+  Text to Turnaround Image uses, deliberately, so "work is happening" looks the
+  same everywhere. Two details make it work:
+  - the tile count comes from the LOCAL request (`expected`, set before the
+    `await`), not from server progress — otherwise the strip stays empty until
+    the first poll, which is what looked broken;
+  - `mine` is true if this strip started the run OR the worker reports this
+    panel, covering the gap before the worker picks the job up.
+  Polling is 2.5s while drawing, and `expected` is cleared when the board goes
+  idle so a stopped run shows what it really has.
+- **Download:** `GET /storyboards/{id}/panels/{index}/frames.zip` →
+  `pose_001.png…` in play order, so an unzipped folder already flips correctly.
+  The button appears per shot once it has poses and the run is finished.
+- **Click a pose to open it full size**, and step through the set with the ‹ ›
+  arrows or the arrow KEYS (Escape closes). The thumbnails are ~135px — enough
+  to see that something moved, nowhere near enough to judge a drawing, which is
+  what was reported. It reuses the board's own `.lightbox-*` shell so opening a
+  pose feels like opening a panel; the arrows and the "Shot 1 · pose 5 / 16"
+  counter are the additions. Pending placeholders aren't clickable.
+- **Stepping WRAPS** (`(n + delta + frames) % frames`): 16/16 → 1/16, and back
+  from 1/16 → 16/16. Neither arrow is ever disabled. These are the frames of a
+  LOOP of motion, so flipping them round and round is how you judge whether the
+  cycle reads — an end-stop at 16 just made the user close the viewer and
+  reopen it (reported). The counter is what tells you where you are, since
+  there is no longer an end to bump into.
+- **Layout, after two rounds of user feedback:** shots sit **TWO per row**, then
+  the next two below. One column was tried first (the original ask) and was
+  wrong in practice — it wasted the right half of a wide screen and made each
+  shot enormous beside its own strip. `auto-fill` is deliberately NOT used: it
+  would drop to 1 or jump to 3 with width, and two is what was asked for. Grid
+  `stretch` equalises the tile heights; `.board-column .board-tile` is a flex
+  column and `.seq-strip` takes `margin-top: auto` so the strips across a row
+  land on the same line whatever the shot descriptions do. Single file below
+  1100px, where a half-width shot is too small to judge.
+- **The header is trimmed to what this workflow can act on.** In `sequenceMode`:
+  - **"You stopped this generation — N of M panels drawn" is hidden.** It
+    reports on the PANEL draw, which happened in Script to Storyboard before
+    this copy existed — stale news about someone else's run. Each shot's
+    key-pose strip reports its own state.
+  - **"Start over" is hidden** (it resets the script→shots flow, and there is
+    nothing to restart on a board you opened), and **Download assets (ZIP) +
+    Make animatic move into that spot** in the top row.
+  - They are ONE render function (`finishActions`), placed either in the toolbar
+    or the top row — not duplicated JSX, so the two placements can't drift.
+    Wrapped in `.review-actions-right`, because `.review-actions` is
+    `space-between` and two loose children would spread across the row.
+  - `.top-actions .btn` now states one size family: an emoji label
+    ("⬇ …", "🎬 …") grows the line box and sat 3px taller than "← Your Boards".
+    Measured 40px for all three, same baseline. Same class of bug as the board
+    toolbar's, which documents the identical cause.
+- **"Add a style" and "Download PDF" are hidden in `sequenceMode`.** Re-styling
+  would throw every key pose out of step with the panel it was drawn from
+  (restyle in Script to Storyboard, then copy the board over), and a PDF is a
+  document to hand someone — this workflow's output is images, so its downloads
+  are the assets ZIP and the per-shot poses.
+- **Tested** (`smoke_sequence.py`, scratch) with BOTH AI backends stubbed — real
+  runs cost 16 image credits a press. Covers the arithmetic, anchoring (asserted
+  on the composition-reference count), frame files and serving, stop mid-run,
+  resume drawing only the missing frames, start-over clearing one shot only,
+  bad-duration 400, and a cross-account 404.
 
 ### 2026-08-09 — Image to Animatic Image works on COPIES, never the original board
 
@@ -4260,6 +5103,83 @@ script→storyboard→animatics→video pipeline.
 human generation, per-part progress + skeletons, custom assets, safe body base
 mesh, zip cache-bust.
 
+**CONTINUITY (2026-08-09) — read before changing any panel prompt.** A board is
+generated as ONE FILM, not as N independent pictures. Four things hold it
+together, in order of how much work they do:
+1. **The written bible** — the cast's and assets' visual descriptions go into
+   every panel prompt, scoped to who/what is in that panel. This is the one that
+   works with no reference images, which is the *normal* case: Rough Sketch (the
+   default style) skips the cast step by design.
+2. **Scene look-anchors** — the first drawn panel of each scene is fed to the
+   rest of that scene. One anchor per scene, never chained.
+3. **Story flow** — each panel is told the shots either side of it as context it
+   must not draw.
+4. **Reference images** — as before, when the style generates them.
+Sending a panel prompt without (1) is what made the same character come back as a
+different person; don't add a code path that skips it.
+
+**KEY POSES (2026-08-09) — a shot animates its own moment and NOTHING further.**
+The same continuity discipline applies one level down, and two rules carry it:
+1. **Pose 1 is the panel, copied — never generated.** The board's panel is
+   already approved; drawing it again produces a different picture, which is the
+   first thing anyone sees on opening the zip. `run_panel_sequence` copies the
+   file. Don't "improve" this by prompting for a faithful reproduction.
+2. **A shot may not outrun its own description.** `plan_beats` is given the
+   shots either side of this one AND returns `hold` — one sentence naming what
+   stays true in every drawing, which is then handed to every drawing and
+   overrides the "the body must have MOVED" push. Without both, an establishing
+   wide of a sleeping man came back as eight drawings of him waking up, directly
+   before the close-up that shows him still asleep. A held shot is a real shot:
+   the motion is breathing and the quilt settling, not an invented event.
+Regression check: `python tests/key_pose_scope_check.py [--live]`.
+
+**REGENERATING A PICTURE THAT IS ALREADY ON SCREEN (2026-08-09) — three rules,
+and they apply to EVERY workflow, not just key poses.** All three were broken at
+once and the user's report was simply "I can't see any changes":
+1. **A regenerate must actually redraw.** Sending the resume flag is not a
+   regenerate — on complete work there is nothing missing, so the server
+   correctly does nothing and the click is a no-op. Keep resume as its own,
+   separately-labelled button ("Draw the remaining N") so the two costs stay
+   visibly different.
+2. **A redrawn image must get a NEW URL.** Every image in this app is fetched as
+   an authed blob and cached by path; a path that survives a redraw is a picture
+   that never updates. Stamp a version in — `?v=<mtime>` for key-pose frames,
+   `?v=<variant>` for panels, `?t=` for character views.
+3. **It must LOOK like it is working, over the old picture.** A shimmer that only
+   renders when there is no image shows on a first run and never on a redraw.
+   Use `.is-redrawing` + `.redraw-veil` (blur the old picture, veil it, name the
+   action) — the shared treatment used by `PanelSequenceStrip`, `StoryboardBoard`
+   and `JobDetail`. Blur, don't blank: the layout must not jump and the user has
+   to see WHICH image is being replaced.
+Regression check: `python tests/key_pose_refresh_check.py`.
+
+**REFRESH ONLY WHAT CHANGED (2026-08-09).** A fourth rule, learned the same way:
+every picture here is an authed blob cached by URL, so *how much cache you throw
+away decides how much of the page blinks*. `StoryboardBoard` has two tools and
+they are not interchangeable:
+- `refreshPanelImage(index, url)` — ONE panel. Fetches the new bytes first, then
+  swaps, so the tile never renders empty. Use for a version switch, a single
+  redraw, anything scoped to one shot.
+- `reloadBoard()` — the whole cache. Use ONLY for insert / delete, where indices
+  shift and a blob keyed by `/panel/2` now belongs to a different shot.
+Wiring the second to a single-panel action is what made the entire board
+re-download on every ‹ › press. When a swap replaces a blob, retire it rather
+than revoking it on the spot — the `<img>` is still showing it until React
+commits.
+
+**NEVER ASK FOR A "PANEL" (2026-08-09).** In comics and storyboard training data
+a panel IS a bordered rectangle, so the word makes the model draw the box as well
+as the picture — a freehand frame just inside the edge, no two alike, on 138 of
+371 real panels. Prompts say **full-bleed IMAGE / artwork**, never "panel", and
+`strip_drawn_border()` (first step of `normalise_panel`, so panels, key poses and
+redraws all get it) crops any frame that still appears. If you add a style
+string, do not put "panel" in it. Regression check:
+`python tests/panel_border_check.py`.
+
+`normalise_panel` returns the size it was GIVEN, on every path — a board stays
+uniform only because of that. It has one exit for the same reason; don't add an
+early `return` that skips the final resize.
+
 **Script → Storyboard now opens on "Your Storyboards"** (Stage G): every generated
 board is saved and re-openable, with rename / duplicate / delete / public share
 link per card. Note that persistence follows the job store — under
@@ -4314,6 +5234,12 @@ exists. (Driving the Flow UI with a session cookie would breach Google's terms
 and break on any redesign.)
 
 **Not yet verified live** (needs real keys / steady backend):
+- **The 2026-08-09 continuity pass** — the bible, scene anchors, flow context and
+  the locked-camera key poses are all PROMPT changes, tested only against a
+  stubbed image model. Whether they actually hold the characters still can only
+  be judged by generating a real board. **Do that before building anything on
+  top of them.** The mechanical parts (hole retry, gap-aware resume, flipbook
+  animatic) are verified offline and don't need the API.
 - **Veo video rendering** — see above. Coded, typed, unit-tested, never called.
 - **3D generation** — Meshy path is coded but not run live; **Tripo is entirely
   unverified** (built from public docs, no test key — adjust request shape when tried).
@@ -4380,6 +5306,52 @@ language — do NOT copy the Drawstory reference's look/colours.
 **Next steps** (pick the top unchecked item when told to "start next"):
 - [x] Client redesign (sidebar dashboard), subject-type templates, live progress,
       per-section 3D + saved API keys, regenerate part/view, custom assets (2026-07-22).
+- [ ] **Re-run shot 2 of the Ep_4 board and compare against the known-bad set**
+      (`output/_storyboards/284759b3ff034687a8bb5814b16cdcf5/seq/panel_01`). The
+      head should now visibly move between poses and every pose should be the
+      same medium as its panel. This is 8 images — the cheapest possible test of
+      the `composition_purpose` fix.
+- [x] **PREVIEW — stop paying 8–40 images to find out it didn't work** (done
+      2026-08-09; see the Work Log entry).
+- [x] **Pose 1 must BE the panel, and a shot must not animate into the next one**
+      (done 2026-08-09; see the Work Log. `tests/key_pose_scope_check.py`).
+- [x] **Regenerate must redraw, refresh the picture, and look like it is working**
+      (done 2026-08-09; see the Work Log. `tests/key_pose_refresh_check.py`).
+- [x] **Refreshing one panel must not re-download the whole board** (done
+      2026-08-09; `refreshPanelImage` vs `reloadBoard` — see the Work Log).
+- [x] **No drawn frame around a panel or a key pose** (done 2026-08-09; prompt +
+      `strip_drawn_border`. See the top Work Log entry. `tests/panel_border_check.py`).
+- [ ] **Re-generate a board and confirm the new prompt stops the frame at source.**
+      `strip_drawn_border` is the safety net and is measured; what is NOT yet
+      measured is how often the *reworked prompt* still draws one. Generate a
+      board, then run `tests/panel_border_check.py` and compare the "carried a
+      drawn frame" count against today's baseline of **138 / 371**. If the rate
+      hasn't dropped, the wording needs another pass — the net is already
+      catching them, but every framed render is a picture drawn smaller than it
+      needed to be, then scaled back up.
+- [ ] **Re-run shot 1 of the TTBB_EP_One board and look at the 8 poses.** The
+      user's known-bad set is `TTBB_EP_One - shot 1 key poses.zip` (pose 1 not the
+      panel; Kabir awake by pose 8). Expect: pose 1 identical to the board panel,
+      and all eight with him still asleep — breathing, the quilt settling. The
+      pose plan is already verified live; this is 7 images to confirm the
+      DRAWINGS obey it too, and it is the cheapest test of the `hold` fence.
+      Worth doing on a CLOSE-UP as well: the scope fix must not have cost the
+      close-up its head movement (the fix logged directly below).
+- [ ] **Contact-sheet view for a shot's key poses.** Tiling the eight poses next
+      to their source panel made every defect obvious in one look, where
+      thumbnails in a strip hid all of them. Small, and it is how the user will
+      judge every future run.
+- [ ] **Judge the continuity pass on a REAL board (2026-08-09).** Generate the
+      same script the user reported against (rough sketch, no cast step) and look
+      at whether the character holds across all shots. If it still drifts, the
+      next lever is a cheap **auto-generated cast sheet for reference-free
+      styles** — one small grey character sketch per named role, drawn once and
+      fed to every panel — which keeps the style's promise (no cast STEP for the
+      user) while giving the model a picture as well as words.
+- [ ] **Surface holes in the UI.** The API now reports `missing` poses and failed
+      panels honestly; the board still shows a failed panel as a quiet gap and
+      "Make animatic" still drops it silently. Say so on screen, with a one-click
+      "fill the gaps".
 - [ ] **Live-test 3D** — run Meshy with a real key end-to-end; then fix/verify Tripo.
 - [ ] **Make regenerate + 3D async jobs** — currently regenerate is synchronous
       (blocks the request ~30–60s and dies if the backend restarts). Convert to the

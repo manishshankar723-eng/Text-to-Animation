@@ -42,7 +42,12 @@ SUPPORTED_PROVIDERS = ("vertex", "gemini")
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SECONDS = 4  # doubles each retry: 4s, 8s, 16s
 # Hard cap so a huge script can't produce a runaway number of panels.
-MAX_SHOTS = 60
+# Raised from 60 when the breakdown started splitting actions into their beats
+# (wind-up / action / impact / reaction, each its own shot). That division is
+# what makes a panel animatable, and it roughly doubles the shot count, so the
+# old ceiling would have silently truncated ordinary scripts. Still a ceiling: a
+# shot is an image, and 120 images is already an expensive click.
+MAX_SHOTS = 120
 
 # ---------------------------------------------------------------------------
 # Sampling — the breakdown is EXTRACTION, not invention
@@ -182,6 +187,98 @@ _SYSTEM_INSTRUCTION = (
     "sensible location and camera angle when the script doesn't state them. Do "
     "NOT invent major plot the script doesn't imply. Split long actions into "
     "multiple shots when the visual clearly changes.\n\n"
+    # THE SHOT LIST IS A FILM, NOT A LIST OF PICTURES. Without this the model
+    # returns twelve self-contained illustrations of twelve sentences: each is
+    # fine on its own and the board does not play. Every downstream stage —
+    # the panel art, the key poses, the animatic — inherits whatever flow this
+    # list has, so it has to be here.
+    "THE SHOTS MUST PLAY AS ONE CONTINUOUS FILM, in order, the way a flipbook "
+    "does. Read your own list back as if it were being projected:\n"
+    "- Each shot picks up exactly where the one before it left off. If someone "
+    "is reaching for a door in shot 4, shot 5 starts with their hand on it — "
+    "not with them already outside.\n"
+    "- Nothing may change between consecutive shots of the same scene except "
+    "what the story actually changes: same clothes, same light, same time of "
+    "day, same objects in the same places.\n"
+    "- VARY THE FRAMING between neighbouring shots — a wide, then a medium, "
+    "then a close-up of the thing that matters. Two identical framings back to "
+    "back read as a mistake; cutting from a close-up straight to another "
+    "close-up of someone else needs a reason.\n"
+    "- Keep screen direction consistent: someone moving left-to-right keeps "
+    "moving left-to-right until the story turns them round.\n"
+    "- Spend shots where the story turns and skim the rest. A beat that matters "
+    "gets its own close-up; a journey can be one shot.\n\n"
+    # THE RULE THAT MAKES A PANEL ANIMATABLE.
+    #
+    # Every panel is later handed to a key-pose generator that draws the shot's
+    # motion STARTING FROM THAT PANEL. So a panel that depicts the middle or the
+    # end of a movement has nothing to animate: given "a slipper is seen mid-air,
+    # flying towards camera", the flipbook opens with the slipper already in
+    # flight and there is no throw. Reported exactly that way by the user, who
+    # wanted the slipper in the thrower's HAND first.
+    #
+    # An action therefore has to be broken into its beats, each its own shot,
+    # and each shot opened at the instant BEFORE its movement — the wind-up, not
+    # the follow-through.
+    "EVERY SHOT MUST OPEN AT THE START OF ITS OWN ACTION. This is the most "
+    "important rule here, because each panel is later animated FORWARD from the "
+    "moment it draws:\n"
+    "- Draw the instant BEFORE the movement happens — the wind-up, the hand "
+    "still holding the object, the mouth about to open, the weight already "
+    "shifting. Never open a shot on the middle or the end of a movement.\n"
+    "- A thrown object is the clearest case. WRONG: one shot of 'the slipper "
+    "flies through the air'. RIGHT: the thrower with the slipper raised in his "
+    "hand, ready to throw → the slipper in flight → the moment it strikes → the "
+    "victim's reaction. Four shots, each starting at its own beginning.\n"
+    "- SPLIT AN ACTION INTO ITS BEATS and give each beat its own shot: the "
+    "preparation, the action itself, the impact or result, and the reaction of "
+    "whoever it happened to. A cause and its effect are never one panel.\n"
+    "- Prefer MORE, SMALLER shots over fewer busy ones. Each shot is one clear "
+    "physical beat that a person could act out in about a second. If your "
+    "description needs the word 'then', or 'as', or 'while', it is two shots.\n"
+    "- A shot that shows only a result, with no visible cause and nobody "
+    "reacting, is a mistake — add the shot before it.\n"
+    # Even with the rule above, a board came back going: Kabir asleep → wide of
+    # the room → SLIPPER ALREADY IN FLIGHT. The thrower was never on screen.
+    # Reported: "Madanlal in the doorway panel missing before shot 3". Stating
+    # the causal rule as a hard test the model can apply to its own list is what
+    # catches it, because "open at the start of the action" is too abstract to
+    # self-check against.
+    "- NOTHING MOVES ON ITS OWN. Before any shot where something is already in "
+    "motion — an object in flight, a door swinging, a hand entering frame — "
+    "there MUST be an earlier shot showing the PERSON who set it moving, doing "
+    "so. Check your finished list: for every moving thing, point at the shot "
+    "that started it. If you cannot, you have skipped a shot; insert it.\n"
+    "- The person who causes something must be ON SCREEN causing it. A slipper "
+    "cannot fly until we have seen who threw it; a voice cannot shout from "
+    "off-camera in a shot that is about the shouting.\n\n"
+    # POSTURE. A board showed Madanlal telling off a STANDING Kabir, and two
+    # shots later Kabir was flat on his back asleep in the same scene. Nothing
+    # in either sentence said which he was, so the artist chose freely each
+    # time. Reported: "shot 6 kabir look stand on bed but see shot 8 so he is
+    # sleeping how is posible".
+    "SAY WHAT EVERY CHARACTER'S BODY IS DOING, IN EVERY SHOT. Not their mood — "
+    "their posture and position:\n"
+    "- 'lying on his back asleep under the quilt', 'sitting up in bed', "
+    "'standing in the doorway', 'half out of bed with one foot on the floor'. "
+    "The artist has only your sentence; if it does not say, they will guess, "
+    "and they will guess differently in the next shot.\n"
+    "- POSTURE CARRIES FORWARD. A character who is lying down stays lying down "
+    "until a shot SHOWS them getting up. Never let someone be asleep in one "
+    "shot and on their feet in the next with no shot in between where they "
+    "rise. Read your list back and check each person's body from shot to shot "
+    "the way you check the location.\n\n"
+    # BACKGROUND EXTRAS. A classroom full of students in the wide shot, then the
+    # same classroom with nobody in it two shots later. Reported: "shot 11 kabir
+    # and frnd look but background student missing not consistance same in
+    # shot 16".
+    "BACKGROUND PEOPLE ARE CONTINUITY TOO. If a scene contains other people — a "
+    "classroom of students, a crowd, a family in the room — say so in EVERY "
+    "shot of that scene, however tight the framing: 'behind them, the rest of "
+    "the class at their desks'. A room that held thirty students in the wide "
+    "shot still holds them in the close-up, and a background that empties "
+    "between two shots of one scene is the most obvious continuity error there "
+    "is.\n\n"
     "You also identify the story's WORLD — its region, period, culture and "
     "religious tradition — and make sure the people, clothing, buildings and "
     "objects you describe belong to THAT world. An artist reading your breakdown "
@@ -195,7 +292,10 @@ _SYSTEM_INSTRUCTION = (
 _PROMPT_TEMPLATE = (
     "Break the following script into a storyboard shot list, a short cast list, "
     "AND an asset list.\n"
-    "Return between 1 and {max_shots} shots, in reading order.\n"
+    "Return between 1 and {max_shots} shots, in reading order. Err on the side "
+    "of MORE shots: one clear physical beat each, opened at the start of its "
+    "own action. A single sentence of script that contains a wind-up, an action "
+    "and a reaction is three or four shots, not one.\n"
     "For each shot provide:\n"
     "  - scene_number: which SCENE this shot belongs to, starting at 1. A scene is "
     "one continuous piece of action in ONE place at ONE time. Start a NEW scene "
@@ -209,7 +309,25 @@ _PROMPT_TEMPLATE = (
     "never leaves one place or time.\n"
     "  - shot_number: this shot's position WITHIN its scene, restarting at 1 in "
     "each new scene (so scene 2's first shot is shot_number 1)\n"
-    "  - description: one vivid sentence describing what we SEE in this panel\n"
+    "  - description: one vivid sentence describing what we SEE in this panel. "
+    "Write it as the NEXT shot of a film that is already running, and open it at "
+    "the START of this shot's action (see the rule above). "
+    "Name the characters by their cast names every time — never 'he', 'the "
+    "man' or 'a woman', because the artist drawing this panel sees only this "
+    "sentence and has to know exactly who is in it.\n"
+    # The artist draws EXACTLY the sentence and nothing else. "Madanlal points
+    # an angry finger at Kabir's bed" produced a panel with Madanlal pointing at
+    # an empty bed — Kabir was nowhere in it, because the sentence never said he
+    # was there. Reported. Naming a person's BED, chair or door is not naming
+    # the person.
+    "    EVERY PERSON VISIBLE IN THE FRAME MUST BE NAMED IN THIS SENTENCE, "
+    "and what each of them is doing must be stated. That includes the person "
+    "being spoken to, shouted at, pointed at, looked at or reacted to — if they "
+    "are in shot, name them and say what they are doing ('Madanlal stands in the "
+    "doorway pointing at Kabir, who is sitting up in bed rubbing his cheek'). "
+    "Naming somebody's BED, chair, door or belongings does NOT put that person "
+    "in the picture: an artist given 'pointing at Kabir's bed' draws an empty "
+    "bed. If a character is meant to be off-camera, simply do not mention them.\n"
     "  - script_excerpt: the EXACT sentence(s) from the script THIS shot is drawn "
     "from, copied VERBATIM — same words, same spelling, no paraphrasing, no "
     "summarising, nothing added. Quote ONLY the part that becomes this one panel: "
@@ -219,7 +337,13 @@ _PROMPT_TEMPLATE = (
     "same text, you have split the wrong sentence. This is shown to the writer to "
     "point at the exact words that became this panel, so a short exact quote is "
     "far better than a long or rewritten one.\n"
-    "  - characters: list of character names visible in the shot (empty if none)\n"
+    "  - characters: EVERY character visible in this shot, by cast name. This "
+    "must match the description: anyone your description mentions as being in "
+    "frame — including someone asleep, in the background, seen from behind, or "
+    "only partly in shot ('Kabir's sleeping form', 'Madanlal's hand') — belongs "
+    "in this list. It is what tells the artist who to keep looking consistent, "
+    "so a person named in the sentence but missing here gets redrawn as someone "
+    "else. Empty ONLY when the frame genuinely contains no people\n"
     # NOTE: this template goes through str.format, so the literal braces below
     # are DOUBLED. A single {character, line} raises KeyError at format time.
     "  - dialogue: the lines SPOKEN in this shot, in the order they are said, "
@@ -548,6 +672,17 @@ def _coerce_shots(raw) -> list[dict]:
     if not isinstance(raw, list):
         raise ScriptBreakdownError("The model did not return a list of shots.")
 
+    # Truncation loses the END of the story, so it is never silent. Beat-level
+    # splitting makes a long script far more likely to reach the ceiling than it
+    # used to be, and a board that just stops two-thirds of the way through with
+    # no explanation is the worst way to find that out.
+    if len(raw) > MAX_SHOTS:
+        logger.warning(
+            "[breakdown] the model returned %d shots; keeping the first %d. "
+            "THE END OF THE SCRIPT IS NOT IN THIS BOARD — split the script and "
+            "run it in parts.", len(raw), MAX_SHOTS,
+        )
+
     shots: list[dict] = []
     for i, item in enumerate(raw[:MAX_SHOTS], start=1):
         if not isinstance(item, dict):
@@ -643,6 +778,68 @@ def _normalise_scenes(shots: list[dict]) -> None:
             current_scene, position = shot["scene_number"], 0
         position += 1
         shot["shot_number"] = position
+
+
+# Possessives that put the OWNER in the picture. "Kabir's face" cannot be in
+# frame without Kabir; "Kabir's bed" easily can. That distinction is the whole
+# heuristic below, and it is why this is a word list rather than a grammar rule.
+_BODY_PARTS = frozenset(
+    ("face", "cheek", "eyes", "eye", "hand", "hands", "arm", "arms", "head",
+     "hair", "mouth", "shoulder", "shoulders", "back", "chest", "leg", "legs",
+     "foot", "feet", "finger", "fingers", "body", "fist", "nose", "ear", "ears",
+     "chin", "brow", "forehead", "neck", "knee", "lap", "expression", "gaze",
+     "form", "figure", "silhouette", "profile")
+)
+
+
+def _add_characters_named_in_descriptions(shots: list[dict], characters: list[dict]) -> None:
+    """Put people the description shows in frame into the shot's `characters`.
+
+    The list is what drives reference images and the written bible, so a person
+    the sentence clearly puts on screen but the model forgot to list is drawn
+    from nothing and comes back as a different person. Observed: "The slipper is
+    mid-air, flying directly towards Kabir's face" with an EMPTY character list.
+
+    Deliberately conservative, because adding somebody who is NOT in frame is
+    the worse error — it invites the artist to draw them. A bare mention counts;
+    a possessive counts only for a body part (see _BODY_PARTS), so "Kabir's
+    cheek" adds Kabir and "Kabir's bedroom" does not.
+    """
+    names = [str(c.get("name", "")).strip() for c in characters or []]
+    names = [n for n in names if n]
+    if not names:
+        return
+
+    for shot in shots:
+        desc = str(shot.get("description", "") or "")
+        if not desc:
+            continue
+        present = {str(n).strip().lower() for n in (shot.get("characters") or [])}
+        for name in names:
+            if name.lower() in present:
+                continue
+            # Whole word only: "Ram" must not match "Rama".
+            for m in re.finditer(rf"\b{re.escape(name)}\b(’s|'s)?", desc, re.IGNORECASE):
+                if not m.group(1):
+                    break  # a bare mention — they are in the shot
+                # The next FEW words, not just one: descriptions modify the noun
+                # ("Kabir's sleeping form", "Kabir's left hand", "Kabir's badly
+                # bruised cheek"), and checking only the adjacent word missed
+                # every one of those. Three is enough for the adjectives that
+                # occur and short enough that "Kabir's bedroom floor by the bed"
+                # still, correctly, finds nothing.
+                nxt = [w.strip(".,;:!?'\"").lower() for w in desc[m.end():].split()[:3]]
+                if any(w in _BODY_PARTS for w in nxt):
+                    break  # "Kabir's face" — Kabir is in the shot
+            else:
+                continue
+            shot.setdefault("characters", []).append(name)
+            present.add(name.lower())
+            logger.info(
+                "[breakdown] shot %s: '%s' is in the description but was not "
+                "listed — added, so they keep their look.",
+                shot.get("shot_number"), name,
+            )
 
 
 def _coerce_characters(raw) -> list[dict]:
@@ -1021,6 +1218,10 @@ def break_down_script(
             # aren't actually in the script).
             _attach_script_lines(shots, text)
             characters = _coerce_characters(chars_raw)
+            # A person the description puts in frame but leaves out of
+            # `characters` gets no reference and no bible entry, and is redrawn
+            # as a stranger. The prompt asks for this; this makes it true.
+            _add_characters_named_in_descriptions(shots, characters)
             assets = _coerce_assets(assets_raw)
             grounding = build_grounding_report(shots, characters, assets, text)
             traced = sum(1 for s in shots if s.get("script_line"))

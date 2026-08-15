@@ -24,13 +24,36 @@ export function clearSession() {
 // --reload restarting after a code change). Only connection failures are
 // retried — once the server answers, its response is returned as-is, errors
 // included, so real 4xx/5xx are never re-sent.
+// A request that never answers must not hang FOREVER. `fetch()` has no timeout
+// of its own: if the server accepts the connection and then goes quiet — a
+// wedged database lookup is the usual way — the promise simply never settles,
+// every caller's `loading` stays true, and the screen shimmers with no error
+// until the tab is reloaded. That was reported as "why do all the panels look
+// like this". Generous, because some calls are legitimately slow (the script
+// breakdown and a single-panel redraw are synchronous AI calls), but finite.
+const REQUEST_TIMEOUT_MS = 120000;
+
 async function fetchWithRetry(url, options, attempts = 3, delayMs = 700) {
   for (let i = 1; ; i++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      return await fetch(url, options);
+      return await fetch(url, { ...options, signal: controller.signal });
     } catch (e) {
+      // A TIMEOUT is not a blip — re-sending would just wait another two
+      // minutes for the same silent server. Only a failed connection is worth
+      // retrying (in dev that is usually uvicorn's --reload restarting).
+      if (e?.name === "AbortError") {
+        throw new Error(
+          `The server didn't respond within ${REQUEST_TIMEOUT_MS / 1000}s. ` +
+            `It may be stuck (a database it needs can do this) — check the ` +
+            `backend's log, then try again.`
+        );
+      }
       if (i >= attempts) throw e;
       await new Promise((r) => setTimeout(r, delayMs));
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -53,7 +76,12 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
     // window of a second or two, so retry briefly before giving up. A rejected
     // fetch means the request never got a response, so re-sending is safe.
     res = await fetchWithRetry(`${BASE}${path}`, { method, headers, body: payload });
-  } catch {
+  } catch (e) {
+    // "Couldn't connect" and "connected, then silence" are different faults
+    // with different fixes, so don't flatten the second into the first — the
+    // timeout message says the server is UP but stuck, which is the harder
+    // case to diagnose and the one worth naming.
+    if (e?.message?.includes("didn't respond")) throw e;
     throw new Error(
       `Can't reach the server at ${BASE}. Make sure the backend is running ` +
         `(uvicorn) and reachable, then try again.`
@@ -247,6 +275,8 @@ export function createStoryboard({
   aspectRatio,
   title,
   genre,
+  characters,
+  assets,
   characterRefs,
   assetRefs,
   assetCategories,
@@ -263,6 +293,14 @@ export function createStoryboard({
       aspect_ratio: aspectRatio,
       title,
       genre,
+      // THE WRITTEN CONTINUITY BIBLE — the reviewed cast and asset lists WITH
+      // their descriptions. Every panel is told what the people in it look
+      // like, which is what stops the same character being drawn as a
+      // different person from shot to shot. Sent for every style, including
+      // the ones that skip the reference-image steps entirely: words cost
+      // nothing, and for those styles they are the only continuity there is.
+      characters: characters || [],
+      assets: assets || [],
       // Promotes the draft this board was reviewed as, instead of creating a
       // second record. Harmless to omit.
       draft_job_id: draftJobId || null,
@@ -354,6 +392,98 @@ export async function fetchStoryboardPanel(jobId, index, path) {
 }
 
 // Re-draw the whole board in a new style (kept as a new variant). Returns a job.
+// --- Panel versions: every redraw is kept, so nothing is lost ---------------
+// Re-drawing a shot archives the new picture instead of overwriting the old
+// one, so you can step back to the version you preferred.
+
+export function getPanelVersions(jobId, index) {
+  return request(`/storyboards/${jobId}/panels/${index}/versions`);
+}
+
+// Make version `n` the panel's picture again. Everything downstream (PDF, ZIP,
+// key poses, animatic) reads the active picture, so this switches all of them.
+export function usePanelVersion(jobId, index, n) {
+  return request(`/storyboards/${jobId}/panels/${index}/versions/${n}`, {
+    method: "POST"
+  });
+}
+
+// --- Image to Animatic Image: one panel → its key-pose sequence ------------
+// The "flipbook". `durationSeconds` is the SHOT LENGTH (2/4/6/8/10); how many
+// drawings that means is decided server-side (4 per second, so 4s = 16), so the
+// client can never ask for hundreds of images.
+
+// What key poses this shot has so far.
+export function getPanelSequence(jobId, index) {
+  return request(`/storyboards/${jobId}/panels/${index}/sequence`);
+}
+
+// SPENDS IMAGE CREDITS — one per drawing. Async: poll getJob(jobId).
+// Stop with stopStoryboard(jobId); calling this again RESUMES from the frames
+// already drawn, so nothing is paid for twice.
+// `preview` draws only the first couple of poses and stops, so you can see
+// whether the shot actually moves before paying for all of them. Continuing
+// afterwards is an ordinary resume — nothing already drawn is redrawn.
+export function generatePanelSequence(
+  jobId,
+  index,
+  durationSeconds,
+  resume = true,
+  preview = false,
+  redraw = []
+) {
+  return request(`/storyboards/${jobId}/panels/${index}/sequence`, {
+    method: "POST",
+    body: { duration_seconds: durationSeconds, resume, preview, redraw }
+  });
+}
+
+// Re-draw ONE key pose that came out wrong, reusing the pose plan the sequence
+// was built from. Costs a single image, and leaves every other drawing alone.
+export function redrawPanelPose(jobId, index, durationSeconds, poseNumber) {
+  return generatePanelSequence(jobId, index, durationSeconds, true, false, [
+    poseNumber
+  ]);
+}
+
+// One shot's key poses as a ZIP (pose_001.png … in play order).
+export async function downloadPanelFrames(jobId, index, filename) {
+  const token = getToken();
+  let res;
+  try {
+    res = await fetchWithRetry(
+      `${BASE}/storyboards/${jobId}/panels/${index}/frames.zip`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = serverFilename(res, filename || "key-poses.zip");
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Throw the sequence away so Generate starts clean instead of resuming.
+export function deletePanelSequence(jobId, index) {
+  return request(`/storyboards/${jobId}/panels/${index}/sequence`, {
+    method: "DELETE"
+  });
+}
+
 export function restyleStoryboard(jobId, style) {
   return request(`/storyboards/${jobId}/restyle`, {
     method: "POST",

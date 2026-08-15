@@ -546,6 +546,36 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     return out;
   }
 
+  // WHAT THE BOARD IS TOLD ITS PEOPLE AND PLACES LOOK LIKE.
+  //
+  // computeCast() answers a different question — "who needs a reference image
+  // drawn?" — so it keeps only the characters a shot names exactly, and gives
+  // an empty description to anyone it can't pair up. That is right for the cast
+  // step and wrong for the bible: an empty description tells the image model
+  // nothing, and it goes back to inventing a new face per panel.
+  //
+  // So: everyone the breakdown described, plus anyone a shot names who wasn't
+  // described. The server pairs shot names to cast entries tolerantly and only
+  // ever mentions the characters actually in a given panel.
+  function castForBible() {
+    const out = characters.filter((c) => (c?.name || "").trim());
+    const seen = new Set(out.map((c) => c.name.trim().toLowerCase()));
+    for (const c of computeCast()) {
+      const key = (c?.name || "").trim().toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        out.push(c);
+      }
+    }
+    return out;
+  }
+
+  // Same idea for props and locations. computeAssets() already starts from the
+  // full breakdown list, so this only guards against a nameless entry.
+  function assetsForBible() {
+    return computeAssets().filter((a) => (a?.name || "").trim());
+  }
+
   // The ACTIVE assets to lock = the breakdown's canonical prop/background list,
   // plus any asset named in a shot that wasn't in that list. Category/description
   // come from the canonical list when available.
@@ -656,6 +686,21 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         // Saved with the job so the library card can name and label the board.
         title: effectiveTitle(),
         genre: effectiveGenre(),
+        // The cast and props WITH their descriptions — the written continuity
+        // bible that goes into every panel prompt. Sent even when this style
+        // skips the cast/props steps (Rough Sketch does): those steps produce
+        // reference IMAGES, and skipping them is no reason for the board to
+        // forget what its own characters look like.
+        //
+        // The FULL breakdown lists, not computeCast()/computeAssets(). Those
+        // two keep only entries whose name a shot spells exactly, so a shot
+        // saying "Lead Thug" against a cast entry called "Thug Leader" would
+        // arrive with an empty description — losing the one thing the bible is
+        // for. The server matches names tolerantly, so give it everything and
+        // let it pair them up; a panel is only ever told about the characters
+        // that are actually in it.
+        characters: castForBible(),
+        assets: assetsForBible(),
         characterRefs: charRefs || {},
         assetRefs: assetRefs || {},
         assetCategories,

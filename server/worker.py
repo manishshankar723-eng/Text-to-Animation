@@ -70,6 +70,12 @@ def submit_animatic_export(job_id: str, kwargs: dict):
     _executor.submit(_run_animatic_export, job_id, kwargs)
 
 
+def submit_panel_sequence(job_id: str, kwargs: dict):
+    """Enqueue a key-pose sequence for ONE storyboard panel (Image to Animatic
+    Image). Runs on the pipeline pool — it is image work, like a board draw."""
+    _executor.submit(_run_panel_sequence, job_id, kwargs)
+
+
 def submit_shot_renders(job_id: str, shot_ids: list[str]):
     """Enqueue Veo renders for named shots of a final-video project.
 
@@ -324,6 +330,76 @@ def _run_animatic_export(job_id: str, kwargs: dict):
     except Exception as e:  # noqa: BLE001
         store.update(job_id, status=JobStatus.FAILED, error=f"{type(e).__name__}: {e}", progress=None)
         logger.exception("[job %s] animatic export crashed.", job_id)
+    finally:
+        clear_cancel(job_id)
+
+
+def _run_panel_sequence(job_id: str, kwargs: dict):
+    """Draw one panel's key-pose sequence, updating the BOARD job as it goes.
+
+    The board's own status carries this, exactly as a panel draw or a re-style
+    does — so the board page's existing progress bar and Stop button work with
+    no new plumbing. The RESULT is left alone apart from the `sequences` entry:
+    the panels themselves are untouched, so a stopped or failed run leaves the
+    board exactly as it was, plus whatever frames it did draw.
+    """
+    from cancel import clear_cancel, is_cancelled
+    from panel_sequence import SequenceError, run_panel_sequence
+
+    store = get_store()
+    clear_cancel(job_id)
+    index = int(kwargs.get("panel", {}).get("index", 0))
+    store.mark_running(job_id)
+    logger.info("[job %s] panel %d sequence started (%ss)", job_id, index, kwargs.get("duration_seconds"))
+
+    def _progress(update: dict):
+        try:
+            store.update(job_id, progress=update)
+        except Exception:  # noqa: BLE001 — progress writes must not kill the run
+            logger.debug("[job %s] sequence progress update failed", job_id, exc_info=True)
+
+    def _store_sequence(summary: dict):
+        """Merge this panel's sequence into the board result, leaving the rest."""
+        job = store.get(job_id)
+        result = dict((job.result if job else None) or {})
+        sequences = dict(result.get("sequences") or {})
+        # Merged onto what this panel already had, not written over it: a run
+        # that redraws ONE pose reports no pose plan of its own, and replacing
+        # the entry wholesale would throw away the plan the sequence was built
+        # from — which is what a later single-pose redraw needs to stay faithful.
+        sequences[str(index)] = {**(sequences.get(str(index)) or {}), **summary}
+        result["sequences"] = sequences
+        return result
+
+    try:
+        summary = run_panel_sequence(
+            job_id=job_id,
+            progress_cb=_progress,
+            cancel_check=lambda: is_cancelled(job_id),
+            **kwargs,
+        )
+        store.update(
+            job_id,
+            status=JobStatus.SUCCEEDED,
+            error=None,
+            progress=None,
+            result=_store_sequence(summary),
+        )
+        logger.info(
+            "[job %s] panel %d sequence %s: %d/%d frames",
+            job_id, index, "STOPPED" if summary.get("stopped") else "done",
+            summary.get("frames", 0), summary.get("planned", 0),
+        )
+    except SequenceError as e:
+        # Written for the user (no panel drawn yet, bad duration) — show as-is.
+        store.update(job_id, status=JobStatus.SUCCEEDED, error=str(e), progress=None)
+        logger.error("[job %s] panel %d sequence failed: %s", job_id, index, e)
+    except Exception as e:  # noqa: BLE001
+        store.update(
+            job_id, status=JobStatus.SUCCEEDED,
+            error=f"{type(e).__name__}: {e}", progress=None,
+        )
+        logger.exception("[job %s] panel %d sequence crashed.", job_id, index)
     finally:
         clear_cancel(job_id)
 

@@ -23,6 +23,7 @@ VERTEX_IMAGE_MODEL / GEMINI_IMAGE_MODEL.
 import hashlib
 import io
 import os
+import re
 import threading
 import time
 import logging
@@ -64,15 +65,41 @@ QUOTA_BACKOFF_CAP = retry_policy.QUOTA_BACKOFF_CAP
 # Lowered from 6/120: firing many image calls at once is what blew a per-minute
 # quota all in one go (whole boards failing together). Fewer in flight + gentler
 # pacing spreads the load so the quota can keep up.
-MAX_CONCURRENCY = max(1, int(os.environ.get("IMAGE_MAX_CONCURRENCY", "3")))
-IMAGE_RPM = max(0, int(os.environ.get("IMAGE_RPM", "60")))
+MAX_CONCURRENCY = max(1, int(os.environ.get("IMAGE_MAX_CONCURRENCY", "2")))
+# Lowered from 60. Sixty was never a measured number, and a real 42-panel board
+# produced **79 quota rejections in twenty minutes** against it: the limiter
+# waved requests through at a rate the image model does not grant, every one
+# came back 429, and each then sat in exponential backoff (12s, 27s, 48s, 56s)
+# until it gave up after five attempts. Five panels failed outright and the
+# board crawled. This is a STARTING point only — the real ceiling is discovered
+# at runtime by the adaptive bucket below, so being a little low costs a little
+# ramp-up time and being too high costs failed panels.
+IMAGE_RPM = max(0, int(os.environ.get("IMAGE_RPM", "12")))
+# Never throttle below this, however many 429s arrive — at some point the quota
+# is simply gone for the period and crawling makes no difference.
+MIN_RPM = 3.0
 
 
 class _TokenBucket:
-    """Thread-safe token bucket: at most `rpm` acquisitions per rolling minute."""
+    """Thread-safe token bucket that FINDS the quota instead of guessing it.
+
+    A fixed requests-per-minute number is always wrong for somebody: quotas
+    differ by project, model, region and time of day, and the only setting that
+    is right is the one the API is currently willing to serve. So this is AIMD,
+    the same additive-increase / multiplicative-decrease that TCP uses:
+
+      * a quota rejection HALVES the rate (down to MIN_RPM) — back off hard and
+        immediately, because every further request is making it worse;
+      * sustained success creeps the rate back up toward the configured ceiling
+        and never past it.
+
+    The effect is that a board settles at whatever rate the project actually
+    allows, within a minute or so, without anyone tuning an env var.
+    """
 
     def __init__(self, rpm: int, burst: int = 2):
-        self.rate = rpm / 60.0 if rpm > 0 else 0.0  # tokens per second
+        self.max_rate = rpm / 60.0 if rpm > 0 else 0.0  # tokens per second
+        self.rate = self.max_rate
         self.capacity = float(max(rpm, 1))
         # Start with only a SMALL burst, not a full minute's worth of tokens —
         # otherwise the first N calls fire instantly with no pacing at all (which
@@ -83,7 +110,7 @@ class _TokenBucket:
 
     def acquire(self) -> None:
         """Block until a token is available (no-op when the limit is disabled)."""
-        if self.rate <= 0:
+        if self.max_rate <= 0:
             return
         while True:
             with self._lock:
@@ -95,21 +122,70 @@ class _TokenBucket:
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return
-                wait = (1.0 - self._tokens) / self.rate
+                wait = (1.0 - self._tokens) / max(self.rate, 1e-6)
             time.sleep(min(wait, 5.0))
+
+    def penalise(self) -> float:
+        """A quota rejection: halve the rate. Returns the new rpm."""
+        if self.max_rate <= 0:
+            return 0.0
+        with self._lock:
+            floor = MIN_RPM / 60.0
+            self.rate = max(floor, self.rate / 2.0)
+            # Drop any banked tokens too, or the next few calls ignore the new
+            # rate entirely and walk straight back into the quota.
+            self._tokens = 0.0
+            return self.rate * 60.0
+
+    def reward(self) -> None:
+        """A success: creep back toward the configured ceiling."""
+        if self.max_rate <= 0 or self.rate >= self.max_rate:
+            return
+        with self._lock:
+            # +1 rpm per success. Slow enough not to re-trip the quota straight
+            # after recovering, quick enough to matter over a 40-panel board.
+            self.rate = min(self.max_rate, self.rate + 1.0 / 60.0)
 
 
 _semaphore = threading.BoundedSemaphore(MAX_CONCURRENCY)
 _bucket = _TokenBucket(IMAGE_RPM)
 
 
+def note_quota_error() -> None:
+    """Tell the shared limiter that the API just refused us for quota."""
+    rpm = _bucket.penalise()
+    if rpm:
+        logger.warning(
+            "[throttle] quota rejection — image rate reduced to %.1f req/min "
+            "for this process; it will climb back as calls start succeeding.", rpm,
+        )
+
+
+def note_success() -> None:
+    """Tell the shared limiter that a call went through."""
+    _bucket.reward()
+
+
 @contextmanager
 def _throttle():
-    """Hold a concurrency slot and a rate-limit token for one API call."""
+    """Hold a concurrency slot and a rate-limit token for one API call, and
+    feed the outcome back into the rate.
+
+    The feedback lives HERE rather than at the four call sites because every
+    image call in the process already goes through this one context manager —
+    putting it anywhere else would mean four copies to keep in step, and the
+    one that got missed would be the one hammering the quota.
+    """
     _bucket.acquire()
     _semaphore.acquire()
     try:
         yield
+    except Exception as e:  # noqa: BLE001 — classify, then re-raise untouched
+        if _is_quota_error(e):
+            note_quota_error()
+        raise
+    else:
+        note_success()
     finally:
         _semaphore.release()
 
@@ -423,6 +499,178 @@ def build_world_context(world: dict | None) -> str:
     return "WORLD OF THIS STORY — " + " ".join(lines) + " " + _WORLD_RULE
 
 
+# ---------------------------------------------------------------------------
+# The written continuity bible
+#
+# A storyboard is not a set of illustrations, it is ONE film cut into pictures,
+# and the thing that makes it read as one film is that the same person looks the
+# same in every panel. Reference IMAGES do that job when they exist — but the
+# default style (rough sketch) skips the cast step on purpose, so most boards
+# have none, and a panel handed the bare name "Lead Thug" draws a different man
+# every time. That was the reported bug.
+#
+# The breakdown has ALREADY written a visual description of every character and
+# every locked prop / set, for free, as text. Putting those words into each
+# panel prompt is the cheapest consistency there is: no extra image call, no
+# extra second of wall clock, nothing to set up.
+# ---------------------------------------------------------------------------
+_CAST_RULE = (
+    "These are the SAME people in every panel of this film. Draw each one "
+    "exactly as described — same face, same hair, same build, same clothing, "
+    "same age — no matter the camera angle or how close the shot is. A close-up "
+    "must be recognisably the same person as the wide shot before it. Never "
+    "invent a different-looking person for a name listed here, and never swap "
+    "two characters' looks."
+)
+_SET_RULE = (
+    "These props and places recur across the film and must look the SAME every "
+    "time: same shape, same colour, same layout, same lighting."
+)
+
+
+# Words that carry no identity on their own. "The Lead Thug" and "Thug Leader"
+# are the same man; "Thug 1" and "Thug 2" are not, which is why digits are kept.
+_NAME_NOISE = frozenset(
+    ("the", "a", "an", "lead", "leader", "main", "young", "old", "elder", "mr",
+     "mrs", "ms", "miss", "sri", "shri", "smt")
+)
+_NAME_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _norm_name(name: str) -> str:
+    """A name reduced to something two spellings of it can agree on."""
+    return " ".join(t for t in _NAME_SPLIT_RE.split(str(name).lower()) if t)
+
+
+def _name_tokens(name: str) -> frozenset:
+    return frozenset(t for t in _norm_name(name).split() if t not in _NAME_NOISE)
+
+
+def resolve_name(name: str, mapping: dict | None):
+    """The entry in `mapping` that `name` refers to, or None.
+
+    Exact (normalised) match first. Failing that, the entry sharing the most
+    identifying words — so a shot's "Lead Thug" finds the cast's "Thug Leader".
+    A TIE is treated as no match: with "Thug 1" and "Thug 2" both half-matching,
+    guessing would put the wrong face in the panel, which is the very bug this
+    exists to prevent.
+    """
+    if not isinstance(mapping, dict) or not mapping:
+        return None
+    by_norm = {_norm_name(k): v for k, v in mapping.items()}
+    key = _norm_name(name)
+    if key in by_norm:
+        return by_norm[key]
+
+    wanted = _name_tokens(name)
+    if not wanted:
+        return None
+    scored: list[tuple[int, str]] = []
+    for k in mapping:
+        overlap = len(wanted & _name_tokens(k))
+        if overlap:
+            scored.append((overlap, _norm_name(k)))
+    if not scored:
+        return None
+    best = max(s[0] for s in scored)
+    winners = {k for score, k in scored if score == best}
+    if len(winners) != 1:
+        return None  # ambiguous — better no description than the wrong one
+    return by_norm[winners.pop()]
+
+
+def _bible_lines(names, bible: dict | None, limit: int = 8) -> list[str]:
+    """"Name: description." for each name that the bible knows about.
+
+    Matching is by NORMALISED name (see `resolve_name`), because a shot says
+    "Lead Thug" where the cast list says "Thug Leader" often enough that exact
+    matching quietly drops the description and the model is back to inventing.
+    """
+    lines, seen = [], set()
+    for raw in names or []:
+        name = str(raw).strip()
+        key = _norm_name(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        desc = str((resolve_name(name, bible) or "")).strip().rstrip(".")
+        if desc:
+            lines.append(f"{name} — {desc}.")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
+def build_cast_context(characters, character_bible: dict | None) -> str:
+    """The cast of THIS panel, described, or "" when nothing is known.
+
+    Only the characters in this shot: handing the model the whole cast of a
+    twelve-shot film invites it to draw people who are not in the scene.
+    """
+    lines = _bible_lines(characters, character_bible)
+    if not lines:
+        return ""
+    return "THE CAST IN THIS PANEL — " + " ".join(lines) + " " + _CAST_RULE
+
+
+def build_set_context(asset_bible: dict | None) -> str:
+    """The locked props / sets for this panel, described, or ""."""
+    if not isinstance(asset_bible, dict) or not asset_bible:
+        return ""
+    lines = [
+        f"{name} — {str(desc).strip().rstrip('.')}."
+        for name, desc in list(asset_bible.items())[:6]
+        if str(desc or "").strip()
+    ]
+    if not lines:
+        return ""
+    return "PROPS AND PLACES IN THIS PANEL — " + " ".join(lines) + " " + _SET_RULE
+
+
+def build_flow_context(story_context: dict | None) -> str:
+    """Where this panel sits in the story — context ONLY, never drawn.
+
+    This is the difference between a panel and a SHOT. Told what happened a
+    second ago and what happens a second later, the model draws a moment that
+    continues the action — the character is still in the same room, wearing the
+    same clothes, mid-way through the same movement. Told nothing, it draws a
+    fresh, self-contained illustration of a sentence, which is exactly why a
+    finished board plays like twelve unrelated pictures instead of a film.
+    """
+    if not isinstance(story_context, dict):
+        return ""
+    previous = str(story_context.get("previous") or "").strip()
+    following = str(story_context.get("next") or "").strip()
+    shot_no = story_context.get("shot_number")
+    of = story_context.get("of")
+    scene_no = story_context.get("scene_number")
+    same_scene = bool(story_context.get("previous_same_scene"))
+
+    bits: list[str] = []
+    if shot_no and of:
+        where = f"This is shot {shot_no} of {of} in the film"
+        if scene_no:
+            where += f", scene {scene_no}"
+        bits.append(where + ".")
+    if previous:
+        bits.append(f"The shot immediately BEFORE this one showed: {previous}")
+        if same_scene:
+            bits.append(
+                "That was the same scene, moments ago — the same characters in "
+                "the same place, wearing the same clothes, in the same light. "
+                "This panel continues that action from where it got to."
+            )
+    if following:
+        bits.append(f"The shot immediately AFTER this one shows: {following}")
+    if not bits:
+        return ""
+    return (
+        "STORY CONTINUITY (context only — draw ONLY this panel's moment, never "
+        "the ones either side of it) — " + " ".join(bits) + " Draw this as one "
+        "frame of a continuous film, not as a standalone illustration."
+    )
+
+
 # System-level wrapper that steers Gemini toward producing a clean T-pose
 # character reference image suitable for the turnaround pipeline.
 _REFERENCE_PROMPT_TEMPLATE = (
@@ -505,7 +753,7 @@ def _is_valid_reference(image: Image.Image) -> bool:
 # Per-style art direction appended to every panel prompt.
 _STORYBOARD_STYLE_PROMPTS = {
     # Current UI style ids (match client STYLES / MORE_STYLES).
-    "comic": "bold colourful comic-book panel, strong ink outlines, dramatic cel shading",
+    "comic": "bold colourful comic-book artwork, strong ink outlines, dramatic cel shading",
     "cinematic": "photorealistic cinematic film still, natural lighting, shallow depth of field, filmic colour grade",
     "soft-pencil": "soft graphite pencil storyboard sketch, light hand-drawn shading, clean paper texture",
     "animation-3d": "polished Pixar-style 3D animated render, soft global illumination, expressive characters",
@@ -532,14 +780,36 @@ _STORYBOARD_STYLE_PROMPTS = {
     "flat-vector": "flat vector illustration, clean geometric shapes, bold solid colours, minimal shading",
     "noir": "high-contrast black-and-white film-noir look, deep shadows, dramatic low-key lighting",
     "stick-figure": "simple black-and-white stick-figure storyboard, minimal line drawing on a white background",
-    "graphic-novel": "gritty graphic-novel panel, inked linework, muted cinematic colour palette",
-    "custom": "clean illustrated storyboard panel",
+    "graphic-novel": "gritty graphic-novel artwork, inked linework, muted cinematic colour palette",
+    "custom": "clean illustrated storyboard artwork",
     # Back-compat aliases for older style ids.
     "sketch": "black-and-white rough pencil storyboard sketch, loose gestural lines, minimal shading",
-    "comics": "bold colourful comic-book panel, strong ink outlines, dramatic cel shading",
+    "comics": "bold colourful comic-book artwork, strong ink outlines, dramatic cel shading",
     "realistic": "photorealistic cinematic film still, natural lighting, shallow depth of field",
     "3d-animation": "polished Pixar-style 3D animated render, soft global illumination",
 }
+
+# THE STYLES THAT ARE NOT ALLOWED TO HAVE COLOUR.
+#
+# Their prompts already say so — "greyscale only", "absolutely no colour",
+# "black-and-white" — and the model ignores it often enough to ruin a board.
+# Measured on one real 15-panel rough-sketch board: panels 1 and 4 came back as
+# fully coloured illustrations while the rest were grey, and inside ONE shot's
+# 8-pose flipbook a single pose came back in colour. That is the user's
+# "colours change" report, and no amount of prompt wording fixes it reliably.
+#
+# So it is enforced in code instead: for these styles the picture is desaturated
+# after generation. Free, instant, and it cannot fail. See
+# storyboard_pipeline.conform_to_style().
+GREYSCALE_STYLES = frozenset(
+    ("rough-sketch", "sketch", "soft-pencil", "charcoal", "noir", "stick-figure")
+)
+
+
+def is_greyscale_style(style: str) -> bool:
+    """Does this style forbid colour? Unknown / freeform styles do not."""
+    return (style or "").strip().lower() in GREYSCALE_STYLES
+
 
 # Aspect-ratio phrasing (the image is also post-cropped to the exact ratio).
 _STORYBOARD_ASPECT_HINTS = {
@@ -561,9 +831,15 @@ def generate_storyboard_panel(
     reference_images: list[Image.Image] | None = None,
     asset_reference_images: list[Image.Image] | None = None,
     composition_reference_image: "Image.Image | None" = None,
+    composition_purpose: str = "restyle",
+    shot_invariant: str = "",
+    scene_reference_image: "Image.Image | None" = None,
     provider: str | None = None,
     world: dict | None = None,
     variation: int | None = 0,
+    character_bible: dict | None = None,
+    asset_bible: dict | None = None,
+    story_context: dict | None = None,
 ) -> Image.Image | None:
     """Generate ONE storyboard panel image from a shot description.
 
@@ -572,12 +848,35 @@ def generate_storyboard_panel(
     `reference_images` (character references) and `asset_reference_images`
     (prop / background references) are passed alongside so the depicted
     characters, key props and backgrounds stay visually consistent across panels
-    (Stage B). `composition_reference_image` is the existing render of THIS shot —
-    used when re-styling a board so the new panel keeps the same staging and only
-    the art style changes. `world` is the script's region/period/culture block —
+    (Stage B). `composition_reference_image` is an existing render of THIS shot;
+    `composition_purpose` says what to do with it and MUST be set correctly:
+    "restyle" keeps the staging AND the action and changes only the art style,
+    while "repose" keeps the staging and the style and CHANGES the action. They
+    are opposite instructions — see the comment at the branch below for the bug
+    that sending the wrong one causes. `shot_invariant` is the fence around a
+    "repose": one sentence naming what stays true in every drawing of the shot,
+    so "the body has physically moved" cannot be read as licence to invent a new
+    action. `world` is the script's region/period/culture block —
     see build_world_context(); it keeps the people and places in the panel true
     to the story instead of the model's Western default. Returns a PIL image, or
     None if the model returned nothing (e.g. safety filter).
+
+    THE THREE CONTINUITY CHANNELS (why a board looks like ONE film):
+
+    1. `character_bible` / `asset_bible` — {name: visual description} from the
+       script breakdown. This is the WRITTEN continuity, and it is the one that
+       works even when there are no reference images at all, which is the normal
+       case for the rough-sketch style (it skips the cast step by design). A
+       panel that is handed only the NAME "Lead Thug" invents a new face every
+       single time; handed the description, it draws the same man. Costs nothing
+       — the breakdown already produced these words.
+    2. `scene_reference_image` — a panel from EARLIER IN THE SAME SCENE, used as
+       a look reference, never as a composition. Anchored on one fixed picture
+       per scene rather than chained panel→panel, for the reason spelled out in
+       panel_sequence's docstring: chaining compounds drift.
+    3. `story_context` — {previous, next, scene_number, shot_number, of} — what
+       happens either side of this panel. NOT drawn. It is what turns a bag of
+       illustrations into consecutive shots of one continuous action.
     """
     provider = _resolve_provider(provider)
     client = get_client(provider)
@@ -590,18 +889,41 @@ def generate_storyboard_panel(
         style_txt = (style or "").strip() or _STORYBOARD_STYLE_PROMPTS["custom"]
     aspect_txt = _STORYBOARD_ASPECT_HINTS.get(aspect_ratio, "wide 16:9 cinematic framing")
 
-    parts = [f"A single storyboard panel: {style_txt}.", f"{aspect_txt}."]
+    # "A single storyboard PANEL" is what taught the model to draw the BOX. In
+    # comics and storyboard training data a panel IS a bordered rectangle, so
+    # asking for one gets you a sketchy frame just inside the edge with white
+    # paper around it — freehand, so no two on a board ever match. Asking for
+    # the IMAGE instead, and saying full-bleed in the same breath, removes the
+    # cue at its source. `strip_drawn_border()` cleans up what still gets drawn.
+    parts = [
+        f"A single full-bleed storyboard IMAGE — the photograph-like picture "
+        f"itself with NO border, NO frame and NO box drawn around it: {style_txt}.",
+        f"{aspect_txt}.",
+    ]
     # The story's world comes BEFORE the shot detail, so the model has the
     # culture in hand while it reads what to draw.
     world_txt = build_world_context(world)
     if world_txt:
         parts.append(world_txt)
+    # The written continuity bible, BEFORE the shot description. These people
+    # and places are fixed for the whole film; the shot only says what they are
+    # doing right now.
+    cast_txt = build_cast_context(characters, character_bible)
+    if cast_txt:
+        parts.append(cast_txt)
+    else:
+        if characters:
+            parts.append("Characters present: " + ", ".join(characters) + ".")
+    set_txt = build_set_context(asset_bible)
+    if set_txt:
+        parts.append(set_txt)
+    flow_txt = build_flow_context(story_context)
+    if flow_txt:
+        parts.append(flow_txt)
     if camera:
         parts.append(f"Camera: {camera}.")
     if location:
         parts.append(f"Location: {location}.")
-    if characters:
-        parts.append("Characters present: " + ", ".join(characters) + ".")
     if reference_images:
         parts.append(
             "Use the provided character reference image(s) to keep each "
@@ -615,13 +937,70 @@ def generate_storyboard_panel(
             "design consistent with these references, redrawn in this panel's art "
             "style and framing."
         )
-    if composition_reference_image is not None:
+    if scene_reference_image is not None:
         parts.append(
-            "The LAST reference image is the existing version of THIS exact panel. "
-            "Keep its composition, camera angle, staging and the positions of "
-            "everything in frame the same — ONLY re-render it in the new art style "
-            "described above. Do not change the layout or what is happening."
+            "One of the reference images is ANOTHER PANEL FROM THIS SAME SCENE, "
+            "already drawn. Match it: the same people with the same faces and "
+            "clothes, the same room and furniture, the same time of day and "
+            "light, the same drawing style, line weight and grey values. Do NOT "
+            "copy its composition — this is a different moment from a different "
+            "camera position. It shows you what this scene LOOKS like, not what "
+            "to draw."
         )
+    if composition_reference_image is not None:
+        # WHY the reference is here decides what to say about it, and getting
+        # this wrong is not a nuance — it is the difference between a flipbook
+        # and eight copies of one drawing. The re-style wording below ends with
+        # "do not change what is happening", which is correct for a re-style and
+        # catastrophic for a key pose: sent with a pose instruction it wins,
+        # because it is the more absolute of the two, and the model returns the
+        # same picture with the shading nudged. That shipped, and the user's
+        # 8-pose strip came back with the head frozen to within 3 pixels.
+        if composition_purpose == "repose":
+            parts.append(
+                "The LAST reference image is THE SAME SHOT, one moment earlier. "
+                "Keep from it: the camera position and framing, the character's "
+                "face and design, the clothing, the background and every object "
+                "in it, the drawing style, the line weight and THE EXACT SAME "
+                "TONAL VALUES — the same greys, the same palette, the same "
+                "darkness of ink. "
+                "CHANGE from it: the POSE. This is a later moment and the body "
+                # Was "the head, neck and shoulders must sit in a visibly
+                # DIFFERENT position" — right for a close-up and wrong for a
+                # wide, where it asks for the one movement too small to read at
+                # that size and pushes the model to enlarge the action until it
+                # does. The pose line below already names the part that moves.
+                "has physically moved. The part of the body named below must sit "
+                "in a visibly DIFFERENT position — turned, tilted, raised, "
+                "dropped, leaned or shifted exactly as described, and far enough "
+                "to read at this shot's framing. Someone flipping between the "
+                "reference and your drawing must see a body that MOVED, not the "
+                "same drawing re-rendered. Re-drawing the reference pose, or "
+                "changing only the facial expression, is a failed drawing."
+            )
+            # HOW FAR THAT MOVEMENT MAY GO. Everything above is a push, and a
+            # push with no limit is how a shot of a sleeping man became a shot
+            # of him waking up: told the body must visibly move and given no
+            # boundary, the model picks the biggest movement the scene affords.
+            # This is the boundary, and it comes last so it reads as the final
+            # word on the paragraph above.
+            if str(shot_invariant or "").strip():
+                parts.append(
+                    "WHAT MUST NOT CHANGE, in this drawing and every other "
+                    "drawing of this shot: " + str(shot_invariant).strip() + " "
+                    "This overrides everything above about movement. The body "
+                    "moves ONLY as far as the moment described below, and never "
+                    "out of the state named here — if the two ever pull against "
+                    "each other, this one wins and the movement gets smaller. "
+                    "Never draw an action that is not described below."
+                )
+        else:
+            parts.append(
+                "The LAST reference image is the existing version of THIS exact panel. "
+                "Keep its composition, camera angle, staging and the positions of "
+                "everything in frame the same — ONLY re-render it in the new art style "
+                "described above. Do not change the layout or what is happening."
+            )
     parts.append(f"Scene: {description}")
     parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
     # Asked for one panel, the model otherwise oscillates between drawing edge to
@@ -629,10 +1008,32 @@ def generate_storyboard_panel(
     # 96% frame coverage across one board, which is what made a finished board
     # look like a jumble of sizes. normalise_panel() cleans up what still slips
     # through; this reduces how often it has to.
+    # Said twice, in different words, and last — because the first version of
+    # this ("no drawn frame or paper edge around the picture") was buried mid-
+    # prompt and lost to the word "panel" above it. Reported twice.
     parts.append(
-        "The artwork must FILL the entire frame edge to edge. No blank margins, "
-        "no white border, no drawn frame or paper edge around the picture, and "
-        "no letterboxing — the scene runs right to all four edges."
+        "ABSOLUTELY NO BORDER. Do not draw a frame, a box, a rectangle, a ruled "
+        "or sketched outline, a panel edge, a paper edge, a mount, a vignette or "
+        "any kind of line around the picture. There must be no white or blank "
+        "margin between the artwork and the edge of the image, and no "
+        "letterboxing. The artwork BLEEDS off all four sides: the scene is cut "
+        "off by the edge of the image itself, exactly as a photograph or a film "
+        "frame is, and every corner of the image is scene. If you are about to "
+        "draw the outline of the panel, do not — draw only what is inside it."
+    )
+    # THE FACE IS THE SHOT. A storyboard exists to show who is doing what and
+    # what they feel, and a close-up whose face is half-swallowed by a school
+    # bench communicates neither — reported ("shot 17 face and school banch
+    # marge face hide of banch"). The model is happy to run a desk edge straight
+    # through someone's chin because it is composing a picture, not staging a
+    # shot; this tells it which of the two it is doing.
+    parts.append(
+        "STAGING: keep every character's face completely visible and "
+        "unobstructed. Nothing in the foreground — a desk, a bench, a table, a "
+        "chair back, a prop — may cross, cover or merge with anyone's face; put "
+        "such things below the chin or out of the way, and leave clear space "
+        "between a face and the edge of the frame. Never crop a head at the top "
+        "of the frame in a close-up. Faces must read instantly as faces."
     )
     # Keep borderline (mild-conflict) shots from tripping the safety filter.
     parts.append(
@@ -641,9 +1042,12 @@ def generate_storyboard_panel(
     )
     prompt = " ".join(parts)
 
-    # Prompt first, then character refs, prop/background refs, then (last) the
-    # existing panel as a composition reference for re-styling.
+    # Prompt first, then character refs, prop/background refs, the scene's look
+    # anchor, then (last) the existing panel as a composition reference for
+    # re-styling. The order matches how the prompt above refers to them.
     contents = [prompt, *(reference_images or []), *(asset_reference_images or [])]
+    if scene_reference_image is not None:
+        contents.append(scene_reference_image)
     if composition_reference_image is not None:
         contents.append(composition_reference_image)
 
@@ -652,9 +1056,10 @@ def generate_storyboard_panel(
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
-                "[panel] Generating storyboard panel (provider=%s, model=%s, char_refs=%d, asset_refs=%d, composition=%s, attempt %d/%d)…",
+                "[panel] Generating storyboard panel (provider=%s, model=%s, char_refs=%d, asset_refs=%d, cast_bible=%d, scene_anchor=%s, composition=%s, attempt %d/%d)…",
                 provider, model_id, len(reference_images or []),
-                len(asset_reference_images or []), composition_reference_image is not None,
+                len(asset_reference_images or []), len(_bible_lines(characters, character_bible)),
+                scene_reference_image is not None, composition_reference_image is not None,
                 attempt, MAX_RETRIES,
             )
             with _throttle():

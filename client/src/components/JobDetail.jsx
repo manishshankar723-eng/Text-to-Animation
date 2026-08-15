@@ -462,9 +462,17 @@ export default function JobDetail({ jobId, onChanged }) {
                     {VIEWS.map((v) => {
                       const imgUrl = getPartViewUrl(part, v);
                       if (!imgUrl) return null;
+                      // Regenerating this ONE view, or the whole part (which
+                      // redraws all four). Either way this picture is being
+                      // replaced, and the image on screen is about to be stale.
+                      const replacing =
+                        Boolean(viewBusy[`${part}_${v}`]) || isRegening;
                       const vBusy = Boolean(viewBusy[`${part}_${v}`]);
                       return (
-                        <figure key={v} className="view-fig">
+                        <figure
+                          key={v}
+                          className={`view-fig ${replacing ? "is-redrawing" : ""}`}
+                        >
                           <img
                             src={imgUrl}
                             alt={`${part} ${v}`}
@@ -473,7 +481,17 @@ export default function JobDetail({ jobId, onChanged }) {
                             onClick={() => setLightboxSrc(imgUrl)}
                             title="Click to view full size"
                           />
-                          {isDone && (
+                          {/* Same veil as the board and the key-pose strip: the
+                              old picture used to sit there untouched for the
+                              whole redraw, with only a 14px spinner inside the
+                              corner button to say so. */}
+                          {replacing && (
+                            <span className="redraw-veil">
+                              <span className="spinner-inline" />
+                              <span className="tiny">Regenerating…</span>
+                            </span>
+                          )}
+                          {isDone && !replacing && (
                             <button
                               type="button"
                               className="view-regen"
@@ -481,7 +499,7 @@ export default function JobDetail({ jobId, onChanged }) {
                               title={`Regenerate only this ${v.replace("_", " ")} image`}
                               onClick={() => handleRegenerateView(part, v)}
                             >
-                              {vBusy ? <span className="spinner-inline" /> : "🔄"}
+                              🔄
                             </button>
                           )}
                           <figcaption>{v.replace("_", " ")}</figcaption>

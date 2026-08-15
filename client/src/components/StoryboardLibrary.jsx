@@ -84,6 +84,9 @@ export default function StoryboardLibrary({
 }) {
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
+  // The load is taking unusually long — shown so a stuck backend explains
+  // itself instead of leaving the page shimmering silently.
+  const [slow, setSlow] = useState(false);
   const [error, setError] = useState("");
   // jobId → object URL of the cover panel (fetched with the bearer token).
   const [covers, setCovers] = useState({});
@@ -103,6 +106,12 @@ export default function StoryboardLibrary({
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setSlow(false);
+    // A silent server used to leave this shimmering with no explanation. The
+    // request now times out on its own (see api.js), but two minutes of ghost
+    // cards still tells the user nothing — so say something after ten seconds.
+    const slowTimer = setTimeout(() => alive && setSlow(true), 10000);
     (async () => {
       try {
         const list = await api.listStoryboards(workflow);
@@ -110,11 +119,15 @@ export default function StoryboardLibrary({
       } catch (e) {
         if (alive) setError(e.message);
       } finally {
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+          setSlow(false);
+        }
       }
     })();
     return () => {
       alive = false;
+      clearTimeout(slowTimer);
     };
   }, [workflow, refreshKey]);
 
@@ -474,6 +487,15 @@ export default function StoryboardLibrary({
       </div>
 
       {error && <div className="error">{error}</div>}
+
+      {slow && (
+        <div className="fv-banner warn">
+          <strong>Still loading your storyboards.</strong> The backend has
+          accepted the request but hasn't answered — usually a database it needs
+          (MongoDB) being unreachable. Check the uvicorn log; the request gives
+          up on its own after two minutes.
+        </div>
+      )}
 
       {/* New storyboard — first, so starting a story is one click. Only where
           boards can actually be created; see the props comment. */}

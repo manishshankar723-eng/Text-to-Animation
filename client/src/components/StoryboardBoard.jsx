@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import ScriptPanel from "./ScriptPanel.jsx";
 import * as api from "../api.js";
 import DialogueBox from "./DialogueBox.jsx";
+import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
+import PanelVersions from "./PanelVersions.jsx";
 
 // Styles the user can re-cast the whole board into (kept as switchable variants).
 const RESTYLE_OPTIONS = [
@@ -39,11 +41,20 @@ export default function StoryboardBoard({
   // Set by App: hands the new animatic's id to the animatics workflow. Absent
   // when the board is rendered somewhere that can't navigate there.
   onOpenAnimatic,
+  // Image to Animatic Image turns this on. It stacks the shots in ONE column
+  // and gives each a key-pose strip (PanelSequenceStrip). Off everywhere else,
+  // so Script to Storyboard's board is exactly as it was.
+  sequenceMode = false,
 }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
   const [panelUrls, setPanelUrls] = useState({});
   const panelUrlsRef = useRef({});
+  // Blobs REPLACED by a fresher render of the same panel. They can't be revoked
+  // at swap time — the <img> is still showing one until React commits the new
+  // src — so they are parked here and freed on unmount with everything else.
+  // Bounded by how many times you redraw in one sitting.
+  const retiredBlobs = useRef([]);
   const [lightbox, setLightbox] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
@@ -75,6 +86,12 @@ export default function StoryboardBoard({
         const j = await api.getJob(jobId);
         if (!active) return;
         setJob(j);
+        // A poll that WORKS clears the last poll's complaint. Without this, one
+        // slow or dropped request left "The server didn't respond within 120s"
+        // pinned over a board that had long since recovered and was visibly
+        // drawing panels — reported, and it sent us hunting a server fault that
+        // had already fixed itself.
+        setError((prev) => (prev ? "" : prev));
         if (j.status === "succeeded" || j.status === "failed") return;
       } catch (e) {
         if (active) setError(e.message);
@@ -98,6 +115,14 @@ export default function StoryboardBoard({
         api
           .fetchStoryboardPanel(jobId, p.index, p.url)
           .then((url) => {
+            // A version switch or a redraw may have swapped a FRESHER picture
+            // into this key while this fetch was in flight. Theirs wins — the
+            // slot no longer says "loading" — or we would quietly put the old
+            // pixels back, which is the bug this whole cache is meant to avoid.
+            if (panelUrlsRef.current[p.url] !== "loading") {
+              URL.revokeObjectURL(url);
+              return;
+            }
             panelUrlsRef.current[p.url] = url;
             setPanelUrls((prev) => ({ ...prev, [p.url]: url }));
           })
@@ -108,14 +133,66 @@ export default function StoryboardBoard({
     });
   }, [job, jobId]);
 
-  // Revoke blob URLs on unmount.
+  // Revoke blob URLs on unmount — the live cache AND the ones superseded by a
+  // redraw, which are no longer reachable through it.
   useEffect(() => {
     return () => {
       Object.values(panelUrlsRef.current).forEach((u) => {
         if (typeof u === "string" && u.startsWith("blob:")) URL.revokeObjectURL(u);
       });
+      retiredBlobs.current.forEach((u) => URL.revokeObjectURL(u));
     };
   }, []);
+
+  // Refresh ONE panel's picture. Nothing else on the board is touched.
+  //
+  // This exists because `reloadBoard` drops EVERY tile's blob, and it was being
+  // used to refresh a single panel — so switching one shot's version, or
+  // redrawing one shot, made the whole board blink through empty boxes and
+  // re-download every picture (reported: "i only regenerate this panel so why
+  // all image refresh"). `reloadBoard` is the right tool ONLY for insert and
+  // delete, where indices shift and a blob keyed by "/panel/2" now belongs to a
+  // different shot.
+  //
+  // The new bytes are fetched BEFORE anything on screen changes, so the tile
+  // goes from the old picture straight to the new one with no empty frame in
+  // between. `fetchStoryboardPanel` cache-busts its request, so an UNCHANGED
+  // url — which is exactly what a version switch leaves you with — still comes
+  // back with the new pixels.
+  async function refreshPanelImage(index, url) {
+    const target =
+      url || (job?.result?.panels || []).find((p) => p.index === index)?.url;
+    if (!target) return;
+    let fresh;
+    try {
+      fresh = await api.fetchStoryboardPanel(jobId, index, target);
+    } catch {
+      return; // keep the picture that's up rather than blanking the tile
+    }
+    const displaced = panelUrlsRef.current[target];
+    if (typeof displaced === "string" && displaced.startsWith("blob:")) {
+      retiredBlobs.current.push(displaced);
+    }
+    panelUrlsRef.current[target] = fresh;
+    setPanelUrls((prev) => ({ ...prev, [target]: fresh }));
+  }
+
+  // Forget one cache key. Only for a url nothing renders any more — a redraw
+  // that moved the panel to a different url.
+  function dropPanelImage(url) {
+    if (!url) return;
+    const cached = panelUrlsRef.current[url];
+    if (typeof cached === "string" && cached.startsWith("blob:")) {
+      retiredBlobs.current.push(cached);
+    }
+    delete panelUrlsRef.current[url];
+    setPanelUrls((prev) => {
+      if (!(url in prev)) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+  }
 
   const status = job?.status;
   const progress = job?.progress || {};
@@ -126,7 +203,20 @@ export default function StoryboardBoard({
   // library. Falls back while the first poll is still in flight.
   const boardTitle = job?.character_name || "Your storyboard";
   const boardScript = job?.params?.script || "";
-  const running = status === "queued" || status === "running" || !status;
+  // "We don't know yet" is NOT "it is generating". This used to read
+  // `|| !status`, so any board whose job could not be fetched — the server
+  // restarting, a dropped request, a poll that errored — rendered as a live
+  // run: "Stop generation" in the toolbar, the progress bar up, and every
+  // Regenerate button hidden because the board believed it was busy. Nothing
+  // the user pressed could recover it. Reported as "i cant see regenarte
+  // buttun and i see nothing happen".
+  //
+  // Unknown status counts as running ONLY while the first fetch is genuinely in
+  // flight, which keeps the toolbar from flashing on load. Once a fetch has
+  // failed, the board is treated as idle so its buttons come back and the user
+  // can act — the error banner already says the fetch failed.
+  const loadingFirst = !job && !error;
+  const running = status === "queued" || status === "running" || loadingFirst;
   // The run ended early because the user pressed Stop (server-reported, so it
   // survives a reload) — the board says so instead of looking half-finished.
   const stopped = Boolean(job?.result?.stopped);
@@ -180,6 +270,52 @@ export default function StoryboardBoard({
   }
   const pendingCount = Math.max(0, total - panels.length);
   const tileRatio = (aspect || "16:9").replace(":", " / ");
+
+  // The two "the board is done, what now" actions. A render FUNCTION rather
+  // than duplicated JSX, because they sit in the toolbar normally but in the
+  // TOP row in sequenceMode (which has no Start over to compete with) — one
+  // definition, so the two placements can't drift apart.
+  function finishActions() {
+    if (!okCount) return null;
+    return (
+      <>
+        <button
+          type="button"
+          className="btn"
+          disabled={zipBusy}
+          onClick={handleZip}
+          title="Generated character, prop & background images + the PDF, as a ZIP you can reuse"
+        >
+          {zipBusy ? (
+            <>
+              <span className="spinner-inline" /> Zipping…
+            </>
+          ) : (
+            "⬇ Download assets (ZIP)"
+          )}
+        </button>
+        {/* LAST, after the download: it's the step you take once the board is
+            done, not another export. No AI credits spent. */}
+        {onOpenAnimatic && !running && (
+          <button
+            type="button"
+            className="btn board-animatic"
+            disabled={animaticBusy}
+            onClick={handleMakeAnimatic}
+            title="Time these panels against audio and export a video — costs no AI credits"
+          >
+            {animaticBusy ? (
+              <>
+                <span className="spinner-inline" /> Opening…
+              </>
+            ) : (
+              "🎬 Make animatic"
+            )}
+          </button>
+        )}
+      </>
+    );
+  }
   const okCount = panels.filter((p) => !p.failed && p.url).length;
   const failedCount = panels.filter((p) => p.failed).length;
 
@@ -205,11 +341,17 @@ export default function StoryboardBoard({
     setBatch(null);
   }
 
-  // Re-draw a single panel (failed, edited, or just unwanted). Sends the edited
-  // description when the user has changed the shot's prompt.
-  // After a structural edit (insert/delete) panel indices shift, so a cached
-  // blob keyed by "/panel/2" may now belong to a different shot. Drop the whole
-  // cache and reload the job so every tile re-fetches the right pixels.
+  // THE NUCLEAR RELOAD — for STRUCTURAL edits only (insert / delete).
+  //
+  // Those shift every later panel's index, so a cached blob keyed by "/panel/2"
+  // may now belong to a different shot and the whole cache has to go. That is
+  // also why the entire board visibly re-downloads afterwards, which is
+  // acceptable exactly once, for an edit that really did change every tile's
+  // identity.
+  //
+  // DO NOT use this to refresh ONE panel — that is `refreshPanelImage`. Calling
+  // it for a version switch or a single redraw is what made the whole board
+  // blink every time the user pressed ‹ ›.
   async function reloadBoard() {
     Object.values(panelUrlsRef.current).forEach((u) => {
       if (typeof u === "string" && u.startsWith("blob:")) URL.revokeObjectURL(u);
@@ -257,6 +399,8 @@ export default function StoryboardBoard({
     }
   }
 
+  // Re-draw a single panel (failed, edited, or just unwanted). Sends the edited
+  // description when the user has changed the shot's prompt.
   async function retryPanel(index) {
     if (retrying[index]) return;
     setError("");
@@ -264,23 +408,16 @@ export default function StoryboardBoard({
     try {
       const overrides = {};
       if (typeof editedDesc[index] === "string") overrides.description = editedDesc[index];
-      // Old URL of this panel (within the active variant) — bust its cache so the
-      // fetch effect re-loads the fresh pixels.
       const prevUrl = (job?.result?.panels || []).find((p) => p.index === index)?.url;
       const res = await api.regenerateStoryboardPanel(jobId, index, overrides);
       const panel = res.panel;
-      [prevUrl, panel.url].forEach((u) => {
-        if (!u) return;
-        const cached = panelUrlsRef.current[u];
-        if (typeof cached === "string" && cached.startsWith("blob:")) URL.revokeObjectURL(cached);
-        delete panelUrlsRef.current[u];
-      });
-      setPanelUrls((prev) => {
-        const next = { ...prev };
-        if (prevUrl) delete next[prevUrl];
-        if (panel.url) delete next[panel.url];
-        return next;
-      });
+      // NEW PIXELS FIRST, then the new panel object. Emptying the cache and
+      // letting the fetch effect pick it up afterwards — which is what this did
+      // — meant the tile rendered at least once with no picture at all, so a
+      // redraw flashed an empty box before the drawing appeared. Priming the
+      // cache before `setJob` closes that gap: by the time render sees the new
+      // url, its picture is already in hand.
+      await refreshPanelImage(index, panel.url);
       setJob((prev) => {
         if (!prev) return prev;
         const r = prev.result || {};
@@ -290,6 +427,9 @@ export default function StoryboardBoard({
           : r.variants;
         return { ...prev, result: { ...r, panels, variants } };
       });
+      // Only now that nothing renders it: if the redraw moved the panel to a
+      // different url, the old key is dead weight holding a blob.
+      if (prevUrl && prevUrl !== panel.url) dropPanelImage(prevUrl);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -394,13 +534,28 @@ export default function StoryboardBoard({
         <button type="button" className="btn" onClick={onBack}>
           {backLabel || "← Back to shots"}
         </button>
-        <button type="button" className="btn ghost" onClick={onRestart}>
-          Start over
-        </button>
+        {/* "Start over" belongs to the workflow that BUILDS a board (it resets
+            the script→shots flow). In sequenceMode there is nothing to start
+            over — the board is a copy you opened — so the finish actions take
+            that spot instead of leaving it empty. */}
+        {sequenceMode ? (
+          /* Wrapped: `.review-actions` is space-between, so two loose children
+             on the right would spread across the row instead of grouping.
+             `.review-actions-right` is the existing answer to that. */
+          <div className="review-actions-right">{finishActions()}</div>
+        ) : (
+          <button type="button" className="btn ghost" onClick={onRestart}>
+            Start over
+          </button>
+        )}
       </div>
 
-      {/* Style variants: switch between saved styles, or add a new one. */}
-      {variants.length > 0 && (
+      {/* Style variants: switch between saved styles, or add a new one.
+          Hidden in sequenceMode — this workflow is about drawing the MOTION of
+          a board you already styled, and re-styling every panel would throw the
+          key poses out of step with the panels they were drawn from. Restyle in
+          Script to Storyboard, then copy the board over. */}
+      {!sequenceMode && variants.length > 0 && (
         <div className="board-styles">
           {variants.length > 1 && (
             <div className="board-variant-switch">
@@ -458,7 +613,11 @@ export default function StoryboardBoard({
         <div className="error">Generation failed: {job?.error || "unknown error"}</div>
       )}
 
-      {stopped && (
+      {/* Hidden in sequenceMode: it reports on the PANEL draw, which happened
+          back in Script to Storyboard before this copy was ever made, so here
+          it is stale news about someone else's run. Each shot's own key-pose
+          strip reports its own state. */}
+      {!sequenceMode && stopped && (
         <div className="info-msg">
           ⏹ You stopped this generation — {okCount} of {total} panels drawn.
           {emptyIdx.length > 0
@@ -539,7 +698,10 @@ export default function StoryboardBoard({
               ⏹ Stop
             </button>
           )}
-          {okCount > 0 && (
+          {/* A PDF is a document to hand someone — the output of Script to
+              Storyboard. This workflow produces IMAGES, so its downloads are
+              the assets and the per-shot key poses instead. */}
+          {!sequenceMode && okCount > 0 && (
             <button
               type="button"
               className="btn"
@@ -555,42 +717,9 @@ export default function StoryboardBoard({
               )}
             </button>
           )}
-          {okCount > 0 && (
-            <button
-              type="button"
-              className="btn"
-              disabled={zipBusy}
-              onClick={handleZip}
-              title="Generated character, prop & background images + the PDF, as a ZIP you can reuse"
-            >
-              {zipBusy ? (
-                <>
-                  <span className="spinner-inline" /> Zipping…
-                </>
-              ) : (
-                "⬇ Download assets (ZIP)"
-              )}
-            </button>
-          )}
-          {/* LAST in the row, after the two downloads: it's the step you take
-              once the board is done, not another export. No AI credits spent. */}
-          {okCount > 0 && onOpenAnimatic && !running && (
-            <button
-              type="button"
-              className="btn board-animatic"
-              disabled={animaticBusy}
-              onClick={handleMakeAnimatic}
-              title="Time these panels against audio and export a video — costs no AI credits"
-            >
-              {animaticBusy ? (
-                <>
-                  <span className="spinner-inline" /> Opening…
-                </>
-              ) : (
-                "🎬 Make animatic"
-              )}
-            </button>
-          )}
+          {/* In sequenceMode these two live in the TOP row instead — see
+              `finishActions`, rendered once in whichever place applies. */}
+          {!sequenceMode && finishActions()}
         </div>
       )}
 
@@ -615,13 +744,20 @@ export default function StoryboardBoard({
           the download buttons off the end of the page. */}
       <ScriptPanel script={boardScript} defaultOpen={false} />
 
-      <div className="board-grid">
+      {/* One column in sequence mode: each shot's key-pose strip sits directly
+          under its panel, so shot 2 reads BELOW shot 1 rather than beside it.
+          A grid would put the strip in a narrow column and break the reading
+          order the flipbook depends on. */}
+      <div className={`board-grid ${sequenceMode ? "board-column" : ""}`}>
         {panels.map((p) => {
           // A new panel the user inserted: no image yet, board not generating.
           const isNew = !p.url && !p.failed && !running;
           return (
             <figure className="board-tile" key={p.index}>
-              <div className="board-frame" style={{ aspectRatio: tileRatio }}>
+              <div
+                className={`board-frame ${retrying[p.index] ? "is-redrawing" : ""}`}
+                style={{ aspectRatio: tileRatio }}
+              >
                 {p.url && panelUrls[p.url] ? (
                   <img
                     src={panelUrls[p.url]}
@@ -650,6 +786,36 @@ export default function StoryboardBoard({
                   </div>
                 ) : (
                   <div className="board-skeleton" />
+                )}
+
+                {/* REDRAWING A PANEL THAT ALREADY HAS A PICTURE. The branches
+                    above only show a spinner for a FAILED or a NEW panel — a
+                    shot with an image kept showing that image, unchanged, for
+                    the whole 30-60s redraw, so the board looked like it had
+                    ignored the click. Same veil the key-pose strip uses, for
+                    the same reason and with the same wording. */}
+                {retrying[p.index] && p.url && panelUrls[p.url] && (
+                  <span className="redraw-veil">
+                    <span className="spinner-inline" />
+                    <span className="tiny">Redrawing…</span>
+                  </span>
+                )}
+
+                {/* Sits ON the picture, bottom-right. Renders nothing until the
+                    shot has been redrawn at least once, so an untouched board
+                    looks exactly as it always did. */}
+                {p.url && (
+                  <PanelVersions
+                    jobId={jobId}
+                    index={p.index}
+                    disabled={running || !!retrying[p.index]}
+                    /* Just THIS panel. Switching a version changes one shot's
+                       pixels and shifts no indices, so there is nothing for the
+                       rest of the board to re-read — it used to call
+                       `reloadBoard`, which dropped every tile's blob and made
+                       the whole page blink on every ‹ › press. */
+                    onSwitched={() => refreshPanelImage(p.index, p.url)}
+                  />
                 )}
               </div>
               <figcaption>
@@ -715,10 +881,27 @@ export default function StoryboardBoard({
                     "✨ Generate this panel"
                   ) : p.failed ? (
                     "🔄 Retry"
+                  ) : sequenceMode ? (
+                    /* In this workflow the panel is a starting point you draw
+                       FROM, so the action is "Generate", not "Regenerate" —
+                       the same word the key-pose button uses. */
+                    "✨ Generate panel"
                   ) : (
                     "🔄 Regenerate"
                   )}
                 </button>
+
+                {sequenceMode && (
+                  <PanelSequenceStrip
+                    jobId={jobId}
+                    index={p.index}
+                    label={`Scene ${p.scene_number ?? 1} · Shot ${p.shot_number ?? p.index + 1}`}
+                    boardBusy={running}
+                    progress={progress}
+                    onError={setPdfError}
+                    onStarted={() => setPollNonce((n) => n + 1)}
+                  />
+                )}
               </figcaption>
             </figure>
           );

@@ -39,6 +39,15 @@ FIRESTORE_COLLECTION = os.environ.get("API_FIRESTORE_COLLECTION", "character_job
 # backend restart (e.g. uvicorn --reload picking up a code change) doesn't wipe
 # saved storyboards. Set empty to disable and keep jobs purely in RAM.
 LOCAL_JOBS_PATH = os.environ.get("API_LOCAL_JOBS_PATH", ".local_jobs.json")
+# At startup, close out any job still marked RUNNING/QUEUED. Work runs in THIS
+# process's thread pool, so such a job has no worker and never will — left
+# alone its page is frozen for ever, showing "Stop generation" with every
+# Regenerate button hidden because the board believes it is still busy.
+# TURN THIS OFF if more than one API process shares a job store, or one will
+# reap another's live work. See main._reap_orphaned_jobs.
+REAP_ORPHANED_JOBS = os.environ.get("API_REAP_ORPHANED_JOBS", "1").lower() not in (
+    "0", "false", "no",
+)
 
 # --- Worker ------------------------------------------------------------------
 # How many pipeline jobs may run concurrently. Each job makes several Gemini
