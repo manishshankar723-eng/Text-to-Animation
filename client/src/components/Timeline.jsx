@@ -18,10 +18,21 @@
 // on the left; only the tracks scroll, so the labels never leave the screen.
 import { useEffect, useRef, useState } from "react";
 import Waveform from "./Waveform.jsx";
+import { keysOf } from "../animatic/keyframes.js";
+import { ANIMATABLE, frameSpans } from "../animatic/scene.js";
+import {
+  MAX_TRANSITION_MS,
+  MIN_TRANSITION_MS,
+  transitionWindow,
+} from "../animatic/transitions.js";
 import Icon from "./Icon.jsx";
 import { shapeCss } from "./Shapes.jsx";
 
 const MIN_MS = 100; // shortest hold / clip the backend accepts
+
+// A lane kind → the name that kind goes by in the scene model, so a lane can
+// ask which properties it is allowed to animate. Only the spelling differs.
+const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overlay" };
 
 // Per-lane chrome. Keyed by lane kind, so adding a kind is one entry here and
 // one branch in `renderLane` — not another copy of the whole gutter.
@@ -61,6 +72,13 @@ export default function Timeline({
   shapes = [],
   overlays = [],
   overlayUrls = {},
+  // What happens on the cuts. Drawn as a badge straddling the edit point,
+  // because that is exactly where a boundary-local transition happens.
+  transitions = [],
+  selectedTransitionId,
+  onSelectTransition,
+  onAddTransition,
+  onTransitionChange,
   // Every row on the timeline, top to bottom, built by the editor. The gutter
   // and the tracks both render from this one list.
   lanes = [],
@@ -90,6 +108,9 @@ export default function Timeline({
   onTextChange,
   onShapeChange,
   onOverlayChange,
+  // Re-time one keyframe: (kind, clipId, fromT, toT), both times relative to
+  // the clip. The editor owns `moveKey`; the timeline only reports the gesture.
+  onKeyMove,
   // "put something on THIS lane" — the lane decides what that means.
   onAddToLane,
   onRemoveLayer,
@@ -122,6 +143,10 @@ export default function Timeline({
   // says which list the change is written back to when the pointer comes up.
   const [clipDraft, setClipDraft] = useState(null); // { kind, id, startMs, durationMs }
   const [audioDraft, setAudioDraft] = useState(null); // { id, lengthMs }
+  // A keyframe diamond being dragged along its clip. { kind, id, from, to }
+  const [keyDraft, setKeyDraft] = useState(null);
+  // A transition badge being widened. { id, durationMs }
+  const [trDraft, setTrDraft] = useState(null);
   const dragRef = useRef(null);
 
   // Everything horizontal is measured against the SPAN, not the video length.
@@ -321,6 +346,128 @@ export default function Timeline({
     setClipDraft({ kind, id: clip.id, startMs: clip.start_ms, durationMs: clip.duration_ms });
   }
 
+  // --- Keyframe diamonds --------------------------------------------------
+  /**
+   * One implementation for both lanes, because a key on a frame and a key on a
+   * caption are the same thing — the frames lane just computes its clip start
+   * from the running total instead of reading `start_ms`.
+   *
+   * A press that doesn't move SEEKS to the key; a press that does DRAGS it.
+   * Deciding between them on pointerup rather than up front is what lets one
+   * diamond do both without a modifier, and it is why a 3px slop exists: a
+   * mouse always moves a pixel or two on the way to a click.
+   *
+   * A diamond now belongs to ONE property — the row it sits on — so a plain
+   * drag re-times only that property. SHIFT-drag moves every property keyed at
+   * that instant, which is how a Ken Burns push (`scale` and `x` keyed
+   * together) is kept in step when you want to slide the whole move.
+   */
+  function startKeyDrag(e, item, t, clipStartMs, kind, prop) {
+    if (e.button !== 0) return;
+    // Beat the clip's own move-drag. Without this, aiming at a key nudges the
+    // whole clip sideways and keys become impossible to hit accurately.
+    e.stopPropagation();
+    e.preventDefault();
+    dragRef.current = {
+      key: true,
+      kind,
+      id: item.id,
+      prop,
+      all: e.shiftKey,
+      from: t,
+      clipStartMs,
+      startX: e.clientX,
+      // Its own time is excluded from the snap targets, or it would stick to
+      // where it already is — the same rule the clip edges follow.
+      own: [clipStartMs + t],
+    };
+    setKeyDraft({ kind, id: item.id, prop, from: t, to: t });
+  }
+
+  useEffect(() => {
+    if (!keyDraft) return undefined;
+    function move(e) {
+      const d = dragRef.current;
+      if (!d?.key) return;
+      const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
+      // Snapping is done in TIMELINE time and converted back, so a key snaps to
+      // cuts, the playhead and the marks like everything else — then stored
+      // relative to its clip, which is where key times live.
+      const absolute = snapMs(d.clipStartMs + d.from + deltaMs, d.own);
+      const next = Math.round(absolute - d.clipStartMs);
+      d.latest = next;
+      setKeyDraft({ kind: d.kind, id: d.id, prop: d.prop, from: d.from, to: next });
+    }
+    function up() {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setKeyDraft(null);
+      if (!d?.key) return;
+      const moved = d.latest !== undefined && Math.abs(d.latest - d.from) > 3;
+      if (moved) onKeyMove?.(d.kind, d.id, d.from, d.latest, d.prop, d.all);
+      else onSeek(d.clipStartMs + d.from);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [keyDraft, pxPerSec, onKeyMove, onSeek]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * The diamonds for one clip. Shared by the frames lane and the clip lanes.
+   *
+   * ⚠ ONE ROW PER ANIMATED PROPERTY, stacked down the clip — NOT one merged
+   * diamond per instant, which is what this used to draw. Merging was chosen so
+   * that a Ken Burns push (`scale` and `x` keyed together) wouldn't stack two
+   * diamonds a pixel apart, but it hid the thing you most need to know: how
+   * many keys are here, and on WHAT. Two keys at one instant looked exactly
+   * like one, and a key next to a transition badge vanished into it.
+   *
+   * Rows follow `ANIMATABLE` order, which is the order the Properties pane
+   * lists the same controls in — so the top row is the top control (Zoom, then
+   * X, Y, Opacity for a frame) and the two panes read as one thing. Only
+   * properties that ARE animated get a row, so an ordinary clip draws nothing
+   * and a single fade draws one row, not four.
+   */
+  function renderKeys(item, kind, w, clipStartMs) {
+    const animated = (ANIMATABLE[KEY_KIND[kind]] || []).filter(
+      (prop) => keysOf(item, prop).length > 0
+    );
+    return animated.flatMap((prop, row) =>
+      keysOf(item, prop).map((key) => {
+        const t = key.t ?? 0;
+        const dragging =
+          keyDraft &&
+          keyDraft.id === item.id &&
+          keyDraft.prop === prop &&
+          keyDraft.from === t;
+        const shown = dragging ? keyDraft.to : t;
+        const at = (shown / 1000) * pxPerSec;
+        // A key can sit outside its clip — the value simply holds there — but
+        // drawing it beyond the bar would put it on top of the neighbour.
+        if (at < -4 || at > w + 4) return null;
+        return (
+          <span
+            key={`${prop}:${t}`}
+            className={`tl-key k-${prop} ${dragging ? "dragging" : ""}`}
+            style={{
+              left: at,
+              top: `calc(var(--tl-key-top) + ${row} * var(--tl-key-row))`,
+            }}
+            title={
+              `${prop} key at ${(shown / 1000).toFixed(2)}s into this clip — ` +
+              "click to go there, drag to re-time it, " +
+              "shift-drag to move every property keyed at this instant"
+            }
+            onPointerDown={(e) => startKeyDrag(e, item, t, clipStartMs, kind, prop)}
+          />
+        );
+      })
+    );
+  }
+
   useEffect(() => {
     if (!clipDraft) return undefined;
     function move(e) {
@@ -376,6 +523,131 @@ export default function Timeline({
       window.removeEventListener("pointerup", up);
     };
   }, [clipDraft, pxPerSec, onTextChange, onShapeChange, onOverlayChange]);
+
+  // --- Transitions on the cuts --------------------------------------------
+  // A transition is BOUNDARY-LOCAL: it straddles the edit point, taking half
+  // its length from the tail of one picture and half from the head of the next,
+  // and moves nothing. So it is drawn centred on the cut — which is both what
+  // it looks like and, unusually, exactly what it does.
+  //
+  // Dragging the handle grows it from the CENTRE, so `duration` changes by
+  // twice the pointer's travel. Clamped to the shorter of the two holds,
+  // because that is what the renderer will honour — a badge wider than the
+  // transition it draws would be a lie about the video.
+  function startTransitionDrag(e, transition, win) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelectTransition?.(transition.id);
+    dragRef.current = {
+      transition: true,
+      id: transition.id,
+      startX: e.clientX,
+      startMs: win.durationMs,
+      maxMs: win.maxMs,
+    };
+    setTrDraft({ id: transition.id, durationMs: win.durationMs });
+  }
+
+  useEffect(() => {
+    if (!trDraft) return undefined;
+    function move(e) {
+      const d = dragRef.current;
+      if (!d?.transition) return;
+      const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
+      // ×2: the handle is on one edge but the badge grows from its centre, so
+      // the pointer's travel is only half of what the length changes by.
+      const snapped = Math.round((d.startMs + deltaMs * 2) / 50) * 50;
+      d.latest = Math.max(MIN_TRANSITION_MS, Math.min(d.maxMs, snapped));
+      setTrDraft({ id: d.id, durationMs: d.latest });
+    }
+    function up() {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setTrDraft(null);
+      if (d?.transition && d.latest !== undefined && d.latest !== d.startMs) {
+        onTransitionChange?.(d.id, { duration_ms: d.latest });
+      }
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [trDraft, pxPerSec, onTransitionChange]);
+
+  /** The badge on every internal cut — one per edit point, transition or not. */
+  function renderTransitions() {
+    // Built from the DRAFTED durations, not the saved ones, so a badge travels
+    // with the cut while its frame's edge is being dragged instead of sitting
+    // where the cut used to be until the pointer comes up.
+    const drafted = frames.map((f) => ({ ...f, duration_ms: durationOf(f) }));
+    const { spans } = frameSpans(drafted);
+    const out = [];
+    for (let i = 0; i < spans.length - 1; i++) {
+      const cut = spans[i].end;
+      const at = (cut / 1000) * pxPerSec;
+      const transition = transitions.find((t) => t.after_frame_id === frames[i].id);
+
+      if (!transition) {
+        // An empty cut carries a ＋ so a transition can be added where it goes,
+        // rather than from a menu somewhere else. It is faint until hovered —
+        // a row of buttons down every edit point would drown the pictures.
+        out.push(
+          <button
+            key={`add:${frames[i].id}`}
+            type="button"
+            className="tl-transition tl-tr-add"
+            style={{ left: at }}
+            title="Add a transition on this cut"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => onAddTransition?.(frames[i].id)}
+          >
+            ＋
+          </button>
+        );
+        continue;
+      }
+
+      const win = transitionWindow(drafted, spans, transition);
+      if (!win) continue;
+      const dragging = trDraft && trDraft.id === transition.id;
+      // The cap the renderer applies, so the handle stops where the effect does.
+      const maxMs = Math.min(
+        MAX_TRANSITION_MS,
+        Math.min(spans[i].end - spans[i].start, spans[i + 1].end - spans[i + 1].start)
+      );
+      const durationMs = dragging ? trDraft.durationMs : win.durationMs;
+      const width = Math.max(10, (durationMs / 1000) * pxPerSec);
+      out.push(
+        <button
+          key={transition.id}
+          type="button"
+          className={[
+            "tl-transition",
+            `tr-${win.kind}`,
+            selectedTransitionId === transition.id ? "sel" : "",
+            dragging ? "dragging" : "",
+          ].join(" ")}
+          style={{ left: at - width / 2, width }}
+          title={`${win.kind} · ${(durationMs / 1000).toFixed(1)}s across this cut — drag the edge to change it`}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onSelectTransition?.(transition.id);
+          }}
+        >
+          <span className="tl-tr-mark" />
+          <span
+            className="tl-tr-handle"
+            title="Drag to change how long the transition lasts"
+            onPointerDown={(e) => startTransitionDrag(e, transition, { ...win, maxMs })}
+          />
+        </button>
+      );
+    }
+    return out;
+  }
 
   function startAudioTrim(e, track) {
     e.stopPropagation();
@@ -449,6 +721,14 @@ export default function Timeline({
               }
             >
               {body.render(item, w)}
+              {/* Keys are drawn ON the clip, because that is where they live —
+                  their times are relative to it, so dragging the clip carries
+                  them along and the diamonds move with it for free.
+                  ONE DIAMOND PER INSTANT, not per property: a Ken Burns push
+                  keyframes `scale` and `x` together, and two diamonds a pixel
+                  apart would be unclickable. Which property is which is the
+                  Properties pane's job. */}
+              {renderKeys(item, lane.kind, w, start)}
               <span
                 className="tl-handle"
                 onPointerDown={(e) => startClipDrag(e, item, "resize", lane.kind)}
@@ -505,6 +785,15 @@ export default function Timeline({
               >
                 <span className="tl-bar-label">{w > 34 ? f.label || i + 1 : ""}</span>
                 {w > 56 && <span className="tl-bar-secs">{(ms / 1000).toFixed(1)}s</span>}
+                {/* A frame's own keys — a Ken Burns push lives here, so this is
+                    the lane where they matter most. Times are relative to the
+                    frame, so they ride along when its hold is re-timed. */}
+                {renderKeys(
+                  f,
+                  "frames",
+                  w,
+                  frames.slice(0, i).reduce((sum, x) => sum + (x.duration_ms || 0), 0)
+                )}
                 <span
                   className="tl-handle"
                   onPointerDown={(e) => startResize(e, f, i)}
@@ -517,6 +806,9 @@ export default function Timeline({
               </div>
             );
           })}
+          {/* The cuts, drawn OVER the bars: a transition belongs to the edit
+              point between two pictures, not to either of them. */}
+          {renderTransitions()}
           {!frames.length && (
             <button
               type="button"

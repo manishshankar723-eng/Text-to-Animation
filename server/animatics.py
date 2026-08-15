@@ -49,6 +49,7 @@ from .schemas import (
     AnimaticShape,
     AnimaticSummary,
     AnimaticTextClip,
+    AnimaticTransition,
     AnimaticUploadResponse,
     Job,
     JobCreatedResponse,
@@ -166,6 +167,19 @@ def _shapes_of(job: Job) -> list[AnimaticShape]:
     return out
 
 
+def _transitions_of(job: Job) -> list[AnimaticTransition]:
+    """What happens on the cuts. Absent on every animatic saved before
+    transitions existed, which then plays as the straight cuts it always did."""
+    raw = (job.params or {}).get("transitions") or []
+    out: list[AnimaticTransition] = []
+    for item in raw:
+        try:
+            out.append(AnimaticTransition(**item))
+        except Exception:  # noqa: BLE001 — one bad transition must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable transition %r", job.job_id, item)
+    return out
+
+
 def _audio_tracks_of(job: Job) -> list[AnimaticAudio]:
     """Every audio track on this animatic, oldest first.
 
@@ -232,6 +246,7 @@ def _project_of(job: Job) -> AnimaticProject:
         shapes=_shapes_of(job),
         layers=_layers_of(job),
         overlays=overlays,
+        transitions=_transitions_of(job),
         audio_tracks=tracks,
         duration_ms=_duration_ms(frames),
         video=(job.result or {}).get("video"),
@@ -443,6 +458,7 @@ def create_animatic(
             "shapes": [],
             "layers": [],
             "overlays": [],
+            "transitions": [],
             "audio_tracks": [],
             "source_storyboard_id": source_id,
         },
@@ -543,6 +559,14 @@ def save_animatic(
             )
         # `url` is filled on read, so it is never stored — see AnimaticOverlay.
         params["overlays"] = [o.model_dump(exclude={"url"}) for o in body.overlays]
+
+    if body.transitions is not None:
+        if len(body.transitions) > config.MAX_ANIMATIC_TRANSITIONS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_TRANSITIONS} transitions.",
+            )
+        params["transitions"] = [t.model_dump() for t in body.transitions]
 
     if body.audio_tracks is not None:
         if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_TRACKS:
@@ -858,6 +882,10 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             "texts": [t.model_dump() for t in _texts_of(job)],
             "shapes": [s.model_dump() for s in _shapes_of(job)],
             "overlays": overlays,
+            # Transitions are boundary-local, so they change nothing about the
+            # length calculated above — they only change what is drawn on the
+            # cuts. One naming a frame the export dropped is simply inert.
+            "transitions": [t.model_dump() for t in _transitions_of(job)],
             "audio_tracks": audio_tracks,
             "aspect_ratio": settings.aspect_ratio,
             "resolution": settings.resolution,

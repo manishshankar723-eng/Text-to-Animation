@@ -5799,6 +5799,15 @@ input[type="checkbox"] {
 .an-screen img.cover {
   object-fit: cover;
 }
+/* The picture ARRIVING on a cut that has a transition. Laid directly over the
+   outgoing one and the same size — both fill the screen box — which is what
+   lets all four kinds be expressed as an opacity, a clip-path or a shift.
+   See `pictureStyle` in AnimaticEditor.jsx, and `_transition_canvas` in
+   animatic.py, which is the same four cases in Pillow. */
+.an-screen-b {
+  position: absolute;
+  inset: 0;
+}
 .an-screen-empty {
   color: var(--muted);
   font-size: 0.9rem;
@@ -6362,6 +6371,21 @@ input[type="checkbox"] {
   --tl-shp-h: var(--tl-track-h);
   --tl-aud-h: var(--tl-track-h);
   --tl-row-gap: 0.3rem;
+  /* Keyframe rows: one per ANIMATED property, stacked down the clip.
+     ⚠ In `rem`, like the track they sit in — NOT px. Mixing the two means the
+     rows keep their size while the track shrinks with the browser's font size,
+     and the bottom row eventually lands in the transition band. Everything on
+     this bar scales together or the bands stop being bands.
+     Two budgets have to hold at once, and the tighter one is the second:
+       · a FRAME animates at most 4 (zoom, x, y, opacity). Four rows reach
+         1.52rem including the diamonds' rotated corners; `.tl-transition`
+         starts at 66% of 2.6rem = 1.72rem, so they clear it.
+       · a SHAPE animates 6 (x, y, w, h, opacity, rotation) and its clip is
+         inset 3px top and bottom, leaving 2.23rem. Six rows reach 2.18rem, so
+         the last one is not sliced off by the clip's `overflow: hidden`. */
+  --tl-key-top: 0.15rem;
+  --tl-key-row: 0.31rem;
+  --tl-key-size: 0.3rem;
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
@@ -7512,6 +7536,129 @@ input[type="checkbox"] {
   border-radius: 0;
   background: none;
   overflow: visible;
+}
+
+/* --- Transitions on the cuts ---------------------------------------------- */
+/* A transition is BOUNDARY-LOCAL — it straddles the edit point, taking half its
+   length from the tail of one picture and half from the head of the next, and
+   moves nothing. So the badge is CENTRED on the cut and overlaps both bars,
+   which is both what it looks like and what it actually does. It sits above the
+   bars so it stays clickable on a busy sequence.
+
+   ⚠ IT SITS IN THE BOTTOM BAND ONLY, leaving the top edge to the keyframe
+   diamonds (`.tl-key`). Full height was the obvious first choice and was wrong:
+   the badge swallowed any key sitting near the cut, so the keys became
+   impossible to count at exactly the moment you care about them — a push that
+   ends on the cut. Two bands, and neither may grow into the other. */
+.tl-transition {
+  position: absolute;
+  /* Below the four keyframe rows (see `.tl-wrap`), which reach 1.52rem on a
+     2.6rem track. This leaves the badge ~14px — still an easy grab. */
+  top: 66%;
+  bottom: 3px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  /* ⚠ VIOLET, NOT GOLD, and that is the point of the colour. Everything else on
+     this lane is gold — the clips, their borders, the selection — so a gold
+     badge read as "part of the picture bar" and got lost in it. A transition is
+     a different kind of thing (it belongs to the CUT, not to either shot), so
+     it gets a colour nothing else on the timeline uses. */
+  --tl-tr-ink: #8b6ce0;
+  border: 1px solid var(--tl-tr-ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tl-transition:hover {
+  --tl-tr-ink: #a98cf5;
+}
+.tl-transition.sel {
+  --tl-tr-ink: #c0a7ff;
+  box-shadow: 0 0 0 1px #c0a7ff;
+}
+.tl-transition.dragging {
+  --tl-tr-ink: #c0a7ff;
+  box-shadow: 0 0 0 2px #c0a7ff;
+}
+/* The kinds, told apart by the pattern rather than by a label: at a typical
+   0.6s the badge is a few pixels wide and no word would fit. Every kind gets
+   its own rule and the base carries no fill — `transitionWindow` folds an
+   unrecognised kind down to "dissolve" before it ever reaches the DOM, so the
+   class is always one of these four and there is no unstyled case to cover. */
+.tl-transition.tr-dissolve {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(139, 108, 224, 0.65) 0 4px,
+    rgba(139, 108, 224, 0.18) 4px 8px
+  );
+}
+.tl-transition.tr-dip {
+  background: linear-gradient(
+    90deg,
+    rgba(139, 108, 224, 0.6),
+    rgba(0, 0, 0, 0.8),
+    rgba(139, 108, 224, 0.6)
+  );
+}
+.tl-transition.tr-wipe {
+  background: linear-gradient(90deg, rgba(139, 108, 224, 0.12), rgba(139, 108, 224, 0.8));
+}
+.tl-transition.tr-slide {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(139, 108, 224, 0.7) 0 3px,
+    rgba(139, 108, 224, 0.15) 3px 7px
+  );
+}
+/* The exact cut, so it stays readable which edit point this belongs to when the
+   badge is wide enough to cover most of a short picture. */
+.tl-tr-mark {
+  width: 1px;
+  height: 100%;
+  background: #e7dcff;
+  opacity: 0.8;
+}
+.tl-tr-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+.tl-tr-handle:hover {
+  background: #c0a7ff;
+  border-radius: 3px;
+}
+/* An empty cut. Faint until the sequence is hovered — a button down every edit
+   point would drown the pictures they sit between.
+   ⚠ `pointer-events` goes with the opacity. A transparent element still takes
+   clicks, so without this there would be an invisible 14px button sitting on
+   every cut, quietly stealing presses aimed at the pictures either side. */
+.tl-tr-add {
+  width: 14px;
+  margin-left: -7px;
+  border-style: dashed;
+  background: var(--panel-2);
+  color: var(--muted);
+  /* Sized for the short bottom band, not for a full-height button. */
+  font-size: 0.52rem;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.tl-bars:hover .tl-tr-add {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+.tl-tr-add:hover {
+  opacity: 1;
+  color: #c0a7ff;
+  border-color: #c0a7ff;
 }
 
 /* An overlay clip: the same box as a shape clip, carrying a thumbnail of the
@@ -8857,4 +9004,177 @@ input[type="checkbox"] {
   .fv-shot-mini-head {
     grid-template-columns: 4rem minmax(0, 1fr) auto;
   }
+}
+
+/* --- Keyframes -------------------------------------------------------------
+   The ⏱ row that turns a property into an animation, and the diamonds that show
+   where its keys are. Both borrow the existing vocabulary rather than inventing
+   one: the buttons are `.an-tp-btn` sized down, and "on" is the same gold the
+   rest of the Properties pane uses for an active toggle. */
+.an-kf {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: 0.15rem;
+}
+.an-kf-btn {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.18rem 0.24rem;
+}
+.an-kf-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.an-kf-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+/* The stopwatch is the one control that is always there, so it carries the
+   state: dim means "this property is a number", gold means "it is an
+   animation". */
+.an-kf-watch.on,
+.an-kf-dot.on {
+  color: var(--primary);
+}
+.an-kf-watch.on {
+  background: var(--panel-2);
+}
+/* The colour legend on a ⏱ row: the same diamond, in the same colour, as the
+   row this property occupies on the timeline. Drawn as a diamond rather than a
+   dot on purpose — it has to be recognisable as "that shape down there". */
+.an-kf-swatch {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  transform: rotate(45deg);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 1px;
+  background: var(--kf-any);
+  margin-right: 0.15rem;
+}
+.an-kf-swatch.k-scale {
+  background: var(--kf-scale);
+}
+.an-kf-swatch.k-x {
+  background: var(--kf-x);
+}
+.an-kf-swatch.k-y {
+  background: var(--kf-y);
+}
+.an-kf-swatch.k-w {
+  background: var(--kf-w);
+}
+.an-kf-swatch.k-h {
+  background: var(--kf-h);
+}
+.an-kf-swatch.k-rotation {
+  background: var(--kf-rotation);
+}
+.an-kf-swatch.k-opacity {
+  background: var(--kf-opacity);
+}
+
+.an-kf-ease {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 0.14rem 0.2rem;
+  max-width: 6rem;
+}
+.an-kf-ease:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* A section heading inside the Properties pane — "Motion" above the frame's
+   pan/zoom controls. Separated by a rule so the transform reads as its own
+   group rather than more of the timing fields above it. */
+.an-prop-head {
+  border-top: 1px solid var(--border);
+  padding-top: 0.55rem;
+  margin-top: 0.15rem;
+}
+
+/* A keyframe diamond, centred on its time (hence the negative margin).
+   `top` is set inline, per ROW: one row per animated property.
+
+   ⚠ THE ROWS ARE THE POINT. Every key used to be drawn on one line at
+   mid-height, merged so that two properties keyed at the same instant showed a
+   single diamond — you could not tell one key from four, and a key near a cut
+   disappeared into the transition badge behind it. Now each property owns a row
+   and a COLOUR, the rows run down from the top edge, and `.tl-transition` has
+   the bottom band to itself. Three rules hold it together, and all three are
+   easy to break by accident:
+     1. rows and track are both in `rem`, so they scale together (see `.tl-wrap`)
+     2. nothing else may occupy the top band
+     3. the colour here must match the swatch on the matching ⏱ row in the
+        Properties pane (`.an-kf-swatch`) — that pairing is the whole legend. */
+.tl-key {
+  position: absolute;
+  width: var(--tl-key-size);
+  height: var(--tl-key-size);
+  margin-left: calc(var(--tl-key-size) / -2);
+  transform: rotate(45deg);
+  background: var(--kf-any);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 1px;
+  cursor: pointer;
+  z-index: 3;
+}
+.tl-key:hover {
+  box-shadow: 0 0 0 1px #fff;
+}
+/* Being dragged: ringed rather than resized. Growing the diamond was the old
+   cue, and it cannot work now — a bigger diamond spans √2 times its width
+   across the corners and would reach into the row above and below it. The ring
+   reads just as clearly and moves nothing. */
+.tl-key.dragging {
+  box-shadow: 0 0 0 2px #fff;
+  z-index: 5;
+}
+
+/* One colour per property, so a row can be identified without counting rows —
+   which matters most on a clip that animates three of them at once. Gold and
+   amber are deliberately absent: the clips themselves are gold, and a key the
+   colour of the bar it sits on is a key you cannot see. `--kf-any` is the
+   fallback for a property added later that hasn't been given a colour yet. */
+.tl-wrap,
+.an-props {
+  --kf-any: #b0bec5;
+  --kf-scale: #29b6f6;
+  --kf-x: #66bb6a;
+  --kf-y: #ec407a;
+  --kf-w: #ab47bc;
+  --kf-h: #26c6da;
+  --kf-rotation: #ff7043;
+  --kf-opacity: #ffffff;
+}
+.tl-key.k-scale {
+  background: var(--kf-scale);
+}
+.tl-key.k-x {
+  background: var(--kf-x);
+}
+.tl-key.k-y {
+  background: var(--kf-y);
+}
+.tl-key.k-w {
+  background: var(--kf-w);
+}
+.tl-key.k-h {
+  background: var(--kf-h);
+}
+.tl-key.k-rotation {
+  background: var(--kf-rotation);
+}
+.tl-key.k-opacity {
+  background: var(--kf-opacity);
 }

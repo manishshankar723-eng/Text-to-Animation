@@ -81,6 +81,11 @@ MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
 # Audio tracks per animatic (music + voiceover is the usual pair). Every extra
 # track is another ffmpeg input to decode and mix, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
+# Transitions per animatic. There is at most one per cut, so the frame cap is
+# the real ceiling; this only stops a malformed save carrying thousands.
+MAX_ANIMATIC_TRANSITIONS = int(
+    os.environ.get("API_MAX_ANIMATIC_TRANSITIONS", str(MAX_ANIMATIC_FRAMES))
+)
 
 # --- Final video (Animatics → Final Video) -----------------------------------
 # Veo renders one clip per shot, then the clips are concatenated. Every number

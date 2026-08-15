@@ -10,6 +10,25 @@
 // nothing. Only "Export video" touches the server for real work.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
+import { ANIMATABLE, defaultFor, sceneAt, valueAt } from "../animatic/scene.js";
+import {
+  disableProp,
+  enableProp,
+  isAnimatedProp,
+  moveKey,
+  moveKeysAt,
+  neighbourKey,
+  removeKey,
+  setKey,
+  setKeyEase,
+} from "../animatic/keyframes.js";
+import {
+  DEFAULT_TRANSITION_MS,
+  MAX_TRANSITION_MS,
+  MIN_TRANSITION_MS,
+  TRANSITIONS,
+} from "../animatic/transitions.js";
+import KeyframeControls from "./KeyframeControls.jsx";
 import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
@@ -196,6 +215,10 @@ export default function AnimaticEditor({
   const [layers, setLayers] = useState([]);
   // Pictures composited over the sequence — the content of image layers.
   const [overlays, setOverlays] = useState([]);
+  // What happens ON the cuts. Anchored to the frame each one FOLLOWS, and
+  // boundary-local, so adding one changes nothing about the timeline's length
+  // or about where any other clip sits — see `animatic/transitions.js`.
+  const [transitions, setTransitions] = useState([]);
   // Zero or more audio tracks, mixed on export. Music under a voiceover is the
   // pair this exists for.
   const [audioTracks, setAudioTracks] = useState([]);
@@ -231,6 +254,7 @@ export default function AnimaticEditor({
   const [selectedTextId, setSelectedTextId] = useState(null);
   const [selectedShapeId, setSelectedShapeId] = useState(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState(null);
+  const [selectedTransitionId, setSelectedTransitionId] = useState(null);
   // Which half of the Media pane is showing: the footage, or the shape picker.
   const [mediaTab, setMediaTab] = useState("media");
   // An audio track selected for editing — its controls live in Properties, like
@@ -299,68 +323,29 @@ export default function AnimaticEditor({
     });
   }, [frames]);
 
-  const currentIndex = useMemo(() => {
-    if (!frames.length) return -1;
-    for (let i = frames.length - 1; i >= 0; i--) {
-      if (timeMs >= starts[i]) return i;
-    }
-    return 0;
-  }, [frames, starts, timeMs]);
-  const currentFrame = currentIndex >= 0 ? frames[currentIndex] : null;
-
-  // What the viewer would see right now. Empty clips are skipped here AND in the
-  // exporter, so an unfinished caption never burns a blank bar into the video.
-  const activeTexts = useMemo(
-    () =>
-      texts.filter(
-        (c) =>
-          (c.text || "").trim() &&
-          timeMs >= c.start_ms &&
-          timeMs < c.start_ms + c.duration_ms
-      ),
-    [texts, timeMs]
-  );
-  // The shapes on screen at this moment. A fully transparent one is skipped
-  // here AND in the exporter, so the two always agree on what is visible.
-  const activeShapes = useMemo(
-    () =>
-      shapes.filter(
-        (s) =>
-          (s.opacity ?? 1) > 0 &&
-          timeMs >= s.start_ms &&
-          timeMs < s.start_ms + s.duration_ms
-      ),
-    [shapes, timeMs]
-  );
-  // The overlay pictures on screen now. Same rule, and the exporter uses it too.
-  const activeOverlays = useMemo(
-    () =>
-      overlays.filter(
-        (o) =>
-          (o.opacity ?? 1) > 0 &&
-          timeMs >= o.start_ms &&
-          timeMs < o.start_ms + o.duration_ms
-      ),
-    [overlays, timeMs]
-  );
   // Exactly one thing is selected at a time, and the Properties pane follows it:
-  // a text clip, else a shape, else a track, else a frame, else the video
-  // itself. Selecting one clears the others (see `selectOnly`), so the pane can
-  // never show the wrong one.
-  const selectedText = texts.find((c) => c.id === selectedTextId) || null;
-  const selectedShape = selectedText
+  // a transition, else a text clip, else a shape, else a track, else a frame,
+  // else the video itself. Selecting one clears the others (see `selectOnly`),
+  // so the pane can never show the wrong one.
+  const selectedTransition =
+    transitions.find((t) => t.id === selectedTransitionId) || null;
+  const selectedText = selectedTransition
     ? null
-    : shapes.find((s) => s.id === selectedShapeId) || null;
+    : texts.find((c) => c.id === selectedTextId) || null;
+  const selectedShape =
+    selectedTransition || selectedText
+      ? null
+      : shapes.find((s) => s.id === selectedShapeId) || null;
   const selectedOverlay =
-    selectedText || selectedShape
+    selectedTransition || selectedText || selectedShape
       ? null
       : overlays.find((o) => o.id === selectedOverlayId) || null;
   const selectedTrack =
-    selectedText || selectedShape || selectedOverlay
+    selectedTransition || selectedText || selectedShape || selectedOverlay
       ? null
       : audioTracks.find((a) => a.upload_id === selectedTrackId) || null;
   const selectedFrame =
-    selectedText || selectedShape || selectedOverlay || selectedTrack
+    selectedTransition || selectedText || selectedShape || selectedOverlay || selectedTrack
       ? null
       : frames.find((f) => f.id === selectedId) || null;
 
@@ -372,12 +357,14 @@ export default function AnimaticEditor({
     track = null,
     shape = null,
     overlay = null,
+    transition = null,
   }) {
     setSelectedId(frame);
     setSelectedTextId(text);
     setSelectedTrackId(track);
     setSelectedShapeId(shape);
     setSelectedOverlayId(overlay);
+    setSelectedTransitionId(transition);
   }
 
   const exporting = exportJob?.status === "running" || exportBusy;
@@ -401,6 +388,45 @@ export default function AnimaticEditor({
     overlays.reduce((max, o) => Math.max(max, o.start_ms + o.duration_ms), 0)
   );
 
+  // ------------------------------------------------------------------ scene
+  // WHAT THE VIEWER SEES RIGHT NOW, and the single place that decides it.
+  //
+  // This used to be four separate derivations — one loop for which picture is
+  // up, and three `useMemo`s filtering the text / shape / overlay lists by
+  // time. They agreed with the exporter only because nothing moved; the moment
+  // a property is keyframed, "which clips are visible" stops being the whole
+  // answer and "what have their values become" starts to matter. `sceneAt` is
+  // that answer, and `animatic_render.py` is the same function again in Python
+  // so the MP4 shows what this pane shows. `tests/render_parity.py` proves it.
+  //
+  // `spanMs` goes in as the end so the LAST PICTURE IS HELD while a longer
+  // audio track plays out — which is what the export has always done, and what
+  // this preview previously did not.
+  // The playhead can sit ON `spanMs`, which is one tick PAST the last picture —
+  // a clip is alive up to but not including its end. Asking for the scene there
+  // would correctly return no frame, and the monitor would go black at the end
+  // of every playthrough. Reading the last visible instant instead is what a
+  // person means by "parked at the end".
+  const scene = useMemo(
+    () =>
+      sceneAt(
+        { frames, texts, shapes, overlays, transitions },
+        Math.min(timeMs, Math.max(0, spanMs - 1)),
+        spanMs
+      ),
+    [frames, texts, shapes, overlays, transitions, timeMs, spanMs]
+  );
+
+  const currentIndex = scene.frame ? scene.frame.index : -1;
+  const currentFrame = currentIndex >= 0 ? frames[currentIndex] : null;
+  // The resolved picture — `currentFrame` with its pan/zoom/fade applied. The
+  // two are different things and both are wanted: edits are written to the
+  // stored frame, the preview draws the resolved one.
+  const shownFrame = scene.frame;
+  const activeTexts = scene.texts;
+  const activeShapes = scene.shapes;
+  const activeOverlays = scene.overlays;
+
   // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
   // such an animatic throws it away instead of leaving an empty "Untitled" on
   // the library forever.
@@ -410,6 +436,7 @@ export default function AnimaticEditor({
     !shapes.length &&
     !layers.length &&
     !overlays.length &&
+    !transitions.length &&
     !audioTracks.length &&
     !video &&
     (!title.trim() || title.trim() === UNTITLED);
@@ -431,6 +458,7 @@ export default function AnimaticEditor({
         setShapes(p.shapes || []);
         setLayers(p.layers || []);
         setOverlays(p.overlays || []);
+        setTransitions(p.transitions || []);
         setSettings(p.settings);
         setAudioTracks(p.audio_tracks || []);
         setVideo(p.video || null);
@@ -625,6 +653,7 @@ export default function AnimaticEditor({
         shapes: doc.shapes,
         layers: doc.layers,
         overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
+        transitions: doc.transitions,
         audioTracks: doc.audioTracks,
       });
       baselineRef.current = sent;
@@ -665,17 +694,22 @@ export default function AnimaticEditor({
         shapes,
         layers,
         overlays,
+        transitions,
         audioTracks,
       }),
-    [title, settings, frames, texts, shapes, layers, overlays, audioTracks]
+    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
   );
 
   // Keep the latest project in a ref so the unmount flush sees it.
   useEffect(() => {
     docRef.current = {
-      title, settings, frames, texts, shapes, layers, overlays, audioTracks, signature,
+      title, settings, frames, texts, shapes, layers, overlays, transitions,
+      audioTracks, signature,
     };
-  }, [title, settings, frames, texts, shapes, layers, overlays, audioTracks, signature]);
+  }, [
+    title, settings, frames, texts, shapes, layers, overlays, transitions,
+    audioTracks, signature,
+  ]);
 
   // Debounced autosave. Blocked during an export (the server refuses a save
   // while ffmpeg is reading these exact frames), and retried once it ends.
@@ -979,8 +1013,11 @@ export default function AnimaticEditor({
   // state re-renders — the stack itself lives in the ref.
   const [historyTick, setHistoryTick] = useState(0);
   const doc = useMemo(
-    () => ({ title, settings, frames, texts, shapes, layers, overlays, audioTracks }),
-    [title, settings, frames, texts, shapes, layers, overlays, audioTracks]
+    () => ({
+      title, settings, frames, texts, shapes, layers, overlays, transitions,
+      audioTracks,
+    }),
+    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
   );
 
   useEffect(() => {
@@ -1000,16 +1037,71 @@ export default function AnimaticEditor({
     }
     if (h.sig === signature) return; // identity changed, content didn't
     // Coalesce: a drag fires dozens of changes a second, and undoing one pixel
-    // at a time is useless. A burst inside half a second shares one entry.
-    if (Date.now() - h.lastPush > 500) {
+    // at a time is useless.
+    //
+    // TWO rules, because the timer alone was not enough. Inside a GESTURE — a
+    // pointer is down and being dragged — only the first change is recorded, so
+    // the whole drag is one undo no matter how long it lasts. That matters most
+    // for the thing this was added for: dragging a keyframe or an opacity
+    // slider slowly is easy to do for several seconds, and on the timer alone
+    // it left one undo entry per half second, so Ctrl+Z walked the value back
+    // in steps instead of putting it where it started.
+    //
+    // Outside a gesture the old half-second burst rule still applies: it covers
+    // held arrow keys and typing, which have no pointer to bracket them.
+    const inGesture = h.gesture;
+    if (inGesture ? h.gestureFirst : Date.now() - h.lastPush > 500) {
       h.past = [...h.past.slice(-49), h.present];
       h.lastPush = Date.now();
+      h.gestureFirst = false;
       setHistoryTick((t) => t + 1);
     }
     h.future = [];
     h.present = doc;
     h.sig = signature;
   }, [signature, doc]);
+
+  /**
+   * Bracket a drag so the whole thing is ONE undo.
+   *
+   * Called on pointer down and pointer up by everything that drags a value:
+   * timeline clips, frame edges, the shapes on the monitor, keyframe diamonds
+   * and the opacity sliders. A gesture that never changes anything records
+   * nothing, because the history effect only fires on a real content change.
+   */
+  const setGesture = useCallback((active) => {
+    const h = historyRef.current;
+    h.gesture = active;
+    if (active) {
+      h.gestureFirst = true;
+    } else {
+      // The next unrelated edit starts a fresh entry rather than being absorbed
+      // into the gesture that just ended.
+      h.lastPush = 0;
+    }
+  }, []);
+
+  /**
+   * Spread onto anything draggable: `<input type="range" {...gestureProps} />`.
+   *
+   * ⚠ The END of the gesture is caught on the WINDOW, not on the element. A
+   * pointer released outside the control it started on never delivers a
+   * pointerup to that control, and a gesture that is never closed swallows
+   * every later edit into one undo entry — a far worse bug than the one this
+   * exists to fix. The window always sees it.
+   */
+  const gestureProps = {
+    onPointerDown: () => {
+      setGesture(true);
+      const end = () => {
+        setGesture(false);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    },
+  };
 
   const applyDoc = useCallback((snapshot) => {
     historyRef.current.restoring = true;
@@ -1020,6 +1112,7 @@ export default function AnimaticEditor({
     setShapes(snapshot.shapes);
     setLayers(snapshot.layers);
     setOverlays(snapshot.overlays);
+    setTransitions(snapshot.transitions);
     setAudioTracks(snapshot.audioTracks);
   }, []);
 
@@ -1080,16 +1173,20 @@ export default function AnimaticEditor({
         );
         return;
       }
+      const tail = { ...source, id: newId(), duration_ms: source.duration_ms - offset };
       setFrames((list) => {
         const next = [...list];
-        next.splice(
-          i,
-          1,
-          { ...source, duration_ms: offset },
-          { ...source, id: newId(), duration_ms: source.duration_ms - offset }
-        );
+        next.splice(i, 1, { ...source, duration_ms: offset }, tail);
         return next;
       });
+      // ⚠ The head keeps the source's id, so a transition anchored to it would
+      // silently jump to the NEW cut in the middle of the split. The edit point
+      // it was put on still exists — it now follows the second half.
+      setTransitions((list) =>
+        list.map((t) =>
+          t.after_frame_id === source.id ? { ...t, after_frame_id: tail.id } : t
+        )
+      );
       setNotice("Cut — that picture is now two frames you can time separately.");
     },
     [frames, starts]
@@ -1099,7 +1196,9 @@ export default function AnimaticEditor({
   // what to show — so Delete always removes the thing the pane is describing,
   // which is the only reading of "the selection" a person can act on.
   const deleteSelection = useCallback(() => {
-    if (selectedText) {
+    if (selectedTransition) {
+      deleteTransition(selectedTransition.id);
+    } else if (selectedText) {
       deleteText(selectedText.id);
       setNotice("Text clip deleted.");
     } else if (selectedShape) {
@@ -1121,7 +1220,11 @@ export default function AnimaticEditor({
     } else {
       setNotice("Nothing is selected — click a frame, clip or shape first.");
     }
-  }, [selectedText, selectedShape, selectedOverlay, selectedTrack, selectedFrame, frames]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedTransition, selectedText, selectedShape, selectedOverlay,
+    selectedTrack, selectedFrame, frames,
+  ]);
 
   // ------------------------------------------------------------- shortcuts
   // Premiere's keys, for the things this editor actually has. Deliberately NO
@@ -1271,21 +1374,84 @@ export default function AnimaticEditor({
   }
 
   function duplicateFrame(id) {
+    const copyId = newId();
     setFrames((list) => {
       const i = list.findIndex((f) => f.id === id);
       if (i < 0) return list;
-      const copy = { ...list[i], id: newId() };
+      const copy = { ...list[i], id: copyId };
       // The picture is identical, so point the new frame at the same source —
       // its blob is fetched from the same URL and nothing is uploaded twice.
       const next = [...list];
       next.splice(i + 1, 0, copy);
       return next;
     });
+    // The copy lands between this frame and whatever followed it, so the cut a
+    // transition was put on is now the COPY's. Left where it was it would sit
+    // between two identical pictures and dissolve invisibly.
+    setTransitions((list) =>
+      list.map((t) => (t.after_frame_id === id ? { ...t, after_frame_id: copyId } : t))
+    );
   }
 
+  /**
+   * Transitions that still have a cut to live on.
+   *
+   * A transition is anchored to the frame it FOLLOWS, so it survives exactly as
+   * long as that frame does AND something comes after it. Deleting the frame
+   * takes the cut away; deleting everything past it does too. Both are pruned
+   * here rather than left as inert records — the renderer would ignore them
+   * either way, but a Properties pane describing a transition you can't see is
+   * worse than not having it.
+   */
+  const pruneTransitions = (list, frameList) => {
+    const ids = new Set(frameList.map((f) => f.id));
+    const lastId = frameList[frameList.length - 1]?.id;
+    return list.filter((t) => ids.has(t.after_frame_id) && t.after_frame_id !== lastId);
+  };
+
   function deleteFrame(id) {
-    setFrames((list) => list.filter((f) => f.id !== id));
+    // ⚠ The next list is computed HERE rather than inside the updater: writing
+    // to a second piece of state from inside a `setFrames(current => …)` is a
+    // setState-during-render, which React runs twice in StrictMode. Same rule
+    // the timeline's drags follow.
+    const next = frames.filter((f) => f.id !== id);
+    setFrames(next);
+    setTransitions((list) => pruneTransitions(list, next));
     setSelectedId((s) => (s === id ? null : s));
+  }
+
+  // ------------------------------------------------------ transitions
+  // What happens on a cut. Boundary-local: the blend straddles the edit point,
+  // so adding one leaves the timeline exactly as long and every other clip
+  // exactly where it was. See `client/src/animatic/transitions.js`.
+  const patchTransition = (id, patch) =>
+    setTransitions((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+
+  function addTransition(afterFrameId) {
+    // One per cut. Pressing ＋ on a cut that already has one selects it rather
+    // than stacking a second, which would make the render depend on list order.
+    const existing = transitions.find((t) => t.after_frame_id === afterFrameId);
+    if (existing) {
+      selectOnly({ transition: existing.id });
+      return;
+    }
+    const transition = {
+      id: newId(),
+      after_frame_id: afterFrameId,
+      kind: "dissolve",
+      duration_ms: DEFAULT_TRANSITION_MS,
+    };
+    setTransitions((list) => [...list, transition]);
+    selectOnly({ transition: transition.id });
+    setNotice(
+      "Dissolve added on that cut — it blends across the edit without making the video any longer."
+    );
+  }
+
+  function deleteTransition(id) {
+    setTransitions((list) => list.filter((t) => t.id !== id));
+    setSelectedTransitionId((s) => (s === id ? null : s));
+    setNotice("Transition removed — that edit is a straight cut again.");
   }
 
   // ----------------------------------------------------------- text layer
@@ -1472,6 +1638,184 @@ export default function AnimaticEditor({
   const patchShape = (id, patch) =>
     setShapes((list) => list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
 
+  // ------------------------------------------------------------- keyframes
+  // WHAT IS BEING INSPECTED, in one description. The Properties pane already
+  // shows exactly one thing at a time (see `selectOnly`), so the keyframe
+  // plumbing is written once here rather than four times in four panes — and
+  // adding a fifth kind of clip later means adding one line to this list.
+  //
+  // `startMs` is the piece that cannot be guessed: key times are relative to
+  // the clip's own start, and for a FRAME that start is its position in the
+  // sequence, not a field on it.
+  const inspected = useMemo(() => {
+    if (selectedText)
+      return { clip: selectedText, kind: "text", patch: patchText, startMs: selectedText.start_ms };
+    if (selectedOverlay)
+      return {
+        clip: selectedOverlay,
+        kind: "overlay",
+        patch: patchOverlay,
+        startMs: selectedOverlay.start_ms,
+      };
+    if (selectedShape)
+      return { clip: selectedShape, kind: "shape", patch: patchShape, startMs: selectedShape.start_ms };
+    if (selectedFrame) {
+      const i = frames.findIndex((f) => f.id === selectedFrame.id);
+      return { clip: selectedFrame, kind: "frame", patch: patchFrame, startMs: starts[i] ?? 0 };
+    }
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedText, selectedOverlay, selectedShape, selectedFrame, frames, starts]);
+
+  // The playhead, in the inspected clip's own time.
+  const kfTime = inspected ? timeMs - inspected.startMs : 0;
+
+  /**
+   * Write values to a clip, turning them into KEYS where the property is animated.
+   *
+   * THE ONE RULE THAT MAKES THIS AN ANIMATION TOOL: while a property is
+   * animated, setting a value writes a key at the playhead instead of changing
+   * the value everywhere. Without it the stopwatch would be a light that does
+   * nothing — you could turn animation on and then have no way to say what the
+   * value should become. Un-animated properties are written straight through,
+   * exactly as before, so nothing changes for a clip nobody has keyframed.
+   *
+   * ⚠ Takes the STORED clip and an explicit time, rather than reading the
+   * selection. Both matter: `sceneAt` hands the preview RESOLVED clips (whose
+   * `x` is where the shape is right now, not what is saved on it), and a drag
+   * that has only just called `selectOnly` is running one render ahead of
+   * `inspected`. Passing both in is what keeps the two callers honest.
+   */
+  function writeAnimatable(kind, stored, startMs, write, values, atMs) {
+    // An explicit `keyframes` in the patch means the caller is managing the
+    // animation itself — "Reset motion" clears the curves AND the values in one
+    // press, and turning those values into keys on the curves being deleted
+    // would be the exact opposite of what it says.
+    if ("keyframes" in values) return write(stored.id, values);
+    const animatable = ANIMATABLE[kind] || [];
+    const tRel = (atMs ?? timeMs) - startMs;
+    const plain = {};
+    // Keys accumulate against a clip that already carries the previous ones: a
+    // single write can touch two animated properties (dragging a shape moves x
+    // and y together) and each `setKey` must see the other's work.
+    let working = stored;
+    let touchedKeys = false;
+    for (const [prop, value] of Object.entries(values)) {
+      if (animatable.includes(prop) && isAnimatedProp(stored, prop)) {
+        working = { ...working, ...setKey(working, prop, tRel, value) };
+        touchedKeys = true;
+      } else {
+        plain[prop] = value;
+      }
+    }
+    write(stored.id, touchedKeys ? { ...plain, keyframes: working.keyframes } : plain);
+  }
+
+  /** The change handler the Properties pane gets — `writeAnimatable` bound to the selection. */
+  function patchInspected(id, patch) {
+    if (!inspected || inspected.clip.id !== id) return;
+    writeAnimatable(inspected.kind, inspected.clip, inspected.startMs, inspected.patch, patch);
+  }
+
+  // The four things the ⏱ row can ask for.
+  const kfHandlers = {
+    onToggle: (prop) => {
+      const { clip, kind, patch } = inspected;
+      const fallback = defaultFor(kind, prop);
+      patch(
+        clip.id,
+        isAnimatedProp(clip, prop)
+          ? disableProp(clip, prop, kfTime, fallback)
+          : enableProp(clip, prop, kfTime, fallback)
+      );
+    },
+    onKey: (prop, add) => {
+      const { clip, kind, patch } = inspected;
+      const fallback = defaultFor(kind, prop);
+      patch(
+        clip.id,
+        add
+          ? // A key added by the diamond takes the value that is ALREADY on
+            // screen at this instant — adding one must never change the picture.
+            setKey(clip, prop, kfTime, valueAt(clip, prop, kfTime, clip[prop] ?? fallback))
+          : removeKey(clip, prop, kfTime)
+      );
+    },
+    onSeekKey: (prop, dir) => {
+      const key = neighbourKey(inspected.clip, prop, kfTime, dir);
+      if (key) seek(inspected.startMs + key.t);
+    },
+    onEase: (prop, ease) =>
+      inspected.patch(inspected.clip.id, setKeyEase(inspected.clip, prop, kfTime, ease)),
+  };
+
+  /**
+   * Re-time one keyframe, dragged on the timeline.
+   *
+   * Deliberately NOT routed through `inspected`: you can drag a key on a clip
+   * that isn't selected, and the timeline is the one that knows which lane was
+   * grabbed. Both operations return null when there is no key at `fromT` — a
+   * stale drag against a clip that has since changed — and that is left as a
+   * no-op rather than written as an empty patch.
+   *
+   * `prop` is the row the diamond was on, so a plain drag re-times THAT
+   * property and nothing else — which is what the row means, and what you can
+   * see. `all` (shift-drag) moves every property keyed at that instant instead,
+   * so a Ken Burns push can still be slid along without pulling `scale` and
+   * `x` apart.
+   */
+  const moveKeyframe = useCallback(
+    (kind, id, fromT, toT, prop, all) => {
+      const [list, write] =
+        kind === "frames"
+          ? [frames, patchFrame]
+          : kind === "text"
+            ? [texts, patchText]
+            : kind === "shape"
+              ? [shapes, patchShape]
+              : [overlays, patchOverlay];
+      const clip = list.find((c) => c.id === id);
+      if (!clip) return;
+      const next =
+        all || !prop
+          ? moveKeysAt(clip, fromT, toT)
+          : moveKey(clip, prop, fromT, toT);
+      if (next) write(id, next);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [frames, texts, shapes, overlays]
+  );
+
+  // Handed to every Properties pane as one prop, so a pane renders a ⏱ with
+  // `<KeyframeControls {...kf} prop="opacity" />` and knows nothing else.
+  // ⚠ `clip` here is the STORED clip — the one that owns the keyframes, which is
+  // what every operation in `keyframes.js` needs.
+  const kf = inspected ? { clip: inspected.clip, tRel: kfTime, ...kfHandlers } : null;
+
+  /**
+   * The inspected clip with its animated properties resolved AT THE PLAYHEAD —
+   * what the panes display.
+   *
+   * The stored clip is the wrong thing to show: keyframe a zoom from 100% to
+   * 200% and the stored `scale` stays 1, so parked half way along, the field
+   * would read "100%" while the picture plainly shows 150%. An inspector that
+   * disagrees with the monitor is worse than no inspector. Editing still writes
+   * through the stored clip — `writeAnimatable` takes that one explicitly — so
+   * this is a display concern only.
+   *
+   * `sceneAt`'s resolved clips can't be reused for this: they only exist while
+   * the playhead is inside the clip, and you can perfectly well select a frame
+   * and then scrub somewhere else.
+   */
+  const inspectedShown = useMemo(() => {
+    if (!inspected) return null;
+    const out = { ...inspected.clip };
+    for (const prop of ANIMATABLE[inspected.kind] || []) {
+      out[prop] = valueAt(inspected.clip, prop, kfTime, defaultFor(inspected.kind, prop));
+    }
+    return out;
+  }, [inspected, kfTime]);
+
   function deleteShape(id) {
     setShapes((list) => list.filter((s) => s.id !== id));
     setSelectedShapeId((s) => (s === id ? null : s));
@@ -1499,10 +1843,23 @@ export default function AnimaticEditor({
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const patch = kind === "overlay" ? patchOverlay : patchShape;
+    const write = kind === "overlay" ? patchOverlay : patchShape;
     selectOnly(kind === "overlay" ? { overlay: shape.id } : { shape: shape.id });
     const box = screenRef.current?.getBoundingClientRect();
     if (!box || !box.width || !box.height) return;
+
+    // ⚠ `shape` here is the RESOLVED clip from `sceneAt` — its x/y/w/h are where
+    // the shape is on screen at this instant, which is exactly what a drag must
+    // start from. The STORED clip is a different object, and it is the one that
+    // owns the keyframes, so both are needed: drag from what you see, write to
+    // what is saved.
+    const stored =
+      (kind === "overlay" ? overlays : shapes).find((s) => s.id === shape.id) || shape;
+    // The playhead is captured ONCE. A drag lands its keys where it began, not
+    // wherever the clock has crept to by the time the pointer comes up.
+    const at = timeMs;
+    const patch = (id, values) =>
+      writeAnimatable(kind === "overlay" ? "overlay" : "shape", stored, stored.start_ms, write, values, at);
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -1531,7 +1888,9 @@ export default function AnimaticEditor({
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      setGesture(false);
     };
+    setGesture(true);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
@@ -1878,6 +2237,55 @@ export default function AnimaticEditor({
   // `~` maximizes the pane the pointer is over, exactly as Premiere does — so
   // every pane reports its own name on hover and the workspace is told which
   // one is filling it.
+  // --- The transition, as CSS ---------------------------------------------
+  // Each branch below is the counterpart of a branch in `_transition_canvas`
+  // (animatic.py): the same fractions travelling the same way, so the monitor
+  // shows the blend that actually gets encoded. A preview that dissolves where
+  // the export wipes is worse than no preview at all.
+  //
+  // ⚠ KNOWN LIMIT. These composite against what is BEHIND them, while the
+  // exporter fits each picture onto the bar colour and blends the two results.
+  // The two agree exactly unless a picture is ALSO being faded by its own
+  // keyframes mid-transition, where the preview is slightly off. Matching that
+  // properly needs the canvas compositor Phase 4 brings; it is not worth a
+  // second full-frame layer in the DOM before then.
+  const shownFrameB = scene.frame_b;
+  const mix = scene.mix || 0;
+  const transitionKind = scene.transition;
+  const frameBUrl = shownFrameB ? urls[frames[shownFrameB.index]?.id] : null;
+
+  function pictureStyle(picture, role) {
+    if (!picture) return undefined;
+    // The picture's OWN pan / zoom / fade. `transform-origin: center` plus a
+    // translate expressed in % of the PICTURE puts the same point of the image
+    // under the same point of the frame as `place_picture` does server side.
+    const own =
+      `translate(${(picture.x - 0.5) * 100}%, ${(picture.y - 0.5) * 100}%)` +
+      ` scale(${picture.scale})`;
+    let opacity = picture.opacity;
+    // A transform on the WHOLE frame, applied before (i.e. outside) the pan and
+    // zoom, so the scale can't change what it means.
+    let lead = "";
+    let clipPath;
+    if (transitionKind && shownFrameB) {
+      if (transitionKind === "dip") {
+        // Out through the bar colour and back up: only ever ONE picture is up.
+        opacity *= role === "b" ? Math.max(0, 2 * mix - 1) : Math.max(0, 1 - 2 * mix);
+      } else if (transitionKind === "wipe") {
+        // A hard edge travelling left → right, revealing the incoming picture.
+        if (role === "b") clipPath = `inset(0 ${(1 - mix) * 100}% 0 0)`;
+      } else if (transitionKind === "slide") {
+        // A push — both move. In % of this element, which fills the screen box,
+        // so it is the same fraction of the canvas the exporter offsets by.
+        lead = `translateX(${(role === "b" ? 1 - mix : -mix) * 100}%) `;
+      } else if (role === "b") {
+        // dissolve: the arriving picture simply comes up over the outgoing one.
+        opacity *= mix;
+      }
+    }
+    return { transformOrigin: "center", transform: lead + own, opacity, clipPath };
+  }
+
   const paneProps = (name) => ({
     onMouseEnter: () => {
       hoverPaneRef.current = name;
@@ -2224,11 +2632,31 @@ export default function AnimaticEditor({
               }}
             >
               {currentFrame && urls[currentFrame.id] ? (
-                <img
-                  src={urls[currentFrame.id]}
-                  alt={currentFrame.label || `Frame ${currentIndex + 1}`}
-                  className={settings.fit === "cover" ? "cover" : ""}
-                />
+                <>
+                  {/* The picture's own pan / zoom / fade, resolved by
+                      `sceneAt`, plus its half of any transition — see
+                      `pictureStyle`. x/y are the picture's centre here and in
+                      `place_picture`, which is the only reading under which a
+                      zoom doesn't also shift it. */}
+                  <img
+                    src={urls[currentFrame.id]}
+                    alt={currentFrame.label || `Frame ${currentIndex + 1}`}
+                    className={settings.fit === "cover" ? "cover" : ""}
+                    style={pictureStyle(shownFrame, "a")}
+                  />
+                  {/* The picture ARRIVING, on a cut that has a transition. It
+                      sits directly over the outgoing one and is the same size,
+                      because both fill the screen box — which is what lets the
+                      four kinds be expressed as opacity, a clip and a shift. */}
+                  {shownFrameB && frameBUrl && (
+                    <img
+                      className={`an-screen-b ${settings.fit === "cover" ? "cover" : ""}`}
+                      src={frameBUrl}
+                      alt=""
+                      style={pictureStyle(shownFrameB, "b")}
+                    />
+                  )}
+                </>
               ) : (
                 <div className="an-screen-empty">
                   {frames.length ? "Loading…" : "Add images to start your animatic"}
@@ -2342,7 +2770,7 @@ export default function AnimaticEditor({
                               `al-${c.align || "center"}`,
                               selectedTextId === c.id ? "sel" : "",
                             ].join(" ")}
-                            style={{ color: c.color || "#ffffff" }}
+                            style={{ color: c.color || "#ffffff", opacity: c.opacity ?? 1 }}
                           >
                             {c.text}
                           </span>
@@ -2408,21 +2836,24 @@ export default function AnimaticEditor({
           <div className="an-pane-head">
             <span className="an-pane-title">Properties</span>
             <span className="tiny muted">
-              {selectedText
-                ? "Text"
-                : selectedShape
-                  ? "Shape"
-                  : selectedOverlay
-                    ? "Picture"
-                    : selectedTrack
-                      ? "Audio"
-                      : selectedFrame
-                        ? "Frame"
-                        : "Video"}
+              {selectedTransition
+                ? "Transition"
+                : selectedText
+                  ? "Text"
+                  : selectedShape
+                    ? "Shape"
+                    : selectedOverlay
+                      ? "Picture"
+                      : selectedTrack
+                        ? "Audio"
+                        : selectedFrame
+                          ? "Frame"
+                          : "Video"}
             </span>
             {/* Without this there is no way back: selecting anything hides the
                 whole-video settings, and nothing deselects. */}
-            {(selectedText ||
+            {(selectedTransition ||
+              selectedText ||
               selectedShape ||
               selectedOverlay ||
               selectedFrame ||
@@ -2438,31 +2869,45 @@ export default function AnimaticEditor({
             )}
           </div>
           <div className="an-pane-body">
-            {selectedText ? (
+            {selectedTransition ? (
+              <TransitionProperties
+                transition={selectedTransition}
+                frames={frames}
+                onChange={patchTransition}
+                onDelete={deleteTransition}
+                onClose={() => selectOnly({})}
+              />
+            ) : selectedText ? (
               <TextProperties
-                clip={selectedText}
+                clip={inspectedShown}
                 totalMs={totalMs}
                 textAreaRef={textAreaRef}
-                onChange={patchText}
+                kf={kf}
+                gesture={gestureProps}
+                onChange={patchInspected}
                 onDuplicate={duplicateText}
                 onDelete={deleteText}
                 onClose={() => setSelectedTextId(null)}
               />
             ) : selectedOverlay ? (
               <ShapeProperties
-                shape={selectedOverlay}
+                shape={inspectedShown}
                 totalMs={totalMs}
                 picture={overlayUrls[selectedOverlay.upload_id]}
-                onChange={patchOverlay}
+                kf={kf}
+                gesture={gestureProps}
+                onChange={patchInspected}
                 onDuplicate={duplicateOverlay}
                 onDelete={deleteOverlay}
                 onClose={() => setSelectedOverlayId(null)}
               />
             ) : selectedShape ? (
               <ShapeProperties
-                shape={selectedShape}
+                shape={inspectedShown}
                 totalMs={totalMs}
-                onChange={patchShape}
+                kf={kf}
+                gesture={gestureProps}
+                onChange={patchInspected}
                 onDuplicate={duplicateShape}
                 onDelete={deleteShape}
                 onClose={() => setSelectedShapeId(null)}
@@ -2471,15 +2916,18 @@ export default function AnimaticEditor({
               <AudioProperties
                 track={selectedTrack}
                 index={audioTracks.findIndex((a) => a.upload_id === selectedTrack.upload_id)}
+                gesture={gestureProps}
                 onChange={patchTrack}
                 onRemove={removeTrack}
               />
             ) : selectedFrame ? (
               <FrameProperties
-                frame={selectedFrame}
+                frame={inspectedShown}
                 index={frames.findIndex((f) => f.id === selectedFrame.id)}
                 url={urls[selectedFrame.id]}
-                onChange={patchFrame}
+                kf={kf}
+                gesture={gestureProps}
+                onChange={patchInspected}
                 onDuplicate={duplicateFrame}
                 onDelete={deleteFrame}
               />
@@ -2631,6 +3079,11 @@ export default function AnimaticEditor({
             selectedOverlayId={selectedOverlayId}
             overlays={overlays}
             overlayUrls={overlayUrls}
+            transitions={transitions}
+            selectedTransitionId={selectedTransitionId}
+            onSelectTransition={(id) => selectOnly({ transition: id })}
+            onAddTransition={addTransition}
+            onTransitionChange={patchTransition}
             lanes={lanes}
             audioUrls={audioUrls}
             onToggleMute={(id) =>
@@ -2650,6 +3103,7 @@ export default function AnimaticEditor({
             onTextChange={patchText}
             onShapeChange={patchShape}
             onOverlayChange={patchOverlay}
+            onKeyMove={moveKeyframe}
             onAddToLane={addToLane}
             onRemoveLayer={removeLayer}
             onAddLayer={() => setLayerMenu(true)}
@@ -3016,7 +3470,105 @@ export default function AnimaticEditor({
 // Properties pane — one component per selection state. Split out so the editor
 // itself stays readable; they are presentational and hold no state of their own.
 // ---------------------------------------------------------------------------
-function TextProperties({ clip, totalMs, textAreaRef, onChange, onDuplicate, onDelete, onClose }) {
+// A transition's settings: which one, and how long. Deliberately short — there
+// is nothing else to say about a cut treatment, and the alternative (direction
+// pickers, easing, a preview strip) is a lot of surface for four effects.
+function TransitionProperties({ transition, frames, onChange, onDelete, onClose }) {
+  const i = frames.findIndex((f) => f.id === transition.after_frame_id);
+  const from = frames[i];
+  const to = frames[i + 1];
+  // What the renderer will actually use. A transition is capped at the SHORTER
+  // of the two holds it joins, so it can never eat more than half of either —
+  // and saying so here is better than silently ignoring the number typed in.
+  const shorter = Math.min(from?.duration_ms ?? Infinity, to?.duration_ms ?? Infinity);
+  const effective = Math.max(
+    MIN_TRANSITION_MS,
+    Math.min(transition.duration_ms, MAX_TRANSITION_MS, shorter)
+  );
+  const clamped = effective !== transition.duration_ms;
+
+  return (
+    <div className="an-props">
+      <div className="an-prop-row">
+        <span className="an-prop-label">On the cut</span>
+        <span className="tiny">
+          {from ? from.label || `Frame ${i + 1}` : "—"} →{" "}
+          {to ? to.label || `Frame ${i + 2}` : "—"}
+        </span>
+      </div>
+
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">Transition</span>
+        <span className="an-set-chips">
+          {TRANSITIONS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`opt-chip ${transition.kind === t.id ? "active" : ""}`}
+              onClick={() => onChange(transition.id, { kind: t.id })}
+            >
+              {t.label}
+              <span className="opt-chip-note">{t.note}</span>
+            </button>
+          ))}
+        </span>
+      </div>
+
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>Lasts</span>
+          <input
+            type="number"
+            step="0.1"
+            min={MIN_TRANSITION_MS / 1000}
+            max={MAX_TRANSITION_MS / 1000}
+            value={(transition.duration_ms / 1000).toFixed(1)}
+            onChange={(e) =>
+              onChange(transition.id, {
+                duration_ms: clamp(
+                  Math.round(parseFloat(e.target.value || 0) * 1000),
+                  MIN_TRANSITION_MS,
+                  MAX_TRANSITION_MS
+                ),
+              })
+            }
+          />
+          <span className="an-tp-unit">s</span>
+        </label>
+      </div>
+
+      {clamped && (
+        <p className="an-prop-warn">
+          ⚠ Trimmed to {(effective / 1000).toFixed(1)}s — a transition can't be
+          longer than the shorter of the two shots it joins.
+        </p>
+      )}
+
+      {/* The one thing about this design worth stating outright, because every
+          other editor works the other way and people expect their cut to move. */}
+      <p className="tiny muted an-prop-hint">
+        The blend straddles the cut, taking half from the end of the first shot
+        and half from the start of the second — so the video stays exactly as
+        long, and nothing else on the timeline moves.
+      </p>
+
+      <div className="an-prop-actions">
+        <button
+          type="button"
+          className="btn small danger-btn"
+          onClick={() => onDelete(transition.id)}
+        >
+          <Icon name="close" /> Remove
+        </button>
+        <button type="button" className="btn small ghost" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TextProperties({ clip, totalMs, textAreaRef, kf, gesture, onChange, onDuplicate, onDelete, onClose }) {
   const overruns = clip.start_ms + clip.duration_ms > totalMs;
   return (
     <div className="an-props">
@@ -3067,6 +3619,25 @@ function TextProperties({ clip, totalMs, textAreaRef, onChange, onDuplicate, onD
           ⚠ This runs past the end of the video, so part of it is never seen.
         </p>
       )}
+
+      {/* Fades the whole caption — backdrop, ink and outline together. With the
+          ⏱ on, this is how a caption ARRIVES rather than appearing, which is
+          the one text animation worth having before a preset list exists. */}
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">
+          Opacity <span className="tiny muted">{Math.round((clip.opacity ?? 1) * 100)}%</span>
+          {kf && <KeyframeControls {...kf} prop="opacity" />}
+        </span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={clip.opacity ?? 1}
+          {...gesture}
+          onChange={(e) => onChange(clip.id, { opacity: parseFloat(e.target.value) })}
+        />
+      </div>
 
       <div className="an-prop-row">
         <span className="an-prop-label">Position</span>
@@ -3163,6 +3734,8 @@ function ShapeProperties({
   shape,
   totalMs,
   picture,
+  kf,
+  gesture,
   onChange,
   onDuplicate,
   onDelete,
@@ -3250,6 +3823,7 @@ function ShapeProperties({
             onChange={(e) => setPct("x", e.target.value, -0.5, 1.5)}
           />
           <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="x" />}
         </label>
         <label className="an-tp-field">
           <span>Y</span>
@@ -3260,6 +3834,7 @@ function ShapeProperties({
             onChange={(e) => setPct("y", e.target.value, -0.5, 1.5)}
           />
           <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="y" />}
         </label>
       </div>
 
@@ -3274,6 +3849,7 @@ function ShapeProperties({
             onChange={(e) => setPct("w", e.target.value, 0.02, 4)}
           />
           <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="w" />}
         </label>
         <label className="an-tp-field">
           <span>Height</span>
@@ -3285,12 +3861,14 @@ function ShapeProperties({
             onChange={(e) => setPct("h", e.target.value, 0.02, 4)}
           />
           <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="h" />}
         </label>
       </div>
 
       <div className="an-prop-row an-prop-stack">
         <span className="an-prop-label">
           Opacity <span className="tiny muted">{Math.round((shape.opacity ?? 1) * 100)}%</span>
+          {kf && <KeyframeControls {...kf} prop="opacity" />}
         </span>
         <input
           type="range"
@@ -3298,6 +3876,7 @@ function ShapeProperties({
           max="1"
           step="0.05"
           value={shape.opacity ?? 1}
+          {...gesture}
           onChange={(e) => onChange(shape.id, { opacity: parseFloat(e.target.value) })}
         />
       </div>
@@ -3316,6 +3895,7 @@ function ShapeProperties({
           }
         />
         <span className="an-tp-unit">°</span>
+        {kf && <KeyframeControls {...kf} prop="rotation" />}
         {!isPicture && (
           <input
             type="color"
@@ -3342,7 +3922,7 @@ function ShapeProperties({
   );
 }
 
-function AudioProperties({ track, index, onChange, onRemove }) {
+function AudioProperties({ track, index, gesture, onChange, onRemove }) {
   const volume = track.volume ?? 1;
   const rest = Math.max(0, (track.duration_ms || 0) - (track.offset_ms || 0));
   const playLen = track.trim_ms ? Math.min(track.trim_ms, rest || track.trim_ms) : rest;
@@ -3374,6 +3954,7 @@ function AudioProperties({ track, index, onChange, onRemove }) {
             step="0.05"
             value={volume}
             disabled={track.muted}
+            {...gesture}
             onChange={(e) =>
               onChange(track.upload_id, { volume: Number(e.target.value) })
             }
@@ -3451,7 +4032,12 @@ function AudioProperties({ track, index, onChange, onRemove }) {
   );
 }
 
-function FrameProperties({ frame, index, url, onChange, onDuplicate, onDelete }) {
+function FrameProperties({ frame, index, url, kf, gesture, onChange, onDuplicate, onDelete }) {
+  // A frame's own pan / zoom / fade. New with keyframes, and the reason they
+  // matter most here: keyframe `Zoom` and `X` and a held storyboard panel stops
+  // being a slide and becomes a shot. All four default to an identity
+  // transform, so a frame nobody touches is placed exactly as it always was.
+  const pct = (v) => Math.round((v ?? 0) * 100);
   return (
     <div className="an-props">
       <div className="an-prop-thumb">
@@ -3494,6 +4080,97 @@ function FrameProperties({ frame, index, url, onChange, onDuplicate, onDelete })
           title="Shown on the timeline, and burned in when 'shot labels' is on"
         />
       </div>
+
+      <div className="an-prop-row an-prop-head">
+        <span className="an-prop-label">Motion</span>
+        <span className="tiny muted">Press ⏱, move the playhead, change the value</span>
+      </div>
+
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>Zoom</span>
+          <input
+            type="number"
+            step="5"
+            min="10"
+            max="1000"
+            value={pct(frame.scale ?? 1)}
+            onChange={(e) =>
+              onChange(frame.id, {
+                scale: clamp((parseFloat(e.target.value) || 100) / 100, 0.1, 10),
+              })
+            }
+          />
+          <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="scale" />}
+        </label>
+      </div>
+
+      <div className="an-prop-row">
+        <label className="an-tp-field">
+          <span>X</span>
+          <input
+            type="number"
+            step="1"
+            value={pct(frame.x ?? 0.5)}
+            onChange={(e) =>
+              onChange(frame.id, { x: clamp((parseFloat(e.target.value) || 0) / 100, -2, 3) })
+            }
+          />
+          <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="x" />}
+        </label>
+        <label className="an-tp-field">
+          <span>Y</span>
+          <input
+            type="number"
+            step="1"
+            value={pct(frame.y ?? 0.5)}
+            onChange={(e) =>
+              onChange(frame.id, { y: clamp((parseFloat(e.target.value) || 0) / 100, -2, 3) })
+            }
+          />
+          <span className="an-tp-unit">%</span>
+          {kf && <KeyframeControls {...kf} prop="y" />}
+        </label>
+      </div>
+
+      <div className="an-prop-row an-prop-stack">
+        <span className="an-prop-label">
+          Opacity <span className="tiny muted">{pct(frame.opacity ?? 1)}%</span>
+          {kf && <KeyframeControls {...kf} prop="opacity" />}
+        </span>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={frame.opacity ?? 1}
+          {...gesture}
+          onChange={(e) => onChange(frame.id, { opacity: parseFloat(e.target.value) })}
+        />
+      </div>
+
+      {/* One press, rather than making someone type 100 / 50 / 50 / 100 back in
+          — which is the only way to undo a motion once the stopwatch is off. */}
+      {((frame.scale ?? 1) !== 1 ||
+        (frame.x ?? 0.5) !== 0.5 ||
+        (frame.y ?? 0.5) !== 0.5 ||
+        (frame.opacity ?? 1) !== 1 ||
+        Object.keys(frame.keyframes || {}).length > 0) && (
+        <div className="an-prop-row">
+          <button
+            type="button"
+            className="btn small ghost"
+            onClick={() =>
+              onChange(frame.id, { scale: 1, x: 0.5, y: 0.5, opacity: 1, keyframes: {} })
+            }
+            title="Back to the whole picture, centred, with no animation"
+          >
+            Reset motion
+          </button>
+        </div>
+      )}
 
       <div className="an-prop-actions">
         <button type="button" className="btn small ghost" onClick={() => onDuplicate(frame.id)}>

@@ -23,9 +23,27 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-11 — public landing page rewritten to cover all six
-workflows (see the top Work Log entry; the workflow list there is the third copy
-of `Sidebar.jsx`'s `WORKFLOWS` and must be kept in step with it).
+**Last updated:** 2026-08-16 — **the animatic editor has KEYFRAMES and
+TRANSITIONS** (⏱ per property, draggable diamonds, easing, per-gesture undo;
+dissolve / dip / wipe / slide on any cut), and the scene model underneath them
+is written twice on purpose. `client/src/animatic/scene.js` +
+`client/src/animatic/transitions.js` and `animatic_render.py` are the same
+evaluator in two languages; the preview and the exporter both go through it, and
+`tests/render_parity.py` fails the moment they disagree. Read the top Work Log
+entry before touching any of those files, or before adding any property that
+varies over time.
+
+**The one thing to know about transitions before you change them:** they are
+**boundary-local** — the blend straddles the cut and the timeline does NOT get
+shorter. Everything else about the design follows from that, and the reasoning
+is at the top of `transitions.js`.
+
+This is Phases 0–2 of the CapCut/VN-style editor plan — see **Video editor
+roadmap** near the bottom.
+
+Before that: 2026-08-11 — public landing page rewritten to cover all six
+workflows (the workflow list there is the third copy of `Sidebar.jsx`'s
+`WORKFLOWS` and must be kept in step with it).
 
 Before that: 2026-08-09 — three passes, all from user reports on the same
 board. Read the top three Work Log entries, and the CONTINUITY one below them,
@@ -90,6 +108,7 @@ Pipeline stages (see `pipeline.py`):
 | `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
 | `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
 | `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. Owns the ffmpeg integration: `ffmpeg_exe()` and `run_ffmpeg()` are public so `video_assemble.py` reuses them. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
+| `animatic_render.py` | **The scene model: what the frame looks like at time t.** Which clips are on screen, what every animated property has interpolated to, and — mid-cut — which SECOND picture is blending in and how far. **⚠ TWIN of `client/src/animatic/scene.js` (and, for the `transition_*` half, of `client/src/animatic/transitions.js`)** — the same evaluator in two languages, so the preview and the export agree; `tests/render_parity.py` fails the moment they don't. Also owns `place_picture()`, a frame's own pan/zoom, which has to happen while the picture is fitted rather than after. Knows nothing about ffmpeg. |
 | `video_client.py` | **Animatics → Final Video.** Veo image→video. The ONLY module that knows Veo exists. **Switchable backend (`VIDEO_PROVIDER`): Vertex AI or Gemini API** — same shape as `gemini_client.py`. **BILLED PER SECOND OF OUTPUT.** `estimate_cost_usd()` lives here. There is no Google Flow API — read the module docstring. |
 | `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
 | `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
@@ -114,6 +133,9 @@ Pipeline stages (see `pipeline.py`):
 | File | Responsibility |
 |------|----------------|
 | `client/src/api.js` | Fetch client, JWT in localStorage, auth'd blob download, cache-busted zip, friendly network errors. |
+| `client/src/animatic/keyframes.js` | **Editing keyframes** — the operations behind the ⏱ button (add / remove / move a key, set a curve, start and stop animating a property). `moveKeysAt()` is the one a timeline diamond drags: a diamond is an INSTANT, so every property keyed there moves together. Pure, returns PATCHES rather than mutating, so a keyframe edit is an ordinary document edit and Ctrl+Z works on it. No Python twin: the server renders animations, it never edits them. |
+| `client/src/components/KeyframeControls.jsx` | The `⏱ ‹ ◆ › curve` row that sits at the end of an animatable property in the Properties pane. Renders and reports intent only — every operation on the data is in `animatic/keyframes.js`. |
+| `client/src/animatic/scene.js` | **The scene model, client side** — `sceneAt(project, t)`, keyframe interpolation, easing, `isAnimated`, `sceneSignature`. Pure: no React, no DOM, no urls. **⚠ TWIN of `animatic_render.py`.** Read its docstring before adding any property that varies over time. |
 | `client/src/App.jsx` | Landing → Login → sidebar shell. Nav state, upgrade + account (logout) popups. |
 | `client/src/components/Landing.jsx` | Public marketing landing page (full-bleed). |
 | `client/src/components/Login.jsx` | Login / register + "Continue with Google" (UI only, not wired) + back-to-home. |
@@ -429,6 +451,400 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 ---
 
 ## ✅ Work Log (newest first)
+
+### 2026-08-16 (latest) — TRANSITIONS, and they cost the timeline nothing (Phase 2)
+
+- **Asked for:** Phase 2 of the editor roadmap. Delivered as **transitions
+  alone** — dissolve, dip to black, wipe, slide.
+
+- **SPEED WAS DROPPED FROM THE PHASE, deliberately.** Constant speed, reverse
+  and freeze-frame are meaningless for a held still: a still at 2× is just a
+  shorter hold, and the duration field already does that. They only become real
+  once a clip has a source range, so they moved to Phase 3. Phase 2 is
+  transitions, and is about a third of the work for it.
+
+- **⚠ THE DESIGN DECISION, and everything else follows from it:
+  BOUNDARY-LOCAL, not overlapping.** A dissolve needs two pictures at once, and
+  there were two ways to pay:
+  - *Overlapping (CapCut's)* — the transition eats `duration/2` from each side
+    and the timeline gets SHORTER. That breaks `frameSpans`, every cut position,
+    ripple and rolling trims, and every caption timed against a cut.
+  - *Boundary-local (chosen)* — the blend happens over the TAIL of the outgoing
+    picture and the HEAD of the incoming one, d/2 either side of the cut.
+    **Nothing moves. Total length is unchanged.**
+  So the roadmap's old warning ("transitions *shorten* the timeline, so
+  re-verify ripple and rolling") **does not apply** — there was nothing
+  downstream to re-verify, which is the whole point of choosing this. A held
+  still has no spare frames to give up anyway; the pictures either side simply
+  spend their last and first moments mixing. Asserted, not assumed:
+  `transition_check.py` encodes the same project with and without a transition
+  and fails if the MP4 lengths differ.
+
+- **NEW: `client/src/animatic/transitions.js`, and its twin in
+  `animatic_render.py`** (`transition_window` / `transition_at`). Third pair in
+  the scene model, same rule as the other two: **change one, change the other,
+  run `tests/render_parity.py`.** The parity fixture gained three transitions —
+  a real one, one clamped from 5s down to a 900ms shot, and one naming a frame
+  that doesn't exist — plus eleven new sample times across the blend.
+
+- **⚠ DURING A TRANSITION, `scene.frame` IS THE OUTGOING PICTURE — for the whole
+  window, including the half PAST the cut where `frameSpans` would say the
+  incoming one is up.** This looks wrong and is the crux. It is what makes `mix`
+  run 0 → 1 without doubling back, and `frame_b` mean "the picture arriving" —
+  the only reading under which a **wipe or a slide has a direction**. With the
+  pair flipping at the cut, a renderer would have to work out which of the two
+  was incoming before it could draw an edge travelling the right way. Outside a
+  window nothing changed: the half-open rule still puts a cut on one picture.
+
+- **⚠ THE CLAMP IS LOAD-BEARING.** A transition is capped at the SHORTER of
+  the two holds it joins, so each half-window is at most half of the shorter
+  picture. Two transitions either side of one short frame can therefore **meet
+  but never overlap**, which is what lets `transition_at` return a single
+  answer instead of a list. Asserted by sweeping 10ms steps across a 400ms
+  picture with a 10s transition on each side.
+
+- **`mix` is in `scene_signature`.** Without it every video frame of a dissolve
+  shares one render key, the exporter renders ONE still and reuses it for the
+  whole blend, and the transition SNAPS — exactly the reuse bug the cache key
+  already guards against for keyframes. Added only when there IS a second
+  picture, so a project with no transitions signs byte-for-byte as before.
+
+- **A transition costs the stills it uses, not the timeline.** `is_animated`
+  returns True for any non-empty `transitions`, so the whole export moves to
+  per-frame sampling — but samples outside the window resolve to an unchanging
+  picture and collapse in the cache. A 600ms dissolve on a 2s project: 48
+  samples → **17 stills** (15 blended + one per held picture). Put one on a cut
+  of a two-minute animatic and it costs half a second of stills, not two
+  minutes'. Asserted.
+
+- **Four kinds, each defined so it is invisible at mix 0 and 1** — that is what
+  lets one straddle a cut with nothing appearing to jump. `dip` is NOT a
+  two-picture blend: the shot goes out through the bar colour and the next comes
+  up from it, so only one picture is ever on screen, which is what makes it read
+  as a beat rather than a cross-fade. `render_frame` grew a second picture;
+  `_picture_layer` was split out of it so both sides get identical fit,
+  background and rounding — two pictures placed by two slightly different
+  calculations would shimmer along the edges of a dissolve.
+
+- **UI, in the existing grammar.** A badge on the cut in the frames lane
+  (`.tl-transition`, centred on the edit point because that is literally where
+  it happens), drag its edge to change the length — ×2, since it grows from the
+  centre — and a faint ＋ on every cut that hasn't got one. Sixth Properties
+  state, built from `.an-prop-row` / `.an-tp-field` / `.opt-chip` like the other
+  five. **⚠ `pointer-events` goes with the ＋'s opacity**: a transparent element
+  still takes clicks, so without it there would be an invisible 14px button on
+  every cut stealing presses aimed at the pictures either side.
+
+- **⚠⚠ ONE DIAMOND ROW PER PROPERTY — THIS REVERSES PHASE 1's "ONE DIAMOND PER
+  INSTANT" (user-reported, twice).** The two entries below still describe
+  merging `scale` and `x` into a single diamond because "two diamonds a pixel
+  apart would be unclickable". **That was the wrong trade and it is gone.**
+  Merging hid the one thing you actually need off the timeline: *how many keys
+  are here, and on what*. Two keys at one instant looked exactly like one, and a
+  key near a cut vanished into the transition badge behind it. Now:
+  - **A row per ANIMATED property**, in `ANIMATABLE` order — which is the order
+    the Properties pane lists the same controls in, so the top row is the top
+    control (Zoom, X, Y, Opacity on a frame). Only animated properties get a
+    row, so an ordinary clip still draws nothing.
+  - **A colour per property** (`--kf-*`), repeated as a diamond swatch on the
+    matching ⏱ row (`.an-kf-swatch`). **That pairing IS the legend** — there is
+    no other. Change a colour on one side only and it breaks silently, because
+    neither side errors. Gold and amber are deliberately unused: the clips are
+    gold, and a key the colour of its bar is invisible.
+  - **A plain drag re-times ONE property** (the row you grabbed — `moveKey`);
+    **shift-drag moves every property keyed at that instant** (`moveKeysAt`),
+    which is how a Ken Burns push is still slid along without pulling `scale`
+    and `x` apart. That capability is why `moveKeysAt` survives; `keyTimes` did
+    not, because nothing asks for merged instants any more.
+- **⚠ A CLIP BAR HAS THREE BANDS, AND THEY MUST NOT BE MERGED.** Keyframe rows
+  own the **top** (`--tl-key-top/-row/-size`), the bar's own label sits in the
+  **middle**, a transition badge owns the **bottom** (`.tl-transition`,
+  `top: 66%`). Keys and badge were both at mid-height first, and the badge's
+  hatching swallowed any key near the cut. Three things to preserve:
+  - **The rows are in `rem`, like the track they sit in — never px.** Mix the
+    two and the rows keep their size while the track shrinks with the browser's
+    font size, until the bottom row lands in the transition band.
+  - **A 45° square spans √2 times its width** across the corners, so a 0.3rem
+    key needs 0.42rem of vertical room. This is why dragging now draws a RING
+    (`box-shadow`) instead of enlarging the diamond: a bigger diamond would
+    reach into the rows above and below it, and `.tl-bar` is `overflow: hidden`,
+    so growing upward slices the tip off the key you are holding.
+  - Two budgets bind, and the tighter is a SHAPE's six properties inside a clip
+    inset 3px top and bottom — a fixed px inset against rem rows, so it is
+    worst at SMALL root sizes. Checked arithmetically across a 12–24px root:
+    the top row never clips, the four-row frame case clears the badge by ≥3.3px,
+    and the six-row shape case fits by ≥0.5px.
+
+- **The three ways a transition outlives its cut, all handled.** Deleting a
+  frame prunes the transitions on it (and any left dangling off the new last
+  frame). **Splitting a frame re-anchors it to the SECOND half** — the head
+  keeps the source's id, so without that the transition would silently jump to
+  the new cut in the middle of the split. Duplicating moves it to the copy, so
+  it stays on the boundary with the next *different* picture. One naming a
+  missing frame, or the last frame, is **inert rather than invalid**: skipped,
+  kept, and working again if the sequence changes back.
+
+- **Verified.** `tests/transition_check.py` (NEW) — 35 checks. The model half
+  runs without ffmpeg; the encoded half builds real MP4s and measures decoded
+  frames. Wipe and slide are asserted as **each other's opposite** half way
+  through (wipe has changed the LEFT of the frame, slide the RIGHT), because a
+  renderer drawing one where the other was asked for would pass any test that
+  only checked "something moved". Parity (36 sample times), keyframe ops, motion
+  and seven other offline suites pass; old-shaped payloads with no `transitions`
+  key parse unchanged at every layer; class audit clean (9 new classes, all
+  styled); `npm run build` clean.
+  **NOT VIEWED IN A BROWSER** — same standing gap as Phase 1. The four CSS
+  branches in `pictureStyle` are matched to `_transition_canvas` by reasoning
+  about the geometry, not by looking at them. See Phase 1a, which now has a
+  second thing to check.
+  (`tests/profile_check.py` fails on this machine, before and after these
+  changes alike — a leftover account in the local user store, unrelated.)
+
+- **Known limit, written down rather than chased:** the monitor composites the
+  two pictures against what is behind them, while the exporter fits each onto
+  the bar colour and blends the results. They agree exactly unless a picture is
+  ALSO being faded by its own keyframes mid-transition. Matching that properly
+  needs the canvas compositor Phase 4 brings.
+
+### 2026-08-16 — the two things Phase 1 left open
+
+- **Asked for:** close the open issues recorded in the entry below — keyframes
+  could be clicked but not dragged, and undo still coalesced on a bare timer.
+
+- **DRAGGING A DIAMOND MOVES THE INSTANT, NOT A PROPERTY.**
+  **⚠ SUPERSEDED — see the top entry.** The timeline now draws a row per
+  property, so a plain drag moves that ONE property and shift-drag moves the
+  instant. `moveKeysAt` still exists and is still what shift-drag calls; the
+  rest of this bullet describes why it is one operation, which still holds.
+  This is the whole
+  design point and it needed a new operation rather than a loop at the call
+  site. The timeline draws one diamond per key TIME (a Ken Burns push keys
+  `scale` and `x` together, and two diamonds a pixel apart would be
+  unclickable), so what is being grabbed is the instant — `moveKeysAt()` moves
+  every property keyed there, and leaves properties that aren't keyed there
+  alone. Moving only one of them would silently pull the push apart, and the
+  picture would start zooming and panning at different moments for no visible
+  reason. Asserted both ways in `keyframe_ops_check.py`.
+
+- **Click vs drag is decided on pointerUP, not up front.** A press that doesn't
+  move seeks to the key; one that does re-times it. That is what lets one
+  diamond do both with no modifier, and it is why there is a 3px slop — a mouse
+  always moves a pixel or two on the way to a click. `renderKeys` is ONE
+  implementation shared by the frames lane and the clip lanes, same rule as
+  `startClipDrag`: they are the same gesture and two copies would drift.
+  Keys snap to cuts, the playhead and the marks, because snapping is done in
+  timeline time and converted back — key times themselves stay relative to
+  their clip.
+
+- **Undo now groups per GESTURE, not per half second.** The old rule recorded
+  one entry per 500ms burst, which is right for held keys and typing and wrong
+  for a drag: pulling an opacity slider slowly for three seconds left six undo
+  entries, so Ctrl+Z walked the value back in steps instead of putting it where
+  it started. `setGesture(true/false)` brackets a drag and only its FIRST change
+  is recorded. The timer rule still applies outside a gesture, where there is no
+  pointer to bracket things.
+  **⚠ The end of a gesture is caught on the WINDOW, not on the element.** A
+  pointer released outside the control it started on never delivers a pointerup
+  to that control, and a gesture that never closes swallows every later edit
+  into one undo entry — far worse than the bug being fixed. `gestureProps`
+  registers a one-shot `pointerup`/`pointercancel` on the window.
+  Bracketed: the four opacity/volume sliders and the monitor's shape drag —
+  i.e. everything that writes CONTINUOUSLY. Timeline drags already wrote once on
+  pointerup (`dragRef.current.latest`), so they were always one entry and needed
+  nothing.
+
+- **Verified.** `keyframe_ops_check.py` is now 40 checks (8 new, all on
+  `moveKeysAt`); parity, motion and the six existing offline suites pass; class
+  audit clean; `npm run build` clean. **Still not browser-verified** — see
+  Phase 1a, which is now the only thing outstanding on the editor.
+
+### 2026-08-16 (later) — KEYFRAMES, end to end (Phase 1)
+
+- **Asked for:** the keyframe UI, on top of the scene model built earlier the
+  same day. The engine was already there and tested; this is the interface, plus
+  the two gaps that only appear once you try to drive it.
+
+- **Premiere's grammar, because it is the one every editor already knows.** Per
+  animatable property: `⏱` to animate it, then `‹ ◆ ›` to step between keys and
+  add or remove one here, then a curve picker. `KeyframeControls.jsx` renders
+  it; `client/src/animatic/keyframes.js` holds every operation on the data.
+  That split is deliberate — `scene.js` READS keyframes and is mirrored in
+  Python, `keyframes.js` WRITES them and has no twin, because the server renders
+  animations and never edits them.
+
+- **THE RULE THAT MAKES IT AN ANIMATION TOOL: while a property is animated,
+  setting a value writes a KEY at the playhead** instead of changing the value
+  everywhere. Without it the stopwatch is a light that does nothing — you turn
+  animation on and then have no way to say what the value should become. It
+  lives in `writeAnimatable()` in `AnimaticEditor.jsx`, which every write goes
+  through. Un-animated properties are written straight through exactly as
+  before, so nothing changes for a clip nobody has keyframed.
+
+- **⚠ Two traps in `writeAnimatable`, both found by using it:**
+  1. **The preview's drag handles hand you the RESOLVED clip.** `sceneAt` gives
+     the monitor clips whose `x` is where the shape is *right now*; the STORED
+     clip is a different object and is the one that owns the keyframes. A drag
+     must start from what you see and write to what is saved, so
+     `startShapeDrag` now looks up both. Passing the resolved one to a `setKey`
+     would bake the current on-screen position in as a new base value.
+  2. **A drag captures the playhead ONCE.** Keys land where the drag began, not
+     wherever the clock crept to by the time the pointer came up.
+  Also: an explicit `keyframes` in a patch means the caller is managing the
+  animation itself (that is how "Reset motion" works), so it bypasses the
+  key-writing entirely — otherwise Reset would turn the values it is clearing
+  into keys on the curves it is deleting.
+
+- **⚠ THE PANE SHOWS THE RESOLVED VALUE, NOT THE STORED ONE.** Keyframe a zoom
+  100% → 200%, park half way, and the stored `scale` is still 1 — so the field
+  read "100%" while the picture plainly showed 150%. An inspector that disagrees
+  with the monitor is worse than no inspector. `inspectedShown` resolves the
+  selection at the playhead for display; editing still writes through the stored
+  clip. `sceneAt`'s resolved clips can't be reused for this — they only exist
+  while the playhead is *inside* the clip, and you can select a frame and then
+  scrub elsewhere.
+
+- **A frame gained Motion controls** (Zoom / X / Y / Opacity + "Reset motion"),
+  which is where keyframes earn their keep: a Ken Burns push turns a held
+  storyboard panel into a shot. Shapes and overlays can animate position, size,
+  opacity and rotation.
+
+- **TEXT GAINED `opacity`, because Phase 0 had promised it and not delivered.**
+  `ANIMATABLE.text` listed `opacity`, but `AnimaticTextClip` had no such field
+  and `draw_texts` couldn't render one — so the ⏱ on a caption would have
+  animated nothing. Now: schema field, preview, and `draw_texts` scaling the
+  alpha of the backdrop, the ink and the outline together. **It fades the PARTS,
+  not the finished block** — a half-faded caption is a half-faded scrim with
+  half-faded text over it. The two differ only where the text overlaps its own
+  backdrop, and at the speed a caption fades, not visibly; doing it properly
+  means an RGBA layer per clip, which is a lot of allocation for a difference
+  nobody can see.
+
+- **Timeline: ONE DIAMOND PER KEY INSTANT, not per property.**
+  **⚠ SUPERSEDED — see the top entry.** Merging turned out to hide how many keys
+  there are and on what, which is the main thing the timeline is read for; there
+  is now a row and a colour per property, and `keyTimes()` has been removed.
+  Everything below about seeking, hit-stealing and keys living ON the clip still
+  holds. A Ken Burns push
+  keyframes `scale` and `x` together, and two diamonds a pixel apart would be
+  unclickable — `keyTimes()` merges them. Clicking one seeks to it, and stops
+  the clip's move-drag so keys stay hittable. Keys are drawn ON the clip, which
+  is also where they live: their times are relative to it, so dragging the clip
+  carries them along for free.
+
+- **Verified.** `tests/keyframe_ops_check.py` (NEW) — 32 checks through node,
+  covering the ones a person notices instantly when they are wrong: the
+  stopwatch ON must not change the picture, OFF must keep what is on screen
+  rather than snapping back, adding a key must not move anything, re-typing a
+  value must not silently reset a chosen curve, a key within tolerance is edited
+  rather than duplicated, and dropping a key onto another leaves exactly one.
+  `tests/animatic_motion_check.py` gained a real caption fade — decoded frames
+  show the bottom strip darkening as the scrim comes up. Parity, motion and six
+  existing suites all pass; class audit clean (7 new classes, all styled);
+  `npm run build` clean.
+  **STILL NOT VIEWED IN A BROWSER.** Everything above is reasoned and tested
+  offline. The ⏱ row's layout inside `.an-prop-row`, whether the diamonds are
+  big enough to hit, and whether the CSS transform on the monitor actually
+  matches the exported push are all unexercised. That is the next thing to do,
+  and `tests/e2e_animatic.py` is where it belongs.
+
+### 2026-08-16 — ONE definition of "what the frame looks like at time t" (Phase 0)
+
+- **Asked for:** an animatic editor in the class of CapCut / VN — keyframes,
+  transitions, speed, filters, the lot. Researched both, audited what we have,
+  and reported that **features were not the bottleneck**: the exporter and the
+  preview had two separate, incompatible ideas of the picture, and both worked
+  only because nothing in an animatic moved. This entry is the foundation pass.
+  No new button; everything after it gets far cheaper.
+
+- **THE PROBLEM, precisely.** `plan_segments` cuts the timeline wherever a clip
+  appears or disappears and renders **one Pillow still per stretch**. That is a
+  *step function*: it is cheap exactly because the picture between two cuts is
+  constant. Meanwhile the preview picked visible clips out of three separate
+  `useMemo`s. Every feature on the list — a keyframed zoom, a crossfade, a speed
+  ramp — is *continuous*, and breaks both halves at once.
+
+- **NEW: the scene model, and it is written TWICE.**
+  `client/src/animatic/scene.js` (`sceneAt`) and `animatic_render.py`
+  (`scene_at`) answer the same question — which clips are on screen at `t` and
+  what has every animated property interpolated to — and return the same shape.
+  The Program monitor renders one; the exporter renders the other.
+  **⚠ Change one, change the other.**
+
+- **`tests/render_parity.py` is what makes that safe, and it is not optional.**
+  It evaluates a deliberately nasty fixture (keys out of order, a lone key, keys
+  outside the clip, every easing curve, a shape fading up from 0, times landing
+  exactly on cuts) through BOTH and fails on any difference. **It compares
+  NUMBERS, not pixels** — canvas and Pillow will never produce identical bytes,
+  so a pixel diff would fail forever and get switched off, whereas the resolved
+  scene can be identical and is what actually drifts. It caught a real
+  disagreement on its first run: JS prints `1` where Python prints `1.0`, so the
+  two render-cache signatures differed for identical frames. Both sides now
+  format numbers explicitly to 6 places.
+
+- **Two planners; the project chooses.** `is_animated()` decides. Nothing
+  keyframed → `plan_segments`, byte-for-byte the old cheap path, which is every
+  animatic that exists today. Something keyframed → `plan_animated_segments`
+  samples the scene once per video frame. That is less ruinous than it sounds:
+  consecutive samples resolving to the same picture share a `signature` and
+  render once, so a 3s push inside a 2min animatic costs 3s of stills, not
+  2min's. `is_animated` deliberately **errs toward True** — being wrong the
+  other way would silently drop every animation from the MP4 while the preview
+  showed it, which is the one failure that would make the editor untrustworthy.
+  Guarded by `MAX_RENDERED_STILLS` (20,000) with a message naming the number.
+
+- **⚠ BUG FOUND AND FIXED ON THE WAY: the per-entry duration floor was `0.1s`.**
+  At 24fps an animated segment is 1/24s, so every one would have been stretched
+  to 100ms and a 2s animatic would have encoded as **4.8s**. The floor is now
+  one video frame (`1/fps`), which is the shortest thing that can be displayed.
+  It was already quietly wrong before this: `plan_segments` can emit a 40–99ms
+  segment, and those were being padded to 100ms and lengthening the video.
+
+- **A frame now has its own transform** — `scale` / `x` / `y` / `opacity`,
+  defaulting to identity, keyframable. That is Ken Burns: the move that makes a
+  held storyboard panel read as a shot rather than a slide. `place_picture()`
+  does the fit, the zoom and the pan in **one** calculation — doing them in
+  sequence rounds twice and drifts the picture a pixel per step. `x`/`y` are the
+  picture's CENTRE, like every other geometry here, which is the only reading
+  under which a zoom doesn't also shift the image.
+  **A zoom is about the canvas centre**, so a subject in a corner is carried off
+  the edge as the picture grows. That is correct, and it fooled this session's
+  own test — see the fixture comment in `tests/animatic_motion_check.py`.
+
+- **⚠ THE PREVIEW WAS NOT REWRITTEN AS A CANVAS, on purpose.** The plan said
+  canvas; reading the code changed the call. Shapes and overlays in the Program
+  monitor carry live drag-to-move and corner-resize handles, and a canvas means
+  reimplementing hit-testing and handles for zero user-visible gain. The DOM
+  preview now *consumes* `sceneAt` instead, which achieves the actual Phase 0
+  goal — one definition of the frame — with none of the risk. Canvas moves to
+  the colour/LUT/mask phase, where shaders are genuinely required.
+- The preview gained a real fix from this: **the last picture is now HELD while
+  a longer audio track plays out**, which the export has always done and the
+  preview never did. It also no longer goes black when parked exactly on the
+  end (a clip is alive up to but *not including* its end, so the monitor reads
+  the last visible instant instead).
+
+- **Schemas: additive, and old projects are untouched.** `AnimaticKeyframe`
+  (`t`, `v`, `ease`), plus `keyframes: dict[str, list[…]]` on frames, texts,
+  shapes and overlays, defaulting to `{}`. `t` is **relative to the clip's own
+  start** — absolute times have to be rewritten on every drag and are wrong the
+  moment one is interrupted. Outside the first and last key the value **holds**;
+  extrapolating would fling a clip off screen the moment it is trimmed longer.
+  `ease` is deliberately **not** constrained to the known set: both evaluators
+  fall back to linear for a curve they don't recognise, so a project written by
+  a newer client still opens rather than 422-ing the whole animatic over one
+  word. Verified: an `AnimaticFrame` saved before any of this parses unchanged.
+
+- **Verified.** `tests/render_parity.py` — 15 checks, both evaluators agree at
+  all 28 sampled times. `tests/animatic_motion_check.py` (NEW) — encodes real
+  MP4s and **decodes frames back out**: a keyframed push measurably grows the
+  subject and changes continuously rather than in one jump, a fade ends darker
+  than it started, and a project with no keyframes still renders one still per
+  picture at exactly the old length. Six existing offline suites still pass
+  (`grounding`, `panel_normalise`, `panel_border`, both `key_pose`s,
+  `plan_export_columns`); `server.main` imports; `npm run build` clean.
+  **NOT viewed in a browser** — the Program monitor's CSS transform is matched
+  to `place_picture` by reasoning about the geometry, not by looking at it, and
+  no keyframe UI exists yet to drive it. That is the first thing to check next.
 
 ### 2026-08-11 — Landing page now pitches ALL SIX workflows, not just turnarounds
 
@@ -5233,7 +5649,83 @@ models. Do not add "Flow integration" to the roadmap; it isn't a thing that
 exists. (Driving the Flow UI with a session cookie would breach Google's terms
 and break on any redesign.)
 
+**VIDEO EDITOR ROADMAP (researched 2026-08-16, with the user).** The goal is an
+animatic editor in the class of CapCut / VN. The audit's conclusion, which
+should survive contact with any future session: **do not try to out-CapCut
+CapCut on filters and stickers.** They have hundreds of engineers on that table.
+What no one else can do is the thing we are already 70% of the way to — the
+timeline knows what a *shot* is (scene/shot number, camera, location, dialogue,
+the script line), the key poses make an animatic that genuinely moves, and the
+panel can be regenerated from inside the editor. **Position it as the editor
+where the storyboard, the animatic and the final film are one timeline.**
+
+- **Phase 0 — the scene model. ✅ DONE 2026-08-16** (top Work Log entry).
+- **Phase 1 — keyframe UI. ✅ DONE 2026-08-16** (see the two Work Log entries).
+  ⏱ per property, draggable diamonds on the timeline, easing per key; frames
+  gained Motion (zoom/pan/fade), captions gained opacity; undo groups per
+  gesture. Nothing is left open in the data layer.
+- **Phase 1a — SEE IT IN A BROWSER. ⬅ NEXT, and it is small.** Nothing built on
+  2026-08-16 has been looked at. Fold into `tests/e2e_animatic.py`: the ⏱ row
+  laying out inside `.an-prop-row`, the diamonds being hittable, and — the one
+  that actually matters — **a keyframed push looking the same in the monitor as
+  in the exported MP4**. The CSS transform is matched to `place_picture` by
+  reasoning, not by looking.
+  **Phase 2 added a second thing to look at:** the transition badge sitting on
+  the cut and draggable, and the four kinds looking in the monitor like they
+  look in the MP4 — `pictureStyle` is matched to `_transition_canvas` by
+  argument too. A wipe previewing as a dissolve is exactly the class of bug this
+  step exists to catch.
+- **Phase 2 — TRANSITIONS. ✅ DONE 2026-08-16** (see the top Work Log entry).
+  `AnimaticTransition {id, after_frame_id, kind, duration_ms}` — dissolve, dip
+  to black, wipe, slide — written twice like the rest of the scene model.
+  **They are BOUNDARY-LOCAL, not overlapping: the blend straddles the cut and
+  the timeline does not get shorter.** That was the design decision of the
+  phase; read `client/src/animatic/transitions.js` before changing any of it.
+  Ripple and rolling trims therefore needed no re-verifying — nothing moved.
+  **SPEED WAS DROPPED FROM THIS PHASE ON PURPOSE.** Constant speed, reverse and
+  freeze-frame are meaningless for a held still: a still at 2× is just a shorter
+  hold, which the duration field already does. They only become real once video
+  clips exist, so they moved to Phase 3.
+- **Phase 3 — VIDEO CLIPS on the animatic timeline. ⭐ the big product unlock.**
+  Generalize `AnimaticFrame` → a clip with `kind: image | video | color` and an
+  `in_ms`/`out_ms` source range. Pillow cannot decode video, so the server
+  extracts frames with `ffmpeg -vf fps=N` (remember: **there is no ffprobe** on
+  an `imageio-ffmpeg` install — see `video_assemble.py`). Then **fold Veo
+  rendering into the editor**: select a frame → "animate this shot" → the clip
+  lands on the same timeline. This collapses `FinalVideoWorkspace` and the
+  animatic editor into one coherent product.
+  **Speed / reverse / freeze-frame belong here**, moved down from Phase 2 —
+  they need a clip with a source range before they mean anything.
+- **Phase 4 — look: colour, LUT (.cube), masks, chroma key, blend modes.** This
+  is where the DOM preview finally has to become a **canvas/WebGL** compositor —
+  CSS cannot match Pillow on any of these. Budget the drag-handle hit-testing
+  that the DOM gives for free (see the Phase 0 entry for why it was kept).
+- **Phase 5 — text engine + captions.** Fonts, stroke/shadow/gradient, in/out
+  animation presets, saved templates; then auto-captions from the voiceover and
+  dialogue → TTS, both auto-timed from data we already hold.
+- **Phase 6 — audio depth:** fade handles, ducking, beat markers, EQ.
+- **Phase 7 — the moat:** regenerate-panel inside Properties, auto-cut to beat,
+  auto-reframe 16:9 → 9:16, "make this shot 2s longer" re-planning key poses.
+- **Phase 8 — performance:** proxies, thumbnail/waveform cache, export presets.
+
+**Two files are past their sane size and the next phase should split them
+FIRST, not after:** `AnimaticEditor.jsx` (~4.2k lines — extract
+`useAnimaticProject`, `useTimelineTransport`, `useUndoStack` and the six
+`*Properties` panes) and `styles.css` (~9.1k lines). Phase 2 added to both
+rather than splitting them, which was the wrong trade to make twice; Phase 3
+generalises `AnimaticFrame` into a clip and will touch every one of those
+sections, so it is the natural moment.
+
 **Not yet verified live** (needs real keys / steady backend):
+- **EVERYTHING built on 2026-08-16 — the scene model, the keyframe UI AND the
+  transitions.** Not one pixel of it has been seen in a browser. The Program
+  monitor's CSS transform is matched to `place_picture` by reasoning about the
+  geometry (`translate` in % of an element that fills the screen box == a
+  fraction of the canvas; `scale` about the same centre; `.an-screen` already
+  has `overflow: hidden` to clip a zoom), and the four transition branches in
+  `pictureStyle` are matched to `_transition_canvas` the same way — by argument,
+  not by looking. The offline tests are thorough about the numbers, and about
+  what lands in the MP4, and say nothing about the layout. See **Phase 1a**.
 - **The 2026-08-09 continuity pass** — the bible, scene anchors, flow context and
   the locked-camera key poses are all PROMPT changes, tested only against a
   stubbed image model. Whether they actually hold the characters still can only

@@ -16,6 +16,18 @@ Two deliberate choices:
    exact sum of the frame durations, so a short audio file can't truncate the
    video and a long one can't extend it.
 
+3. **There are two ways to plan the stills, and the project chooses.** If
+   nothing in it is keyframed, `plan_segments` cuts the timeline into stretches
+   where the picture holds still and renders one PNG per stretch — cheap, and
+   exactly what this module has always done. If something IS keyframed, that
+   trick no longer works (the picture changes continuously), so
+   `plan_animated_segments` samples the scene at every video frame instead.
+   Both hand the same segment shape to the same renderer, so only the planning
+   differs. See `animatic_render.py` for the scene model both go through.
+   A TRANSITION counts as movement for exactly the same reason a keyframe does
+   — every frame of a dissolve is a different picture — so one anywhere in the
+   project puts the whole export on the sampling planner.
+
 Nothing here spends AI quota — an animatic is images, timing and audio.
 """
 
@@ -28,7 +40,22 @@ import threading
 
 from PIL import Image, ImageDraw, ImageFont
 
+from animatic_render import (
+    frame_spans,
+    is_animated,
+    place_picture,
+    scene_at,
+    scene_signature,
+)
+
 logger = logging.getLogger(__name__)
+
+# An animated export renders one still per DISTINCT picture. Identical
+# consecutive frames share one file, so a project that only moves here and there
+# costs little — but a long timeline at a high frame rate genuinely is tens of
+# thousands of PNGs, and filling the disk mid-export is a worse failure than
+# refusing up front with a number the user can act on.
+MAX_RENDERED_STILLS = 20_000
 
 
 class AnimaticError(RuntimeError):
@@ -240,6 +267,15 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
 
     Clips sharing a position stack downward in the order given, so two captions
     at the bottom don't land on top of each other.
+
+    A clip's `opacity` scales the alpha of everything it draws — its backdrop,
+    its ink and its outline — which is what makes a caption fade in rather than
+    appear. Note that this fades the PARTS rather than the finished block, so a
+    half-faded caption is a half-faded scrim with half-faded text over it, not
+    the whole block at half strength. The two differ where the text overlaps its
+    own backdrop; at the speed a caption fades, not visibly. Doing it properly
+    means a separate RGBA layer per clip, which is a lot of allocation for a
+    difference nobody can see.
     """
     if not clips:
         return
@@ -293,6 +329,15 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
             align = clip.get("align", "center")
             ink = _parse_colour(clip.get("color", "#ffffff"))
             backdrop = clip.get("backdrop", "scrim")
+            # Resolved by `scene_at` when the clip is keyframed, otherwise the
+            # clip's own value, otherwise fully opaque — which is every caption
+            # written before fades existed.
+            op = max(0.0, min(1.0, float(clip.get("opacity", 1.0) or 0.0)))
+            if op <= 0:
+                continue
+
+            def _a(value: int) -> int:
+                return max(0, min(255, int(round(value * op))))
 
             box_w = min(width - margin, block["text_w"] + pad * 2)
             if align == "left":
@@ -307,7 +352,7 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
                 draw.rounded_rectangle(
                     [box_x, y, box_x + box_w, y + block["height"]],
                     radius=max(4, int(pad * 0.6)),
-                    fill=(0, 0, 0, alpha),
+                    fill=(0, 0, 0, _a(alpha)),
                 )
 
             ty = y + pad
@@ -324,11 +369,11 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
                 # gets a dark outline in that mode.
                 if backdrop == "none":
                     draw.text(
-                        (tx, ty), line, font=font, fill=(*ink, 255),
-                        stroke_width=max(2, line_h // 14), stroke_fill=(0, 0, 0, 210),
+                        (tx, ty), line, font=font, fill=(*ink, _a(255)),
+                        stroke_width=max(2, line_h // 14), stroke_fill=(0, 0, 0, _a(210)),
                     )
                 else:
-                    draw.text((tx, ty), line, font=font, fill=(*ink, 255))
+                    draw.text((tx, ty), line, font=font, fill=(*ink, _a(255)))
                 ty += line_h
             y += block["height"] + margin * 0.25
 
@@ -461,6 +506,131 @@ def draw_overlays(canvas: Image.Image, overlays: list[dict]) -> None:
         )
 
 
+def _picture_layer(
+    src_path: str,
+    size: tuple[int, int],
+    fit: str,
+    background: str,
+    transform: dict | None,
+) -> Image.Image:
+    """ONE source picture, fitted onto its own full-frame canvas.
+
+    "contain" letterboxes it (nothing is lost — the default, because a
+    storyboard frame you cropped is a frame you can't read); "cover" scales up
+    and centre-crops so the frame is filled edge to edge.
+
+    `transform` is the picture's OWN pan/zoom/fade on top of that — the resolved
+    `scale`/`x`/`y`/`opacity` from `scene_at`. Absent, or at its defaults, the
+    result is byte-for-byte what this has always produced.
+
+    Split out of `render_frame` so a transition can build TWO of these and blend
+    them. Both pictures then get the identical fit, background and rounding,
+    which they must: a dissolve between two pictures placed by two slightly
+    different calculations would shimmer at the edges.
+    """
+    target_w, target_h = size
+    canvas = Image.new("RGB", (target_w, target_h), _parse_colour(background))
+
+    tf = transform or {}
+    scale = float(tf.get("scale", 1.0) or 1.0)
+    origin_x = float(tf.get("x", 0.5))
+    origin_y = float(tf.get("y", 0.5))
+    alpha = float(tf.get("opacity", 1.0))
+
+    with Image.open(src_path) as im:
+        im = im.convert("RGB")
+        sw, sh = im.size
+        if sw <= 0 or sh <= 0:
+            raise AnimaticError(f"'{os.path.basename(src_path)}' has no pixels.")
+        # The fit, the zoom and the pan are one calculation — doing them in
+        # sequence would round twice and drift the picture by a pixel per step.
+        new, left, top = place_picture(im, size, fit, scale, origin_x, origin_y)
+
+    if alpha >= 1.0:
+        canvas.paste(new, (left, top))
+    elif alpha > 0:
+        # A faded picture is blended against the BACKGROUND, not against the
+        # frame before it — the frames are independent stills, so there is no
+        # "before" to show through. That makes opacity a fade to the backdrop,
+        # which is what a dip-to-black looks like. `dip` below is exactly this,
+        # driven by the transition instead of by a keyframe.
+        layer = Image.new("RGB", (target_w, target_h), _parse_colour(background))
+        layer.paste(new, (left, top))
+        canvas = Image.blend(canvas, layer, alpha)
+    return canvas
+
+
+def _faded(transform: dict | None, factor: float) -> dict:
+    """A copy of a transform with its opacity scaled — how a dip fades a shot."""
+    tf = dict(transform or {})
+    tf["opacity"] = float(tf.get("opacity", 1.0)) * max(0.0, min(1.0, factor))
+    return tf
+
+
+def _transition_canvas(
+    src_path: str,
+    picture_b: str,
+    size: tuple[int, int],
+    fit: str,
+    background: str,
+    transform: dict | None,
+    transform_b: dict | None,
+    kind: str,
+    mix: float,
+) -> Image.Image:
+    """The two pictures of a transition, composited at `mix` (0 → 1).
+
+    0 is the outgoing picture alone, 1 is the incoming one alone. Every kind is
+    defined so that those two ends hold, which is what makes a transition
+    invisible at its own edges and so lets it straddle the cut without anything
+    appearing to jump.
+
+    ⚠ Each kind here has a counterpart in the Program monitor's CSS (see
+    `AnimaticEditor.jsx`). They are matched by construction — the same
+    fractions, the same direction — because a preview that dissolves where the
+    export wipes is worse than having no preview.
+    """
+    width, height = size
+    m = max(0.0, min(1.0, float(mix)))
+
+    if kind == "dip":
+        # NOT a two-picture blend: the shot goes out through the bar colour and
+        # the next one comes up from it, so only ever ONE picture is on screen.
+        # That is what makes a dip read as a beat rather than a cross-fade.
+        if m < 0.5:
+            return _picture_layer(
+                src_path, size, fit, background, _faded(transform, 1 - 2 * m)
+            )
+        return _picture_layer(
+            picture_b, size, fit, background, _faded(transform_b, 2 * m - 1)
+        )
+
+    a = _picture_layer(src_path, size, fit, background, transform)
+    b = _picture_layer(picture_b, size, fit, background, transform_b)
+
+    if kind == "wipe":
+        # A hard edge travelling left → right, revealing the incoming picture.
+        edge = int(round(width * m))
+        if edge > 0:
+            a.paste(b.crop((0, 0, edge, height)), (0, 0))
+        return a
+
+    if kind == "slide":
+        # A push: the outgoing picture is driven off to the left while the
+        # incoming one comes in behind it. Both move, which is what separates a
+        # push from a cover — and the background shows through neither, because
+        # together they are always exactly one frame wide.
+        offset = int(round(width * m))
+        out = Image.new("RGB", size, _parse_colour(background))
+        out.paste(a, (-offset, 0))
+        out.paste(b, (width - offset, 0))
+        return out
+
+    # dissolve, and anything unrecognised — but `transition_window` has already
+    # folded unknown kinds down to this one, so both sides fall back together.
+    return Image.blend(a, b, m)
+
+
 def render_frame(
     src_path: str,
     size: tuple[int, int],
@@ -470,35 +640,29 @@ def render_frame(
     texts: list[dict] | None = None,
     shapes: list[dict] | None = None,
     overlays: list[dict] | None = None,
+    transform: dict | None = None,
+    picture_b: str | None = None,
+    transform_b: dict | None = None,
+    transition: str | None = None,
+    mix: float = 0.0,
 ) -> Image.Image:
-    """Fit one source image onto the video frame.
+    """One video frame: the picture (or two, mid-transition) plus every layer.
 
-    "contain" letterboxes it (nothing is lost — the default, because a
-    storyboard frame you cropped is a frame you can't read); "cover" scales up
-    and centre-crops so the frame is filled edge to edge.
+    `picture_b` / `transition` / `mix` are the transition, resolved by
+    `scene_at`. With no second picture this is exactly what it always was, which
+    is the whole of every animatic written before transitions existed.
+
+    Shapes, overlays and text are drawn ON TOP of the finished transition, not
+    into it — a caption spanning a cut stays legible all the way through rather
+    than dissolving with the picture underneath it.
     """
-    target_w, target_h = size
-    canvas = Image.new("RGB", (target_w, target_h), _parse_colour(background))
-
-    with Image.open(src_path) as im:
-        im = im.convert("RGB")
-        sw, sh = im.size
-        if sw <= 0 or sh <= 0:
-            raise AnimaticError(f"'{os.path.basename(src_path)}' has no pixels.")
-
-        scale = (
-            max(target_w / sw, target_h / sh)
-            if fit == "cover"
-            else min(target_w / sw, target_h / sh)
+    if picture_b and transition:
+        canvas = _transition_canvas(
+            src_path, picture_b, size, fit, background,
+            transform, transform_b, transition, mix,
         )
-        new = im.resize(
-            (max(1, int(round(sw * scale))), max(1, int(round(sh * scale)))),
-            Image.LANCZOS,
-        )
-
-    left = (target_w - new.width) // 2
-    top = (target_h - new.height) // 2
-    canvas.paste(new, (left, top))
+    else:
+        canvas = _picture_layer(src_path, size, fit, background, transform)
     # Stacking order, bottom to top: picture → shapes → overlay images → text.
     # Shapes sit under the overlays because a shape is usually a highlight or a
     # mask ON the art, while an overlay is a picture element (a logo, an inset)
@@ -626,6 +790,92 @@ def plan_segments(
     return merged, total_ms
 
 
+def plan_animated_segments(
+    frames: list[dict],
+    texts: list[dict],
+    end_ms: int | None = None,
+    shapes: list[dict] | None = None,
+    overlays: list[dict] | None = None,
+    fps: int = 24,
+    transitions: list[dict] | None = None,
+) -> tuple[list[dict], int]:
+    """`plan_segments`, for a project where something MOVES.
+
+    Cutting the timeline where clips start and end only works while the picture
+    between those cuts holds still. A keyframed property doesn't, so the scene is
+    sampled at every video frame instead and each sample becomes its own
+    one-frame segment.
+
+    That sounds ruinous and mostly isn't: consecutive samples that resolve to the
+    same picture carry the same `signature`, and `build_animatic` renders one
+    still per distinct signature. A three-second push inside a two-minute
+    animatic costs three seconds' worth of stills, not two minutes'.
+
+    Returns the same (segments, total_ms) shape `plan_segments` does, so the
+    renderer downstream cannot tell which planner ran — with two additions per
+    segment: `signature` (the render cache key) and `transform` (the picture's
+    resolved pan/zoom/fade). A segment inside a TRANSITION carries three more:
+    `frame_b` (the picture arriving, as an index into `frames`), `transform_b`
+    and `mix`.
+
+    Note that transitions cannot change `total_ms`: they are boundary-local, so
+    the sampling grid below is the same one an untransitioned project gets.
+    """
+    project = {
+        "frames": frames,
+        "texts": texts or [],
+        "shapes": shapes or [],
+        "overlays": overlays or [],
+        "transitions": transitions or [],
+    }
+    _spans, total_ms = frame_spans(frames, end_ms)
+    if total_ms <= 0:
+        return [], 0
+
+    fps = max(1, min(60, int(fps or 24)))
+    count = max(1, int(round(total_ms * fps / 1000)))
+
+    segments: list[dict] = []
+    for n in range(count):
+        # Boundaries are computed from the frame INDEX rather than accumulated,
+        # so rounding cannot drift over a long timeline and the last segment
+        # lands exactly on total_ms.
+        start = n * total_ms / count
+        end = (n + 1) * total_ms / count
+        scene = scene_at(project, start, end_ms)
+        if scene["frame"] is None:
+            continue
+        segment = {
+            "frame": scene["frame"]["index"],
+            "start_ms": start,
+            "duration_ms": end - start,
+            "texts": scene["texts"],
+            "shapes": scene["shapes"],
+            "overlays": scene["overlays"],
+            "signature": scene_signature(scene),
+            "transform": _transform_of(scene["frame"]),
+        }
+        # Mid-transition: the second picture rides along on the segment, so the
+        # renderer downstream still only ever looks at one dict.
+        if scene["frame_b"] is not None:
+            segment["frame_b"] = scene["frame_b"]["index"]
+            segment["transform_b"] = _transform_of(scene["frame_b"])
+            segment["transition"] = scene["transition"]
+            segment["mix"] = scene["mix"]
+        segments.append(segment)
+    return segments, total_ms
+
+
+def _transform_of(picture: dict) -> dict:
+    """The four values `render_frame` needs off a resolved picture."""
+    return {
+        "scale": picture["scale"],
+        "x": picture["x"],
+        "y": picture["y"],
+        "opacity": picture["opacity"],
+    }
+
+
 def _write_concat_list(path: str, entries: list[tuple[str, float]]) -> None:
     """Write an ffconcat list of (filename, seconds) pairs.
 
@@ -711,6 +961,7 @@ def build_animatic(
     texts: list[dict] | None = None,
     shapes: list[dict] | None = None,
     overlays: list[dict] | None = None,
+    transitions: list[dict] | None = None,
     audio_tracks: list[dict] | None = None,
     aspect_ratio: str = "16:9",
     resolution: int = BASE_SHORT_EDGE,
@@ -742,6 +993,11 @@ def build_animatic(
         overlays: the same, but each carries a "path" to a picture instead of a
             colour — the image layers. Composited over the shapes and under the
             text; one whose file has gone is skipped.
+        transitions: [{"id", "after_frame_id", "kind", "duration_ms"}] — what
+            happens ON a cut. BOUNDARY-LOCAL: the blend straddles the cut,
+            taking d/2 from the tail of one picture and the head of the next, so
+            the encoded video is exactly as long as it would be without them.
+            One naming a frame that isn't there, or the last frame, is inert.
         audio_tracks: [{"path", "offset_ms", "volume"}] laid under the sequence
             and MIXED together — music under a voiceover is the usual pair.
             `offset_ms` is how far into that file playback starts; `volume` is
@@ -797,9 +1053,39 @@ def build_animatic(
             "None of the frames could be read — their images may have been deleted."
         )
 
-    segments, total_ms = plan_segments(
-        usable, texts or [], end_ms, shapes or [], overlays or []
-    )
+    # Which planner: see this module's docstring. `is_animated` errs toward True
+    # — being wrong the other way would silently drop every animation from the
+    # MP4 while the preview showed it, which is the one failure mode that would
+    # make the editor untrustworthy.
+    project = {
+        "frames": usable,
+        "texts": texts or [],
+        "shapes": shapes or [],
+        "overlays": overlays or [],
+        "transitions": transitions or [],
+    }
+    animated = is_animated(project)
+    if animated:
+        segments, total_ms = plan_animated_segments(
+            usable, texts or [], end_ms, shapes or [], overlays or [], fps,
+            transitions or [],
+        )
+        distinct = len({s["signature"] for s in segments})
+        if distinct > MAX_RENDERED_STILLS:
+            shutil.rmtree(build_dir, ignore_errors=True)
+            raise AnimaticError(
+                f"This animatic would need {distinct:,} rendered frames, which is more "
+                f"than the {MAX_RENDERED_STILLS:,} an export can hold. Lower the frame "
+                "rate, shorten the timeline, or remove some of the animation."
+            )
+        logger.info(
+            "[animatic %s] animated: %d sample(s) at %dfps → %d distinct still(s)",
+            job_id, len(segments), fps, distinct,
+        )
+    else:
+        segments, total_ms = plan_segments(
+            usable, texts or [], end_ms, shapes or [], overlays or []
+        )
 
     # --- 2. Render one PNG per segment -------------------------------------
     # A text clip can start or end part-way through a held image, so the unit of
@@ -807,7 +1093,7 @@ def build_animatic(
     # text are constant), not a frame. With no text there is exactly one segment
     # per frame, so this costs nothing in the common case.
     entries: list[tuple[str, float]] = []
-    rendered: dict[tuple, str] = {}  # (frame index, active text ids) → filename
+    rendered: dict[object, str] = {}  # cache key → filename
     total = len(segments)
 
     for n, segment in enumerate(segments):
@@ -819,7 +1105,13 @@ def build_animatic(
         # The shape ids are part of the key: without them two segments differing
         # ONLY in which shapes are up would share one rendered still, and a
         # shape would appear or vanish at the wrong moment.
-        key = (
+        #
+        # An animated segment brings its own key instead. Ids alone would be
+        # wrong there — two samples one video frame apart hold exactly the same
+        # clips and differ only in the values those clips resolved to, so an
+        # id-based key would reuse the first still for the whole animation and
+        # nothing would move.
+        key = segment.get("signature") or (
             segment["frame"],
             tuple(t.get("id") for t in segment["texts"]),
             tuple(s.get("id") for s in segment.get("shapes") or ()),
@@ -829,6 +1121,10 @@ def build_animatic(
 
         if name is None:
             name = f"f{len(rendered):04d}.png"
+            # Mid-transition the segment names a SECOND picture to blend with.
+            # It indexes `usable` like `frame` does, so a frame dropped for a
+            # missing image can't be picked up here either.
+            index_b = segment.get("frame_b")
             try:
                 image = render_frame(
                     frame["path"],
@@ -839,6 +1135,11 @@ def build_animatic(
                     texts=segment["texts"],
                     shapes=segment.get("shapes") or [],
                     overlays=segment.get("overlays") or [],
+                    transform=segment.get("transform"),
+                    picture_b=usable[index_b]["path"] if index_b is not None else None,
+                    transform_b=segment.get("transform_b"),
+                    transition=segment.get("transition"),
+                    mix=segment.get("mix") or 0.0,
                 )
                 image.save(os.path.join(build_dir, name), "PNG")
             except AnimaticError:
@@ -851,7 +1152,14 @@ def build_animatic(
                 continue
             rendered[key] = name
 
-        entries.append((name, max(0.1, segment["duration_ms"] / 1000)))
+        # ⚠ The floor is ONE VIDEO FRAME, not 0.1s as it used to be. A segment
+        # shorter than 1/fps cannot be shown at all, so that is the smallest
+        # meaningful duration — but at 24fps an animated segment IS 1/24s, and
+        # the old floor would have stretched every one of them to 100ms, making
+        # the export run 2.4× long. It was also quietly wrong before this: a
+        # 40–99ms segment (which `plan_segments` can produce) was already being
+        # padded out to 100ms and lengthening the video.
+        entries.append((name, max(1.0 / fps, segment["duration_ms"] / 1000)))
         # Preparing frames is the first 55% — it's real work on big images.
         _report(int(55 * (n + 1) / total), f"Preparing frame {n + 1} of {total}", "frames")
 
@@ -973,9 +1281,16 @@ def build_animatic(
         # is higher whenever text starts or ends part-way through a held image.
         "frame_count": len(usable),
         "segment_count": len(entries),
+        # Which planner ran. Worth reporting: an animated export renders far more
+        # stills and takes correspondingly longer, and when someone asks why an
+        # export that used to take 20 seconds now takes three minutes, this is
+        # the answer.
+        "animated": animated,
+        "still_count": len(rendered),
         "text_count": len([t for t in (texts or []) if (t.get("text") or "").strip()]),
         "shape_count": len(shapes or []),
         "overlay_count": len(overlays or []),
+        "transition_count": len(transitions or []),
         "skipped_frames": skipped,
         "width": size[0],
         "height": size[1],

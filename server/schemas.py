@@ -714,6 +714,44 @@ class ShareResponse(BaseModel):
     share_token: str | None = None
 
 
+class AnimaticKeyframe(BaseModel):
+    """One point on one property's animation curve.
+
+    `t` is RELATIVE to the clip's own start, which is what lets a clip be
+    dragged along the timeline without its animation sliding out from under it.
+    It may be negative, or run past the clip's end: the value simply HOLDS
+    outside the first and last key rather than extrapolating, so trimming a clip
+    longer can never fling it off screen.
+
+    The curve named by `ease` governs the span from THIS key to the next one —
+    the last key's ease is therefore unused. "hold" makes the property step
+    rather than glide.
+
+    ⚠ The interpolation these describe is implemented TWICE, in
+    `animatic_render.py` and `client/src/animatic/scene.js`, so that the preview
+    and the export agree. `tests/render_parity.py` is what keeps them honest.
+    """
+
+    t: int = Field(..., description="Milliseconds from the clip's own start. May be negative.")
+    v: float
+    # Not constrained to the known set on purpose: both evaluators fall back to
+    # "linear" for a curve they don't recognise, so a project written by a newer
+    # client with a curve this server hasn't heard of still opens and still
+    # plays. Rejecting it would lose the whole animatic over one word.
+    ease: str = Field(
+        "linear", description="'linear' | 'hold' | 'ease-in' | 'ease-out' | 'ease-in-out'."
+    )
+
+
+# Every animatable clip carries the same field, so it is declared once. An
+# animatic saved before keyframes existed has no such key, which reads as an
+# empty dict and animates nothing — those projects export exactly as they did.
+_KEYFRAMES = Field(
+    default_factory=dict,
+    description="Animation curves by property name, e.g. {'opacity': [{'t':0,'v':0}, …]}.",
+)
+
+
 class AnimaticFrameSource(BaseModel):
     """Where one animatic frame's picture comes from.
 
@@ -744,6 +782,17 @@ class AnimaticFrame(BaseModel):
     # 0.1s–10min. The whole point of the editor is that this is per-frame.
     duration_ms: int = Field(2000, ge=100, le=600_000)
     label: str = Field("", description="Caption, e.g. 'Shot 3'. Burned in only if show_labels.")
+    # The picture's OWN pan and zoom, on top of `settings.fit`. Keyframe `scale`
+    # and `x`/`y` and you have a Ken Burns push — which is the move that makes a
+    # held storyboard panel read as a shot rather than a slide. `x`/`y` are the
+    # picture's CENTRE as a fraction of the canvas, matching every other
+    # geometry here; the defaults are an identity transform, so a frame that
+    # never touches them is placed exactly as it always was.
+    scale: float = Field(1.0, gt=0.0, le=10.0)
+    x: float = Field(0.5, ge=-2.0, le=3.0)
+    y: float = Field(0.5, ge=-2.0, le=3.0)
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
     # Filled by the server on read so the client has ONE url shape for both
     # source kinds. Ignored on write.
     url: str | None = None
@@ -814,6 +863,7 @@ class AnimaticOverlay(BaseModel):
     h: float = Field(0.3, gt=0.0, le=4.0)
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     rotation: float = Field(0.0, ge=-360.0, le=360.0)
+    keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
     # Filled by the server on read, like a frame's. Ignored on write.
     url: str | None = None
 
@@ -846,6 +896,11 @@ class AnimaticTextClip(BaseModel):
     # How the text is kept readable over busy art: a translucent bar behind it
     # ("scrim"), a solid box, or an outline only ("none").
     backdrop: str = Field("scrim", description="'scrim' | 'box' | 'none'.")
+    # Fades the caption — its backdrop, ink and outline together. Keyframe it
+    # and a caption arrives instead of appearing, which is the one text
+    # animation worth having before a full text-animation preset list.
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
 
     @property
     def end_ms(self) -> int:
@@ -876,10 +931,42 @@ class AnimaticShape(BaseModel):
     color: str = Field("#c2185b", description="Fill colour, #rrggbb.")
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     rotation: float = Field(0.0, ge=-360.0, le=360.0, description="Degrees, clockwise.")
+    keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
 
     @property
     def end_ms(self) -> int:
         return self.start_ms + self.duration_ms
+
+
+class AnimaticTransition(BaseModel):
+    """What happens ON one cut — a dissolve, a dip, a wipe, a slide.
+
+    Anchored to the frame it comes AFTER rather than to a time, so it rides
+    along when that frame is re-timed, moved or trimmed, exactly as a keyframe
+    does. One naming a frame that has been deleted — or the LAST frame, where
+    there is nothing to cut to — is inert rather than invalid: it is skipped,
+    kept, and works again if the sequence changes back.
+
+    ⚠ BOUNDARY-LOCAL. The blend straddles the cut, taking `duration_ms`/2 from
+    the tail of the outgoing picture and the same from the head of the incoming
+    one. It takes NOTHING away from either, so the timeline is exactly as long
+    with transitions as without and every existing timing rule survives. The
+    reasoning is in `client/src/animatic/transitions.js`; the implementation is
+    written twice, there and in `animatic_render.py`.
+    """
+
+    id: str = Field(..., description="Stable client-side id.")
+    after_frame_id: str = Field(..., description="The frame this transition follows.")
+    # Not constrained to the known set on purpose — same rule as `ease` on a
+    # keyframe. Both evaluators fold an unrecognised kind down to "dissolve", so
+    # a project written by a newer client still opens and still plays here.
+    kind: str = Field(
+        "dissolve", description="'dissolve' | 'dip' | 'wipe' | 'slide'."
+    )
+    # Clamped again at render time to the SHORTER of the two holds it joins, so
+    # a transition can never eat more than half of either neighbour — which is
+    # what stops two of them overlapping on a short picture.
+    duration_ms: int = Field(600, ge=100, le=10_000)
 
 
 class AnimaticSettings(BaseModel):
@@ -929,6 +1016,9 @@ class AnimaticProject(BaseModel):
     layers: list[AnimaticLayer] = Field(default_factory=list)
     # Pictures composited over the sequence (image layers).
     overlays: list[AnimaticOverlay] = Field(default_factory=list)
+    # What happens on the cuts. Empty on every animatic saved before transitions
+    # existed, which then plays exactly as it always did — straight cuts.
+    transitions: list[AnimaticTransition] = Field(default_factory=list)
     # Zero or more audio tracks, mixed together on export. Records written before
     # multi-track carried a single `audio` object; it is migrated on read.
     audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
@@ -976,6 +1066,9 @@ class AnimaticSaveRequest(BaseModel):
     shapes: list[AnimaticShape] | None = None
     layers: list[AnimaticLayer] | None = None
     overlays: list[AnimaticOverlay] | None = None
+    # Send the whole list; an empty list removes every transition, so the
+    # sequence goes back to straight cuts.
+    transitions: list[AnimaticTransition] | None = None
     # Send the whole list; an empty list removes every track. (This replaced a
     # single `audio` field plus a `clear_audio` flag — with a list, "none" is
     # just an empty list and needs no companion flag.)
