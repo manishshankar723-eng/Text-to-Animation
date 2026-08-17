@@ -84,6 +84,36 @@ def submit_shot_renders(job_id: str, shot_ids: list[str]):
     _video_executor.submit(_run_shot_renders, job_id, shot_ids)
 
 
+def submit_animatic_animate(job_id: str, clip_ids: list[str], render: dict):
+    """Enqueue Veo renders for frames of an ANIMATIC (the editor's ✨ button).
+
+    On the VIDEO pool for the same reason the final-video renders are: a Veo
+    call holds its thread for minutes, and sharing the pipeline pool would put
+    every storyboard behind one editor's render.
+    """
+    _video_executor.submit(_run_animatic_animate, job_id, clip_ids, render)
+
+
+def submit_animatic_captions(job_id: str, body: dict):
+    """Enqueue an auto-captions pass over one of an animatic's audio tracks.
+
+    On the VIDEO pool, not the pipeline pool. It is an AI call that holds its
+    thread for the length of the audio, and the pipeline pool is where every
+    storyboard draw queues — one 20-minute track would otherwise sit in front of
+    them all. Small pool, long calls: the same reasoning as the Veo renders.
+    """
+    _video_executor.submit(_run_animatic_captions, job_id, body)
+
+
+def submit_animatic_voiceover(job_id: str, body: dict):
+    """Enqueue a text-to-speech read of an animatic's dialogue.
+
+    On the VIDEO pool for the same reason, and more so: this is one model call
+    PER LINE, so a scene can hold the thread for a couple of minutes.
+    """
+    _video_executor.submit(_run_animatic_voiceover, job_id, body)
+
+
 def submit_final_assemble(job_id: str, kwargs: dict):
     """Enqueue the assembly of a final video's rendered clips (step 3).
 
@@ -402,6 +432,152 @@ def _run_panel_sequence(job_id: str, kwargs: dict):
         logger.exception("[job %s] panel %d sequence crashed.", job_id, index)
     finally:
         clear_cancel(job_id)
+
+
+def _run_animatic_animate(job_id: str, clip_ids: list[str], render: dict):
+    """Render each queued animatic frame with Veo, one at a time.
+
+    The same shape as `_run_shot_renders`, and sequential for the same reason:
+    Veo's concurrency quota is small and every clip is billed, so firing a batch
+    at once turns one project into a row of 429s while still paying for the few
+    that got through.
+
+    ⚠ THE JOB GOES BACK TO QUEUED, NEVER FAILED. An animatic's status describes
+    its EXPORT, and a render that Veo refused has not broken the animatic — the
+    project is still editable and every clip that did land is real. The failure
+    is recorded on the clip, which is where the UI reads it from.
+    """
+    from cancel import clear_cancel, is_cancelled
+    from video_client import VideoGenerationError
+
+    from .animatics import _write_veo_clip, render_frame_clip
+
+    store = get_store()
+    store.mark_running(job_id)
+    clear_cancel(job_id)
+    total = len(clip_ids)
+    logger.info("[job %s] animatic Veo renders started (%d clip(s))", job_id, total)
+
+    done = 0
+    for clip_id in clip_ids:
+        if is_cancelled(job_id):
+            logger.info("[job %s] animatic renders STOPPED by user after %d", job_id, done)
+            # Anything never reached is dropped rather than left claiming to be
+            # queued for a batch that is over.
+            _write_veo_clip(job_id, clip_id, status="failed", error="Stopped before this frame.")
+            continue
+
+        def _progress(update: dict, _cid=clip_id, _done=done):
+            within = max(0, min(100, int(update.get("percent", 0))))
+            try:
+                store.update(job_id, progress={
+                    "percent": int((_done * 100 + within) / max(1, total)),
+                    "stage": "rendering",
+                    "message": update.get("message", ""),
+                    "current_shot": _cid,
+                    "done_parts": _done,
+                    "total_parts": total,
+                })
+            except Exception:  # noqa: BLE001 — progress writes must not kill the batch
+                logger.debug("[job %s] render progress failed (ignored)", job_id, exc_info=True)
+
+        try:
+            render_frame_clip(
+                job_id, clip_id, render,
+                progress_cb=_progress,
+                cancel_check=lambda: is_cancelled(job_id),
+            )
+            logger.info("[job %s] animatic clip %s rendered.", job_id, clip_id)
+        except VideoGenerationError as e:
+            # Written for the user (quota, safety, credentials) — show verbatim.
+            _write_veo_clip(job_id, clip_id, status="failed", error=str(e))
+            logger.error("[job %s] animatic clip %s failed: %s", job_id, clip_id, e)
+        except Exception as e:  # noqa: BLE001 — one bad clip must not kill the batch
+            _write_veo_clip(job_id, clip_id, status="failed", error=f"{type(e).__name__}: {e}")
+            logger.exception("[job %s] animatic clip %s crashed.", job_id, clip_id)
+        done += 1
+
+    clear_cancel(job_id)
+    store.update(
+        job_id,
+        status=JobStatus.QUEUED,
+        progress={"percent": 100, "stage": "done", "message": ""},
+    )
+    logger.info("[job %s] animatic Veo batch finished (%d clip(s)).", job_id, done)
+
+
+def _run_animatic_captions(job_id: str, body: dict):
+    """Transcribe one audio track into caption clips.
+
+    ⚠ THE JOB GOES BACK TO QUEUED, NEVER FAILED — the same rule the Veo batch
+    follows, and for the same reason: an animatic's status describes its EXPORT,
+    and a transcription that didn't work has not broken the animatic. The
+    project is still editable and every caption already on it is still there.
+    The reason is put in the job's `error` so the editor can show it.
+    """
+    from .animatics import run_captions
+
+    store = get_store()
+    store.mark_running(job_id)
+    logger.info("[job %s] animatic captions started.", job_id)
+
+    error = None
+    try:
+        run_captions(job_id, body)
+    except Exception as e:  # noqa: BLE001 — every failure here is a message, not a crash
+        error = str(e) or f"{type(e).__name__}"
+        logger.exception("[job %s] animatic captions failed.", job_id)
+
+    store.update(
+        job_id,
+        status=JobStatus.QUEUED,
+        error=error,
+        progress={"percent": 100, "stage": "done", "message": ""},
+    )
+    logger.info("[job %s] animatic captions finished%s.", job_id, " with an error" if error else "")
+
+
+def _run_animatic_voiceover(job_id: str, body: dict):
+    """Read an animatic's dialogue aloud and lay it on the audio layer.
+
+    Back to QUEUED rather than FAILED, exactly as above. Note that a partial
+    failure still costs: the lines read before the one that failed were billed,
+    and are thrown away because a voiceover is one track. That is why the
+    estimate and the character cap matter more here than the per-call price
+    suggests.
+    """
+    from .animatics import run_voiceover
+
+    store = get_store()
+    store.mark_running(job_id)
+    logger.info("[job %s] animatic voiceover started.", job_id)
+
+    def _progress(done: int, total: int, text: str):
+        try:
+            store.update(job_id, progress={
+                "percent": int(done * 100 / max(1, total)),
+                "stage": "voiceover",
+                "message": f"Reading line {done + 1} of {total}…",
+                "done_parts": done,
+                "total_parts": total,
+            })
+        except Exception:  # noqa: BLE001 — progress writes must not kill the run
+            logger.debug("[job %s] voiceover progress failed (ignored)", job_id, exc_info=True)
+
+    error = None
+    try:
+        run_voiceover(job_id, body, progress_cb=_progress)
+    except Exception as e:  # noqa: BLE001 — every failure here is a message, not a crash
+        error = str(e) or f"{type(e).__name__}"
+        logger.exception("[job %s] animatic voiceover failed.", job_id)
+
+    store.update(
+        job_id,
+        status=JobStatus.QUEUED,
+        error=error,
+        progress={"percent": 100, "stage": "done", "message": ""},
+    )
+    logger.info("[job %s] animatic voiceover finished%s.", job_id, " with an error" if error else "")
 
 
 def _run_shot_renders(job_id: str, shot_ids: list[str]):

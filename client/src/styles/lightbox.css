@@ -1,0 +1,164 @@
+/* lightbox — Image preview and the fullscreen lightbox. Shared: Text-to-Image, the storyboard board and the key-pose flipbook all open the same viewer. */
+
+/* Preview + advanced */
+.preview {
+  margin-top: 0.65rem;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  object-fit: contain;
+  background: var(--frame-bg);
+}
+.preview.clickable {
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+.preview.clickable:hover {
+  transform: scale(1.02);
+  border-color: var(--primary);
+  box-shadow: var(--gold-glow);
+}
+
+/* Lightbox / fullscreen image popup */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(8, 9, 12, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  animation: lightbox-fade-in 0.2s ease;
+}
+@keyframes lightbox-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.lightbox-img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 14px;
+  border: 1px solid var(--border-gold);
+  box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8), var(--gold-glow);
+  cursor: default;
+  object-fit: contain;
+}
+/* Shrinks to the image so the ✕ hugs its corner instead of sitting in the far
+   corner of the screen (which looked miles away for square images). */
+.lightbox-figure {
+  position: relative;
+  display: inline-flex;
+  max-width: 92vw;
+  max-height: 92vh;
+}
+
+/* Lightbox controls sit ON TOP OF THE PICTURE, and the picture is usually a
+   storyboard panel — near-white paper. A translucent white fill made them
+   effectively invisible (reported). They are therefore SOLID DARK with a full
+   gold edge and a drop shadow, which reads on white paper and on a night
+   exterior alike. Shared by every lightbox in the app: the board's panel view
+   and the key-pose viewer both use these classes, so this is one fix for all
+   of them — keep it that way rather than adding a per-workflow variant. */
+.lightbox-close,
+.lightbox-nav {
+  position: absolute;
+  z-index: 10000;
+  background: rgba(12, 14, 18, 0.88);
+  border: 2px solid var(--primary);
+  color: var(--primary);
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Lifts the control off whatever is behind it — the ring of shadow is what
+     stops a light picture bleeding into the button's edge. */
+  box-shadow:
+    0 2px 14px rgba(0, 0, 0, 0.55),
+    0 0 0 4px rgba(12, 14, 18, 0.35);
+  transition: all 0.2s;
+}
+.lightbox-close {
+  top: 0.6rem;
+  right: 0.6rem;
+  font-size: 1.4rem;
+}
+/* Destructive-ish (it dismisses), so it goes red on hover — the one control
+   here that does something other than move you along. */
+.lightbox-close:hover {
+  background: var(--fail);
+  color: #fff;
+  border-color: var(--fail);
+}
+
+/* Step through a set of images without closing (the key-pose flipbook). Shares
+   the shell above with the close button, so the three read as one control set;
+   arrow keys do the same thing. */
+.lightbox-nav {
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 2rem;
+  line-height: 1;
+  padding-bottom: 0.2rem; /* optically centres the chevron glyph */
+}
+.lightbox-nav.prev {
+  left: 0.6rem;
+}
+.lightbox-nav.next {
+  right: 0.6rem;
+}
+.lightbox-nav:hover:not(:disabled) {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: var(--primary);
+}
+/* The key-pose viewer never disables its arrows — they WRAP, so the cycle can
+   be flipped round continuously. This is here for any future lightbox that
+   does need an end-stop. Dimmed via COLOUR, not `opacity`, which would fade the
+   dark fill too and put the button back into the white picture it sits on. */
+.lightbox-nav:disabled {
+  border-color: rgba(229, 193, 88, 0.28);
+  color: rgba(229, 193, 88, 0.3);
+  cursor: not-allowed;
+}
+/* "Shot 1 · pose 5 / 16" — which drawing you are looking at, since they are
+   deliberately near-identical. */
+.lightbox-count {
+  position: absolute;
+  left: 50%;
+  bottom: 0.7rem;
+  transform: translateX(-50%);
+  z-index: 10000;
+  background: rgba(8, 9, 12, 0.78);
+  border: 1px solid var(--border-gold);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.25rem 0.8rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .lightbox-nav {
+    width: 38px;
+    height: 38px;
+    font-size: 1.6rem;
+  }
+}
+
+.advanced {
+  margin-top: 1.1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+

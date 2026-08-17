@@ -1,0 +1,250 @@
+/* preflight — The pre-flight modal — the last stop before panel generation spends credits. */
+
+/* =========================================================================
+   PRE-FLIGHT MODAL — the last stop before panel generation spends credits.
+   Shows every prompt with its cast/props/backgrounds and lets the board-wide
+   settings (style, genre, ASPECT RATIO) be changed while it's still free.
+   ========================================================================= */
+.pf-modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(880px, 100%);
+  max-height: min(88vh, 900px);
+  background: var(--panel);
+  border: 1px solid var(--border-gold);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.pf-head {
+  padding: 1.4rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.pf-eyebrow {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.pf-title {
+  margin: 0.3rem 0 0.4rem;
+  font-size: 1.3rem;
+}
+.pf-sub {
+  margin: 0;
+  font-size: 0.86rem;
+  max-width: 62ch;
+}
+/* The scrolling middle — the header and the Generate button stay put. */
+.pf-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.2rem 1.5rem 0.6rem;
+}
+.pf-section {
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.pf-section:last-child {
+  border-bottom: none;
+}
+.pf-h3 {
+  margin: 0 0 0.7rem;
+  font-size: 0.94rem;
+}
+.pf-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.pf-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pf-label-block {
+  display: block;
+  margin: 0.9rem 0 0.45rem;
+}
+.pf-note {
+  margin: 0.6rem 0 0;
+}
+/* Cast / props / backgrounds — is a locked reference actually going along? */
+.pf-refs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.55rem;
+}
+.pf-ref {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pf-ref-thumb {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  font-weight: 700;
+}
+.pf-ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pf-ref-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pf-ref-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-ref-state {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.pf-ref-state.ok {
+  color: var(--ok);
+}
+/* The prompts themselves — editable here, so a typo doesn't cost a redraw. */
+.pf-shots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.pf-shot {
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.pf-shotnum {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.4rem;
+}
+.pf-scene {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.pf-shot-desc {
+  width: 100%;
+  resize: vertical;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.pf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.pf-meta b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+.pf-shot-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.pf-error {
+  margin: 0 1.5rem;
+}
+.pf-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.9rem 1.5rem 1.1rem;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+@media (max-width: 620px) {
+  .pf-settings {
+    grid-template-columns: 1fr;
+  }
+  .pf-foot {
+    flex-direction: column-reverse;
+  }
+  .pf-foot .btn {
+    width: 100%;
+  }
+}
+
+/* Script traceability — the writer's own lines above the AI's image prompt.
+   Deliberately quieter than the prompt box (it's source material, not an input)
+   but with a gold spine so it reads as "this is yours". */
+.script-line {
+  margin: 0.1rem 0 0.7rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+}
+.script-line-tag {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--primary);
+  margin-bottom: 0.25rem;
+}
+.script-line-text {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+  /* Scripts are line-broken on purpose — keep the writer's own line breaks. */
+  white-space: pre-wrap;
+  max-height: 8.5rem;
+  overflow-y: auto;
+}
+/* Label over the prompt box, so the two stacked boxes can't be confused. */
+.shot-prompt-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+

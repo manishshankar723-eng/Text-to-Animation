@@ -69,6 +69,17 @@ const PATHS = {
       <path d="M12 4v16M9 20h6" {...STROKE} />
     </>
   ),
+  // A colour card — a clip whose whole content is one flat colour. A card with
+  // a SOLID block inside it, because a plain stroked rectangle beside these
+  // reads as an empty frame, which is the opposite of what this clip is. The
+  // fill is `currentColor` like `play`, so it still takes the button's colour
+  // rather than carrying one of its own.
+  card: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" {...STROKE} />
+      <rect x="6.5" y="8" width="11" height="8" rx="1" fill="currentColor" stroke="none" />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = "1.05em", className = "", title }) {

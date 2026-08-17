@@ -752,6 +752,85 @@ _KEYFRAMES = Field(
 )
 
 
+class AnimaticEffect(BaseModel):
+    """One step in a clip's colour chain — a grade, a LUT, a chroma key.
+
+    ORDER MATTERS and is the order of the list: a LUT after a saturation pull is
+    a different picture from a saturation pull after a LUT. The editor moves
+    effects up and down for exactly that reason.
+
+    `kind` is NOT constrained to the known set, following the same rule as
+    `ease`, a clip's `kind` and a transition's: both evaluators simply skip a
+    kind they don't recognise, so a project written by a newer client opens,
+    plays and SAVES BACK with its unknown effect intact rather than being lost
+    over one word.
+
+    `params` is left as a free dict for the same reason. Every parameter is
+    filled from `EFFECT_PARAMS` when it is read (`effect_params` in
+    `animatic_render.py`), so a project saved before a parameter existed picks
+    up its default instead of failing validation.
+
+    ⚠ A NUMERIC PARAMETER IS KEYFRAMABLE, and its keyframe track lives in the
+    CLIP's own `keyframes` under the flat name `fx:<id>:<param>` — which is why
+    `id` has to be stable and unique within the clip.
+    """
+
+    id: str = Field(..., description="Stable client-side id, unique within the clip.")
+    kind: str = Field(
+        ...,
+        description="'brightness' | 'contrast' | 'saturation' | 'lut' | 'chroma'.",
+    )
+    params: dict[str, float | str] = Field(default_factory=dict)
+
+
+class AnimaticMask(BaseModel):
+    """The one region of the FRAME a clip is allowed to paint into.
+
+    Geometry is fractions of the frame with `x`/`y` the CENTRE, matching a
+    shape, an overlay and a picture's pan — it is dragged with the same handles.
+    In frame coordinates rather than the source picture's, because a vignette or
+    a spotlight is a region of the film you are making; that is also what lets
+    one be keyframed to sweep across a shot while the shot pans underneath.
+
+    `feather` is in the mask's OWN units (1.0 = half its width), so a small mask
+    gets a proportionally small softness and the edge doesn't change hardness
+    when the mask is animated bigger.
+
+    kind "none" is the default and means no mask at all — every animatic saved
+    before this one has it, and is unaffected.
+    """
+
+    kind: str = Field("none", description="'none' | 'rect' | 'ellipse'.")
+    x: float = Field(0.5, ge=-1.0, le=2.0)
+    y: float = Field(0.5, ge=-1.0, le=2.0)
+    w: float = Field(0.5, gt=0.0, le=4.0)
+    h: float = Field(0.5, gt=0.0, le=4.0)
+    feather: float = Field(0.1, ge=0.0, le=1.0)
+    # Keeps everything OUTSIDE the region instead — how you punch a hole rather
+    # than cut one out. Not keyframable: a half-inverted mask is not a picture.
+    invert: bool = False
+
+
+# The three fields that make up a clip's LOOK. Declared once because a frame and
+# an overlay carry exactly the same three — they are the two clips that are
+# PICTURES, and the only two with pixels of their own to grade. A shape is
+# vector and a caption is text; both are drawn above the finished composite.
+#
+# All three are optional with defaults that reproduce today's picture exactly:
+# no effects, no mask, normal blend. An animatic saved before this opens, plays
+# and exports unchanged, which `tests/effects_check.py` asserts on an
+# old-shaped payload rather than leaving to inspection.
+_EFFECTS = Field(default_factory=list, description="Colour chain, applied in order.")
+_MASK = Field(default_factory=lambda: AnimaticMask(), description="The clip's mask.")
+_BLEND = Field(
+    "normal",
+    description=(
+        "How this clip composites onto what is under it: 'normal' | 'multiply' "
+        "| 'screen' | 'overlay' | 'add' | 'darken' | 'lighten'."
+    ),
+)
+
+
 class AnimaticFrameSource(BaseModel):
     """Where one animatic frame's picture comes from.
 
@@ -762,7 +841,11 @@ class AnimaticFrameSource(BaseModel):
 
     kind: str = Field(
         "panel",
-        description="'panel' (a storyboard panel), 'pose' (one key pose of a panel's sequence), or 'upload'.",
+        description=(
+            "'panel' (a storyboard panel), 'pose' (one key pose of a panel's "
+            "sequence), 'upload' (an uploaded still), or 'video' (an uploaded "
+            "video file)."
+        ),
     )
     storyboard_id: str | None = Field(None, description="Board job id (kind='panel'/'pose').")
     index: int | None = Field(None, description="Panel index on that board (kind='panel'/'pose').")
@@ -771,17 +854,52 @@ class AnimaticFrameSource(BaseModel):
     # what makes an animatic actually MOVE instead of being a slideshow of
     # stills. Referenced, never copied — redrawing the pose updates the animatic.
     frame: int | None = Field(None, description="Key-pose number within that panel's sequence (kind='pose').")
-    upload_id: str | None = Field(None, description="Uploaded image id (kind='upload').")
+    # One field for both upload kinds. A video and a still are stored side by
+    # side under the same id space, so the only thing that differs is which
+    # file extension is on disk — see `_video_file` / `_image_path`.
+    upload_id: str | None = Field(
+        None, description="Uploaded image id (kind='upload') or video id (kind='video')."
+    )
 
 
 class AnimaticFrame(BaseModel):
-    """One held image in the sequence, with how long it stays on screen."""
+    """ONE CLIP in the sequence, and how long it holds the screen.
+
+    Called a "frame" throughout for history's sake — it started life as one held
+    picture. It is now a clip that may be a still, a piece of a video file, or a
+    flat colour card, and `kind` says which.
+
+    ⚠ `duration_ms` IS THE LENGTH ON THE TIMELINE, for every kind. For a video
+    clip, `in_ms`/`out_ms` say which part of the SOURCE is read and `speed` how
+    fast it is read through — none of which changes how much timeline the clip
+    occupies. See `source_at` in `animatic_render.py` for why it is that way
+    round rather than speed re-timing the clip.
+    """
 
     id: str = Field(..., description="Stable client-side id (survives reordering).")
     src: AnimaticFrameSource
     # 0.1s–10min. The whole point of the editor is that this is per-frame.
     duration_ms: int = Field(2000, ge=100, le=600_000)
     label: str = Field("", description="Caption, e.g. 'Shot 3'. Burned in only if show_labels.")
+    # What this clip is made of. Optional with an "image" default, so every
+    # animatic saved before video clips existed opens as exactly what it was.
+    # Not constrained to the known set on purpose — same rule as `ease` and a
+    # transition's `kind`: both evaluators fold an unrecognised kind down to
+    # "image", so a project written by a newer client still opens and still
+    # plays rather than being lost over one word.
+    kind: str = Field("image", description="'image' | 'video' | 'color'.")
+    # --- Video clips only ---------------------------------------------------
+    # The SOURCE window. `in_ms` is where in the file the clip starts; `out_ms`
+    # is where it stops, exclusive, and None means "to the end of the file".
+    # Past `out_ms` the clip holds its last source frame rather than going black.
+    in_ms: int = Field(0, ge=0, le=24 * 3_600_000)
+    out_ms: int | None = Field(None, ge=1, le=24 * 3_600_000)
+    # How fast the source is read: 2.0 covers twice as much footage in the same
+    # stretch of timeline, 0.5 half as much. It does NOT change `duration_ms`,
+    # which is what keeps every later cut, caption and transition where it was.
+    speed: float = Field(1.0, gt=0.0, le=10.0)
+    # --- Colour cards only --------------------------------------------------
+    color: str = Field("#000000", description="Fill colour for kind='color', #rrggbb.")
     # The picture's OWN pan and zoom, on top of `settings.fit`. Keyframe `scale`
     # and `x`/`y` and you have a Ken Burns push — which is the move that makes a
     # held storyboard panel read as a shot rather than a slide. `x`/`y` are the
@@ -792,6 +910,10 @@ class AnimaticFrame(BaseModel):
     x: float = Field(0.5, ge=-2.0, le=3.0)
     y: float = Field(0.5, ge=-2.0, le=3.0)
     opacity: float = Field(1.0, ge=0.0, le=1.0)
+    # --- The LOOK ----------------------------------------------------------
+    effects: list[AnimaticEffect] = _EFFECTS
+    mask: AnimaticMask = _MASK
+    blend: str = _BLEND
     keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
     # Filled by the server on read so the client has ONE url shape for both
     # source kinds. Ignored on write.
@@ -824,6 +946,36 @@ class AnimaticAudio(BaseModel):
     # a music bed usually wants pulling DOWN under a voice, not pushing up.
     volume: float = Field(1.0, ge=0.0, le=2.0)
     muted: bool = False
+    # --- Shape: how the track comes in and goes out -------------------------
+    # Milliseconds of ramp at each end of what the track PLAYS — so a fade out
+    # lands on the end of the TRIM, or on the end of the video if that comes
+    # first, rather than on the end of the file. 0 is a hard start / stop, which
+    # is every track saved before this existed. Both are applied by `afade` on
+    # export and by the same window in the editor; see `fade_window`.
+    fade_in_ms: int = Field(0, ge=0, le=60_000)
+    fade_out_ms: int = Field(0, ge=0, le=60_000)
+    # --- Tone ---------------------------------------------------------------
+    # Three fixed bands, in dB, 0 = untouched. FIXED rather than parametric so
+    # that each band is exactly one biquad in the browser and one filter in
+    # ffmpeg — see `EQ_BANDS` in animatic.py for why that is the whole design.
+    # ±12 dB is a mix control, not a repair tool: past that you want a better
+    # recording, not a bigger number.
+    eq_low: float = Field(0.0, ge=-12.0, le=12.0)
+    eq_mid: float = Field(0.0, ge=-12.0, le=12.0)
+    eq_high: float = Field(0.0, ge=-12.0, le=12.0)
+    # --- The mix: which track is which, and what ducks under what -----------
+    # STATED, never inferred. A duck has to know which track is the voice, and
+    # "the other one" is wrong the first time someone lays two music beds. ""
+    # is every track saved before this and ducks nothing.
+    role: str = Field("", description="'' | 'voice' | 'music'.")
+    # How far this track is pulled down WHILE THE VOICE IS TALKING, as a gain:
+    # 1.0 = never (the default), 0.3 ≈ −10 dB. It is a compressor keyed off the
+    # voice, so the depth is what the voice asks for around this figure rather
+    # than a fixed step — see `duck_ratio` in animatic.py.
+    duck_to: float = Field(1.0, ge=0.05, le=1.0)
+    # WHICH voice opens the duck, by `upload_id`. "" = the first track whose
+    # role is "voice", which is the only sensible reading when there is one.
+    duck_target: str = ""
     url: str | None = None
 
 
@@ -863,6 +1015,13 @@ class AnimaticOverlay(BaseModel):
     h: float = Field(0.3, gt=0.0, le=4.0)
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     rotation: float = Field(0.0, ge=-360.0, le=360.0)
+    # --- The LOOK, identical to a frame's ----------------------------------
+    # `blend` earns its keep most here: an overlay is the one clip that sits ON
+    # something, so "screen this flare over the shot" is the whole reason the
+    # mode exists.
+    effects: list[AnimaticEffect] = _EFFECTS
+    mask: AnimaticMask = _MASK
+    blend: str = _BLEND
     keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
     # Filled by the server on read, like a frame's. Ignored on write.
     url: str | None = None
@@ -897,9 +1056,50 @@ class AnimaticTextClip(BaseModel):
     # ("scrim"), a solid box, or an outline only ("none").
     backdrop: str = Field("scrim", description="'scrim' | 'box' | 'none'.")
     # Fades the caption — its backdrop, ink and outline together. Keyframe it
-    # and a caption arrives instead of appearing, which is the one text
-    # animation worth having before a full text-animation preset list.
+    # and a caption arrives instead of appearing.
     opacity: float = Field(1.0, ge=0.0, le=1.0)
+    # --- The TYPE (Phase 5) -------------------------------------------------
+    # Every field below is optional with a default that reproduces exactly what
+    # this clip drew before Phase 5, so an animatic saved earlier opens, plays
+    # and exports unchanged — asserted on an old-shaped payload by
+    # `tests/captions_check.py` rather than left to inspection.
+    #
+    # WHICH FONT, by id from the bundled list — never a family name the machine
+    # is asked to resolve. `animatic_fonts.py` and `client/src/animatic/fonts.js`
+    # are the two halves of that list and the files ship in
+    # `client/public/fonts/`; read either module's header for why a caption set
+    # in a font the SERVER looked up by name is a caption that wraps differently
+    # in the MP4 than in the monitor. An id this build doesn't know folds down
+    # to the default, like every other unrecognised enum here.
+    font: str = Field("inter", description="Bundled font id — see animatic_fonts.FONTS.")
+    # HOW it is positioned. "flow" is the original behaviour and the default:
+    # dropped into its `position` zone, stacking with other captions in that
+    # zone so two never land on top of each other. "free" uses x/y instead.
+    # Not animatable — half way between two layout algorithms is not a picture.
+    place: str = Field("flow", description="'flow' (stacked in its zone) | 'free' (x/y).")
+    # The caption's CENTRE as a fraction of the frame, used only when
+    # place='free'. Matches a shape, an overlay and a picture's pan, because it
+    # is dragged with the same handles. ⚠ ANIMATABLE, and the two properties the
+    # in/out presets move: a title sliding up into place is two keys on `y`.
+    # Defaults match TEXT_DEFAULTS in `animatic_render.py` and `scene.js`.
+    x: float = Field(0.5, ge=-1.0, le=2.0)
+    y: float = Field(0.85, ge=-1.0, le=2.0)
+    # Outline around the glyphs, in pixels AT 1080p — scaled with the frame, so
+    # the same project looks the same exported at 720p or 4K. 0 is no outline,
+    # which is what every caption written before this has. (The "none" backdrop
+    # still draws its own automatic outline: without a backdrop OR an outline,
+    # white text on pale art is invisible, and that has always been true.)
+    stroke_px: float = Field(0.0, ge=0.0, le=24.0)
+    stroke_color: str = Field("#000000", description="Outline colour, #rrggbb.")
+    # Drop shadow OFFSET, as a fraction of the font size — so it is one number
+    # in both languages: `shadow`em down and right in CSS, `shadow * font_px` in
+    # Pillow. 0 is no shadow. 0.06 is an ordinary one.
+    shadow: float = Field(0.0, ge=0.0, le=0.5)
+    # Extra space between glyphs, as a fraction of the font size (CSS `em`).
+    # Negative tightens. 0 leaves the font's own metrics alone, and the drawing
+    # code takes its original per-line path in that case, so an untouched
+    # caption is rendered by exactly the code that rendered it before.
+    letter_spacing: float = Field(0.0, ge=-0.2, le=1.0)
     keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
 
     @property
@@ -1030,6 +1230,11 @@ class AnimaticProject(BaseModel):
     # set the moment the project is edited afterwards, so the UI can say the
     # downloadable file no longer matches what's on screen.
     video: dict | None = None
+    # Every Veo render made from this editor, newest last. READ-ONLY: it is
+    # server-owned state living in the job's `result`, and `AnimaticSaveRequest`
+    # deliberately has no matching field — see AnimaticVeoClip for why a paid
+    # render must not be reachable by the autosave.
+    veo_clips: list["AnimaticVeoClip"] = Field(default_factory=list)
     error: str | None = None
     created_at: str
     updated_at: str
@@ -1109,6 +1314,29 @@ class AnimaticUploadResponse(BaseModel):
     items: list[AnimaticMediaItem] = Field(default_factory=list)
     # Files that couldn't be read, so the UI can name them instead of silently
     # dropping them from a 40-file drag-and-drop.
+    rejected: list[str] = Field(default_factory=list)
+
+
+class AnimaticVideoItem(BaseModel):
+    """One uploaded video, ready to be dropped onto the timeline."""
+
+    upload_id: str
+    filename: str = ""
+    # Measured SERVER SIDE, by ffmpeg — unlike audio, whose length the browser
+    # reports. The client needs it before it can size the clip, and it needs to
+    # be the same number the exporter will work from, so there is one measurer.
+    # 0 means "couldn't tell": the clip still works, it just opens at the
+    # default hold instead of at its natural length.
+    duration_ms: int = 0
+    url: str
+
+
+class AnimaticVideoUploadResponse(BaseModel):
+    """Returned from POST /animatics/{id}/videos — uploads in the order sent."""
+
+    items: list[AnimaticVideoItem] = Field(default_factory=list)
+    # Files that couldn't be stored or read, named rather than silently dropped
+    # — same rule as the image upload response.
     rejected: list[str] = Field(default_factory=list)
 
 
@@ -1339,6 +1567,147 @@ class CostEstimate(BaseModel):
     usd: float = 0.0
     tier: str = "fast"
     resolution: str = "720p"
+
+
+# --- Animating an ANIMATIC frame with Veo, from inside the editor -----------
+# These belong to the animatic editor, not to this workflow, but they live down
+# here because they are built on `RenderSettings` and `CostEstimate` above —
+# and because sharing those types is the point. The editor quotes and bills
+# through the same rate table as the final-video workspace, so the two can never
+# disagree about what a render costs.
+#
+# ⚠ THIS IS THE ONE PATH IN THE ANIMATIC EDITOR THAT SPENDS MONEY. It follows
+# the discipline established on 2026-08-07; the reasoning for every rule is in
+# that Work Log entry:
+#   · nothing renders without a FREE estimate having been shown first
+#   · the batch is capped (config.MAX_VIDEO_BATCH)
+#   · a frame that already produced a clip is never silently re-rendered
+#   · a frame with no motion prompt is never submitted — it could only ever
+#     produce a PAID failure
+#
+# The rendered clip lands as an ordinary VIDEO UPLOAD, exactly like a file
+# dragged in from the desktop. That is deliberate and it is the whole trick:
+# from the moment it exists, a generated clip and a dropped clip are the same
+# object on the timeline, so trimming, speed, extraction and export have one
+# code path rather than two that can drift apart.
+class AnimaticVeoClip(BaseModel):
+    """One Veo render on an animatic, as a SERVER-OWNED record.
+
+    ⚠ Lives in the job's `result`, never in `params`. `params` is rewritten
+    wholesale by the editor's autosave every time anything changes, so a render
+    recorded there would be rolled back by a save that started before it
+    finished — erasing the record of a clip that was paid for. This is the same
+    lesson as `FinalVideoShot.include` vs `ShotStatus`: what the USER decides and
+    what the RENDER decides must not share a home.
+    """
+
+    id: str = Field(..., description="This render's own id (a re-render is a new one).")
+    # The frame this was generated FROM, so the editor can attach it to the right
+    # clip. Not authoritative: the frame may since have been deleted, which costs
+    # the attachment, not the clip.
+    frame_id: str = ""
+    # Where the finished MP4 lives — an ordinary video upload id, servable and
+    # placeable exactly as a dropped file is.
+    upload_id: str = ""
+    prompt: str = ""
+    status: str = Field("queued", description="'queued' | 'rendering' | 'ready' | 'failed'.")
+    error: str = ""
+    # What we ASKED Veo for, so nothing downstream has to measure it — the same
+    # rule the assembler follows, and for the same reason: there is no ffprobe.
+    duration_ms: int = 0
+    # Advisory, and recorded per render so a running total is a sum of real
+    # charges rather than a re-estimate at today's settings.
+    cost_usd: float = 0.0
+    rendered_at: str = ""
+
+
+class AnimaticAnimateRequest(BaseModel):
+    """Body for the two /animate endpoints — estimate (free) and render (paid).
+
+    Both take the SAME body on purpose: the number shown in the confirm dialog
+    can then only be the price of the thing the button goes on to do. Two
+    differently-shaped requests is how an estimate starts quoting for something
+    other than what actually gets rendered.
+    """
+
+    # Which frames to animate.
+    frame_ids: list[str] = Field(default_factory=list)
+    # frame_id → the motion prompt for that frame. A frame whose prompt is blank
+    # is REFUSED rather than rendered: Veo bills for a failure exactly as it
+    # bills for a success.
+    prompts: dict[str, str] = Field(default_factory=dict)
+    render: RenderSettings = Field(default_factory=RenderSettings)
+    # Re-render a frame that already produced a clip. It costs again, so it is a
+    # separate, differently-worded action in the UI — never a silent retry.
+    force: bool = False
+
+
+# --- Captions and voiceover (Phase 5) ---------------------------------------
+# ⚠ THE OTHER TWO PATHS IN THE ANIMATIC EDITOR THAT SPEND QUOTA. They follow the
+# discipline ✨ Animate established on 2026-08-07, for the same reason:
+#   · nothing runs without a FREE estimate having been shown first, and both
+#     endpoints of a pair take the SAME body, so the price quoted can only ever
+#     be the price of the thing the button then does
+#   · the run is capped (captions.MAX_AUDIO_SECONDS, tts.MAX_CHARACTERS)
+#   · the job goes RUNNING, which `save_animatic` already refuses to write
+#     through — so an autosave cannot roll back work that was paid for
+#
+# They are far cheaper than a Veo render, which is exactly why the discipline is
+# worth keeping: a cheap call is the one that gets clicked forty times.
+class AudioCostEstimate(BaseModel):
+    """FREE advisory quote for a captions or a voiceover run.
+
+    A separate type from `CostEstimate` rather than a reuse of it: that one is
+    priced per SHOT of video at a tier and a resolution, and neither field means
+    anything about a sound. A dialog reading "720p" over a transcription is the
+    kind of small lie that makes a price look made up — which, being advisory,
+    it can least afford.
+    """
+
+    # Whichever of these the run is priced by; the other is 0.
+    lines: int = 0
+    characters: int = 0
+    seconds: float = 0.0
+    usd: float = 0.0
+    model: str = ""
+    # True when the request is over its own spend guard. The client uses it to
+    # disable the button and say why, rather than letting the call 413.
+    over_limit: bool = False
+    limit: str = Field("", description="What the limit is, in words, when over_limit.")
+
+
+class AnimaticCaptionsRequest(BaseModel):
+    """Body for the two /captions endpoints — estimate (free) and run (paid)."""
+
+    # WHICH audio track to caption. Named rather than assumed, because an
+    # animatic usually carries music as well as a voice and transcribing the
+    # music is a paid way to get nothing.
+    upload_id: str = Field(..., description="The audio track to transcribe.")
+    language: str = Field("", description="Hint, e.g. 'Hindi'. Blank = let the model tell.")
+    # Drop the captions a previous run made before adding these. On by default:
+    # running it twice is nearly always a correction, and the alternative is two
+    # copies of every subtitle stacked on top of each other.
+    replace: bool = True
+
+
+class AnimaticVoiceoverRequest(BaseModel):
+    """Body for the two /voiceover endpoints — estimate (free) and run (paid).
+
+    The lines come from the SOURCE BOARD's dialogue, matched to the frames that
+    reference each panel, so every line already knows which shot it belongs to
+    and therefore where on the timeline it goes. Nothing here has to be typed —
+    that is the whole point, and it is why this belongs in the editor rather
+    than being a text box beside it.
+    """
+
+    voice: str = Field("Kore", description="Prebuilt voice name — see tts.VOICES.")
+    # Restrict to some shots. Empty = every frame that has dialogue.
+    frame_ids: list[str] = Field(default_factory=list)
+    # Lay the spoken lines down as captions too, at the times they were ACTUALLY
+    # read at (which is not always the time they were asked for — see
+    # `tts.synthesise_timed`). Free: the timings come back with the audio.
+    add_captions: bool = True
+    replace: bool = True
 
 
 class VideoBackendStatus(BaseModel):

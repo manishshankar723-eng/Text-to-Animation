@@ -1,0 +1,699 @@
+/* animatic-editor — The NLE workspace: a fixed-height grid of Media / Program / Properties over a full-width timeline. */
+
+/* =========================================================================
+   ANIMATIC EDITOR — NLE WORKSPACE
+   A fixed-height grid, not a scrolling page: three panes (Media / Program /
+   Properties) over a full-width Timeline. In an editor the picture must never
+   slide off screen while you drag a clip, so the workspace fills the viewport
+   and every pane scrolls inside itself.
+   ========================================================================= */
+.an-nle {
+  /* Fallback for browsers without :has() — assumes .shell-main's 1.8rem of
+     top+bottom padding. The rule below replaces this with a real flex fill, so
+     the layout stops depending on that number being right. */
+  height: calc(100dvh - 3.6rem);
+  /* FLEX, not grid rows. A grid template assigns rows by POSITION, and the
+     status strip only exists when there's something to say — so on a fresh
+     animatic every child shifted up a row, the timeline inherited the `1fr`
+     and ~390px of dead space appeared beneath it. Flex doesn't care how many
+     children there are: the panes take the slack, everything else is content
+     height. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 0;
+}
+.an-topbar,
+.an-statusbar,
+.an-pane-timeline {
+  flex: 0 0 auto;
+}
+
+/* The editor is the one screen that must FIT the viewport rather than scroll —
+   pane heights are meaningless if the page itself scrolls underneath them.
+   `:has()` lets it opt the shell into that without App.jsx having to know which
+   page is mounted, and without the editor hard-coding anyone's padding. */
+.shell:has(.an-nle) {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+.shell:has(.an-nle) .shell-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  /* Tighter than the rest of the app on purpose: this is a workspace, and every
+     pixel of the page's usual 1.8rem breathing room is a pixel off the picture.
+     Kept symmetric so it still reads as deliberate framing, not a misfit. */
+  padding: 0.85rem clamp(0.85rem, 1.4vw, 1.35rem);
+}
+.shell:has(.an-nle) .an-nle {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.an-panes {
+  /* Takes ALL the slack — this is what makes the workspace reach the bottom of
+     the window however many optional strips are showing above it. */
+  flex: 1 1 auto;
+  display: grid;
+  /* Fluid: a 4K screen gives the side panes more room, a 1280 laptop keeps the
+     Program pane from being crushed between two fixed columns. */
+  grid-template-columns:
+    clamp(12rem, 15vw, 17rem)
+    minmax(0, 1fr)
+    clamp(16rem, 20vw, 22rem);
+  gap: 0.55rem;
+  min-height: 0;
+}
+
+/* --- A panel: title strip + a body that scrolls on its own ---------------- */
+.an-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.an-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.4rem 0.6rem;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.an-pane-title {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.an-pane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.6rem;
+}
+
+/* --- Media pane ---------------------------------------------------------- */
+/* The frame cards stack instead of scrolling sideways; everything else about
+   them (drag to reorder, the typed hold) is the same component. */
+.fs-vertical {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+.fs-vertical .fs-head {
+  margin-bottom: 0.5rem;
+}
+.fs-vertical .fs-row {
+  flex-direction: column;
+  overflow: visible;
+}
+.fs-vertical .fs-card {
+  width: 100%;
+}
+.fs-vertical .fs-add {
+  min-height: 4rem;
+}
+
+/* The Media pane's single control: click it or drop onto the pane. It replaced
+   three separate ones ("Add images", the drop card, "Add an MP3") that all did
+   the same job. */
+.an-asset-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.9rem 0.7rem;
+  margin-bottom: 0.9rem;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.an-asset-drop:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.an-asset-drop:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: progress;
+}
+.an-asset-plus {
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--primary);
+}
+.an-asset-text {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.an-asset-note {
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+/* Whole pane lights up while a file is over it, so the target is the pane and
+   not just the little dashed box. */
+.an-dropping {
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
+  background: rgba(229, 193, 88, 0.06);
+}
+
+.an-media-audio {
+  margin-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.an-media-sub {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.an-media-track {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.an-media-track-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* Volume for THIS track in the mix — the reason multiple tracks exist is being
+   able to pull music down under a voice. */
+.an-media-track-mix {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+.an-vol {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--primary);
+}
+.an-vol:disabled {
+  opacity: var(--disabled-opacity);
+}
+.an-mute {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.15rem 0.25rem;
+}
+.an-mute.on {
+  border-color: var(--warn);
+}
+.an-mix-note {
+  margin: 0.2rem 0 0;
+  line-height: 1.4;
+}
+.an-media-ico {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.an-media-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-media-empty {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.55rem;
+}
+.an-media-empty:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+/* --- Program pane -------------------------------------------------------- */
+.an-program-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow: hidden; /* the picture is sized to fit, never scrolled */
+}
+/* The fitter takes whatever height is left after the transport row and becomes
+   a SIZE CONTAINER, so the screen below can measure it. */
+.an-screen-fit {
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Widest that fits BOTH ways: the container's width, or its height scaled by
+   the frame ratio. `aspect-ratio` alone can't do this — with the box bounded on
+   both axes the browser drops the ratio and the preview stops matching the
+   exported frame (measured 1.66:1 for a 16:9 project before this). Width is
+   definite here, so `aspect-ratio` derives the height and the shape is exact. */
+.an-nle .an-screen {
+  width: min(100cqw, calc(100cqh * var(--ar-num, 1.7778)));
+  height: auto;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* --- Properties pane ----------------------------------------------------- */
+.an-pane-back {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.12rem 0.4rem;
+}
+.an-pane-back:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.an-props {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.an-prop-hint {
+  margin: 0;
+  line-height: 1.5;
+}
+.an-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.an-prop-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  min-width: 5.2rem;
+}
+.an-prop-input {
+  flex: 1 1 6rem;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 0.25rem 0.4rem;
+}
+.an-prop-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-prop-thumb {
+  aspect-ratio: 16 / 9;
+  background: var(--frame-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* The colour card's swatch in the Properties pane — same job as the <img>
+   below, so it fills the thumb the same way. */
+.an-prop-card {
+  width: 100%;
+  height: 100%;
+}
+.an-prop-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.an-prop-warn {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--warn);
+  line-height: 1.45;
+}
+.an-prop-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 0.2rem;
+}
+/* Delete-the-whole-animatic sits below a rule, away from the per-clip buttons. */
+.an-prop-actions.an-danger-row {
+  border-top: 1px solid var(--border);
+  padding-top: 0.7rem;
+  margin-top: 0.4rem;
+}
+.an-pane-props .an-tp-text {
+  font-size: 0.85rem;
+}
+.an-pane-props .opt-chip {
+  font-size: 0.74rem;
+  padding: 0.3rem 0.5rem;
+}
+
+/* --- Timeline pane ------------------------------------------------------- */
+.an-pane-timeline {
+  /* Tall enough for the ruler + three tracks without the pane scrolling, but it
+     gives room back to the picture on a short screen instead of fighting it. */
+  /* Grows with the number of layers — a second audio lane needs room — but
+     never eats more than half the window, and scrolls beyond that. */
+  height: auto;
+  min-height: clamp(13rem, 24vh, 15.5rem);
+  max-height: 50vh;
+  flex-shrink: 0;
+}
+/* ⚠ `overflow: hidden`, and a flex column — the TIMELINE scrolls itself now.
+   While this pane scrolled, the ruler and the labels slid away with the tracks
+   and the scroll bars sat wherever the content happened to end. The lanes are
+   inside their own scroller instead, and this box's only job is to hand it a
+   height to be bounded by. */
+.an-timeline-body {
+  padding: 0.5rem 0.6rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.an-pane-timeline .an-tl-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+.an-pane-timeline .an-setall,
+.an-pane-timeline .an-zoom {
+  margin-left: 0;
+}
+
+/* --- Status strip -------------------------------------------------------- */
+/* One line for errors, notices and export progress, so none of them push the
+   panes around by appearing and disappearing. */
+.an-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
+}
+.an-status-error {
+  color: var(--fail);
+}
+.an-status-note {
+  color: var(--primary);
+}
+.an-status-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+.an-status-bar {
+  display: inline-block;
+  width: 9rem;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.an-status-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--gold-bar);
+  transition: width 0.3s ease;
+}
+.an-stale {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* --- Narrow screens ------------------------------------------------------ */
+/* Two stages, because dropping straight from three columns to one wastes a lot
+   of usable width in between. First the side panes give ground to the picture… */
+@media (max-width: 1400px) {
+  .an-panes {
+    grid-template-columns: 11rem minmax(0, 1fr) 15rem;
+  }
+  .an-pane-props .opt-chip {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.4rem;
+  }
+}
+
+/* …then the split stops helping altogether: the panes become too narrow to use,
+   so the workspace goes back to stacking and scrolling like a normal page. */
+@media (max-width: 1180px) {
+  .shell:has(.an-nle),
+  .shell:has(.an-nle) .shell-main {
+    height: auto;
+    overflow: visible;
+    display: block;
+  }
+  .shell:has(.an-nle) {
+    display: grid;
+  }
+  .an-nle,
+  .shell:has(.an-nle) .an-nle {
+    height: auto;
+  }
+  .an-panes {
+    grid-template-columns: 1fr;
+  }
+  .an-pane-media,
+  .an-pane-props {
+    max-height: 22rem;
+  }
+  .an-nle .an-screen {
+    width: min(100%, 62vh);
+    height: auto;
+  }
+  .an-pane-timeline {
+    height: auto;
+    min-height: 13.5rem;
+  }
+}
+
+/* A short window (a laptop with devtools open, a phone on its side) can't give
+   every pane a usable height. Stop pinning to the viewport and let it scroll —
+   a squashed workspace is worse than a scrolling one. */
+@media (max-height: 620px) {
+  .shell:has(.an-nle),
+  .shell:has(.an-nle) .shell-main {
+    height: auto;
+    overflow: visible;
+  }
+  .shell:has(.an-nle) .shell-main {
+    display: block;
+  }
+  .an-nle,
+  .shell:has(.an-nle) .an-nle {
+    height: auto;
+    min-height: 40rem;
+  }
+}
+
+/* Icon-only buttons: centre the glyph and let it inherit the button colour. */
+.lib-icon,
+.fs-tool,
+.an-topbar .an-del-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lib-icon .icon {
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: middle;
+}
+.fs-tool .icon {
+  width: 1em;
+  height: 1em;
+}
+
+/* --- Timeline: audio LAYERS ---------------------------------------------- */
+/* Each track gets its own lane and its own gutter row, so a voiceover and a
+   music bed are visibly separate things that happen to be mixed. */
+.tl-layer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tl-layer-mute {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  flex-shrink: 0;
+}
+/* A muted lane is dimmed rather than hidden — it's still part of the edit. */
+.tl-audio.muted {
+  opacity: 0.42;
+}
+.tl-audio + .tl-audio {
+  margin-top: var(--tl-row-gap);
+}
+.tl-add-layer {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: var(--tl-row-gap);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.2rem;
+}
+.tl-add-layer:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.tl-add-layer:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.tl-layer-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.1rem;
+  line-height: 1;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.tl-layer-del:hover {
+  color: var(--fail);
+}
+.tl-layer-del .icon {
+  width: 0.85em;
+  height: 0.85em;
+}
+
+/* --- Add-layer picker ---------------------------------------------------- */
+.an-layer-modal {
+  max-width: 26rem;
+  width: 92vw;
+  position: relative;
+}
+.an-layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+.an-layer-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.6rem 0.75rem;
+}
+.an-layer-opt:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-layer-opt:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+.an-layer-opt > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.an-layer-opt-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--primary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.an-past-end-note {
+  font-size: 0.7rem;
+  color: var(--warn);
+  white-space: nowrap;
+}
+/* A selected audio track — in the gutter, in its lane, and in the Media list. */
+.tl-gutter-audio.sel,
+.an-media-track.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-audio.sel {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+.an-media-track {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.an-media-track:hover {
+  border-color: var(--primary);
+}

@@ -58,16 +58,46 @@ PROJECT = {
         # A Ken Burns push: the picture zooms 1.0 → 1.25 while drifting left.
         # Keys are RELATIVE to this frame's own start, which is the rule most
         # likely to be got wrong on one side.
+        # It also carries a GRADE THAT MOVES (Phase 4): a LUT dialling in over
+        # the push and a mask closing down on it. Both are addressed by the flat
+        # track names `fx:<id>:<param>` and `mask:<field>`, which is the one
+        # piece of the keyframe design the two languages could parse
+        # differently — an effect id containing a colon, a missing id, a
+        # parameter that is a string. All three are exercised in this fixture.
         {
             "id": "fr1",
             "duration_ms": 1500,
             "label": "Shot 1",
+            "effects": [
+                {"id": "e1", "kind": "lut", "params": {"name": "noir", "amount": 0.0}},
+                # A parameter LEFT OUT: `smoothness` and `spill` must arrive at
+                # their defaults on both sides rather than as null or 0.
+                {"id": "e2", "kind": "chroma", "params": {"color": "#12ff34", "similarity": 0.4}},
+                # An effect this build has never heard of. Both evaluators must
+                # DROP it from the resolved scene — the same forgiveness `ease`
+                # and `clip_kind` get — while leaving it in the project.
+                {"id": "e3", "kind": "kaleidoscope", "params": {"amount": 3}},
+                # NO ID. Both sides must fall back to the effect's position, and
+                # to the SAME position — the raw index, counted before the
+                # unknown kind above is dropped, or the two disagree by one.
+                {"kind": "brightness", "params": {"amount": 1.1}},
+            ],
+            "mask": {"kind": "ellipse", "x": 0.5, "y": 0.5, "w": 0.9, "h": 0.9,
+                     "feather": 0.2, "invert": False},
+            "blend": "screen",
             "keyframes": {
                 "scale": [
                     {"t": 0, "v": 1.0, "ease": "ease-in-out"},
                     {"t": 1500, "v": 1.25},
                 ],
                 "x": [{"t": 0, "v": 0.5}, {"t": 1500, "v": 0.42}],
+                "fx:e1:amount": [
+                    {"t": 0, "v": 0.0, "ease": "ease-in"},
+                    {"t": 1500, "v": 1.0},
+                ],
+                "mask:w": [{"t": 0, "v": 0.9}, {"t": 1500, "v": 0.35}],
+                # A track naming the effect at index 3, which carries no id.
+                "fx:3:amount": [{"t": 0, "v": 1.1}, {"t": 1500, "v": 0.7}],
             },
         },
         # No keyframes at all — the common case, and it must stay identical to
@@ -75,6 +105,34 @@ PROJECT = {
         {"id": "fr2", "duration_ms": 2500, "label": "Shot 2"},
         # A lone key. One key is not an animation; the value simply holds.
         {"id": "fr3", "duration_ms": 900, "keyframes": {"opacity": [{"t": 200, "v": 0.5}]}},
+        # --- Clips (Phase 3) ------------------------------------------------
+        # A VIDEO CLIP AT DOUBLE SPEED, with both ends of its source window set.
+        # 1600ms of timeline at speed 2 reads 3200ms of source starting at 500,
+        # i.e. 500 → 3700 — but `out_ms` is 3000, so the last 350ms of the clip
+        # HOLD source frame 2999. Both the ramp and the hold are sampled below.
+        # This is the one clip in the fixture where the two languages have a
+        # brand-new number to disagree about.
+        {
+            "id": "fr4",
+            "duration_ms": 1600,
+            "label": "A take",
+            "kind": "video",
+            "src": {"kind": "video", "upload_id": "v1"},
+            "in_ms": 500,
+            "out_ms": 3000,
+            "speed": 2.0,
+            # Keyframed AS WELL, because a video clip is still a picture on the
+            # canvas: the source range and the pan/zoom are independent, and
+            # resolving one must not disturb the other.
+            "keyframes": {"scale": [{"t": 0, "v": 1.0}, {"t": 1600, "v": 1.4}]},
+        },
+        # A COLOUR CARD. No file, no source time — `source_ms` must be null on
+        # both sides, and `color` must survive rather than defaulting to black.
+        {"id": "fr5", "duration_ms": 600, "kind": "color", "color": "#204060"},
+        # A clip whose kind this build has never heard of. Both evaluators must
+        # fold it down to "image" — the same forgiveness `ease` and the
+        # transition kinds get, and what lets a newer client's project open here.
+        {"id": "fr6", "duration_ms": 500, "kind": "hologram", "speed": 3.0},
     ],
     "texts": [
         {
@@ -95,6 +153,32 @@ PROJECT = {
         # burn a blank bar into the video.
         {"id": "tx2", "text": "   ", "start_ms": 0, "duration_ms": 4000},
         {"id": "tx3", "text": "Static caption", "start_ms": 2000, "duration_ms": 1500},
+        # --- Text (Phase 5) --------------------------------------------------
+        # A FREE-PLACED title that slides up into frame while it fades in —
+        # which is what `text_presets.js` writes, and the reason a caption
+        # gained x/y at all. Both keys run on a curve, so this is also where the
+        # two languages would part company on a caption that MOVES.
+        {
+            "id": "tx4",
+            "text": "A title that arrives",
+            "start_ms": 1000,
+            "duration_ms": 2000,
+            "place": "free",
+            "x": 0.5,
+            "y": 0.6,
+            "font": "anton",
+            "stroke_px": 4,
+            "shadow": 0.06,
+            "letter_spacing": 0.08,
+            "keyframes": {
+                "y": [{"t": 0, "v": 0.68, "ease": "ease-out"}, {"t": 500, "v": 0.6}],
+                "opacity": [{"t": 0, "v": 0.0}, {"t": 500, "v": 1.0}],
+            },
+        },
+        # A placement this build has never heard of. Both evaluators must fold
+        # it down to "flow" — the same forgiveness `ease` and `clip_kind` get.
+        {"id": "tx5", "text": "Odd placement", "start_ms": 5000, "duration_ms": 800,
+         "place": "orbit", "x": 0.1, "y": 0.1},
     ],
     "shapes": [
         # Keys given OUT OF ORDER on purpose, and every easing curve exercised.
@@ -162,7 +246,29 @@ PROJECT = {
             "duration_ms": 2000,
             "x": 0.5, "y": 0.5, "w": 0.3, "h": 0.3,
             "opacity": 1.0, "rotation": 0.0,
-            "keyframes": {"w": [{"t": -500, "v": 0.1}, {"t": 4000, "v": 0.9}]},
+            # An overlay carries the SAME look a frame does — it is the other
+            # clip that is a picture — and this is where a blend mode earns its
+            # keep, since an overlay is the one thing that sits ON something.
+            "effects": [
+                {"id": "g1", "kind": "saturation", "params": {"amount": 1.6}},
+            ],
+            "blend": "multiply",
+            "keyframes": {
+                "w": [{"t": -500, "v": 0.1}, {"t": 4000, "v": 0.9}],
+                "fx:g1:amount": [{"t": 0, "v": 1.6}, {"t": 2000, "v": 0.0}],
+            },
+        },
+        # An overlay carrying NO look at all: the common case, and the one that
+        # proves an empty chain, an unset mask and "normal" resolve to the same
+        # SHAPE on both sides rather than to `undefined` on one and a missing
+        # key on the other.
+        {
+            "id": "ov2",
+            "upload_id": "u2",
+            "start_ms": 0,
+            "duration_ms": 1200,
+            "x": 0.2, "y": 0.8, "w": 0.15, "h": 0.15,
+            "opacity": 1.0, "rotation": 0.0,
         },
     ],
     "transitions": [
@@ -175,31 +281,53 @@ PROJECT = {
         # 4001 are all sampled, so both sides have to agree about the moment the
         # picture underneath changes as well as about the blend either side.
         {"id": "tr1", "after_frame_id": "fr2", "kind": "dissolve", "duration_ms": 600},
-        # CLAMPED: 5s asked for, but fr3 is only 900ms long, so both evaluators
-        # must cut it to 900 — and to the SAME 900, or the windows differ.
-        # Anchored to the LAST frame, so it is also the inert case: there is
-        # nothing to cut to, and it must be skipped rather than crash.
-        {"id": "tr2", "after_frame_id": "fr3", "kind": "wipe", "duration_ms": 5000},
+        # Anchored to the LAST frame — the inert case: there is nothing to cut
+        # to, so it must be skipped rather than crash.
+        {"id": "tr2", "after_frame_id": "fr6", "kind": "wipe", "duration_ms": 5000},
         # Names a frame that isn't in the project at all — the "you deleted the
         # frame this was on" case, which must be silently inert on both sides.
         {"id": "tr3", "after_frame_id": "gone", "kind": "slide", "duration_ms": 400},
+        # CLAMPED: 5s asked for, but the two holds it joins are 600 and 500, so
+        # both evaluators must cut it to 500 — and to the SAME 500, or the
+        # windows differ. It also lands ON a colour card, which is the cheapest
+        # proof that a transition does not care what kind its neighbours are.
+        {"id": "tr4", "after_frame_id": "fr5", "kind": "wipe", "duration_ms": 5000},
     ],
 }
+
+# Where every clip sits, for reading the assertions below:
+#   fr1 0–1500 · fr2 1500–4000 · fr3 4000–4900 · fr4 (video) 4900–6500
+#   fr5 (colour) 6500–7100 · fr6 7100–7600, then held to END_MS
 
 # Every cut boundary, either side of every boundary, the ends, and a spread of
 # ordinary moments in between. A half-open visibility rule (start <= t < end) is
 # what makes a cut land on exactly one picture; times ON a boundary are where an
 # implementation that got that wrong shows itself.
 TIMES = [
-    0, 1, 250, 499, 500, 501, 600, 999, 1000, 1001, 1499, 1500, 1501,
+    0, 1, 250, 499, 500, 501, 600, 999, 1000, 1001,
+    # A free-placed title sliding up over its first 500ms (tx4, 1000–3000).
+    1050, 1150, 1250, 1350,
+    1499, 1500, 1501,
     1999, 2000, 2001, 2500, 3000, 3499, 3500,
     # The transition on the 4000ms cut runs 3700–4300. Both edges, either side
     # of both edges, the midpoint, and the cut itself — a transition is where
     # two implementations disagree about rounding if they are going to.
     3699, 3700, 3701, 3850, 3999, 4000, 4001, 4150, 4299, 4300, 4301,
-    4500, 4899, 4900, 5200, 8000,
+    4500, 4899,
+    # The VIDEO clip, 4900–6500 at speed 2 out of a source window 500→3000.
+    # Its source time ramps 500 → 3000 over the first 1250ms and then HOLDS at
+    # 2999 for the remaining 350: both halves are sampled, and so is the moment
+    # the hold begins, which is where a clamp written two different ways parts
+    # company.
+    4900, 4901, 5000, 5525, 6149, 6150, 6151, 6300, 6499,
+    # The COLOUR card, and the clamped wipe onto it (6850–7350).
+    6500, 6700, 6849, 6850, 7000, 7099, 7100, 7101, 7349, 7350, 7351,
+    # The last clip, and past the end of every picture.
+    7400, 7599, 7600, 8000, 8599,
 ]
-END_MS = 6000  # longer than the pictures: the last frame must be HELD out to here
+# Longer than the pictures (which run to 7600): the last frame must be HELD out
+# to here, which is what makes an export cover a music bed that outlasts them.
+END_MS = 8600
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +433,15 @@ check("isAnimated agrees", js["animated"] == py_animated,
       f"(js={js['animated']} py={py_animated})")
 check("the fixture IS animated (or the rest of this test proves nothing)", py_animated)
 
-still = {"frames": [dict(f, keyframes={}) for f in PROJECT["frames"]],
+# Stripping the keyframes is no longer enough to make this fixture hold still:
+# a VIDEO CLIP moves by itself, and so does a speed other than 1. Both have to
+# go too, which is the point — see the dedicated checks further down.
+still = {"frames": [dict(f, keyframes={}, kind="image", speed=1.0) for f in PROJECT["frames"]],
          "texts": [dict(t, keyframes={}) for t in PROJECT["texts"]],
          "shapes": [dict(s, keyframes={}) for s in PROJECT["shapes"]],
          "overlays": [dict(o, keyframes={}) for o in PROJECT["overlays"]]}
-check("a project with the keyframes stripped is NOT animated", not is_animated(still))
+check("a project with the keyframes and the clips stripped is NOT animated",
+      not is_animated(still))
 
 # --- The scene at every sampled time --------------------------------------
 mismatches = 0
@@ -350,7 +482,7 @@ check("a cut boundary belongs to the incoming picture",
 
 # The last picture is held out to end_ms so a long music bed is covered.
 check("the last picture is held past the end of the frames",
-      scene_at(PROJECT, 5500, END_MS)["frame"]["index"] == 2)
+      scene_at(PROJECT, 8000, END_MS)["frame"]["index"] == 5)
 check("total_ms is the held length, not the sum of the frames",
       scene_at(PROJECT, 0, END_MS)["total_ms"] == END_MS)
 
@@ -393,7 +525,7 @@ check("the moment the window ends, the incoming picture is simply up",
 # A transition hanging off the LAST frame, or naming a frame that has been
 # deleted, is inert — skipped, not an error, and not a second window.
 check("a transition on the last frame is inert",
-      all(scene_at(PROJECT, t, END_MS)["frame_b"] is None for t in (4700, 4899, 5200)))
+      all(scene_at(PROJECT, t, END_MS)["frame_b"] is None for t in (7400, 7599, 8200)))
 check("a transition naming a frame that isn't there is inert",
       scene_at(PROJECT, 2000, END_MS)["frame_b"] is None)
 # Transitions cost nothing in length: that is the entire design decision.
@@ -412,6 +544,208 @@ check("the render key changes as the blend progresses",
 check("a moment off a transition signs exactly as it did before they existed",
       scene_signature(scene_at(PROJECT, 1000, END_MS))
       == scene_signature(scene_at({**PROJECT, "transitions": []}, 1000, END_MS)))
+
+# --- Clips: image / video / colour ----------------------------------------
+# The scene model's job for a video clip is to answer ONE new question — which
+# moment of the source file is on screen — and these pin the answer rather than
+# leaving it to "both sides do the same thing".
+img = scene_at(PROJECT, 1000, END_MS)["frame"]
+check("a plain still reports kind 'image' and no source time",
+      img["kind"] == "image" and img["source_ms"] is None)
+
+# fr4 starts at 4900, in_ms 500, speed 2. At the very first instant the source
+# time is exactly `in_ms` — an off-by-one here shows as the clip starting a
+# frame late, which is the classic trim bug.
+check("a video clip opens on exactly its in point",
+      scene_at(PROJECT, 4900, END_MS)["frame"]["source_ms"] == 500)
+check("a video clip reports kind 'video'",
+      scene_at(PROJECT, 4900, END_MS)["frame"]["kind"] == "video")
+# 100ms of timeline at speed 2 is 200ms of source: 500 + 200 = 700.
+check("speed 2 covers twice as much source as timeline",
+      scene_at(PROJECT, 5000, END_MS)["frame"]["source_ms"] == 700,
+      f"(got {scene_at(PROJECT, 5000, END_MS)['frame']['source_ms']})")
+# 1250ms in, the source reaches out_ms (500 + 1250*2 = 3000) and stops there.
+held_a = scene_at(PROJECT, 6150, END_MS)["frame"]["source_ms"]
+held_b = scene_at(PROJECT, 6499, END_MS)["frame"]["source_ms"]
+check("past the out point the clip HOLDS its last source frame",
+      held_a == 2999 and held_b == 2999, f"({held_a} then {held_b})")
+
+# THE DECISION OF THE PHASE, asserted directly: speed changes what the clip
+# SHOWS, never where anything sits. Doubling every speed must leave the spans,
+# and therefore every later cut, exactly where they were.
+faster = {**PROJECT, "frames": [dict(f, speed=float(f.get("speed", 1)) * 2)
+                                for f in PROJECT["frames"]]}
+check("changing speed does not move a single cut",
+      [(scene_at(faster, t, END_MS)["frame"] or {}).get("index")
+       for t in TIMES]
+      == [(scene_at(PROJECT, t, END_MS)["frame"] or {}).get("index") for t in TIMES])
+check("changing speed does not change the timeline's length",
+      scene_at(faster, 0, END_MS)["total_ms"] == scene_at(PROJECT, 0, END_MS)["total_ms"])
+
+# A colour card is a clip with no file behind it at all.
+card = scene_at(PROJECT, 6700, END_MS)["frame"]
+check("a colour card reports its colour and no source time",
+      card["kind"] == "color" and card["color"] == "#204060" and card["source_ms"] is None)
+
+# Forgiveness, matching `ease` and the transition kinds: a kind this build has
+# never heard of is an image, not an error.
+check("an unrecognised clip kind folds down to 'image'",
+      scene_at(PROJECT, 7500, END_MS)["frame"]["kind"] == "image")
+
+# is_animated decides the EXPORT PLANNER, and getting it wrong in the "false"
+# direction would render a video clip as one frozen still held for its whole
+# length while the preview played it. Both triggers are asserted alone.
+check("a video clip alone forces the per-frame planner",
+      is_animated({"frames": [{"id": "v", "duration_ms": 1000, "kind": "video"}]}))
+check("a speed other than 1 alone forces the per-frame planner",
+      is_animated({"frames": [{"id": "v", "duration_ms": 1000, "speed": 2.0}]}))
+check("a project of plain stills is still NOT animated",
+      not is_animated({"frames": [{"id": "a", "duration_ms": 1000, "kind": "image"},
+                                  {"id": "b", "duration_ms": 1000}]}))
+
+# The render cache key. Two moments of one video clip resolve to the same clip
+# and the same transform, differing ONLY in the source frame — so leaving
+# `source_ms` out of the signature would render one still and reuse it for the
+# whole clip, and the video would play as a freeze frame. Exactly the bug `mix`
+# already guards against for transitions.
+check("the render key changes as a video clip plays",
+      len({scene_signature(scene_at(PROJECT, t, END_MS))
+           for t in (4900, 5000, 5100, 5200)}) == 4)
+# …and stops changing once the clip is holding its last frame, which is what
+# makes a held tail cost ONE rendered still instead of hundreds. Checked on a
+# clip of its own: fr4 also has a `scale` keyframe running the whole way, so its
+# signature keeps changing after the source stops — correctly, and for a
+# different reason than the one under test here.
+tail = {"frames": [{"id": "v", "duration_ms": 2000, "kind": "video",
+                    "in_ms": 0, "out_ms": 500, "speed": 1.0}]}
+check("a held tail collapses to a single render key",
+      len({scene_signature(scene_at(tail, t)) for t in (900, 1200, 1800)}) == 1)
+check("a project of stills signs exactly as it did before clips existed",
+      scene_signature(scene_at({"frames": [{"id": "a", "duration_ms": 2000}]}, 500))
+      == "f0:1.000000:0.500000:0.500000:1.000000")
+
+# --- The look: effects, mask, blend ---------------------------------------
+# The scene model's job for a grade is the same as for a transform: say what
+# every parameter IS at time t. These pin the answers rather than leaving them
+# to "both sides do the same thing", because two implementations can agree and
+# both be wrong.
+look = scene_at(PROJECT, 750, END_MS)["frame"]
+check("a clip's effects, mask and blend all reach the scene",
+      "effects" in look and "mask" in look and look["blend"] == "screen")
+check("an effect kind this build doesn't know is dropped from the scene",
+      all(e["kind"] != "kaleidoscope" for e in look["effects"]),
+      f"({[e['kind'] for e in look['effects']]})")
+check("the effects that ARE known survive, in the order they were written",
+      [e["kind"] for e in look["effects"]] == ["lut", "chroma", "brightness"])
+# fx:e1:amount runs 0 → 1 over 1500ms on an ease-in curve, so at the halfway
+# point it is BELOW 0.5 — which is the cheapest proof the curve is being read
+# and not just the endpoints.
+mid_lut = look["effects"][0]["params"]["amount"]
+check("a keyframed effect parameter is interpolated on its own curve",
+      0 < mid_lut < 0.5, f"(amount={mid_lut})")
+check("a string parameter is never interpolated — it is read straight off",
+      look["effects"][0]["params"]["name"] == "noir"
+      and look["effects"][1]["params"]["color"] == "#12ff34")
+check("a parameter left out of a saved project arrives at its default",
+      look["effects"][1]["params"]["smoothness"] == 0.08
+      and look["effects"][1]["params"]["spill"] == 0.0)
+# The effect with no id is at raw index 3 — counted BEFORE the unknown kind is
+# dropped. Off by one here and the track would animate the wrong effect.
+check("an effect with no id is keyed by its position in the WRITTEN chain",
+      look["effects"][2]["id"] == "3" and look["effects"][2]["params"]["amount"] < 1.1,
+      f"(id={look['effects'][2]['id']}, amount={look['effects'][2]['params']['amount']})")
+check("a keyframed mask field is interpolated, the rest are read off",
+      0.35 < look["mask"]["w"] < 0.9 and look["mask"]["h"] == 0.9
+      and look["mask"]["kind"] == "ellipse" and look["mask"]["invert"] is False)
+
+# The shape of the resolved look on a clip that carries none. This is the check
+# that would have caught `undefined` on the JS side being dropped by JSON while
+# Python reported a real dict — the two would then differ without either being
+# wrong, and the whole comparison would be meaningless.
+bare = scene_at(PROJECT, 2500, END_MS)["frame"]
+check("a clip with no look still resolves one, in the same shape",
+      bare["effects"] == [] and bare["blend"] == "normal"
+      and bare["mask"]["kind"] == "none")
+plain_ov = [o for o in scene_at(PROJECT, 500, END_MS)["overlays"] if o["id"] == "ov2"]
+check("so does an overlay with no look", len(plain_ov) == 1
+      and plain_ov[0]["effects"] == [] and plain_ov[0]["blend"] == "normal")
+
+# A grade that RAMPS is continuous in exactly the way a Ken Burns push is, so it
+# has to force the sampling planner. Getting this wrong in the "false" direction
+# would export the grade frozen at its first value while the monitor animated it
+# — the same class of failure a video clip planned as a still is.
+check("a keyframed effect parameter alone forces the per-frame planner",
+      is_animated({"frames": [{"id": "a", "duration_ms": 1000,
+                               "effects": [{"id": "x", "kind": "brightness"}],
+                               "keyframes": {"fx:x:amount": [{"t": 0, "v": 1},
+                                                             {"t": 500, "v": 2}]}}]}))
+check("a keyframed mask alone forces the per-frame planner",
+      is_animated({"frames": [{"id": "a", "duration_ms": 1000,
+                               "mask": {"kind": "rect"},
+                               "keyframes": {"mask:x": [{"t": 0, "v": 0.2},
+                                                        {"t": 500, "v": 0.8}]}}]}))
+check("a STATIC grade does NOT force it — one still can carry a fixed look",
+      not is_animated({"frames": [{"id": "a", "duration_ms": 1000, "blend": "multiply",
+                                   "mask": {"kind": "rect"},
+                                   "effects": [{"id": "x", "kind": "lut",
+                                                "params": {"name": "noir"}}]}]}))
+
+# The render cache key again, for the third thing that can move a picture
+# without moving a clip. Two samples of the mask closing on fr1 resolve to the
+# same clip at the same transform and differ ONLY in the look.
+check("the render key changes as a grade moves",
+      len({scene_signature(scene_at(PROJECT, t, END_MS)) for t in (100, 500, 900, 1300)}) == 4)
+# (that a clip with NO look signs byte-for-byte what it always did is asserted
+# further down, by the same check that has guarded it since clips arrived)
+
+# --- Text: placement and the properties that move it ----------------------
+# A caption gained x/y in Phase 5, and they only mean anything in FREE
+# placement. Both halves of that are pinned here rather than left to "both sides
+# do the same thing", because two implementations can agree and both be wrong.
+def _text(t, text_id):
+    return next(c for c in scene_at(PROJECT, t, END_MS)["texts"] if c["id"] == text_id)
+
+
+check("every caption resolves a placement, even one that never chose",
+      _text(2500, "tx3")["place"] == "flow")
+check("an unrecognised placement folds down to flow",
+      _text(5200, "tx5")["place"] == "flow", f"(got {_text(5200, 'tx5')['place']!r})")
+# tx4 runs 1000–3000 with y easing 0.68 → 0.6 over its first 500ms.
+check("a free caption's y is interpolated on its own curve",
+      0.6 < _text(1200, "tx4")["y"] < 0.68, f"(y={_text(1200, 'tx4')['y']})")
+check("and holds once past its last key",
+      _text(2000, "tx4")["y"] == 0.6 and _text(2900, "tx4")["y"] == 0.6)
+check("a flow caption still resolves x/y — it just doesn't use them",
+      "x" in _text(2500, "tx3") and "y" in _text(2500, "tx3"))
+check("an untouched caption's y is the subtitle default, not the centre",
+      _text(2500, "tx3")["y"] == 0.85)
+
+# The render cache key, for the FOURTH thing that can move a picture without
+# moving a clip. Two samples of tx4 sliding up resolve to the same clip and
+# differ only in `y`, so leaving it out would freeze the title in the MP4.
+check("the render key changes as a free caption moves",
+      len({scene_signature(scene_at(PROJECT, t, END_MS))
+           for t in (1050, 1150, 1250, 1350)}) == 4)
+# …and a project of ordinary stacked subtitles must sign byte-for-byte what it
+# signed before free placement existed, or every old export's cache is invalid.
+check("a flow caption signs exactly as it did before free placement existed",
+      scene_signature(scene_at({"frames": [{"id": "a", "duration_ms": 2000}], "texts": [
+          {"id": "c", "text": "hi", "start_ms": 0, "duration_ms": 2000}]}, 500))
+      == "f0:1.000000:0.500000:0.500000:1.000000|tc:1.000000")
+
+# `is_animated` picks the export planner, so a caption that only moves through
+# x/y has to force it — miss this and the title sits dead still in the MP4 while
+# the monitor slides it, which is the same class of failure a video clip planned
+# as a still is.
+check("a keyframed caption position alone forces the per-frame planner",
+      is_animated({"frames": [{"id": "a", "duration_ms": 1000}],
+                   "texts": [{"id": "c", "text": "hi", "start_ms": 0, "duration_ms": 900,
+                              "place": "free",
+                              "keyframes": {"y": [{"t": 0, "v": 0.9}, {"t": 500, "v": 0.5}]}}]}))
+check("a still caption does NOT force it",
+      not is_animated({"frames": [{"id": "a", "duration_ms": 1000}],
+                       "texts": [{"id": "c", "text": "hi", "start_ms": 0,
+                                  "duration_ms": 900, "place": "free", "y": 0.5}]}))
 
 # An un-keyframed project must resolve to exactly its stored values — this is
 # the "nothing changed for existing animatics" guarantee.

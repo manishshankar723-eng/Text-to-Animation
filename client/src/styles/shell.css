@@ -1,0 +1,337 @@
+/* shell — The signed-in shell: the sidebar rail (workflow panels, account chip, theme switch) and the workflow header every screen opens with. */
+
+/* =========================================================================
+   APP SHELL + SIDEBAR
+   ========================================================================= */
+.shell {
+  display: grid;
+  grid-template-columns: 264px 1fr;
+  /* dvh tracks the REAL viewport as mobile browser chrome slides away; the vh
+     line above it is the fallback for browsers that don't know dvh. */
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+@media (max-width: 820px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}
+.shell-main {
+  min-width: 0;
+  padding: 1.8rem clamp(1.2rem, 3vw, 2.5rem);
+  overflow-x: hidden;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1.1rem 0.85rem 1.1rem;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+@media (max-width: 820px) {
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+}
+
+.sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.6rem 0.8rem;
+}
+.sb-logo {
+  font-size: 1.4rem;
+}
+.sb-brand-name {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Account avatar ----------------------------------------------------- */
+/* The round person glyph (Avatar.jsx). Same face in the sidebar header, the
+   footer chip and the account modal, so all three read as "you". */
+.avatar-svg {
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.avatar-bg {
+  fill: #4f52c9;
+}
+.avatar-fg {
+  fill: #9aa3f5;
+}
+.avatar-initial {
+  fill: #fff;
+  font-family: inherit;
+}
+
+/* Sits at the far right of the brand row — the top-left corner is where people
+   look for "me", and this is the shortest path to the profile. */
+.sb-brand-avatar {
+  margin-left: auto;
+  padding: 2px;
+  background: none;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  line-height: 0;
+  transition: border-color 0.2s, transform 0.15s;
+}
+.sb-brand-avatar:hover {
+  border-color: var(--border-gold);
+  transform: scale(1.05);
+}
+.sb-brand-avatar.active {
+  border-color: var(--primary);
+}
+
+.sb-workspace {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  margin-bottom: 0.4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s;
+}
+.sb-workspace:hover,
+.sb-workspace.active {
+  border-color: var(--border-gold);
+}
+.sb-ws-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sb-ws-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-ws-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.sb-nav {
+  display: flex;
+  flex-direction: column;
+  /* Was 0.15rem, which was fine for borderless rows. Now that each row is
+     outlined, two neighbours that close together read as one doubled line —
+     this is the gap that keeps them looking like separate panels. */
+  gap: 0.35rem;
+  overflow-y: auto;
+  flex: 1;
+}
+.sb-section-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.9rem 0.7rem 0.35rem;
+}
+/* Each workflow is its own PANEL: an outline plus a lifted background, so the
+   rows read as separate controls instead of merging into the sidebar (they
+   were transparent and border-less, which is what was reported). The padding
+   drops by the 1px the border adds, so the row height is unchanged. */
+.sb-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: calc(0.55rem - 1px) calc(0.7rem - 1px);
+  border: 1px solid var(--nav-stroke);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sb-item:hover {
+  background: var(--panel-2);
+  border-color: var(--nav-stroke-hover);
+}
+/* The one you're in is gold-outlined, so "selected" never has to be told apart
+   from "just hovered". */
+.sb-item.active,
+.sb-item.active:hover {
+  background: rgba(229, 193, 88, 0.12);
+  color: var(--primary);
+  border-color: var(--border-gold);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.sb-ico {
+  font-size: 1.05rem;
+  width: 1.3rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+.sb-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-badge-soon {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+  font-weight: 600;
+}
+.sb-dot-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.18);
+  flex-shrink: 0;
+}
+
+.sb-footer {
+  padding-top: 0.6rem;
+}
+
+/* ---- Light / dark switch, directly above the account button ---- */
+.sb-theme {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.4rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.86rem;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.sb-theme:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+.sb-theme-label {
+  flex: 1;
+  min-width: 0;
+}
+/* Little track+knob so the current mode is readable at a glance. */
+.sb-theme-switch {
+  flex-shrink: 0;
+  position: relative;
+  width: 2.1rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  transition: background 0.2s, border-color 0.2s;
+}
+.sb-theme:hover .sb-theme-switch {
+  border-color: var(--border-gold);
+}
+.sb-theme-switch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.15rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: translateY(-50%);
+  transition: left 0.2s ease, background 0.2s ease;
+}
+.sb-theme-switch.on {
+  background: rgba(229, 193, 88, 0.18);
+  border-color: var(--border-gold);
+}
+.sb-theme-switch.on::after {
+  left: calc(100% - 0.95rem);
+  background: var(--gold-fill);
+}
+.sb-upgrade {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid var(--primary);
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--gold-ink);
+  background: var(--gold-grad-rich);
+  box-shadow: var(--gold-glow);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.sb-upgrade:hover {
+  transform: translateY(-1px);
+  background: var(--gold-grad-rich-hover);
+  box-shadow: 0 8px 26px rgba(229, 193, 88, 0.45);
+}
+.sb-upgrade-ico {
+  font-size: 1rem;
+}
+
+/* =========================================================================
+   WORKFLOW HEADER
+   ========================================================================= */
+.workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  margin-bottom: 1.8rem;
+}
+.wf-icon {
+  font-size: 2.4rem;
+  width: 4rem;
+  height: 4rem;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-gold);
+}
+.wf-title {
+  font-size: clamp(1.9rem, 2.4vw, 2.6rem);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+}
+.workflow-header .muted {
+  font-size: 1.02rem;
+}
+

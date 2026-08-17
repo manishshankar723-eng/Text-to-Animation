@@ -1,0 +1,1173 @@
+/* home — Home dashboard, the Profile page, and Plan & Script (its conversation, calendar and export preview). */
+
+/* =========================================================================
+   HOME DASHBOARD
+   ========================================================================= */
+.home-head {
+  margin-bottom: 1.6rem;
+}
+.home-head h1 {
+  font-size: 1.8rem;
+}
+.home-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+  /* STRETCH, not start: the profile and plan cards hold different amounts of
+     content, so `start` left one visibly shorter than the other. They're a
+     matched pair at the top of the page and should read as one band. */
+  align-items: stretch;
+  margin-bottom: 1.2rem;
+}
+@media (max-width: 900px) {
+  .home-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.home-card {
+  margin-bottom: 0;
+}
+.recent-card {
+  grid-column: 1 / -1;
+  margin-bottom: 1.2rem;
+}
+
+/* A stretched card lays itself out as a column and pushes its action row to the
+   bottom, so the two top cards' buttons sit on the same line. */
+.home-grid .home-card {
+  display: flex;
+  flex-direction: column;
+}
+.home-card-foot {
+  margin-top: auto;
+  padding-top: 0.9rem;
+}
+.home-card-foot .btn {
+  margin-top: 0;
+}
+.profile-who {
+  min-width: 0;
+}
+.profile-who .profile-email {
+  overflow-wrap: anywhere;
+}
+
+/* ---- Recent work, grouped by workflow ---------------------------------- */
+.wf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  align-items: stretch;
+}
+.wf-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.wf-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.wf-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+.wf-group-ico {
+  font-size: 1.05rem;
+}
+.wf-group-head .btn {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.wf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.wf-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.wf-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wf-open:hover .wf-name {
+  color: var(--primary);
+}
+.wf-name {
+  font-weight: 600;
+  font-size: 0.87rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-sub {
+  display: flex;
+  gap: 0.5rem;
+}
+.wf-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.wf-actions .btn {
+  margin-top: 0;
+}
+/* The empty state is the same size as a populated group, so a row of four
+   doesn't jump around depending on which workflows have been used. */
+.wf-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 84px;
+  padding: 0.6rem;
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.wf-empty:hover {
+  border-color: var(--border-gold);
+  color: var(--text);
+}
+
+.profile-top {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.profile-email {
+  font-size: 1.05rem;
+  word-break: break-all;
+}
+
+.plan-head {
+  margin-bottom: 0.9rem;
+}
+.plan-badge {
+  display: inline-block;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.1);
+  border: 1px solid var(--border-gold);
+}
+.credit-row {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+.credit-stat {
+  display: flex;
+  flex-direction: column;
+}
+.credit-num {
+  font-size: 1.7rem;
+  font-weight: 750;
+  color: var(--text);
+  line-height: 1.1;
+}
+.upgrade-inline {
+  background: var(--gold-grad-rich);
+  color: var(--gold-ink);
+  border: 1px solid var(--primary);
+  font-weight: 650;
+  width: 100%;
+  box-shadow: var(--gold-glow);
+}
+.upgrade-inline:hover {
+  color: var(--gold-ink);
+  transform: translateY(-1px);
+  background: var(--gold-grad-rich-hover);
+  box-shadow: 0 6px 20px rgba(229, 193, 88, 0.45);
+}
+.plan-note {
+  margin: 0.6rem 0 0;
+}
+
+.recent-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+.recent-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.account-card h2 {
+  font-size: 1.15rem;
+}
+.account-btn {
+  width: 100%;
+  margin-top: 0.6rem;
+}
+.api-keys-block {
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.api-keys-title {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+.api-keys-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.api-key-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+
+.danger-zone {
+  margin-top: 1.3rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.danger-title {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fail);
+  margin-bottom: 0.6rem;
+}
+.danger-btn {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: var(--fail);
+  background: rgba(248, 113, 113, 0.08);
+}
+.danger-btn:hover:not(:disabled) {
+  background: var(--fail);
+  color: #fff;
+  border-color: var(--fail);
+}
+/* ---- Plan & Script ------------------------------------------------------ */
+.plan-page > .card {
+  margin-bottom: 1rem;
+}
+.plan-channel-row {
+  display: flex;
+  gap: 0.6rem;
+}
+.plan-channel-row input {
+  flex: 1;
+}
+
+/* The conversation. Capped height with its own scroll so the calendar below
+   stays reachable however long the chat gets. */
+.plan-chat-log {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding-right: 0.3rem;
+}
+.plan-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 82%;
+}
+.plan-msg.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.plan-msg-who {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.plan-msg-text {
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.plan-msg.is-user .plan-msg-text {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: transparent;
+}
+/* The language shown IN the controls row — same box as the selects beside it,
+   with a caret so it reads as a chooser rather than an action. */
+.plan-lang-btn {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 150px;
+  padding-left: 0.75rem;
+  padding-right: 0.65rem;
+  background: var(--panel-2);
+  text-align: left;
+}
+.plan-lang-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-lang-caret {
+  color: var(--muted);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+.plan-strategy-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.plan-strategy-head h2 {
+  margin: 0;
+}
+.plan-lang-chip {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+
+/* ---- Language picker (shown on Generate) -------------------------------- */
+.lang-modal {
+  position: relative;
+  width: min(620px, 94vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  text-align: left;
+  border-color: var(--border-gold);
+}
+.lang-head h2 {
+  margin: 0 2rem 0.3rem 0;
+  font-size: 1.05rem;
+}
+.lang-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.9rem 0;
+}
+.lang-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.lang-opt:hover {
+  border-color: var(--border-gold);
+}
+.lang-opt.on {
+  border-color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
+}
+.lang-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.lang-opt-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.lang-opt-label {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+.lang-opt-native {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.lang-opt-hint {
+  font-size: 0.79rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+/* A real sample title is worth more than any description — you can see what
+   your board will read like before spending a generation on it. */
+.lang-opt-sample {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text);
+  opacity: 0.85;
+}
+.lang-custom {
+  margin-bottom: 0.9rem;
+}
+.lang-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.lang-foot > .tiny {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lang-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.lang-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  box-sizing: border-box;
+}
+
+/* ---- The agent's clickable questions ------------------------------------ */
+/* Sits between the transcript and the chat box: the answer is right where you
+   were about to type, not somewhere you have to go looking for. */
+.pq {
+  margin-top: 0.9rem;
+  padding: 0.85rem 0.95rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+}
+.pq-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.pq-tabs {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.pq-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.6rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pq-tab:hover {
+  color: var(--text);
+}
+.pq-tab.on {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  background: rgba(229, 193, 88, 0.08);
+}
+.pq-tick {
+  color: var(--ok);
+  font-size: 0.7rem;
+}
+.pq-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+  padding: 0.2rem;
+}
+.pq-close:hover {
+  color: var(--text);
+}
+.pq-question {
+  margin: 0 0 0.7rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+.pq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+/* An option is a big target with its consequence written underneath — the
+   description is what makes a choice informed rather than a guess. */
+.pq-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pq-opt:hover {
+  border-color: var(--border-gold);
+}
+.pq-opt.on {
+  border-color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
+}
+.pq-radio {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 0.15rem;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+}
+.pq-opt.on .pq-radio {
+  border-color: var(--primary);
+  background:
+    radial-gradient(circle, var(--primary) 0 45%, transparent 46%);
+}
+.pq-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.pq-opt-label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+.pq-opt-desc {
+  font-size: 0.79rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.pq-other {
+  margin-top: 0.1rem;
+}
+.pq-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.pq-foot .btn {
+  margin-top: 0;
+}
+
+.plan-chat-input {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+  margin-top: 0.9rem;
+}
+.plan-chat-input .prompt-textarea {
+  flex: 1;
+  min-height: 0;
+}
+.plan-starters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.plan-starter {
+  text-align: left;
+  white-space: normal;
+}
+
+.plan-generate-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+  /* ONE height for every control in this row — the two selects, any Custom
+     box, and all four buttons. Declared once so the two can't drift apart. */
+  --control-h: 40px;
+}
+.plan-generate-row .field {
+  min-width: 190px;
+}
+/* The button cluster: Generate + divider + the three exports.
+   Grouping them means they align to EACH OTHER first and the group aligns to
+   the bottom of the row as one block. Aligning five items individually against
+   two label+select columns is what left them a few pixels apart. */
+.plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+/* The buttons' column: same structure as a labelled field, but it must not
+   inherit the fields' min-width (it's as wide as its buttons need). */
+.plan-generate-row .plan-actions-field {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+/* THE single source of truth for this row's controls — both selects, any Custom
+   box, and all four buttons. One rule, one height, so nothing can sit proud of
+   the band. Do not add these selectors to any other grouped button rule; two
+   rules setting the same thing is what kept them a few pixels apart. */
+.plan-generate-row select,
+.plan-generate-row input,
+.plan-generate-row .btn {
+  height: var(--control-h);
+  min-height: var(--control-h);
+  max-height: var(--control-h);
+  box-sizing: border-box;
+  margin: 0;
+  /* Buttons need their label centred once their height is fixed; harmless on
+     a select, which centres its own text. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+}
+/* A select must keep its native appearance (the dropdown arrow) — inline-flex
+   above is for the buttons, so put the selects back. */
+.plan-generate-row select {
+  display: block;
+  width: 100%;
+  padding: 0 0.75rem;
+}
+/* Divider between "make the plan" and "take the plan away" — same row, but the
+   two are different kinds of action and shouldn't read as one strip of five. */
+.plan-row-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 0.3rem;
+  flex-shrink: 0;
+  align-self: center;
+}
+/* The Custom box appears under its dropdown, so the row doesn't jump sideways
+   when it opens. Wider for the cadence one, which takes a phrase not a number. */
+.plan-generate-row .field input {
+  margin-top: 0.4rem;
+}
+.plan-generate-row .field:has(> select + input) {
+  min-width: 230px;
+}
+
+.plan-pillars {
+  margin: 0.7rem 0 0;
+  padding-left: 1.1rem;
+  line-height: 1.7;
+}
+.plan-assumptions {
+  margin-top: 0.8rem;
+}
+
+/* The calendar itself. Cards rather than a table: each upload carries a hook,
+   an outline and tags, which a table row cannot hold legibly. */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  /* Every card the same size. `start` let each take its natural height, so a
+     shot with a four-beat outline towered over a three-beat one and the grid
+     read as broken. */
+  align-items: stretch;
+  /* One card height for the whole calendar. Fixed rather than "as tall as the
+     tallest in the row", so a single long entry can't stretch every card on
+     its row into a wall of whitespace. */
+  --plan-card-h: 400px;
+}
+.plan-item {
+  margin: 0;
+  height: var(--plan-card-h);
+  display: flex;
+  flex-direction: column;
+}
+/* Slot, chips and title stay put; only the detail below them scrolls, so a
+   scrolled card is still identifiable. */
+.plan-item-head,
+.plan-item-title {
+  flex-shrink: 0;
+}
+.plan-item-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  /* Room for the bar so text doesn't run under it. */
+  padding-right: 0.15rem;
+}
+.plan-item-body::-webkit-scrollbar {
+  width: 10px;
+}
+.plan-item-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.plan-item-body::-webkit-scrollbar-thumb {
+  background: #454a5e;
+  border: 3px solid var(--panel);
+  border-radius: 8px;
+}
+.plan-item-body::-webkit-scrollbar-thumb:hover {
+  background: #5c6278;
+}
+.plan-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+.plan-slot {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.plan-chip {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.goal-reach { border-color: #4f83c9; color: #7aa9e6; }
+.goal-engagement { border-color: #c98f4f; color: #e6b47a; }
+.goal-conversion { border-color: #4fc98a; color: #7ae6b0; }
+.goal-retention { border-color: #9a7ae6; color: #b49ae6; }
+
+.plan-item-title {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+.plan-label {
+  display: inline-block;
+  margin-right: 0.4rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+}
+.plan-hook {
+  margin: 0 0 0.4rem;
+  font-style: italic;
+  line-height: 1.45;
+}
+.plan-outline {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.plan-keywords {
+  margin-top: 0.5rem;
+  word-break: break-word;
+}
+
+/* ---- Export preview modal ----------------------------------------------- */
+/* Deliberately LARGE: the point is to check a whole calendar before downloading
+   it, which a small dialog can't show. Header and footer are pinned; only the
+   preview scrolls, so Download is always reachable. */
+.export-modal {
+  position: relative;
+  width: min(1400px, 96vw);
+  height: min(900px, 92vh);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  text-align: left;
+  border-color: var(--border-gold);
+}
+.export-modal-head {
+  flex-shrink: 0;
+}
+.export-modal-head h2 {
+  /* Right margin clears the × button. */
+  margin: 0 2rem 0.2rem 0;
+  font-size: 1.05rem;
+}
+.export-sheets {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+/* `.btn.primary` carries a global `margin-top: 1.1rem` (it's usually the last
+   control in a form), which in a ROW pushes the gold button down and makes it
+   look like a different size from its neighbours. Every button row in the app
+   resets it; these are this workflow's rows. */
+.export-sheets .btn.primary,
+.export-modal-actions .btn.primary,
+.plan-generate-row .btn.primary,
+.plan-chat-input .btn.primary,
+.plan-channel-row .btn.primary {
+  margin-top: 0;
+}
+/* Buttons in a row get an IDENTICAL box, not merely a shared minimum.
+   `min-height` alone wasn't enough: a gold `.btn.primary` carries its own glow
+   shadow and heavier weight, so beside a ghost button it still read as bigger.
+   Fixing the height and zeroing the vertical padding makes every variant in a
+   row the same rectangle, whatever it contains. */
+/* NOTE: `.plan-generate-row .btn` is deliberately NOT in this list. That row's
+   controls are governed by a single rule above (--control-h) so the selects and
+   the buttons cannot be given different heights by two competing rules. */
+.export-sheets .btn,
+.export-modal-actions .btn,
+.plan-chat-input .btn,
+.plan-channel-row .btn,
+.plan-page .review-actions-right .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+  margin-top: 0;
+  box-sizing: border-box;
+}
+/* The sheet switcher uses the small variant, so it gets the small height. */
+.export-sheets .btn {
+  height: 32px;
+}
+/* Icons inside a button follow the label's size rather than setting their own. */
+.export-modal-actions .btn svg,
+.plan-generate-row .btn svg,
+.plan-page .review-actions-right .btn svg {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+/* ONE scroll container, not two.
+   This used to scroll AND contain a scrolling .export-table-wrap. The inner
+   wrap then grew to the full height of the table, so its horizontal scrollbar
+   sat at the bottom of the CONTENT — off-screen until you scrolled all the way
+   down, which is exactly the "the bar hides when I scroll up" report.
+   Now the body only clips; the child inside it is the single scroller, so its
+   horizontal bar is pinned to the bottom of the visible box and stays there. */
+.export-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.export-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  /* A clear divider, so the preview's own scrollbar reads as belonging to the
+     table above rather than looking like it slides under the footer. */
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+/* The hint shrinks instead of pushing the buttons out and spilling off the
+   card's left edge, which is what clipped its first word. */
+.export-modal-foot > .tiny {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.export-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Spreadsheet preview. Sticky header + row numbers so a long calendar stays
+   readable while scrolling, the way the real sheet does with frozen panes.
+   This is THE scroller (see .export-modal-body): it fills the body, so the
+   horizontal bar sits at the bottom edge of the visible area at all times. */
+.export-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* Reserve the gutter so content doesn't reflow when a bar appears, and keep
+     the bars drawn rather than overlaid-and-fading. */
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: var(--muted) transparent;
+}
+.export-table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.8rem;
+}
+.export-table th,
+.export-table td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.55rem;
+  vertical-align: top;
+  text-align: left;
+  max-width: 260px;
+  white-space: pre-wrap;
+}
+.export-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #3b3f51;
+  color: #fff;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.export-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+.export-rownum {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  width: 2.4rem;
+  min-width: 2.4rem;
+}
+/* The corner cell is sticky on BOTH axes, so it can't slide out from under the
+   frozen header when the table is scrolled sideways. */
+.export-table thead .export-rownum {
+  z-index: 2;
+  background: #3b3f51;
+}
+.export-table-kv th {
+  width: 180px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* Always-visible scrollbars inside the preview. The default overlay bars fade
+   out, which is what made the horizontal one feel like it disappeared. */
+.export-table-wrap::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.export-table-wrap::-webkit-scrollbar-track {
+  background: var(--panel);
+  border-radius: 8px;
+}
+.export-table-wrap::-webkit-scrollbar-thumb {
+  background: #555a6e;
+  border: 3px solid var(--panel);
+  border-radius: 8px;
+}
+.export-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: #6d7389;
+}
+.export-table-wrap::-webkit-scrollbar-corner {
+  background: var(--panel);
+}
+
+/* Document preview — reads like the .docx, on a page rather than in a grid.
+   Scrolls itself for the same reason the table wrap does.
+   The scroller is FULL WIDTH and the line length is capped on the page INSIDE
+   it. Putting max-width on the scroller itself parked the scrollbar 820px in,
+   i.e. in the middle of the panel instead of at its right edge. */
+.export-doc {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  line-height: 1.6;
+}
+/* Fills the panel. A document preview would normally cap the line length for
+   readability, but an 820px cap inside a ~1100px modal left a dead band down
+   the right-hand side — the preview is for CHECKING the export, and wasted
+   width means less of it on screen per scroll. */
+.export-doc-page {
+  width: 100%;
+  padding: 1.6rem 2rem;
+}
+/* Same visible bars as the table preview. */
+.export-doc::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.export-doc::-webkit-scrollbar-track {
+  background: var(--panel);
+  border-radius: 8px;
+}
+.export-doc::-webkit-scrollbar-thumb {
+  background: #555a6e;
+  border: 3px solid var(--panel);
+  border-radius: 8px;
+}
+.export-doc::-webkit-scrollbar-thumb:hover {
+  background: #6d7389;
+}
+.export-doc h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.3rem;
+}
+.export-doc h2 {
+  font-size: 1.1rem;
+  margin: 1.4rem 0 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.export-doc h3 {
+  font-size: 0.98rem;
+  margin: 1.1rem 0 0.2rem;
+}
+.export-doc p {
+  margin: 0.3rem 0;
+}
+.export-doc ul,
+.export-doc ol {
+  margin: 0.3rem 0;
+  padding-left: 1.3rem;
+}
+.export-doc-slot {
+  font-style: italic;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.export-doc-item {
+  padding-bottom: 0.6rem;
+}
+
+/* ---- Profile page ------------------------------------------------------- */
+/* Stacked cards rather than the Home dashboard grid: these are forms, and a
+   form that changes width between sections is harder to fill in. */
+.profile-page .home-card {
+  margin-bottom: 1rem;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.9rem 1.1rem;
+  margin-top: 0.9rem;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.field-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.field input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.profile-save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+.profile-saved {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.home-account-actions {
+  margin: 0.7rem 0;
+}
+
+.danger-confirm {
+  background: rgba(248, 113, 113, 0.06);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: 10px;
+  padding: 0.8rem;
+}
+.danger-actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+

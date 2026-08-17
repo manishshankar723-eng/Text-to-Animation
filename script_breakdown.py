@@ -98,6 +98,20 @@ def _model_id(provider: str) -> str:
     return os.environ.get("VERTEX_TEXT_MODEL", DEFAULT_TEXT_MODEL)
 
 
+def text_provider(provider: str | None = None) -> str:
+    """The effective text provider. Public because `captions.py` and `tts.py`
+    have to resolve it to the SAME answer this module does — two modules each
+    reading TEXT_PROVIDER their own way is how a workflow ends up half on Vertex
+    and half on the Developer API with only one set of credentials configured.
+    """
+    return _resolve_provider(provider)
+
+
+def text_model_id(provider: str | None = None) -> str:
+    """The text model id for `provider`, for the same reason as above."""
+    return _model_id(_resolve_provider(provider))
+
+
 def _env_float(name: str, default: float) -> float:
     """Read a float env var, falling back to `default` when unset or junk."""
     raw = (os.environ.get(name) or "").strip()

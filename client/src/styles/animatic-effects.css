@@ -1,0 +1,97 @@
+/* animatic-effects.css — the Look rows in the Properties pane.
+ *
+ * Added at the END of `index.css`, as that file's header instructs: the import
+ * order IS the cascade, and everything here is new so it can only be last.
+ *
+ * ⚠ NOTHING NEW IS INVENTED HERE. The sections, rows, fields and prose are the
+ * ones in `properties.css` — exactly what the Motion rows above them use, so
+ * the Look rows read as more of the same pane rather than as a bolted-on panel.
+ * What is left in this file is only what genuinely did not exist: a `<select>`
+ * and a colour well inside a field, a checkbox row, and the three buttons on an
+ * effect's header. The effect CARD itself is a `PropGroup` — `.an-grp-fx` in
+ * `properties.css` — since an effect is a collapsible section like any other.
+ */
+
+/* A <select> in a property field. Matched to `.an-tp-field input` and to
+   `.an-kf-ease` — same panel, same border, same radius — because the three sit
+   on the same row and any difference between them reads as a mistake. */
+.an-tp-field select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.3rem;
+  max-width: 9.5rem;
+}
+.an-tp-field select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+/* The colour well, sized to the row rather than to the browser's default, which
+   is nearly twice the height of everything beside it. */
+.an-tp-field input[type="color"] {
+  width: 2.2rem;
+  height: 1.5rem;
+  padding: 0.1rem;
+  cursor: pointer;
+}
+
+/* A checkbox row — "Invert" is the only one, but it is a different shape from
+   every other control in the pane and needs its label beside it rather than
+   before it. */
+.an-tp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.an-tp-check input {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* Re-order and remove, on an effect's header. Small and quiet: the chain is
+   ordered and re-orderable — the order is the difference between a LUT over a
+   saturation pull and a saturation pull over a LUT — but moving one is a rare
+   act next to turning its Amount, so these must not out-shout the rows. */
+.an-fx-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.16rem 0.34rem;
+}
+.an-fx-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.an-fx-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.an-fx-del:hover {
+  border-color: var(--danger, #c2185b);
+  color: var(--danger, #c2185b);
+}
+.an-fx-add {
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.45rem;
+  width: 100%;
+}
+.an-fx-add:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}

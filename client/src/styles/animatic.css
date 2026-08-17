@@ -1,0 +1,721 @@
+/* animatic — Storyboard to Animatic — the library and the editor's own furniture. */
+
+/* =========================================================================
+   STORYBOARD → ANIMATIC (editor + library)
+   Its own block: nothing here is shared with the storyboard board, and the
+   editor is the only screen in the app with a timeline.
+   ========================================================================= */
+
+/* --- Top bar ------------------------------------------------------------ */
+.an-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+.an-title {
+  flex: 1 1 14rem;
+  min-width: 10rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 650;
+  padding: 0.45rem 0.6rem;
+}
+.an-title:hover {
+  border-color: var(--border);
+}
+.an-title:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--panel);
+}
+.an-save {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  /* Holds its width whether or not it's saying anything, so the buttons beside
+     it don't jump every time the state changes. */
+  min-width: 9rem;
+  text-align: center;
+}
+/* Every button in the top bar is ONE size, whatever `.btn` modifier it carries.
+   They were a mix of `small` (Save, Delete, Back) and full-size (Export), so
+   they sat at different heights and read as unrelated controls. Only the FILL
+   distinguishes them now: Export is gold because it's the primary action. */
+.an-topbar .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 2.3rem;
+  padding: 0 0.95rem;
+  font-size: 0.84rem;
+  line-height: 1;
+  margin-top: 0;
+  white-space: nowrap;
+}
+/* Icon-only, so it's a square of that same height rather than a wide slab.
+   Same font size as the rest — the other buttons carry emoji too, so bumping
+   this one made it the odd one out. */
+.an-topbar .an-del-btn {
+  width: 2.3rem;
+  padding: 0;
+}
+.an-del-btn {
+  color: var(--muted);
+}
+.an-del-btn:hover:not(:disabled) {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.an-del-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.an-save-saved {
+  color: var(--ok);
+}
+.an-save-error {
+  color: var(--fail);
+}
+.an-spacer {
+  flex: 1 1 auto;
+}
+.an-export {
+  margin-top: 0;
+}
+
+.an-screen {
+  position: relative;
+  width: min(100%, 62vh);
+  max-height: 56vh;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow);
+}
+/* ⚠ THE PICTURE IS A CANVAS. It used to be an <img>, a <video> and a coloured
+   <div>, with a second copy of each laid over the first for a transition and
+   `object-fit` doing the letterboxing. All of that is now composited in WebGL
+   by `ProgramCanvas` — because CSS cannot do a 3D LUT, a feathered mask or a
+   chroma key, and `mix-blend-mode` blends a whole ELEMENT rather than one clip
+   against the pixels beneath it. The `contain` / `cover` fit, the pan and the
+   zoom moved into `placePicture`, which is the twin of `place_picture` in
+   animatic_render.py, so the preview matches the export by construction rather
+   than by two rules kept in step by hand.
+   (Gone with them: `.an-screen img`, `.an-screen img.cover`, `.an-screen-b`,
+   `.an-screen-card` and `.an-shape-fill`.) */
+.an-screen-gl {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* The canvas's raw material: the <img> and <video> elements it uploads as
+   textures. They have to be IN the document — a <video> will not decode
+   otherwise, and `useMonitorVideo` drives them exactly as it did when they were
+   the picture — but they must never be seen or take a click.
+   `display: none` is deliberately NOT used: it stops decoding in some browsers,
+   which shows up as a video clip that plays in one and freezes in another. */
+.an-gl-sources {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.an-screen-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 2rem;
+  text-align: center;
+}
+.an-screen-label {
+  position: absolute;
+  left: 0.8rem;
+  bottom: 0.8rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.78rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: 5px;
+}
+
+.an-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.an-tbtn {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text);
+  border-radius: 8px;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.an-tbtn:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-tbtn:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+.an-tbtn.small {
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 0.8rem;
+}
+.an-play {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: var(--primary);
+  width: 2.8rem;
+  height: 2.8rem;
+  font-size: 1rem;
+}
+.an-play:hover:not(:disabled) {
+  background: var(--gold-grad-hover);
+}
+.an-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-left: 0.6rem;
+}
+.an-shotnum {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* --- Frame strip -------------------------------------------------------- */
+.fs-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem 1rem 1rem;
+  margin-bottom: 0.9rem;
+}
+.fs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+.fs-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.fs-row {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+  align-items: stretch;
+}
+.fs-card {
+  flex: 0 0 auto;
+  width: 8.4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.4rem;
+  cursor: grab;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.fs-card:active {
+  cursor: grabbing;
+}
+.fs-card.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.fs-card.over {
+  border-color: var(--primary);
+  transform: translateX(3px);
+}
+.fs-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--frame-bg);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fs-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.fs-thumb-wait {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  animation: spin 0.8s linear infinite;
+}
+.fs-num {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.3rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.68rem;
+  padding: 0.05rem 0.32rem;
+  border-radius: 4px;
+}
+/* What KIND of clip this card is, when it isn't an ordinary still. Same pill as
+   .fs-num, in the opposite corner so the two can never collide. */
+.fs-kind {
+  position: absolute;
+  right: 0.3rem;
+  bottom: 0.2rem;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.68rem;
+  padding: 0.05rem 0.32rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+/* A colour card, showing itself. Fills the thumb exactly as a picture would. */
+.fs-swatch {
+  width: 100%;
+  height: 100%;
+}
+.fs-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  gap: 0.3rem;
+}
+.fs-dur {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.1rem;
+}
+.fs-dur-input {
+  width: 2.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.15rem 0.25rem;
+  text-align: right;
+}
+.fs-dur-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.fs-dur-unit {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.fs-tools {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+.fs-tool {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 4px;
+}
+.fs-tool:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+.fs-tool.danger:hover {
+  color: var(--fail);
+}
+.fs-label {
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  border-style: dashed;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: center;
+  min-height: 6.4rem;
+}
+.fs-add:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.fs-add-plus {
+  font-size: 1.3rem;
+  color: var(--primary);
+}
+.fs-add-text {
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.an-setall {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.an-setall-btn {
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+.an-setall-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-zoom {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+
+.an-tl-total strong {
+  font-variant-numeric: tabular-nums;
+  margin-left: 0.2rem;
+}
+.an-match {
+  margin-left: 0.6rem;
+  font-size: 0.78rem;
+}
+.an-match.ok {
+  color: var(--ok);
+}
+.an-match.off {
+  color: var(--warn);
+}
+
+/* Scrolls on BOTH axes now — the lanes are a stack that can outgrow the pane,
+   and the ruler stays pinned to the top of it (`position: sticky` below) so you
+   never lose the clock while looking at the bottom track.
+   ⚠ The native scrollbars are hidden, NOT disabled: wheel, trackpad and the
+   Hand tool all still scroll this element, they just draw nothing. What you see
+   instead is `.tl-sbar`, whose ends zoom — see ZoomScrollbar.jsx. Turning the
+   overflow off here would take the wheel with it. */
+.tl-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+.tl-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.tl-inner {
+  position: relative;
+  /* NO `min-width: 100%`. It used to stretch the tracks to fill the pane
+     whenever the timeline was shorter than it — but the time mapping is
+     `x / pxPerSec`, which does NOT stretch. The lanes were then drawn wider
+     than the time they represent: a click at the visual half-way point landed
+     at 0:44 of 0:59, and the playhead could never reach the right-hand edge.
+     The timeline is now exactly as wide as the time it shows. */
+}
+/* PINNED to the top of the scroller: it scrolls sideways with the tracks (that
+   is what `sticky` leaves alone) but stays put when the lanes scroll down, so
+   the clock is still there while you work on the bottom track. It needs an
+   opaque background for that — a transparent ruler would have the lanes sliding
+   through it — and a z-index above everything drawn on a lane. */
+.tl-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  height: 1.15rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  cursor: text;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  font-size: 0.66rem;
+  color: var(--muted);
+  transform: translateX(2px);
+  border-left: 1px solid var(--border);
+  padding-left: 3px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.tl-bars {
+  display: flex;
+  height: 2.2rem;
+  margin-top: 0.25rem;
+}
+.tl-bar {
+  position: relative;
+  flex: 0 0 auto;
+  background: var(--tl-clip-bg);
+  border: 1px solid var(--border-gold);
+  /* The seam between two shots, so the strip doesn't read as one long block. */
+  border-right: 1px solid var(--tl-clip-seam);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.35rem;
+  overflow: hidden;
+  cursor: pointer;
+  min-width: 3px;
+}
+/* Alternating shades: at 2s a shot the seam alone is a thin cue, this makes the
+   boundary readable even when the timeline is zoomed out. */
+.tl-bar:nth-child(even) {
+  background: var(--tl-clip-bg-alt);
+}
+.tl-bar:hover {
+  border-color: var(--primary);
+  z-index: 1;
+}
+.tl-bar:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.tl-bar:last-child {
+  border-right: 1px solid var(--border-gold);
+  border-radius: 0 6px 6px 0;
+}
+/* Matches the selected TEXT clip — one selection language across the layers. */
+.tl-bar.sel {
+  background: var(--gold-grad);
+  border-color: var(--primary);
+  z-index: 2;
+}
+.tl-bar.sel .tl-bar-label,
+.tl-bar.sel .tl-bar-secs {
+  color: var(--gold-ink);
+}
+.tl-bar-label {
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.tl-bar-secs {
+  font-size: 0.66rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  padding-right: 0.25rem;
+}
+/* The grab strip for dragging a hold longer or shorter. Deliberately 8px wide
+   so it can be hit without precision aiming. */
+.tl-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  background: linear-gradient(90deg, transparent, var(--border));
+}
+.tl-handle:hover {
+  background: var(--primary);
+}
+
+.tl-audio {
+  margin-top: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  cursor: text;
+  --wave-ink: var(--primary);
+}
+.wave-canvas {
+  display: block;
+  width: 100%;
+}
+.wave-msg,
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--primary);
+  pointer-events: none;
+  z-index: 3;
+}
+/* ⚠ ABOVE the pinned ruler (z-index 8), or the head of the playhead — the grip
+   you drag to scrub — would be hidden behind the ruler's new background. */
+.tl-inner > .tl-playhead {
+  z-index: 9;
+}
+.tl-playhead-grip {
+  position: absolute;
+  top: -2px;
+  left: -5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--primary);
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.an-set-chips {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.an-select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.82rem;
+}
+.an-colour {
+  width: 2.4rem;
+  height: 1.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+}
+.an-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.an-source {
+  font-size: 0.76rem;
+  margin-left: auto;
+}
+
+/* --- Library ------------------------------------------------------------ */
+/* The animatics library REUSES the storyboard library's `.lib-*` classes so the
+   two workflows read as one product — see AnimaticLibrary.jsx. The only thing
+   it adds is the running time on the thumbnail, which a storyboard card has no
+   equivalent for. Bottom-right, the convention every video tile follows. */
+.lib-badge.time {
+  top: auto;
+  left: auto;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.an-name-modal {
+  max-width: 28rem;
+  width: 92vw;
+  position: relative;
+}
+.an-name-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 1rem;
+  padding: 0.6rem 0.75rem;
+  margin-top: 1rem;
+}
+.an-name-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-name-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.an-name-actions .btn.primary {
+  margin-top: 0;
+}
+
+.an-pick-modal {
+  max-width: 34rem;
+  width: 92vw;
+  position: relative;
+}
+.an-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.9rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.an-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.6rem 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text);
+}
+.an-pick-row:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-pick-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-pick-row .muted {
+  margin-left: auto;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .an-screen {
+    width: 100%;
+  }
+  .an-zoom {
+    margin-left: 0;
+  }
+}
+

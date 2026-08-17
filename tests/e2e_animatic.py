@@ -187,11 +187,15 @@ with sync_playwright() as pw:
     # They were a mix of `btn small` and full-size `btn primary`, so they sat at
     # different heights and read as unrelated controls. Only the FILL should
     # tell them apart.
+    # `icon` means ICON-ONLY: no label of its own. Detected by "has an <svg> and
+    # no text", NOT by the glyph — Delete was a literal 🗑 when this was written
+    # and is an <Icon name="trash"/> now, so matching on the character silently
+    # found nothing and the squareness check below never ran.
     style = page.evaluate("""() => [...document.querySelectorAll('.an-topbar .btn')].map(b => {
         const r = b.getBoundingClientRect(), s = getComputedStyle(b);
         return { h: Math.round(r.height), w: Math.round(r.width), y: Math.round(r.top),
                  font: s.fontSize, radius: s.borderRadius, border: s.borderWidth,
-                 icon: b.textContent.trim() === "🗑" };
+                 icon: b.textContent.trim() === "" && !!b.querySelector('svg') };
     })""")
     for key, name in (("h", "height"), ("y", "baseline"), ("font", "font size"),
                       ("radius", "corner radius"), ("border", "border width")):
@@ -213,24 +217,36 @@ with sync_playwright() as pw:
           f"top {fit['above']}px / bottom {fit['below']}px")
 
     print("\n=== 5. timeline track heights (the --tl-* variables) ===")
+    # ⚠ THE TIMELINE HAS AS MANY LANES AS THE PROJECT HAS — never a fixed three.
+    # This section used to name `.tl-bars` / `.tl-texts` / `.tl-audio` by hand,
+    # so the SHAPES lane pushed the gutter to four rows and the alignment loop
+    # below indexed off the end of that list. The whole run died there, taking
+    # sections 6-14 with it, and it stayed dead because a crash reads like a
+    # broken environment rather than a stale assertion. Walk what is rendered.
     sizes = page.evaluate("""() => ({
         rows: [...document.querySelectorAll('.tl-gutter-row')].map(e => Math.round(e.getBoundingClientRect().height)),
-        tracks: ['.tl-bars','.tl-texts','.tl-audio'].map(s => Math.round(document.querySelector(s).getBoundingClientRect().height)),
+        tracks: [...document.querySelectorAll('.tl-lane')].map(e => Math.round(e.getBoundingClientRect().height)),
     })""")
-    check("the three layer buttons are the SAME size", len(set(sizes["rows"])) == 1, str(sizes["rows"]))
-    check("the three tracks are the SAME size", len(set(sizes["tracks"])) == 1, str(sizes["tracks"]))
-    for cls, name in ((".tl-bars", "Images"), (".tl-texts", "Text"), (".tl-audio", "Audio")):
-        box = page.locator(cls).bounding_box()
+    check("every layer button is the SAME size", len(set(sizes["rows"])) == 1, str(sizes["rows"]))
+    check("every track is the SAME size", len(set(sizes["tracks"])) == 1, str(sizes["tracks"]))
+    check("a gutter row for every lane", len(sizes["rows"]) == len(sizes["tracks"]),
+          f"{len(sizes['rows'])} rows / {len(sizes['tracks'])} lanes")
+    for cls, name in ((".tl-bars", "Images"), (".tl-texts", "Text"),
+                      (".tl-shapes", "Shapes"), (".tl-audio", "Audio")):
+        box = page.locator(cls).first.bounding_box()
         check(f"{name} track has height", box and box["height"] > 15,
               f"{box['height']:.0f}px" if box else "no box")
+    # The gutter and the tracks are two COLUMNS generated from the one `lanes`
+    # list, so row i must sit beside lane i whatever the project contains.
     rows = page.locator(".tl-gutter-row")
-    ok = True
-    for i in range(rows.count()):
-        gb = rows.nth(i).bounding_box()
-        tb = page.locator([".tl-bars", ".tl-texts", ".tl-audio"][i]).bounding_box()
+    lanes = page.locator(".tl-lane")
+    ok = rows.count() == lanes.count()
+    for i in range(min(rows.count(), lanes.count())):
+        gb, tb = rows.nth(i).bounding_box(), lanes.nth(i).bounding_box()
         if abs(gb["height"] - tb["height"]) > 2 or abs(gb["y"] - tb["y"]) > 3:
             ok = False
-    check("gutter labels line up with their tracks", ok)
+    check("gutter labels line up with their tracks", ok,
+          f"{rows.count()} rows / {lanes.count()} lanes")
 
     print("\n=== 5b. the Media pane has ONE way to add things ===")
     pane = page.locator(".an-pane-media")
@@ -335,9 +351,25 @@ with sync_playwright() as pw:
     check("audio named in the Media pane",
           "track.wav" in page.locator(".an-media-name").first.inner_text())
     # Audio is a LAYER now: each track gets its own lane, gutter row and volume.
-    check("one audio lane per track", page.locator(".tl-audio").count() == 1,
-          str(page.locator(".tl-audio").count()))
-    check("the track has its own volume control", page.locator(".an-vol").count() == 1)
+    # TWO tracks by this point, and that is correct — §6 put the same WAV in
+    # through the Media pane's combined control, and this section added it again
+    # through the audio picker. Two uploads are two tracks (music under a
+    # voiceover is what the multi-track cap exists for), so assert the RELATION
+    # — one lane, and one gutter row, per track — rather than a fixed number.
+    audio_lanes = page.locator(".tl-audio").count()
+    check("one audio lane per track", audio_lanes == 2, f"{audio_lanes} lanes for 2 uploads")
+    check("one gutter row per audio lane",
+          page.locator(".tl-gutter-audio").count() == audio_lanes,
+          f"{page.locator('.tl-gutter-audio').count()} rows / {audio_lanes} lanes")
+    # The volume slider lives in Properties, which follows the SELECTION — so a
+    # track has to be selected before it can be there. Checking for it without
+    # clicking was asserting that the pane shows a control for something nobody
+    # picked, which is exactly what `selectOnly` exists to prevent.
+    page.locator(".tl-audio").first.click(position={"x": 5, "y": 5})
+    page.wait_for_timeout(400)
+    check("selecting a track opens its Properties", page.locator(".an-vol").count() == 1,
+          f"{page.locator('.an-vol').count()} volume sliders")
+    check("...with the mute beside it", page.locator(".an-props .an-mute").count() == 1)
     check("an 'Add layer' control exists", page.locator(".tl-add-layer").count() == 1)
 
     print("\n=== 10. playback ===")
@@ -354,6 +386,31 @@ with sync_playwright() as pw:
           page.locator(".an-pane-props .an-pane-head .muted").inner_text().strip() == "Frame",
           page.locator(".an-pane-props .an-pane-head .muted").inner_text().strip())
     check("only one thing is selected at a time", page.locator(".tl-text.sel").count() == 0)
+
+    print("\n=== 11b. a colour card — the clip you make without a file ===")
+    # `addColorCard` shipped with Phase 3 and had NO caller, so the whole
+    # `kind: "color"` path was unreachable from the UI while being fully built
+    # and unit-tested underneath. Added AND REMOVED again inside this section,
+    # so every duration assertion after it still sees the same three frames.
+    bars_before = page.locator(".tl-bar").count()
+    page.click(".an-add-card")
+    page.wait_for_timeout(600)
+    check("the card lands on the sequence",
+          page.locator(".tl-bar").count() == bars_before + 1,
+          f"{page.locator('.tl-bar').count()} bars, was {bars_before}")
+    props = page.locator(".an-pane-props .an-props").inner_text()
+    check("Properties calls it a Colour card", "Colour card" in props,
+          props.split("\n")[1] if "\n" in props else props[:40])
+    check("...and offers the one control it has",
+          page.locator(".an-pane-props .an-colour").count() == 1,
+          f"{page.locator('.an-pane-props .an-colour').count()} colour inputs")
+    check("the swatch stands in for the missing picture",
+          page.locator(".an-pane-props .an-prop-card").count() == 1)
+    page.locator(".an-prop-actions .danger-btn").click()
+    page.wait_for_timeout(500)
+    check("removing it puts the sequence back",
+          page.locator(".tl-bar").count() == bars_before,
+          f"{page.locator('.tl-bar').count()} bars, was {bars_before}")
 
     page.screenshot(path=os.path.join(SHOTS, "editor-1920.png"), full_page=False)
 

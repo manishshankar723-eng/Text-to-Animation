@@ -1,0 +1,206 @@
+/* animatic-lanes — Lanes — as many timeline rows as the project has. The gutter labels and the tracks are two columns that must line up. */
+
+/* =========================================================================
+   LANES — the timeline is now as many rows as the project has, not four.
+
+   ⚠ The gutter labels and the tracks are two COLUMNS that must line up, and
+   they are generated from the same `lanes` list. Alignment is kept by giving
+   BOTH the same box: one height, one gap, on every row without exception. Do
+   not give one kind of lane its own height — that is what put every label
+   beside the wrong track once before.
+   ========================================================================= */
+.tl-lane,
+.tl-lane-row {
+  box-sizing: border-box;
+  height: var(--tl-track-h);
+  margin-top: var(--tl-row-gap);
+}
+.tl-lane {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+/* The picture sequence is a row of butted-up bars, not a band with clips in it. */
+.tl-lane.tl-bars {
+  display: flex;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+
+/* --- Transitions on the cuts ---------------------------------------------- */
+/* A transition is BOUNDARY-LOCAL — it straddles the edit point, taking half its
+   length from the tail of one picture and half from the head of the next, and
+   moves nothing. So the badge is CENTRED on the cut and overlaps both bars,
+   which is both what it looks like and what it actually does. It sits above the
+   bars so it stays clickable on a busy sequence.
+
+   ⚠ IT SITS IN THE BOTTOM BAND ONLY, leaving the top edge to the keyframe
+   diamonds (`.tl-key`). Full height was the obvious first choice and was wrong:
+   the badge swallowed any key sitting near the cut, so the keys became
+   impossible to count at exactly the moment you care about them — a push that
+   ends on the cut. Two bands, and neither may grow into the other. */
+.tl-transition {
+  position: absolute;
+  /* Below the four keyframe rows (see `.tl-wrap`), which reach 1.52rem on a
+     2.6rem track. This leaves the badge ~14px — still an easy grab. */
+  top: 66%;
+  bottom: 3px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  /* ⚠ VIOLET, NOT GOLD, and that is the point of the colour. Everything else on
+     this lane is gold — the clips, their borders, the selection — so a gold
+     badge read as "part of the picture bar" and got lost in it. A transition is
+     a different kind of thing (it belongs to the CUT, not to either shot), so
+     it gets a colour nothing else on the timeline uses. */
+  --tl-tr-ink: #8b6ce0;
+  border: 1px solid var(--tl-tr-ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tl-transition:hover {
+  --tl-tr-ink: #a98cf5;
+}
+.tl-transition.sel {
+  --tl-tr-ink: #c0a7ff;
+  box-shadow: 0 0 0 1px #c0a7ff;
+}
+.tl-transition.dragging {
+  --tl-tr-ink: #c0a7ff;
+  box-shadow: 0 0 0 2px #c0a7ff;
+}
+/* The kinds, told apart by the pattern rather than by a label: at a typical
+   0.6s the badge is a few pixels wide and no word would fit. Every kind gets
+   its own rule and the base carries no fill — `transitionWindow` folds an
+   unrecognised kind down to "dissolve" before it ever reaches the DOM, so the
+   class is always one of these four and there is no unstyled case to cover. */
+.tl-transition.tr-dissolve {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(139, 108, 224, 0.65) 0 4px,
+    rgba(139, 108, 224, 0.18) 4px 8px
+  );
+}
+.tl-transition.tr-dip {
+  background: linear-gradient(
+    90deg,
+    rgba(139, 108, 224, 0.6),
+    rgba(0, 0, 0, 0.8),
+    rgba(139, 108, 224, 0.6)
+  );
+}
+.tl-transition.tr-wipe {
+  background: linear-gradient(90deg, rgba(139, 108, 224, 0.12), rgba(139, 108, 224, 0.8));
+}
+.tl-transition.tr-slide {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(139, 108, 224, 0.7) 0 3px,
+    rgba(139, 108, 224, 0.15) 3px 7px
+  );
+}
+/* The exact cut, so it stays readable which edit point this belongs to when the
+   badge is wide enough to cover most of a short picture. */
+.tl-tr-mark {
+  width: 1px;
+  height: 100%;
+  background: #e7dcff;
+  opacity: 0.8;
+}
+.tl-tr-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+}
+.tl-tr-handle:hover {
+  background: #c0a7ff;
+  border-radius: 3px;
+}
+/* An empty cut. Faint until the sequence is hovered — a button down every edit
+   point would drown the pictures they sit between.
+   ⚠ `pointer-events` goes with the opacity. A transparent element still takes
+   clicks, so without this there would be an invisible 14px button sitting on
+   every cut, quietly stealing presses aimed at the pictures either side. */
+.tl-tr-add {
+  width: 14px;
+  margin-left: -7px;
+  border-style: dashed;
+  background: var(--panel-2);
+  color: var(--muted);
+  /* Sized for the short bottom band, not for a full-height button. */
+  font-size: 0.52rem;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.tl-bars:hover .tl-tr-add {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+.tl-tr-add:hover {
+  opacity: 1;
+  color: #c0a7ff;
+  border-color: #c0a7ff;
+}
+
+/* An overlay clip: the same box as a shape clip, carrying a thumbnail of the
+   picture instead of a swatch. */
+.tl-overlay {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-overlay:active {
+  cursor: grabbing;
+}
+.tl-overlay.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-overlay.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+.tl-overlay-thumb {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 0.85rem;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--panel-2);
+}
+
+/* (`.an-overlay-img` was here. An overlay ON THE PREVIEW is drawn in the canvas
+   now — `overlayRect` in compositor.js does the "contain" fit that this rule's
+   `object-fit` used to, and is the twin of the sizing in `draw_overlays`. The
+   DOM box that remains is the drag target only.) */
+.an-prop-thumb {
+  max-width: 5rem;
+  max-height: 2.6rem;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+

@@ -1,0 +1,271 @@
+/* theme — Dark + light palettes, the tints derived from them, and the chip/pill family that every screen builds on. Nothing here is owned by one workflow. */
+
+/* Dark theme (the default). Every colour in this file comes from one of these
+   variables, so the light theme below only has to redefine the palette — see
+   theme.js, which stamps data-theme onto <html>. */
+:root {
+  /* Tells the browser to theme its own widgets too — scrollbars, <select>
+     dropdowns, autofill. Without it those stay dark in light mode. */
+  color-scheme: dark;
+  --bg: #0c0e12;
+  --panel: #13161f;
+  --panel-2: #1b1e2b;
+  --border: #272c3d;
+  /* Outline on each sidebar workflow row. Its own token, NOT --border: the
+     nav sits on --panel, and a border the same value as everything else was
+     too close to the background to see, so the rows read as one dark block
+     (user-reported). A cool near-white lifts them off it. Changing --border
+     instead would have restyled every card and input in the app. */
+  --nav-stroke: rgba(186, 209, 255, 0.26);
+  --nav-stroke-hover: rgba(200, 222, 255, 0.55);
+  --border-gold: rgba(229, 193, 88, 0.35);
+  --text: #f4f6fa;
+  --muted: #9aa2b4;
+  --primary: #e5c158; /* Pastel Warm Champagne Gold */
+  --primary-hover: #f3d67b;
+  --primary-ink: #141005;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --fail: #f87171;
+  --running: #e5c158;
+  --gold-glow: 0 4px 20px rgba(229, 193, 88, 0.22);
+  /* Gold FILLS and the ink that sits on them. Every filled gold surface in
+     this file goes through these, so the two themes can differ without any
+     individual rule knowing about it. Dark mode keeps its exact old values. */
+  --gold-grad: linear-gradient(135deg, #e5c158 0%, #d4aa3b 100%);
+  --gold-grad-hover: linear-gradient(135deg, #f3d67b 0%, #e2be52 100%);
+  --gold-grad-rich: linear-gradient(135deg, #f3d67b 0%, #e5c158 45%, #d4aa3b 100%);
+  --gold-grad-rich-hover: linear-gradient(135deg, #f7de8c 0%, #f0cf6c 45%, #e2be52 100%);
+  --gold-bar: linear-gradient(90deg, #d4aa3b 0%, #e5c158 50%, #f3d67b 100%);
+  --gold-fill: #e5c158;
+  --gold-ink: #141005;
+  /* Timeline image clips. On --panel-2 alone a shot bar was the same colour as
+     the track behind it, so the layer read as an empty band — these tint it the
+     way the text clips and the waveform are already tinted. The two shades
+     alternate so neighbouring shots stay tellable apart at a glance. */
+  --tl-clip-bg: rgba(229, 193, 88, 0.13);
+  --tl-clip-bg-alt: rgba(229, 193, 88, 0.2);
+  --tl-clip-seam: rgba(229, 193, 88, 0.34);
+  --disabled-opacity: 0.45;
+  /* Plain-button surface — see the .btn comment. */
+  --btn-bg: var(--panel-2);
+  --btn-border: var(--border);
+  --btn-shadow: none;
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
+  /* Letterbox behind panel / preview images. */
+  --frame-bg: #000;
+}
+
+/* Light theme. The gold BUTTON gradients stay exactly as they are — that's the
+   brand — but gold used as text or a border washes out on white, so those go
+   several shades deeper to stay readable. Shadows become soft and blue-grey
+   instead of black. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-2: #eceff5;
+  --border: #d8dde8;
+  /* Same job as in dark, opposite direction: a near-white stroke would vanish
+     on a white sidebar, so this goes cool and DARK to lift the rows off it. */
+  --nav-stroke: rgba(72, 100, 150, 0.28);
+  --nav-stroke-hover: rgba(56, 84, 134, 0.55);
+  --border-gold: rgba(150, 116, 27, 0.4);
+  --text: #141824;
+  --muted: #5b6377;
+  --primary: #8a6b17;
+  --primary-hover: #6f5511;
+  --primary-ink: #141005;
+  --ok: #15803d;
+  --warn: #b45309;
+  --fail: #dc2626;
+  --running: #a97f14;
+  --gold-glow: 0 4px 18px rgba(180, 140, 40, 0.26);
+  /* A MID gold — the user asked for this brightness over the deeper, more
+     legible one. White ink lands around 3.0-3.4:1 here: it clears WCAG AA for
+     the bold button labels these fills carry (large-text threshold is 3:1) but
+     not the 4.5:1 body-text bar, so keep these surfaces to short bold labels.
+     The dark theme's own #e5c158 would be 1.7:1 — that is why this isn't just
+     the same gold. Hovers go DARKER, the light-mode convention. */
+  --gold-grad: linear-gradient(135deg, #bd8d1e 0%, #a87914 100%);
+  --gold-grad-hover: linear-gradient(135deg, #a87914 0%, #94690f 100%);
+  --gold-grad-rich: linear-gradient(135deg, #c29320 0%, #bd8d1e 45%, #a87914 100%);
+  --gold-grad-rich-hover: linear-gradient(135deg, #b0821a 0%, #a87914 45%, #946a0f 100%);
+  --gold-bar: linear-gradient(90deg, #a87914 0%, #bd8d1e 50%, #cba02c 100%);
+  --gold-fill: #b0841a;
+  --gold-ink: #ffffff;
+  /* Same tints in the deeper light-mode gold — the dark theme's #e5c158 all but
+     disappears on a white track. */
+  --tl-clip-bg: rgba(138, 107, 23, 0.1);
+  --tl-clip-bg-alt: rgba(138, 107, 23, 0.17);
+  --tl-clip-seam: rgba(138, 107, 23, 0.34);
+  /* 0.45 washes a disabled button out to nothing on a light surface. */
+  --disabled-opacity: 0.6;
+  --btn-bg: var(--panel);
+  --btn-border: #c7cedd;
+  --btn-shadow: var(--shadow-sm);
+  --shadow-sm: 0 2px 10px rgba(20, 24, 36, 0.06);
+  --shadow: 0 4px 16px rgba(20, 24, 36, 0.09);
+  --shadow-lg: 0 20px 50px rgba(20, 24, 36, 0.18);
+  --frame-bg: #e4e8f0;
+}
+
+/* A handful of tints were written as translucent white or pale gold/blue, which
+   only reads on a dark surface. These are the light-mode counterparts. */
+/* Chips and pills. On the dark theme a faint gold tint with gold text reads
+   fine; on white it turns into a barely-there outline, so light mode fills them
+   with the same gold as the buttons and puts white ink on top. This covers
+   every page at once — the review summary's style/ratio/shot-count pills, the
+   character-name chips on each shot, the library cards' genre/ratio/panel
+   pills, and the removable custom-asset chips. */
+:root[data-theme="light"] .chip {
+  background: var(--gold-fill);
+  border-color: transparent;
+  color: var(--gold-ink);
+}
+:root[data-theme="light"] .chip-x {
+  background: rgba(255, 255, 255, 0.25);
+  color: var(--gold-ink);
+}
+/* Selected style / genre / ratio options are the same visual family, so they
+   fill too — otherwise the picked option would look weaker than a read-only
+   pill sitting next to it. */
+:root[data-theme="light"] .opt-chip:hover {
+  background: rgba(150, 116, 27, 0.08);
+}
+:root[data-theme="light"] .opt-chip.active {
+  background: var(--gold-fill);
+  border-color: var(--gold-fill);
+  color: var(--gold-ink);
+  box-shadow: inset 0 0 0 1px var(--gold-fill);
+}
+:root[data-theme="light"] .opt-chip.active .opt-chip-note {
+  color: var(--gold-ink);
+  opacity: 0.8;
+}
+:root[data-theme="light"] .tab-btn:hover {
+  background: rgba(20, 24, 36, 0.05);
+}
+/* Prop / background badges fill like the other pills, but KEEP their two
+   colours — that difference is information (a prop vs. a location), not
+   decoration, so they aren't merged into one gold. */
+:root[data-theme="light"] .asset-badge {
+  border-color: transparent;
+  color: #ffffff;
+}
+:root[data-theme="light"] .asset-badge-prop {
+  background: var(--gold-fill);
+}
+:root[data-theme="light"] .asset-badge-background {
+  background: #3a6cbf;
+}
+:root[data-theme="light"] .sb-theme-switch.on {
+  background: rgba(150, 116, 27, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+/* ⚠ A DROPDOWN'S OPEN LIST IS A SEPARATE SURFACE, and it does not inherit the
+   page. On Windows, Chromium paints an open `<select>` using THAT SELECT's own
+   `background-color` — so any select drawn transparent (the dashed
+   "＋ Add an effect…" opener in the Properties pane is one) got the browser's
+   white default behind the app's near-white option text, and the list could
+   only be read one row at a time under the blue highlight (user-reported).
+   Stating both halves on the options themselves fixes every select in the app
+   at once; `color-scheme: dark` on `:root` covers the platforms that draw the
+   popup natively instead of painting it. Keep BOTH — neither is enough alone. */
+option,
+optgroup {
+  background-color: var(--panel-2);
+  color: var(--text);
+}
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+label {
+  display: block;
+  font-size: 0.83rem;
+  color: var(--muted);
+  margin: 0.75rem 0 0.3rem;
+  font-weight: 500;
+}
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 0.9rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.15);
+}
+input[type="file"] {
+  padding: 0.45rem;
+  cursor: pointer;
+}
+input[type="checkbox"] {
+  width: auto;
+  margin-right: 0.55rem;
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  margin-top: 0.9rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+.tiny {
+  font-size: 0.78rem;
+}
+.error {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid var(--fail);
+  color: var(--fail);
+  padding: 0.6rem 0.8rem;
+  border-radius: 9px;
+  margin: 0.8rem 0;
+  font-size: 0.86rem;
+  word-break: break-word;
+}
+.ok-msg {
+  color: var(--ok);
+  font-size: 0.85rem;
+  margin-left: 0.6rem;
+}
+

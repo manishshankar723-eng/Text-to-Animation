@@ -3,11 +3,32 @@
 // This is where a hold is TYPED ("image 1 = 2 sec, image 5 = 5 sec"); the
 // timeline below is where it's dragged. Both write the same milliseconds, so
 // it doesn't matter which one you reach for.
+//
+// A "frame" is a CLIP now — a still, a piece of video, or a flat colour card —
+// so a card has to say WHICH at a glance. The thumbnail alone can't: a video's
+// poster is just a picture, and a colour card has no picture at all.
 import { useEffect, useRef, useState } from "react";
 import Icon from "./Icon.jsx";
 
 const MIN_MS = 100;
 const MAX_MS = 600000;
+
+// How much SOURCE footage a video clip reads through, in seconds.
+//
+// Deliberately NOT the same number as the hold in the foot below: that one is
+// how long the clip sits on the timeline, this one is how much of the file gets
+// played inside it. They differ exactly when `speed` isn't 1, which is the case
+// where showing only one of them is misleading.
+function sourceSpanSeconds(clip) {
+  const speed = Number(clip.speed) > 0 ? Number(clip.speed) : 1;
+  const covered = (Number(clip.duration_ms) || 0) * speed;
+  const inMs = Math.max(0, Number(clip.in_ms) || 0);
+  const out = clip.out_ms;
+  // Past the out point the clip holds its last frame, so it can never read more
+  // source than the trim allows however long it is held.
+  const limit = out === null || out === undefined ? covered : Math.max(0, Number(out) - inMs);
+  return Math.min(covered, limit) / 1000;
+}
 
 // A drop of many files is sorted by filename, so `01.png … 12.png` lands in the
 // order the user named them rather than whatever order the OS handed over.
@@ -110,7 +131,10 @@ export default function FrameStrip({
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            // Video too: `onAddFiles` is the editor's one-way-in `addAssets`,
+            // which routes by kind, so refusing video HERE would be the picker
+            // disagreeing with the drop target beside it.
+            accept="image/*,video/*"
             multiple
             hidden
             onChange={(e) => {
@@ -130,7 +154,7 @@ export default function FrameStrip({
                   <span className="spinner-inline" /> Uploading…
                 </>
               ) : (
-                "＋ Add images"
+                "＋ Add media"
               )}
             </button>
           )}
@@ -165,12 +189,32 @@ export default function FrameStrip({
             onClick={() => onSelect(f.id)}
           >
             <div className="fs-thumb">
-              {urls[f.id] ? (
+              {/* A COLOUR CARD HAS NO FILE, so it must never wait for one. It
+                  shows itself instead — without this it sat on the loading
+                  spinner for ever, because the url it was given can only 404. */}
+              {(f.kind || "image") === "color" ? (
+                <span
+                  className="fs-swatch"
+                  style={{ background: f.color || "#000000" }}
+                />
+              ) : urls[f.id] ? (
                 <img src={urls[f.id]} alt={f.label || `Frame ${i + 1}`} />
               ) : (
                 <span className="fs-thumb-wait" />
               )}
               <span className="fs-num">{i + 1}</span>
+              {/* What this clip IS, when it isn't the ordinary case. A video's
+                  poster looks exactly like a still, so the badge is the only
+                  thing separating them — and it carries the number the foot
+                  below can't show: how much FOOTAGE runs inside the hold. */}
+              {(f.kind || "image") === "video" && (
+                <span className="fs-kind" title="Video clip">
+                  ▶ {sourceSpanSeconds(f).toFixed(1)}s
+                  {Number(f.speed) && Number(f.speed) !== 1
+                    ? ` · ${Number(f.speed)}×`
+                    : ""}
+                </span>
+              )}
             </div>
 
             <div className="fs-foot">
@@ -213,8 +257,8 @@ export default function FrameStrip({
           >
             <span className="fs-add-plus">＋</span>
             <span className="fs-add-text">
-              Add images
-              <span className="muted"> or drop them here</span>
+              Add media
+              <span className="muted"> or drop it here</span>
             </span>
           </button>
         )}

@@ -1,0 +1,226 @@
+/* base — The shared vocabulary: buttons, inline SVG icons, cards and page layout, and the auth screens. */
+
+/* Buttons.
+   The plain button's surface comes from --btn-* rather than being hardcoded:
+   on the dark page a recessed grey reads as a button, but on the light page
+   that same grey is nearly the background's own value, so the button looks
+   like flat text. Light mode raises it to white with a firmer edge instead.
+   Keeping it in variables means .primary / .secondary / .ghost keep overriding
+   it exactly as before — no specificity fights. */
+/* Icons are inline SVG stroked with `currentColor`, so they take the colour of
+   whatever button they sit in — that's the whole reason they aren't emoji, which
+   carry their own colours and can't be restyled. */
+.icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+
+.btn {
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  box-shadow: var(--btn-shadow);
+  color: var(--text);
+  padding: 0.6rem 1.1rem;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+  background: var(--panel-2);
+}
+.btn:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+.btn.primary {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: var(--primary);
+  font-weight: 650;
+  margin-top: 1.1rem;
+  box-shadow: var(--gold-glow);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--gold-grad-hover);
+  box-shadow: 0 6px 24px rgba(229, 193, 88, 0.35);
+  transform: translateY(-1px);
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.btn.ghost:hover {
+  background: var(--panel-2);
+}
+.btn.small {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+/* Cards / layout */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.35rem;
+  margin-bottom: 1.2rem;
+  box-shadow: var(--shadow);
+}
+.brand {
+  font-size: 1.5rem;
+  color: var(--primary);
+  font-weight: 700;
+}
+.brand.small {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 2rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Full laptop width layout */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(380px, 440px) 1fr;
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 100%;
+}
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+/* Auth */
+.auth-wrap {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: radial-gradient(circle at center, var(--panel-2) 0%, var(--bg) 80%);
+}
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  border-color: var(--border-gold);
+  position: relative;
+}
+.switch {
+  margin-top: 1.1rem;
+  text-align: center;
+}
+.auth-back {
+  align-self: flex-start;
+  margin: 0 0 0.9rem -0.4rem;
+  padding-left: 0.4rem;
+  color: var(--muted);
+}
+.auth-back:hover {
+  color: var(--primary);
+}
+
+/* Password field with show/hide toggle */
+.password-field {
+  position: relative;
+}
+.password-field input {
+  padding-right: 2.8rem;
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 7px;
+  transition: color 0.15s, background 0.15s;
+}
+.password-toggle:hover {
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.1);
+}
+
+/* Google button + divider + info message */
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin-top: 1.2rem;
+  background: #fff;
+  color: #1f1f1f;
+  border-color: #fff;
+  font-weight: 600;
+}
+.google-btn:hover {
+  background: #f2f2f2;
+  border-color: #f2f2f2;
+  color: #1f1f1f;
+}
+.google-icon {
+  flex-shrink: 0;
+}
+.or-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 1.1rem 0 0.3rem;
+}
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.or-divider span {
+  padding: 0 0.7rem;
+}
+.info-msg {
+  background: rgba(229, 193, 88, 0.1);
+  border: 1px solid var(--border-gold);
+  color: var(--primary);
+  padding: 0.6rem 0.8rem;
+  border-radius: 9px;
+  margin: 0.8rem 0 0;
+  font-size: 0.84rem;
+}
+

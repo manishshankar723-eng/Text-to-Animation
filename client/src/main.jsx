@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import { applyTheme, getTheme } from "./theme.js";
-import "./styles.css";
+import "./styles/index.css";
 
 // Set the theme BEFORE the first render, otherwise a light-mode user gets a
 // flash of the dark palette on every page load.

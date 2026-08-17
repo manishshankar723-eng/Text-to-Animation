@@ -9,7 +9,7 @@
 // The layout deliberately MIRRORS StoryboardLibrary.jsx — same header, same
 // New tile, same Recent / All sections, same card, chips and icon actions — so
 // the two workflows read as one product. If you change a card here, change it
-// there too (the shared look lives in the `.lib-*` classes in styles.css).
+// there too (the shared look lives in the `.lib-*` classes in styles/storyboard-library.css).
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";

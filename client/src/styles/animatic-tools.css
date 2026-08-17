@@ -1,0 +1,303 @@
+/* animatic-tools — Tools, shortcuts and the marked range (Premiere's keys). */
+
+/* =========================================================================
+   TOOLS, SHORTCUTS AND THE MARKED RANGE (Premiere's keys)
+   ========================================================================= */
+.an-tools {
+  display: flex;
+  gap: 0.15rem;
+  margin-right: 0.3rem;
+}
+.an-tool {
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.an-tool:hover:not(:disabled) {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+.an-tool.on {
+  background: var(--gold-grad);
+  border-color: var(--primary);
+  color: var(--gold-ink);
+}
+.an-tool:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* The tool decides what the pointer over the timeline MEANS, so it has to look
+   different — a razor that still shows an I-beam is a razor nobody trusts. */
+.tl-inner.tool-razor,
+.tl-inner.tool-razor .tl-bar,
+.tl-inner.tool-razor .tl-ruler {
+  cursor: crosshair;
+}
+.tl-inner.tool-hand,
+.tl-inner.tool-hand .tl-bar,
+.tl-inner.tool-hand .tl-ruler {
+  cursor: grab;
+}
+.tl-inner.tool-hand:active {
+  cursor: grabbing;
+}
+.tl-inner.tool-zoom,
+.tl-inner.tool-zoom .tl-bar,
+.tl-inner.tool-zoom .tl-ruler {
+  cursor: zoom-in;
+}
+/* With an edit tool armed, the grab strip is the thing you want, so make it
+   obvious it is what the pointer is for. */
+.tl-inner.tool-rolling .tl-handle,
+.tl-inner.tool-ripple .tl-handle {
+  background: var(--primary);
+}
+
+/* The marked range (I / O). Sits UNDER the tick labels — it marks time, and
+   the numbers have to stay readable over it. */
+.tl-marks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(229, 193, 88, 0.18);
+  border-left: 2px solid var(--primary);
+  border-right: 2px solid var(--primary);
+  pointer-events: none;
+  z-index: 0;
+}
+.tl-tick {
+  z-index: 1;
+}
+
+/* --- Maximize a panel (~) ------------------------------------------------ */
+/* The maximized pane fills the workspace and the rest are taken out of the
+   layout entirely. `display: none` rather than opacity, so a hidden pane can't
+   still be tabbed into or keep its scroll position on screen. */
+.an-nle.an-has-max .an-panes > .an-pane:not(.an-maxed),
+.an-nle.an-has-max > .an-pane-timeline:not(.an-maxed) {
+  display: none;
+}
+.an-nle.an-has-max .an-panes {
+  display: block;
+}
+.an-nle.an-has-max .an-pane.an-maxed {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+}
+/* When the timeline is the maximized one the panes row goes entirely, so the
+   timeline gets the height the three panes were using. */
+.an-nle.an-max-timeline .an-panes {
+  display: none;
+}
+.an-nle.an-max-timeline .an-pane-timeline {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* --- The Shapes tab in the Media pane ------------------------------------ */
+/* Two tabs, because the picker is a LIBRARY you take from rather than part of
+   this animatic's footage — stacked under the frames it sat below a 60-panel
+   board and was never found. */
+.an-tabs {
+  display: flex;
+  gap: 0.15rem;
+}
+.an-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.15rem 0.4rem 0.25rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.an-tab:hover {
+  color: var(--text);
+}
+.an-tab.on {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.shape-gallery {
+  display: grid;
+  /* Fluid, so the pane can narrow to one column on a phone without a shape
+     tile ever forcing a horizontal scroll. */
+  grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr));
+  gap: 0.5rem;
+}
+.shape-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.55rem 0.3rem 0.4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--text);
+}
+.shape-tile:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.shape-swatch {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+}
+.shape-tile-art {
+  width: 2.1rem;
+  height: 2.1rem;
+}
+.an-shape-hint {
+  margin: 0.6rem 0 0.9rem;
+  line-height: 1.45;
+}
+/* The kind picker in Properties: swatches, not words — four names in a row of
+   buttons is unreadable at this width, and the shape IS the label. */
+.an-shape-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.4rem;
+}
+.an-shape-pick .shape-swatch {
+  width: 0.9rem;
+  height: 0.9rem;
+  background: currentColor;
+}
+
+/* --- Export dialog -------------------------------------------------------- */
+.an-export-modal {
+  max-width: 30rem;
+  width: 94vw;
+  position: relative;
+}
+.an-exp-grid {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem 0.8rem;
+  margin-top: 1.1rem;
+}
+.an-exp-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.an-exp-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.an-exp-fixed {
+  line-height: 1.4;
+}
+.an-export-modal .an-select,
+.an-export-modal .an-prop-input {
+  width: 100%;
+}
+/* What you are about to get, stated in facts we actually know. */
+.an-exp-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.55rem 0.75rem;
+  margin-top: 1.1rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.an-exp-summary > span {
+  color: var(--muted);
+}
+.an-exp-note {
+  margin: 0.5rem 0 0;
+  line-height: 1.5;
+}
+/* An audio CLIP: as wide as the track actually plays, with a trim handle on its
+   right edge — the same gesture as a frame hold or a text clip. */
+.tl-audio-clip {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-right: 2px solid var(--border-gold);
+}
+.tl-audio-clip .tl-handle {
+  z-index: 2;
+}
+
+/* --- Beats --------------------------------------------------------------- */
+/* A tick per onset, along the bottom of the clip so it reads against the
+   waveform instead of through it. Not interactive: a beat is something a
+   dragged edge SNAPS to (see `snapTargets`), not something you can grab. */
+.tl-beat {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 34%;
+  background: var(--primary);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* --- Fades --------------------------------------------------------------- */
+/* The wedge is the ramp: darkest where the track is silent, clear where it is
+   at its set level, so the shape on the clip is the shape of the gain. Both are
+   drawn from `fadeWindow`, the same function that places ffmpeg's `afade`. */
+.tl-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.tl-fade-in {
+  left: 0;
+  background: linear-gradient(90deg, var(--panel-2) 15%, rgba(0, 0, 0, 0));
+}
+.tl-fade-out {
+  right: 0;
+  background: linear-gradient(270deg, var(--panel-2) 15%, rgba(0, 0, 0, 0));
+}
+/* The grip sits ON the top edge at the end of its ramp — Premiere's gesture,
+   and the only place it can be where dragging it means one thing. */
+.tl-fade-grip {
+  position: absolute;
+  top: 0;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--panel);
+  background: var(--primary);
+  opacity: 0.7;
+  cursor: ew-resize;
+  z-index: 3;
+}
+.tl-fade-grip:hover,
+.tl-fade-grip:active {
+  opacity: 1;
+  transform: scale(1.15);
+}
+

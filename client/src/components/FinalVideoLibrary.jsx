@@ -4,7 +4,7 @@
 // MIRRORS AnimaticLibrary.jsx deliberately — same header, same New tiles, same
 // Recent / All sections, same card, chips and icon actions — so the workflows
 // read as one product. Change a card here, change it there (the shared look
-// lives in the `.lib-*` classes in styles.css).
+// lives in the `.lib-*` classes in styles/storyboard-library.css).
 //
 // The one thing this library shows that no other does is SPEND: a project's
 // card carries what it has cost so far, because these are the only projects in

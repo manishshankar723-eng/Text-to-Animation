@@ -678,6 +678,22 @@ export function deleteAnimatic(id) {
   return request(`/animatics/${id}`, { method: "DELETE" });
 }
 
+// --- LUTs -------------------------------------------------------------------
+// The colour tables the Effects pane offers. A LUT is a FILE both sides read:
+// the exporter loads it with Pillow's Color3DLUT and the monitor fetches the
+// same bytes into a WebGL texture, so there is one copy of the numbers and
+// nothing to keep in step by hand.
+export function listLuts() {
+  return request("/animatics/luts");
+}
+
+// The .cube itself, as text. Not JSON, so `request` hands back the Response and
+// the caller reads it — see `loadLut` in animatic/gl/lut.js, which parses and
+// caches it for the life of the tab.
+export function getLutFile(name) {
+  return request(`/animatics/luts/${encodeURIComponent(name)}`);
+}
+
 // Upload images into an animatic. They're stored but NOT sequenced — the client
 // decides the order and saves the project afterwards.
 export function uploadAnimaticImages(id, files) {
@@ -686,10 +702,118 @@ export function uploadAnimaticImages(id, files) {
   return request(`/animatics/${id}/images`, { method: "POST", body: fd, isForm: true });
 }
 
+// Upload video clips into an animatic. Stored but NOT sequenced, exactly like
+// the images — the client decides where on the timeline they land.
+//
+// Each item comes back with a `duration_ms` MEASURED BY THE SERVER (ffmpeg),
+// not by the browser as an audio track's is. It has to be the same number the
+// exporter works from, so there is one measurer; 0 means it couldn't be read,
+// and the clip opens at the default hold instead of its natural length.
+export function uploadAnimaticVideos(id, files) {
+  const fd = new FormData();
+  for (const file of files) fd.append("files", file);
+  return request(`/animatics/${id}/videos`, { method: "POST", body: fd, isForm: true });
+}
+
 export function uploadAnimaticAudio(id, file) {
   const fd = new FormData();
   fd.append("file", file);
   return request(`/animatics/${id}/audio`, { method: "POST", body: fd, isForm: true });
+}
+
+// --- Animating a frame with Veo, from inside the editor ---------------------
+// ⚠ The one path in the animatic editor that SPENDS MONEY. The pair mirrors
+// `estimateFinalVideo` / `renderFinalVideoShots` exactly, including taking the
+// SAME body: the number the confirm dialog shows can then only be the price of
+// the thing the button goes on to do.
+
+// Free to call. Drives the confirm dialog, so the price is on screen before the
+// button that spends it.
+export function estimateAnimateFrames(id, { frameIds, prompts, render, force } = {}) {
+  return request(`/animatics/${id}/animate/estimate`, {
+    method: "POST",
+    body: {
+      frame_ids: frameIds || [],
+      prompts: prompts || {},
+      render,
+      force: !!force,
+    },
+  });
+}
+
+// SPENDS MONEY. Renders the named frames with Veo, async — poll getJob(id).
+// Each finished clip lands as an ordinary video upload, so from that moment it
+// is the same thing on the timeline as a file dragged in from the desktop.
+export function animateAnimaticFrames(id, { frameIds, prompts, render, force } = {}) {
+  return request(`/animatics/${id}/animate`, {
+    method: "POST",
+    body: {
+      frame_ids: frameIds || [],
+      prompts: prompts || {},
+      render,
+      force: !!force,
+    },
+  });
+}
+
+// --- Captions and voiceover -------------------------------------------------
+// ⚠ The other two paths in this editor that SPEND QUOTA. Same shape as the pair
+// above and for the same reason: estimate and run take the SAME body, so the
+// number in the confirm dialog can only be the price of what the button does.
+// Far cheaper than a Veo render, which is exactly why the discipline is kept —
+// a cheap button is the one that gets pressed forty times.
+
+// Free. What transcribing that audio track into captions would cost.
+export function estimateCaptions(id, { uploadId, language, replace } = {}) {
+  return request(`/animatics/${id}/captions/estimate`, {
+    method: "POST",
+    body: {
+      upload_id: uploadId,
+      language: language || "",
+      replace: replace !== false,
+    },
+  });
+}
+
+// SPENDS QUOTA. Writes caption clips from one audio track, async — poll
+// getJob(id), then re-read the project: the captions are written server-side.
+export function captionAnimatic(id, { uploadId, language, replace } = {}) {
+  return request(`/animatics/${id}/captions`, {
+    method: "POST",
+    body: {
+      upload_id: uploadId,
+      language: language || "",
+      replace: replace !== false,
+    },
+  });
+}
+
+// Free. What reading the board's dialogue aloud would cost.
+export function estimateVoiceover(id, { voice, frameIds, addCaptions, replace } = {}) {
+  return request(`/animatics/${id}/voiceover/estimate`, {
+    method: "POST",
+    body: {
+      voice: voice || "Kore",
+      frame_ids: frameIds || [],
+      add_captions: addCaptions !== false,
+      replace: replace !== false,
+    },
+  });
+}
+
+// SPENDS QUOTA. Reads the dialogue aloud onto the audio layer, async — same
+// polling as the captions call. The spoken lines come back as captions too,
+// timed to when they were ACTUALLY read rather than when they were asked for.
+export function voiceAnimatic(id, { voice, frameIds, addCaptions, replace } = {}) {
+  return request(`/animatics/${id}/voiceover`, {
+    method: "POST",
+    body: {
+      voice: voice || "Kore",
+      frame_ids: frameIds || [],
+      add_captions: addCaptions !== false,
+      replace: replace !== false,
+    },
+  });
 }
 
 // Encode the MP4 (async — poll getJob(id) for progress, same as a board).

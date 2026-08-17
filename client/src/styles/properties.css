@@ -1,0 +1,409 @@
+/* properties.css — the Properties pane's layout: named sections, one property
+ * per row, everything on one column grid.
+ *
+ * Added at the END of `index.css`, as that file's header instructs: the import
+ * order IS the cascade, and this file deliberately overrides a handful of the
+ * older `.an-prop-*` rules (the pane's gap, the select and slider sizing) that
+ * were written when every pane laid itself out by hand.
+ *
+ * ⚠ THE ALIGNMENT IS THE POINT. Every row is a two-column grid whose first
+ * column is exactly `--an-label-w` wide, so every label in the pane starts at
+ * the same x and every value starts at the same x — down a Frame pane that is
+ * five sections and fifteen rows. Putting a value, a unit or a ⏱ in the LABEL
+ * column is what breaks it, which is why `PropRow` only ever accepts a name
+ * there. See the header of `components/properties/PropGroup.jsx`.
+ *
+ * THE COLOUR RULE, which is the other half of why this pane used to read as
+ * noise — everything in it was tinted, so nothing stood out:
+ *
+ *   section name   --text, uppercase       what you scan for
+ *   property name  --muted                 supporting
+ *   value / input  --text                  what you came to read
+ *   --primary      ONLY for on/active      a live ⏱, a chosen chip
+ *   --warn         ONLY for "probably not what you meant"
+ *
+ * Nothing in this pane is ever --fail: none of it can be an error.
+ */
+
+.an-props {
+  /* One number, so a wider label column is one edit rather than fifteen. Fits
+     "Position X" and "Images that don't fit" wraps to two lines, which is the
+     right trade at a pane this narrow. */
+  --an-label-w: 5.8rem;
+  /* Tighter than the old hand-rolled pane: the sections do the separating now,
+     so the rows inside one don't also need air between them. */
+  gap: 0.5rem;
+}
+
+/* --- A section ----------------------------------------------------------- */
+.an-grp {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.an-grp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  background: var(--panel-2);
+  /* Transparent rather than absent when closed, so opening a group doesn't
+     shift everything under it by a pixel. */
+  border-bottom: 1px solid transparent;
+}
+.an-grp.open > .an-grp-head {
+  border-bottom-color: var(--border);
+}
+.an-grp-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.1rem 0.35rem;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+}
+.an-grp-twist {
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1;
+  width: 0.75rem;
+  transition: transform 0.12s ease;
+}
+.an-grp.open > .an-grp-head .an-grp-twist {
+  transform: rotate(90deg);
+}
+.an-grp-title {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.an-grp-toggle:hover .an-grp-title,
+.an-grp-toggle:hover .an-grp-twist {
+  color: var(--primary);
+}
+/* How many effects are in the chain, on the header, so a collapsed group still
+   says whether there is anything in it. */
+.an-grp-count {
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.14);
+  border-radius: 99px;
+  padding: 0.02rem 0.34rem;
+}
+/* Always its own line — a hint sharing the title's line is the first thing to
+   get squeezed to nothing on a narrow pane. */
+.an-grp-hint {
+  flex: 1 0 100%;
+  padding-left: 1.1rem;
+  font-size: 0.7rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.an-grp-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.4rem 0.4rem 0 0;
+}
+.an-grp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem 0.55rem;
+}
+
+/* ONE EFFECT, as a card inside the Effects section. The chain is ordered and
+   re-orderable, so each step has to read as a discrete thing you can move — the
+   order is the difference between a LUT over a saturation pull and a saturation
+   pull over a LUT. The `fx` prefix is Premiere's, and is worth borrowing: it is
+   what tells you at a glance which of these sections is a grade rather than a
+   property of the clip. */
+.an-grp-fx {
+  background: var(--panel-2);
+}
+.an-grp-fx > .an-grp-head {
+  background: transparent;
+}
+.an-grp-fx .an-grp-title {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+.an-grp-fx .an-grp-title::before {
+  content: "fx ";
+  color: var(--primary);
+  font-weight: 700;
+}
+
+/* --- A property ---------------------------------------------------------- */
+.an-row {
+  display: grid;
+  grid-template-columns: var(--an-label-w) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 0.5rem;
+  row-gap: 0.25rem;
+  min-height: 1.7rem;
+}
+/* A row whose control needs the whole width — a button, a chip strip, a preset
+   grid. The label, if there is one, sits above it. */
+.an-row.full {
+  grid-template-columns: minmax(0, 1fr);
+}
+.an-row-label {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.an-row-ctl {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* The ⏱ goes to the right edge of the row, and wraps onto its own line rather
+   than squeezing the value when the pane is narrow and the property is animated
+   (a live one grows ‹ ◆ › and an easing menu). */
+.an-row-ctl > .an-kf {
+  margin-left: auto;
+}
+/* Same trick for a trailing "Use whole clip" / "Use whole track". */
+.an-row-end {
+  margin-left: auto;
+}
+.an-row-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* An indented block of rows belonging to the row that switched them on — the
+   mask's geometry under "Mask". The rule down the left is what says "these are
+   part of that" without a second level of section headers. */
+.an-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.1rem 0 0.1rem 0.3rem;
+  padding-left: 0.55rem;
+  border-left: 2px solid var(--border);
+}
+
+/* --- The controls themselves --------------------------------------------- */
+/* All one size, all on the same baseline, because a pane where the number boxes
+   are 4rem and the dropdowns are 9.5rem is the thing that made this look
+   unfinished. */
+.an-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+/* The one-letter tag in front of a paired field (X, Y). Not a label — a label
+   lives in the left column — just a marker on the box. */
+.an-num-tag {
+  font-size: 0.7rem;
+  color: var(--muted);
+  min-width: 0.7rem;
+}
+.an-num input {
+  width: 4.2rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.24rem 0.35rem;
+  text-align: right;
+}
+.an-num input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-num-unit {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+/* A number the pane is TELLING you, next to one you can type. Same size and the
+   same tabular figures so a column of them lines up, but no box, because there
+   is nothing to click. */
+.an-num-read,
+.an-row-read {
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.an-num-read {
+  min-width: 2.6rem;
+  text-align: right;
+}
+
+.an-row-ctl select,
+.an-props .an-select {
+  flex: 1 1 6rem;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 0.24rem 0.3rem;
+}
+.an-row-ctl select:focus,
+.an-props .an-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+/* ⚠ The keyframe easing menu is NOT a property control — it belongs to the ⏱
+   cluster and must stay small, or a row with a key on it doubles in width. */
+.an-row-ctl .an-kf-ease {
+  flex: 0 0 auto;
+  max-width: 5.2rem;
+  font-size: 0.7rem;
+  padding: 0.14rem 0.2rem;
+}
+/* "+ Add an effect…" keeps its dashed, full-width, invitation look — it adds a
+   thing, it doesn't set a value. */
+.an-row-ctl select.an-fx-add {
+  flex: 1 1 100%;
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+  padding: 0.32rem 0.45rem;
+}
+.an-row-ctl select.an-fx-add:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.an-row-ctl input[type="range"] {
+  flex: 1 1 5rem;
+  min-width: 3rem;
+  accent-color: var(--primary);
+}
+.an-row-ctl input[type="color"],
+.an-row-ctl .an-colour {
+  flex: none;
+  width: 2.2rem;
+  height: 1.6rem;
+  padding: 2px;
+}
+.an-row-ctl .an-prop-input {
+  flex: 1 1 6rem;
+  font-size: 0.8rem;
+  padding: 0.24rem 0.35rem;
+}
+.an-row-ctl .an-set-chips {
+  gap: 0.25rem;
+}
+/* A caption's text box is the one control that owns a whole section. */
+.an-grp-body > .an-tp-text {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* --- What am I looking at ------------------------------------------------- */
+/* One block at the top of every pane naming the selection, so no section below
+   has to repeat it. */
+.an-prop-ident {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.an-prop-ident .an-prop-thumb {
+  flex: none;
+  width: 5.5rem;
+}
+.an-prop-ident-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 0;
+}
+.an-prop-kind {
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.an-prop-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.an-prop-sub {
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+/* --- Prose --------------------------------------------------------------- */
+.an-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* "This is probably not what you meant." Takes --warn, never --fail: a clip
+   that runs past the end of the video, or wants more footage than its trim
+   leaves, still renders — it just renders something nobody asked for. Same
+   shape as `.fv-banner.warn`: a panel with one coloured edge, which is how this
+   app already says "read this". */
+.an-note-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--warn);
+}
+.an-note-warn .icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  margin-top: 0.15em;
+}
+
+/* --- The label column at other widths -------------------------------------- */
+/* The two breakpoints are `animatic-editor.css`'s, not new ones — the column
+   only has to follow what the pane itself is doing at each of them.
+   1320px: the split panes are at their narrowest and every rem the labels give
+   back goes to the value boxes. 1180px: the workspace stops splitting and the
+   pane becomes full width, so the labels can have the room to stop wrapping. */
+@media (max-width: 1320px) {
+  .an-props {
+    --an-label-w: 5rem;
+  }
+}
+@media (max-width: 1180px) {
+  .an-props {
+    --an-label-w: 7rem;
+  }
+}

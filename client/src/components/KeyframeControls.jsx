@@ -56,7 +56,7 @@ export default function KeyframeControls({
           diamonds per animated property, in this pane's own order — so the
           swatch here is what says which row down there is this control. It
           appears only once the property is animated, because until then there
-          is no row for it to name. Colours live in `--kf-*` (styles.css) and
+          is no row for it to name. Colours live in `--kf-*` (styles/keyframes.css) and
           are shared with `.tl-key`; changing one without the other breaks the
           pairing silently, since neither side errors. */}
       {animated && <span className={`an-kf-swatch k-${prop}`} aria-hidden="true" />}

@@ -67,6 +67,21 @@ ALLOWED_AUDIO_TYPES = {
 }
 ALLOWED_AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".oga", ".webm"}
 MAX_AUDIO_BYTES = int(os.environ.get("API_MAX_AUDIO_BYTES", str(50 * 1024 * 1024)))
+# Video clips dropped onto the animatic timeline. Like the audio list above, the
+# extension is accepted as a fallback because browsers disagree about content
+# types — a .mov arrives as video/quicktime on one machine and empty on another.
+# The list is what ffmpeg can decode AND a browser can play in the Program
+# monitor: the preview uses a real <video> element, so a format the browser
+# can't show would export correctly and preview as a black rectangle.
+ALLOWED_VIDEO_TYPES = {
+    "video/mp4", "video/quicktime", "video/webm", "video/x-m4v", "video/mpeg",
+}
+ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
+# Deliberately larger than the audio cap and separately tunable: a 30-second
+# phone clip is comfortably past 50MB, and refusing it is the first thing anyone
+# would hit. The real guard on cost is MAX_EXTRACTED_FRAMES in video_frames.py —
+# what matters is how much gets DECODED, not how much gets stored.
+MAX_VIDEO_BYTES = int(os.environ.get("API_MAX_VIDEO_BYTES", str(300 * 1024 * 1024)))
 # Guard rail on the sequence length — an animatic is a rough cut, not a feature.
 MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
 # Text clips per animatic. Each boundary splits the timeline into another

@@ -1,0 +1,165 @@
+/* keyframes — The keyframe row and the timeline diamonds, and the one colour per animated property. */
+
+/* --- Keyframes -------------------------------------------------------------
+   The ⏱ row that turns a property into an animation, and the diamonds that show
+   where its keys are. Both borrow the existing vocabulary rather than inventing
+   one: the buttons are `.an-tp-btn` sized down, and "on" is the same gold the
+   rest of the Properties pane uses for an active toggle. */
+.an-kf {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: 0.15rem;
+}
+.an-kf-btn {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.18rem 0.24rem;
+}
+.an-kf-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.an-kf-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+/* The stopwatch is the one control that is always there, so it carries the
+   state: dim means "this property is a number", gold means "it is an
+   animation". */
+.an-kf-watch.on,
+.an-kf-dot.on {
+  color: var(--primary);
+}
+.an-kf-watch.on {
+  background: var(--panel-2);
+}
+/* The colour legend on a ⏱ row: the same diamond, in the same colour, as the
+   row this property occupies on the timeline. Drawn as a diamond rather than a
+   dot on purpose — it has to be recognisable as "that shape down there". */
+.an-kf-swatch {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  transform: rotate(45deg);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 1px;
+  background: var(--kf-any);
+  margin-right: 0.15rem;
+}
+.an-kf-swatch.k-scale {
+  background: var(--kf-scale);
+}
+.an-kf-swatch.k-x {
+  background: var(--kf-x);
+}
+.an-kf-swatch.k-y {
+  background: var(--kf-y);
+}
+.an-kf-swatch.k-w {
+  background: var(--kf-w);
+}
+.an-kf-swatch.k-h {
+  background: var(--kf-h);
+}
+.an-kf-swatch.k-rotation {
+  background: var(--kf-rotation);
+}
+.an-kf-swatch.k-opacity {
+  background: var(--kf-opacity);
+}
+
+.an-kf-ease {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.72rem;
+  padding: 0.14rem 0.2rem;
+  max-width: 6rem;
+}
+.an-kf-ease:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* A keyframe diamond, centred on its time (hence the negative margin).
+   `top` is set inline, per ROW: one row per animated property.
+
+   ⚠ THE ROWS ARE THE POINT. Every key used to be drawn on one line at
+   mid-height, merged so that two properties keyed at the same instant showed a
+   single diamond — you could not tell one key from four, and a key near a cut
+   disappeared into the transition badge behind it. Now each property owns a row
+   and a COLOUR, the rows run down from the top edge, and `.tl-transition` has
+   the bottom band to itself. Three rules hold it together, and all three are
+   easy to break by accident:
+     1. rows and track are both in `rem`, so they scale together (see `.tl-wrap`)
+     2. nothing else may occupy the top band
+     3. the colour here must match the swatch on the matching ⏱ row in the
+        Properties pane (`.an-kf-swatch`) — that pairing is the whole legend. */
+.tl-key {
+  position: absolute;
+  width: var(--tl-key-size);
+  height: var(--tl-key-size);
+  margin-left: calc(var(--tl-key-size) / -2);
+  transform: rotate(45deg);
+  background: var(--kf-any);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 1px;
+  cursor: pointer;
+  z-index: 3;
+}
+.tl-key:hover {
+  box-shadow: 0 0 0 1px #fff;
+}
+/* Being dragged: ringed rather than resized. Growing the diamond was the old
+   cue, and it cannot work now — a bigger diamond spans √2 times its width
+   across the corners and would reach into the row above and below it. The ring
+   reads just as clearly and moves nothing. */
+.tl-key.dragging {
+  box-shadow: 0 0 0 2px #fff;
+  z-index: 5;
+}
+
+/* One colour per property, so a row can be identified without counting rows —
+   which matters most on a clip that animates three of them at once. Gold and
+   amber are deliberately absent: the clips themselves are gold, and a key the
+   colour of the bar it sits on is a key you cannot see. `--kf-any` is the
+   fallback for a property added later that hasn't been given a colour yet. */
+.tl-wrap,
+.an-props {
+  --kf-any: #b0bec5;
+  --kf-scale: #29b6f6;
+  --kf-x: #66bb6a;
+  --kf-y: #ec407a;
+  --kf-w: #ab47bc;
+  --kf-h: #26c6da;
+  --kf-rotation: #ff7043;
+  --kf-opacity: #ffffff;
+}
+.tl-key.k-scale {
+  background: var(--kf-scale);
+}
+.tl-key.k-x {
+  background: var(--kf-x);
+}
+.tl-key.k-y {
+  background: var(--kf-y);
+}
+.tl-key.k-w {
+  background: var(--kf-w);
+}
+.tl-key.k-h {
+  background: var(--kf-h);
+}
+.tl-key.k-rotation {
+  background: var(--kf-rotation);
+}
+.tl-key.k-opacity {
+  background: var(--kf-opacity);
+}

@@ -1,0 +1,37 @@
+/* index.css — the whole stylesheet, in the order it has always been written.
+ *
+ * ⚠ THE ORDER OF THESE IMPORTS IS THE CASCADE. This file was one 9.2k-line
+ * `styles.css`, and splitting it is only safe because the pieces are pulled
+ * back in end-to-end in exactly the order they were concatenated before. Two
+ * rules of equal specificity are still decided by which comes last, so moving
+ * an import up or down here can change the page without changing a single
+ * declaration. Add a new file at the END, or beside the block it belongs to —
+ * never in the middle for tidiness.
+ *
+ * `theme.css` must stay first: every other file reads the custom properties it
+ * defines on `:root`.
+ */
+@import "./theme.css";
+@import "./base.css";
+@import "./landing.css";
+@import "./lightbox.css";
+@import "./text-to-image.css";
+@import "./shell.css";
+@import "./home.css";
+@import "./soon-upgrade.css";
+@import "./storyboard.css";
+@import "./storyboard-library.css";
+@import "./pricing.css";
+@import "./preflight.css";
+@import "./story-extras.css";
+@import "./animatic.css";
+@import "./animatic-text.css";
+@import "./animatic-editor.css";
+@import "./animatic-lanes.css";
+@import "./animatic-tools.css";
+@import "./key-poses.css";
+@import "./final-video.css";
+@import "./keyframes.css";
+@import "./animatic-effects.css";
+@import "./properties.css";
+@import "./animatic-scrollbar.css";

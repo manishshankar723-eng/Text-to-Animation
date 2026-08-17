@@ -1,0 +1,714 @@
+/* final-video — Animatics to Final Video: the three-step workspace, the shot grid, and the SPEND treatments. */
+
+/* ===========================================================================
+   Animatics → Final Video
+   ---------------------------------------------------------------------------
+   The three-step workspace. Reuses `.card`, `.chip`, `.btn`, `.lib-*` and the
+   modal classes wherever the shape matches an existing screen — what follows is
+   only what this workflow genuinely does differently: a step tab strip, a shot
+   grid that holds video, and the SPEND treatments.
+
+   Spend is styled deliberately. `~$x.xx` takes the gold accent everywhere it
+   appears, so the number that can cost money always looks like the same thing
+   whether it is on a library card, in the header, or on the confirm button.
+   =========================================================================== */
+.fv-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem clamp(0.75rem, 3vw, 2rem) 2.5rem;
+  min-height: 100vh;  /* fallback */
+  min-height: 100dvh; /* follows the real viewport as mobile chrome slides away */
+  min-width: 0;
+}
+
+.fv-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 3rem 0;
+  color: var(--muted);
+}
+
+/* --- Header ---------------------------------------------------------------- */
+.fv-top {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-top-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fv-title,
+.fv-title-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  min-width: 0;
+  max-width: min(100%, 34rem);
+}
+.fv-title:hover {
+  border-color: var(--border);
+}
+.fv-title .icon {
+  color: var(--muted);
+}
+.fv-title-input {
+  cursor: text;
+  border-color: var(--border-gold);
+  background: var(--panel-2);
+}
+
+/* The running spend. Always visible — it is the number that can surprise you. */
+.fv-spend {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.12);
+  border: 1px solid var(--border-gold);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.85rem;
+}
+.fv-save-state {
+  min-width: 4.5rem;
+  text-align: right;
+}
+
+/* BUTTON SIZING — read this before adding a button anywhere in this workflow.
+   `.btn.primary` carries `margin-top: 1.1rem` (it is designed to sit at the
+   bottom of a form), so dropping one into a ROW of buttons pushes it lower
+   than its neighbours and it reads as a different, bigger control. Every row
+   below therefore states one size family and zeroes that margin — the same fix
+   `.an-topbar .btn` made for the animatic editor's top bar after exactly this
+   was reported. Match these values; don't add a lone `btn small` to a row. */
+.fv-top .btn,
+.fv-section-actions .btn,
+.fv-batch .btn,
+.fv-final-actions .btn,
+.fv-shot-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 2.3rem;
+  padding: 0 0.95rem;
+  font-size: 0.84rem;
+  line-height: 1;
+  margin-top: 0;
+  white-space: nowrap;
+}
+/* The back arrow is icon-only, so it is a square of that same height rather
+   than a wide slab — same rule the delete button follows in the top bar. */
+.fv-top .btn.ghost.small {
+  width: 2.3rem;
+  padding: 0;
+}
+
+/* --- Step tabs ------------------------------------------------------------- */
+.fv-steps {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  overflow-x: auto;
+  min-width: 0;
+}
+.fv-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.fv-step:hover {
+  color: var(--text);
+}
+.fv-step.active {
+  color: var(--primary-ink);
+  background: var(--gold-grad);
+  border-color: transparent;
+  font-weight: 600;
+}
+.fv-step-dot {
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex: none;
+}
+.fv-step.active .fv-step-dot {
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--primary-ink);
+}
+/* The long label on wide screens, the short one once it stops fitting — the
+   middle stage the responsive rules ask for, rather than 3 tabs collapsing to 1. */
+.fv-step-short {
+  display: none;
+}
+@media (max-width: 900px) {
+  .fv-step-label {
+    display: none;
+  }
+  .fv-step-short {
+    display: inline;
+  }
+}
+
+/* --- Status strip ---------------------------------------------------------- */
+.fv-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.chip.failed {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.chip.stale {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.chip.spend {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  font-variant-numeric: tabular-nums;
+}
+.fv-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+.fv-progress-bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  min-width: 0;
+}
+.fv-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--gold-bar);
+  transition: width 0.4s ease;
+}
+
+/* --- Banners --------------------------------------------------------------- */
+.fv-banner {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.fv-banner.warn {
+  border-left-color: var(--warn);
+}
+
+/* --- Step panes ------------------------------------------------------------ */
+.fv-body {
+  min-width: 0;
+}
+.fv-step-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-width: 0;
+}
+.fv-pane-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-pane-head h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+.fv-pane-head p {
+  margin: 0;
+  max-width: 62ch;
+  line-height: 1.55;
+}
+.fv-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.4rem;
+  min-width: 0;
+}
+.fv-section-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.fv-section-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.fv-empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  line-height: 1.55;
+}
+
+/* --- Fields ---------------------------------------------------------------- */
+.fv-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+  gap: 0.7rem;
+  align-items: end;
+  min-width: 0;
+}
+.fv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.fv-field.wide {
+  grid-column: 1 / -1;
+}
+.fv-field select,
+.fv-field input {
+  width: 100%;
+  min-width: 0;
+}
+.fv-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  line-height: 1.4;
+  min-width: 0;
+}
+.fv-check input {
+  flex: none;
+}
+.fv-batch {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding-top: 0.3rem;
+}
+
+/* --- Step 1: the art tray -------------------------------------------------- */
+.fv-art-tray {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9.5rem), 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-art {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem;
+  background: var(--panel);
+  min-width: 0;
+}
+.fv-art-thumb,
+.fv-shot-mini-thumb,
+.fv-order-thumb {
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--frame-bg);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.fv-art-thumb img,
+.fv-shot-mini-thumb img,
+.fv-order-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.fv-art-placeholder {
+  font-size: 1.4rem;
+  opacity: 0.5;
+}
+.fv-art-name {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.fv-art-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.fv-shot-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: 0.7rem;
+  min-width: 0;
+}
+.fv-shot-mini {
+  padding: 0.55rem;
+  min-width: 0;
+}
+.fv-shot-mini.open {
+  grid-column: 1 / -1;
+}
+.fv-shot-mini-head {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+.fv-shot-mini-label {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.fv-shot-mini-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 0.6rem;
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+.fv-ref-picker {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.82rem;
+  max-width: 100%;
+  min-width: 0;
+}
+.fv-ref-chip.on {
+  border-color: var(--primary);
+  color: var(--text);
+  background: rgba(229, 193, 88, 0.12);
+}
+.fv-ref-chip img {
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.fv-ref-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fv-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 1fr));
+  gap: 0.5rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  min-width: 0;
+}
+.fv-asset-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.fv-asset-pick:hover {
+  border-color: var(--primary);
+}
+.fv-asset-name {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* --- Step 2: the shot grid ------------------------------------------------- */
+.fv-shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.85rem;
+  min-width: 0;
+}
+.fv-shot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.65rem;
+  min-width: 0;
+}
+.fv-shot.failed {
+  border-color: var(--fail);
+}
+.fv-shot.ready {
+  border-color: var(--border-gold);
+}
+.fv-shot-media {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--frame-bg);
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+.fv-shot-media img,
+.fv-shot-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.fv-shot-placeholder {
+  font-size: 1.8rem;
+  opacity: 0.4;
+}
+.fv-shot-working {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 0.8rem;
+}
+.fv-shot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.fv-shot-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-shot-head strong {
+  margin-right: auto;
+}
+.chip.ready {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.chip.rendering,
+.chip.queued {
+  color: var(--running);
+  border-color: var(--running);
+}
+.fv-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  min-width: 0;
+  line-height: 1.5;
+}
+.fv-shot-error {
+  border-left: 3px solid var(--fail);
+  background: rgba(248, 113, 113, 0.08);
+  padding: 0.45rem 0.6rem;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.fv-shot-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fv-shot-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+/* --- The confirm dialog: the last thing before money moves ----------------- */
+.fv-confirm {
+  position: relative;
+  width: min(30rem, 92vw);
+  padding: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.fv-confirm h2 {
+  margin: 0;
+  padding-right: 2rem;
+  font-size: 1.15rem;
+}
+.fv-confirm p {
+  margin: 0;
+  line-height: 1.55;
+}
+.fv-confirm-price {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: rgba(229, 193, 88, 0.1);
+}
+.fv-confirm-usd {
+  font-size: 1.85rem;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* --- Step 3: order + the finished cut -------------------------------------- */
+.fv-order {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.fv-order-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  min-width: 0;
+}
+.fv-order-row.excluded {
+  opacity: var(--disabled-opacity);
+}
+.fv-order-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+.fv-order-move {
+  display: flex;
+  gap: 0.2rem;
+}
+.fv-final-player {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 10px;
+  background: var(--frame-bg);
+}
+.fv-final-placeholder {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  max-height: 40vh;
+  border-radius: 10px;
+  background: var(--frame-bg);
+  color: var(--muted);
+}
+.fv-final-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .fv-order-row {
+    grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  }
+  .fv-order-row > .tiny {
+    display: none;
+  }
+  .fv-shot-mini-head {
+    grid-template-columns: 4rem minmax(0, 1fr) auto;
+  }
+}
+

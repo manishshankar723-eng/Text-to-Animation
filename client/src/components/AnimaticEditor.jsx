@@ -4,13 +4,38 @@
 // timer; every animation frame reads the <audio> element's currentTime and
 // picks the picture whose slice of the sequence contains it. Audio is the
 // master, so the pictures can never drift away from the sound — which is the
-// one thing this whole feature exists to let you check.
+// one thing this whole feature exists to let you check. That machinery lives in
+// `animatic/useTimelineTransport.js`.
+//
+// What is left in THIS file is the workspace: the panes, the media it fetches,
+// the edits it makes to the document, and the two server jobs it can start.
+// Three things that used to be here now have files of their own, and the
+// reasoning that goes with them lives there rather than in this header:
+//
+//   animatic/useAnimaticProject.js   loading, autosave and the dirty baseline
+//   animatic/useTimelineTransport.js the playhead, shuttle, marks, video slaves
+//   animatic/useUndoStack.js         Ctrl+Z, and the gesture bracket
+//   components/properties/           the six Properties panes
 //
 // Everything here is local and free: no AI call is made, and preview costs
-// nothing. Only "Export video" touches the server for real work.
+// nothing. "Export video" and "✨ Animate" are the only two that touch the
+// server for real work, and only the second one SPENDS MONEY.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
-import { ANIMATABLE, defaultFor, sceneAt, valueAt } from "../animatic/scene.js";
+import {
+  ANIMATABLE,
+  LOOK_KINDS,
+  TEXT_DEFAULTS,
+  defaultFor,
+  lookProps,
+  lookPropParts,
+  lookValueOf,
+  resolveLook,
+  sceneAt,
+  setLookValue,
+  valueAt,
+} from "../animatic/scene.js";
+import { DEFAULT_FONT, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
 import {
   disableProp,
   enableProp,
@@ -22,27 +47,42 @@ import {
   setKey,
   setKeyEase,
 } from "../animatic/keyframes.js";
-import {
-  DEFAULT_TRANSITION_MS,
-  MAX_TRANSITION_MS,
-  MIN_TRANSITION_MS,
-  TRANSITIONS,
-} from "../animatic/transitions.js";
-import KeyframeControls from "./KeyframeControls.jsx";
+import { DEFAULT_TRANSITION_MS } from "../animatic/transitions.js";
+import { clamp } from "../animatic/util.js";
+import useAnimaticProject from "../animatic/useAnimaticProject.js";
+import useAudioAnalysis from "../animatic/useAudioAnalysis.js";
+import { forgetAudio } from "../animatic/beats.js";
+import useTimelineTransport, { useMonitorVideo } from "../animatic/useTimelineTransport.js";
+import useUndoStack from "../animatic/useUndoStack.js";
 import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
+import ProgramCanvas from "./ProgramCanvas.jsx";
 import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
   SHAPE_KINDS,
   ShapeSwatch,
-  shapeCss,
 } from "./Shapes.jsx";
+import EffectsPanel from "./EffectsPanel.jsx";
+import {
+  AudioProperties,
+  FrameProperties,
+  ShapeProperties,
+  TextProperties,
+  TransitionProperties,
+  VideoProperties,
+} from "./properties/index.js";
 
-const ZOOMS = [8, 16, 32, 64, 128, 256]; // pixels per second
-const DEFAULT_ZOOM = 2;
-const AUTOSAVE_MS = 900;
+// The timeline's scale, in pixels per second. CONTINUOUS, not a list of steps:
+// the scroll bar's grips ask for whatever scale frames the stretch you dragged
+// them around, and rounding that to the nearest power of two would make the
+// gesture lie about what it was going to show you. The ＋/− buttons and the
+// Zoom tool still move in steps — `ZOOM_STEP` — which is what a click wants.
+const MIN_PPS = 2;
+const MAX_PPS = 600;
+const DEFAULT_PPS = 32;
+const ZOOM_STEP = 1.6;
 const MIN_MS = 100;
 // Mirrors API_MAX_ANIMATIC_AUDIO_TRACKS on the server.
 const MAX_AUDIO_TRACKS = 4;
@@ -73,14 +113,6 @@ function frameSizeFor(aspect, resolution) {
   return [even(base[0] * scale), even(base[1] * scale)];
 }
 
-const ASPECTS = [
-  { id: "16:9", label: "16:9", note: "Wide" },
-  { id: "9:16", label: "9:16", note: "Reels" },
-  { id: "1:1", label: "1:1", note: "Square" },
-  { id: "4:3", label: "4:3", note: "Classic" },
-  { id: "4:5", label: "4:5", note: "Portrait" },
-];
-
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
 // A new caption. Defaults to a scrim so it stays readable over a grey
@@ -95,7 +127,52 @@ const newTextClip = (startMs, durationMs) => ({
   size: "medium",
   color: "#ffffff",
   backdrop: "scrim",
+  // The type, all at the values that reproduce exactly what a caption drew
+  // before Phase 5 — a new clip and an old one must look the same, or every
+  // animatic in the library changes appearance the day this ships.
+  font: DEFAULT_FONT,
+  place: "flow",
+  x: TEXT_DEFAULTS.x,
+  y: TEXT_DEFAULTS.y,
+  stroke_px: 0,
+  stroke_color: "#000000",
+  shadow: 0,
+  letter_spacing: 0,
 });
+
+/**
+ * The inline style that makes a caption in the monitor the caption in the MP4.
+ *
+ * ⚠ EVERY NUMBER HERE IS MATCHED TO `_draw_text_block` IN animatic.py, by
+ * construction rather than by eye:
+ *   · the FONT is the same bundled .ttf file, loaded by `ensureFontsLoaded`
+ *     from `/fonts/` — never a family name the machine resolves;
+ *   · `stroke_px` is pixels at 1080p, so it is scaled by the frame height,
+ *     which in here is `100cqh` (`.an-screen` is a size container — the same
+ *     trick the sz-* font sizes already use);
+ *   · `shadow` and `letter_spacing` are fractions of the font size, i.e. `em`,
+ *     which is the same number on both sides with no conversion at all;
+ *   · the shadow's blur is ZERO and its ink is rgba(0,0,0,.55) because Pillow
+ *     draws a hard shadow at alpha 140. A blurred one here would be prettier
+ *     and would be a preview that lies.
+ */
+function captionStyle(c) {
+  const style = {
+    color: c.color || "#ffffff",
+    opacity: c.opacity ?? 1,
+    fontFamily: fontFamily(c.font),
+  };
+  if (c.letter_spacing) style.letterSpacing = `${c.letter_spacing}em`;
+  if (c.stroke_px) {
+    style.WebkitTextStrokeWidth = `calc(100cqh * ${c.stroke_px} / 1080)`;
+    style.WebkitTextStrokeColor = c.stroke_color || "#000000";
+    style.paintOrder = "stroke fill";
+  }
+  if (c.shadow) {
+    style.textShadow = `${c.shadow}em ${c.shadow}em 0 rgba(0, 0, 0, 0.55)`;
+  }
+  return style;
+}
 
 // A new shape: a quarter of the frame, dead centre. Geometry is in FRACTIONS of
 // the frame (never pixels), so the same shape lands in the same place whether
@@ -114,7 +191,46 @@ const newShape = (kind, startMs, durationMs) => ({
   opacity: 1,
   rotation: 0,
 });
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// A new VIDEO clip. `duration_ms` is its length on the TIMELINE and `in_ms` /
+// `out_ms` the window of the SOURCE it reads — see `sourceAt` in scene.js for
+// why speed widens that window instead of re-timing the clip. A clip whose file
+// we couldn't measure opens at the default hold rather than at zero length.
+const newVideoClip = (uploadId, durationMs, label) => ({
+  id: newId(),
+  src: { kind: "video", upload_id: uploadId },
+  kind: "video",
+  duration_ms: clamp(Math.round(durationMs || 2000), MIN_MS, 600000),
+  label: label || "",
+  in_ms: 0,
+  out_ms: durationMs ? Math.round(durationMs) : null,
+  speed: 1,
+  scale: 1,
+  x: 0.5,
+  y: 0.5,
+  opacity: 1,
+  keyframes: {},
+});
+
+// A new COLOUR CARD — a clip with no file behind it at all. A slug, a blackout,
+// a flash. `src` is still sent because the server's schema requires one; nothing
+// ever resolves it for this kind.
+const newColorClip = (color, durationMs) => ({
+  id: newId(),
+  src: { kind: "upload" },
+  kind: "color",
+  color: color || "#000000",
+  duration_ms: clamp(Math.round(durationMs || 1000), MIN_MS, 600000),
+  label: "",
+  in_ms: 0,
+  out_ms: null,
+  speed: 1,
+  scale: 1,
+  x: 0.5,
+  y: 0.5,
+  opacity: 1,
+  keyframes: {},
+});
 
 // --- Tools (Premiere's keys, only the ones that mean something here) --------
 // An animatic is stills, captions, shapes and audio: there are no keyframes to
@@ -126,29 +242,6 @@ const TOOLS = [
   { id: "rolling", key: "N", label: "Rolling edit", hint: "Drag an edit point; the next frame absorbs it, so the video stays the same length" },
   { id: "hand", key: "H", label: "Hand", hint: "Drag to scroll the timeline" },
   { id: "zoom", key: "Z", label: "Zoom", hint: "Click to zoom in · Alt-click to zoom out" },
-];
-// Shuttle speeds for J / L, in the order repeated presses step through them.
-const SHUTTLE = [1, 2, 4];
-
-const TEXT_POSITIONS = [
-  { id: "top", label: "Top" },
-  { id: "middle", label: "Middle" },
-  { id: "bottom", label: "Bottom" },
-];
-const TEXT_ALIGNS = [
-  { id: "left", label: "◧" },
-  { id: "center", label: "▣" },
-  { id: "right", label: "◨" },
-];
-const TEXT_SIZES = [
-  { id: "small", label: "S" },
-  { id: "medium", label: "M" },
-  { id: "large", label: "L" },
-];
-const TEXT_BACKDROPS = [
-  { id: "scrim", label: "Shaded bar" },
-  { id: "box", label: "Solid box" },
-  { id: "none", label: "Outline only" },
 ];
 
 // What a dropped file is, by MIME with an extension fallback (a drag from some
@@ -188,42 +281,8 @@ export default function AnimaticEditor({
   onDeleted,
   onMakeFinalVideo,
 }) {
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-
-  // --- The project ---
-  const [title, setTitle] = useState("");
-  const [frames, setFrames] = useState([]);
-  const [settings, setSettings] = useState({
-    aspect_ratio: "16:9",
-    fps: 24,
-    fit: "contain",
-    background: "#000000",
-    show_labels: false,
-  });
-  // The text layer. Timed independently of the frames, which is why it isn't
-  // just a field on a frame.
-  const [texts, setTexts] = useState([]);
-  // The shape layer — boxes, circles, pentagons and stars drawn over the
-  // picture. Timed like the text layer, and like it, independent of the frames.
-  const [shapes, setShapes] = useState([]);
-  // Lanes the USER added. "+ Add layer" creates one of these and nothing else —
-  // it is a blank row, filled afterwards by that row's own ＋. Every kind also
-  // has an implicit DEFAULT lane (clips whose layer_id is ""), which is what an
-  // animatic saved before layers is made of, and what a new one starts with.
-  const [layers, setLayers] = useState([]);
-  // Pictures composited over the sequence — the content of image layers.
-  const [overlays, setOverlays] = useState([]);
-  // What happens ON the cuts. Anchored to the frame each one FOLLOWS, and
-  // boundary-local, so adding one changes nothing about the timeline's length
-  // or about where any other clip sits — see `animatic/transitions.js`.
-  const [transitions, setTransitions] = useState([]);
-  // Zero or more audio tracks, mixed on export. Music under a voiceover is the
-  // pair this exists for.
-  const [audioTracks, setAudioTracks] = useState([]);
-  const [video, setVideo] = useState(null);
-  const [sourceBoard, setSourceBoard] = useState(null);
 
   // --- Media ---
   const [urls, setUrls] = useState({}); // frame id → object URL
@@ -231,23 +290,20 @@ export default function AnimaticEditor({
   // upload_id → object URL, for the overlay pictures.
   const [overlayUrls, setOverlayUrls] = useState({});
   const overlayUrlsRef = useRef({});
+  // upload_id → object URL of the VIDEO FILE ITSELF, for the Program monitor.
+  // Separate from `urls`, which holds one THUMBNAIL per clip: the strip and the
+  // Properties pane want a still, the monitor wants something that can play.
+  // Keyed by upload id, not clip id, so the same take cut three times over is
+  // fetched once — the rule the overlay pictures already follow.
+  const [videoUrls, setVideoUrls] = useState({});
+  const videoUrlsRef = useRef({});
+  // upload_id → the <video> element showing it, so playback can slave them all
+  // to the clock. Same shape as `audioElsRef`, deliberately.
+  const videoElsRef = useRef({});
   // upload_id → object URL, and upload_id → its <audio> element.
   const [audioUrls, setAudioUrls] = useState({});
   const audioUrlsRef = useRef({});
   const audioElsRef = useRef({});
-
-  // --- Playback ---
-  const [timeMs, setTimeMs] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const timeRef = useRef(0);
-  // Shuttle speed (J / K / L). 1 is normal play and is the ONLY rate that uses
-  // the audio as the master clock; see the playback effect.
-  const [rate, setRate] = useState(1);
-  // Mark in / out (I / O). Null = not marked. They bound PLAYBACK, not the
-  // export — the export is still the whole timeline, which is what the export
-  // dialog says it is.
-  const [markIn, setMarkIn] = useState(null);
-  const [markOut, setMarkOut] = useState(null);
 
   // --- UI ---
   const [selectedId, setSelectedId] = useState(null);
@@ -260,7 +316,7 @@ export default function AnimaticEditor({
   // An audio track selected for editing — its controls live in Properties, like
   // everything else that has settings.
   const [selectedTrackId, setSelectedTrackId] = useState(null);
-  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const [pxPerSec, setPxPerSec] = useState(DEFAULT_PPS);
   // The active tool (V / C / B / N / H / Z) and whether clip edges snap (S).
   const [tool, setTool] = useState("select");
   // Which shape lane the picker will drop the next shape onto ("" = default).
@@ -271,10 +327,6 @@ export default function AnimaticEditor({
   const [maximized, setMaximized] = useState(null);
   const hoverPaneRef = useRef(null);
   const [uploading, setUploading] = useState(false);
-  const [saveState, setSaveState] = useState("saved"); // saved | dirty | saving | error
-  // True for a couple of seconds after a save lands, so the tick is a moment of
-  // feedback rather than a permanent label.
-  const [savedFlash, setSavedFlash] = useState(false);
   const [exportJob, setExportJob] = useState(null);
   const [exportBusy, setExportBusy] = useState(false);
   // True while the final-video project is being created and navigated to.
@@ -290,6 +342,65 @@ export default function AnimaticEditor({
   const [exportOpen, setExportOpen] = useState(false);
   const [exportName, setExportName] = useState("");
 
+  // --- Animating a frame with Veo (THE ONE THING HERE THAT COSTS MONEY) ---
+  // The records themselves are SERVER-owned and live on the project (see
+  // `useAnimaticProject`): a save must not be able to erase the record of a
+  // clip that was paid for.
+  // The "animate this shot" panel. Null = closed; otherwise the frame id.
+  const [animateFor, setAnimateFor] = useState(null);
+  const [animatePrompt, setAnimatePrompt] = useState("");
+  const [animateRender, setAnimateRender] = useState({
+    tier: "fast",
+    resolution: "720p",
+    duration_seconds: 8,
+    generate_audio: false,
+    negative_prompt: "",
+  });
+  // The PRICED confirmation. Nothing is submitted until this has been shown and
+  // accepted — the rule every paid path in this app follows.
+  const [animateConfirm, setAnimateConfirm] = useState(null);
+  const [animateBusy, setAnimateBusy] = useState(false);
+  // ⚠ A PLAIN BOOLEAN, and the polling effect below keys on THIS ALONE.
+  // It used to key on the polled job object, which the poll itself wrote — so
+  // the moment the batch finished and the job went RUNNING → QUEUED, the effect
+  // re-ran, its cleanup killed the in-flight poll, and the finished clip was
+  // never attached. The render had succeeded and been paid for; the editor just
+  // sat on "Animating…" for ever. Nothing but `setAnimating` may write this.
+  const [animating, setAnimating] = useState(false);
+  // Progress, kept separate for the same reason: it changes on every tick and
+  // must never be something the effect restarts on.
+  const [animateProgress, setAnimateProgress] = useState(null);
+  // Renders already dealt with, so a finished clip is attached exactly once and
+  // an old one is never re-attached over a frame the user has since changed.
+  const veoHandledRef = useRef(new Set());
+  const framesRef = useRef([]);
+
+  // --- Captions and voiceover (the other two things here that spend quota) ---
+  // Same two-step discipline as ✨ Animate, deliberately: a panel that spends
+  // nothing, then a priced confirmation, then the call. These are far cheaper —
+  // fractions of a cent against a couple of dollars — which is precisely why
+  // the discipline is kept, because a cheap button is the one clicked forty
+  // times. Null = closed; "captions" or "voiceover" is which pass is open.
+  const [speechFor, setSpeechFor] = useState(null);
+  const [speechTrack, setSpeechTrack] = useState("");
+  const [speechLanguage, setSpeechLanguage] = useState("");
+  const [speechVoice, setSpeechVoice] = useState("Kore");
+  const [speechReplace, setSpeechReplace] = useState(true);
+  const [speechCaptions, setSpeechCaptions] = useState(true);
+  const [speechConfirm, setSpeechConfirm] = useState(null);
+  const [speechBusy, setSpeechBusy] = useState(false);
+  // ⚠ ITS OWN ERROR, not the editor's banner. The banner renders in the status
+  // bar at the top of the page, which is BEHIND the modal overlay — so a failed
+  // "See the price" wrote its reason somewhere the user could not possibly see
+  // it, and the button looked dead. Anything that can go wrong while this panel
+  // is open has to say so INSIDE the panel.
+  const [speechError, setSpeechError] = useState("");
+  // A plain boolean the poll keys on ALONE, for the reason spelled out above
+  // `animating`: an effect that restarts on what its own poll writes cancels
+  // itself mid-flight, and the work is already paid for by then.
+  const [speechRunning, setSpeechRunning] = useState(false);
+  const [speechProgress, setSpeechProgress] = useState(null);
+
   const textAreaRef = useRef(null);
   const audioInputRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -297,18 +408,52 @@ export default function AnimaticEditor({
   const overlayInputRef = useRef(null);
   // Which audio lane a just-picked file belongs to ("" = a lane of its own).
   const pendingAudioLane = useRef("");
-  const loadedRef = useRef(false);
-  const docRef = useRef(null); // latest project, for the unmount flush
-  const dirtyRef = useRef(false);
-  // A signature of the project as it is ON THE SERVER. "Dirty" is decided by
-  // comparing content against this — NOT by "did an effect fire", which is what
-  // it used to do via a setTimeout(0) flag. That race was lost whenever React
-  // invoked the load effect twice (StrictMode in dev), so a freshly created
-  // animatic opened as "Unsaved changes" and immediately fired a pointless PUT.
-  // Comparing content also means editing something back to its original value
-  // correctly reads as saved again.
-  const baselineRef = useRef(null);
-  const adoptBaselineRef = useRef(false);
+
+  const exporting = exportJob?.status === "running" || exportBusy;
+  // Anything that has the server holding this job — an export encoding, a Veo
+  // batch rendering, or a captions/voiceover pass. All of them put it in
+  // RUNNING, and `save_animatic` refuses to write through that, so the autosave
+  // has to stand down for ALL of them. Separate from `exporting` on purpose:
+  // that one drives the Export/Stop buttons and the progress strip, and a Veo
+  // render must not make them say "export".
+  //
+  // ⚠ The captions pass is the one where standing down MATTERS MOST: it is the
+  // server that writes the caption clips, so an autosave landing mid-run would
+  // put the editor's older `texts` back over work that was paid for. That is
+  // the same failure the Veo records were moved into `result` to avoid.
+  const serverBusy = exporting || animating || speechRunning;
+
+  // ------------------------------------------------------------- the project
+  // Loading, autosave and "is this saved?" — see `useAnimaticProject`.
+  //
+  // ⚠ `onLoaded` is LATE-BOUND through a ref. It runs from inside the load
+  // promise and needs `reconcileVeoClips` and the undo stack, both of which are
+  // declared further down this file; the ref is assigned beside
+  // `reconcileVeoClips`, which is the only place it makes sense to read it.
+  const onLoadedRef = useRef(() => true);
+  const {
+    loading,
+    title, setTitle,
+    frames, setFrames,
+    settings, setSettings,
+    texts, setTexts,
+    shapes, setShapes,
+    layers, setLayers,
+    overlays, setOverlays,
+    transitions, setTransitions,
+    audioTracks, setAudioTracks,
+    video, setVideo,
+    sourceBoard,
+    veoClips, setVeoClips,
+    doc, signature, applySnapshot,
+    saveState, savedFlash, flush,
+    loadedRef, dirtyRef, baselineRef,
+  } = useAnimaticProject({
+    animaticId,
+    serverBusy,
+    onLoaded: (p) => onLoadedRef.current(p),
+    onError: setError,
+  });
 
   const totalMs = useMemo(
     () => frames.reduce((sum, f) => sum + (f.duration_ms || 0), 0),
@@ -367,7 +512,6 @@ export default function AnimaticEditor({
     setSelectedTransitionId(transition);
   }
 
-  const exporting = exportJob?.status === "running" || exportBusy;
   // How long a track PLAYS: its trim, else the rest of the file after the
   // offset. The same rule as the timeline's `trackLength`.
   const playLength = (a) => {
@@ -387,6 +531,39 @@ export default function AnimaticEditor({
     shapes.reduce((max, s) => Math.max(max, s.start_ms + s.duration_ms), 0),
     overlays.reduce((max, o) => Math.max(max, o.start_ms + o.duration_ms), 0)
   );
+
+  // Each track decoded once — the beats the timeline marks and snaps to, and
+  // the voice envelope the duck follows while previewing. The waveforms read
+  // the same cache, so a file is decoded once however many things want it.
+  const audioAnalyses = useAudioAnalysis(audioUrls);
+
+  // -------------------------------------------------------------- transport
+  // The playhead and everything that moves it. It owns the CLOCK, and the scene
+  // below is derived from that clock — which is why `useMonitorVideo`, the part
+  // that pushes the scene into the monitor's <video> elements, is a separate
+  // call made after the scene exists rather than part of this one.
+  const {
+    timeMs, timeRef,
+    playing, rate,
+    markIn, setMarkIn,
+    markOut, setMarkOut,
+    seek, togglePlay, stopPlayback, shuttle,
+    stepOneFrame, gotoEditPoint,
+  } = useTimelineTransport({
+    frames,
+    audioTracks,
+    audioElsRef,
+    audioUrls,
+    audioAnalyses,
+    spanMs,
+    totalMs,
+    // How long the EXPORT will be, which is where a fade out has to land. The
+    // two options are the same number until the audio outlasts the pictures.
+    exportMs: settings.end_at === "frames" ? totalMs : spanMs,
+    starts,
+    fps: settings.fps,
+    onSelectFrame: setSelectedId,
+  });
 
   // ------------------------------------------------------------------ scene
   // WHAT THE VIEWER SEES RIGHT NOW, and the single place that decides it.
@@ -423,9 +600,39 @@ export default function AnimaticEditor({
   // two are different things and both are wanted: edits are written to the
   // stored frame, the preview draws the resolved one.
   const shownFrame = scene.frame;
+  // The monitor is WebGL now, and a browser can refuse to give us a context —
+  // an old machine, a blocked GPU, too many live contexts on one page. When it
+  // does, say so ON the monitor rather than showing a black rectangle that
+  // looks like a broken project, and say that the EXPORT is unaffected: the MP4
+  // is rendered by Pillow on the server and never touches this.
+  const [glFailed, setGlFailed] = useState(false);
   const activeTexts = scene.texts;
   const activeShapes = scene.shapes;
   const activeOverlays = scene.overlays;
+
+  // The bundled caption faces. Registered once, here rather than at module
+  // scope so nothing is injected into a document that may not exist yet.
+  useEffect(() => {
+    ensureFontsLoaded();
+  }, []);
+
+  // Does any clip come from a storyboard panel? A voiceover reads the BOARD's
+  // dialogue, so on an animatic built from uploaded stills there is nothing to
+  // read and never will be — better to disable the button and say why than to
+  // let two clicks end in "there is no dialogue".
+  const hasBoardFrames = useMemo(
+    () => frames.some((f) => f.src?.kind === "panel" || f.src?.kind === "pose"),
+    [frames]
+  );
+
+  const captionClass = (c) =>
+    [
+      "an-text-clip",
+      `sz-${c.size || "medium"}`,
+      `bd-${c.backdrop || "scrim"}`,
+      `al-${c.align || "center"}`,
+      selectedTextId === c.id ? "sel" : "",
+    ].join(" ");
 
   // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
   // such an animatic throws it away instead of leaving an empty "Untitled" on
@@ -444,47 +651,23 @@ export default function AnimaticEditor({
   // a real one first.
   const needsName = !title.trim() || title.trim() === UNTITLED;
 
-  // ---------------------------------------------------------------- loading
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    api
-      .getAnimatic(animaticId)
-      .then((p) => {
-        if (!alive) return;
-        setTitle(p.title);
-        setFrames(p.frames || []);
-        setTexts(p.texts || []);
-        setShapes(p.shapes || []);
-        setLayers(p.layers || []);
-        setOverlays(p.overlays || []);
-        setTransitions(p.transitions || []);
-        setSettings(p.settings);
-        setAudioTracks(p.audio_tracks || []);
-        setVideo(p.video || null);
-        setSourceBoard(p.source_storyboard_id || null);
-        setSelectedId(p.frames?.[0]?.id || null);
-        if (p.status === "running") setExportJob({ status: "running", progress: null });
-        setLoading(false);
-        // Whatever renders next IS the saved state — take it as the baseline.
-        adoptBaselineRef.current = true;
-        // …and it is also where UNDO history begins. Anything recorded before
-        // this point describes an editor that hadn't loaded yet.
-        historyRef.current = { past: [], future: [], present: null, sig: null, lastPush: 0 };
-        setHistoryTick((t) => t + 1);
-        loadedRef.current = true;
-      })
-      .catch((e) => {
-        if (!alive) return;
-        setError(e.message);
-        setLoading(false);
-      });
-    return () => {
-      alive = false;
-      loadedRef.current = false;
-    };
-  }, [animaticId]);
+  useMonitorVideo({ scene, frames, videoElsRef, playing, rate });
 
+  // Steps by PICTURE, which is what the transport arrows mean — they sit next
+  // to a "Frame 3 of 12" readout. It stays here rather than in the transport
+  // hook because it needs `currentIndex`, and that comes from the scene, which
+  // is derived from the clock the hook owns.
+  const stepFrame = useCallback(
+    (delta) => {
+      if (!frames.length) return;
+      const next = Math.max(0, Math.min(frames.length - 1, currentIndex + delta));
+      setSelectedId(frames[next].id);
+      seek(starts[next]);
+    },
+    [frames, currentIndex, starts, seek]
+  );
+
+  // ----------------------------------------------------------------- media
   // Fetch each frame's picture as an authed blob, a few at a time so a
   // 60-panel board doesn't open 60 sockets at once.
   useEffect(() => {
@@ -499,7 +682,13 @@ export default function AnimaticEditor({
       }
     }
 
-    const missing = frames.filter((f) => f.url && !urlsRef.current[f.id]);
+    // A COLOUR CARD IS SKIPPED, not fetched. It has no file behind it, so the
+    // url the server fills in for every frame alike can only 404 — one wasted
+    // request per card on every load, and a thumbnail stuck on its spinner
+    // waiting for a picture that is never coming.
+    const missing = frames.filter(
+      (f) => f.url && (f.kind || "image") !== "color" && !urlsRef.current[f.id]
+    );
     if (!missing.length) {
       setUrls({ ...urlsRef.current });
       return;
@@ -571,6 +760,57 @@ export default function AnimaticEditor({
     };
   }, [overlays, animaticId]);
 
+  // One blob per VIDEO SOURCE, for the Program monitor.
+  //
+  // Fetched whole rather than streamed, which is deliberate: every media path in
+  // this app is behind a bearer token, so a <video src> can't point straight at
+  // the server. Pulling the file into a blob solves the auth AND makes scrubbing
+  // instant — the browser seeks inside memory rather than issuing a range
+  // request per playhead move. The cost is that a large clip is held in memory
+  // while the editor is open, which is the right trade for a rough-cut tool.
+  useEffect(() => {
+    let alive = true;
+    const wanted = new Set(
+      frames
+        .filter((f) => (f.kind || "image") === "video" && f.src?.upload_id)
+        .map((f) => f.src.upload_id)
+    );
+    for (const id of Object.keys(videoUrlsRef.current)) {
+      if (!wanted.has(id)) {
+        URL.revokeObjectURL(videoUrlsRef.current[id]);
+        delete videoUrlsRef.current[id];
+        delete videoElsRef.current[id];
+      }
+    }
+    const missing = [...wanted].filter((id) => !videoUrlsRef.current[id]);
+    if (!missing.length) {
+      setVideoUrls({ ...videoUrlsRef.current });
+      return undefined;
+    }
+    (async () => {
+      // One at a time: these are the biggest files in the project, and five
+      // parallel 100MB fetches is a worse first impression than a slower one.
+      for (const uploadId of missing) {
+        try {
+          const url = await api.fetchAnimaticMedia(
+            `/animatics/${animaticId}/media/${uploadId}`
+          );
+          if (!alive) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          videoUrlsRef.current[uploadId] = url;
+          setVideoUrls({ ...videoUrlsRef.current });
+        } catch {
+          /* a clip that won't load shows its thumbnail, not an error banner */
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [frames, animaticId]);
+
   // One blob per audio track, for the waveforms and for playback.
   useEffect(() => {
     let alive = true;
@@ -578,6 +818,10 @@ export default function AnimaticEditor({
 
     for (const id of Object.keys(audioUrlsRef.current)) {
       if (!wanted.has(id)) {
+        // The decoded analysis is cached BY URL, so it has to go with the url —
+        // otherwise a removed track's samples sit in memory for the life of the
+        // page, keyed by a blob that no longer exists.
+        forgetAudio(audioUrlsRef.current[id]);
         URL.revokeObjectURL(audioUrlsRef.current[id]);
         delete audioUrlsRef.current[id];
       }
@@ -623,328 +867,16 @@ export default function AnimaticEditor({
       urlsRef.current = {};
       for (const url of Object.values(overlayUrlsRef.current)) URL.revokeObjectURL(url);
       overlayUrlsRef.current = {};
-      for (const url of Object.values(audioUrlsRef.current)) URL.revokeObjectURL(url);
+      for (const url of Object.values(videoUrlsRef.current)) URL.revokeObjectURL(url);
+      videoUrlsRef.current = {};
+      videoElsRef.current = {};
+      for (const url of Object.values(audioUrlsRef.current)) {
+        forgetAudio(url);
+        URL.revokeObjectURL(url);
+      }
       audioUrlsRef.current = {};
     },
     []
-  );
-
-  // ---------------------------------------------------------------- saving
-  const flush = useCallback(async () => {
-    if (!loadedRef.current || !dirtyRef.current) return;
-    const doc = docRef.current;
-    if (!doc) return;
-    dirtyRef.current = false;
-    // Captured BEFORE the request: if the user edits while it's in flight, the
-    // new signature won't match this and the project correctly stays dirty.
-    const sent = doc.signature;
-    setSaveState("saving");
-    try {
-      await api.saveAnimatic(animaticId, {
-        title: doc.title,
-        settings: doc.settings,
-        frames: doc.frames.map((f) => ({
-          id: f.id,
-          src: f.src,
-          duration_ms: f.duration_ms,
-          label: f.label || "",
-        })),
-        texts: doc.texts,
-        shapes: doc.shapes,
-        layers: doc.layers,
-        overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
-        transitions: doc.transitions,
-        audioTracks: doc.audioTracks,
-      });
-      baselineRef.current = sent;
-      setSaveState("saved");
-      setSavedFlash(true);
-      // The exported file no longer matches the project — the server flags this
-      // too, but saying so immediately is what stops a stale download.
-      setVideo((v) => (v ? { ...v, stale: true } : v));
-    } catch (e) {
-      dirtyRef.current = true;
-      setSaveState("error");
-      setError(e.message);
-    }
-  }, [animaticId]);
-
-  // Let the tick fade after a moment. Cleared on any new edit too, via the
-  // autosave effect below.
-  useEffect(() => {
-    if (!savedFlash) return undefined;
-    const t = setTimeout(() => setSavedFlash(false), 2200);
-    return () => clearTimeout(t);
-  }, [savedFlash]);
-
-  // Exactly what a save would send — so comparing it against the baseline
-  // answers "is there anything to save?" honestly.
-  const signature = useMemo(
-    () =>
-      JSON.stringify({
-        title,
-        settings,
-        frames: frames.map((f) => ({
-          id: f.id,
-          src: f.src,
-          duration_ms: f.duration_ms,
-          label: f.label || "",
-        })),
-        texts,
-        shapes,
-        layers,
-        overlays,
-        transitions,
-        audioTracks,
-      }),
-    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
-  );
-
-  // Keep the latest project in a ref so the unmount flush sees it.
-  useEffect(() => {
-    docRef.current = {
-      title, settings, frames, texts, shapes, layers, overlays, transitions,
-      audioTracks, signature,
-    };
-  }, [
-    title, settings, frames, texts, shapes, layers, overlays, transitions,
-    audioTracks, signature,
-  ]);
-
-  // Debounced autosave. Blocked during an export (the server refuses a save
-  // while ffmpeg is reading these exact frames), and retried once it ends.
-  useEffect(() => {
-    if (!loadedRef.current) return undefined;
-
-    // The first render after a load establishes what "saved" looks like.
-    if (adoptBaselineRef.current) {
-      adoptBaselineRef.current = false;
-      baselineRef.current = signature;
-      dirtyRef.current = false;
-      setSaveState("saved");
-      return undefined;
-    }
-
-    // Content-identical to the server? Then there is nothing to save, however
-    // many times React re-ran this.
-    if (signature === baselineRef.current) {
-      dirtyRef.current = false;
-      setSaveState("saved");
-      return undefined;
-    }
-
-    dirtyRef.current = true;
-    setSaveState("dirty");
-    setSavedFlash(false);
-    if (exporting) return undefined;
-    const t = setTimeout(flush, AUTOSAVE_MS);
-    return () => clearTimeout(t);
-  }, [signature, exporting, flush]);
-
-  useEffect(
-    () => () => {
-      // Leaving the editor: don't lose the last few hundred ms of edits.
-      if (dirtyRef.current) flush();
-    },
-    [flush]
-  );
-
-  // ------------------------------------------------------------- playback
-  // Every track's <audio>, paired with its project entry. Elements that haven't
-  // mounted yet (a blob still loading) are simply absent.
-  const liveTracks = useCallback(
-    () =>
-      audioTracks
-        .map((track) => ({ track, el: audioElsRef.current[track.upload_id] }))
-        .filter((x) => x.el),
-    [audioTracks]
-  );
-
-  // Put one element at the given video time. `offset_ms` is how far into the
-  // FILE the sequence starts, so file time = video time + offset.
-  function placeTrack(el, track, videoMs) {
-    const at = (videoMs + (track.offset_ms || 0)) / 1000;
-    if (!Number.isFinite(at)) return;
-    el.currentTime = Math.max(0, Math.min(el.duration || at, at));
-  }
-
-  const seek = useCallback(
-    (ms) => {
-      const t = Math.max(0, Math.min(spanMs, Math.round(ms)));
-      timeRef.current = t;
-      setTimeMs(t);
-      for (const { track, el } of liveTracks()) placeTrack(el, track, t);
-    },
-    [spanMs, liveTracks]
-  );
-
-  // Keep the elements' own volume/mute in step with the project. Browser volume
-  // caps at 1, so a track boosted above that previews at 1 — the EXPORT still
-  // applies the real figure via ffmpeg's volume filter.
-  useEffect(() => {
-    for (const { track, el } of liveTracks()) {
-      el.volume = Math.max(0, Math.min(1, track.volume ?? 1));
-      el.muted = Boolean(track.muted);
-    }
-  }, [audioTracks, audioUrls, liveTracks]);
-
-  // Where playback stops, and where it starts from. With no marks that's the
-  // whole timeline, exactly as before.
-  const playFrom = markIn ?? 0;
-  const playTo = markOut ?? spanMs;
-
-  useEffect(() => {
-    if (!playing) return undefined;
-    let raf = 0;
-    let anchorWall = performance.now();
-    let anchorT = timeRef.current;
-
-    const tick = () => {
-      const now = performance.now();
-      // At NORMAL speed the first track genuinely playing is the master clock,
-      // so the pictures can never drift from the sound. If it ends early (a
-      // track shorter than the sequence) we carry on from the wall clock — the
-      // handover is seamless because the anchor is re-set every frame, and the
-      // video's length is decided by the frames, not by any track.
-      //
-      // Shuttling (J/L) is wall-clock only: a browser cannot play an <audio>
-      // element backwards at all, and reading currentTime as the clock while
-      // scrubbing at 4x fights the element rather than following it.
-      const master =
-        rate === 1
-          ? liveTracks().find(
-              ({ el }) => !el.paused && !el.ended && !Number.isNaN(el.currentTime)
-            )
-          : null;
-      let t;
-      if (master) {
-        t = master.el.currentTime * 1000 - (master.track.offset_ms || 0);
-      } else {
-        t = anchorT + (now - anchorWall) * rate;
-      }
-      anchorT = t;
-      anchorWall = now;
-
-      // Runs to the end of the TIMELINE, not the end of the video: with a
-      // 2-minute track under 2 seconds of pictures you still want to hear it.
-      // With marks set, the marked range is the limit instead.
-      if (t >= playTo || t <= (rate < 0 ? playFrom : -1)) {
-        const stopAt = clamp(t >= playTo ? playTo : playFrom, 0, spanMs);
-        timeRef.current = stopAt;
-        setTimeMs(stopAt);
-        setPlaying(false);
-        setRate(1);
-        for (const { el } of liveTracks()) el.pause();
-        return;
-      }
-      timeRef.current = t;
-      setTimeMs(t);
-      raf = requestAnimationFrame(tick);
-    };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, spanMs, liveTracks, rate, playFrom, playTo]);
-
-  const stopPlayback = useCallback(() => {
-    for (const { el } of liveTracks()) {
-      el.pause();
-      el.playbackRate = 1;
-    }
-    setPlaying(false);
-    setRate(1);
-  }, [liveTracks]);
-
-  // Start (or re-start) playback at `nextRate`. Negative shuttles backwards.
-  const playAt = useCallback(
-    (nextRate) => {
-      if (!frames.length) return;
-      // Off the end (or, going backwards, off the front) — jump to the other
-      // side of the marked range rather than refusing to play.
-      if (nextRate > 0 && timeRef.current >= playTo - 30) seek(playFrom);
-      if (nextRate < 0 && timeRef.current <= playFrom + 30) seek(playTo);
-      setRate(nextRate);
-      setPlaying(true);
-      for (const { track, el } of liveTracks()) {
-        if (nextRate < 0) {
-          // No audio in reverse: browsers can't do it. The pictures still run.
-          el.pause();
-          continue;
-        }
-        placeTrack(el, track, timeRef.current);
-        // Browsers accept roughly 0.06–16x; our shuttle only goes to 4.
-        el.playbackRate = nextRate;
-        el.play().catch(() => {
-          /* autoplay policy — the wall clock still drives the pictures */
-        });
-      }
-    },
-    [frames.length, liveTracks, seek, playFrom, playTo]
-  );
-
-  const togglePlay = useCallback(() => {
-    if (playing) {
-      stopPlayback();
-      return;
-    }
-    playAt(1);
-  }, [playing, stopPlayback, playAt]);
-
-  // J and L step through the shuttle speeds: press again to go faster, and
-  // pressing the opposite key always drops back to 1x in that direction.
-  const shuttle = useCallback(
-    (direction) => {
-      const current = playing ? rate : 0;
-      const sameWay = Math.sign(current) === direction;
-      const step = sameWay
-        ? SHUTTLE[Math.min(SHUTTLE.indexOf(Math.abs(current)) + 1, SHUTTLE.length - 1)]
-        : SHUTTLE[0];
-      playAt(step * direction);
-    },
-    [playing, rate, playAt]
-  );
-
-  // One video frame at the project's frame rate — what Left/Right mean in an
-  // NLE. Moving to the next PICTURE is Up/Down (the next edit point).
-  const stepOneFrame = useCallback(
-    (delta) => {
-      const frameMs = 1000 / Math.max(1, settings.fps || 24);
-      seek(timeRef.current + delta * frameMs);
-    },
-    [seek, settings.fps]
-  );
-
-  // The cuts in the sequence — every picture boundary, plus the two ends.
-  const editPoints = useMemo(
-    () => [...starts, totalMs, spanMs].filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => a - b),
-    [starts, totalMs, spanMs]
-  );
-
-  const gotoEditPoint = useCallback(
-    (delta) => {
-      const here = timeRef.current;
-      const target =
-        delta > 0
-          ? editPoints.find((p) => p > here + 1)
-          : [...editPoints].reverse().find((p) => p < here - 1);
-      if (target === undefined) return;
-      seek(target);
-      const i = starts.lastIndexOf(target);
-      if (i >= 0) setSelectedId(frames[i].id);
-    },
-    [editPoints, seek, starts, frames]
-  );
-
-  // Kept for the transport buttons, which step by PICTURE (their arrows sit
-  // next to a "Frame 3 of 12" readout, so that is what they should do).
-  const stepFrame = useCallback(
-    (delta) => {
-      if (!frames.length) return;
-      const next = Math.max(0, Math.min(frames.length - 1, currentIndex + delta));
-      setSelectedId(frames[next].id);
-      seek(starts[next]);
-    },
-    [frames, currentIndex, starts, seek]
   );
 
   // ----------------------------------------------------------------- lanes
@@ -1005,150 +937,25 @@ export default function AnimaticEditor({
   }, [layers, audioTracks]);
 
   // ------------------------------------------------------------ undo / redo
-  // History of the whole document, because that is the unit a person means by
-  // "undo": one stack, not one per layer. Entries hold the actual state arrays
-  // (not JSON), so restoring is exact and costs nothing to serialise.
-  const historyRef = useRef({ past: [], future: [], present: null, sig: null, lastPush: 0 });
-  // Bumped on every history change purely so the toolbar's enabled/disabled
-  // state re-renders — the stack itself lives in the ref.
-  const [historyTick, setHistoryTick] = useState(0);
-  const doc = useMemo(
-    () => ({
-      title, settings, frames, texts, shapes, layers, overlays, transitions,
-      audioTracks,
-    }),
-    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
-  );
-
-  useEffect(() => {
-    const h = historyRef.current;
-    // ⚠ Nothing is recorded until the project has LOADED. An editor mounts with
-    // empty frames/texts/shapes and fills them from the server a moment later;
-    // recording that as an edit made the very first Ctrl+Z restore the empty
-    // document and wipe the animatic on screen. The load handler resets this
-    // ref, so the loaded state — not the empty one — is where history begins.
-    if (!loadedRef.current) return;
-    if (h.present === null || h.restoring) {
-      // First render, or the state we just restored — neither is a new edit.
-      h.restoring = false;
-      h.present = doc;
-      h.sig = signature;
-      return;
-    }
-    if (h.sig === signature) return; // identity changed, content didn't
-    // Coalesce: a drag fires dozens of changes a second, and undoing one pixel
-    // at a time is useless.
-    //
-    // TWO rules, because the timer alone was not enough. Inside a GESTURE — a
-    // pointer is down and being dragged — only the first change is recorded, so
-    // the whole drag is one undo no matter how long it lasts. That matters most
-    // for the thing this was added for: dragging a keyframe or an opacity
-    // slider slowly is easy to do for several seconds, and on the timer alone
-    // it left one undo entry per half second, so Ctrl+Z walked the value back
-    // in steps instead of putting it where it started.
-    //
-    // Outside a gesture the old half-second burst rule still applies: it covers
-    // held arrow keys and typing, which have no pointer to bracket them.
-    const inGesture = h.gesture;
-    if (inGesture ? h.gestureFirst : Date.now() - h.lastPush > 500) {
-      h.past = [...h.past.slice(-49), h.present];
-      h.lastPush = Date.now();
-      h.gestureFirst = false;
-      setHistoryTick((t) => t + 1);
-    }
-    h.future = [];
-    h.present = doc;
-    h.sig = signature;
-  }, [signature, doc]);
-
-  /**
-   * Bracket a drag so the whole thing is ONE undo.
-   *
-   * Called on pointer down and pointer up by everything that drags a value:
-   * timeline clips, frame edges, the shapes on the monitor, keyframe diamonds
-   * and the opacity sliders. A gesture that never changes anything records
-   * nothing, because the history effect only fires on a real content change.
-   */
-  const setGesture = useCallback((active) => {
-    const h = historyRef.current;
-    h.gesture = active;
-    if (active) {
-      h.gestureFirst = true;
-    } else {
-      // The next unrelated edit starts a fresh entry rather than being absorbed
-      // into the gesture that just ended.
-      h.lastPush = 0;
-    }
-  }, []);
-
-  /**
-   * Spread onto anything draggable: `<input type="range" {...gestureProps} />`.
-   *
-   * ⚠ The END of the gesture is caught on the WINDOW, not on the element. A
-   * pointer released outside the control it started on never delivers a
-   * pointerup to that control, and a gesture that is never closed swallows
-   * every later edit into one undo entry — a far worse bug than the one this
-   * exists to fix. The window always sees it.
-   */
-  const gestureProps = {
-    onPointerDown: () => {
-      setGesture(true);
-      const end = () => {
-        setGesture(false);
-        window.removeEventListener("pointerup", end);
-        window.removeEventListener("pointercancel", end);
-      };
-      window.addEventListener("pointerup", end);
-      window.addEventListener("pointercancel", end);
-    },
-  };
-
-  const applyDoc = useCallback((snapshot) => {
-    historyRef.current.restoring = true;
-    setTitle(snapshot.title);
-    setSettings(snapshot.settings);
-    setFrames(snapshot.frames);
-    setTexts(snapshot.texts);
-    setShapes(snapshot.shapes);
-    setLayers(snapshot.layers);
-    setOverlays(snapshot.overlays);
-    setTransitions(snapshot.transitions);
-    setAudioTracks(snapshot.audioTracks);
-  }, []);
-
-  const undo = useCallback(() => {
-    const h = historyRef.current;
-    if (!h.past.length) return;
-    const previous = h.past[h.past.length - 1];
-    h.past = h.past.slice(0, -1);
-    h.future = [h.present, ...h.future].slice(0, 50);
-    h.lastPush = 0; // the next real edit starts a fresh entry
-    applyDoc(previous);
-    setHistoryTick((t) => t + 1);
-    setNotice("Undo");
-  }, [applyDoc]);
-
-  const redo = useCallback(() => {
-    const h = historyRef.current;
-    if (!h.future.length) return;
-    const next = h.future[0];
-    h.future = h.future.slice(1);
-    h.past = [...h.past.slice(-49), h.present];
-    h.lastPush = 0;
-    applyDoc(next);
-    setHistoryTick((t) => t + 1);
-    setNotice("Redo");
-  }, [applyDoc]);
-
-  // Read off the ref, but recomputed when the tick says the stack moved — the
-  // stack itself must not be state, or every push would re-render the editor.
-  const { canUndo, canRedo } = useMemo(
-    () => ({
-      canUndo: historyRef.current.past.length > 0,
-      canRedo: historyRef.current.future.length > 0,
-    }),
-    [historyTick]
-  );
+  // One stack for the whole document — see `useUndoStack`. `gestureProps` is
+  // spread onto anything draggable so a whole drag is a single Ctrl+Z, and
+  // `resetHistory` is called once the project has loaded, because anything
+  // recorded before that describes an editor that hadn't loaded yet.
+  const {
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    setGesture,
+    gestureProps,
+    reset: resetHistory,
+  } = useUndoStack({
+    doc,
+    signature,
+    loadedRef,
+    apply: applySnapshot,
+    onNotice: setNotice,
+  });
 
   // ------------------------------------------------------------ add an edit
   // The razor: split the picture at `ms` into two frames that add up to the
@@ -1692,7 +1499,14 @@ export default function AnimaticEditor({
     // press, and turning those values into keys on the curves being deleted
     // would be the exact opposite of what it says.
     if ("keyframes" in values) return write(stored.id, values);
-    const animatable = ANIMATABLE[kind] || [];
+    // ⚠ `lookProps` is what makes an EFFECT PARAMETER animate like everything
+    // else. A grade's tracks are named per clip ("fx:e3:amount"), so the list
+    // cannot be a constant the way ANIMATABLE is — but once it is here, typing
+    // a LUT strength while its stopwatch is on writes a key exactly as typing a
+    // zoom does, and nothing below this line knows the difference.
+    const animatable = LOOK_KINDS.includes(kind)
+      ? [...(ANIMATABLE[kind] || []), ...lookProps(stored)]
+      : ANIMATABLE[kind] || [];
     const tRel = (atMs ?? timeMs) - startMs;
     const plain = {};
     // Keys accumulate against a clip that already carries the previous ones: a
@@ -1700,15 +1514,28 @@ export default function AnimaticEditor({
     // and y together) and each `setKey` must see the other's work.
     let working = stored;
     let touchedKeys = false;
+    let touchedLook = false;
     for (const [prop, value] of Object.entries(values)) {
       if (animatable.includes(prop) && isAnimatedProp(stored, prop)) {
         working = { ...working, ...setKey(working, prop, tRel, value) };
         touchedKeys = true;
+      } else if (lookPropParts(prop)) {
+        // Not animated, so it is written where it LIVES — inside the effect or
+        // the mask — rather than as a flat key the schema would drop. See
+        // `setLookValue` for why that distinction is worth a function.
+        working = { ...working, ...setLookValue(working, prop, value) };
+        touchedLook = true;
       } else {
         plain[prop] = value;
       }
     }
-    write(stored.id, touchedKeys ? { ...plain, keyframes: working.keyframes } : plain);
+    const patch = { ...plain };
+    if (touchedKeys) patch.keyframes = working.keyframes;
+    if (touchedLook) {
+      if (working.effects) patch.effects = working.effects;
+      if (working.mask) patch.mask = working.mask;
+    }
+    write(stored.id, patch);
   }
 
   /** The change handler the Properties pane gets — `writeAnimatable` bound to the selection. */
@@ -1718,20 +1545,35 @@ export default function AnimaticEditor({
   }
 
   // The four things the ⏱ row can ask for.
+  // A look property's fallback lives INSIDE the effect or the mask, not on the
+  // clip, so the two cases are asked differently — everything downstream then
+  // treats them identically.
+  const kfFallback = (clip, kind, prop) =>
+    lookPropParts(prop) ? lookValueOf(clip, prop) : defaultFor(kind, prop);
+
   const kfHandlers = {
     onToggle: (prop) => {
       const { clip, kind, patch } = inspected;
-      const fallback = defaultFor(kind, prop);
-      patch(
-        clip.id,
-        isAnimatedProp(clip, prop)
-          ? disableProp(clip, prop, kfTime, fallback)
-          : enableProp(clip, prop, kfTime, fallback)
-      );
+      const fallback = kfFallback(clip, kind, prop);
+      if (!isAnimatedProp(clip, prop)) {
+        return patch(clip.id, enableProp(clip, prop, kfTime, fallback));
+      }
+      const off = disableProp(clip, prop, kfTime, fallback);
+      if (lookPropParts(prop)) {
+        // ⚠ Freeze it back into the EFFECT, not onto the clip. `disableProp`
+        // returns `{[prop]: frozen}`, which for a look track would be a flat
+        // key the schema has no field for and drops on the next save — so
+        // switching the stopwatch off would look like it worked and quietly
+        // lose the value you were standing on.
+        const frozen = off[prop];
+        delete off[prop];
+        Object.assign(off, setLookValue(clip, prop, frozen));
+      }
+      patch(clip.id, off);
     },
     onKey: (prop, add) => {
       const { clip, kind, patch } = inspected;
-      const fallback = defaultFor(kind, prop);
+      const fallback = kfFallback(clip, kind, prop);
       patch(
         clip.id,
         add
@@ -1813,8 +1655,30 @@ export default function AnimaticEditor({
     for (const prop of ANIMATABLE[inspected.kind] || []) {
       out[prop] = valueAt(inspected.clip, prop, kfTime, defaultFor(inspected.kind, prop));
     }
+    // The grade, resolved at the playhead for the same reason: a LUT keyframed
+    // from 0 to 1 would otherwise read "0%" in the pane while the monitor
+    // plainly showed it half way in.
+    if (LOOK_KINDS.includes(inspected.kind)) {
+      Object.assign(out, resolveLook(inspected.clip, kfTime));
+    }
     return out;
   }, [inspected, kfTime]);
+
+  // The LOOK rows, built once and slotted into whichever pane is showing. Only
+  // the two clip kinds that are PICTURES get them — a shape is vector and a
+  // caption is text, and neither has pixels of its own to grade. Passed as a
+  // node rather than a flag so the panes stay presentational and neither of
+  // them has to know what an effect is.
+  const lookPanel =
+    inspected && LOOK_KINDS.includes(inspected.kind) ? (
+      <EffectsPanel
+        clip={inspectedShown}
+        stored={inspected.clip}
+        kf={kf}
+        gesture={gestureProps}
+        onChange={patchInspected}
+      />
+    ) : null;
 
   function deleteShape(id) {
     setShapes((list) => list.filter((s) => s.id !== id));
@@ -1933,6 +1797,64 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * Upload video files and drop them onto the picture track as clips.
+   *
+   * A clip opens at its FULL natural length with `out_ms` set to the end of the
+   * file, which is what "I dropped a 6-second take in" should mean. When the
+   * server couldn't measure the file (`duration_ms: 0`) the clip falls back to
+   * the default hold and `out_ms` stays null — the source simply runs on, and
+   * the user can trim it by hand.
+   *
+   * Returns how many landed, so the one shared "here's what I did with your
+   * files" notice can report them alongside the images and audio.
+   */
+  async function addVideoClips(files, insertAt) {
+    if (!files.length) return 0;
+    setUploading(true);
+    setError("");
+    try {
+      const res = await api.uploadAnimaticVideos(animaticId, files);
+      const added = (res.items || []).map((item) =>
+        newVideoClip(
+          item.upload_id,
+          item.duration_ms,
+          (item.filename || "").replace(/\.[^.]+$/, "")
+        )
+      );
+      setFrames((list) => {
+        const at = insertAt === undefined ? list.length : insertAt;
+        const next = [...list];
+        next.splice(at, 0, ...added);
+        return next;
+      });
+      if (added.length && !selectedId) setSelectedId(added[0].id);
+      if (res.rejected?.length) {
+        setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
+      }
+      return added.length;
+    } catch (e) {
+      setError(e.message);
+      return 0;
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // A colour card: a clip with no file at all. Dropped in at the playhead's
+  // clip, or at the end, like every other insert here.
+  function addColorCard() {
+    const card = newColorClip("#000000", 1000);
+    setFrames((list) => {
+      const at = currentIndex >= 0 ? currentIndex + 1 : list.length;
+      const next = [...list];
+      next.splice(at, 0, card);
+      return next;
+    });
+    selectOnly({ frame: card.id });
+    setNotice("Added a colour card.");
+  }
+
   // Opening the OS file dialog is the whole action for the audio layer, so both
   // entry points (the tools row and the ＋ on the Audio track) share this.
   function openAudioPicker() {
@@ -1952,6 +1874,10 @@ export default function AnimaticEditor({
     const others = files.filter((f) => kindOf(f) === "other");
 
     if (images.length) await addFiles(images, insertAt);
+    // A video file becomes a CLIP on the picture track, alongside the stills —
+    // one timeline, three kinds of clip, which is the whole point of the phase.
+    let addedVideos = 0;
+    if (videos.length) addedVideos = await addVideoClips(sortFiles(videos), insertAt);
     // Each audio file becomes its OWN track — dropping music and a voiceover
     // together gives you two layers, which is the point of the layer control.
     const room = MAX_AUDIO_TRACKS - audioTracks.length;
@@ -1960,6 +1886,7 @@ export default function AnimaticEditor({
 
     const said = [];
     if (images.length) said.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
+    if (addedVideos) said.push(`${addedVideos} video clip${addedVideos === 1 ? "" : "s"}`);
     if (taking.length)
       said.push(
         taking.length === 1
@@ -1971,8 +1898,8 @@ export default function AnimaticEditor({
       ignored.push(
         `${audios.length - taking.length} audio file(s) — at most ${MAX_AUDIO_TRACKS} tracks`
       );
-    if (videos.length) ignored.push(`${videos.length} video file(s) — video isn't supported yet`);
-    if (others.length) ignored.push(`${others.length} file(s) that aren't images or audio`);
+    if (others.length)
+      ignored.push(`${others.length} file(s) that aren't images, video or audio`);
 
     if (said.length || ignored.length) {
       setNotice(
@@ -2113,6 +2040,393 @@ export default function AnimaticEditor({
     };
   }, [exportJob?.status, animaticId]);
 
+  // ------------------------------------------------- animate a frame (Veo)
+  // ⚠ THE ONE PATH IN THIS EDITOR THAT SPENDS MONEY. It follows the discipline
+  // `FinalVideoRenderStep` established: no button renders anything directly —
+  // every one opens the priced confirm dialog, and nothing is submitted until
+  // the number has been on screen and accepted.
+  //
+  // A finished clip lands as an ordinary VIDEO UPLOAD and is attached to the
+  // frame it was generated from, so from that moment it is the same object on
+  // the timeline as a file dragged in from the desktop: same trimming, same
+  // speed, same export path.
+
+  // The current frame list, readable from a callback that must NOT re-fire when
+  // it changes. The Veo poll is the one that matters: an effect which restarts
+  // on the frames would cancel its own in-flight fetch the moment it attached a
+  // clip, which is how a paid render went missing once already.
+  useEffect(() => {
+    framesRef.current = frames;
+  }, [frames]);
+
+  function openAnimate(frameId) {
+    const frame = frames.find((f) => f.id === frameId);
+    setAnimateFor(frameId);
+    // The frame's label is a starting draft, not a finished prompt — a label
+    // says what the shot IS and Veo wants to hear what MOVES — but an empty box
+    // is worse, and the placeholder explains the difference.
+    setAnimatePrompt(frame?.label || "");
+    setAnimateConfirm(null);
+  }
+
+  const veoFor = (frameId) =>
+    veoClips.filter((c) => c.frame_id === frameId).slice(-1)[0] || null;
+
+  // Ask what it would cost. FREE — this is the call that fills the dialog.
+  async function askToAnimate(force = false) {
+    if (!animateFor || !animatePrompt.trim()) return;
+    setError("");
+    setAnimateBusy(true);
+    try {
+      // The encoder and the renderer both read the SAVED project, so the frame
+      // being animated has to be on the server before its picture is resolved.
+      await flush();
+      const estimate = await api.estimateAnimateFrames(animaticId, {
+        frameIds: [animateFor],
+        prompts: { [animateFor]: animatePrompt.trim() },
+        render: animateRender,
+        force,
+      });
+      if (!estimate.shots) {
+        setError(
+          force
+            ? "Nothing to re-render."
+            : "This frame already has a clip — use “Render again” if you want to pay for another."
+        );
+        return;
+      }
+      setAnimateConfirm({ estimate, force });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAnimateBusy(false);
+    }
+  }
+
+  // The only place that actually spends. Reached solely from the confirm dialog.
+  async function doAnimate() {
+    if (!animateConfirm || !animateFor) return;
+    const { force } = animateConfirm;
+    setAnimateBusy(true);
+    setAnimateConfirm(null);
+    try {
+      await api.animateAnimaticFrames(animaticId, {
+        frameIds: [animateFor],
+        prompts: { [animateFor]: animatePrompt.trim() },
+        render: animateRender,
+        force,
+      });
+      setAnimateFor(null);
+      setAnimating(true);
+      setAnimateProgress({ percent: 0, message: "Starting…" });
+      setNotice("Animating with Veo — this takes a couple of minutes.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAnimateBusy(false);
+    }
+  }
+
+  // Turn a finished render into a video clip ON the frame it came from. This is
+  // an ordinary document edit — the clip bytes and the paid record are already
+  // safe on the server, so the worst a failed attach costs is the attach.
+  const attachVeoClip = useCallback((clip) => {
+    if (!clip?.upload_id) return;
+    setFrames((list) =>
+      list.map((f) =>
+        f.id === clip.frame_id
+          ? {
+              ...f,
+              kind: "video",
+              src: { kind: "video", upload_id: clip.upload_id },
+              // The clip is as long as we asked Veo for, and it opens showing
+              // all of it — trimming and speed are then the ordinary controls.
+              duration_ms: clip.duration_ms || f.duration_ms,
+              in_ms: 0,
+              out_ms: clip.duration_ms || null,
+              speed: 1,
+            }
+          : f
+      )
+    );
+  }, []);
+
+  /**
+   * Put every finished render where it belongs, and say whether any is still going.
+   *
+   * ⚠ SELF-HEALING ON PURPOSE. A clip that finished while the editor was closed
+   * — or while an earlier version of this code was busy killing its own polling
+   * loop — is still a clip that was PAID FOR, and it is sitting on the server
+   * fully rendered. So this does not only run at the end of a batch: it runs on
+   * every load too, and attaches anything ready whose frame isn't already video.
+   * The alternative is a charge with nothing to show for it.
+   *
+   * It never touches a frame that IS already video, so it cannot fight a clip
+   * the user has since trimmed, replaced or re-rendered.
+   */
+  const reconcileVeoClips = useCallback(
+    (clips, currentFrames) => {
+      let attached = 0;
+      let failure = "";
+      let pending = 0;
+      for (const clip of clips || []) {
+        if (clip.status === "queued" || clip.status === "rendering") {
+          pending += 1;
+          continue;
+        }
+        if (veoHandledRef.current.has(clip.id)) continue;
+        if (clip.status === "failed") {
+          veoHandledRef.current.add(clip.id);
+          failure = clip.error || "The render failed.";
+          continue;
+        }
+        if (clip.status !== "ready" || !clip.upload_id) continue;
+        const frame = (currentFrames || []).find((f) => f.id === clip.frame_id);
+        if (!frame) {
+          // The frame it was generated from has gone. The clip is not lost —
+          // it is an ordinary upload — but there is nowhere obvious to put it.
+          veoHandledRef.current.add(clip.id);
+          continue;
+        }
+        veoHandledRef.current.add(clip.id);
+        if ((frame.kind || "image") === "video") continue;
+        attachVeoClip(clip);
+        attached += 1;
+      }
+      return { attached, failure, pending };
+    },
+    [attachVeoClip]
+  );
+
+  /**
+   * Everything the editor does with a freshly loaded project.
+   *
+   * Assigned to the ref declared beside the `useAnimaticProject` call at the top
+   * of this component, and called from inside its load promise — it sits HERE
+   * because this is the first point in the file where `reconcileVeoClips` and
+   * `resetHistory` both exist.
+   *
+   * Returns whether the load may be adopted as the saved baseline: FALSE if it
+   * changed the document, because adopting then would fold that change into
+   * "what the server already has" and it would never be saved.
+   */
+  onLoadedRef.current = (p) => {
+    setSelectedId(p.frames?.[0]?.id || null);
+    if (p.status === "running") setExportJob({ status: "running", progress: null });
+    // RECOVER ANY PAID CLIP THAT NEVER LANDED. A render that finished while
+    // this editor was closed is still a charge on someone's card, and the
+    // MP4 is sitting on the server fully rendered. Attach it now; and if one
+    // is still in flight, pick the polling back up where it left off. Both
+    // run off the frames just loaded, not off state that hasn't settled yet.
+    framesRef.current = p.frames || [];
+    const { attached, pending } = reconcileVeoClips(p.veo_clips || [], p.frames || []);
+    if (pending > 0) setAnimating(true);
+    else if (attached) {
+      setNotice(
+        attached === 1
+          ? "A clip you'd already rendered was waiting — it's on the timeline."
+          : `${attached} rendered clips were waiting — they're on the timeline.`
+      );
+    }
+    // This is also where UNDO history begins. Anything recorded before this
+    // point describes an editor that hadn't loaded yet.
+    resetHistory();
+    return attached === 0;
+  };
+
+  // ⚠ KEYED ON `animating` ALONE. Everything this loop writes — the clip list,
+  // the progress — is deliberately NOT in the dependency array, because an
+  // effect that restarts on what its own poll writes cancels itself mid-flight.
+  // That is exactly what went wrong the first time: the batch finished, the job
+  // went RUNNING → QUEUED, the effect re-ran, its cleanup set `alive = false`,
+  // and the awaited fetch returned to a dead closure. The clip was rendered,
+  // charged for, and never attached.
+  useEffect(() => {
+    if (!animating) return undefined;
+    let alive = true;
+    let timer;
+    async function poll() {
+      try {
+        // The RECORDS are the truth about whether anything is still rendering.
+        // The job's status is not: a Veo batch ends by putting it back to
+        // QUEUED, which is indistinguishable from an idle animatic.
+        const project = await api.getAnimatic(animaticId);
+        if (!alive) return;
+        setVeoClips(project.veo_clips || []);
+        const { attached, failure, pending } = reconcileVeoClips(
+          project.veo_clips || [],
+          framesRef.current
+        );
+        if (pending > 0) {
+          try {
+            const job = await api.getJob(animaticId);
+            if (alive) setAnimateProgress(job.progress || null);
+          } catch {
+            /* progress is a nicety; losing it must not stop the poll */
+          }
+          if (alive) timer = setTimeout(poll, 2000);
+          return;
+        }
+        setAnimating(false);
+        setAnimateProgress(null);
+        if (failure) setError(failure);
+        else if (attached) setNotice("Clip ready — it's on the timeline.");
+      } catch (e) {
+        if (!alive) return;
+        setAnimating(false);
+        setAnimateProgress(null);
+        setError(e.message);
+      }
+    }
+    timer = setTimeout(poll, 1500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [animating, animaticId, reconcileVeoClips]);
+
+  // ------------------------------------------- captions & voiceover (Gemini)
+  // ⚠ TWO STEPS, ALWAYS, exactly as ✨ Animate does it: a panel that spends
+  // nothing, then a priced confirmation, then the call. Nothing here submits
+  // directly.
+  //
+  // Both passes are written by the SERVER into the saved project — captions
+  // become `texts`, a voiceover becomes an audio track — so when one finishes
+  // the editor re-reads the project rather than trying to construct the result
+  // locally. That is why `speechRunning` is part of `serverBusy`: for the life
+  // of the run the server is the only writer.
+  function openCaptions(uploadId) {
+    setSpeechFor("captions");
+    setSpeechTrack(uploadId || audioTracks[0]?.upload_id || "");
+    setSpeechConfirm(null);
+    setSpeechError("");
+  }
+
+  function openVoiceover() {
+    setSpeechFor("voiceover");
+    setSpeechConfirm(null);
+    setSpeechError("");
+  }
+
+  // Ask what it would cost. FREE — this is the call that fills the dialog.
+  async function askForSpeech() {
+    setSpeechError("");
+    setSpeechBusy(true);
+    try {
+      // The server reads the SAVED project — which frames are on the timeline
+      // decides which dialogue gets read — so it has to be up to date first.
+      await flush();
+      const estimate =
+        speechFor === "captions"
+          ? await api.estimateCaptions(animaticId, {
+              uploadId: speechTrack,
+              language: speechLanguage,
+              replace: speechReplace,
+            })
+          : await api.estimateVoiceover(animaticId, {
+              voice: speechVoice,
+              addCaptions: speechCaptions,
+              replace: speechReplace,
+            });
+      if (speechFor === "voiceover" && !estimate.lines) {
+        // By far the likeliest reason this button appears to do nothing, so it
+        // says all three things that could be true rather than just the first.
+        setSpeechError(
+          "There is no dialogue to read. The lines come from the storyboard " +
+            "this animatic was made from — so either these frames aren't from " +
+            "a board, or the board's shots have no spoken lines on them."
+        );
+        return;
+      }
+      setSpeechConfirm({ estimate });
+    } catch (e) {
+      setSpeechError(e.message);
+    } finally {
+      setSpeechBusy(false);
+    }
+  }
+
+  // The only place either pass actually spends. Reached solely from the dialog.
+  async function doSpeech() {
+    if (!speechConfirm) return;
+    const pass = speechFor;
+    setSpeechBusy(true);
+    setSpeechConfirm(null);
+    try {
+      if (pass === "captions") {
+        await api.captionAnimatic(animaticId, {
+          uploadId: speechTrack,
+          language: speechLanguage,
+          replace: speechReplace,
+        });
+      } else {
+        await api.voiceAnimatic(animaticId, {
+          voice: speechVoice,
+          addCaptions: speechCaptions,
+          replace: speechReplace,
+        });
+      }
+      setSpeechFor(null);
+      setSpeechRunning(true);
+      setSpeechProgress({ percent: 0, message: "Starting…" });
+      setNotice(
+        pass === "captions"
+          ? "Listening to that track and writing the captions…"
+          : "Reading the dialogue aloud — this takes a moment per line."
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSpeechBusy(false);
+    }
+  }
+
+  // ⚠ KEYED ON `speechRunning` ALONE, for the reason written out above the Veo
+  // poll: an effect that restarts on what its own poll writes cancels itself
+  // mid-flight, and by then the work has been paid for.
+  //
+  // Unlike the Veo poll this reads the JOB STATUS rather than a record list,
+  // because there is nothing to reconcile — the captions are already in the
+  // saved project by the time the job leaves RUNNING. The pass ends by putting
+  // the job back to QUEUED, exactly as a Veo batch does, and reports what went
+  // wrong (if anything) in the job's `error`.
+  useEffect(() => {
+    if (!speechRunning) return undefined;
+    let alive = true;
+    let timer;
+    async function poll() {
+      try {
+        const job = await api.getJob(animaticId);
+        if (!alive) return;
+        if (job.status === "running") {
+          setSpeechProgress(job.progress || null);
+          timer = setTimeout(poll, 1500);
+          return;
+        }
+        // Finished, one way or the other. Re-read the document: this is the one
+        // path where the server, not the editor, wrote the project's content.
+        const project = await api.getAnimatic(animaticId);
+        if (!alive) return;
+        setTexts(project.texts || []);
+        setAudioTracks(project.audio_tracks || []);
+        setSpeechRunning(false);
+        setSpeechProgress(null);
+        if (job.error) setError(job.error);
+        else setNotice("Done — it's on the timeline.");
+      } catch (e) {
+        if (!alive) return;
+        setSpeechRunning(false);
+        setSpeechProgress(null);
+        setError(e.message);
+      }
+    }
+    timer = setTimeout(poll, 1200);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [speechRunning, animaticId, setTexts, setAudioTracks]);
+
   async function stopExport() {
     try {
       await api.stopAnimaticExport(animaticId);
@@ -2226,7 +2540,11 @@ export default function AnimaticEditor({
   // height with this number keeps it exact — see `.an-screen-fit`.
   const [arW, arH] = (settings.aspect_ratio || "16:9").split(":").map(Number);
   const arNum = arW && arH ? arW / arH : 16 / 9;
-  const pxPerSec = ZOOMS[zoom];
+  // One step of zoom, from a button or from the Zoom tool. `dir` is ±1.
+  const zoomBy = (dir) =>
+    setPxPerSec((p) =>
+      Math.min(MAX_PPS, Math.max(MIN_PPS, p * Math.pow(ZOOM_STEP, dir)))
+    );
   const lengthMatches = audioMs > 0 && Math.abs(audioMs - totalMs) <= 250;
   const progress = exportJob?.progress || {};
 
@@ -2237,54 +2555,26 @@ export default function AnimaticEditor({
   // `~` maximizes the pane the pointer is over, exactly as Premiere does — so
   // every pane reports its own name on hover and the workspace is told which
   // one is filling it.
-  // --- The transition, as CSS ---------------------------------------------
-  // Each branch below is the counterpart of a branch in `_transition_canvas`
-  // (animatic.py): the same fractions travelling the same way, so the monitor
-  // shows the blend that actually gets encoded. A preview that dissolves where
-  // the export wipes is worse than no preview at all.
+  // --- The picture is a CANVAS now -----------------------------------------
+  // Every pixel of the monitor — both pictures, the transition between them,
+  // the shapes and the overlay pictures — is composited by `ProgramCanvas` in
+  // WebGL. The DOM keeps only what WebGL adds nothing to: the captions, the
+  // shot label, and the selection outlines and resize handles below.
   //
-  // ⚠ KNOWN LIMIT. These composite against what is BEHIND them, while the
-  // exporter fits each picture onto the bar colour and blends the two results.
-  // The two agree exactly unless a picture is ALSO being faded by its own
-  // keyframes mid-transition, where the preview is slightly off. Matching that
-  // properly needs the canvas compositor Phase 4 brings; it is not worth a
-  // second full-frame layer in the DOM before then.
-  const shownFrameB = scene.frame_b;
-  const mix = scene.mix || 0;
-  const transitionKind = scene.transition;
-  const frameBUrl = shownFrameB ? urls[frames[shownFrameB.index]?.id] : null;
-
-  function pictureStyle(picture, role) {
-    if (!picture) return undefined;
-    // The picture's OWN pan / zoom / fade. `transform-origin: center` plus a
-    // translate expressed in % of the PICTURE puts the same point of the image
-    // under the same point of the frame as `place_picture` does server side.
-    const own =
-      `translate(${(picture.x - 0.5) * 100}%, ${(picture.y - 0.5) * 100}%)` +
-      ` scale(${picture.scale})`;
-    let opacity = picture.opacity;
-    // A transform on the WHOLE frame, applied before (i.e. outside) the pan and
-    // zoom, so the scale can't change what it means.
-    let lead = "";
-    let clipPath;
-    if (transitionKind && shownFrameB) {
-      if (transitionKind === "dip") {
-        // Out through the bar colour and back up: only ever ONE picture is up.
-        opacity *= role === "b" ? Math.max(0, 2 * mix - 1) : Math.max(0, 1 - 2 * mix);
-      } else if (transitionKind === "wipe") {
-        // A hard edge travelling left → right, revealing the incoming picture.
-        if (role === "b") clipPath = `inset(0 ${(1 - mix) * 100}% 0 0)`;
-      } else if (transitionKind === "slide") {
-        // A push — both move. In % of this element, which fills the screen box,
-        // so it is the same fraction of the canvas the exporter offsets by.
-        lead = `translateX(${(role === "b" ? 1 - mix : -mix) * 100}%) `;
-      } else if (role === "b") {
-        // dissolve: the arriving picture simply comes up over the outgoing one.
-        opacity *= mix;
-      }
-    }
-    return { transformOrigin: "center", transform: lead + own, opacity, clipPath };
-  }
+  // Why it had to stop being the DOM: CSS can fake a brightness slider, but not
+  // a 3D LUT, a feathered mask or a chroma key, and `mix-blend-mode` blends a
+  // whole ELEMENT rather than one clip against the pixels beneath it. The shape
+  // FILLS moved with it because the compositing order is picture → shapes →
+  // overlays and an overlay's blend mode needs every pixel underneath it — so
+  // a DOM shape would sit either in the wrong order or outside the backdrop the
+  // blend reads.
+  //
+  // ⚠ THE OLD KNOWN LIMIT IS GONE. The monitor and `_transition_canvas` now
+  // both composite the incoming picture OVER the outgoing one, so a clip faded
+  // by its own keyframes — or carrying a chroma key or a mask — mid-transition
+  // looks the same in both. Each transition branch in `ProgramCanvas` is still
+  // the counterpart of one in `animatic.py`: the same fractions travelling the
+  // same way.
 
   const paneProps = (name) => ({
     onMouseEnter: () => {
@@ -2434,7 +2724,7 @@ export default function AnimaticEditor({
         )}
       </header>
 
-      {(error || notice || exporting) && (
+      {(error || notice || exporting || animating || speechRunning) && (
         <div className="an-statusbar">
           {error && <span className="an-status-error">{error}</span>}
           {!error && notice && <span className="an-status-note">{notice}</span>}
@@ -2446,6 +2736,32 @@ export default function AnimaticEditor({
                 <span style={{ width: `${progress.percent ?? 0}%` }} />
               </span>
               {progress.percent ?? 0}%
+            </span>
+          )}
+          {/* A Veo render takes minutes and costs money, so it says so the whole
+              time rather than leaving a button reading "Animating…" as the only
+              sign anything is happening. */}
+          {animating && !exporting && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {animateProgress?.message || "Animating with Veo…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${animateProgress?.percent ?? 0}%` }} />
+              </span>
+              {animateProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* A captions or voiceover pass is quick but it is still the SERVER
+              writing this project, so it says so for the same reason: the
+              editor is read-only until it finishes. */}
+          {speechRunning && !exporting && !animating && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {speechProgress?.message || "Working…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${speechProgress?.percent ?? 0}%` }} />
+              </span>
+              {speechProgress?.percent ?? 0}%
             </span>
           )}
         </div>
@@ -2631,43 +2947,38 @@ export default function AnimaticEditor({
                 background: settings.background,
               }}
             >
-              {currentFrame && urls[currentFrame.id] ? (
-                <>
-                  {/* The picture's own pan / zoom / fade, resolved by
-                      `sceneAt`, plus its half of any transition — see
-                      `pictureStyle`. x/y are the picture's centre here and in
-                      `place_picture`, which is the only reading under which a
-                      zoom doesn't also shift it. */}
-                  <img
-                    src={urls[currentFrame.id]}
-                    alt={currentFrame.label || `Frame ${currentIndex + 1}`}
-                    className={settings.fit === "cover" ? "cover" : ""}
-                    style={pictureStyle(shownFrame, "a")}
-                  />
-                  {/* The picture ARRIVING, on a cut that has a transition. It
-                      sits directly over the outgoing one and is the same size,
-                      because both fill the screen box — which is what lets the
-                      four kinds be expressed as opacity, a clip and a shift. */}
-                  {shownFrameB && frameBUrl && (
-                    <img
-                      className={`an-screen-b ${settings.fit === "cover" ? "cover" : ""}`}
-                      src={frameBUrl}
-                      alt=""
-                      style={pictureStyle(shownFrameB, "b")}
-                    />
-                  )}
-                </>
-              ) : (
+              {/* EVERY PIXEL of the monitor: both pictures, the transition
+                  between them, the shape fills and the overlay pictures, with
+                  each clip's effects, mask and blend mode applied. The DOM
+                  layers below are the handles and the captions only. x/y are
+                  the picture's centre here and in `place_picture`, which is the
+                  only reading under which a zoom doesn't also shift it. */}
+              <ProgramCanvas
+                scene={scene}
+                frames={frames}
+                urls={urls}
+                videoUrls={videoUrls}
+                overlayUrls={overlayUrls}
+                settings={settings}
+                videoElsRef={videoElsRef}
+                onUnavailable={() => setGlFailed(true)}
+              />
+              {(!shownFrame || glFailed) && (
                 <div className="an-screen-empty">
-                  {frames.length ? "Loading…" : "Add images to start your animatic"}
+                  {glFailed
+                    ? "This browser can't show the preview — it has no WebGL. The export is unaffected."
+                    : frames.length
+                      ? "Loading…"
+                      : "Add images or video to start your animatic"}
                 </div>
               )}
 
-              {/* The shape layer, UNDER the text — a shape is usually a
-                  highlight or a mask ON the art, and a caption you couldn't
-                  read over it would be pointless. The exporter stacks them the
-                  same way round. Everything is positioned in % of this box,
-                  which is the same fraction the project stores. */}
+              {/* The shape HANDLES. The fills are in the canvas; these boxes
+                  are the drag targets, laid over them at the same fractions the
+                  compositor draws at, so a shape and its handle cannot
+                  separate. Everything is positioned in % of this box, which is
+                  the same fraction the project stores and `draw_shapes` scales
+                  into the exported frame. */}
               {activeShapes.length > 0 && (
                 <div className="an-shape-layer">
                   {activeShapes.map((s) => (
@@ -2684,17 +2995,11 @@ export default function AnimaticEditor({
                       onPointerDown={(e) => startShapeDrag(e, s, "move")}
                       title="Drag to move · drag the corner to resize"
                     >
-                      {/* The FILL is a child, because clip-path would otherwise
-                          cut off this shape's own selection outline and resize
-                          handle — a star's corners are exactly where they sit. */}
-                      <span
-                        className="an-shape-fill"
-                        style={{
-                          background: s.color,
-                          opacity: s.opacity ?? 1,
-                          ...shapeCss(s.kind),
-                        }}
-                      />
+                      {/* ⚠ NO FILL. The shape itself is drawn in the canvas
+                          under this box — it has to be, so an overlay's blend
+                          mode can read it as backdrop. What is left here is the
+                          hit target and the handle, which is the half WebGL
+                          would have made harder rather than easier. */}
                       {selectedShapeId === s.id && (
                         <span
                           className="an-shape-handle"
@@ -2707,12 +3012,10 @@ export default function AnimaticEditor({
                 </div>
               )}
 
-              {/* Overlay pictures — composited over the video and UNDER the
-                  text. ⚠ Rendered AFTER the shapes so they sit ON TOP of them,
-                  which is the order `render_frame` composites in — the preview
-                  has to be what gets exported. Placed and
-                  dragged exactly like a shape, because they are the same box
-                  with a picture in it instead of a colour. */}
+              {/* Overlay HANDLES, over the shapes' — the same box a shape gets,
+                  because they are placed and dragged the same way. The pictures
+                  themselves are composited in the canvas, after the shapes and
+                  under the text, which is the order `render_frame` uses. */}
               {activeOverlays.length > 0 && (
                 <div className="an-shape-layer">
                   {activeOverlays.map((o) => (
@@ -2725,16 +3028,18 @@ export default function AnimaticEditor({
                         width: `${o.w * 100}%`,
                         height: `${o.h * 100}%`,
                         transform: `translate(-50%, -50%) rotate(${o.rotation || 0}deg)`,
-                        opacity: o.opacity ?? 1,
+                        // ⚠ NOT faded with the clip. The picture's opacity is
+                        // applied in the canvas; fading the HANDLE too would
+                        // leave a nearly-transparent overlay with a drag target
+                        // nobody can see.
                       }}
                       onPointerDown={(e) => startShapeDrag(e, o, "move", "overlay")}
                       title="Drag to move · drag the corner to resize"
                     >
-                      {overlayUrls[o.upload_id] && (
-                        // `contain`, matching the exporter: a logo dropped into
-                        // a square box must not be stretched into a new logo.
-                        <img className="an-overlay-img" src={overlayUrls[o.upload_id]} alt="" />
-                      )}
+                      {/* ⚠ NO <img>. The picture is drawn in the canvas, fitted
+                          "contain" inside this box exactly as `draw_overlays`
+                          fits it — see `overlayRect`. This box is the drag
+                          target and nothing else. */}
                       {selectedOverlayId === o.id && (
                         <span
                           className="an-shape-handle"
@@ -2755,7 +3060,8 @@ export default function AnimaticEditor({
                 <div className="an-text-layer">
                   {["top", "middle", "bottom"].map((zone) => {
                     const zoneClips = activeTexts.filter(
-                      (c) => (c.position || "bottom") === zone
+                      (c) => (c.place || "flow") !== "free"
+                        && (c.position || "bottom") === zone
                     );
                     if (!zoneClips.length) return null;
                     return (
@@ -2763,14 +3069,8 @@ export default function AnimaticEditor({
                         {zoneClips.map((c) => (
                           <span
                             key={c.id}
-                            className={[
-                              "an-text-clip",
-                              `sz-${c.size || "medium"}`,
-                              `bd-${c.backdrop || "scrim"}`,
-                              `al-${c.align || "center"}`,
-                              selectedTextId === c.id ? "sel" : "",
-                            ].join(" ")}
-                            style={{ color: c.color || "#ffffff", opacity: c.opacity ?? 1 }}
+                            className={captionClass(c)}
+                            style={captionStyle(c)}
                           >
                             {c.text}
                           </span>
@@ -2778,6 +3078,25 @@ export default function AnimaticEditor({
                       </div>
                     );
                   })}
+                  {/* Free-placed captions sit at their own x/y rather than in a
+                      zone — the same fractions `draw_texts` centres the block on
+                      in the exported frame, so dragging one here puts it there
+                      in the MP4 at any resolution. */}
+                  {activeTexts
+                    .filter((c) => (c.place || "flow") === "free")
+                    .map((c) => (
+                      <span
+                        key={c.id}
+                        className={`${captionClass(c)} an-text-free`}
+                        style={{
+                          ...captionStyle(c),
+                          left: `${(c.x ?? 0.5) * 100}%`,
+                          top: `${(c.y ?? 0.85) * 100}%`,
+                        }}
+                      >
+                        {c.text}
+                      </span>
+                    ))}
                 </div>
               )}
 
@@ -2880,6 +3199,7 @@ export default function AnimaticEditor({
             ) : selectedText ? (
               <TextProperties
                 clip={inspectedShown}
+                stored={inspected.clip}
                 totalMs={totalMs}
                 textAreaRef={textAreaRef}
                 kf={kf}
@@ -2897,6 +3217,7 @@ export default function AnimaticEditor({
                 kf={kf}
                 gesture={gestureProps}
                 onChange={patchInspected}
+                look={lookPanel}
                 onDuplicate={duplicateOverlay}
                 onDelete={deleteOverlay}
                 onClose={() => setSelectedOverlayId(null)}
@@ -2916,9 +3237,12 @@ export default function AnimaticEditor({
               <AudioProperties
                 track={selectedTrack}
                 index={audioTracks.findIndex((a) => a.upload_id === selectedTrack.upload_id)}
+                tracks={audioTracks}
                 gesture={gestureProps}
                 onChange={patchTrack}
                 onRemove={removeTrack}
+                onCaptions={openCaptions}
+                captionsBusy={serverBusy}
               />
             ) : selectedFrame ? (
               <FrameProperties
@@ -2927,9 +3251,24 @@ export default function AnimaticEditor({
                 url={urls[selectedFrame.id]}
                 kf={kf}
                 gesture={gestureProps}
+                // Which moment of its source is under the playhead — only
+                // meaningful, and only shown, while THIS clip is the one on
+                // screen. Reading the scene rather than recomputing it means
+                // the pane can't disagree with the monitor.
+                sourceMs={
+                  shownFrame && frames[shownFrame.index]?.id === selectedFrame.id
+                    ? shownFrame.source_ms
+                    : null
+                }
+                look={lookPanel}
                 onChange={patchInspected}
                 onDuplicate={duplicateFrame}
                 onDelete={deleteFrame}
+                // The paid path. The pane only ever OPENS the dialog — it can
+                // never render anything itself.
+                onAnimate={openAnimate}
+                veo={veoFor(selectedFrame.id)}
+                animating={animating}
               />
             ) : (
               <VideoProperties
@@ -3019,6 +3358,41 @@ export default function AnimaticEditor({
           >
             <Icon name="text" /> Text
           </button>
+          {/* The other clip you can make without a file. Sits beside Text on
+              purpose: those two are the whole set, and a colour card had no way
+              in at all until now even though the `kind: "color"` clip underneath
+              it was built and tested. Not disabled on an empty animatic — a
+              black slug is a perfectly ordinary first clip. */}
+          <button
+            type="button"
+            className="btn small an-add-card"
+            onClick={() => addColorCard()}
+            title="Add a colour card after the frame at the playhead — a slug, a blackout or a flash. Pick its colour in Properties."
+          >
+            <Icon name="card" /> Colour card
+          </button>
+          {/* ⚠ SPENDS QUOTA — but only through the priced panel it opens, like
+              ✨ Animate. The lines come from the board this animatic was made
+              from, timed to the shots that reference them, so there is nothing
+              to type: that is the whole reason it lives in here.
+
+              Plain `btn small`, like "Fit to audio" beside it, and deliberately
+              NOT the `.an-add-text` / `.an-add-card` weight: those two are a
+              pair that makes a clip out of nothing and costs nothing. This one
+              spends, and reading as one of them would be a lie about it. */}
+          <button
+            type="button"
+            className="btn small"
+            disabled={!hasBoardFrames || serverBusy}
+            onClick={openVoiceover}
+            title={
+              hasBoardFrames
+                ? "Read the storyboard's dialogue aloud onto the audio layer — costs a little; you see the price first"
+                : "Nothing here to read: a voiceover comes from the storyboard's dialogue, and none of these clips are board panels"
+            }
+          >
+            🎙 Voiceover
+          </button>
           <button
             type="button"
             className="btn small"
@@ -3046,8 +3420,8 @@ export default function AnimaticEditor({
             <button
               type="button"
               className="an-tbtn small"
-              disabled={zoom === 0}
-              onClick={() => setZoom((z) => Math.max(0, z - 1))}
+              disabled={pxPerSec <= MIN_PPS + 0.01}
+              onClick={() => zoomBy(-1)}
               title="Zoom out"
             >
               −
@@ -3055,8 +3429,8 @@ export default function AnimaticEditor({
             <button
               type="button"
               className="an-tbtn small"
-              disabled={zoom === ZOOMS.length - 1}
-              onClick={() => setZoom((z) => Math.min(ZOOMS.length - 1, z + 1))}
+              disabled={pxPerSec >= MAX_PPS - 0.01}
+              onClick={() => zoomBy(1)}
               title="Zoom in"
             >
               ＋
@@ -3086,12 +3460,14 @@ export default function AnimaticEditor({
             onTransitionChange={patchTransition}
             lanes={lanes}
             audioUrls={audioUrls}
+            audioAnalyses={audioAnalyses}
             onToggleMute={(id) =>
               patchTrack(id, {
                 muted: !audioTracks.find((a) => a.upload_id === id)?.muted,
               })
             }
             onTrimTrack={(id, ms) => patchTrack(id, { trim_ms: ms })}
+            onFadeChange={(id, patch) => patchTrack(id, patch)}
             onSelect={(id) => selectOnly({ frame: id })}
             onSelectText={(id) => selectOnly({ text: id })}
             onSelectShape={(id) => selectOnly({ shape: id })}
@@ -3111,9 +3487,14 @@ export default function AnimaticEditor({
             tool={tool}
             snapping={snapping}
             onSplitAt={splitFrameAt}
-            onZoomAt={(dir) =>
-              setZoom((z) => Math.max(0, Math.min(ZOOMS.length - 1, z + dir)))
+            onZoomAt={zoomBy}
+            /* The scroll bar's grips set the scale outright — see
+               ZoomScrollbar.jsx — so they get the setter, not the stepper. */
+            onSetPxPerSec={(next) =>
+              setPxPerSec(Math.min(MAX_PPS, Math.max(MIN_PPS, next)))
             }
+            minPxPerSec={MIN_PPS}
+            maxPxPerSec={MAX_PPS}
             markIn={markIn}
             markOut={markOut}
           />
@@ -3354,6 +3735,338 @@ export default function AnimaticEditor({
         </div>
       )}
 
+      {/* --- Animate a shot with Veo: write the motion, then see the price -- */}
+      {/* ⚠ TWO STEPS, ALWAYS. This first panel spends nothing — it only writes
+          the prompt and picks the quality. The button at the bottom asks the
+          server what that would cost and hands over to the confirm dialog
+          below. No button in this editor renders anything directly. */}
+      {animateFor !== null && !animateConfirm && (
+        <div className="modal-overlay" onClick={() => setAnimateFor(null)}>
+          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setAnimateFor(null)}>
+              ✕
+            </button>
+            <h2>Animate this shot</h2>
+            <p className="muted">
+              Veo turns this still into real footage. Describe what MOVES — the
+              picture already says what it is.
+            </p>
+            <textarea
+              className="an-tp-text"
+              autoFocus
+              rows={3}
+              value={animatePrompt}
+              placeholder="e.g. he lowers the lamp and turns towards the door; slow push in"
+              maxLength={1000}
+              onChange={(e) => setAnimatePrompt(e.target.value)}
+            />
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Quality</span>
+              <select
+                className="an-select"
+                value={animateRender.tier}
+                onChange={(e) =>
+                  setAnimateRender((r) => ({ ...r, tier: e.target.value }))
+                }
+              >
+                <option value="lite">Lite — cheapest</option>
+                <option value="fast">Fast — the usual choice</option>
+                <option value="standard">Standard — dearest</option>
+              </select>
+            </div>
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Size</span>
+              <select
+                className="an-select"
+                value={animateRender.resolution}
+                onChange={(e) =>
+                  setAnimateRender((r) => ({ ...r, resolution: e.target.value }))
+                }
+              >
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+              </select>
+            </div>
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Length</span>
+              <select
+                className="an-select"
+                value={animateRender.duration_seconds}
+                onChange={(e) =>
+                  setAnimateRender((r) => ({
+                    ...r,
+                    duration_seconds: Number(e.target.value),
+                  }))
+                }
+              >
+                <option value={4}>4 seconds</option>
+                <option value={6}>6 seconds</option>
+                <option value={8}>8 seconds</option>
+              </select>
+            </div>
+
+            {/* Off by default here, unlike the final-video workspace: an
+                animatic usually already carries a scratch voiceover, and sound
+                costs more for something you are about to mute. */}
+            <label className="an-check">
+              <input
+                type="checkbox"
+                checked={animateRender.generate_audio}
+                onChange={(e) =>
+                  setAnimateRender((r) => ({ ...r, generate_audio: e.target.checked }))
+                }
+              />
+              Let Veo generate sound too (costs more)
+            </label>
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setAnimateFor(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!animatePrompt.trim() || animateBusy}
+                onClick={() => askToAnimate(Boolean(veoFor(animateFor)?.upload_id))}
+              >
+                {animateBusy ? "Checking the price…" : "See the price →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- The confirm dialog: the last thing before money moves --------- */}
+      {/* Same shape as FinalVideoRenderStep's, deliberately — this is the one
+          screen in the app where a familiar layout is worth more than a novel
+          one. `.an-name-actions` for the footer, NOT `.lib-confirm-btns`. */}
+      {animateConfirm && (
+        <div className="modal-overlay" onClick={() => setAnimateConfirm(null)}>
+          <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setAnimateConfirm(null)}
+            >
+              ✕
+            </button>
+            <h2>Animate this shot?</h2>
+
+            <div className="fv-confirm-price">
+              <span className="fv-confirm-usd">
+                ~${animateConfirm.estimate.usd.toFixed(2)}
+              </span>
+              <span className="tiny muted">estimated</span>
+            </div>
+
+            <p className="muted">
+              {animateConfirm.estimate.seconds}s of video at {animateRender.tier} /{" "}
+              {animateRender.resolution}
+              {animateRender.generate_audio ? " with sound" : ", silent"}.
+              {animateConfirm.force &&
+                " This shot already has a clip — rendering again costs the same as the first time."}
+            </p>
+            <p className="tiny muted">
+              An estimate from list prices, not a quote. Google bills the actual
+              amount, and you are only charged for renders that succeed.
+            </p>
+
+            <div className="an-name-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setAnimateConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={animateBusy}
+                onClick={doAnimate}
+              >
+                <Icon name="play" />{" "}
+                {animateBusy
+                  ? "Starting…"
+                  : `Animate — ~$${animateConfirm.estimate.usd.toFixed(2)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Captions / voiceover: the panel, then the price --------------- */}
+      {/* ⚠ TWO STEPS, exactly as ✨ Animate. This panel spends nothing — it
+          picks the track or the voice. The button at the bottom asks the server
+          what that would cost and hands over to the confirm dialog below. */}
+      {speechFor !== null && !speechConfirm && (
+        <div className="modal-overlay" onClick={() => setSpeechFor(null)}>
+          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setSpeechFor(null)}>
+              ✕
+            </button>
+            {speechFor === "captions" ? (
+              <>
+                <h2>Write captions from a track</h2>
+                <p className="muted">
+                  Listens to one audio track and writes a caption for each line,
+                  timed to when it is said. They arrive as ordinary text clips —
+                  every one can be edited, restyled or deleted afterwards.
+                </p>
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Track</span>
+                  <select
+                    className="an-select"
+                    value={speechTrack}
+                    onChange={(e) => setSpeechTrack(e.target.value)}
+                  >
+                    {audioTracks.map((t, i) => (
+                      <option key={t.upload_id} value={t.upload_id}>
+                        {t.filename || `Track ${i + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="an-prop-row">
+                  <label className="an-tp-field">
+                    <span>Language</span>
+                    <input
+                      className="an-name-input an-speech-lang"
+                      value={speechLanguage}
+                      placeholder="let the model tell"
+                      onChange={(e) => setSpeechLanguage(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </>
+            ) : (
+              <>
+                <h2>Read the dialogue aloud</h2>
+                <p className="muted">
+                  Every spoken line on the storyboard, read in order and laid
+                  under the shot it belongs to. A line longer than its shot
+                  pushes the next one later rather than talking over it.
+                </p>
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Voice</span>
+                  <select
+                    className="an-select"
+                    value={speechVoice}
+                    onChange={(e) => setSpeechVoice(e.target.value)}
+                  >
+                    {["Kore", "Puck", "Charon", "Zephyr", "Fenrir", "Aoede"].map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="an-check">
+                  <input
+                    type="checkbox"
+                    checked={speechCaptions}
+                    onChange={(e) => setSpeechCaptions(e.target.checked)}
+                  />
+                  Add captions for the spoken lines too (free — the timings come
+                  back with the audio)
+                </label>
+              </>
+            )}
+
+            <label className="an-check">
+              <input
+                type="checkbox"
+                checked={speechReplace}
+                onChange={(e) => setSpeechReplace(e.target.checked)}
+              />
+              Replace captions a previous run made (captions you typed are never
+              touched)
+            </label>
+
+            {/* ⚠ IN HERE, not in the status bar. The banner is behind this
+                overlay, so an error written there is an error nobody sees and a
+                button that looks broken. */}
+            {speechError && <p className="an-prop-warn">⚠ {speechError}</p>}
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setSpeechFor(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={speechBusy || (speechFor === "captions" && !speechTrack)}
+                onClick={askForSpeech}
+              >
+                {speechBusy ? "Checking the price…" : "See the price →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {speechConfirm && (
+        <div className="modal-overlay" onClick={() => setSpeechConfirm(null)}>
+          <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setSpeechConfirm(null)}
+            >
+              ✕
+            </button>
+            <h2>{speechFor === "captions" ? "Write the captions?" : "Read the dialogue?"}</h2>
+
+            <div className="fv-confirm-price">
+              <span className="fv-confirm-usd">
+                ~${speechConfirm.estimate.usd.toFixed(4)}
+              </span>
+              <span className="tiny muted">estimated</span>
+            </div>
+
+            <p className="muted">
+              {speechFor === "captions"
+                ? `${Math.round(speechConfirm.estimate.seconds)}s of audio, transcribed by ${speechConfirm.estimate.model}.`
+                : `${speechConfirm.estimate.lines} line(s), ${speechConfirm.estimate.characters} characters, read by ${speechVoice}.`}
+            </p>
+            {speechConfirm.estimate.over_limit && (
+              <p className="an-prop-warn">
+                ⚠ That is over the limit for one run ({speechConfirm.estimate.limit}).
+                Do it in smaller passes — this is a spend guard, not a technical one.
+              </p>
+            )}
+            <p className="tiny muted">
+              An estimate from list prices, not a quote. Google bills the actual
+              amount.
+            </p>
+
+            <div className="an-name-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setSpeechConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={speechBusy || speechConfirm.estimate.over_limit}
+                onClick={doSpeech}
+              >
+                <Icon name="play" />{" "}
+                {speechBusy
+                  ? "Starting…"
+                  : `Go — ~$${speechConfirm.estimate.usd.toFixed(4)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Save on an unnamed animatic lands here first. */}
       {saveAsName !== null && (
         <div className="modal-overlay" onClick={() => setSaveAsName(null)}>
@@ -3462,813 +4175,6 @@ export default function AnimaticEditor({
           e.target.value = "";
         }}
       />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Properties pane — one component per selection state. Split out so the editor
-// itself stays readable; they are presentational and hold no state of their own.
-// ---------------------------------------------------------------------------
-// A transition's settings: which one, and how long. Deliberately short — there
-// is nothing else to say about a cut treatment, and the alternative (direction
-// pickers, easing, a preview strip) is a lot of surface for four effects.
-function TransitionProperties({ transition, frames, onChange, onDelete, onClose }) {
-  const i = frames.findIndex((f) => f.id === transition.after_frame_id);
-  const from = frames[i];
-  const to = frames[i + 1];
-  // What the renderer will actually use. A transition is capped at the SHORTER
-  // of the two holds it joins, so it can never eat more than half of either —
-  // and saying so here is better than silently ignoring the number typed in.
-  const shorter = Math.min(from?.duration_ms ?? Infinity, to?.duration_ms ?? Infinity);
-  const effective = Math.max(
-    MIN_TRANSITION_MS,
-    Math.min(transition.duration_ms, MAX_TRANSITION_MS, shorter)
-  );
-  const clamped = effective !== transition.duration_ms;
-
-  return (
-    <div className="an-props">
-      <div className="an-prop-row">
-        <span className="an-prop-label">On the cut</span>
-        <span className="tiny">
-          {from ? from.label || `Frame ${i + 1}` : "—"} →{" "}
-          {to ? to.label || `Frame ${i + 2}` : "—"}
-        </span>
-      </div>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">Transition</span>
-        <span className="an-set-chips">
-          {TRANSITIONS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`opt-chip ${transition.kind === t.id ? "active" : ""}`}
-              onClick={() => onChange(transition.id, { kind: t.id })}
-            >
-              {t.label}
-              <span className="opt-chip-note">{t.note}</span>
-            </button>
-          ))}
-        </span>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Lasts</span>
-          <input
-            type="number"
-            step="0.1"
-            min={MIN_TRANSITION_MS / 1000}
-            max={MAX_TRANSITION_MS / 1000}
-            value={(transition.duration_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(transition.id, {
-                duration_ms: clamp(
-                  Math.round(parseFloat(e.target.value || 0) * 1000),
-                  MIN_TRANSITION_MS,
-                  MAX_TRANSITION_MS
-                ),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-      </div>
-
-      {clamped && (
-        <p className="an-prop-warn">
-          ⚠ Trimmed to {(effective / 1000).toFixed(1)}s — a transition can't be
-          longer than the shorter of the two shots it joins.
-        </p>
-      )}
-
-      {/* The one thing about this design worth stating outright, because every
-          other editor works the other way and people expect their cut to move. */}
-      <p className="tiny muted an-prop-hint">
-        The blend straddles the cut, taking half from the end of the first shot
-        and half from the start of the second — so the video stays exactly as
-        long, and nothing else on the timeline moves.
-      </p>
-
-      <div className="an-prop-actions">
-        <button
-          type="button"
-          className="btn small danger-btn"
-          onClick={() => onDelete(transition.id)}
-        >
-          <Icon name="close" /> Remove
-        </button>
-        <button type="button" className="btn small ghost" onClick={onClose}>
-          Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TextProperties({ clip, totalMs, textAreaRef, kf, gesture, onChange, onDuplicate, onDelete, onClose }) {
-  const overruns = clip.start_ms + clip.duration_ms > totalMs;
-  return (
-    <div className="an-props">
-      <textarea
-        ref={textAreaRef}
-        className="an-tp-text"
-        rows={3}
-        value={clip.text}
-        placeholder="Type the caption — press Enter for a second line"
-        onChange={(e) => onChange(clip.id, { text: e.target.value })}
-      />
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Starts at</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={(clip.start_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(clip.id, {
-                start_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-        <label className="an-tp-field">
-          <span>Stays for</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            value={(clip.duration_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(clip.id, {
-                duration_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-      </div>
-
-      {overruns && (
-        <p className="an-prop-warn">
-          ⚠ This runs past the end of the video, so part of it is never seen.
-        </p>
-      )}
-
-      {/* Fades the whole caption — backdrop, ink and outline together. With the
-          ⏱ on, this is how a caption ARRIVES rather than appearing, which is
-          the one text animation worth having before a preset list exists. */}
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">
-          Opacity <span className="tiny muted">{Math.round((clip.opacity ?? 1) * 100)}%</span>
-          {kf && <KeyframeControls {...kf} prop="opacity" />}
-        </span>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={clip.opacity ?? 1}
-          {...gesture}
-          onChange={(e) => onChange(clip.id, { opacity: parseFloat(e.target.value) })}
-        />
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Position</span>
-        <span className="an-tp-group">
-          {TEXT_POSITIONS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={`an-tp-btn ${clip.position === p.id ? "on" : ""}`}
-              onClick={() => onChange(clip.id, { position: p.id })}
-            >
-              {p.label}
-            </button>
-          ))}
-        </span>
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Align</span>
-        <span className="an-tp-group">
-          {TEXT_ALIGNS.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className={`an-tp-btn ${clip.align === a.id ? "on" : ""}`}
-              title={`Align ${a.id}`}
-              onClick={() => onChange(clip.id, { align: a.id })}
-            >
-              {a.label}
-            </button>
-          ))}
-        </span>
-        <span className="an-tp-group">
-          {TEXT_SIZES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={`an-tp-btn ${clip.size === s.id ? "on" : ""}`}
-              title={`${s.id} text`}
-              onClick={() => onChange(clip.id, { size: s.id })}
-            >
-              {s.label}
-            </button>
-          ))}
-        </span>
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Backdrop</span>
-        <select
-          className="an-select"
-          value={clip.backdrop}
-          onChange={(e) => onChange(clip.id, { backdrop: e.target.value })}
-          title="How the text is kept readable over the art"
-        >
-          {TEXT_BACKDROPS.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.label}
-            </option>
-          ))}
-        </select>
-        <input
-          type="color"
-          className="an-colour"
-          value={clip.color}
-          onChange={(e) => onChange(clip.id, { color: e.target.value })}
-          title="Text colour"
-        />
-      </div>
-
-      <div className="an-prop-actions">
-        <button type="button" className="btn small ghost" onClick={() => onDuplicate(clip.id)}>
-          <Icon name="copy" /> Duplicate
-        </button>
-        <button type="button" className="btn small danger-btn" onClick={() => onDelete(clip.id)}>
-          <Icon name="close" /> Remove
-        </button>
-        <button type="button" className="btn small ghost" onClick={onClose}>
-          Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// A shape's settings. Position and size are shown as PERCENTAGES of the frame,
-// because that is what they are — the project stores fractions so the same
-// shape lands identically at 720p and 4K, and showing pixels here would be a
-// number that means nothing outside this preview.
-// Serves BOTH a shape and an overlay picture: they are the same box, placed
-// with the same handles and the same numbers. `picture` (a blob url) is what
-// says which — an overlay has no shape kind to pick and no fill to colour.
-function ShapeProperties({
-  shape,
-  totalMs,
-  picture,
-  kf,
-  gesture,
-  onChange,
-  onDuplicate,
-  onDelete,
-  onClose,
-}) {
-  const isPicture = picture !== undefined;
-  const overruns = shape.start_ms + shape.duration_ms > totalMs;
-  const pct = (v) => Math.round(v * 100);
-  const setPct = (field, value, lo, hi) =>
-    onChange(shape.id, { [field]: clamp((parseFloat(value) || 0) / 100, lo, hi) });
-
-  return (
-    <div className="an-props">
-      <div className="an-prop-row">
-        <span className="an-prop-label">{isPicture ? "Picture" : "Shape"}</span>
-        {isPicture ? (
-          picture ? (
-            <img className="an-prop-thumb" src={picture} alt="" />
-          ) : (
-            <span className="tiny muted">Loading…</span>
-          )
-        ) : (
-          <span className="an-tp-group">
-            {SHAPE_KINDS.map((k) => (
-              <button
-                key={k.id}
-                type="button"
-                className={`an-tp-btn an-shape-pick ${shape.kind === k.id ? "on" : ""}`}
-                title={k.label}
-                onClick={() => onChange(shape.id, { kind: k.id })}
-              >
-                <ShapeSwatch kind={k.id} />
-              </button>
-            ))}
-          </span>
-        )}
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Starts at</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={(shape.start_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(shape.id, {
-                start_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-        <label className="an-tp-field">
-          <span>Stays for</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            value={(shape.duration_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(shape.id, {
-                duration_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-      </div>
-
-      {overruns && (
-        <p className="an-prop-warn">
-          ⚠ This runs past the end of the video, so part of it is never seen.
-        </p>
-      )}
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>X</span>
-          <input
-            type="number"
-            step="1"
-            value={pct(shape.x)}
-            onChange={(e) => setPct("x", e.target.value, -0.5, 1.5)}
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="x" />}
-        </label>
-        <label className="an-tp-field">
-          <span>Y</span>
-          <input
-            type="number"
-            step="1"
-            value={pct(shape.y)}
-            onChange={(e) => setPct("y", e.target.value, -0.5, 1.5)}
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="y" />}
-        </label>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Width</span>
-          <input
-            type="number"
-            step="1"
-            min="2"
-            value={pct(shape.w)}
-            onChange={(e) => setPct("w", e.target.value, 0.02, 4)}
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="w" />}
-        </label>
-        <label className="an-tp-field">
-          <span>Height</span>
-          <input
-            type="number"
-            step="1"
-            min="2"
-            value={pct(shape.h)}
-            onChange={(e) => setPct("h", e.target.value, 0.02, 4)}
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="h" />}
-        </label>
-      </div>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">
-          Opacity <span className="tiny muted">{Math.round((shape.opacity ?? 1) * 100)}%</span>
-          {kf && <KeyframeControls {...kf} prop="opacity" />}
-        </span>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={shape.opacity ?? 1}
-          {...gesture}
-          onChange={(e) => onChange(shape.id, { opacity: parseFloat(e.target.value) })}
-        />
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Rotation</span>
-        <input
-          className="an-prop-input"
-          type="number"
-          step="5"
-          min="-360"
-          max="360"
-          value={Math.round(shape.rotation || 0)}
-          onChange={(e) =>
-            onChange(shape.id, { rotation: clamp(parseFloat(e.target.value) || 0, -360, 360) })
-          }
-        />
-        <span className="an-tp-unit">°</span>
-        {kf && <KeyframeControls {...kf} prop="rotation" />}
-        {!isPicture && (
-          <input
-            type="color"
-            className="an-colour"
-            value={shape.color}
-            onChange={(e) => onChange(shape.id, { color: e.target.value })}
-            title="Fill colour"
-          />
-        )}
-      </div>
-
-      <div className="an-prop-actions">
-        <button type="button" className="btn small ghost" onClick={() => onDuplicate(shape.id)}>
-          <Icon name="copy" /> Duplicate
-        </button>
-        <button type="button" className="btn small danger-btn" onClick={() => onDelete(shape.id)}>
-          <Icon name="close" /> Remove
-        </button>
-        <button type="button" className="btn small ghost" onClick={onClose}>
-          Done
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AudioProperties({ track, index, gesture, onChange, onRemove }) {
-  const volume = track.volume ?? 1;
-  const rest = Math.max(0, (track.duration_ms || 0) - (track.offset_ms || 0));
-  const playLen = track.trim_ms ? Math.min(track.trim_ms, rest || track.trim_ms) : rest;
-  return (
-    <div className="an-props">
-      <div className="an-prop-row">
-        <span className="an-prop-label">Track {index + 1}</span>
-        <span className="tiny" title={track.filename}>
-          {track.filename}
-        </span>
-      </div>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">Volume in the mix</span>
-        <div className="an-prop-vol">
-          <button
-            type="button"
-            className={`an-mute ${track.muted ? "on" : ""}`}
-            title={track.muted ? "Unmute this track" : "Mute this track"}
-            onClick={() => onChange(track.upload_id, { muted: !track.muted })}
-          >
-            {track.muted ? "🔇" : "🔊"}
-          </button>
-          <input
-            className="an-vol"
-            type="range"
-            min="0"
-            max="1.5"
-            step="0.05"
-            value={volume}
-            disabled={track.muted}
-            {...gesture}
-            onChange={(e) =>
-              onChange(track.upload_id, { volume: Number(e.target.value) })
-            }
-          />
-          <span className="tiny muted an-vol-read">{Math.round(volume * 100)}%</span>
-        </div>
-        <p className="tiny muted an-prop-hint">
-          100% is the file as recorded. Pull a music bed down to sit under a
-          voice — the tracks are mixed together when the video is exported.
-          {volume > 1 && " Above 100% the editor previews at 100%, but the export uses the real figure."}
-        </p>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Starts at</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            value={((track.offset_ms || 0) / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(track.upload_id, {
-                offset_ms: Math.max(0, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-            title="How far INTO this file playback starts — use it to skip an intro"
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-        <span className="tiny muted">of {formatTime(track.duration_ms || 0)}</span>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Plays for</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            value={(playLen / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(track.upload_id, {
-                trim_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-            title="How much of the track plays — the same as dragging its right edge"
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-        {track.trim_ms ? (
-          <button
-            type="button"
-            className="btn small ghost"
-            onClick={() => onChange(track.upload_id, { trim_ms: null })}
-            title="Play the whole file from the start point"
-          >
-            Use whole track
-          </button>
-        ) : (
-          <span className="tiny muted">whole track</span>
-        )}
-      </div>
-
-      <div className="an-prop-actions">
-        <button
-          type="button"
-          className="btn small danger-btn"
-          onClick={() => onRemove(track.upload_id)}
-        >
-          <Icon name="close" /> Remove track
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function FrameProperties({ frame, index, url, kf, gesture, onChange, onDuplicate, onDelete }) {
-  // A frame's own pan / zoom / fade. New with keyframes, and the reason they
-  // matter most here: keyframe `Zoom` and `X` and a held storyboard panel stops
-  // being a slide and becomes a shot. All four default to an identity
-  // transform, so a frame nobody touches is placed exactly as it always was.
-  const pct = (v) => Math.round((v ?? 0) * 100);
-  return (
-    <div className="an-props">
-      <div className="an-prop-thumb">
-        {url ? <img src={url} alt={frame.label || `Frame ${index + 1}`} /> : <span className="fs-thumb-wait" />}
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Frame</span>
-        <span className="tiny">
-          {index + 1}
-          {frame.label ? ` · ${frame.label}` : ""}
-        </span>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Held for</span>
-          <input
-            type="number"
-            step="0.1"
-            min="0.1"
-            value={(frame.duration_ms / 1000).toFixed(1)}
-            onChange={(e) =>
-              onChange(frame.id, {
-                duration_ms: Math.max(100, Math.round(parseFloat(e.target.value || 0) * 1000)),
-              })
-            }
-          />
-          <span className="an-tp-unit">s</span>
-        </label>
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Label</span>
-        <input
-          className="an-prop-input"
-          value={frame.label || ""}
-          placeholder="Shot 1"
-          onChange={(e) => onChange(frame.id, { label: e.target.value })}
-          title="Shown on the timeline, and burned in when 'shot labels' is on"
-        />
-      </div>
-
-      <div className="an-prop-row an-prop-head">
-        <span className="an-prop-label">Motion</span>
-        <span className="tiny muted">Press ⏱, move the playhead, change the value</span>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>Zoom</span>
-          <input
-            type="number"
-            step="5"
-            min="10"
-            max="1000"
-            value={pct(frame.scale ?? 1)}
-            onChange={(e) =>
-              onChange(frame.id, {
-                scale: clamp((parseFloat(e.target.value) || 100) / 100, 0.1, 10),
-              })
-            }
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="scale" />}
-        </label>
-      </div>
-
-      <div className="an-prop-row">
-        <label className="an-tp-field">
-          <span>X</span>
-          <input
-            type="number"
-            step="1"
-            value={pct(frame.x ?? 0.5)}
-            onChange={(e) =>
-              onChange(frame.id, { x: clamp((parseFloat(e.target.value) || 0) / 100, -2, 3) })
-            }
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="x" />}
-        </label>
-        <label className="an-tp-field">
-          <span>Y</span>
-          <input
-            type="number"
-            step="1"
-            value={pct(frame.y ?? 0.5)}
-            onChange={(e) =>
-              onChange(frame.id, { y: clamp((parseFloat(e.target.value) || 0) / 100, -2, 3) })
-            }
-          />
-          <span className="an-tp-unit">%</span>
-          {kf && <KeyframeControls {...kf} prop="y" />}
-        </label>
-      </div>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">
-          Opacity <span className="tiny muted">{pct(frame.opacity ?? 1)}%</span>
-          {kf && <KeyframeControls {...kf} prop="opacity" />}
-        </span>
-        <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
-          value={frame.opacity ?? 1}
-          {...gesture}
-          onChange={(e) => onChange(frame.id, { opacity: parseFloat(e.target.value) })}
-        />
-      </div>
-
-      {/* One press, rather than making someone type 100 / 50 / 50 / 100 back in
-          — which is the only way to undo a motion once the stopwatch is off. */}
-      {((frame.scale ?? 1) !== 1 ||
-        (frame.x ?? 0.5) !== 0.5 ||
-        (frame.y ?? 0.5) !== 0.5 ||
-        (frame.opacity ?? 1) !== 1 ||
-        Object.keys(frame.keyframes || {}).length > 0) && (
-        <div className="an-prop-row">
-          <button
-            type="button"
-            className="btn small ghost"
-            onClick={() =>
-              onChange(frame.id, { scale: 1, x: 0.5, y: 0.5, opacity: 1, keyframes: {} })
-            }
-            title="Back to the whole picture, centred, with no animation"
-          >
-            Reset motion
-          </button>
-        </div>
-      )}
-
-      <div className="an-prop-actions">
-        <button type="button" className="btn small ghost" onClick={() => onDuplicate(frame.id)}>
-          <Icon name="copy" /> Duplicate
-        </button>
-        <button type="button" className="btn small danger-btn" onClick={() => onDelete(frame.id)}>
-          <Icon name="close" /> Remove
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function VideoProperties({ settings, onChange, sourceBoard }) {
-  return (
-    <div className="an-props">
-      <p className="tiny muted an-prop-hint">
-        Nothing selected — these settings apply to the whole video. Click a frame
-        or a text clip to edit just that.
-      </p>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">Frame shape</span>
-        <span className="an-set-chips">
-          {ASPECTS.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className={`opt-chip ${settings.aspect_ratio === a.id ? "active" : ""}`}
-              onClick={() => onChange({ aspect_ratio: a.id })}
-            >
-              {a.label}
-              <span className="opt-chip-note">{a.note}</span>
-            </button>
-          ))}
-        </span>
-      </div>
-
-      <div className="an-prop-row an-prop-stack">
-        <span className="an-prop-label">Images that don't fit</span>
-        <span className="an-set-chips">
-          <button
-            type="button"
-            className={`opt-chip ${settings.fit === "contain" ? "active" : ""}`}
-            onClick={() => onChange({ fit: "contain" })}
-          >
-            Fit whole image
-            <span className="opt-chip-note">bars at the edges</span>
-          </button>
-          <button
-            type="button"
-            className={`opt-chip ${settings.fit === "cover" ? "active" : ""}`}
-            onClick={() => onChange({ fit: "cover" })}
-          >
-            Fill the frame
-            <span className="opt-chip-note">crops the edges</span>
-          </button>
-        </span>
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Frame rate</span>
-        <select
-          className="an-select"
-          value={settings.fps}
-          onChange={(e) => onChange({ fps: Number(e.target.value) })}
-        >
-          <option value={12}>12 fps</option>
-          <option value={24}>24 fps (film)</option>
-          <option value={25}>25 fps</option>
-          <option value={30}>30 fps</option>
-        </select>
-      </div>
-
-      <div className="an-prop-row">
-        <span className="an-prop-label">Bar colour</span>
-        <input
-          type="color"
-          className="an-colour"
-          value={settings.background}
-          onChange={(e) => onChange({ background: e.target.value })}
-        />
-      </div>
-
-      <label className="an-check">
-        <input
-          type="checkbox"
-          checked={settings.show_labels}
-          onChange={(e) => onChange({ show_labels: e.target.checked })}
-        />
-        Burn shot labels into the video
-      </label>
-
-      {sourceBoard && (
-        <p className="tiny muted an-source">
-          Frames come from a storyboard — re-draw a panel there and it updates here.
-        </p>
-      )}
     </div>
   );
 }

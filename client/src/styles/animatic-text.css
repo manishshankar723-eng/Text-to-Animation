@@ -1,0 +1,522 @@
+/* animatic-text — The animatic's text layer, and the timeline track heights the gutter and the tracks both read. */
+
+/* =========================================================================
+   ANIMATIC — TEXT LAYER
+   The timeline is three tracks (images / text / audio) with a fixed label
+   gutter. Track heights come from these variables so the gutter rows and the
+   tracks themselves can never drift out of alignment.
+   ========================================================================= */
+/* Track heights live on the Timeline's own root, not on whatever wrapper it
+   happens to sit in — the gutter rows and the tracks are matched against these,
+   so if they ever went missing every track would collapse to nothing. */
+.tl-wrap {
+  --tl-ruler-h: 1.15rem;
+  /* ONE height for all three tracks, so the Images / Text / Audio buttons in
+     the gutter are identical — three different sizes read as three different
+     kinds of thing, which they aren't. The waveform is drawn to whatever this
+     is, so it follows automatically. */
+  --tl-track-h: 2.6rem;
+  --tl-img-h: var(--tl-track-h);
+  --tl-txt-h: var(--tl-track-h);
+  --tl-shp-h: var(--tl-track-h);
+  --tl-aud-h: var(--tl-track-h);
+  --tl-row-gap: 0.3rem;
+  /* Keyframe rows: one per ANIMATED property, stacked down the clip.
+     ⚠ In `rem`, like the track they sit in — NOT px. Mixing the two means the
+     rows keep their size while the track shrinks with the browser's font size,
+     and the bottom row eventually lands in the transition band. Everything on
+     this bar scales together or the bands stop being bands.
+     Two budgets have to hold at once, and the tighter one is the second:
+       · a FRAME animates at most 4 (zoom, x, y, opacity). Four rows reach
+         1.52rem including the diamonds' rotated corners; `.tl-transition`
+         starts at 66% of 2.6rem = 1.72rem, so they clear it.
+       · a SHAPE animates 6 (x, y, w, h, opacity, rotation) and its clip is
+         inset 3px top and bottom, leaving 2.23rem. Six rows reach 2.18rem, so
+         the last one is not sliced off by the clip's `overflow: hidden`. */
+  --tl-key-top: 0.15rem;
+  --tl-key-row: 0.31rem;
+  --tl-key-size: 0.3rem;
+  /* A COLUMN now: the two label/track columns, and the horizontal scroll bar
+     under both of them. `--tl-track-h` above is only the default — the vertical
+     bar's grips overwrite it inline, and every row on both columns is measured
+     against it, which is what keeps them in step at any height. */
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-height: 0;
+  min-width: 0;
+  /* Fills the pane rather than stopping under the last lane, so the bar along
+     the bottom is where a scroll bar belongs — at the edge — instead of half
+     way up a half-empty timeline. */
+  flex: 1 1 auto;
+}
+/* The two columns and the vertical bar. This is the row that `.tl-wrap` used to
+   be; the bar along the bottom is its sibling, so it spans the labels too. */
+.tl-cols {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.tl-gutter {
+  /* Wide enough for a track's filename beside its mute button — at 6.6rem a
+     name truncated to "m..." told you nothing about which lane was which. */
+  flex: 0 0 9rem;
+  width: 9rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tl-gutter-ruler {
+  height: var(--tl-ruler-h);
+  flex: 0 0 auto;
+}
+/* The labels scroll DOWN with their tracks (Timeline.jsx translates the rows),
+   so they need a window to be clipped by. They deliberately do NOT scroll
+   sideways — that is the whole point of a gutter. */
+.tl-gutter-clip {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.tl-gutter-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 0.4rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* Explicit classes, NOT :nth-of-type. The ruler spacer above these is a <div>
+   too, so nth-of-type counted it and handed every label the NEXT track's
+   height — Audio got none at all. Browser-tested; don't go back to positional
+   selectors here. */
+/* Per-kind heights used to live here, one rule per lane. They are gone on
+   purpose: with the lanes generated from a list there can be any number of each
+   kind, so EVERY row takes its box from `.tl-lane-row` (gutter) and `.tl-lane`
+   (track) instead. Those two rules are now the only thing keeping the columns
+   in step — see the LANES section further down. */
+.tl-layer-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--primary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.tl-layer-add {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0.1rem 0.25rem;
+  flex-shrink: 0;
+}
+.tl-layer-add:hover {
+  border-color: var(--primary);
+  background: var(--panel);
+}
+
+.tl-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.tl-bars {
+  box-sizing: border-box;
+  height: var(--tl-img-h);
+}
+.tl-audio {
+  box-sizing: border-box;
+  height: var(--tl-aud-h);
+  margin-top: var(--tl-row-gap);
+}
+
+/* --- Text track ---------------------------------------------------------- */
+/* Clips are absolutely positioned because a caption's start is independent of
+   the frames above it — that is the whole point of the layer. */
+.tl-texts {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--tl-txt-h);
+  margin-top: var(--tl-row-gap);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  cursor: text;
+}
+.tl-text {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: rgba(229, 193, 88, 0.22);
+  border: 1px solid var(--border-gold);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-text:active {
+  cursor: grabbing;
+}
+.tl-text.sel {
+  background: var(--gold-grad);
+  border-color: var(--primary);
+}
+.tl-text.sel .tl-text-label {
+  color: var(--gold-ink);
+}
+/* A clip hanging past the last frame is never seen — the frames decide the
+   length of the video — so it is marked rather than silently ignored. */
+.tl-text.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+.tl-text-label {
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+/* --- Shape track --------------------------------------------------------- */
+/* Structurally identical to the text track above — same free-floating clips,
+   same drag code — so it inherits the same geometry. What differs is the tint:
+   a shape clip is neutral, because the swatch inside it carries the shape's own
+   colour and a gold clip around a pink swatch reads as two unrelated things. */
+.tl-shapes {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--tl-shp-h);
+  margin-top: var(--tl-row-gap);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  cursor: default;
+}
+.tl-shape {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: grab;
+  overflow: hidden;
+  min-width: 6px;
+}
+.tl-shape:active {
+  cursor: grabbing;
+}
+.tl-shape.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.tl-shape.over-end {
+  border-style: dashed;
+  border-color: var(--warn);
+}
+/* The clip's own miniature of the shape, in the shape's colour — a lane of six
+   is then readable without opening any of them. */
+.tl-shape-swatch {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+}
+.tl-shape-label {
+  font-size: 0.68rem;
+  text-transform: capitalize;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.tl-track-empty {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.45rem 0.6rem;
+  user-select: none;
+  /* A lane is one track high. Without this the prompt wrapped to a second line
+     and was sliced in half by the lane's own `overflow: hidden`. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The empty band of a layer IS its add button — the obvious thing to click. */
+.tl-track-add {
+  display: block;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-track-add:hover {
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.07);
+}
+.tl-audio .tl-track-empty {
+  padding: 0.9rem 0.7rem;
+}
+
+/* --- Text over the preview ---------------------------------------------- */
+/* `container-type: size` is what makes `cqh` below work: the text is sized as a
+   fraction of the PREVIEW's own height using the same divisors the exporter
+   uses (30 / 21 / 14), so what you see here is what gets burned in. */
+.an-screen {
+  container-type: size;
+}
+/* --- Shapes over the preview --------------------------------------------- */
+/* Everything is positioned in % of this box, which is the same fraction the
+   project stores and `draw_shapes` scales into the exported frame — so dragging
+   a shape here places it exactly there in the MP4, at any resolution.
+   The layer sits UNDER `.an-text-layer` (it is rendered first) for the same
+   reason the exporter draws it first: a caption has to stay readable. */
+.an-shape-layer {
+  position: absolute;
+  inset: 0;
+  /* The layer itself is inert; only the shapes in it take the pointer, so a
+     drag on empty picture still reaches whatever is underneath. */
+  pointer-events: none;
+}
+.an-shape {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+}
+.an-shape:active {
+  cursor: grabbing;
+}
+/* ⚠ THERE IS NO FILL HERE ANY MORE. A shape is drawn in the canvas under this
+   box (see compositor.js — it had to move, so an overlay's blend mode can read
+   it as backdrop). What is left is the drag target and its handle, laid over
+   the canvas at the same fractions the compositor draws at. An UNSELECTED shape
+   is therefore invisible in the DOM, which is correct: the shape you can see is
+   the real one, underneath. */
+.an-shape.sel {
+  outline: 1px dashed var(--primary);
+  outline-offset: 2px;
+}
+.an-shape-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--primary);
+  border: 1px solid var(--gold-ink);
+  cursor: nwse-resize;
+}
+.an-text-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.an-text-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4cqh;
+  padding: 0 7%;
+}
+.an-text-top {
+  top: 5.5%;
+}
+.an-text-middle {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.an-text-bottom {
+  bottom: 5.5%;
+}
+.an-text-clip {
+  display: inline-block;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.28;
+  padding: 0.28em 0.5em;
+  border-radius: 0.25em;
+  font-weight: 500;
+  /* Fallback for browsers without container query units. */
+  font-size: 1rem;
+}
+.an-text-clip.sz-small {
+  font-size: calc(100cqh / 30);
+}
+.an-text-clip.sz-medium {
+  font-size: calc(100cqh / 21);
+}
+.an-text-clip.sz-large {
+  font-size: calc(100cqh / 14);
+}
+.an-text-clip.bd-scrim {
+  background: rgba(0, 0, 0, 0.55);
+}
+.an-text-clip.bd-box {
+  background: rgba(0, 0, 0, 0.88);
+}
+/* No backdrop means the text sits straight on the art, which on a pale
+   storyboard thumbnail can be white-on-white — hence the outline, matching the
+   stroke the exporter draws in this mode. */
+.an-text-clip.bd-none {
+  background: none;
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.055em rgba(0, 0, 0, 0.85);
+}
+.an-text-clip.al-left {
+  align-self: flex-start;
+  text-align: left;
+}
+.an-text-clip.al-center {
+  align-self: center;
+  text-align: center;
+}
+.an-text-clip.al-right {
+  align-self: flex-end;
+  text-align: right;
+}
+.an-text-clip.sel {
+  outline: 1px dashed var(--primary);
+  outline-offset: 2px;
+}
+/* A FREE-PLACED caption. It sits at its own x/y instead of in a zone, and the
+   translate is what makes those the CENTRE of the block — the same point
+   `_draw_text_block` centres on in the exported frame, so a caption dragged
+   here lands there at any resolution. `left`/`top` come from the clip and are
+   set inline; everything else about it is an ordinary `.an-text-clip`.
+   `max-width` is 86% because that is `_TEXT_WIDTH` in animatic.py: the width a
+   caption wraps at has to be the same on both sides or the line breaks differ. */
+.an-text-free {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 86%;
+}
+/* The preset row wraps: five buttons don't fit the inspector's width, and a
+   horizontal scrollbar inside a properties pane is worse than two rows. */
+.an-tp-presets {
+  flex-wrap: wrap;
+}
+/* The language box in the captions panel. Narrower than `.an-name-input`'s
+   full width — it is a hint ("Hindi"), not a title. */
+.an-speech-lang {
+  width: 11rem;
+}
+
+/* --- Add-text button ---------------------------------------------------- */
+/* The two "make a clip out of nothing" buttons in the timeline header. They are
+   a pair and must read as one, so they share the weight — the alternative is
+   Text looking like the real control and Colour card like an afterthought. */
+.an-add-text,
+.an-add-card {
+  font-weight: 650;
+}
+
+.an-tp-text {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.6rem;
+  resize: vertical;
+}
+.an-tp-text:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-tp-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.an-tp-field input {
+  width: 4rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.22rem 0.35rem;
+  text-align: right;
+}
+.an-tp-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.an-tp-group {
+  display: inline-flex;
+  gap: 0.15rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.15rem;
+}
+.an-tp-btn {
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+}
+.an-tp-btn:hover {
+  color: var(--text);
+}
+.an-tp-btn.on {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  font-weight: 650;
+}
+
+@media (max-width: 720px) {
+  .tl-gutter {
+    flex-basis: 6.4rem;
+    width: 6.4rem;
+    font-size: 0.68rem;
+  }
+}
+

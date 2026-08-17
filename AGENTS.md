@@ -23,15 +23,121 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-16 — **the animatic editor has KEYFRAMES and
-TRANSITIONS** (⏱ per property, draggable diamonds, easing, per-gesture undo;
-dissolve / dip / wipe / slide on any cut), and the scene model underneath them
-is written twice on purpose. `client/src/animatic/scene.js` +
-`client/src/animatic/transitions.js` and `animatic_render.py` are the same
-evaluator in two languages; the preview and the exporter both go through it, and
-`tests/render_parity.py` fails the moment they disagree. Read the top Work Log
-entry before touching any of those files, or before adding any property that
-varies over time.
+**Last updated:** 2026-08-17 — **Phase 6 is in and complete: AUDIO DEPTH.** A
+track now has a fade at each end, a three-band EQ, a duck under the voice, and
+its beats on the timeline (drawn AND snapped to). **Preview playback goes through
+a WebAudio graph now** (`client/src/animatic/audio_engine.js`) — an `<audio>`
+element caps volume at 1 and cannot be EQ'd — but ⚠ **the element is still the
+master clock**, and every failure in that file falls back to `el.volume`. Four
+things to know before touching any of it: `fade_window`/`EQ_BANDS` in
+`animatic.py` and `fadeWindow`/`EQ_BANDS` in `client/src/animatic/audio_mix.js`
+are **a twin pair**, checked by running the JS through node; **which track is the
+voice is stated (`role`), never guessed**; `amix=…:normalize=0` must survive
+every edit to `audio_graph`; and the shelves must keep stating `t=s:w=1`, or
+ffmpeg and WebAudio build different filters. The duck is a compressor, so **the
+preview is close rather than exact — the one remaining gap in this editor's
+preview**, and the pane says so. `tests/audio_mix_check.py` encodes, decodes and
+measures the result (49 checks); **nothing has been looked at in a browser, and
+this time the whole preview signal path changed.**
+
+Before that: **An open `<select>` was unreadable** (white list,
+near-white text, user-reported): a select drawn `background: transparent` makes
+Chromium paint its popup on the browser's white default, so `option`/`optgroup`
+now state their colours explicitly in `theme.css`. **Read that rule's comment
+before styling any select** — `color-scheme: dark` does not cover this case.
+
+Before that: **The TIMELINE SCROLLS LIKE PREMIERE'S now
+(user-requested, with a screenshot).** A bar along the bottom and one down the
+right-hand side, each with a round grip at both ends that ZOOMS instead of
+scrolling — `client/src/components/ZoomScrollbar.jsx` +
+`client/src/styles/animatic-scrollbar.css`. The native scrollbars are hidden but
+still driven (wheel, trackpad, the Hand tool), the ruler is pinned to the top of
+the scroller, the gutter is moved by hand to stay beside its tracks, and the zoom
+became CONTINUOUS pixels-per-second instead of six fixed steps. `npm run build`
+is clean and the component was **driven in a headless Chromium** (grip-zoom,
+pan, track-height zoom, scrolled alignment — all measured), but **the real
+editor has still not been opened — see Next Steps.**
+
+Before that: **The PROPERTIES PANE was rebuilt as one pane
+(user-reported: "confusing").** It is now Premiere's Effect Controls grammar:
+named collapsible sections, one property per row on a fixed two-column grid, one
+size for every control, and colour used to rank things rather than to decorate
+them. Everything a pane is made of lives in
+`client/src/components/properties/PropGroup.jsx` + `client/src/styles/properties.css`
+— **read that file's header before editing any pane**, because the alignment
+depends on two rules stated there (one property per row; rows in `ANIMATABLE`
+order, to match the timeline's diamond rows). `npm run build` is clean and every
+selector the e2e suite reaches for was kept, but **the editor has not been opened
+in a browser since — this is a layout change and needs eyes.**
+
+Before that: **Phase 5 is in: the TEXT ENGINE. The font is now
+a FILE THAT SHIPS WITH THE PROJECT, and that is the point of the whole phase.**
+`_text_font` used to grope for `arial.ttf` while the monitor asked CSS for the
+nearest system sans; on any machine where those differ, the caption you
+positioned was not the caption that landed in the MP4. Six OFL fonts now live in
+`client/public/fonts/` and `animatic_fonts.py` ⇄ `client/src/animatic/fonts.js`
+are a TWIN PAIR checked by `tests/captions_check.py`, exactly like the scene
+model. A caption gained real type (stroke, shadow, letter spacing — every unit
+chosen so both sides use the same number), free placement (`place: flow | free`
+with keyframable `x`/`y`), and in/out presets that are **keyframe macros and
+nothing else**: the exporter needed no changes at all. Auto-captions come from an
+audio track and a voiceover from the board's dialogue, both timed from data we
+already hold. **⚠ NO REAL GEMINI CALL HAS BEEN MADE — both AI paths are proven
+against stubs only.** Read the top Work Log entry before touching any of it.
+
+Before that: **Phase 4: the LOOK (colour, LUT, masks,
+chroma key, blend modes), and the Program monitor is a WebGL canvas.** A frame
+and an overlay each carry `effects` / `mask` / `blend`, and every numeric
+parameter is keyframable through the ordinary ⏱ using a FLAT track name
+(`fx:<effect id>:<param>`, `mask:<field>`) — so `keyframes` stays the shape it
+has always been, and the timeline, the undo stack and the inspector all work on a
+graded clip unchanged. The pixel maths is written twice, `animatic_effects.py`
+and `client/src/animatic/gl/shaders/`, and the two are compared with a TOLERANCE
+rather than exactly, because WebGL and Pillow never will be byte-identical.
+**Read the top Work Log entry before touching any of it.**
+
+**Three pre-existing bugs fell out of this, all of one kind: the preview was
+lying and nothing was checking.** The export payload in `server/animatics.py` was
+a hand-written dict that had fallen behind the model, so **every transition was
+inert in the MP4** and **a Ken Burns push exported as a still**; and the fast
+planner dropped a STATIC transform. That payload is a `model_dump` now and must
+stay one.
+
+**⚠ THE SHADERS HAVE NEVER BEEN COMPILED.** The pixel half of
+`tests/effects_parity_check.py` needs `headless-gl`, which would not build on
+this machine, and the editor has not been opened in a browser. Its static half
+passes and the whole Python side is pinned to golden values, but nothing has yet
+proved the monitor draws. That is the first thing to do next.
+
+**`tests/e2e_animatic.py` passes all 14 sections again.** It had been crashing at
+section 5 since the LANES work, so sections 6-14 — the Media pane, the Properties
+panes, keyframes, all five viewports — had not run for several sessions. Three of
+the four failures were a stale test, one was the test misreading the app, and
+none was a bug in the app; **when one of its assertions fails, work out which
+side is wrong before changing either.**
+
+Before that: **the timeline holds VIDEO CLIPS**, alongside
+stills and colour cards (Phase 3). A "frame" is a clip: `kind` says what it is,
+and a video adds `in_ms`/`out_ms`/`speed`. **`duration_ms` is still the length on
+the TIMELINE for every kind — speed widens the SOURCE window, it does not re-time
+the clip** — which is why nothing else on the timeline moves when you change it.
+Pillow can't decode video, so `video_frames.py` extracts stills with ffmpeg and
+caches them by content; **there is still no ffprobe**. A clip gets there two
+ways — **dragged in from the desktop, or generated by Veo with ✨ Animate** — and
+a generated clip lands as an ordinary video upload so the two are the same object
+from that moment on. **The ✨ button SPENDS MONEY**: read the top Work Log entry
+and the 2026-08-07 one before touching it, and note that render records live in
+the job's `result` because the autosave would otherwise erase a clip that was
+paid for.
+
+Before that, and still true: **the editor has KEYFRAMES and TRANSITIONS** (⏱ per
+property, draggable diamonds, easing, per-gesture undo; dissolve / dip / wipe /
+slide on any cut), and the scene model underneath them is written twice on
+purpose. `client/src/animatic/scene.js` + `client/src/animatic/transitions.js`
+and `animatic_render.py` are the same evaluator in two languages; the preview and
+the exporter both go through it, and `tests/render_parity.py` fails the moment
+they disagree. Read the top Work Log entry before touching any of those files, or
+before adding any property that varies over time.
 
 **The one thing to know about transitions before you change them:** they are
 **boundary-local** — the blend straddles the cut and the timeline does NOT get
@@ -107,9 +213,15 @@ Pipeline stages (see `pipeline.py`):
 | `prompts.yaml` | Prompt templates + per-template `parts_order`. Subject types: `default` (human, gender inferred), `human_male`, `human_female`, `robot`, `animal`, `bird`, `monster`, `ghost`. Global `parts_order` fallback. |
 | `postprocess.py` | Clean white bg + auto-crop + **group-normalize** (4 views share one scale). |
 | `splitter.py` | Split 2×2 sheet → 4 views at natural aspect (NO square resize). |
-| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. Owns the ffmpeg integration: `ffmpeg_exe()` and `run_ffmpeg()` are public so `video_assemble.py` reuses them. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Spends no AI quota. |
+| `animatic.py` | **Storyboard → Animatic.** Timed image sequence + text layer + audio → MP4. Owns the ffmpeg integration: `ffmpeg_exe()` and `run_ffmpeg()` are public so `video_assemble.py` reuses them. `plan_segments()` cuts the timeline wherever a text clip starts/ends; `draw_texts()` burns captions in with Pillow. Also owns **the MIX** — `audio_graph()` builds the levels, the `afade` ramps and the sidechain duck, and returns None when nothing needs a filter at all; `track_play_ms`/`fade_window` are a **⚠ TWIN of `client/src/animatic/audio_mix.js`**, and `amix=…:normalize=0` must survive every edit to it. Spends no AI quota. |
 | `animatic_render.py` | **The scene model: what the frame looks like at time t.** Which clips are on screen, what every animated property has interpolated to, and — mid-cut — which SECOND picture is blending in and how far. **⚠ TWIN of `client/src/animatic/scene.js` (and, for the `transition_*` half, of `client/src/animatic/transitions.js`)** — the same evaluator in two languages, so the preview and the export agree; `tests/render_parity.py` fails the moment they don't. Also owns `place_picture()`, a frame's own pan/zoom, which has to happen while the picture is fitted rather than after. Knows nothing about ffmpeg. |
 | `video_client.py` | **Animatics → Final Video.** Veo image→video. The ONLY module that knows Veo exists. **Switchable backend (`VIDEO_PROVIDER`): Vertex AI or Gemini API** — same shape as `gemini_client.py`. **BILLED PER SECOND OF OUTPUT.** `estimate_cost_usd()` lives here. There is no Google Flow API — read the module docstring. |
+| `animatic_effects.py` | **The LOOK, in pixels** — brightness / contrast / saturation, a 3D LUT from a `.cube`, a chroma key, feathered masks and the blend modes. **⚠ TWIN of `client/src/animatic/gl/shaders/`**, and the ONE twin in this project that cannot be compared exactly: WebGL and Pillow will never be byte-identical, so `tests/effects_parity_check.py` compares them with a tolerance while `tests/effects_check.py` pins this side to golden values. Deliberately NOT `ImageEnhance` — its contrast pivots on the image's own mean, which a fragment shader cannot know. Numpy; no ffmpeg, no quota. |
+| `animatic_fonts.py` | **The caption fonts, server side** — the bundled list and the path to each `.ttf` in `client/public/fonts/`. **⚠ TWIN of `client/src/animatic/fonts.js`**, element for element, checked by `tests/captions_check.py`. Exists because a font resolved by NAME resolves differently on a laptop and a server, so the caption in the monitor is not the caption in the MP4. Never asks the machine it is running on. |
+| `client/public/fonts/*.ttf` | The six OFL faces themselves, served to the browser at `/fonts/` and opened off disk by the exporter — ONE file for both sides, which is the whole design. Licences in that folder's `OFL.txt` and `README.md`. |
+| `captions.py` | **Audio → timed caption clips.** ⚠ SPENDS QUOTA, in one call. Two halves on purpose: `transcribe()` is the model call, `tidy_lines()` is pure — split, order, never overlap, long enough to read, inside the video. The free half is where every "the subtitles are on top of each other" bug lives, and a failure there must not mean paying to listen again. A generated caption is marked ONLY by its `cap…` id prefix. |
+| `tts.py` | **Dialogue → a spoken voiceover, timed to the shots.** ⚠ SPENDS QUOTA, one call PER LINE. Returns the timings that HAPPENED, not the ones asked for — an overrunning line pushes the next later rather than talking over it — and those become the captions. **The one place here that knows a sound's length without being told**: raw PCM at a known rate, so the byte count IS the duration and no ffprobe is needed. |
+| `luts/*.cube` | The built-in colour looks, as FILES — read by `Color3DLUT` for the export and fetched by the browser for the monitor, so there is one copy of the numbers. Regenerate with `python luts/generate_luts.py`. |
 | `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
 | `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
 | `retry_policy.py` | When to retry a Google AI call and how long to wait. Shared by `gemini_client.py` and `video_client.py` so one tuned policy governs both. Pure functions over an exception. |
@@ -136,6 +248,8 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/animatic/keyframes.js` | **Editing keyframes** — the operations behind the ⏱ button (add / remove / move a key, set a curve, start and stop animating a property). `moveKeysAt()` is the one a timeline diamond drags: a diamond is an INSTANT, so every property keyed there moves together. Pure, returns PATCHES rather than mutating, so a keyframe edit is an ordinary document edit and Ctrl+Z works on it. No Python twin: the server renders animations, it never edits them. |
 | `client/src/components/KeyframeControls.jsx` | The `⏱ ‹ ◆ › curve` row that sits at the end of an animatable property in the Properties pane. Renders and reports intent only — every operation on the data is in `animatic/keyframes.js`. |
 | `client/src/animatic/scene.js` | **The scene model, client side** — `sceneAt(project, t)`, keyframe interpolation, easing, `isAnimated`, `sceneSignature`. Pure: no React, no DOM, no urls. **⚠ TWIN of `animatic_render.py`.** Read its docstring before adding any property that varies over time. |
+| `client/src/animatic/fonts.js` | **The caption fonts, client side** — the same list, plus the generated `@font-face` rules. **⚠ TWIN of `animatic_fonts.py`.** The rules are GENERATED rather than written in a .css file: a third hand-maintained copy of the list is exactly the `_SHAPE_POINTS`/`POINTS` failure. Families are namespaced so a user's own copy of Inter can never win. |
+| `client/src/animatic/text_presets.js` | **In/out text animations, as KEYFRAME MACROS.** Fade / Rise / Drop / Slide write keys on `opacity`/`x`/`y` and get out of the way — nothing is stored on the clip and neither renderer has heard of a "preset", which is why the exporter needed no changes. A moving preset switches the clip to free placement, or it would animate nothing. |
 | `client/src/App.jsx` | Landing → Login → sidebar shell. Nav state, upgrade + account (logout) popups. |
 | `client/src/components/Landing.jsx` | Public marketing landing page (full-bleed). |
 | `client/src/components/Login.jsx` | Login / register + "Continue with Google" (UI only, not wired) + back-to-home. |
@@ -145,18 +259,33 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/GenerateForm.jsx` | Describe/Upload tabs (drag-and-drop), subject-type dropdown, parts multi-select chips + custom asset. |
 | `client/src/components/JobList.jsx` | Owner's jobs; auto-polls while active. |
 | `client/src/components/JobDetail.jsx` | Live progress bar + per-section skeletons, incremental gallery, per-view/section regenerate, failed-part retry, per-section download + 3D popup. |
+| `client/src/animatic/gl/compositor.js` | **The Program monitor's compositor.** WebGL: the pictures, the transition, the SHAPE FILLS and the overlays, each with its own effects, mask and blend. Blend modes work by ping-ponging two framebuffers so a layer can sample what is under it. Holds `placePicture` (twin of `place_picture`) and `overlayRect` (twin of the sizing in `draw_overlays`). ⚠ The shape polygons here are the THIRD copy of `POINTS` / `_SHAPE_POINTS` — a clip-path, a Pillow polygon and a vertex buffer genuinely cannot share one representation. |
+| `client/src/animatic/gl/shaders/` | `effects.js` (one GLSL function per effect, plus the mask and the blend) and `layer.js` (the one program everything is drawn with). Exported as STRINGS, not `.glsl`, so the parity harness can import the exact source the browser compiles under plain node. The effect numbering is generated from `EFFECT_KINDS`, never typed twice. |
+| `client/src/animatic/gl/cube.js` | Parsing a `.cube` (twin of `parse_cube`) and laying the table out as the 2D strip the shader samples. ⚠ Imports NOTHING — one import of `api.js` would make the whole compositor unloadable outside a bundler and break the parity test. `lut.js` is the browser half that fetches and caches. |
+| `client/src/components/ProgramCanvas.jsx` | The monitor. Draws the scene through the compositor and keeps the media elements it uploads as textures HIDDEN but in the document — a `<video>` will not decode otherwise, and `useMonitorVideo` still drives them through `videoElsRef`. The captions, the label and the drag handles stay in the DOM over the top. |
+| `client/src/components/EffectsPanel.jsx` | The Look rows slotted into `FrameProperties` and (for an overlay) `ShapeProperties`. Every numeric parameter wears the ordinary ⏱; the track is just named `fx:<effect id>:<param>`. Structure is read from the STORED clip and values from the RESOLVED one — `resolveLook` drops an effect kind this build doesn't know, so editing the resolved list would delete the wrong row. |
 | `client/src/components/StoryboardToAnimatics.jsx` | Animatics workflow shell: library ⇄ one open animatic. |
 | `client/src/components/AnimaticLibrary.jsx` | "Your Animatics": New / From a Storyboard tiles + Recent / All sections. **Mirrors `StoryboardLibrary.jsx` and shares its `.lib-*` styles** — change a card in one, change it in both. |
-| `client/src/components/AnimaticEditor.jsx` | The editor, as an **NLE workspace**: top bar + status strip + Media / Program / Properties panes over a full-width timeline, fixed to the viewport height. Holds all the state (playback, autosave, export). **Audio is the playback clock** (see the Work Log). `TextProperties` / `FrameProperties` / `VideoProperties` at the foot are the three states of the Properties pane. |
+| `client/src/components/AnimaticEditor.jsx` | The editor, as an **NLE workspace**: top bar + status strip + Media / Program / Properties panes over a full-width timeline, fixed to the viewport height. What is left here is the workspace itself — the panes, the media it fetches, the edits it makes, and the two server jobs it can start. The document, the clock and the undo stack are the three hooks below; the Properties panes are in `components/properties/`. |
+| `client/src/animatic/useAnimaticProject.js` | **The document**: loading it, holding it, autosaving it. "Is this saved?" is decided by comparing content against a BASELINE signature, never by "did an effect fire" — read the header before touching it. Owns `frameForSave`. `veo_clips` arrives on the project and is **never sent back**, so a save cannot erase a paid render. |
+| `client/src/animatic/useTimelineTransport.js` | **The playhead** — the rAF clock, shuttle (J/K/L), marks (I/O), seek and stepping. **Audio is the master clock**; a `<video>` in the monitor is a slave, which is `useMonitorVideo`, exported separately from the same file. ⚠ `scene` is derived FROM this clock, so it can never be an argument to the transport — that is why the video slaving is a second call. |
+| `client/src/animatic/useUndoStack.js` | Ctrl+Z / Ctrl+Shift+Z over the WHOLE document (one stack, not one per layer), the per-gesture bracket (`gestureProps`), and `reset()` for when a project finishes loading. |
+| `client/src/animatic/util.js` | `clamp`. Nothing else belongs here — scene-model arithmetic goes in `scene.js`. |
+| `client/src/components/properties/` | The Properties pane, one component per selection state: `TransitionProperties`, `TextProperties`, `ShapeProperties` (serves overlays too), `AudioProperties`, `FrameProperties`, `VideoProperties`, re-exported from `index.js`. `VideoClipProperties.jsx` sits beside them but is not a pane — it is the extra rows a video clip or colour card adds to `FrameProperties`. All presentational: no state, they write through the handlers they are given. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
 | `client/src/components/Shapes.jsx` | The shape layer's vocabulary: the unit-square polygons (**mirrored in `animatic.py`**), the CSS for them, and the picker gallery. |
-| `client/src/components/Timeline.jsx` | **As many lanes as the project has** — the editor passes ONE `lanes` list and both the gutter labels and the tracks render from it. Kinds: 🖼 sequence · 🖼 image overlay · T text · ◆ shapes · ♪ audio. Fixed label gutter, ruler, playhead. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. Exports `formatTime`. |
-| `client/src/components/Waveform.jsx` | Decodes the audio in the browser (WebAudio) and draws peaks on a canvas. No library. |
+| `client/src/components/Timeline.jsx` | **As many lanes as the project has** — the editor passes ONE `lanes` list and both the gutter labels and the tracks render from it. Kinds: 🖼 sequence · 🖼 image overlay · T text · ◆ shapes · ♪ audio. Fixed label gutter, ruler pinned to the top of the scroller, playhead, and the two `ZoomScrollbar`s. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. ⚠ The gutter is OUTSIDE the scroller, so `readView` translates it by hand — that is the only thing keeping a label beside its own track when the lanes are scrolled down. Exports `formatTime`. |
+| `client/src/components/ZoomScrollbar.jsx` | The timeline's scroll bars — one component, both axes. **The ends ZOOM**: the thumb's length is the zoom and its position is the scroll, so a grip drag frames a stretch of the edit in one gesture (Premiere's bars, not the browser's). Reports a WINDOW as fractions of the whole timeline; `Timeline.jsx` turns that into pixels-per-second (horizontal) or track height (vertical). |
+| `client/src/components/Waveform.jsx` | Draws the peaks on a canvas. The DECODE moved to `animatic/beats.js` and is cached there by url — the waveform, the beat markers and the duck preview all want the same samples, and three decodes of one MP3 was three chances to disagree about how long it is. |
+| `client/src/animatic/audio_mix.js` | **What a track sounds like at a moment** — its tone, its fader, its fades, the duck it sits under. **⚠ TWIN of the mix half of `animatic.py`** (`trackPlayMs`/`fadeWindow`/`EQ_BANDS` ⇄ `track_play_ms`/`fade_window`/`EQ_BANDS`), compared case by case and band by band in `tests/audio_mix_check.py` by running this file under node. A fade is placed against what the track PLAYS — its trim, or the end of the video — never against the file. The EQ is three FIXED bands because each is one cookbook biquad, i.e. one `BiquadFilterNode` here and one ffmpeg filter there. |
+| `client/src/animatic/audio_engine.js` | **The preview's mixer.** Each `<audio>` is routed `→ 3 biquads → gain → destination`, because an element gives you `volume` (capped at 1) and `muted` and nothing else — a track at 150% used to preview at 100%, and an EQ was impossible. ⚠ **The element is still the master clock**: a `MediaElementSource` plays its element, it does not replace it. The context starts suspended (resumed from the gesture that starts playback) and `createMediaElementSource` may be called once per element — **every failure falls back to `el.volume`**, the behaviour that predates this file. |
+| `client/src/animatic/beats.js` | **Where the beats are, and the one decode everything reads from.** Energy-envelope onset detection: no library, no FFT, no server round-trip. The pure half (`energyEnvelope`, `onsetsFromEnvelope`) takes plain arrays and touches no browser API, which is what lets the test run it under node against a click track at a known BPM. Beat times are in FILE time, like `offset_ms`. |
+| `client/src/animatic/useAudioAnalysis.js` | The React end of that cache: upload_id → the decoded analysis, for the timeline's markers and the transport's duck. Deliberately NOT part of `useTimelineTransport` — the transport owns the clock and an analysis arriving late must not be able to restart it. |
 | `client/src/components/PanelSequenceStrip.jsx` | One shot's KEY POSES under its panel: the duration dialog, the thumbnail strip, per-pose ↻ redraw, the lightbox, Stop/resume/clear. **Regenerate sends `resume=false` (redraw); "Draw the remaining N" sends `resume=true`** — they cost different amounts, don't merge them. Knows a redraw has landed by the frame URL's `?v=<mtime>` changing, and blurs the poses being replaced under `.redraw-veil` until then. |
 | `client/src/components/PanelVersions.jsx` | The "‹ 2 / 3 ›" pill on a panel: every redraw is archived, so you can step back to the version you preferred. Renders nothing until a shot has been redrawn once. |
 | `client/src/components/DialogueBox.jsx` | A shot's spoken lines, read-only (board tiles). Renders **nothing** when the shot is silent. |
 | `client/src/components/DialogueEditor.jsx` | The same lines, editable, on the review step. A silent shot shows only a "＋ Add dialogue" link. |
-| `client/src/styles.css` | Dark + champagne-gold theme. |
+| `client/src/styles/` | Dark + champagne-gold theme, in 24 files pulled in by `styles/index.css` (which `main.jsx` imports). **⚠ The import ORDER in `index.css` is the cascade** — it is the order the one big `styles.css` was written in, and moving an import can change the page without changing a declaration. `theme.css` must stay first; add new files at the end or beside their block. |
 
 ### API endpoints
 - `POST /auth/register` · `POST /auth/login` · `GET /auth/me` · `DELETE /auth/me` (delete account)
@@ -181,6 +310,8 @@ Pipeline stages (see `pipeline.py`):
 - **Storyboard → Animatic (`server/animatics.py`, kind `animatic`):**
   `POST /animatics` — new project; with `source_storyboard_id` and no frames it fills the sequence from that board's DRAWN panels (the board's "🎬 Make animatic") · `GET /animatics` — library · `GET/PUT /animatics/{id}` — read / save the project: `frames`, `texts`, `shapes`, `layers` (the lanes), `overlays` (pictures composited over the video), `audio`, `settings` (PUT is the editor's autosave, every field optional; 409 while exporting) · `DELETE /animatics/{id}`
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
+  `POST /animatics/{id}/videos` (multi-file) — upload video clips; each item comes back with a `duration_ms` **measured server-side by ffmpeg** (there is no ffprobe), because the exporter must work from the same number
+  `POST /animatics/{id}/animate/estimate` — **free**; what animating these frames would cost. Takes the SAME body as the render below, so the price quoted is the price of what the button does · `POST /animatics/{id}/animate` — **SPENDS MONEY.** 202, renders off-request on the video pool (poll `GET /jobs/{id}`). Refuses promptless frames, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`. The finished clip lands as an ordinary video upload, so it is indistinguishable from a dropped file thereafter. **Render records live in the job's `result` (`veo_clips`), never `params`** — the autosave rewrites `params` wholesale and would otherwise erase a clip that was paid for
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - **Animatics → Final Video (`server/videos.py`, kind `final_video`):**
   `POST /final-videos` — new project; with `source_animatic_id` and no shots it fills the shot list from that animatic's frames (the editor's "🎞️ Make final video"); `source_storyboard_id` does the same from drawn panels · `GET /final-videos` — library · `GET/PUT /final-videos/{id}` — read / save (`shots`, `art`, `settings`, `title`; PUT is the workspace autosave, 409 while busy) · `DELETE /final-videos/{id}`
@@ -298,6 +429,25 @@ in `.env` — no code change needed.
 isolated ports. It has caught bugs a clean `npm run build` happily shipped
 (mis-aligned timeline labels, a waveform that never drew, a preview that wasn't
 the exported frame shape, dead space under the workspace).
+
+**Status: ALL 14 SECTIONS PASS** (2026-08-16). It had been dying at section 5
+for several sessions — see the Work Log — so if you are comparing against an
+older note, the numbers moved.
+
+**⚠ WHEN AN ASSERTION HERE FAILS, FIND OUT WHICH SIDE IS WRONG BEFORE TOUCHING
+EITHER.** Of the four that were failing, three were stale test and one was a
+misreading of the app; none was a bug in the app. **Never edit an assertion just
+to make it green** — write down which it was and why, as the comments in the
+file now do.
+
+**Two rules this test has to keep obeying, both learned the hard way:**
+1. **Never name timeline tracks by hand.** The timeline has as many lanes as the
+   project has. Walk `.tl-lane` / `.tl-gutter-row` in DOM order; a hardcoded
+   list of three is what made it `IndexError` and take sections 6-14 with it.
+2. **Anything in the Properties pane needs the thing SELECTED first.** The pane
+   follows the selection (`selectOnly`), so asserting a control is present
+   without clicking is asserting that the pane shows a control for something
+   nobody picked — the exact thing that design prevents.
 
 **Run it when the user ASKS for a browser test — not after every change.** It
 takes minutes (two servers, five viewports) and the user has said plainly they
@@ -452,7 +602,908 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-16 (latest) — TRANSITIONS, and they cost the timeline nothing (Phase 2)
+### 2026-08-17 (latest) — EQ, and PLAYBACK MOVED INTO A WEBAUDIO GRAPH
+
+The one item of Phase 6 that was left out, and the refactor it needed. **The
+refactor is the real change here** — the EQ is what forced it.
+
+**Why an `<audio>` element wasn't enough any more.** It offers exactly two
+controls, `volume` and `muted`, and `volume` is clamped to 1. That was tolerable
+while a track had only a fader; it was already costing us one lie in the UI, and
+an EQ cannot be applied to an element at all:
+
+- a track set to 150% **previewed at 100% and exported at 150%**, and the
+  Properties pane apologised for it in prose. That sentence is gone, because the
+  limit is gone — `GainNode` has no cap.
+- three bands need three filters, and `BiquadFilterNode` is the only place to
+  put them.
+
+**`client/src/animatic/audio_engine.js` (new)** wires each element as
+`<audio> → low shelf → mid peak → high shelf → gain → destination` — the
+exporter's chain, in the exporter's order. ⚠ **The element is still the master
+clock.** A `MediaElementSource` plays its element rather than replacing it, so
+`currentTime` is still read off the first playing track and nothing about the
+transport's clock moved. Two traps are handled and commented: the context starts
+**suspended** until a user gesture (so `playAt` resumes it — a suspended context
+is silence with a moving playhead), and `createMediaElementSource` may be called
+**once per element** and throws otherwise. **Every failure falls back to
+`el.volume`**, which is exactly what the editor did before this file existed: a
+browser that won't give us a graph should lose the EQ, not the sound.
+
+**THREE FIXED BANDS, NOT PARAMETRIC, AND THAT IS THE DESIGN.** `EQ_BANDS` is a
+twin table in `animatic.py` and `audio_mix.js` — low shelf 120 Hz, mid bell
+1 kHz, high shelf 6 kHz — because each entry is one RBJ cookbook biquad, which
+is one `BiquadFilterNode` **and** one ffmpeg filter. A parametric EQ would put a
+frequency and a Q on the project, and every one of them is another number that
+has to mean the same thing in two filter implementations. The tables are
+compared band for band through node.
+
+⚠ **`t=s:w=1` ON THE SHELVES IS LOAD-BEARING.** ffmpeg's `bass`/`treble` default
+to `t=q:w=0.5`; WebAudio's shelves are cookbook shelves with a **slope** of 1.
+Left at ffmpeg's defaults the two are different filters, and the editor would be
+auditioning an EQ the export does not apply.
+
+**Tone runs BEFORE the fader, and both before the fades** — in the graph and in
+the preview's node order. A shelf has gain in it, so running it after the fader
+would make the same boost eat a different amount of headroom at every volume,
+and running it after a fade would ring on top of a ramp that is meant to reach
+silence.
+
+- **Verified** — `tests/audio_mix_check.py`, now 49 checks. The EQ half is
+  measured **out of the encoded file with an FFT**, and every assertion is a
+  PAIR: +9 dB of Low lifts 50 Hz by ×2.4 **and leaves 10 kHz within 1%**; −12 dB
+  of High drops 10 kHz to ×0.26 **and leaves 50 Hz alone**. A plain gain, or the
+  filter landing on the wrong band, fails. Two things worth knowing if you
+  extend it: **a shelf gives half its dB at its own corner frequency**, so a
+  6 kHz tone against the 6 kHz shelf reads as a broken filter (the tones are on
+  the plateaus for that reason); and the tones are quiet, because +9 dB on a
+  loud one clips the encoder and clipped audio steals energy from the other
+  tone. `render_parity` / `keyframe_ops_check` / `animatic_motion_check` still
+  green, `npm run build` clean, `import server.main` clean.
+- **Also fixed: a flaky check I had just written.** "The duck is back afterwards"
+  measured a window starting 0.6s after the voice stopped, while a 400ms release
+  is still letting go — and ended on the last block of the file, where two
+  exports built from different graphs disagree by a few milliseconds. It failed
+  about one run in three. The duck section now uses an 8-second video and
+  measures 5.2–6.5s: **0.999 → 0.463 → 1.000, three runs running.**
+- **NOT browser-checked.** This is the entry with the most reason to be: the
+  whole preview signal path changed. See the Next Steps item.
+
+### 2026-08-17 — PHASE 6: AUDIO DEPTH — fades, ducking, beat markers
+
+The sound was a level and a trim. It is now a mix: a track has a shape at each
+end, a place under the voice, and the beats are on the timeline to cut against.
+
+**Two new fields' worth of schema, and a third that had to be asked for.**
+`AnimaticAudio` gains `fade_in_ms` / `fade_out_ms`, `duck_to` (a gain: 1.0 =
+never, 0.3 ≈ −10 dB), and `role` + `duck_target`. Every one is optional and
+defaults to today's behaviour, so an animatic saved yesterday mixes identically —
+asserted, not assumed (`tests/audio_mix_check.py` §1).
+
+⚠ **WHICH TRACK IS THE VOICE IS STATED, NEVER GUESSED.** `role: voice | music`
+exists because "the other track" is wrong the first time someone lays two music
+beds, and a mix that quietly ducks the wrong thing is harder to diagnose than one
+that doesn't duck at all. `_duck_pairs` resolves `duck_target` first, then the
+first `role: "voice"`, then gives up. A track cannot duck under itself, and a
+track that is somebody's key is never itself ducked.
+
+**A FADE IS PLACED AGAINST WHAT THE TRACK PLAYS, not against the file.**
+`track_play_ms` / `fade_window` (animatic.py) ⇄ `trackPlayMs` / `fadeWindow`
+(`client/src/animatic/audio_mix.js`) are **a twin pair like the scene model**,
+and the parity is checked by running the JS half through **node** and comparing
+window for window (§3). A fade out therefore lands on the end of the trim, or on
+the end of the VIDEO when that comes first — a 4-minute bed under a 6-second cut
+fades out at 6 seconds, where you can hear it. Two fades longer than the track
+are scaled down together rather than crossing (the transition rule, again).
+
+**The duck is a COMPRESSOR, and that is a deliberate trade.** `sidechaincompress`
+keyed off an `asplit` of the voice. There is no ratio that means "exactly −10 dB"
+for every take, so `duck_to` is aimed at a nominal speech level (`duck_ratio`)
+and the compressor does the rest — further down on a shouted line, less on a
+whisper, which is what a duck is for. Every chain in a ducked graph is pinned to
+one `aformat`: a 44.1kHz bed keyed off a 48kHz voiceover is the ordinary case,
+and sidechaincompress needs its two inputs to match.
+
+⚠ **`amix=…:normalize=0` SURVIVED** the rewrite and must keep surviving — see the
+2026-07-31 entry for what it costs when it doesn't. The whole audio graph moved
+into `audio_graph(tracks, total_ms)`, which returns **None** when nothing needs a
+filter at all, so one track at its recorded level still takes the plain
+`-map 1:a:0` path it has always taken, byte for byte.
+
+**The export payload's audio is a `model_dump` now.** It was a hand-written dict
+of four fields — the exact shape that had already cost this project every
+transition and every Ken Burns push (2026-08-17, Phase 4). `duration_ms` alone
+would have been dropped, and a fade out with no idea where the track ends is a
+fade that never happens.
+
+**Beats: `client/src/animatic/beats.js`, and one decode for the whole editor.**
+Energy-envelope onset detection — half-wave rectified rise, peak leading its
+neighbours, enough over a local mean, 120ms minimum gap. No library, no server
+round-trip, no FFT (everything a board is cut to has a transient on the beat).
+The ticks are drawn under the waveform **and are snap targets**, which is the
+point: "roughly on the beat" is exactly what you were trying to avoid.
+The decode used to live inside `Waveform.jsx`; it is now cached by url in
+`beats.js`, so a file is decoded **once** however many things look at it, and
+`useAudioAnalysis` is the React end of that. Verified against a 120 BPM click
+track through the real detector: 16 of 16 markers, worst error **5ms**.
+
+**The preview mixes what the export mixes.** `useTimelineTransport` sets each
+element's volume **every animation frame** (fader × fade × duck) rather than in
+an effect — a fade that only moved when you edited something would be a ramp
+nobody ever heard. ⚠ **The duck is the one place the preview is CLOSE rather than
+exact**, and the Properties pane says so: it runs the same compressor law over
+the decoded envelope, at that envelope's resolution, instead of ffmpeg's
+sample-accurate sidechain. Everything else — where the ramps are, how deep, which
+track ducks under which — is the same code on both sides.
+
+**UI**: fade grips at both top corners of the audio clip (Premiere's gesture),
+the ramp drawn as a wedge from `fadeWindow` so the shape on the clip is the shape
+of the gain, beat ticks along the bottom, and four new rows in
+`AudioProperties` — Fade in / Fade out under Timing, This track is / Duck under
+voice (+ Ducks under, only when there are two voices) under Mix. All of it on the
+existing `PropGroup` / `PropRow` / `NumField` / `an-select` / `an-vol` primitives;
+the only new classes are `.tl-beat` and `.tl-fade*`. The grips are clamped inside
+the clip because it has to clip its waveform — a grip centred on a fade of zero
+would be half off one edge and entirely off the other, i.e. the handle you need
+in order to make a fade would be the one you can't grab.
+
+- **Verified** — `python tests/audio_mix_check.py`: 37 checks green. The graph is
+  built, **encoded, and decoded back out of the MP4 and measured**: a fade climbs
+  through its ramp, sits at half level half way up, leaves the middle of the file
+  untouched (within 3% of a control export) and reaches silence at the end; the
+  ducked mix runs **1.00 → 0.46 → 1.00** against the same project with the duck
+  off. `render_parity` / `keyframe_ops_check` / `animatic_motion_check` /
+  `captions_check` / `effects_check` still green, `npm run build` clean,
+  `import server.main` clean.
+- **NOT built, on purpose: EQ.** It is named in the Phase 6 line but was not in
+  this phase's spec, and it is the one item here that cannot be previewed without
+  routing playback through a WebAudio graph — which would put the master clock at
+  risk for a filter nobody has asked for yet. Left as a Next Step.
+- **NOT browser-checked** (standing instruction: Playwright on request only). The
+  fade grips, the beat ticks and the two new Mix rows have not been looked at in
+  a real editor; the maths behind all three is pinned by the test above.
+
+### 2026-08-17 — AN OPEN `<select>` WAS UNREADABLE: white list, near-white text (user-reported)
+
+- **Asked for:** two screenshots of the Look pane's "＋ Add an effect…" dropdown
+  open — a white popup with the effect names all but invisible on it. Only the
+  row under the blue system highlight could be read.
+- **The cause is one line, and it is a general trap, not an effects bug.**
+  `.an-row-ctl select.an-fx-add` is drawn `background: transparent` so it reads
+  as a dashed invitation rather than a value control. **On Windows, Chromium
+  paints a select's OPEN LIST using that select's own `background-color`** — so
+  transparent meant the browser's white default, with the app's near-white
+  option text on top of it. `color-scheme: dark` was already on `:root` and does
+  not help here: it themes popups the browser draws NATIVELY, and this one is
+  painted from the element's colours.
+- **Fix:** an `option, optgroup` rule in `theme.css` giving both halves
+  explicitly (`--panel-2` / `--text`). It is stated on the OPTIONS, not on the
+  select, so the dashed opener keeps its look, and it covers every select in the
+  app at once rather than this one. Both mechanisms are kept — the comment in
+  `theme.css` says why neither is enough on its own.
+- **Verified** in headless Chromium, both themes: options compute to
+  `#1b1e2b`/`#f4f6fa` in dark and `#eceff5`/`#141824` in light, while the opener
+  itself stays transparent. ⚠ The open popup cannot be screenshotted — it is an
+  OS surface, not part of the page — so the computed colours are the check.
+
+### 2026-08-17 — THE TIMELINE'S SCROLL BARS ARE PREMIERE'S: the ENDS zoom (user-requested)
+
+- **Asked for:** a screenshot of Premiere's timeline beside ours — "i want this
+  type of scroling baar ... lower and side too". Ours had the browser's own
+  scrollbar along the bottom and nothing at all down the side.
+- **Why it is not a cosmetic swap.** In Premiere the bar is not a scrollbar with
+  a skin on it: the thumb's LENGTH is the zoom and its POSITION is the scroll, so
+  dragging a grip frames a stretch of the edit in one gesture instead of picking
+  a zoom level and then hunting for your place again. Copying the look without
+  that behaviour would have been the wrong half of the feature.
+- **What was built:**
+  - `client/src/components/ZoomScrollbar.jsx` — one component for both axes
+    (they differ only in which properties they read, collected in `AXIS`).
+    Middle = pan, either grip = zoom with the opposite end pinned, empty track =
+    page towards the click, double-click = zoom to fit.
+  - `client/src/styles/animatic-scrollbar.css` — the bar, the thumb and the two
+    round grips, in the panel's own colours, with its own thumb/grip tokens
+    because `--btn-bg` resolves to `--panel-2` in dark, which is exactly what the
+    bar's track is painted in — the thumb would have been invisible.
+- **Four things in `Timeline.jsx` had to change with it, and each is load-bearing:**
+  1. `.tl-scroll` scrolls on BOTH axes now, with the native scrollbars hidden
+     (`scrollbar-width: none` + a zero-size `::-webkit-scrollbar`) — **hidden,
+     not disabled**: the wheel, the trackpad and the Hand tool all still scroll
+     that element. Turning the overflow off would take them with it.
+  2. The ruler is `position: sticky; top: 0`, so the clock stays on screen while
+     you work on the bottom track. It needed an opaque background for that, which
+     is why `.tl-playhead` was pushed above it — its grip was behind the ruler.
+  3. The gutter sits outside the scroller (so labels never slide away sideways),
+     so it is now translated by hand from `readView` when the lanes scroll down.
+     ⚠ **That translate is the only thing keeping a label beside its own track
+     vertically** — the same alignment §5 of the e2e suite checks.
+  4. The bars read `clientWidth/scrollWidth/scrollLeft` (and the same three
+     vertically, less the pinned ruler) straight out of the DOM rather than
+     computing them from props. Guessing how much fits on screen is how a
+     scrollbar ends up claiming you can see more than you can.
+- **Zoom became continuous.** `ZOOMS = [8,16,…,256]` and a `zoom` index are gone
+  from `AnimaticEditor.jsx`; there is a `pxPerSec` state clamped to
+  `MIN_PPS`..`MAX_PPS` instead. A grip asks for an exact scale — rounding it to
+  the nearest power of two would make the gesture lie about what it is going to
+  show. The ＋/− buttons and the Zoom tool (`Z`) still step, by `ZOOM_STEP`.
+- **The vertical grips change TRACK HEIGHT** (`--tl-track-h`, 1.5–6rem, local to
+  the timeline), because a lane's height is the only thing there is to zoom on
+  that axis — the same thing Premiere's do. Both columns are measured against
+  that variable, so they cannot drift apart; the waveform's canvas height is
+  derived from it too, since a canvas cannot be sized in rem.
+- **A grip drag reports FRACTIONS of the whole timeline, not pixels.** Fractions
+  survive the zoom that is about to be applied (the timeline still spans the same
+  amount of time), which is also what makes the drag absolute rather than
+  incremental — so it cannot run away while the pointer is held still.
+- `.an-timeline-body` no longer scrolls; it is a flex column that hands the
+  timeline a bounded height. It used to scroll the ruler and the labels away.
+- **Verified**, by mounting `Timeline` on its own in a throwaway Vite page and
+  driving it with Playwright (the page was deleted afterwards; nothing of it is
+  in the repo). Measured, not eyeballed: dragging the horizontal end grip took
+  the content from 1104px to 2253px with the thumb pinned at the left edge;
+  dragging the thumb panned to `scrollLeft` 487; the vertical end grip took the
+  lane height from 42px to 66px; and with the lanes scrolled 60px down, all six
+  gutter rows still had **exactly** the same `y` as their own lanes while the
+  ruler stayed at the top of the scroller. No console errors. `npm run build`
+  clean.
+- **NOT opened in the real editor** — see Next Steps. The e2e suite's timeline
+  selectors (`.tl-gutter-row`, `.tl-lane`, `.tl-bar`, `.tl-add-layer`) were all
+  kept, but the suite has not been run this session.
+
+### 2026-08-17 — THE PROPERTIES PANE IS NOW ONE PANE, not fifteen little forms (user-reported)
+
+- **Asked for:** the user sent two screenshots of the Frame/video-clip Properties
+  pane beside Premiere's **Effect Controls** and said the current one is
+  "confusing" — wanted proper naming, proper grouping, consistent sizes and
+  colours, and the same treatment when a new control is added later.
+- **The actual fault, and it was structural, not cosmetic.** Every pane laid
+  itself out by hand. A label was sometimes `.an-prop-label` (fixed 5.2rem) and
+  sometimes the `<span>` inside `.an-tp-field` (as wide as its own text), so no
+  two rows started at the same x. Number boxes were 4rem and dropdowns 9.5rem.
+  Section headings were a `.an-prop-row.an-prop-head` with a rule over it, which
+  cannot be collapsed, so a graded video clip was ~40 rows of unbroken form. And
+  everything in it was tinted — labels, hints, values, all `--muted` or gold —
+  so nothing stood out from anything else.
+- **What was built:** `client/src/components/properties/PropGroup.jsx`, the four
+  primitives every pane is now made of, plus `client/src/styles/properties.css`.
+  - `PropGroup` — a named, **collapsible** section (Clip · Source · Speed ·
+    Motion · Look · Effects · Footage). Open/closed is remembered in a
+    module-level map keyed by group id, so collapsing "Look" stays collapsed
+    when you click the next clip. Deliberately NOT persisted to the project: it
+    is a view preference and must never reach an exported animatic.
+  - `PropRow` — the two-column grid. **This is the whole fix**: column one is
+    exactly `--an-label-w`, so every label in the pane starts at the same x and
+    every value at the same x. Only a NAME may go in the left column.
+  - `NumField` / `PropSlider` / `PropNote` — one size for every box, tabular
+    figures, the ⏱ pushed to the right edge (it wraps under the value on a
+    narrow pane instead of squeezing it).
+- **⚠ TWO RULES ARE NOW WRITTEN DOWN IN `PropGroup.jsx`'s HEADER, and breaking
+  either is the way this regresses:** one property = one `PropRow` (never two
+  animatable properties on a row — each needs its own ⏱), and rows stay in
+  `ANIMATABLE` order, because `Timeline.jsx`'s `renderKeys` draws one diamond row
+  per animated property in that same order and the two panes are meant to read
+  as the same list.
+- **Naming, since that was half the complaint.** "Held for" → **Duration**;
+  "Zoom" → **Scale** (the editor already has a Zoom — the timeline's, on `Z`);
+  "X"/"Y" → **Position X / Position Y**; text's top/middle/bottom → **Zone**
+  (it sat next to "Placement" and read as the same thing). `VideoClipProperties`'
+  speed note was updated to say "Duration" with it.
+- **Colour is now a rule, not a habit:** section name `--text` uppercase, property
+  name `--muted`, value `--text`, `--primary` ONLY for on/active (a live ⏱, a
+  chosen chip), `--warn` only for "probably not what you meant". Nothing in this
+  pane is ever `--fail` — none of it can be an error.
+- **Every pane was converted, not just the one in the screenshot** — Frame,
+  VideoClip, Effects, Shape/Overlay, Text, Audio, Transition, Video — because a
+  pane with sections beside one without is worse than either.
+- Each effect in the chain is its own collapsible group with an `fx` prefix
+  (Premiere's, and worth borrowing), keeping its ↑ ↓ ✕ on the header.
+- **Files:** new `properties/PropGroup.jsx`, `styles/properties.css` (imported
+  last in `styles/index.css` — that file's order IS the cascade); rewritten
+  `properties/{Frame,VideoClip,Shape,Text,Audio,Transition,Video}Properties.jsx`
+  and `components/EffectsPanel.jsx`; dead rules removed from
+  `animatic-editor.css`, `animatic-effects.css`, `animatic-text.css`,
+  `animatic-tools.css`, `keyframes.css` (`.an-prop-head`, `.an-prop-stack`,
+  `.an-clip-short`, `.an-prop-vol`, `.an-vol-read`, `.an-fx`/`-head`/`-name`/
+  `-unknown`, `.an-tp-unit`).
+- **Verified:** `npm run build` clean. Every selector `tests/e2e_animatic.py`
+  reaches into (`.an-tp-text`, `.an-vol`, `.an-props .an-mute`, `.an-prop-card`,
+  `.an-prop-actions .danger-btn`, `.an-pane-props .an-colour`, and "Colour card"
+  in the pane's text) was kept deliberately and still resolves.
+- **NOT verified: the browser.** The suite was not run and the editor was not
+  opened — this is a layout change, so someone has to look at it. See Next Steps.
+
+### 2026-08-17 — PHASE 5: THE TEXT ENGINE. Bundled fonts, real type, in/out presets, auto-captions and TTS
+
+- **Asked for:** Phase 5 of the editor roadmap — fonts, stroke/shadow, in/out
+  animation presets, then auto-captions from a voiceover and dialogue → TTS,
+  "both auto-timed from data we already hold". Built as specified, with one
+  design decision the plan left open (`place`) and one pre-existing bug found on
+  the way. Both are below.
+
+- **⚠ THE FONT IS NOW A FILE THAT SHIPS WITH THE PROJECT, AND THAT IS THE WHOLE
+  POINT OF THIS PHASE.** `_text_font` used to ask Pillow for `arial.ttf` and fall
+  back to DejaVu and then to a bitmap face; the monitor asked CSS for whatever
+  the OS called the nearest sans. On a Windows dev machine those look alike. On a
+  Linux server they do not — so **the caption you positioned in the monitor was
+  not the caption that landed in the MP4**: different width, different wrap,
+  different number of lines. Same class of bug as the scene model being written
+  twice, and it is fixed the same way:
+
+  - six OFL fonts in `client/public/fonts/` (Inter, Anton, Bebas Neue, Playfair
+    Display, Courier Prime, Caveat), with `OFL.txt` and a README naming each
+    copyright holder;
+  - **`animatic_fonts.py` ⇄ `client/src/animatic/fonts.js` are a TWIN PAIR**,
+    element for element, and `tests/captions_check.py` fails if they drift;
+  - the browser's `@font-face` rules are **generated from that list**, not
+    written in a .css file — a third hand-maintained copy is exactly the
+    `_SHAPE_POINTS`/`POINTS` failure this codebase already has one of;
+  - the CSS family is namespaced (`AnimaticInter`, not `Inter`) so a user who
+    has Inter installed still gets ours.
+
+- **A caption's TYPE.** `font`, `stroke_px`, `stroke_color`, `shadow`,
+  `letter_spacing`, all optional with defaults that reproduce exactly what a
+  caption drew before — asserted by rendering an old-shaped payload and the same
+  clip with the new defaults and comparing the two pictures byte for byte.
+  **Every unit is chosen so the browser and Pillow use the same number:**
+  `stroke_px` is pixels at 1080p and scales with the frame (`calc(100cqh * n /
+  1080)` in CSS); `shadow` and `letter_spacing` are fractions of the font size,
+  i.e. `em`, with no conversion at all. The shadow's blur is **zero on both
+  sides** — a blurred one in the browser and a hard one in Pillow would be
+  prettier and would be a preview that lies. Letter spacing draws glyph by glyph
+  (Pillow has none), counting the trailing gap because CSS counts it too.
+
+- **`place: "flow" | "free"` — the decision the plan left open.** The plan said
+  "plus x/y in ANIMATABLE.text", but x/y alone would have broken the stacking
+  that stops two subtitles landing on each other. So placement is an enum, not
+  animatable (half way between two layout algorithms is not a picture):
+  **"flow"** is the original behaviour and the default — dropped into its zone,
+  stacking; **"free"** puts the block's centre at x/y like a shape. x/y are
+  resolved either way but only USED in free, which is why `sceneSignature`
+  appends them **only in free placement** — a project of ordinary subtitles signs
+  byte-for-byte what it always did.
+
+- **The presets are KEYFRAME MACROS and nothing else** (`text_presets.js`).
+  Fade / Rise / Drop / Slide in write keys on `opacity`/`x`/`y` and get out of
+  the way. Nothing is stored on the clip, neither renderer has heard of a
+  "preset", and **the exporter needed no changes at all** — `animatic_render.py`
+  already interpolates those three properties and `render_parity.py` already
+  proves the two sides agree about them. The timeline shows the diamonds, every
+  key can be dragged afterwards, and undo treats applying one as a single edit.
+  A moving preset switches the clip to free placement, because in flow placement
+  x/y are unused and the slide would animate nothing while the monitor showed it.
+  The cost: a preset is write-only, so the picker cannot show a "current" one —
+  which is honest, since after you drag one of its keys there isn't one.
+
+- **AUTO-CAPTIONS (`captions.py`) — and the half that matters is free.**
+  `transcribe()` is one Gemini call, audio in, timed lines out. `tidy_lines()` is
+  pure: split long lines (time shared out **by character count**, because speech
+  takes about as long as it is long), order them, **never overlap**, extend
+  toward a readable minimum *only into the gap that is actually there*, cut
+  anything past the end. They are separate functions because the timing rules are
+  where every "the subtitles are on top of each other" bug lives and a failure
+  there must not mean paying to listen to the track again. A generated caption is
+  marked ONLY by an id prefix (`cap…`), never by a field: it has to be an
+  ordinary caption in every other respect or half the inspector stops applying.
+
+- **VOICEOVER (`tts.py`) — the trick is that nothing has to be typed or synced.**
+  The board knows who says what in which shot; the timeline knows when that shot
+  is on screen. So `_dialogue_lines` reads the dialogue off the source board,
+  matched to the frames that reference each panel (**the first frame only**, or a
+  shot with sixteen key poses would read its line sixteen times and be billed for
+  each), and hands `synthesise_timed` a target time per line.
+  **⚠ IT RETURNS THE TIMINGS THAT HAPPENED, NOT THE ONES ASKED FOR:** a line
+  longer than its shot pushes the next one later rather than being spoken over
+  the top of it. Those timings become the captions, so what is on screen matches
+  what is heard even where the plan could not be honoured. Cutting the speech to
+  fit would give a voiceover that is correct on the timeline and unlistenable.
+
+- **⚠ AND IT IS THE ONE PLACE HERE THAT KNOWS HOW LONG A SOUND IS WITHOUT BEING
+  TOLD.** There is still no ffprobe on this install, which is why every other
+  audio duration comes from the browser. Generated speech is the exception
+  because it arrives as raw PCM at a known rate: **the byte count IS the
+  duration**, exactly, with no decoder. That is what makes the returned timings
+  trustworthy enough to become captions.
+
+- **Both new paths SPEND QUOTA, and follow the 2026-08-07 discipline exactly** —
+  a free estimate shown before the button that spends (both endpoints of a pair
+  take the SAME body, so the quote can only be the price of what the button
+  does), a cap per run (`MAX_AUDIO_SECONDS`, `MAX_CHARACTERS`), and the job goes
+  RUNNING so `save_animatic` 409s. **That last one matters more here than for
+  Veo:** the SERVER writes the caption clips into `params`, so an autosave
+  landing mid-run would put the editor's older `texts` back over work that was
+  paid for. `speechRunning` is therefore part of `serverBusy`. They cost
+  fractions of a cent, which is precisely why the discipline is kept — a cheap
+  button is the one that gets pressed forty times.
+
+- **What lands is ORDINARY**, the same rule the Veo path follows: a generated
+  caption is an `AnimaticTextClip` and a voiceover is an ordinary audio track, so
+  there is one code path downstream rather than two that can drift.
+
+- **Verified:** `tests/captions_check.py` is new — the two font lists identical
+  and every file on disk; stroke widens the glyph footprint and scales with the
+  frame, shadow offsets it down-right *and not up-left*, tracking widens the
+  block without making it taller, a different font is a different block; a
+  pre-Phase-5 clip renders byte-identically; captions land within **±200ms** of
+  where they were said and **never overlap**; voiceover lines never talk over
+  each other and an overrunning one pushes the next later. `render_parity.py`
+  gained a free-placed title sliding up on a curve, an unknown `place` folding
+  down to flow, and the check that a keyframed caption position alone forces the
+  per-frame planner. Full suite green (`render_parity`, `keyframe_ops_check`,
+  `animatic_motion_check`, `captions_check`, `effects_check`, `transition_check`,
+  `video_clip_check`, `animate_guard_check`); `npm run build` clean;
+  `import server.main` clean; class audit clean (three new classes, all styled —
+  the header Voiceover button deliberately reuses plain `btn small` rather than
+  the `.an-add-text`/`.an-add-card` pair weight, because those two are free and
+  it is not).
+
+- **⚠ ONE BUG FOUND BY THE USER ON FIRST CLICK, AND IT IS WORTH GENERALISING:
+  a modal's errors must be rendered INSIDE THE MODAL.** "See the price" wrote
+  its failure with `setError`, which draws in the status bar at the top of the
+  page — *behind* `.modal-overlay*. So the one thing that could explain the dead
+  button was in the one place the user could not see it, and the button simply
+  looked broken. Every dialog in this app that can fail needs its own error slot
+  (`speechError` → `.an-prop-warn` inside the panel); the global banner is for
+  things that happen with no dialog open. The Voiceover button is also disabled
+  outright now when no clip on the timeline is a board panel, with the reason in
+  its tooltip — an animatic built from uploaded stills has no dialogue to read
+  and never will, so two clicks ending in "there is no dialogue" was a dead end
+  that should never have been reachable.
+
+- **⚠ NOT VERIFIED LIVE, and this is the honest gap:** **no real Gemini call has
+  been made** — neither the transcription nor the TTS. Both are driven in the
+  test by stubs, so what is proven is the timing arithmetic, the spend guards and
+  the plumbing, NOT the request shape, the model ids
+  (`gemini-2.5-flash-preview-tts`), the response parsing or the audio mime types.
+  The first real run may need those adjusted. Nothing has been opened in a
+  browser either, so the type in the monitor is matched to Pillow **by
+  construction and by argument, not by looking** — which is the same standing gap
+  Phase 1a and Phase 4 already carry.
+
+### 2026-08-17 — PHASE 4: THE LOOK. Colour, LUT, masks, chroma, blend — and the monitor became a canvas
+
+- **Asked for:** Phase 4 of the editor roadmap — *"where the DOM preview finally
+  has to become a canvas. CSS cannot match Pillow on LUTs, feathered masks or
+  chroma key."* It is built, with two deviations and three bugs found on the way;
+  all five are below.
+
+- **THE MODEL.** A clip's LOOK is three optional fields, on the two clip kinds
+  that are PICTURES — a frame and an overlay:
+
+  | Field | What it is |
+  |-------|-----------|
+  | `effects` | An ORDERED chain of `{id, kind, params}`. Order is the picture: a LUT after a saturation pull is not a saturation pull after a LUT. |
+  | `mask` | ONE region, `{kind: none/rect/ellipse, x, y, w, h, feather, invert}`, in FRAME coordinates with `x`/`y` the centre — the same convention as a shape. |
+  | `blend` | normal / multiply / screen / overlay / add / darken / lighten. |
+
+  Effect kinds: `brightness`, `contrast`, `saturation`, `lut`, `chroma`. Defaults
+  reproduce today's picture exactly, so every animatic already saved opens, plays
+  and exports unchanged — asserted in `tests/effects_check.py` against an
+  old-shaped payload rather than left to inspection.
+
+- **WHERE EACH OF THE THREE APPLIES, because it is not the same place:** the
+  effect chain runs on the LAYER'S OWN PIXELS before it is placed (so a
+  letterboxed shot does not have its bars graded, and a chroma key sees what the
+  camera recorded); the mask runs afterwards in FRAME coordinates (a vignette is
+  a region of the film you are making, which is also the only reading under which
+  one can be keyframed to sweep across a shot); the blend is between the finished
+  layer and everything already under it.
+
+- **⚠ AN EFFECT PARAMETER IS KEYFRAMED BY A FLAT TRACK NAME.** This is the one
+  decision the rest of the phase hangs off. The track lives in the clip's own
+  `keyframes` under `fx:<effect id>:<param>` (and `mask:<field>`), NOT nested
+  inside the effect. `keyframes` therefore stays exactly the dict-of-lists it has
+  always been, and **every keyframe operation, every timeline diamond row, the
+  undo stack and the "typing a value sets a key" rule work on a graded clip with
+  no changes at all.** Keyed by the effect's own `id` rather than its position,
+  so re-ordering the chain carries each effect's animation with it.
+  The one thing that needed care: `disableProp` returns `{[prop]: frozen}`, which
+  for a look track would write a flat key the schema has no field for and Pydantic
+  drops on the next save — switching the stopwatch off would look like it worked
+  and quietly lose the value. `setLookValue` in `scene.js` is what puts it back
+  where it lives, and every write of a look property goes through it.
+
+- **THE MONITOR IS A CANVAS.** `ProgramCanvas.jsx` + `animatic/gl/` replace the
+  `<img>` / `<video>` / colour-`<div>` stack. What moved and what didn't:
+
+  - **canvas** — both pictures, the transition between them, the SHAPE FILLS, and
+    the overlay pictures. Shapes had to move: the order is picture → shapes →
+    overlays, and an overlay's blend mode needs every pixel beneath it, so a DOM
+    shape would sit either in the wrong order or outside the backdrop the blend
+    reads.
+  - **DOM** — the captions, the shot label, and the selection outlines and resize
+    handles. That was the trap the plan called out and the cheap answer it
+    suggested: hit-testing and drag handles are most of what a canvas editor
+    costs, and exactly the part WebGL adds nothing to.
+
+  Blend modes are possible at all because of two framebuffers, ping-ponged: each
+  layer copies the composite so far into the other buffer, then draws itself
+  while SAMPLING that copy as its backdrop. Two draws per layer.
+
+- **⚠ THE OLD "KNOWN LIMIT" ON TRANSITIONS IS GONE, and the EXPORT changed to
+  close it.** `_transition_canvas` used to fit each picture onto the bar colour
+  and blend the two results, while the preview composited against what was
+  behind; the two agreed only while both pictures were fully opaque. It now
+  composites the incoming picture OVER the outgoing one, exactly as the monitor
+  does — byte-for-byte identical for two opaque pictures, and correct for the
+  first time on a clip that is faded, keyed or masked mid-transition.
+
+- **THREE BUGS FOUND WHILE WIRING IT UP — all pre-existing, all the same kind:
+  the preview was lying and nothing was checking.**
+  1. **EVERY TRANSITION WAS INERT IN THE MP4.** `server/animatics.py` built the
+     export payload as a hand-written dict literal with no `id` on it, so
+     `transition_window`'s `f.get("id") == after_id` never matched. The monitor
+     blended; the video cut. The same dict had no `keyframes`, `scale`, `x`, `y`
+     or `opacity` either, so **a Ken Burns push exported as a still.** Fixed by
+     dumping the model (`f.model_dump(exclude={"url", "src"})`) — a dump cannot
+     drift, and a field added to `AnimaticFrame` now arrives here on its own.
+     **Do not rebuild that dict field by field again.**
+  2. **A STATIC transform was dropped by the fast planner.** `plan_segments` —
+     the one a project with no animation gets — produced no transform at all, so
+     a stored `scale` of 1.5 exported at 1.0. `_static_transform` / `_look_of`
+     are the fallback; the same hole would have swallowed every static grade.
+  3. A redrawn panel would have kept its WebGL texture. The texture cache is
+     keyed by URL, not by clip id, for exactly that reason, and is LRU-bounded
+     at 12 so a sixty-panel animatic cannot hold every panel in VRAM.
+
+- **DEVIATIONS FROM THE PLAN, both deliberate:**
+  1. **NOT `ImageEnhance` for contrast.** `ImageEnhance.Contrast` blends toward
+     the MEAN brightness of that particular image, which a fragment shader cannot
+     know — the two sides would then differ on every picture by an amount that
+     depends on the picture. All three colour operations are plain numpy with a
+     fixed mid-grey pivot. (Brightness and saturation happen to agree with
+     ImageEnhance anyway; saturation uses the same ITU-R 601 weights
+     `convert("L")` does, which is asserted.)
+  2. **The look is on FRAMES and OVERLAYS, not on "every clip".** A shape is
+     vector and a caption is text; both are drawn above the finished composite
+     and have no pixels of their own to grade. Giving them one means rasterising
+     them into the chain, which is a different piece of work.
+
+- **LUTs are FILES, read by both sides.** `luts/*.cube` (identity, warm, cool,
+  noir, teal_orange — regenerate with `python luts/generate_luts.py`), served by
+  `GET /animatics/luts` and `GET /animatics/luts/{name}`. Pillow reads them with
+  `ImageFilter.Color3DLUT`; the browser fetches the same bytes into a tiled 2D
+  texture. **One artefact, two readers — the opposite of the `_SHAPE_POINTS`
+  mistake.** `identity.cube` is not decoration: it is the fixture that proves a
+  LUT round-trips, and a red-only ramp in the test catches the classic .cube bug
+  of reading the table with blue changing fastest instead of red.
+
+- **Files.** New: `animatic_effects.py`, `luts/`, `client/src/animatic/gl/`
+  (`compositor.js`, `cube.js`, `lut.js`, `shaders/effects.js`,
+  `shaders/layer.js`), `client/src/components/ProgramCanvas.jsx`,
+  `EffectsPanel.jsx`, `client/src/styles/animatic-effects.css`,
+  `tests/effects_check.py`, `tests/effects_parity_check.py`. Changed:
+  `animatic_render.py`, `client/src/animatic/scene.js`, `animatic.py`,
+  `server/schemas.py`, `server/animatics.py`, `AnimaticEditor.jsx`,
+  `properties/FrameProperties.jsx`, `properties/ShapeProperties.jsx`, `api.js`,
+  `styles/animatic.css`, `animatic-text.css`, `animatic-lanes.css`,
+  `styles/index.css`, `tests/render_parity.py`. `numpy` was already in
+  requirements.txt, so that line of the plan needed nothing.
+
+- **Verified:** `render_parity` (58 sampled times, the fixture now carrying a
+  keyframed LUT, a keyframed mask, an effect with no id and an effect kind this
+  build has never heard of), `keyframe_ops_check`, `animatic_motion_check`,
+  `transition_check`, `effects_check`, `video_clip_check`, `animate_guard_check`
+  — all pass. `cd client && npm run build` passes; `import server.main` passes.
+  A real MP4 was exported end to end with a static LUT + mask on one clip, a
+  keyframed brightness on the other, and a dissolve between them.
+  **Class audit clean**: every new class (`.an-screen-gl`, `.an-gl-sources`,
+  `.an-fx*`, `.an-tp-check`) has a rule, and the four the canvas made dead
+  (`.an-screen img`, `.an-screen-b`, `.an-screen-card`, `.an-shape-fill`,
+  `.an-overlay-img`) went with their JSX. 22 names remain unmatched — the same
+  pre-existing set of template-literal prefixes and no-style hooks, one fewer
+  than last session.
+
+- **⚠ NOT VERIFIED: THE SHADERS HAVE NEVER BEEN COMPILED.**
+  `tests/effects_parity_check.py` has two halves. The STATIC half — both sides
+  know the same effect kinds, blend modes and mask kinds; every effect has a
+  shader branch; the numbering is generated rather than typed twice — **passes**,
+  and needs no GPU, so the most likely drift (adding an effect and forgetting its
+  shader) is caught even on a machine with no GL. The PIXEL half needs
+  `headless-gl`, which **would not build on this machine** (a native module;
+  Windows needs the Visual Studio "Desktop development with C++" workload). It
+  exits 2 and says so rather than passing. **So no GLSL written in this phase has
+  ever been compiled, and the monitor has not been opened in a browser.** Run
+  that test, or open the editor, before trusting the preview.
+
+### 2026-08-16 — THE REFACTOR BREAK: two files split before Phase 4
+
+- **Asked for:** the split this file has been asking for since Phase 2 — *"⏸
+  Refactor break — do this before Phase 4. Not optional by then."*
+  `AnimaticEditor.jsx` and `styles.css` had both grown past the size where a
+  phase can be added to them safely, and Phase 4 (canvas/WebGL compositor)
+  touches every part of both. **A pure move: no behaviour change, no new test.**
+
+- **What moved, and nothing else did:**
+
+  | New file | What it owns |
+  |----------|--------------|
+  | `client/src/animatic/useAnimaticProject.js` | Loading the document, the debounced autosave, and the BASELINE that decides "is this saved?". Also `frameForSave`. |
+  | `client/src/animatic/useTimelineTransport.js` | The playhead: the rAF clock, shuttle (J/K/L), marks (I/O), seek/step/edit-points. Plus `useMonitorVideo`, a second export. |
+  | `client/src/animatic/useUndoStack.js` | One stack for the whole document, the gesture bracket, and `reset()`. |
+  | `client/src/animatic/util.js` | `clamp`, which four of these files were about to each declare. |
+  | `client/src/components/properties/*.jsx` | The six panes, plus `VideoClipProperties` moved in beside them and an `index.js` barrel. |
+  | `client/src/styles/*.css` (21 files) | `styles.css`, cut at its own banner comments. |
+
+  `AnimaticEditor.jsx` **5151 → 3690 lines**; `styles.css` 9213 lines → 21 files,
+  largest 1171.
+
+- **⚠ TWO ORDERING CONSTRAINTS the split had to bend around, and they will bite
+  anyone who rearranges these calls:**
+  1. **`@import` order in `styles/index.css` IS the cascade.** Two rules of
+     equal specificity are still decided by which comes last, so moving an
+     import for tidiness can change the page without changing a declaration.
+     Add a new file at the END or beside its block — never in the middle.
+  2. **The transport owns the clock, and `scene` is derived FROM the clock**, so
+     the scene cannot be an argument to `useTimelineTransport`. That is why
+     slaving the monitor's `<video>` elements is a SEPARATE export
+     (`useMonitorVideo`) called after the scene exists, and why `stepFrame`
+     stayed in the editor — it needs `currentIndex`, which comes from the scene.
+  3. `onLoaded` is **late-bound through a ref**: it runs inside the load promise
+     and needs `reconcileVeoClips` and the undo stack, both declared further
+     down the file. It is assigned beside `reconcileVeoClips`.
+
+- **The one real bug the verification caught.** `useEffect(() => {
+  framesRef.current = frames })` sat in the middle of the saving block and went
+  out with it. Nothing would have failed loudly: the Veo poll reads
+  `framesRef.current`, so a clip that finished after the load would have been
+  reconciled against a stale frame list — i.e. a **paid render silently not
+  attached**, which is the exact failure the 2026-08-16 entry above was written
+  about. Found by comparing hook-call counts between the two bundles, not by the
+  build and not by the browser.
+
+- **How "pure move" was actually verified** (a build passing proves very little
+  here — CSS never errors, and an undefined JSX identifier is a runtime fault):
+  - **The emitted CSS is byte-identical.** The 21 slices rejoin into the old
+    `styles.css` character for character, and the built bundle keeps the same
+    content hash (`index-Rw-UMXOh.css`) before and after.
+  - **Every literal in the JS bundle is unchanged** — 9026 literals, of which
+    1101 prose strings (803 distinct), scanned sequentially out of the minified
+    output before and after. Zero added, zero lost.
+  - **Hook counts match**: `useEffect` 91→91, `useState` 313→313, `useMemo`
+    14→14. `useCallback` 35→37 and `useRef` 62→65 are the new hooks' own
+    (`applySnapshot`, `reset`, three late-binding refs) and are accounted for
+    one by one. **This is the check that found the lost effect.**
+  - **`no-undef` clean** across `client/src` (throwaway ESLint 9 flat config —
+    not added to the repo). Only two hits, both pre-existing browser globals
+    missing from the throwaway config (`URLSearchParams`, `getComputedStyle`).
+  - **Class audit clean**: no JSX class lost a rule. The 23 unmatched names are
+    the same pre-existing set (template-literal prefixes like `an-save-`, `k-`,
+    `tool-`, and long-standing no-style hooks).
+  - **The Python suites pass**: `render_parity`, `keyframe_ops_check`,
+    `transition_check`, `video_clip_check`, `animate_guard_check`,
+    `animatic_motion_check`.
+
+- **The e2e suite gave the SAME result on the refactored tree as on a `HEAD`
+  worktree** — run against both on the same API, the output diffs to **three
+  lines**, all of them the count of animatics accumulated by running twice.
+  Same passes, same failures, same numbers. That is the proof the move changed
+  nothing a browser can see. The four failures it shared with `HEAD` were then
+  fixed separately — see the entry below.
+
+- **One thing found and deliberately NOT fixed**, because this was a pure move:
+  `addColorCard()` in `AnimaticEditor.jsx` is dead — a complete, working
+  function with no caller, so **there is no way to add a colour card from the
+  UI at all**. Phase 3's, not the split's. Wiring it up means choosing where
+  the control goes (the Media pane? the lane ＋ menu? the tools row?), which is
+  a design decision and not a refactor.
+
+### 2026-08-16 — the e2e suite was lying about being green, and one unstyled warning
+
+Cleanup pass over what the refactor's verification turned up. **Three of the
+four e2e failures were a stale TEST; one was the test misreading the app; none
+was a bug in the app.** Worth stating plainly, because the tempting move here is
+to "fix" the app until the assertions pass.
+
+- **`tests/e2e_animatic.py` — the crash that hid everything else.** Section 5
+  indexed a hardcoded `[".tl-bars", ".tl-texts", ".tl-audio"][i]` over
+  `.tl-gutter-row`. The SHAPES lane (2026-08-02) made that four rows, so the
+  run `IndexError`ed and **sections 6-14 had not run for several sessions** —
+  the Media pane, the Properties panes, keyframes and all five viewports. A
+  crash reads like a broken environment rather than a stale assertion, which is
+  why it survived so long. Now walks `.tl-lane` / `.tl-gutter-row` in DOM order,
+  which is what the lanes design says to do, and asserts one gutter row per lane.
+- **"the icon-only Delete is square" — found nothing, for two releases.** It
+  detected the button by `textContent.trim() === "🗑"`; Delete became an
+  `<Icon name="trash"/>` (an SVG, so no text) and the check quietly matched
+  nothing and passed `icon = None` into a truthiness test. Now detects
+  icon-only as "has an `<svg>` and no text". **The button was square all along**
+  — 37×37 — so this was never a layout bug, just a check that had stopped
+  looking.
+- **"one audio lane per track [2]" — the app was RIGHT.** §6 puts the WAV in
+  through the Media pane's combined `image/*,audio/*` control and §9 adds it
+  again through the audio picker: two uploads, two tracks, two lanes. That is
+  the multi-track behaviour the 4-track cap exists for. The assertion now checks
+  the RELATION (one lane and one gutter row per track) instead of a fixed 1.
+- **"the track has its own volume control" — the test skipped the click.**
+  `.an-vol` lives in `AudioProperties`, and the Properties pane follows the
+  SELECTION. Asserting the slider was present without selecting a track was
+  asserting the pane shows controls for something nobody picked — the exact
+  thing `selectOnly` exists to prevent. Now clicks the lane first, then checks
+  the slider AND the mute beside it.
+- **A colour card could not be added AT ALL.** `addColorCard()` was a complete,
+  working function with no caller, so the whole `kind: "color"` clip — built,
+  exported and unit-tested by Phase 3 — was unreachable from the UI. It now has
+  a **`＋ Colour card` button beside `Text` in the timeline header**, which is
+  where it belongs: those two are the entire set of clips you can make WITHOUT a
+  file, and the Media pane is deliberately one control for files only ("Add
+  assets or drop them here"). Putting it there would have re-created the
+  three-add-buttons mess that pane was cleaned up to remove. Not disabled on an
+  empty animatic — a black slug is a perfectly ordinary first clip. Needed one
+  new icon (`card`, a rounded rect with a solid block in it; a plain stroked
+  rectangle beside the others reads as an empty frame, which is the opposite of
+  what this clip is) and one CSS selector added to `.an-add-text`'s weight rule,
+  since the two buttons are a pair and have to read as one.
+  **Checked against the real thing, not assumed:** both buttons compute to the
+  same border, background, colour, weight, shadow and height (30px). The gold
+  outline in the first screenshot was `:hover` — the mouse was still parked on
+  the button after the click.
+- **`.an-clip-short` had no CSS rule at all.** `VideoClipProperties` renders it
+  for "this clip wants 6.0s of footage but only 4.0s is selected, so its last
+  2.0s will hold on one frozen frame" — the one warning that pane exists to
+  give — and it was coming out as unstyled body text. Now styled as
+  `.fv-banner.warn` already is: a panel with one `--warn` edge, which is how
+  this app says "read this" everywhere else. Deliberately NOT red: holding the
+  last frame is a legitimate freeze, not a failure.
+
+**Verified:** `python tests/e2e_animatic.py` → **ALL PASSED**, now 15 sections
+(new **§11b** covers the colour card end to end: it lands on the sequence,
+Properties names it and offers its one control, and it removes cleanly). §11b
+adds AND removes the card inside itself on purpose, so every duration assertion
+after it still sees the same three frames. Five viewports, no console errors.
+Class audit down to 22 unmatched names, all pre-existing template-literal
+prefixes (`an-save-`, `k-`, `tool-`) and long-standing no-style hooks.
+`npm run build` clean; the six Python suites still pass.
+
+### 2026-08-16 — VIDEO CLIPS on the timeline, dropped OR generated (Phase 3)
+
+- **Asked for:** Phase 3 — generalise `AnimaticFrame` into a clip that can be an
+  image, a piece of video, or a colour card; then fold Veo rendering into the
+  editor. The user's framing: *"I can also drag and drop video from my local and
+  use Veo to generate video — I need both option."* Both are in.
+
+**THE DECISION EVERYTHING ELSE FOLLOWS FROM: `duration_ms` is still the clip's
+length ON THE TIMELINE, for every kind.** A video clip adds `in_ms` / `out_ms`
+(the source window) and `speed` (how fast it is read through). Speed 2 covers
+twice as much footage in the same stretch of timeline — **it does not re-time
+the clip.** So `frame_spans` is untouched, and no later cut, caption or
+transition moves when a speed changes. The alternative (speed re-times the clip)
+is the same class of problem boundary-local transitions were designed to avoid.
+Past `out_ms` a clip HOLDS its last source frame, the same rule keyframes follow
+outside their first and last key — a clip stretched longer than its source shows
+a freeze, never black.
+
+**Pillow cannot decode video**, so a video clip is rendered by tearing the source
+into numbered PNGs and turning "which frame is showing at t" into a lookup.
+
+- **`video_frames.py` (new)** — `extract_frames()` via `ffmpeg -vf fps=`,
+  `frame_path()`, and `probe_duration()`, which reads the length out of
+  **ffmpeg's own banner** because **there is still no ffprobe** on an
+  `imageio-ffmpeg` install. Extraction is **cached by CONTENT** (sha1 of the
+  bytes + fps + source range), so a second export of an unchanged project decodes
+  nothing. The range is in the key on purpose: two clips cut from different parts
+  of one file are different extractions, and a cache that ignored that would
+  serve the first one's stills for the second's timeline. A partial extraction
+  (no `.done` marker) is thrown away rather than trusted. Reuses
+  `animatic.ffmpeg_exe` / `run_ffmpeg` — third caller of the one ffmpeg
+  integration, not a third implementation.
+- **The scene model, both halves** — `clip_kind` / `clipKind`, `source_at` /
+  `sourceAt`, and `_picture_at` / `pictureAt` now stamp `kind`, `color` and
+  `source_ms` onto the resolved picture. `is_animated` returns **True for any
+  video clip** (and any speed ≠ 1): getting that wrong in the False direction
+  would export a video as ONE FROZEN FRAME held for its whole clip while the
+  preview played it. `source_ms` is in `scene_signature` for exactly the reason
+  `mix` is — without it every sampled moment signs the same and the render cache
+  serves one still for the entire clip.
+- **`animatic.py`** — a video segment's path is the extracted still for that
+  instant; a colour card is painted rather than loaded.
+- **`server/animatics.py`** — `POST /animatics/{id}/videos`, serving, and
+  `_video_thumb`: a clip's thumbnail is the frame at its **in point**, so
+  re-trimming changes the picture you see. Stills cache under the animatic's own
+  folder so `delete_animatic`'s existing rmtree collects them — no separate GC to
+  forget to run.
+- **Client** — `VideoClipProperties.jsx` (new), a `<video>` in the monitor,
+  video in the one-way-in `addAssets`, and `FrameStrip` gained a ▶ badge showing
+  **how much footage runs inside the hold** (the number the duration field can't
+  show, and the two differ exactly when speed ≠ 1).
+
+**⚠ THE `<video>` IN THE MONITOR IS A SLAVE, NEVER THE CLOCK.** Audio is still
+master. It is seeked on scrub and drift-corrected while playing, and it is
+**muted** — the export mixes only the project's audio tracks, so an unmuted clip
+would let you hear something the MP4 will not have.
+
+**Two real bugs found on the way, both older than this phase:**
+1. **Phase 1's motion never survived a reload.** The autosave and the dirty-check
+   signature each wrote the saved frame shape out separately, and both carried
+   only `id`/`src`/`duration_ms`/`label` — so a frame's `scale`, `x`, `y`,
+   `opacity` and its whole `keyframes` track were computed, previewed, and then
+   silently dropped on the way to the server. Now one `frameForSave()` feeds
+   both, which is the only arrangement in which they cannot drift again.
+2. **A colour card sat on its loading spinner for ever.** Every frame gets a
+   `url` filled in on read, but a card has no file behind it, so that url can
+   only 404. It is skipped rather than fetched, and the strip draws the colour.
+
+**Verified:** `render_parity` (the fixture gained video-clip cases),
+`keyframe_ops_check`, `animatic_motion_check`, `transition_check`,
+`video_clip_check` (new — builds a real numbered MP4 with ffmpeg, exports it,
+decodes the result and asserts frame N of the output is frame N of the source;
+also trim, speed 2, speed 0.5, a colour card, all three kinds on one timeline,
+cache hit measurably faster, and **an image-only project unchanged**),
+`animate_guard_check` (new — every spend guard, via TestClient with the render
+pool stubbed so it costs nothing: a promptless frame is not priced, an empty
+request is refused, the cap 413s, records land in `result` and not `params`, a
+save during a render 409s, **a save that wipes every frame leaves a paid clip
+untouched**, a rendered frame drops out of the estimate unless forced, and
+another account gets 404 on all three routes), `npm run build`,
+`import server.main`. All green. **No browser test** (standing rule — ask first).
+
+**AND THE OTHER HALF: ✨ ANIMATE WITH VEO, from inside the editor.** Select a
+frame → write what MOVES → see the price → the clip lands on the same timeline.
+
+**⚠ THE STRUCTURAL DECISION, and the reason this is worth having at all: a
+generated clip lands as an ORDINARY VIDEO UPLOAD.** It is written to
+`vid_{upload_id}.mp4` in the same media folder a dragged-in file goes to, and the
+frame is then pointed at it. From that moment nothing downstream can tell the
+two apart — trimming, speed, `in_ms`/`out_ms`, frame extraction, the export, the
+monitor's `<video>` — all one code path. Building Veo output as its own kind of
+clip would have meant a second one to keep in step, which is the mistake
+`_SHAPE_POINTS`/`POINTS` already documents.
+
+**⚠ RENDER STATE IS SERVER-OWNED, AND THIS IS NOT OPTIONAL.** `AnimaticVeoClip`
+records live in the job's **`result`**, never in `params`. The editor autosaves
+every ~900ms and rewrites `params.frames` wholesale from memory, so a render
+recorded there would be rolled back by any save that started before it finished —
+destroying the only record of something the user was **charged for**. This is the
+`FinalVideoShot.include` vs `ShotStatus` lesson from 2026-08-07, one workflow
+along. Two things enforce it, and both are asserted in the test:
+- `/animate` puts the job in **RUNNING**, which `save_animatic` already 409s on,
+  so for the whole life of a batch the server is the only writer to that job.
+- Even after it ends, a save that empties every frame leaves `result.veo_clips`
+  untouched — there is no field on `AnimaticSaveRequest` that could reach it.
+
+The money discipline is the 2026-08-07 one, unchanged: `/animate/estimate` is
+**free** and takes the **same body** as `/animate` (so the number quoted can only
+be the price of what the button then does), the batch is capped at
+`MAX_VIDEO_BATCH`, a promptless frame is refused rather than turned into a paid
+failure, and a frame that already rendered needs `force` — surfaced as a
+separately-worded "Render again", never a retry. `render_frame_clip` is the
+animatic's own thin adapter over `video_client.render_shot`; `render_one_shot`
+stays the final-video adapter. Two thin adapters over one renderer beats one
+function that knows about two workflows.
+
+**⭐ VEO HAS NOW BEEN CALLED FOR REAL — the first time in this project's life.**
+The user rendered one frame (4s, 720p, $0.20) and it came back: a 727KB MP4,
+1280×720, which `probe_duration` reads as 4010ms and `extract_frames` tears into
+96 stills at 24fps with the frame mapping landing exactly where `source_at` says
+it should. **The whole video-clip pipeline is confirmed against genuine Veo
+output, not just synthetic `testsrc` files.** The 10ms overshoot against the
+4000ms we recorded is harmless — `frame_path` clamps to the last still, which is
+the same rule that protects a clip trimmed past its source.
+
+**⚠ THE THIRD BUG, and it lost a clip that had been paid for.** The render
+succeeded, the MP4 was on disk, the record said `ready` — and the editor sat on
+"Animating…" for ever, because the polling effect keyed on the polled JOB
+OBJECT, which the poll itself wrote. A Veo batch ends by putting the job back to
+QUEUED, so: poll writes the job → the dependency changes → the effect re-runs →
+its cleanup sets `alive = false` → the already-awaited fetch returns into a dead
+closure → the clip is never attached, and the effect will not restart because
+the status is no longer "running". **An effect must never depend on state its
+own async body writes.** It now keys on a plain `animating` boolean that nothing
+else touches, completion is decided by the RECORDS rather than the job status
+(QUEUED is indistinguishable from idle), and the frame list is read through a
+ref so attaching a clip cannot cancel the loop that is attaching it.
+`reconcileVeoClips` also runs **on every load** and attaches any ready clip whose
+frame isn't already video — so a render that finished while the editor was shut,
+or during that bug, is recovered rather than silently paid for and lost.
+
+**Still NOT done:** `FinalVideoWorkspace` has not been deleted. The editor can
+now animate a shot, so the two overlap — but the workspace still owns the art
+tray, per-shot reference images and the assemble step, none of which the editor
+has. Collapsing them is a separate decision about what to keep.
+Note that `tests/animate_guard_check.py` stubs the render pool on purpose: it
+proves the spend guards and says nothing about Veo. What proves Veo is the real
+render above, and it was a manual one.
+
+### 2026-08-16 — TRANSITIONS, and they cost the timeline nothing (Phase 2)
 
 - **Asked for:** Phase 2 of the editor roadmap. Delivered as **transitions
   alone** — dissolve, dip to black, wipe, slide.
@@ -605,6 +1656,9 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
   the bar colour and blends the results. They agree exactly unless a picture is
   ALSO being faded by its own keyframes mid-transition. Matching that properly
   needs the canvas compositor Phase 4 brings.
+  **→ CLOSED 2026-08-17 by Phase 4**, and in the monitor's favour: the EXPORT
+  changed to composite the incoming picture over the outgoing one too. See the
+  note on `_transition_canvas`.
 
 ### 2026-08-16 — the two things Phase 1 left open
 
@@ -5634,12 +6688,17 @@ Image generation stays non-reproducible — that API exposes no seed.
 **Open follow-up:** show `grounding.warnings` on the shot-review screen (it's in
 the API response and the logs today, but invisible in the UI).
 
-**Animatics → Final Video is BUILT but NOT run against Veo (2026-08-07):** the
-whole workflow is wired end-to-end — art tray, per-shot motion prompts, render,
-assemble, download — and the API + assembler are tested (see the Work Log entry).
-**No real Veo call has ever been made from this code.** It needs a
-billing-enabled project (or a `GEMINI_API_KEY`) and the first render is the real
-test. Read the money notes in that entry before running one.
+**VEO WORKS — confirmed live 2026-08-16.** The first real call was made from the
+**animatic editor's** ✨ Animate button (one 4s/720p frame, $0.20): Veo returned
+a 1280×720 MP4 that `video_frames` reads and extracts correctly. So
+`video_client.py`, the credentials, the region and the prompt shape are all
+proven. Read the money notes in the 2026-08-07 entry before running more.
+
+**`FinalVideoWorkspace` itself is still un-run against Veo**, though it shares
+`video_client.render_shot` with the path that now works, so what is unproven
+there is its own wiring (art-tray references, `last_frame`, batch sequencing),
+not the model call. The art tray in particular passes reference images the
+editor's path does not use.
 
 **There is no Google Flow API** — researched 2026-08-07. Flow is a Labs *web app*:
 no public API, no OAuth scope, no service account, and its credits are a separate
@@ -5686,37 +6745,100 @@ where the storyboard, the animatic and the final film are one timeline.**
   freeze-frame are meaningless for a held still: a still at 2× is just a shorter
   hold, which the duration field already does. They only become real once video
   clips exist, so they moved to Phase 3.
-- **Phase 3 — VIDEO CLIPS on the animatic timeline. ⭐ the big product unlock.**
-  Generalize `AnimaticFrame` → a clip with `kind: image | video | color` and an
-  `in_ms`/`out_ms` source range. Pillow cannot decode video, so the server
-  extracts frames with `ffmpeg -vf fps=N` (remember: **there is no ffprobe** on
-  an `imageio-ffmpeg` install — see `video_assemble.py`). Then **fold Veo
-  rendering into the editor**: select a frame → "animate this shot" → the clip
-  lands on the same timeline. This collapses `FinalVideoWorkspace` and the
-  animatic editor into one coherent product.
-  **Speed / reverse / freeze-frame belong here**, moved down from Phase 2 —
-  they need a clip with a source range before they mean anything.
-- **Phase 4 — look: colour, LUT (.cube), masks, chroma key, blend modes.** This
-  is where the DOM preview finally has to become a **canvas/WebGL** compositor —
-  CSS cannot match Pillow on any of these. Budget the drag-handle hit-testing
-  that the DOM gives for free (see the Phase 0 entry for why it was kept).
-- **Phase 5 — text engine + captions.** Fonts, stroke/shadow/gradient, in/out
-  animation presets, saved templates; then auto-captions from the voiceover and
-  dialogue → TTS, both auto-timed from data we already hold.
-- **Phase 6 — audio depth:** fade handles, ducking, beat markers, EQ.
+- **Phase 3 — VIDEO CLIPS on the animatic timeline. ✅ DONE 2026-08-16** (see the
+  top Work Log entry). `AnimaticFrame` is a clip with
+  `kind: image | video | color`, an `in_ms`/`out_ms` source range and `speed`;
+  `video_frames.py` extracts stills with `ffmpeg -vf fps=N` and caches them by
+  content. **`duration_ms` stays the TIMELINE length — speed widens the source
+  window rather than re-timing the clip**, which is what keeps every later cut,
+  caption and transition where it was. A clip arrives either by drag-and-drop or
+  from **✨ Animate with Veo**, and a generated clip lands as an ordinary video
+  upload so there is ONE code path downstream. Render records are server-owned
+  (`result`, not `params`) — read the top entry before changing that.
+  Reverse and freeze-frame were NOT built. `FinalVideoWorkspace` is NOT yet
+  deleted: it still owns the art tray, per-shot references and assembly, so
+  collapsing the two is a separate decision about what to keep.
+- **Phase 4 — look: colour, LUT (.cube), masks, chroma key, blend modes.
+  ✅ DONE 2026-08-17** (see the top Work Log entry). A frame and an overlay carry
+  `effects` / `mask` / `blend`; every numeric parameter is keyframable through
+  the ordinary ⏱ using a FLAT track name (`fx:<id>:<param>`, `mask:<field>`), so
+  nothing about `keyframes`, the timeline rows or the undo stack had to change.
+  The DOM preview IS a WebGL canvas now (`ProgramCanvas` + `animatic/gl/`) and
+  **the shape fills moved into it with the pictures** — forced, not chosen: an
+  overlay's blend mode needs every pixel beneath it. The drag handles stayed in
+  the DOM, which is the cheap answer this plan itself suggested.
+  **Pixel parity is by TOLERANCE, never exactly** — `tests/effects_check.py`
+  pins the Python side to golden values, `tests/effects_parity_check.py` compares
+  the shaders against Pillow at mean |Δ| < 3/255. ⚠ **Its pixel half has never
+  run** (headless-gl would not build here); its static half does and passes.
+  NOT built: effects on shapes and captions, and user-uploaded .cube files —
+  the LUTs are the five built-ins in `luts/`.
+- **Phase 5 — text engine + captions. ✅ DONE 2026-08-17** (see the top Work Log
+  entry). Six bundled OFL fonts loaded from ONE file by both the browser and the
+  exporter (`animatic_fonts.py` ⇄ `fonts.js` — a twin pair, checked); stroke,
+  shadow and letter spacing in units that are the same number on both sides;
+  `place: flow | free` with keyframable `x`/`y`; in/out presets that are
+  **keyframe macros, not a second animation system**; auto-captions from an audio
+  track and dialogue → TTS, both timed from data we already hold.
+  **⚠ NO REAL GEMINI CALL HAS BEEN MADE** — transcription and TTS are proven
+  against stubs, so the timing rules and spend guards hold but the request shape,
+  the model ids and the response parsing are unverified. NOT built: gradient
+  fill, saved text templates, and per-speaker voices in the UI (the server
+  already honours a per-line `voice`).
+- **Phase 6 — AUDIO DEPTH. ✅ DONE 2026-08-17, EQ included** (see the top two Work
+  Log entries). A track gained `fade_in_ms` / `fade_out_ms`, a three-band
+  `eq_low`/`eq_mid`/`eq_high`, `duck_to` and `role` / `duck_target`; **preview
+  playback moved into a WebAudio graph** (`audio_engine.js`) because an `<audio>`
+  element caps volume at 1 and cannot be EQ'd — the element is still the clock,
+  and the file falls back to `el.volume` on any failure. The whole audio filter
+  graph is now
+  `audio_graph()` in `animatic.py`, unit-tested as a string AND encoded, decoded
+  and measured. Three rules carry it:
+  **(1)** `track_play_ms` / `fade_window` are a TWIN PAIR with
+  `client/src/animatic/audio_mix.js`, checked by running the JS through node —
+  a fade is placed against what the track PLAYS (its trim, or the end of the
+  video), never against the file.
+  **(2) Which track is the voice is stated, never guessed** (`role`), and
+  `amix=…:normalize=0` still has to survive every edit to that function.
+  **(3)** The duck is a compressor, so the preview is deliberately CLOSE rather
+  than exact — the one honest gap in this editor's preview, stated in the pane
+  where the control is. Beat markers are drawn AND are snap targets; the decode
+  is shared and cached in `beats.js`.
+  **(4)** The EQ's shelves must keep stating `t=s:w=1` — at ffmpeg's defaults
+  they are not the same filter WebAudio builds — and its three bands stay FIXED
+  so that each one is exactly one biquad on each side.
+  **Nothing is left unbuilt.** ⚠ **No browser run**: the grips, the ticks, the
+  Tone and Mix rows, and — most importantly — the rebuilt playback signal path
+  have not been looked at.
 - **Phase 7 — the moat:** regenerate-panel inside Properties, auto-cut to beat,
   auto-reframe 16:9 → 9:16, "make this shot 2s longer" re-planning key poses.
 - **Phase 8 — performance:** proxies, thumbnail/waveform cache, export presets.
 
-**Two files are past their sane size and the next phase should split them
-FIRST, not after:** `AnimaticEditor.jsx` (~4.2k lines — extract
-`useAnimaticProject`, `useTimelineTransport`, `useUndoStack` and the six
-`*Properties` panes) and `styles.css` (~9.1k lines). Phase 2 added to both
-rather than splitting them, which was the wrong trade to make twice; Phase 3
-generalises `AnimaticFrame` into a clip and will touch every one of those
-sections, so it is the natural moment.
+**✅ THE REFACTOR BREAK IS DONE (2026-08-16), and Phase 4 was built on it
+(2026-08-17).** `AnimaticEditor.jsx` was split into `useAnimaticProject`,
+`useTimelineTransport`, `useUndoStack` and the six `*Properties` panes;
+`styles.css` is 22 files under `client/src/styles/`. Three rules came out of the
+two phases that a later one must not break: **the `@import` order in
+`styles/index.css` is the cascade** (add a new file at the END — that is where
+`animatic-effects.css` went); **the transport hook owns the clock, so `scene` can
+never be one of its arguments**; and **the export payload in `server/animatics.py`
+is a `model_dump`, never a hand-written dict** — it was one for three phases and
+had silently fallen behind by `id`, `keyframes` and the whole transform.
 
 **Not yet verified live** (needs real keys / steady backend):
+- **THE PHASE 5 AI PATHS — auto-captions and TTS.** Not one real Gemini call has
+  been made. `tests/captions_check.py` drives both through stubs, so the timing
+  arithmetic, the spend guards and the plumbing are proven and the REQUEST SHAPE
+  is not: the model ids (`gemini-2.5-flash-preview-tts`), the audio mime types,
+  the inline-audio part, `response_modalities=["AUDIO"]` and the PCM extraction
+  are all written from the documented API and may need adjusting on first
+  contact. Try the captions pass first — it is one call and costs a fraction of
+  a cent, whereas a voiceover is one call per line.
+- **The Phase 5 TYPE, in a browser.** The stroke, shadow and letter spacing in
+  the monitor are matched to `_draw_text_block` by unit and by argument, not by
+  looking — `stroke_px` scaling as `calc(100cqh * n / 1080)`, `shadow` and
+  `letter_spacing` as `em`, the shadow's blur being zero on both sides. Same
+  standing gap as Phase 1a, and the same fix: look at one.
 - **EVERYTHING built on 2026-08-16 — the scene model, the keyframe UI AND the
   transitions.** Not one pixel of it has been seen in a browser. The Program
   monitor's CSS transform is matched to `place_picture` by reasoning about the
@@ -5732,7 +6854,11 @@ sections, so it is the natural moment.
   be judged by generating a real board. **Do that before building anything on
   top of them.** The mechanical parts (hole retry, gap-aware resume, flipbook
   animatic) are verified offline and don't need the API.
-- **Veo video rendering** — see above. Coded, typed, unit-tested, never called.
+- **Veo video rendering** — ✅ NO LONGER UNVERIFIED. Called for real on
+  2026-08-16 from the animatic editor and it worked (see above). What is still
+  unverified is `FinalVideoWorkspace`'s own wiring — art-tray reference images,
+  `last_frame`, and a multi-shot batch — none of which the editor's path
+  exercises.
 - **3D generation** — Meshy path is coded but not run live; **Tripo is entirely
   unverified** (built from public docs, no test key — adjust request shape when tried).
 - The shirtless-mannequin `body` prompt may still occasionally be safety-filtered
@@ -5796,6 +6922,101 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **DRAG THE NEW TIMELINE SCROLL BARS IN THE REAL EDITOR.** Added
+      2026-08-17 and proven only in an isolated harness, with no audio lane, no
+      video clips and no keyframes on screen. What to look at, in order: the
+      gutter labels stay beside their own tracks while the lanes are scrolled
+      down (that is a hand-written `translateY`, not layout); the ruler stays
+      pinned and the playhead's grip is still drawn over it; a grip drag zooms
+      with the OPPOSITE end pinned and does not creep while the pointer is
+      still; the vertical grips make every track taller together, waveform
+      included; the wheel still scrolls with no visible scrollbar; and the Hand
+      tool (`H`) still drags the view. Then run `python tests/e2e_animatic.py` —
+      §5 checks exactly the gutter/lane alignment this touched.
+- [x] **UNSTICK `tests/e2e_animatic.py`** (done 2026-08-16 — it had been dying at
+      section 5 of 14 since the LANES work landed, so sections 6-14 had not run
+      for several sessions. All 14 pass now; three of the four failures were a
+      stale test and one was the test misreading the app. See the Work Log.)
+- [x] **Split `AnimaticEditor.jsx` and `styles.css` before Phase 4** (done
+      2026-08-16 — pure move, see the Work Log).
+- [x] **`.an-clip-short` had no CSS rule** (done 2026-08-16 — the video-clip trim
+      warning was rendering unstyled).
+- [x] **Wire up "add a colour card"** (done 2026-08-16 — `＋ Colour card` beside
+      `Text` in the timeline header, the two clips you can make without a file.
+      `addColorCard()` had had no caller since Phase 3. See the Work Log; e2e
+      §11b covers it.)
+- [x] **Render one shot with Veo for real** (done 2026-08-16 — one 4s/720p frame,
+      $0.20. It worked, and the returned MP4 extracts correctly. It also found
+      the polling bug that lost the clip; see the top Work Log entry.)
+- [ ] **LOOK AT THE REBUILT PROPERTIES PANE, at all five viewports.** It was
+      converted from hand-rolled rows to `PropGroup`/`PropRow` (2026-08-17) and
+      `npm run build` is the only thing that has checked it. What to look at, in
+      order: labels line up down a Frame pane with a video clip selected (five
+      sections, ~20 rows); a live ⏱ with ‹ ◆ › and an easing menu does not squash
+      the value box beside it; the segmented button groups (shape kind, text
+      align/size) and the chip strips (speed, aspect) still fit their rows; a
+      collapsed group stays collapsed when you click the next clip; and the
+      1320px / 1180px label-column steps in `properties.css` land where the pane
+      actually changes shape. Then run `python tests/e2e_animatic.py`.
+- [ ] **OPEN THE EDITOR AND LOOK AT THE MONITOR.** Phase 4 replaced the whole
+      preview with a WebGL canvas and **not one line of that GLSL has ever been
+      compiled** — headless-gl would not build on this machine, so the pixel half
+      of `tests/effects_parity_check.py` has never run, and the browser has not
+      been opened. Everything else about the phase is tested; this is the part
+      that isn't. What to check, in order: a plain still still shows; a shape
+      still draws and still drags (its FILL is in the canvas now, only its handle
+      is DOM); an overlay still draws above the shapes; a dissolve still blends;
+      then a LUT, a mask and a chroma key. If the canvas is black, the console
+      will say why — a shader that failed to compile throws with its own log.
+- [ ] **Get `tests/effects_parity_check.py`'s pixel half to run, somewhere.**
+      `cd client && npm install --no-save gl`. It needs a C++ toolchain (Windows:
+      the Visual Studio "Desktop development with C++" workload; Linux:
+      libx11-dev, libxi-dev, mesa). It is the ONLY thing that will catch the
+      monitor and the export grading differently, and until it runs once that
+      guarantee is on paper only.
+- [ ] **Render a SECOND shot, and watch it land on the timeline.** The first one
+      proved Veo and the extraction; what has still never been seen working is
+      the fixed attach path — clip finishes → frame becomes `kind: "video"` →
+      it plays in the monitor → it survives a reload. That is one more $0.20
+      frame and it closes the loop.
+- [ ] **Decide what happens to `FinalVideoWorkspace`.** The editor can now
+      animate a shot, so the two overlap — but the workspace still owns the art
+      tray (character/style references per shot) and the assemble step. Either
+      bring those INTO the editor and delete it, or keep it for multi-shot batch
+      work and say plainly which is for what. Right now there are two ways to
+      spend money on the same thing, which is the worst of both.
+- [ ] **Phase 3 leftovers, small:** reverse and freeze-frame (the source range
+      exists now, so both are cheap), and a video clip's own audio track — the
+      export currently mixes only the project's audio, which is why the monitor's
+      `<video>` is muted.
+- [x] **Phase 6 — audio depth: fades, EQ, ducking, beat markers** (done
+      2026-08-17; see the top two Work Log entries. `tests/audio_mix_check.py` —
+      it encodes, decodes and MEASURES, so this one genuinely covers the export.)
+- [x] **EQ on an audio track** (done 2026-08-17 with the WebAudio refactor it
+      needed — three fixed bands, previewed by three biquads and exported by
+      three ffmpeg filters, measured out of the encoded file with an FFT.)
+- [ ] **LISTEN TO THE AUDIO LANE IN A BROWSER.** The one with the most riding on
+      it: **the whole preview signal path was rebuilt** (every `<audio>` now goes
+      through a WebAudio graph). It is written to fall back to `el.volume` on any
+      failure, so a broken graph would be silent-ly *fine* rather than obviously
+      broken — which is exactly why it needs ears on it. Check, in order:
+      **sound comes out at all** when you press play; a track above 100% is
+      audibly louder than one at 100% (it used to be identical); the three Tone
+      sliders change what you hear and "Flat" puts it back; the two fade grips
+      are grabbable at zero fade (they are clamped inside the clip for that
+      reason) and dragging one writes `fade_in_ms`/`fade_out_ms` with the wedge
+      following; playback audibly ramps at both ends; beat ticks appear under a
+      music track and a dragged frame edge snaps to one. Console: an
+      `AudioContext was not allowed to start` warning on load is expected and
+      harmless — it resumes on the first play.
+- [x] **Phase 4 — the LOOK: colour, LUT, masks, chroma key, blend modes** (done
+      2026-08-17 — plus the WebGL monitor. Three pre-existing export bugs fell
+      out of it; see the top Work Log entry. `tests/effects_check.py`,
+      `tests/effects_parity_check.py`. ⚠ The shaders have never been compiled —
+      the two unchecked items at the top of this list are what closes that.)
+- [x] **Phase 3 — video clips on the timeline, dropped or Veo-generated** (done
+      2026-08-16 apart from the items above; see the top Work Log entry.
+      `tests/video_clip_check.py`, `tests/animate_guard_check.py`).
 - [x] Client redesign (sidebar dashboard), subject-type templates, live progress,
       per-section 3D + saved API keys, regenerate part/view, custom assets (2026-07-22).
 - [ ] **Re-run shot 2 of the Ep_4 board and compare against the known-bad set**

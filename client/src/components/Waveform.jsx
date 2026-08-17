@@ -5,46 +5,13 @@
 // beat instead of guessing. Drawn from the file itself with WebAudio — no
 // library, and nothing is sent to the server.
 import { useEffect, useRef, useState } from "react";
+import { analyseAudio } from "../animatic/beats.js";
 
-// Peaks are computed ONCE at this resolution and re-bucketed for whatever width
-// the canvas happens to be, so zooming redraws instantly instead of decoding a
-// multi-megabyte MP3 again.
-const PEAK_BUCKETS = 4000;
-
-async function computePeaks(url) {
-  const res = await fetch(url);
-  const bytes = await res.arrayBuffer();
-  const Ctx = window.AudioContext || window.webkitAudioContext;
-  if (!Ctx) return null;
-  const ctx = new Ctx();
-  try {
-    const buffer = await ctx.decodeAudioData(bytes);
-    // Mixing to mono is enough for a shape, and halves the work on stereo files.
-    const channels = [];
-    for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
-
-    const peaks = new Float32Array(PEAK_BUCKETS);
-    const per = Math.max(1, Math.floor(buffer.length / PEAK_BUCKETS));
-    for (let i = 0; i < PEAK_BUCKETS; i++) {
-      const start = i * per;
-      let peak = 0;
-      for (let j = 0; j < per; j += 4) {
-        // Step by 4: at this bucket size the extra samples don't change the
-        // drawn shape, and it keeps a 10-minute file responsive.
-        for (const data of channels) {
-          const v = Math.abs(data[start + j] || 0);
-          if (v > peak) peak = v;
-        }
-      }
-      peaks[i] = peak;
-    }
-    return { peaks, durationMs: buffer.duration * 1000 };
-  } finally {
-    // Chrome caps how many AudioContexts a page may hold; a decode-only context
-    // that is never closed will eventually stop new ones from being created.
-    ctx.close?.();
-  }
-}
+// ⚠ THE DECODE MOVED to `animatic/beats.js` and is cached there by url. The
+// peaks are computed exactly as they were — same buckets, same stepping — but
+// the beat markers and the duck preview want the same samples, so decoding a
+// multi-megabyte MP3 once per thing that looks at it was both slow and three
+// chances to disagree about how long the file is.
 
 export default function Waveform({
   audioUrl,
@@ -68,7 +35,7 @@ export default function Waveform({
     }
     let alive = true;
     setState("loading");
-    computePeaks(audioUrl)
+    analyseAudio(audioUrl)
       .then((result) => {
         if (!alive) return;
         setData(result);
@@ -102,7 +69,10 @@ export default function Waveform({
       // x is a position in VIDEO time; offsetMs shifts it into the audio file.
       const audioMs = (x / width) * span + offsetMs;
       if (audioMs < 0 || audioMs > durationMs) continue;
-      const bucket = Math.min(PEAK_BUCKETS - 1, Math.floor((audioMs / durationMs) * PEAK_BUCKETS));
+      // Re-bucketed from the analysis's own resolution, whatever that is — the
+      // canvas is redrawn on every zoom step and must never assume a number
+      // that lives in another file.
+      const bucket = Math.min(peaks.length - 1, Math.floor((audioMs / durationMs) * peaks.length));
       const amp = Math.max(0.02, peaks[bucket]) * (height / 2) * 0.94;
       ctx.fillRect(x, mid - amp, 1, amp * 2);
     }

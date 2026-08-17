@@ -1,0 +1,123 @@
+/* animatic-scrollbar — the timeline's own scroll bars: a thumb with a round
+ * grip at each END, which zooms rather than scrolls. See ZoomScrollbar.jsx.
+ *
+ * Deliberately NOT styled as a native scrollbar. It is a control you work with
+ * constantly — framing a section of the edit is the same gesture as scrolling
+ * to it — so it is drawn at a size you can hit, in the panel's own colours,
+ * with the grips reading as handles rather than as decoration.
+ */
+
+/* Its own two tokens rather than `--btn-bg`: in the dark theme that resolves to
+   `--panel-2`, which is exactly what the bar's own track is painted in — the
+   thumb would have been invisible against it. The thumb has to sit a step off
+   the track in BOTH themes, so it is stated in both. */
+.tl-sbar {
+  --tl-sbar-thumb: #39405a;
+  /* A clear step off the thumb, at rest and not only on hover: the grips are
+     the difference between this and an ordinary scrollbar, so they have to be
+     visible before you touch it. */
+  --tl-sbar-grip: #6b76a0;
+  position: relative;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  /* The whole bar is a drag surface; nothing inside it selects. */
+  user-select: none;
+  touch-action: none;
+}
+.tl-sbar-horizontal {
+  height: 0.85rem;
+  width: 100%;
+}
+.tl-sbar-vertical {
+  width: 0.85rem;
+  /* Starts below the ruler, which is pinned to the top of the scroller and is
+     not part of what this bar moves. */
+  margin-top: var(--tl-ruler-h);
+  margin-bottom: 0;
+  align-self: stretch;
+}
+
+/* The slice of the timeline you are looking at. Its LENGTH is the zoom and its
+   POSITION is the scroll — the two things this bar reports, in one shape. */
+.tl-sbar-thumb {
+  position: absolute;
+  background: var(--tl-sbar-thumb);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: grab;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.tl-sbar-horizontal .tl-sbar-thumb {
+  top: 1px;
+  bottom: 1px;
+}
+.tl-sbar-vertical .tl-sbar-thumb {
+  left: 1px;
+  right: 1px;
+}
+.tl-sbar-thumb:hover,
+.tl-sbar.dragging .tl-sbar-thumb {
+  background: rgba(229, 193, 88, 0.22);
+  border-color: var(--primary);
+}
+.tl-sbar.dragging .tl-sbar-thumb {
+  cursor: grabbing;
+}
+
+/* The grips. Round, sitting ON the ends of the thumb, and a shade lighter than
+   it — that difference is the only thing telling you that the ends do something
+   the middle doesn't. They overhang by a pixel so the whole circle is grabbable
+   even when the thumb is at its minimum width. */
+.tl-sbar-grip {
+  position: absolute;
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 50%;
+  background: var(--tl-sbar-grip);
+  border: 1px solid var(--border);
+}
+.tl-sbar-thumb:hover .tl-sbar-grip,
+.tl-sbar.dragging .tl-sbar-grip {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+.tl-sbar-horizontal .tl-sbar-grip {
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+.tl-sbar-horizontal .tl-sbar-grip.start {
+  left: -1px;
+}
+.tl-sbar-horizontal .tl-sbar-grip.end {
+  right: -1px;
+}
+.tl-sbar-vertical .tl-sbar-grip {
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.tl-sbar-vertical .tl-sbar-grip.start {
+  top: -1px;
+}
+.tl-sbar-vertical .tl-sbar-grip.end {
+  bottom: -1px;
+}
+
+:root[data-theme="light"] .tl-sbar {
+  --tl-sbar-thumb: #cbd2e0;
+  --tl-sbar-grip: #8d99b3;
+}
+
+@media (max-width: 720px) {
+  /* Thicker where the pointer is a fingertip. */
+  .tl-sbar-horizontal {
+    height: 1rem;
+  }
+  .tl-sbar-vertical {
+    width: 1rem;
+  }
+}

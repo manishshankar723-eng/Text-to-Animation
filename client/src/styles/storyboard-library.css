@@ -1,0 +1,394 @@
+/* storyboard-library — The `.lib-*` card grid shared by BOTH project libraries, and the token-gated public board view. */
+
+/* =========================================================================
+   STORYBOARD LIBRARY ("Your Storyboards" — step 1 of Script → Storyboard)
+   ========================================================================= */
+/* Shared by BOTH project libraries — "Your Storyboards" and "Your Animatics".
+   Every `.lib-*` rule below is used by both pages on purpose, so the two
+   workflows read as one product; change a card here and it changes in both. */
+.sb-library {
+  max-width: 2200px;
+  margin: 0 auto;
+}
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.2rem;
+  /* STRETCH, not start: with `start` each card took its natural height, so one
+     card with an extra row of chips stood taller than the ones beside it and
+     the row looked broken. Every card in a row is now the same height, and
+     `.lib-foot` is pushed to the bottom so the dates and actions line up too.
+     Shared by every library (storyboards, animatics, plans). */
+  align-items: stretch;
+}
+@media (max-width: 640px) {
+  .lib-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- The "New Storyboard" tile: always first, so starting is one click ---- */
+.lib-new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 280px;
+  margin: 0;
+  cursor: pointer;
+  border-style: dashed;
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.lib-new:hover {
+  border-color: var(--border-gold);
+  transform: translateY(-2px);
+}
+.lib-new-plus {
+  display: grid;
+  place-items: center;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 14px;
+  font-size: 2.4rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--gold-ink);
+  background: var(--gold-grad);
+  box-shadow: var(--gold-glow);
+  /* A flex child's min-height defaults to `auto`, so an EMOJI tile (🎬, 🎞️)
+     whose line box is taller than 4.5rem grew this box and pushed the title and
+     subtitle a few pixels lower than the neighbouring "+" tile — the two tiles
+     visibly failed to line up. Rule 3 of the Responsive rules: min-height: 0 on
+     every flex child. `overflow: hidden` keeps an oversized glyph inside the
+     square instead of letting it bleed over the corners. */
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.lib-new-title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.95rem;
+}
+
+/* ---- A saved storyboard card ---- */
+.lib-card {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.lib-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--panel-2);
+  cursor: pointer;
+  overflow: hidden;
+  /* Holds its 16:9 shape in a stretched card — the slack belongs to the body,
+     not to a squashed or letterboxed thumbnail. */
+  flex-shrink: 0;
+}
+.lib-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.25s ease;
+}
+.lib-cover:hover img {
+  transform: scale(1.03);
+}
+.lib-cover-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 2rem;
+  color: var(--muted);
+}
+.lib-badge {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--gold-ink);
+  background: var(--gold-fill);
+}
+.lib-badge.failed {
+  color: #fff;
+  background: var(--fail);
+}
+.lib-body {
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  /* Takes the slack in a stretched card, so the extra height goes into empty
+     space above the footer rather than stretching the cover image. */
+  flex: 1;
+}
+.lib-title {
+  font-weight: 650;
+  font-size: 1.02rem;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-title:hover {
+  color: var(--primary);
+}
+.lib-rename {
+  width: 100%;
+  font-weight: 650;
+}
+.lib-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.lib-meta .chip {
+  margin: 0;
+}
+.lib-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  /* Pinned to the bottom of the card, so the date and the ✏️/🗑 buttons sit on
+     one line across the whole row however many chips a card carries. */
+  margin-top: auto;
+}
+.lib-actions {
+  display: flex;
+  gap: 0.15rem;
+}
+.lib-icon {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.lib-icon:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--border-gold);
+  background: var(--panel-2);
+}
+.lib-icon.on {
+  color: var(--primary);
+}
+.lib-icon.danger:hover:not(:disabled) {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+.lib-icon:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Public link row, shown while a board is shared. */
+.lib-share {
+  display: flex;
+  gap: 0.4rem;
+}
+.lib-share input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.lib-share .btn {
+  flex-shrink: 0;
+}
+
+/* Two-step delete: destructive and not undoable, so it always confirms. */
+.lib-confirm {
+  border: 1px solid var(--fail);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  background: rgba(248, 113, 113, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.lib-confirm-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.btn.lib-delete {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.btn.lib-delete:hover:not(:disabled) {
+  background: var(--fail);
+  color: #fff;
+}
+.lib-empty {
+  margin: 0;
+  padding: 1.6rem 0;
+  text-align: center;
+}
+
+/* ---- Folder-style sections: Recent Storyboards / All Storyboards ---- */
+.lib-new-row {
+  margin-bottom: 2rem;
+}
+.lib-section + .lib-section {
+  margin-top: 2rem;
+}
+.lib-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.lib-section-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Dimmed placeholder ("ghost") cards for an empty / loading section ---- */
+.lib-ghost {
+  pointer-events: none;
+  opacity: 0.55;
+}
+.lib-ghost-cover {
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+.lib-ghost-ico {
+  font-size: 1.9rem;
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.lib-ghost-line,
+.lib-ghost-chip {
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+.lib-ghost-title {
+  height: 0.95rem;
+  width: 62%;
+  margin: 0.15rem 0 0.15rem;
+}
+.lib-ghost-chip {
+  display: inline-block;
+  width: 3.2rem;
+  height: 1.15rem;
+  border-radius: 999px;
+}
+/* Empty-state card: mirrors the "New Storyboard" tile — icon + text stacked and
+   centered in the middle of a dashed card. */
+.lib-ghost-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  min-height: 280px;
+  padding: 1.5rem;
+  text-align: center;
+  border-style: dashed;
+}
+.lib-empty-ico {
+  font-size: 2.4rem;
+  opacity: 0.45;
+  filter: grayscale(0.4);
+}
+.lib-empty-text {
+  margin: 0;
+  max-width: 22ch;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.lib-empty-text strong {
+  color: var(--primary);
+}
+/* While the list is still loading, the placeholders shimmer to read as "busy"
+   rather than "empty". Once loaded-and-empty they hold still (no animation). */
+.lib-ghosts.is-loading .lib-ghost-cover,
+.lib-ghosts.is-loading .lib-ghost-line,
+.lib-ghosts.is-loading .lib-ghost-chip {
+  background: linear-gradient(
+    90deg,
+    var(--panel-2) 25%,
+    var(--border) 50%,
+    var(--panel-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: lib-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes lib-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-ghosts.is-loading .lib-ghost-cover,
+  .lib-ghosts.is-loading .lib-ghost-line,
+  .lib-ghosts.is-loading .lib-ghost-chip {
+    animation: none;
+  }
+}
+
+/* The form step's lone "back to library" button shouldn't stretch. */
+.sb-form-actions {
+  justify-content: flex-start;
+}
+.sts-script-label {
+  margin-top: 1rem;
+}
+
+/* =========================================================================
+   PUBLIC (SHARED) STORYBOARD VIEW — rendered without a session
+   ========================================================================= */
+.public-wrap {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0 clamp(1.2rem, 3vw, 2.5rem) 3rem;
+}
+.public-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.public-board {
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.public-msg {
+  max-width: 480px;
+  margin: 15vh auto 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+}
+

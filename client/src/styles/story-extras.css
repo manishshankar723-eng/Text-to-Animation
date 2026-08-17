@@ -1,0 +1,299 @@
+/* story-extras — Three things a shot carries besides its picture: spoken dialogue, the world of the story, and the source script. */
+
+/* =========================================================================
+   DIALOGUE — what is SPOKEN in a shot. Read-only on the board (DialogueBox),
+   editable on the review step (DialogueEditor).
+
+   Nothing here has a visible container of its own when a shot is silent: the
+   components return null for an empty list, so a shot with no speech shows no
+   heading, no rule and no blank row — most shots on a board are silent, and an
+   empty box on each of them would be pure noise.
+   ========================================================================= */
+.dialogue {
+  margin: 0.15rem 0 0.6rem;
+  padding-left: 0.6rem;
+  /* The one persistent cue that someone is speaking here. */
+  border-left: 3px solid var(--border-gold);
+}
+.dialogue-line {
+  margin: 0 0 0.4rem;
+}
+.dialogue-line:last-child {
+  margin-bottom: 0;
+}
+/* The speaker sits ABOVE the line, the way a script prints it. */
+.dialogue-who {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+/* "Dialogue" before the first speaker, in the muted label voice the Camera and
+   Location rows use — the name alone doesn't say what it is. */
+.dialogue-tag {
+  color: var(--muted);
+  margin-right: 0.4rem;
+}
+.dialogue-text {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+/* On a board tile the caption is tight — keep the block from crowding out the
+   prompt box under it. */
+.board-dialogue {
+  margin: 0.35rem 0 0.5rem;
+}
+.board-dialogue .dialogue-text {
+  font-size: 0.78rem;
+}
+
+/* --- Editing dialogue on the review step -------------------------------- */
+.dialogue-edit {
+  margin: 0.7rem 0 0.2rem;
+}
+.dialogue-row {
+  display: grid;
+  /* Who / what they say / remove. The name column is fluid so it can't push
+     the line input off a narrow card. */
+  grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+.dialogue-row input {
+  min-width: 0;
+}
+.dialogue-who-input {
+  text-transform: uppercase;
+}
+/* A quiet link, not a button: adding a line is an option on every shot, and
+   thirty outlined buttons down the page would read as the main action. */
+.dialogue-add {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dialogue-add:hover {
+  color: var(--primary);
+}
+.dialogue-add.empty {
+  display: block;
+  margin-top: 0.7rem;
+}
+
+@media (max-width: 560px) {
+  /* Two columns would leave the line input a few characters wide. */
+  .dialogue-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .dialogue-who-input {
+    grid-column: 1 / -1;
+  }
+}
+
+/* =========================================================================
+   WORLD OF YOUR STORY — region / period / culture, prefixed onto every image
+   prompt. Editable, because the writer is the authority on their own world.
+   ========================================================================= */
+.world-card {
+  border-color: var(--border-gold);
+}
+.world-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.world-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.world-count {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.world-note {
+  margin: 0.35rem 0 0.8rem;
+}
+.world-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+}
+.world-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+/* "The people look like" and the free-notes field earn a full row. */
+.world-field.wide {
+  grid-column: 1 / -1;
+}
+.world-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Collapsed form, used inside the pre-flight modal where space is tight. */
+.world-details {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  padding: 0.6rem 0.75rem;
+}
+.world-details > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.world-details[open] > summary {
+  margin-bottom: 0.6rem;
+}
+@media (max-width: 620px) {
+  .world-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================================
+   YOUR SCRIPT — the full source text on the review step, line-numbered so the
+   "FROM YOUR SCRIPT · LINE n" tag on each shot card can be looked up.
+   ========================================================================= */
+.script-panel {
+  border-color: var(--border-gold);
+}
+.script-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  cursor: pointer;
+  list-style: none;
+}
+.script-panel-head::-webkit-details-marker {
+  display: none;
+}
+.script-panel-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+.script-panel-head::after {
+  content: "▸";
+  order: -1;
+  margin-right: -0.35rem;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.script-panel[open] .script-panel-head::after {
+  transform: rotate(90deg);
+}
+.script-panel-meta {
+  margin-left: auto;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.script-panel-body {
+  margin-top: 0.8rem;
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.script-panel-lines {
+  margin: 0;
+  padding: 0.6rem 0;
+  list-style: none;
+  counter-reset: none;
+}
+.script-panel-lines li {
+  display: flex;
+  gap: 0.9rem;
+  padding: 0 0.8rem;
+}
+.script-panel-lines li:hover {
+  background: rgba(229, 193, 88, 0.07);
+}
+.spl-num {
+  flex: 0 0 2.6rem;
+  text-align: right;
+  font-size: 0.74rem;
+  line-height: 1.65;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.spl-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.65;
+  /* The writer's own wrapping and indentation, preserved. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Progress footer: "N of M parts done" on the left, Stop generation on the
+   right — the stop has to be reachable the moment a part looks wrong. */
+.jp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-top: 0.5rem;
+}
+
+.style-note {
+  margin: 0.55rem 0 0;
+  line-height: 1.5;
+}
+
+/* Scene divider on the review step — full-width across the shot grid, so the
+   scene breaks the AI found are visible rather than only implied by the tags. */
+.scene-divider {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  padding: 0.15rem 0 0.1rem;
+  border-bottom: 1px solid var(--border-gold);
+}
+.scene-divider-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.scene-divider-where {
+  font-size: 0.8rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scene-divider-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
