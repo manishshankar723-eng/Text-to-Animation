@@ -58,6 +58,7 @@ from animatic import (
     ffmpeg_exe,
     run_ffmpeg,
     track_play_ms,
+    track_start_ms,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,10 +87,14 @@ work = tempfile.mkdtemp(prefix="audiomix_")
 
 
 def track(**over):
-    """One audio track, with the shape the server sends the exporter."""
+    """One audio CLIP, with the shape the server sends the exporter."""
     base = {
+        "id": over.pop("id", None) or over.get("upload_id") or "aud1",
         "upload_id": over.pop("upload_id", "aud1"),
         "path": over.pop("path", "music.wav"),
+        # Where the clip sits on the TIMELINE. 0 is every animatic saved before
+        # the razor could cut audio; see `track_start_ms`.
+        "start_ms": 0,
         "offset_ms": 0,
         "trim_ms": None,
         "duration_ms": 0,
@@ -135,7 +140,36 @@ check(
     and old.eq_high == 0.0
     and old.role == ""
     and old.duck_to == 1.0
-    and old.duck_target == "",
+    and old.duck_target == ""
+    # The razor's two fields. `start_ms` of 0 means "pinned to the head of the
+    # video", which is the only behaviour that existed before it.
+    and old.start_ms == 0,
+)
+check(
+    "…including the clip identity, which the server backfills from the upload",
+    # ⚠ THE MIGRATION THIS WHOLE CHANGE RESTS ON. A clip saved before the razor
+    # has no `id`, and everything in the editor is keyed by one: the selection,
+    # its <audio> element, every patch. `_audio_tracks_of` fills it in with the
+    # upload id, which in those projects is unique because one file WAS one clip.
+    old.id == "",
+)
+from server.animatics import _audio_tracks_of  # noqa: E402
+from server.jobs import Job  # noqa: E402
+
+_migrated = _audio_tracks_of(
+    Job(
+        job_id="j",
+        kind="animatic",
+        character_name="x",
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
+        params={"audio_tracks": [old.model_dump()]},
+    )
+)
+check(
+    "…and reading it back gives it one",
+    len(_migrated) == 1 and _migrated[0].id == "a1",
+    [t.id for t in _migrated],
 )
 check(
     "a track with no shape on it needs no filter graph at all",
@@ -186,6 +220,85 @@ check(
     "a track whose length never reached us fades against the video instead",
     fade_window(track(duration_ms=0, fade_out_ms=1000), 6000) == (0, 5000, 1000),
     fade_window(track(duration_ms=0, fade_out_ms=1000), 6000),
+)
+
+# ---------------------------------------------------------------------------
+# 2b. A clip that does not start at the head of the video
+# ---------------------------------------------------------------------------
+# The razor's whole point: cut a take either side of a pause, delete the middle,
+# and the second half now SITS somewhere. Two things follow, and both are easy to
+# get wrong in a way nothing else notices — the room left for it shrinks, and the
+# graph has to delay it.
+print("\nA clip that sits later on the timeline")
+check(
+    "a clip pinned to zero is still what it always was",
+    track_start_ms(track()) == 0 and track_start_ms(track(start_ms=2500)) == 2500,
+)
+check(
+    "the room a clip has is what is LEFT of the video after it starts",
+    track_play_ms(track(duration_ms=90000, start_ms=2000), 6000) == 4000,
+    track_play_ms(track(duration_ms=90000, start_ms=2000), 6000),
+)
+check(
+    "a clip that starts past the end of the video is heard for nothing",
+    track_play_ms(track(duration_ms=90000, start_ms=9000), 6000) == 0,
+    track_play_ms(track(duration_ms=90000, start_ms=9000), 6000),
+)
+check(
+    "its own trim still wins when it is the shorter of the two",
+    track_play_ms(track(duration_ms=90000, start_ms=2000, trim_ms=1500), 6000) == 1500,
+)
+check(
+    "a fade out lands on the end of the CLIP, not the end of the video",
+    # 2s in, 3s long, so it stops at 5s of a 6s video: the ramp is the last
+    # second OF THE CLIP, which is 1s in clip time.
+    fade_window(track(duration_ms=3000, start_ms=2000, fade_out_ms=1000), 6000)
+    == (0, 2000, 1000),
+    fade_window(track(duration_ms=3000, start_ms=2000, fade_out_ms=1000), 6000),
+)
+delayed = audio_graph([track(duration_ms=8000, start_ms=1500)], 6000)
+check(
+    "a clip that starts late CANNOT take the plain path — it needs a delay",
+    delayed is not None,
+)
+check(
+    "…which is adelay, on every channel",
+    "adelay=delays=1500:all=1" in ";".join(delayed[0]),
+    ";".join(delayed[0]),
+)
+shaped = ";".join(
+    audio_graph(
+        [track(duration_ms=8000, start_ms=1500, fade_in_ms=500, eq_low=6)], 9000
+    )[0]
+)
+check(
+    "the delay comes AFTER the fades, or the ramps stay at the head of the video",
+    shaped.index("afade=") < shaped.index("adelay="),
+    shaped,
+)
+check(
+    "…and after the tone and the fader too",
+    shaped.index("bass=") < shaped.index("volume=") < shaped.index("adelay="),
+    shaped,
+)
+check(
+    "a clip still pinned to zero builds no delay at all",
+    "adelay" not in ";".join(audio_graph([track(duration_ms=8000, volume=0.5)], 6000)[0]),
+)
+check(
+    "two clips of ONE file are two inputs, each delayed to its own place",
+    # Which is exactly what a cut leaves behind: same upload, two ids, two
+    # windows, two positions.
+    ";".join(
+        audio_graph(
+            [
+                track(id="c1", upload_id="a", duration_ms=8000, trim_ms=2000),
+                track(id="c2", upload_id="a", duration_ms=8000, start_ms=4000, offset_ms=2000),
+            ],
+            9000,
+        )[0]
+    ).count("adelay=delays=4000:all=1")
+    == 1,
 )
 
 print("\nThe graph that gets built")
@@ -290,6 +403,12 @@ FADE_CASES = [
     (track(duration_ms=4000, fade_in_ms=3000, fade_out_ms=3000), 60000),
     (track(duration_ms=4000, fade_in_ms=1000, fade_out_ms=5000), 60000),
     (track(duration_ms=0, fade_out_ms=1000), 6000),
+    # The razor's cases: a clip that sits later, one whose room the video runs
+    # out of, and one that starts past the end of the video altogether.
+    (track(duration_ms=3000, start_ms=2000, fade_out_ms=1000), 6000),
+    (track(duration_ms=90000, start_ms=2000, fade_in_ms=800, fade_out_ms=1500), 6000),
+    (track(duration_ms=5000, start_ms=9000, fade_out_ms=1000), 6000),
+    (track(duration_ms=0, start_ms=1500, fade_in_ms=500), 6000),
 ]
 
 HARNESS = """
@@ -502,6 +621,54 @@ check(
     band(faded, 5800, 6000) < mid_flat * 0.15,
     f"({band(faded, 5800, 6000):.4f} vs {mid_flat:.4f})",
 )
+
+# ---------------------------------------------------------------------------
+# 4c. A cut really lands where the razor put it
+# ---------------------------------------------------------------------------
+# THE CHECK THIS PHASE EXISTS FOR, and the one that would have caught a missing
+# `adelay`: cut a take either side of a pause, delete the middle, and the piece
+# that is left must be SILENT before it starts and audible after. Measured on the
+# encoded file, because the delay is the only part of this that lives purely in
+# the ffmpeg graph — nothing in the editor could tell you it was missing.
+print("\nA clip cut out of the middle is silent until it starts")
+# One 2s piece of the bed, sitting at 2s of a 6s video. Everything outside
+# 2.0–4.0s should be silence.
+cut = levels(
+    export(
+        [track(path=MUSIC, duration_ms=MUSIC_MS, start_ms=2000, offset_ms=3000, trim_ms=2000)],
+        "mix_cut",
+    )
+)
+before_cut = band(cut, 200, 1700)
+during_cut = band(cut, 2300, 3700)
+after_cut = band(cut, 4300, 5800)
+check(
+    "silent before it starts",
+    before_cut < during_cut * 0.05,
+    f"({before_cut:.5f} vs {during_cut:.5f})",
+)
+check("audible while it plays", during_cut > 0.05, f"({during_cut:.5f})")
+check(
+    "and silent again after it ends",
+    after_cut < during_cut * 0.05,
+    f"({after_cut:.5f} vs {during_cut:.5f})",
+)
+# ⚠ THE PAIR THAT PROVES THE DELAY IS A DELAY AND NOT A TRIM. Without `adelay`
+# the piece would still be 2s long and still be trimmed correctly — it would just
+# start at 0. So the same clip is exported at 0 and the two are compared: the
+# audio in the second must be the SAME sound, arriving 2s later.
+pinned = levels(
+    export(
+        [track(path=MUSIC, duration_ms=MUSIC_MS, start_ms=0, offset_ms=3000, trim_ms=2000)],
+        "mix_pinned",
+    )
+)
+check(
+    "the same sound, two seconds later — a delay, not a trim",
+    abs(band(pinned, 300, 1700) / max(1e-9, during_cut) - 1) < 0.05,
+    f"({band(pinned, 300, 1700):.5f} at 0s vs {during_cut:.5f} at 2s)",
+)
+print(f"       level across the video: {before_cut:.5f} → {during_cut:.5f} → {after_cut:.5f}")
 
 # ---------------------------------------------------------------------------
 # 4b. The EQ moves the band it says it moves, and leaves the others alone

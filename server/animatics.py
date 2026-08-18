@@ -34,7 +34,16 @@ import panel_sequence
 
 from . import config, worker
 from .auth import CurrentUser, get_current_user
-from .common import board_dir, get_owned_job, panel_path, variants_of
+from .common import (
+    board_dir,
+    get_owned_job,
+    panel_for_index,
+    panel_path,
+    regenerate_board_panel,
+    sequence_summary,
+    submit_sequence_run,
+    variants_of,
+)
 from .jobs import get_store
 from .schemas import (
     AnimaticAnimateRequest,
@@ -46,7 +55,11 @@ from .schemas import (
     AnimaticLayer,
     AnimaticMediaItem,
     AnimaticOverlay,
+    AnimaticPanelRegenerateRequest,
+    AnimaticPanelSource,
     AnimaticProject,
+    AnimaticReframeRequest,
+    AnimaticRelengthRequest,
     AnimaticSaveRequest,
     AnimaticSettings,
     AnimaticShape,
@@ -64,6 +77,8 @@ from .schemas import (
     JobCreatedResponse,
     JobKind,
     JobStatus,
+    PanelSequenceInfo,
+    ReframeCostEstimate,
     RenderSettings,
 )
 
@@ -88,8 +103,36 @@ def _media_dir(job_id: str) -> str:
     return os.path.join(_animatic_dir(job_id), "media")
 
 
-def _video_path(job_id: str) -> str:
-    return os.path.join(_animatic_dir(job_id), "animatic.mp4")
+def _video_path(job_id: str, container: str = "mp4") -> str:
+    """Where an export of this container lands. One file per container.
+
+    Keeping the extensions apart rather than writing everything to one name
+    means a GIF export does not destroy the MP4 you made ten minutes ago — the
+    two are different deliverables of the same cut, and nobody expects making
+    one to delete the other.
+    """
+    import export_presets
+
+    return os.path.join(_animatic_dir(job_id), export_presets.output_name(container))
+
+
+def _exported_file(job_id: str, container: str = "mp4") -> tuple[str, str] | None:
+    """The exported file to serve, as (path, container), or None if there is none.
+
+    Asks for the container the settings name, then FALLS BACK to any other that
+    exists. That fallback is what stops the Download button 404ing the moment
+    someone changes the preset in the dialog without re-exporting: the file on
+    disk is still a real export of this animatic, and handing it over is a
+    better answer than pretending there is nothing.
+    """
+    import export_presets
+
+    wanted = export_presets.normalise_container(container)
+    for name in (wanted, *(c for c in export_presets.CONTAINERS if c != wanted)):
+        path = _video_path(job_id, name)
+        if os.path.isfile(path):
+            return path, name
+    return None
 
 
 def _image_path(job_id: str, upload_id: str) -> str | None:
@@ -129,35 +172,92 @@ def _stills_dir(job_id: str) -> str:
     return os.path.join(_animatic_dir(job_id), "_stills")
 
 
-def _video_thumb(job_id: str, frame: AnimaticFrame) -> str | None:
-    """One still off a video clip, for the thumbnail — extracted on demand.
+def _proxy_dir(job_id: str) -> str:
+    """Where this animatic's preview proxies are cached.
 
-    The picture a video clip shows in the Media pane, on the timeline and in
-    Properties is the frame at its IN POINT, so re-trimming a clip changes the
-    thumbnail to what the clip now opens on. Extracted through the same cache
-    the export uses, so a thumbnail already paid for by an export is free.
+    Inside the animatic's own folder for exactly the reason `_stills_dir` is:
+    they are derived data, and `delete_animatic`'s existing rmtree collects them
+    with everything else. There is no separate garbage collector to forget.
+    """
+    return os.path.join(_animatic_dir(job_id), "_proxies")
 
-    Returns None rather than raising: a clip with no thumbnail shows an empty
-    tile, which is what a missing panel already does.
+
+def _frame_origin(frame: AnimaticFrame) -> str:
+    """Where one picture-track clip came from — "board" | "video" | "image".
+
+    ⚠ THE PYTHON HALF OF `frameOrigin` in client/src/animatic/scene.js, and it has
+    to keep agreeing with it: the editor draws the picture track as two rows split
+    by this, and the eye on either row is applied HERE. Split by `kind` instead and
+    hiding "Video" in the editor would blank a different set of clips in the MP4
+    than the monitor blanked — the exact class of bug the render-parity tests
+    exist to catch.
+
+    Origin, not kind: animating a board shot with Veo makes it a video clip, and
+    it stays a board shot for the purpose of which row it is on.
+    """
+    src = frame.src
+    if src.storyboard_id:
+        return "board"
+    if frame.kind == "video":
+        return "video"
+    return "image"
+
+
+def _lane_hidden(hidden: set[str], kind: str, layer_id: str | None) -> bool:
+    """Is the row this clip sits on switched off?
+
+    The tokens are written by the editor (`laneToken` in AnimaticEditor.jsx) and
+    documented on `AnimaticSettings.hidden_lanes`. Read off the CLIP's own fields
+    rather than passed down, so nothing has to keep a parallel list of rows in
+    step with the one the user sees.
+    """
+    return f"{kind}:{layer_id or ''}" in hidden
+
+
+def _video_poster(job_id: str, upload_id: str, at_ms: int = 0) -> str | None:
+    """One still off an uploaded video, by UPLOAD id — extracted on demand.
+
+    ⚠ TAKES AN UPLOAD, NOT A CLIP, and that is the whole reason it exists apart
+    from `_video_thumb`. A clip can only be asked about once it is ON the
+    project, and the editor's save is debounced — so between dropping a video in
+    and the save landing there is no clip to name, the media card has no picture
+    to show, and it sits on its loading spinner. That reads as an upload that
+    never finished, which was the report: "I upload a video file here but it
+    doesn't show in the media panel."
+
+    Returns None rather than raising: a clip with no still shows an empty tile,
+    which is what a missing panel already does.
     """
     import video_frames
 
-    source = _video_file(job_id, frame.src.upload_id or "")
+    source = _video_file(job_id, upload_id or "")
     if not source:
         return None
-    at = max(0, int(frame.in_ms or 0))
+    at = max(0, int(at_ms or 0))
     try:
-        # A single frame: one still, at the in point, cached under its own key.
+        # A single frame: one still, at that moment, cached under its own key —
+        # the same cache the export uses, so a still an export already paid for
+        # is free here.
         info = video_frames.extract_frames(
             source, 1, _stills_dir(job_id), start_ms=at, span_ms=1
         )
     except Exception:  # noqa: BLE001 — a thumbnail is never worth a 500
         logger.warning(
-            "[animatic %s] could not read a thumbnail for clip %s", job_id, frame.id,
+            "[animatic %s] could not read a poster for upload %s", job_id, upload_id,
             exc_info=True,
         )
         return None
     return video_frames.frame_path(info, at)
+
+
+def _video_thumb(job_id: str, frame: AnimaticFrame) -> str | None:
+    """One still off a video CLIP, for its thumbnail.
+
+    The picture a video clip shows in the Media pane, on the timeline and in
+    Properties is the frame at its IN POINT, so re-trimming a clip changes the
+    thumbnail to what the clip now opens on.
+    """
+    return _video_poster(job_id, frame.src.upload_id or "", frame.in_ms or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -244,11 +344,18 @@ def _transitions_of(job: Job) -> list[AnimaticTransition]:
 
 
 def _audio_tracks_of(job: Job) -> list[AnimaticAudio]:
-    """Every audio track on this animatic, oldest first.
+    """Every audio CLIP on this animatic, oldest first.
 
     Migrates records written before multi-track, which carried a single `audio`
     object rather than a list. Nothing rewrites those on disk — they're read
     forward, so an old animatic just opens with one track.
+
+    ⚠ AND BACKFILLS `id`, which is the identity every clip is keyed by since the
+    razor learned to cut audio. A clip saved before that has none, and the
+    `upload_id` is the right value to use: in those projects one file WAS one
+    clip, so the editor's selection, element and patch keys stay exactly what
+    they were. Read forward only — nothing is rewritten on disk until the next
+    ordinary save.
     """
     params = job.params or {}
     raw = params.get("audio_tracks")
@@ -259,10 +366,24 @@ def _audio_tracks_of(job: Job) -> list[AnimaticAudio]:
     out: list[AnimaticAudio] = []
     for item in raw or []:
         try:
-            out.append(AnimaticAudio(**item))
+            track = AnimaticAudio(**item)
         except Exception:  # noqa: BLE001 — one bad track must not 500 the project
             logger.warning("[animatic %s] dropping unreadable audio track %r", job.job_id, item)
+            continue
+        if not track.id:
+            track.id = track.upload_id
+        out.append(track)
     return out
+
+
+def _audio_files_of(job: Job) -> set[str]:
+    """The distinct UPLOADS the timeline's audio clips read from.
+
+    The cap on audio is a cap on FILES, not on clips: cutting one track into
+    four pieces uploads nothing and costs nothing, so counting clips would make
+    the razor run out of room after three cuts.
+    """
+    return {t.upload_id for t in _audio_tracks_of(job) if t.upload_id}
 
 
 def _veo_clips_of(job: Job) -> list[AnimaticVeoClip]:
@@ -330,10 +451,17 @@ def _project_of(job: Job) -> AnimaticProject:
     picture is a board panel or an upload, so the editor never has to care which
     it is — and a board panel that gets re-drawn is picked up automatically,
     because the path is resolved on every request.
+
+    ⚠ …AND THE URL CARRIES `?v=`. Resolving the path on every request is what
+    makes the SERVER return the new picture; it does nothing about the CLIENT,
+    which caches one object URL per path and never re-fetches a path it already
+    holds. See `_frame_version`. One board record is fetched per read however
+    many frames point at it.
     """
     frames = _frames_of(job)
+    boards: dict = {}
     for f in frames:
-        f.url = f"/animatics/{job.job_id}/frame/{f.id}"
+        f.url = f"/animatics/{job.job_id}/frame/{f.id}?v={_frame_version(job, f, boards)}"
     overlays = _overlays_of(job)
     for overlay in overlays:
         # Same url shape as a frame's picture — the editor fetches both the
@@ -376,7 +504,14 @@ def _summarise(job: Job) -> AnimaticSummary:
         aspect_ratio=_settings_of(job).aspect_ratio,
         frame_count=len(frames),
         duration_ms=_duration_ms(frames),
-        cover_url=f"/animatics/{job.job_id}/frame/{frames[0].id}" if frames else None,
+        # Versioned like the frame urls above, so a library card showing a
+        # redrawn shot stops being the one picture on screen that never updates.
+        cover_url=(
+            f"/animatics/{job.job_id}/frame/{frames[0].id}"
+            f"?v={_frame_version(job, frames[0])}"
+            if frames
+            else None
+        ),
         text_count=len(_texts_of(job)),
         audio_count=len(_audio_tracks_of(job)),
         has_audio=bool(_audio_tracks_of(job)),
@@ -384,6 +519,88 @@ def _summarise(job: Job) -> AnimaticSummary:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _mtime_ns(path: str | None) -> int:
+    """A file's mtime in NANOSECONDS, or 0 if it isn't there.
+
+    Nanoseconds, not seconds: two redraws of one shot inside the same second are
+    easy to do by hand and would otherwise collide back into a stale picture.
+    """
+    if not path:
+        return 0
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _frame_version(job: Job, frame: AnimaticFrame, boards: dict | None = None) -> str:
+    """A token that CHANGES when this frame's picture changes.
+
+    ⚠ THIS IS WHAT MAKES "REGENERATE THIS PANEL" VISIBLE. Every image in this
+    app is fetched as an authed blob and cached by URL, and a frame's URL —
+    `/animatics/{id}/frame/{frame_id}` — is built from two ids that a redraw
+    does not touch. So the panel on the board changed, the animatic pointed at
+    the new file, and the editor went on showing the old picture for ever.
+    Stamping this into the URL is rule 2 of "regenerating a picture that is
+    already on screen": a redrawn image must get a NEW URL.
+
+    ⚠ CHEAP ON PURPOSE — one `stat`, never a decode. `_project_of` calls this
+    for every frame on every read and every autosave, so the version of a VIDEO
+    clip is taken from its source file and in point rather than by extracting
+    the thumbnail those two produce.
+
+    `boards` is a per-request cache of board records. A sixty-pose animatic is
+    sixty frames of ONE board, and without it that is sixty round trips to the
+    job store to answer one question.
+    """
+    src = frame.src
+
+    if src.kind == "video":
+        # The thumbnail is the frame at the IN POINT, so re-trimming changes the
+        # picture without changing the file — the in point is part of the answer.
+        path = _video_file(job.job_id, src.upload_id or "")
+        return f"{_mtime_ns(path)}-{max(0, int(frame.in_ms or 0))}"
+
+    if src.kind == "upload":
+        return str(_mtime_ns(_image_path(job.job_id, src.upload_id or "")))
+
+    if src.kind in ("panel", "pose"):
+        board_id = src.storyboard_id or ""
+        if not board_id or not _ID_RE.match(board_id) or src.index is None:
+            return "0"
+        if boards is None:
+            boards = {}
+        if board_id not in boards:
+            board = get_store().get(board_id)
+            # Same owner check `_resolve_frame_path` makes, for the same reason:
+            # frames are user-editable JSON.
+            boards[board_id] = (
+                board
+                if board is not None
+                and board.owner == job.owner
+                and board.kind == JobKind.STORYBOARD
+                else None
+            )
+        board = boards[board_id]
+        if board is None:
+            return "0"
+        if src.kind == "pose":
+            if src.frame is None:
+                return "0"
+            return str(
+                panel_sequence.frame_version(
+                    board_dir(board_id), int(src.index), int(src.frame)
+                )
+            )
+        _, active = variants_of(board.result or {})
+        # The VARIANT is in the token as well as the mtime: switching a board's
+        # style points this frame at a different file, and two files drawn in
+        # the same millisecond is not something to rely on not happening.
+        return f"{active}-{_mtime_ns(panel_path(board_id, int(src.index), active))}"
+
+    return "0"
 
 
 def _resolve_frame_path(job: Job, frame: AnimaticFrame) -> str | None:
@@ -724,11 +941,31 @@ def save_animatic(
         params["transitions"] = [t.model_dump() for t in body.transitions]
 
     if body.audio_tracks is not None:
-        if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_TRACKS:
+        # ⚠ TWO CAPS, and they count two different things. The old one is a cap
+        # on FILES — that is what an upload costs and what the storage bill is —
+        # and cutting a track with the razor adds neither. The second bounds the
+        # number of CLIPS, so a runaway client still can't write an unbounded
+        # list, but it is loose enough that nobody editing by hand meets it.
+        files = {a.upload_id for a in body.audio_tracks if a.upload_id}
+        if len(files) > config.MAX_ANIMATIC_AUDIO_TRACKS:
             raise HTTPException(
                 status_code=413,
                 detail=f"An animatic can hold at most {config.MAX_ANIMATIC_AUDIO_TRACKS} audio tracks.",
             )
+        if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_CLIPS:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"An animatic can hold at most {config.MAX_ANIMATIC_AUDIO_CLIPS} "
+                    "audio clips — that is the razor's limit, not the number of files."
+                ),
+            )
+        # Every clip needs an identity, and a client that predates the razor
+        # sends none. Filled here as well as on read, so the id a project is
+        # SAVED with is the one it is read back with.
+        for a in body.audio_tracks:
+            if not a.id:
+                a.id = a.upload_id
         params["audio_tracks"] = [a.model_dump(exclude={"url"}) for a in body.audio_tracks]
         # Drop the pre-multi-track field so it can't be resurrected by the
         # migration path on a later read.
@@ -970,9 +1207,22 @@ async def upload_audio(
 def get_frame_image(
     job_id: str,
     frame_id: str,
+    w: int = 0,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Serve one frame's picture — board panel or upload, same URL either way."""
+    """Serve one frame's picture — board panel or upload, same URL either way.
+
+    `w` asks for a PROXY: a lossless copy of the same picture whose long edge is
+    at most that many pixels, cached on disk (`proxies.py`). The editor asks for
+    one because it holds every frame of a sixty-panel board in memory at once to
+    draw a monitor 600px wide. Omitted — which is what every other caller does,
+    including anything that predates this — the source file is served untouched.
+
+    ⚠ THE EXPORT DOES NOT COME THROUGH HERE. `build_animatic` opens the sources
+    directly, so no proxy can ever reach the encoder; see rule 2 in `proxies.py`.
+    """
+    import proxies
+
     job = _get_owned_animatic(job_id, current)
     frame = next((f for f in _frames_of(job) if f.id == frame_id), None)
     if frame is None:
@@ -980,6 +1230,10 @@ def get_frame_image(
     path = _resolve_frame_path(job, frame)
     if not path:
         raise HTTPException(status_code=404, detail="This frame's image is missing.")
+    if w:
+        # Falls back to `path` itself for every reason a proxy can't be made, so
+        # the worst case here is exactly what this route did before.
+        path = proxies.proxy_for(path, _proxy_dir(job_id), w)
     return FileResponse(path, media_type="image/png")
 
 
@@ -987,9 +1241,16 @@ def get_frame_image(
 def get_upload(
     job_id: str,
     upload_id: str,
+    poster: int = 0,
+    w: int = 0,
     current: CurrentUser = Depends(get_current_user),
 ):
     """Serve a just-uploaded file — image, video OR audio — by its upload id.
+
+    `poster=1` asks a VIDEO for one still instead of the file itself: the picture
+    a media card wants, from an upload that may not be on the project yet. `w`
+    proxies that still down, exactly as the frame route does. Both are ignored
+    for an image or an audio file, neither of which has anything else to give.
 
     This is the route the editor uses for media it has only just uploaded, and
     it exists because the project-level routes can't answer yet: the editor's
@@ -1011,6 +1272,17 @@ def get_upload(
     # scrubbing a video clip in the editor is instant and needs no Range support.
     video = _video_file(job_id, upload_id)
     if video and os.path.isfile(video):
+        if poster:
+            still = _video_poster(job_id, upload_id)
+            if not still:
+                raise HTTPException(
+                    status_code=404, detail="Couldn't read a picture from this clip."
+                )
+            if w:
+                import proxies
+
+                still = proxies.proxy_for(still, _proxy_dir(job_id), w)
+            return FileResponse(still, media_type="image/png")
         return FileResponse(video)
 
     audio = _audio_file(job_id, upload_id)
@@ -1088,12 +1360,25 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     # `src` is dropped because it is the question this loop ANSWERS — where the
     # picture comes from — and `url` because it is a read-only convenience the
     # encoder has no use for.
+    #
+    # ⚠ A HIDDEN PICTURE ROW IS BLANKED, NEVER DROPPED. `frames` is a sequence laid
+    # end to end, so dropping a clip moves every cut after it, shortens the video
+    # and pulls the audio out of sync — from pressing an eye. Turned into a colour
+    # card of the letterbox colour it holds exactly the time it always held and
+    # draws nothing, which is what an NLE shows for a track it is not outputting.
+    # The monitor does the identical conversion (`shown` in AnimaticEditor.jsx),
+    # which is what keeps the preview and the MP4 the same picture.
+    hidden = set(settings.hidden_lanes or [])
     resolved = []
     for f in frames:
         item = f.model_dump(exclude={"url", "src"})
         item["path"] = None
         item["video_path"] = None
-        if f.kind == "video":
+        row = "video" if _frame_origin(f) == "video" else "stills"
+        if f"frames:{row}" in hidden:
+            item["kind"] = "color"
+            item["color"] = settings.background or "#000000"
+        elif f.kind == "video":
             item["video_path"] = _video_file(job_id, f.src.upload_id or "")
         elif f.kind != "color":
             item["path"] = _resolve_frame_path(job, f)
@@ -1104,6 +1389,10 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     # dropped rather than failing the whole export.
     overlays = []
     for overlay in _overlays_of(job):
+        # A row switched off is left out entirely — unlike a picture-track clip,
+        # an overlay holds no time of its own, so there is nothing to hold open.
+        if _lane_hidden(hidden, "image", overlay.layer_id):
+            continue
         path = _image_path(job_id, overlay.upload_id)
         if not path or not os.path.isfile(path):
             logger.warning(
@@ -1113,6 +1402,14 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         item = overlay.model_dump(exclude={"url"})
         item["path"] = path
         overlays.append(item)
+    # The free-floating clips, with the switched-off rows left out. Unlike a
+    # picture-track clip, none of these holds time open: they are drawn over
+    # whatever is underneath at that moment, so a row that isn't drawn is a row
+    # that isn't there. Filtered ONCE, here, because the same lists decide both
+    # what is drawn and how long the video is.
+    texts = [t for t in _texts_of(job) if not _lane_hidden(hidden, "text", t.layer_id)]
+    shapes = [s for s in _shapes_of(job) if not _lane_hidden(hidden, "shape", s.layer_id)]
+
     # A colour card needs no file, so it counts as usable on its own — an
     # animatic of nothing but colour cards is odd but perfectly encodable, and
     # refusing it would be a rule with no reason behind it.
@@ -1133,11 +1430,19 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             playable = max(0, (track.duration_ms or 0) - (track.offset_ms or 0))
             if track.trim_ms:
                 playable = min(playable, track.trim_ms)
-            end_ms = max(end_ms, playable)
-        for clip in _texts_of(job):
+            # ⚠ Measured from where the clip SITS, not from zero. A clip cut out
+            # of the middle of a take starts late, and a video that stopped at
+            # its length rather than its end would cut it off by exactly the
+            # amount it was moved.
+            end_ms = max(end_ms, (track.start_ms or 0) + playable)
+        # ⚠ A HIDDEN ROW MUST NOT EXTEND THE VIDEO EITHER. A caption row switched
+        # off that still decided the length would leave seconds of held picture at
+        # the end with nothing on them — the row would be invisible and still be
+        # the longest thing in the project. (`overlays` is already filtered above.)
+        for clip in texts:
             if (clip.text or "").strip():
                 end_ms = max(end_ms, clip.start_ms + clip.duration_ms)
-        for shape in _shapes_of(job):
+        for shape in shapes:
             end_ms = max(end_ms, shape.start_ms + shape.duration_ms)
         for overlay in overlays:
             end_ms = max(end_ms, overlay["start_ms"] + overlay["duration_ms"])
@@ -1152,8 +1457,10 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         job_id,
         {
             "frames": resolved,
-            "texts": [t.model_dump() for t in _texts_of(job)],
-            "shapes": [s.model_dump() for s in _shapes_of(job)],
+            # ⚠ THE FILTERED LISTS, not `_texts_of(job)` again — this is where a
+            # hidden row would otherwise walk straight back into the encoder.
+            "texts": [t.model_dump() for t in texts],
+            "shapes": [s.model_dump() for s in shapes],
             "overlays": overlays,
             # Transitions are boundary-local, so they change nothing about the
             # length calculated above — they only change what is drawn on the
@@ -1168,6 +1475,11 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             "fit": settings.fit,
             "background": settings.background,
             "show_labels": settings.show_labels,
+            # What file to write, and — for a still — which moment of it. Both
+            # default to exactly what every export did before presets existed;
+            # see `export_presets.py`.
+            "container": settings.container,
+            "still_ms": settings.still_ms,
             "output_dir": config.OUTPUT_DIR,
         },
     )
@@ -1196,18 +1508,25 @@ def stop_export(job_id: str, current: CurrentUser = Depends(get_current_user)):
 
 @router.get("/{job_id}/video")
 def download_video(job_id: str, current: CurrentUser = Depends(get_current_user)):
-    """Download the exported MP4."""
+    """Download the last export — an MP4, a GIF or a PNG (see `container`)."""
+    import export_presets
+
     job = _get_owned_animatic(job_id, current)
-    path = _video_path(job_id)
-    if not os.path.isfile(path):
+    found = _exported_file(job_id, _settings_of(job).container)
+    if not found:
         raise HTTPException(
             status_code=404, detail="No video yet — export this animatic first."
         )
+    path, container = found
     safe = "".join(
         c if c.isalnum() or c in "-_ " else " " for c in (job.character_name or "animatic")
     )
     safe = " ".join(safe.split()).strip(" -_") or "animatic"
-    return FileResponse(path, media_type="video/mp4", filename=f"{safe}.mp4")
+    return FileResponse(
+        path,
+        media_type=export_presets.CONTAINER_MIME[container],
+        filename=f"{safe}.{export_presets.CONTAINER_EXT[container]}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1486,7 +1805,7 @@ def animate_frames(
 # like any other, and a voiceover is an ordinary audio track — the same rule the
 # Veo path follows and for the same reason: from the moment it exists there is
 # ONE code path downstream, not two that can drift apart.
-def _write_texts(job_id: str, texts: list[dict]) -> None:
+def _write_texts(job_id: str, texts: list[dict], layers: list[dict] | None = None) -> None:
     """Replace the caption list on a job. Read-modify-write on `params`.
 
     Safe because the job is RUNNING for the whole life of a run and
@@ -1495,6 +1814,12 @@ def _write_texts(job_id: str, texts: list[dict]) -> None:
     `result`: a caption is ordinary project content that the user then edits,
     and content in `result` would be invisible to every save the editor makes
     afterwards.
+
+    `layers` is written in the SAME update when given, and the captions pass is
+    the only caller that gives it: a generated caption sits on a lane of its own
+    (`captions.CAPTION_LAYER_ID`) and a clip whose lane doesn't exist is a clip
+    with nowhere to be drawn. Two writes could be interrupted between them and
+    leave exactly that; one cannot.
     """
     store = get_store()
     job = store.get(job_id)
@@ -1502,7 +1827,55 @@ def _write_texts(job_id: str, texts: list[dict]) -> None:
         return
     params = dict(job.params or {})
     params["texts"] = texts
+    if layers is not None:
+        params["layers"] = layers
     store.update(job_id, params=params)
+
+
+def _with_caption_layer(job: Job) -> list[dict] | None:
+    """This project's layers, with the captions lane added if it is missing.
+
+    None means "nothing to write" — either the lane is already there, or there
+    is no room for it (see below) and the captions will fall back to the default
+    text lane rather than the run failing after it has been paid for.
+
+    ⚠ THE CAP IS NOT OPTIONAL. `save_animatic` refuses a project holding more
+    than `MAX_ANIMATIC_LAYERS`, so a lane pushed past that by the server would
+    make the editor's every later save 422 — the user would lose work because we
+    added a row. `caption_animatic` warns about this BEFORE spending anything;
+    this is the belt to that braces.
+    """
+    import captions as captions_mod
+
+    layers = [l.model_dump() for l in _layers_of(job)]
+    if any(l.get("id") == captions_mod.CAPTION_LAYER_ID for l in layers):
+        return None
+    if len(layers) >= config.MAX_ANIMATIC_LAYERS:
+        logger.warning(
+            "[animatic %s] no room for a captions lane (%d layers) — using the "
+            "default text lane instead.",
+            job.job_id, len(layers),
+        )
+        return None
+    layers.append({
+        "id": captions_mod.CAPTION_LAYER_ID,
+        "kind": "text",
+        "name": captions_mod.CAPTION_LAYER_NAME,
+    })
+    return layers
+
+
+def _caption_layer_id(job: Job) -> str:
+    """The lane generated captions go on for THIS project — the captions lane,
+    or "" (the default text lane) when there is no room for one."""
+    import captions as captions_mod
+
+    layers = _layers_of(job)
+    if any(l.id == captions_mod.CAPTION_LAYER_ID for l in layers):
+        return captions_mod.CAPTION_LAYER_ID
+    if len(layers) >= config.MAX_ANIMATIC_LAYERS:
+        return ""
+    return captions_mod.CAPTION_LAYER_ID
 
 
 def _add_audio_track(job_id: str, track: dict) -> None:
@@ -1535,14 +1908,49 @@ def _keep_typed_captions(job: Job) -> list[dict]:
     ]
 
 
-def _captioned_track(job: Job, upload_id: str) -> AnimaticAudio:
-    """The audio track a captions request names, or a 404 saying why not."""
-    track = next((t for t in _audio_tracks_of(job) if t.upload_id == upload_id), None)
-    if track is None:
+def _captioned_clips(job: Job, upload_id: str) -> list[AnimaticAudio]:
+    """Every CLIP reading the file a captions request names, in play order.
+
+    ⚠ A LIST, NOT A TRACK, and that is the whole of the cut-audio fix. Since the
+    razor learned to cut audio, one file can be three clips sitting anywhere on
+    the timeline with any part of it left out. Transcribing is done on the FILE
+    (one call, one bill) but the words then have to be placed CLIP BY CLIP —
+    reading only the first clip, as this used to, timed every caption after the
+    first cut against a window that was no longer the one being heard.
+
+    404 rather than an empty list: the track the request named is gone.
+    """
+    clips = [t for t in _audio_tracks_of(job) if t.upload_id == upload_id]
+    if not clips:
         raise HTTPException(
             status_code=404, detail="That audio track isn't on this animatic any more."
         )
-    return track
+    return sorted(clips, key=lambda t: (t.start_ms or 0, t.offset_ms or 0))
+
+
+def _clip_windows(clips: list[AnimaticAudio]) -> list[dict]:
+    """`captions.clip_lines` windows for a file's clips — where each one sits on
+    the timeline, and which stretch of the file it plays.
+
+    ⚠ `play_ms` comes from `animatic.track_play_ms`, the SAME function the
+    exporter measures a clip with. Written out a second time here it would be a
+    second answer to "how much of this is heard", and the captions would drift
+    from the audio the moment one of them was corrected.
+
+    Measured with NO total: this asks what the clip plays, not how much of it
+    survives the end of the video. `tidy_lines(total_ms=…)` cuts that tail off,
+    once, where every other caption rule is applied.
+    """
+    import animatic as animatic_mod
+
+    return [
+        {
+            "start_ms": animatic_mod.track_start_ms(clip.model_dump()),
+            "offset_ms": max(0, int(clip.offset_ms or 0)),
+            "play_ms": animatic_mod.track_play_ms(clip.model_dump()),
+        }
+        for clip in clips
+    ]
 
 
 def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
@@ -1625,7 +2033,10 @@ def estimate_captions(
     import captions as captions_mod
 
     job = _get_owned_animatic(job_id, current)
-    track = _captioned_track(job, body.upload_id)
+    # ⚠ Priced by the FILE, not by what is left of it on the timeline. One call
+    # sends the whole recording however many pieces it has been cut into, so
+    # quoting the audible total would quote less than the run actually costs.
+    track = _captioned_clips(job, body.upload_id)[0]
     quote = captions_mod.estimate(track.duration_ms)
     return AudioCostEstimate(
         seconds=quote["seconds"],
@@ -1651,10 +2062,22 @@ def caption_animatic(
             status_code=409,
             detail="This animatic is already busy — wait for it to finish, or stop it.",
         )
-    track = _captioned_track(job, body.upload_id)
+    track = _captioned_clips(job, body.upload_id)[0]
     if not _audio_file(job_id, track.upload_id):
         raise HTTPException(
             status_code=409, detail="That track's audio file has gone missing."
+        )
+    # Before anything is spent: is there a row for the captions to land on? They
+    # go on a lane of their own, and finding out there is no room for one AFTER
+    # paying to transcribe would be a bill for a pass that had to fall back.
+    if not _caption_layer_id(job):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This animatic already has {config.MAX_ANIMATIC_LAYERS} layers, so "
+                "there is no room for the Captions lane the words go on. Remove a "
+                "layer you aren't using and try again."
+            ),
         )
     quote = captions_mod.estimate(track.duration_ms)
     if quote["over_limit"]:
@@ -1687,51 +2110,95 @@ def caption_animatic(
     )
 
 
-def run_captions(job_id: str, body: dict) -> None:
+def run_captions(job_id: str, body: dict, progress_cb=None) -> None:
     """Transcribe and write the captions. Called from the worker; raises on failure.
 
     The tidy pass is free and is where every "the subtitles overlap" bug lives,
     so it is a separate function from the paid transcription — a failure in the
     rules must not mean paying to listen to the track again.
+
+    ⚠ `progress_cb(percent, message)` IS REPORTED PER STAGE, NOT PER LINE, and
+    that is the honest shape of this job: transcription is ONE model call that
+    cannot be asked how far through it is, so a bar that crept along during it
+    would be an animation pretending to be a measurement. What the stages give
+    the user is the thing they asked for — evidence that the work is happening,
+    and which part of it is taking the time — without inventing a number.
     """
     import captions as captions_mod
+
+    def say(percent: int, message: str) -> None:
+        if progress_cb:
+            progress_cb(percent, message)
 
     request = AnimaticCaptionsRequest(**(body or {}))
     job = get_store().get(job_id)
     if job is None:
         raise captions_mod.CaptionError("This animatic no longer exists.")
 
-    track = next(
-        (t for t in _audio_tracks_of(job) if t.upload_id == request.upload_id), None
-    )
-    if track is None:
+    # ⚠ EVERY CLIP OF THAT FILE, not the first one. See `_captioned_clips`.
+    clips_of_file = [t for t in _audio_tracks_of(job) if t.upload_id == request.upload_id]
+    if not clips_of_file:
         raise captions_mod.CaptionError(
             "The audio track this was captioning has been removed from the timeline."
         )
-    path = _audio_file(job_id, track.upload_id)
+    clips_of_file.sort(key=lambda t: (t.start_ms or 0, t.offset_ms or 0))
+    path = _audio_file(job_id, clips_of_file[0].upload_id)
     if not path:
         raise captions_mod.CaptionError("That track's audio file has gone missing.")
 
+    # ⚠ MEASURED BEFORE THE MODEL IS CALLED, not after, and not because it reads
+    # better: if ffmpeg is going to fail on this file we find out while nothing
+    # has been spent yet, and the run carries on with the model's own times
+    # rather than having paid for a transcript we then can't place.
+    file_ms = int(clips_of_file[0].duration_ms or 0)
+    spans: list[dict] = []
+    if captions_mod.ALIGN_TO_AUDIO:
+        say(5, "Reading the waveform…")
+        spans = captions_mod.speech_spans(path, file_ms)
+
+    say(20, "Listening to the track…")
     lines = captions_mod.transcribe(path, language=request.language)
+
+    # ⚠ THE MODEL'S WORDS ARE EXCELLENT AND ITS TIMES ARE A GUESS, which is the
+    # whole of the reported "the captions don't match the voiceover": the text
+    # was right and it appeared after the sentence had been said. So the times
+    # are thrown away and recomputed against the sound MEASURED in the file —
+    # the same waveform drawn on the timeline, which is what the user is
+    # checking them against. Free, no quota, and it declines to guess: a
+    # measurement that fails returns the model's own times unchanged.
+    #
+    # Still FILE time on both sides, so `clip_lines` below is unaware of it.
+    if spans:
+        say(80, f"Placing {len(lines)} line(s) on the waveform…")
+        lines = captions_mod.align_lines(lines, spans, total_ms=file_ms)
+
+    say(92, "Writing the captions…")
     # ⚠ A transcript's times are relative to the FILE; a clip's are relative to
-    # the timeline. `offset_ms` is how far INTO the file the track starts
-    # playing, so the transcript shifts the other way. Forgetting this is what
-    # makes captions right on a track that starts at zero and wrong on all the
-    # rest.
+    # the TIMELINE, and one file can be several clips with a different shift
+    # each. `clip_lines` is what walks the transcript through them — it moves
+    # every line onto the timeline where it is actually heard and drops the ones
+    # whose audio was cut out. Read its docstring before changing any of this;
+    # doing the shift with a single number is the bug it replaced.
+    through_cuts = captions_mod.clip_lines(lines, _clip_windows(clips_of_file))
+    # Already absolute, so no further shift — `tidy_lines` is here only for the
+    # rules that make a transcript safe to DRAW (order, overlap, readability).
     tidied = captions_mod.tidy_lines(
-        lines,
+        through_cuts,
         total_ms=_duration_ms(_frames_of(job)) or None,
-        offset_ms=-int(track.offset_ms or 0),
     )
-    clips = captions_mod.caption_clips(tidied, layer_id=track.layer_id or "")
+    layer_id = _caption_layer_id(job)
+    caption_clips = captions_mod.caption_clips(tidied, layer_id=layer_id)
 
     kept = (
         _keep_typed_captions(job)
         if request.replace
         else [t.model_dump() for t in _texts_of(job)]
     )
-    _write_texts(job_id, kept + clips)
-    logger.info("[animatic %s] %d caption(s) written.", job_id, len(clips))
+    _write_texts(job_id, kept + caption_clips, layers=_with_caption_layer(job))
+    logger.info(
+        "[animatic %s] %d caption(s) written from %d line(s) across %d clip(s).",
+        job_id, len(caption_clips), len(lines), len(clips_of_file),
+    )
 
 
 # --- Voiceover --------------------------------------------------------------
@@ -1791,7 +2258,9 @@ def voice_animatic(
                 "this is a spend guard, not a technical one."
             ),
         )
-    if len(_audio_tracks_of(job)) >= config.MAX_ANIMATIC_AUDIO_TRACKS:
+    # Counted in FILES: a voiceover is a new upload, and a track someone has cut
+    # into four pieces still costs one.
+    if len(_audio_files_of(job)) >= config.MAX_ANIMATIC_AUDIO_TRACKS:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1860,10 +2329,14 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
     # itself, exactly, because it made the samples.
     duration_ms = timings[-1]["end_ms"] if timings else 0
     _add_audio_track(job_id, {
+        # One clip, so its identity is its upload — the same value the backfill
+        # in `_audio_tracks_of` would give it.
+        "id": upload_id,
         "upload_id": upload_id,
         "layer_id": "",
         "filename": "Voiceover.wav",
         "duration_ms": duration_ms,
+        "start_ms": 0,
         "offset_ms": 0,
         "trim_ms": None,
         "volume": 1.0,
@@ -1874,15 +2347,467 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
         import captions as captions_mod
 
         job = get_store().get(job_id) or job
-        clips = captions_mod.caption_clips(captions_mod.tidy_lines(timings))
+        # The same lane the captions pass uses — one row for everything this app
+        # wrote, whichever button asked for it. The timings are already timeline
+        # time (they describe audio laid down at 0:00), so there is no shift.
+        clips = captions_mod.caption_clips(
+            captions_mod.tidy_lines(timings), layer_id=_caption_layer_id(job)
+        )
         kept = (
             _keep_typed_captions(job)
             if request.replace
             else [t.model_dump() for t in _texts_of(job)]
         )
-        _write_texts(job_id, kept + clips)
+        _write_texts(job_id, kept + clips, layers=_with_caption_layer(job))
 
     logger.info(
         "[animatic %s] voiceover written (%d line(s), %.1fs).",
         job_id, len(timings), duration_ms / 1000,
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — reaching back to the BOARD from inside the editor
+#
+# ⚠ THE WHOLE OF THIS SECTION RESTS ON ONE FACT: an animatic frame is a
+# REFERENCE to a storyboard panel, not a copy of one (`AnimaticFrameSource`).
+# Redrawing the panel therefore updates the animatic for free — the picture is
+# resolved from the board on every request — and everything here is plumbing to
+# let the editor ask for that redraw without leaving the timeline.
+#
+# Two things it must never do, both learned the hard way:
+#   1. Reimplement the board's own actions. They are `common.regenerate_board_panel`
+#      and `common.submit_sequence_run`, shared with the routes in main.py, so
+#      the continuity bible and the resume arithmetic cannot fork.
+#   2. Serve a redrawn picture on the URL that showed the old one. See
+#      `_frame_version` — the client caches an authed blob per URL, so a path
+#      that survives a redraw is a picture that never updates.
+# ---------------------------------------------------------------------------
+def _frame_or_404(job: Job, frame_id: str) -> AnimaticFrame:
+    frame = next((f for f in _frames_of(job) if f.id == frame_id), None)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="That clip is no longer on this animatic.")
+    return frame
+
+
+def _board_behind(job: Job, frame: AnimaticFrame) -> tuple[Job | None, str]:
+    """The storyboard job this frame's picture comes from, and why not.
+
+    Returns `(board, reason)` — exactly one of them is meaningful. The reason is
+    written for the person reading it in the Properties pane, because "this clip
+    is a file you dropped in" is a perfectly good answer to "why can't I redraw
+    this" and a 400 is not.
+    """
+    src = frame.src
+    if src.kind not in ("panel", "pose"):
+        what = {
+            "upload": "an image you uploaded",
+            "video": "a video clip",
+        }.get(src.kind, "not a storyboard shot")
+        return None, f"This clip is {what}, so there is no panel to re-draw."
+    board_id = src.storyboard_id or ""
+    if not board_id or not _ID_RE.match(board_id) or src.index is None:
+        return None, "This clip has lost its link to the storyboard it came from."
+    board = get_store().get(board_id)
+    # Owner check: frames are user-editable JSON, so without it a crafted board
+    # id would redraw someone else's panel. Same rule as `_resolve_frame_path`.
+    if board is None or board.owner != job.owner or board.kind != JobKind.STORYBOARD:
+        return None, "The storyboard this shot came from is no longer available."
+    return board, ""
+
+
+@router.get("/{job_id}/frames/{frame_id}/panel", response_model=AnimaticPanelSource)
+def get_frame_panel(
+    job_id: str,
+    frame_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """The board panel behind one clip — the wording the inline pane opens on.
+
+    Free, and it answers "can this be re-drawn at all?" in the same breath, so
+    the pane never renders a button that is going to 400.
+    """
+    job = _get_owned_animatic(job_id, current)
+    frame = _frame_or_404(job, frame_id)
+    board, reason = _board_behind(job, frame)
+    if board is None:
+        return AnimaticPanelSource(frame_id=frame_id, reason=reason)
+
+    index = int(frame.src.index or 0)
+    panel = panel_for_index(board, index) or {}
+    is_panel = frame.src.kind == "panel"
+    return AnimaticPanelSource(
+        frame_id=frame_id,
+        storyboard_id=board.job_id,
+        index=index,
+        description=str(panel.get("description") or ""),
+        camera=str(panel.get("camera") or ""),
+        location=str(panel.get("location") or ""),
+        title=board.character_name or "Storyboard",
+        # A POSE is a drawing OF the panel, so redrawing the panel would leave
+        # this clip showing the old pose — the honest answer is no, with the
+        # reason, rather than a button that appears to do nothing.
+        can_regenerate=is_panel,
+        reason=(
+            ""
+            if is_panel
+            else (
+                "This clip is one KEY POSE of a shot, not the shot's panel. "
+                "Re-block the shot below, or re-draw the panel on the storyboard."
+            )
+        ),
+    )
+
+
+@router.post("/{job_id}/frames/{frame_id}/panel", response_model=AnimaticFrame)
+def regenerate_frame_panel(
+    job_id: str,
+    frame_id: str,
+    body: AnimaticPanelRegenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA. Re-draw the storyboard panel this clip shows.
+
+    One image, synchronously — the same single call the board's own Regenerate
+    makes, through the same helper, so the redraw gets the same continuity
+    bible and lands in the same style variant.
+
+    ⚠ Returns the FRAME, not the panel, and the frame's `url` carries a fresh
+    `?v=`. That is the whole point of answering with it: the client swaps one
+    blob for one URL and the shot updates in the monitor, the strip and the
+    Properties pane at once. Answering `{"ok": true}` would leave the caller
+    with nothing to re-fetch against.
+    """
+    job = _get_owned_animatic(job_id, current)
+    frame = _frame_or_404(job, frame_id)
+    board, reason = _board_behind(job, frame)
+    if board is None:
+        raise HTTPException(status_code=400, detail=reason)
+    if frame.src.kind != "panel":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This clip is one key pose of a shot, not the shot's panel — "
+                "re-block the shot instead."
+            ),
+        )
+    if board.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="That storyboard is busy right now — wait for it to finish, or stop it.",
+        )
+
+    index = int(frame.src.index or 0)
+    regenerate_board_panel(
+        board, index,
+        description=body.description, camera=body.camera, location=body.location,
+    )
+    logger.info(
+        "[animatic %s] shot %s re-drew board %s panel %d for %s",
+        job_id, frame_id, board.job_id, index, current.email,
+    )
+    # Re-read: the version has to be computed AFTER the redraw, off the file
+    # that was just written.
+    job = get_store().get(job_id) or job
+    frame = _frame_or_404(job, frame_id)
+    frame.url = f"/animatics/{job_id}/frame/{frame.id}?v={_frame_version(job, frame)}"
+    return frame
+
+
+@router.get("/{job_id}/frames/{frame_id}/sequence", response_model=PanelSequenceInfo)
+def get_frame_sequence(
+    job_id: str,
+    frame_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """The key poses of the shot behind this clip, counted off DISK.
+
+    What the editor reads after a re-block finishes, to find out how many pose
+    frames the shot now has and rebuild that run on the timeline.
+    """
+    job = _get_owned_animatic(job_id, current)
+    frame = _frame_or_404(job, frame_id)
+    board, reason = _board_behind(job, frame)
+    if board is None:
+        raise HTTPException(status_code=400, detail=reason)
+    return PanelSequenceInfo(**sequence_summary(board, int(frame.src.index or 0)))
+
+
+@router.post(
+    "/{job_id}/frames/{frame_id}/sequence",
+    response_model=JobCreatedResponse,
+    status_code=202,
+)
+def relength_frame_sequence(
+    job_id: str,
+    frame_id: str,
+    body: AnimaticRelengthRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA. Re-block this shot's key poses at a new length.
+
+    "Make this shot 2s longer". Runs off-request on the BOARD's job — the
+    drawings belong to the board, not to this animatic — so the returned job_id
+    is the STORYBOARD's, and that is what the editor polls.
+
+    ⚠ IT RESUMES. Every pose already on disk is kept, the plan they were drawn
+    from is handed to the planner as fixed, and only the new tail is drawn. So
+    4s → 6s costs eight drawings rather than twenty-four, and — the part that
+    matters more — drawing 17 continues the motion drawings 1–16 actually made.
+    See `panel_sequence.plan_beats`.
+    """
+    job = _get_owned_animatic(job_id, current)
+    frame = _frame_or_404(job, frame_id)
+    board, reason = _board_behind(job, frame)
+    if board is None:
+        raise HTTPException(status_code=400, detail=reason)
+
+    index = int(frame.src.index or 0)
+    queued = submit_sequence_run(board, index, body.duration_seconds, resume=True)
+    logger.info(
+        "[animatic %s] shot %s re-blocked board %s panel %d to %ss (%d new)",
+        job_id, frame_id, board.job_id, index,
+        queued["duration_seconds"], queued["wanted"],
+    )
+    if queued["wanted"] <= 0:
+        message = (
+            f"This shot is already blocked out to {queued['duration_seconds']}s — "
+            "nothing new to draw."
+        )
+    else:
+        message = (
+            f"Carrying this shot on to {queued['duration_seconds']}s — drawing "
+            f"{queued['wanted']} more key pose(s). The {queued['have']} already "
+            "drawn are kept."
+        )
+    return JobCreatedResponse(
+        job_id=board.job_id,
+        status=JobStatus.RUNNING,
+        kind=JobKind.STORYBOARD,
+        character_name=board.character_name,
+        message=message,
+    )
+
+
+# --- Auto-reframe -----------------------------------------------------------
+def _reframable(job: Job, frame_ids: list[str] | None = None) -> list[AnimaticFrame]:
+    """The clips a reframe pass can actually look at.
+
+    A colour card has no picture and a video clip's framing is a property of the
+    footage rather than of a still, so both are skipped — silently, because
+    "reframe everything" on a mixed timeline is a perfectly ordinary request and
+    a card in the middle of it is not an error.
+    """
+    wanted = set(frame_ids or [])
+    out = []
+    for f in _frames_of(job):
+        if wanted and f.id not in wanted:
+            continue
+        if (f.kind or "image") != "image":
+            continue
+        if f.src.kind not in ("panel", "pose", "upload"):
+            continue
+        out.append(f)
+    return out
+
+
+def _reframe_target(job: Job, aspect_ratio: str = "") -> str:
+    """What shape to frame FOR. The project's own unless told otherwise."""
+    return (aspect_ratio or "").strip() or _settings_of(job).aspect_ratio
+
+
+@router.post("/{job_id}/reframe/estimate", response_model=ReframeCostEstimate)
+def estimate_reframe(
+    job_id: str,
+    body: AnimaticReframeRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """FREE. What re-framing these shots would cost, before anything is spent."""
+    import autoframe
+
+    job = _get_owned_animatic(job_id, current)
+    frames = _reframable(job, body.frame_ids)
+    quote = autoframe.estimate(len(frames))
+    return ReframeCostEstimate(
+        frames=quote["frames"],
+        usd=quote["usd"],
+        model=quote["model"],
+        aspect_ratio=_reframe_target(job, body.aspect_ratio),
+        over_limit=quote["over_limit"],
+        limit=f"{quote['limit_frames']} shots per run",
+    )
+
+
+@router.post("/{job_id}/reframe", response_model=JobCreatedResponse, status_code=202)
+def reframe_animatic(
+    job_id: str,
+    body: AnimaticReframeRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA. Find the subject of each shot and frame it for a new shape."""
+    import autoframe
+
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="This animatic is already busy — wait for it to finish, or stop it.",
+        )
+    frames = _reframable(job, body.frame_ids)
+    if not frames:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "None of these clips is a still with a picture behind it, so "
+                "there is nothing to re-frame."
+            ),
+        )
+    quote = autoframe.estimate(len(frames))
+    if quote["over_limit"]:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"That is {quote['frames']} shots; the limit for one reframe run "
+                f"is {quote['limit_frames']}. This is a spend guard, not a "
+                "technical one — do it in a couple of passes."
+            ),
+        )
+
+    get_store().update(
+        job_id,
+        status=JobStatus.RUNNING,
+        error=None,
+        progress={"percent": 0, "stage": "reframe", "message": "Looking at the first shot…"},
+    )
+    worker.submit_animatic_reframe(job_id, body.model_dump())
+    target = _reframe_target(job, body.aspect_ratio)
+    logger.info(
+        "[animatic %s] reframe to %s requested by %s (%d shot(s), est. $%.4f)",
+        job_id, target, current.email, quote["frames"], quote["usd"],
+    )
+    return JobCreatedResponse(
+        job_id=job_id,
+        status=JobStatus.RUNNING,
+        kind=JobKind.ANIMATIC,
+        character_name=job.character_name or "Animatic",
+        message=(
+            f"Re-framing {quote['frames']} shot(s) for {target} — "
+            f"estimated ${quote['usd']:.4f}."
+        ),
+    )
+
+
+def _write_frames(job_id: str, frames: list[dict]) -> None:
+    """Replace the frame list on a job. Read-modify-write on `params`.
+
+    Safe for the same reason `_write_texts` is: the job is RUNNING for the whole
+    life of the pass and `save_animatic` refuses to write through that, so there
+    is exactly one writer. And in `params` rather than `result` for the same
+    reason too — a reframe is ordinary project content the user then edits, and
+    content in `result` would be invisible to every save the editor makes after.
+    """
+    store = get_store()
+    job = store.get(job_id)
+    if job is None:
+        return
+    params = dict(job.params or {})
+    params["frames"] = frames
+    store.update(job_id, params=params)
+
+
+def run_reframe(job_id: str, body: dict, progress_cb=None) -> None:
+    """Look at each shot and write its new framing. Called from the worker.
+
+    ⚠ WHAT LANDS ON THE CLIP IS `scale` / `x` / `y` AND NOTHING ELSE — the three
+    properties `AnimaticFrame` has carried since the scene model, which the
+    monitor and `animatic_render.place_picture` already agree about. There is no
+    crop field, no new render path, and an auto-reframed shot is indistinguishable
+    from one somebody panned by hand: it keyframes, it undoes, it exports. A clip
+    that was ALREADY animated keeps its move — see `autoframe.apply_to_frame`.
+
+    ⚠ EVERY SHOT IS WRITTEN AS IT LANDS, not in one write at the end. Each one
+    has been paid for by the time it comes back, and a pass that fails on shot
+    nineteen must not throw away the eighteen the user was billed for.
+    """
+    import autoframe
+    from PIL import Image
+
+    import animatic
+
+    request = AnimaticReframeRequest(**(body or {}))
+    job = get_store().get(job_id)
+    if job is None:
+        raise autoframe.AutoframeError("This animatic no longer exists.")
+
+    settings = _settings_of(job)
+    target = _reframe_target(job, request.aspect_ratio)
+    size = animatic.resolve_size(target, settings.resolution)
+    wanted = [f.id for f in _reframable(job, request.frame_ids)]
+    if not wanted:
+        raise autoframe.AutoframeError("There is nothing on this timeline to re-frame.")
+
+    done = 0
+    reframed = 0
+    skipped: list[str] = []
+    for frame_id in wanted:
+        # Re-read every time: this is a long pass and the frame list is the
+        # document. Reading it once at the top would write a stale list back.
+        job = get_store().get(job_id)
+        if job is None:
+            raise autoframe.AutoframeError("This animatic no longer exists.")
+        frames = _frames_of(job)
+        frame = next((f for f in frames if f.id == frame_id), None)
+        if frame is None:
+            done += 1
+            continue
+
+        if progress_cb:
+            progress_cb(done, len(wanted), frame.label or "this shot")
+
+        path = _resolve_frame_path(job, frame)
+        if not path:
+            skipped.append(frame.label or frame.id)
+            done += 1
+            continue
+        try:
+            with Image.open(path) as im:
+                source_size = im.size
+            subject = autoframe.detect_subject(path, hint=frame.label or "")
+        except (autoframe.AutoframeError, OSError) as e:
+            # ONE shot the model wouldn't box is not a failed pass. The rest are
+            # still worth doing, and the ones already written are already paid
+            # for — see the docstring.
+            logger.warning("[animatic %s] reframe skipped %s: %s", job_id, frame_id, e)
+            skipped.append(frame.label or frame.id)
+            done += 1
+            continue
+
+        values = autoframe.reframe_values(subject, source_size, size, fit=settings.fit)
+        patch = autoframe.apply_to_frame(frame.model_dump(), values)
+        _write_frames(
+            job_id,
+            [
+                {**f.model_dump(exclude={"url"}), **patch}
+                if f.id == frame_id
+                else f.model_dump(exclude={"url"})
+                for f in frames
+            ],
+        )
+        reframed += 1
+        done += 1
+        logger.info(
+            "[animatic %s] %s → %s: scale %.2f at (%.2f, %.2f)%s",
+            job_id, frame_id, subject.get("subject") or "subject",
+            values["scale"], values["x"], values["y"],
+            "" if values["fits"] else "  [SUBJECT TOO BIG TO FIT — framed as close as it goes]",
+        )
+
+    logger.info(
+        "[animatic %s] reframe to %s done: %d re-framed, %d skipped.",
+        job_id, target, reframed, len(skipped),
+    )
+    if not reframed:
+        raise autoframe.AutoframeError(
+            "None of those shots could be re-framed — the model returned no "
+            "subject for any of them."
+        )

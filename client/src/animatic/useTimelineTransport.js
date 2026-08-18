@@ -13,18 +13,29 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clamp } from "./util.js";
-import { duckEnvelope, envelopeAt, eqGains, fadeGainAt } from "./audio_mix.js";
+import { duckEnvelope, envelopeAt, eqGains, fadeGainAt, trackWindow } from "./audio_mix.js";
+import { clipId } from "./audio_clips.js";
 import { applyTrackAudio, resumeAudio } from "./audio_engine.js";
 
 // Shuttle speeds for J / L, in the order repeated presses step through them.
 const SHUTTLE = [1, 2, 4];
 // How far a <video> may drift from the clock before it is pulled back.
 const DRIFT_MS = 120;
+// How far an <audio> clip that ISN'T the master clock may drift before it is
+// pulled back. Generous on purpose: correcting an element that is only a few
+// frames out costs a re-decode you can hear, and nothing here is sample-locked
+// anyway. Only ever applied to a follower — see `syncTracks`.
+const AUDIO_DRIFT_MS = 200;
 
-// Put one element at the given video time. `offset_ms` is how far into the
-// FILE the sequence starts, so file time = video time + offset.
+// Put one element at the given video time.
+//
+// ⚠ TWO SHIFTS, and they pull in opposite directions. `start_ms` is where the
+// clip sits on the TIMELINE, so the file is that much BEHIND the playhead;
+// `offset_ms` is how far into the FILE it starts reading, so the file is that
+// much AHEAD. Both, or a clip cut out of the middle of a take plays the wrong
+// sound at the wrong moment.
 function placeTrack(el, track, videoMs) {
-  const at = (videoMs + (track.offset_ms || 0)) / 1000;
+  const at = (videoMs - (track.start_ms || 0) + (track.offset_ms || 0)) / 1000;
   if (!Number.isFinite(at)) return;
   el.currentTime = Math.max(0, Math.min(el.duration || at, at));
 }
@@ -67,12 +78,16 @@ export default function useTimelineTransport({
   const [markIn, setMarkIn] = useState(null);
   const [markOut, setMarkOut] = useState(null);
 
-  // Every track's <audio>, paired with its project entry. Elements that haven't
-  // mounted yet (a blob still loading) are simply absent.
+  // Every audio CLIP's <audio>, paired with its project entry. Elements that
+  // haven't mounted yet (a blob still loading) are simply absent.
+  //
+  // ⚠ Keyed by the CLIP, not by the upload. Cutting one file into two clips
+  // gives two elements playing two different windows of the same blob, and
+  // keying on the upload would give them one element to fight over.
   const liveTracks = useCallback(
     () =>
       audioTracks
-        .map((track) => ({ track, el: audioElsRef.current[track.upload_id] }))
+        .map((track) => ({ track, el: audioElsRef.current[clipId(track)] }))
         .filter((x) => x.el),
     [audioTracks, audioElsRef]
   );
@@ -91,31 +106,39 @@ export default function useTimelineTransport({
   // volume slider rewrites every track sixty times a second, and re-running a
   // compressor over four minutes of envelope each time would be felt.
   const duckKey = audioTracks
-    .map((t) => `${t.upload_id}:${t.role || ""}:${t.duck_to ?? 1}:${t.duck_target || ""}:${t.offset_ms || 0}`)
+    .map(
+      (t) =>
+        `${clipId(t)}:${t.role || ""}:${t.duck_to ?? 1}:${t.duck_target || ""}` +
+        `:${t.offset_ms || 0}:${t.start_ms || 0}`
+    )
     .join("|");
   const duckEnvs = useMemo(() => {
     const out = {};
     const voices = audioTracks.filter((t) => t.role === "voice");
     const voiceOf = (track) =>
-      audioTracks.find((t) => t.upload_id && t.upload_id === track.duck_target) || voices[0];
+      audioTracks.find((t) => clipId(t) && clipId(t) === track.duck_target) || voices[0];
     const sources = new Set();
     for (const track of audioTracks) {
       if ((track.duck_to ?? 1) >= 1) continue;
       const voice = voiceOf(track);
-      if (voice && voice.upload_id !== track.upload_id) sources.add(voice.upload_id);
+      if (voice && clipId(voice) !== clipId(track)) sources.add(clipId(voice));
     }
     for (const track of audioTracks) {
       const to = track.duck_to ?? 1;
-      if (to >= 1 || sources.has(track.upload_id)) continue;
+      if (to >= 1 || sources.has(clipId(track))) continue;
       const voice = voiceOf(track);
-      if (!voice || voice.upload_id === track.upload_id) continue;
+      if (!voice || clipId(voice) === clipId(track)) continue;
+      // The ANALYSIS is of the file, so it is still fetched by upload id — two
+      // clips cut from one voiceover are two windows of one decoded envelope.
       const analysis = audioAnalyses[voice.upload_id];
       if (!analysis) continue;
-      out[track.upload_id] = {
+      out[clipId(track)] = {
         env: duckEnvelope(analysis.envelope, analysis.hopMs, to),
         hopMs: analysis.hopMs,
-        // The envelope is in FILE time, and the voice starts `offset_ms` in.
-        offsetMs: voice.offset_ms || 0,
+        // The envelope is in FILE time. Video time reaches it by the same two
+        // shifts `placeTrack` makes: back by where the VOICE clip sits, forward
+        // by how far into its file it reads.
+        offsetMs: (voice.offset_ms || 0) - (voice.start_ms || 0),
       };
     }
     return out;
@@ -129,9 +152,25 @@ export default function useTimelineTransport({
   // `audio_engine.js` for why that used to be impossible.
   const gainAt = useCallback(
     (track, videoMs) => {
+      // ⚠ TWO DIFFERENT LENGTHS, and swapping them is a real bug. WHETHER the
+      // clip is audible is measured against the SPAN — the timeline reaches past
+      // the pictures precisely so you can scrub into the rest of a long track,
+      // and gating on the export length would make that stretch silent. WHERE
+      // its fade out lands is measured against the EXPORT, which is the existing
+      // rule: a ramp is placed on the end of the video when that comes first,
+      // because a fade nobody hears is not a fade.
+      const { startMs, endMs } = trackWindow(track, spanMs);
+      // ⚠ SILENT OUTSIDE ITS OWN WINDOW, and this is not belt-and-braces: the
+      // element is paused there, but pausing is a decision made once per
+      // boundary crossing while this runs every frame. Without it a clip whose
+      // element the browser refused to pause (or that is mid-seek) would be
+      // heard where the timeline shows nothing.
+      if (videoMs < startMs || videoMs >= endMs) return 0;
       let gain = Math.max(0, track.volume ?? 1);
-      gain *= fadeGainAt(track, videoMs, exportMs || spanMs);
-      const duck = duckEnvs[track.upload_id];
+      // The fades belong to the CLIP, so they are measured from where it starts
+      // — that is what carries a fade along when a clip is dragged.
+      gain *= fadeGainAt(track, videoMs - startMs, exportMs || spanMs);
+      const duck = duckEnvs[clipId(track)];
       if (duck) gain *= envelopeAt(duck.env, duck.hopMs, videoMs + duck.offsetMs);
       return Math.max(0, gain);
     },
@@ -163,22 +202,92 @@ export default function useTimelineTransport({
     [liveTracks, gainAt]
   );
 
+  // --- Which clips are playing right now ----------------------------------
+  // ⚠ THE PART THE RAZOR MADE NECESSARY. A track used to start at the head of
+  // the video and run to its end, so "start playback" meant `play()` on every
+  // element once and nothing had to be scheduled. A CLIP occupies a stretch of
+  // the timeline, several can share one file, and the playhead crosses in and
+  // out of them — so which elements should be running is a question with a
+  // different answer every frame, and this is where it is answered.
+  //
+  // `playing` and `rate` are read from refs rather than from state because
+  // `playAt` has to schedule from inside the same call that starts playback,
+  // before React has re-rendered with the new values.
+  const playingRef = useRef(false);
+  const rateRef = useRef(1);
+
+  const syncTracks = useCallback(
+    (videoMs) => {
+      // The SPAN, for the same reason `gainAt` uses it: which clips are running
+      // is a question about the timeline you are scrubbing, not about how long
+      // the encode will be.
+      const running = playingRef.current && rateRef.current === 1;
+      let master = null;
+      for (const { track, el } of liveTracks()) {
+        const { startMs, endMs } = trackWindow(track, spanMs);
+        if (videoMs < startMs || videoMs >= endMs) {
+          // Off this clip. Paused rather than left running at zero gain: an
+          // element playing silently past its own out point is still decoding,
+          // and it would be a long way from the clock by the time the playhead
+          // came back to it.
+          if (!el.paused) el.pause();
+          continue;
+        }
+        if (!running) {
+          // Scrubbing, paused, or shuttling — pause and seek exactly, which is
+          // the same rule the monitor's <video> elements follow.
+          if (!el.paused) el.pause();
+          placeTrack(el, track, videoMs);
+          continue;
+        }
+        if (el.paused) {
+          // The playhead has just reached this clip. Place it first: `play()`
+          // starts from wherever the element happens to be sitting.
+          placeTrack(el, track, videoMs);
+          el.playbackRate = 1;
+          el.play().catch(() => {
+            /* autoplay policy — the wall clock still drives the pictures */
+          });
+          master = master || el;
+          continue;
+        }
+        // ⚠ THE FIRST ONE PLAYING IS THE MASTER CLOCK AND IS NEVER CORRECTED —
+        // the tick below reads the time OFF it, so pulling it back to where it
+        // says we are is a loop that fights itself. Every other clip is a
+        // follower and is nudged only when it has drifted audibly.
+        if (!master) {
+          master = el;
+          continue;
+        }
+        const want = videoMs - startMs + (track.offset_ms || 0);
+        if (Math.abs(el.currentTime * 1000 - want) > AUDIO_DRIFT_MS) {
+          placeTrack(el, track, videoMs);
+        }
+      }
+    },
+    [liveTracks, spanMs]
+  );
+
   const seek = useCallback(
     (ms) => {
       const t = Math.max(0, Math.min(spanMs, Math.round(ms)));
       timeRef.current = t;
       setTimeMs(t);
-      for (const { track, el } of liveTracks()) placeTrack(el, track, t);
+      syncTracks(t);
       applyGains(t);
     },
-    [spanMs, liveTracks, applyGains]
+    [spanMs, syncTracks, applyGains]
   );
 
   // Keep the elements' own level and mute in step with the project.
   useEffect(() => {
     for (const { track, el } of liveTracks()) el.muted = Boolean(track.muted);
+    // …and in step with where the clips are. Dragging one along the timeline,
+    // or cutting one in two, changes which elements should be running without
+    // the playhead moving at all.
+    syncTracks(timeRef.current);
     applyGains(timeRef.current);
-  }, [audioTracks, audioUrls, liveTracks, applyGains]);
+  }, [audioTracks, audioUrls, liveTracks, syncTracks, applyGains]);
 
   // Where playback stops, and where it starts from. With no marks that's the
   // whole timeline, exactly as before.
@@ -210,7 +319,12 @@ export default function useTimelineTransport({
           : null;
       let t;
       if (master) {
-        t = master.el.currentTime * 1000 - (master.track.offset_ms || 0);
+        // The inverse of `placeTrack`: back out of file time by the same two
+        // shifts that got us into it.
+        t =
+          master.el.currentTime * 1000 -
+          (master.track.offset_ms || 0) +
+          (master.track.start_ms || 0);
       } else {
         t = anchorT + (now - anchorWall) * rate;
       }
@@ -224,6 +338,8 @@ export default function useTimelineTransport({
         const stopAt = clamp(t >= playTo ? playTo : playFrom, 0, spanMs);
         timeRef.current = stopAt;
         setTimeMs(stopAt);
+        playingRef.current = false;
+        rateRef.current = 1;
         setPlaying(false);
         setRate(1);
         for (const { el } of liveTracks()) el.pause();
@@ -231,6 +347,12 @@ export default function useTimelineTransport({
       }
       timeRef.current = t;
       setTimeMs(t);
+      // Which clips should be running is a per-moment question too, and for the
+      // same reason: the playhead crosses into a clip and out of the one before
+      // it while nothing about the project has changed. Done BEFORE the gains,
+      // so an element that has just been started is at the right level on its
+      // very first frame instead of one frame late.
+      syncTracks(t);
       // The fades and the duck are a gain PER MOMENT, so they are applied here
       // rather than in an effect — an effect only runs when the project changes,
       // and a fade that only moved when you edited something would be a ramp
@@ -241,13 +363,15 @@ export default function useTimelineTransport({
 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, spanMs, liveTracks, rate, playFrom, playTo, applyGains]);
+  }, [playing, spanMs, liveTracks, rate, playFrom, playTo, applyGains, syncTracks]);
 
   const stopPlayback = useCallback(() => {
     for (const { el } of liveTracks()) {
       el.pause();
       el.playbackRate = 1;
     }
+    playingRef.current = false;
+    rateRef.current = 1;
     setPlaying(false);
     setRate(1);
   }, [liveTracks]);
@@ -264,24 +388,52 @@ export default function useTimelineTransport({
       // side of the marked range rather than refusing to play.
       if (nextRate > 0 && timeRef.current >= playTo - 30) seek(playFrom);
       if (nextRate < 0 && timeRef.current <= playFrom + 30) seek(playTo);
+      // ⚠ The refs BEFORE the state, and before anything is started: `syncTracks`
+      // reads them, and it is called on the next line — long before React has
+      // re-rendered with the new `playing` / `rate`.
+      playingRef.current = true;
+      rateRef.current = nextRate;
       setRate(nextRate);
       setPlaying(true);
-      for (const { track, el } of liveTracks()) {
-        if (nextRate < 0) {
-          // No audio in reverse: browsers can't do it. The pictures still run.
-          el.pause();
-          continue;
+      if (nextRate === 1) {
+        // The ordinary case, and the only one with sound: every clip the
+        // playhead is standing on starts, and the rest wait their turn.
+        syncTracks(timeRef.current);
+      } else {
+        for (const { track, el } of liveTracks()) {
+          const { startMs, endMs } = trackWindow(track, spanMs);
+          const inside = timeRef.current >= startMs && timeRef.current < endMs;
+          if (nextRate < 0 || !inside) {
+            // No audio in reverse: browsers can't do it. The pictures still run.
+            // And a clip the playhead isn't standing on stays silent — shuttling
+            // does not re-schedule (see below), so starting one here would leave
+            // it running long after the playhead had left it.
+            el.pause();
+            continue;
+          }
+          // Shuttling forward. Scheduling is skipped on purpose — at 2× or 4×
+          // the playhead crosses clip boundaries faster than an element can be
+          // started, so only the clips already under it are shuttled and the
+          // rest stay quiet.
+          placeTrack(el, track, timeRef.current);
+          // Browsers accept roughly 0.06–16x; our shuttle only goes to 4.
+          el.playbackRate = nextRate;
+          el.play().catch(() => {
+            /* autoplay policy — the wall clock still drives the pictures */
+          });
         }
-        placeTrack(el, track, timeRef.current);
-        // Browsers accept roughly 0.06–16x; our shuttle only goes to 4.
-        el.playbackRate = nextRate;
-        el.play().catch(() => {
-          /* autoplay policy — the wall clock still drives the pictures */
-        });
       }
     },
-    [frames.length, liveTracks, seek, playFrom, playTo]
+    [frames.length, liveTracks, seek, syncTracks, playFrom, playTo, spanMs]
   );
+
+  // The refs are written by hand wherever playback starts or stops, because
+  // `syncTracks` needs them before React has re-rendered. This is the belt to
+  // that braces: whatever the state ends up saying, the refs agree with it.
+  useEffect(() => {
+    playingRef.current = playing;
+    rateRef.current = rate;
+  }, [playing, rate]);
 
   const togglePlay = useCallback(() => {
     if (playing) {

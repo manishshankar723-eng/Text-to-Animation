@@ -10,6 +10,9 @@
    happens to sit in — the gutter rows and the tracks are matched against these,
    so if they ever went missing every track would collapse to nothing. */
 .tl-wrap {
+  /* Wide enough for a track's filename beside its mute button — at 6.6rem a
+     name truncated to "m..." told you nothing about which lane was which. */
+  --tl-gutter-w: 9rem;
   --tl-ruler-h: 1.15rem;
   /* ONE height for all three tracks, so the Images / Text / Audio buttons in
      the gutter are identical — three different sizes read as three different
@@ -61,10 +64,12 @@
   min-width: 0;
 }
 .tl-gutter {
-  /* Wide enough for a track's filename beside its mute button — at 6.6rem a
-     name truncated to "m..." told you nothing about which lane was which. */
-  flex: 0 0 9rem;
-  width: 9rem;
+  /* ⚠ ONE width, `--tl-gutter-w` on `.tl-wrap`, because two things are this
+     wide: the labels and the ＋ Add layer head above them (`.tl-head`). Written
+     out twice they drifted apart at the 720px breakpoint and the button no
+     longer sat over the column it adds to. */
+  flex: 0 0 var(--tl-gutter-w);
+  width: var(--tl-gutter-w);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -513,9 +518,10 @@
 }
 
 @media (max-width: 720px) {
+  .tl-wrap {
+    --tl-gutter-w: 6.4rem;
+  }
   .tl-gutter {
-    flex-basis: 6.4rem;
-    width: 6.4rem;
     font-size: 0.68rem;
   }
 }

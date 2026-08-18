@@ -96,9 +96,30 @@ export default function FrameStrip({
   // cards, stacked in a column instead of a scrolling row. Same markup on
   // purpose — the drag-to-reorder and duration handling shouldn't fork.
   vertical = false,
+  // "icon" (thumbnails in a grid) or "list" (a compact row each) — see
+  // animatic/media_view.js. ⚠ CSS ONLY, and it must stay that way: both views
+  // are the SAME cards in the SAME order, so a drag means the same thing in
+  // either and nothing has to be re-tested twice. Ignored unless `vertical`.
+  view = "icon",
   // The Media pane supplies its own single "add assets" control, so the strip's
   // own add button and trailing add-card would be duplicates of it.
   showAdd = true,
+  // ⚠ OFF WHEN SOMETHING ELSE IS ALREADY NAMING THIS LIST. The Media pane puts
+  // the strip inside a collapsible "Frames" section whose header carries the
+  // name and the count, so the strip's own head would be the same two things
+  // again, one line below. The file input stays mounted either way — it is what
+  // the add-card and `onAddFiles` use, not part of the heading.
+  heading = true,
+  // ⚠ WHERE EACH CLIP SITS IN THE WHOLE SEQUENCE, when `frames` is only a SLICE
+  // of it — the Media pane shows the picture track in three sections (storyboard
+  // panels, video, images) and hands each one its own subset.
+  //
+  // Everything a position means has to keep meaning it: the badge is the clip's
+  // number IN THE VIDEO, not its number in this section, and a reorder or a drop
+  // moves it within the SEQUENCE. So every index that leaves this component goes
+  // through here first. Omitted — the whole strip — it is the identity, and this
+  // file behaves exactly as it did.
+  indexOf,
   onSelect,
   onReorder,
   onDuration,
@@ -110,38 +131,56 @@ export default function FrameStrip({
   const [dragIndex, setDragIndex] = useState(null);
   const [overIndex, setOverIndex] = useState(null);
 
+  // This section's index i → the sequence's index. The single door every number
+  // going OUT of here has to walk through; see `indexOf` above.
+  const seq = (i) =>
+    indexOf && frames[i] ? indexOf(frames[i], i) : i;
+  // …and the one for a position PAST the last card (an append), which has no
+  // clip to ask about: the end of the sequence, or of this section.
+  const seqEnd = () => (indexOf && frames.length ? seq(frames.length - 1) + 1 : frames.length);
+
   function handleDrop(e, index) {
     e.preventDefault();
+    const at = index >= frames.length ? seqEnd() : seq(index);
     if (e.dataTransfer?.files?.length) {
-      onAddFiles(sortFiles(e.dataTransfer.files), index);
+      onAddFiles(sortFiles(e.dataTransfer.files), at);
     } else if (dragIndex !== null && dragIndex !== index) {
-      onReorder(dragIndex, index);
+      onReorder(seq(dragIndex), at);
     }
     setDragIndex(null);
     setOverIndex(null);
   }
 
   return (
-    <div className={`fs-wrap ${vertical ? "fs-vertical" : ""}`}>
+    <div
+      className={`fs-wrap ${vertical ? "fs-vertical" : ""} ${
+        vertical ? `fs-view-${view === "list" ? "list" : "icon"}` : ""
+      }`}
+    >
+      {/* Hidden, and OUTSIDE the head on purpose: the head is optional, the
+          picker is not — `fileRef` is what the add-card at the end of the strip
+          opens. */}
+      <input
+        ref={fileRef}
+        type="file"
+        // Video too: `onAddFiles` is the editor's one-way-in `addAssets`, which
+        // routes by kind, so refusing video HERE would be the picker
+        // disagreeing with the drop target beside it.
+        accept="image/*,video/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) onAddFiles(sortFiles(e.target.files));
+          e.target.value = "";
+        }}
+      />
+
+      {heading && (
       <div className="fs-head">
         <h3 className="fs-title">
           Frames <span className="muted">({frames.length})</span>
         </h3>
         <div className="fs-head-actions">
-          <input
-            ref={fileRef}
-            type="file"
-            // Video too: `onAddFiles` is the editor's one-way-in `addAssets`,
-            // which routes by kind, so refusing video HERE would be the picker
-            // disagreeing with the drop target beside it.
-            accept="image/*,video/*"
-            multiple
-            hidden
-            onChange={(e) => {
-              if (e.target.files?.length) onAddFiles(sortFiles(e.target.files));
-              e.target.value = "";
-            }}
-          />
           {showAdd && (
             <button
               type="button"
@@ -160,6 +199,7 @@ export default function FrameStrip({
           )}
         </div>
       </div>
+      )}
 
       <div
         className="fs-row"
@@ -198,11 +238,15 @@ export default function FrameStrip({
                   style={{ background: f.color || "#000000" }}
                 />
               ) : urls[f.id] ? (
-                <img src={urls[f.id]} alt={f.label || `Frame ${i + 1}`} />
+                <img src={urls[f.id]} alt={f.label || `Frame ${seq(i) + 1}`} />
               ) : (
                 <span className="fs-thumb-wait" />
               )}
-              <span className="fs-num">{i + 1}</span>
+              {/* THE NUMBER IS ITS PLACE IN THE VIDEO, which is why it goes
+                  through `seq`: in a section that lists only the video clips,
+                  "1" for the thirty-second one would be a lie about the only
+                  thing this badge is for. */}
+              <span className="fs-num">{seq(i) + 1}</span>
               {/* What this clip IS, when it isn't the ordinary case. A video's
                   poster looks exactly like a still, so the badge is the only
                   thing separating them — and it carries the number the foot
@@ -244,7 +288,12 @@ export default function FrameStrip({
                 </button>
               </span>
             </div>
-            {f.label && <div className="fs-label">{f.label}</div>}
+            {/* Always present, even unnamed. In list view the name IS the row —
+                a card that dropped its line there would be the only one an
+                inch shorter than its neighbours, and the one you can't read. */}
+            <div className="fs-label" title={f.label || ""}>
+              {f.label || `Frame ${seq(i) + 1}`}
+            </div>
           </div>
         ))}
 

@@ -475,14 +475,20 @@
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
+/* ⚠ NOT A FLEX ROW. Every bar is placed at its own `left`, taken from the same
+   running total the ruler is drawn from — see the comment above `renderLane` in
+   Timeline.jsx. A row that adds itself up is a row where one bar drawn wider
+   than its time (a `min-width`, a padding a border-box cannot shrink past)
+   shoves every picture after it to the right, off the end of the timeline. */
 .tl-bars {
-  display: flex;
+  display: block;
   height: 2.2rem;
   margin-top: 0.25rem;
 }
 .tl-bar {
-  position: relative;
-  flex: 0 0 auto;
+  position: absolute;
+  top: 0;
+  bottom: 0;
   background: var(--tl-clip-bg);
   border: 1px solid var(--border-gold);
   /* The seam between two shots, so the strip doesn't read as one long block. */
@@ -490,9 +496,16 @@
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0 0.35rem;
+  /* ⚠ NO HORIZONTAL PADDING ON THE BAR. A border-box cannot be narrower than
+     its own padding and borders, so 0.35rem a side put a FLOOR of ~13px under
+     every bar — a 0.1s shot at a normal zoom is 3px, and the other 10 were a
+     lie about how long it was held. The inset the labels want is theirs, and it
+     is stated on them. */
+  padding: 0;
   overflow: hidden;
   cursor: pointer;
+  /* Narrower than this and there is nothing to click. It can only overlap a
+     neighbour by a pixel now, never move one. */
   min-width: 3px;
 }
 /* Alternating shades: at 2s a shot the seam alone is a thin cue, this makes the
@@ -504,10 +517,14 @@
   border-color: var(--primary);
   z-index: 1;
 }
-.tl-bar:first-child {
+/* ⚠ `-of-type`, not `-child`: the transition badges are children of this lane
+   too, so `:last-child` stopped matching the last picture the moment a
+   transition existed — and the sequence lost its rounded right-hand end. The
+   bars are the only <div>s in there; the badges are <button>s. */
+.tl-bar:first-of-type {
   border-radius: 6px 0 0 6px;
 }
-.tl-bar:last-child {
+.tl-bar:last-of-type {
   border-right: 1px solid var(--border-gold);
   border-radius: 0 6px 6px 0;
 }
@@ -521,19 +538,22 @@
 .tl-bar.sel .tl-bar-secs {
   color: var(--gold-ink);
 }
+/* The inset that used to be the bar's own padding. On the label instead, so a
+   bar too narrow to hold a label is still drawn at its real width. */
 .tl-bar-label {
   font-size: 0.7rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+  padding-left: 0.35rem;
 }
 .tl-bar-secs {
   font-size: 0.66rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   margin-left: auto;
-  padding-right: 0.25rem;
+  padding-right: 0.35rem;
 }
 /* The grab strip for dragging a hold longer or shorter. Deliberately 8px wide
    so it can be hit without precision aiming. */
@@ -602,6 +622,14 @@
   color: var(--text);
   padding: 0.35rem 0.5rem;
   font-size: 0.82rem;
+}
+/* The export dialog is the first place a select is disabled — a GIF has no
+   quality setting and a PNG has no frame rate — so it needs the same treatment
+   every other disabled control here already has. Without it the row looks live
+   and simply ignores you. Same two declarations as `.tl-add-layer:disabled`. */
+.an-select:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
 }
 .an-colour {
   width: 2.4rem;

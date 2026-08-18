@@ -18,6 +18,12 @@ import { clamp } from "../../animatic/util.js";
 // pane uses for it, so "Duration" below is unambiguous whichever kind is up.
 const KIND_LABEL = { image: "Frame", video: "Video clip", color: "Colour card" };
 
+// The hold a clip is created with, and therefore what ↺ on Duration goes back
+// to. ⚠ Matches `newFrame` in AnimaticEditor and `duration_ms`'s default on
+// `AnimaticFrame`; the three have to agree or a reset lands somewhere the clip
+// has never been.
+const DEFAULT_HOLD_MS = 2000;
+
 export default function FrameProperties({
   frame,
   index,
@@ -27,6 +33,12 @@ export default function FrameProperties({
   sourceMs,
   // The LOOK rows (effects, mask, blend), built by the editor and slotted in.
   look,
+  // The two "reach back to the storyboard" groups — redraw this shot, and run
+  // it longer. Slotted in the same way `look` is and for the same reason: they
+  // talk to the server and this file stays presentational. Both render nothing
+  // for a clip that has no board panel behind it, which is every animatic built
+  // from uploaded stills.
+  board,
   onChange,
   onDuplicate,
   onDelete,
@@ -41,6 +53,17 @@ export default function FrameProperties({
   // always was.
   const pct = (v) => Math.round((v ?? 0) * 100);
   const kind = frame.kind || "image";
+  // Is this property animated? A ↺ has to light up for that too — a keyframed
+  // scale is a change even when the value under the playhead reads 100%.
+  const keyed = (prop) => (frame.keyframes?.[prop] || []).length > 0;
+  // Put one property back, keys and all. The keyframe map is rewritten rather
+  // than mutated, for the same reason every write in this editor is: the
+  // document is a value, and undo compares snapshots of it.
+  const resetProp = (prop, value) => {
+    const keys = { ...(frame.keyframes || {}) };
+    delete keys[prop];
+    onChange(frame.id, { [prop]: value, keyframes: keys });
+  };
   const moved =
     (frame.scale ?? 1) !== 1 ||
     (frame.x ?? 0.5) !== 0.5 ||
@@ -72,7 +95,13 @@ export default function FrameProperties({
       </div>
 
       <PropGroup id="frame:clip" title="Clip">
-        <PropRow label="Name" title="Shown on the timeline, and burned in when 'shot labels' is on">
+        <PropRow
+          label="Name"
+          title="Shown on the timeline, and burned in when 'shot labels' is on"
+          reset={() => onChange(frame.id, { label: "" })}
+          changed={Boolean(frame.label)}
+          resetTo={`“Shot ${index + 1}”`}
+        >
           <input
             className="an-prop-input"
             value={frame.label || ""}
@@ -84,6 +113,9 @@ export default function FrameProperties({
         <PropRow
           label="Duration"
           title="How much of the TIMELINE this clip occupies — everything after it moves"
+          reset={() => onChange(frame.id, { duration_ms: DEFAULT_HOLD_MS })}
+          changed={frame.duration_ms !== DEFAULT_HOLD_MS}
+          resetTo={`${DEFAULT_HOLD_MS / 1000}s`}
         >
           <NumField
             unit="s"
@@ -114,7 +146,18 @@ export default function FrameProperties({
         title="Motion"
         hint="Press ⏱, move the playhead, change the value"
       >
-        <PropRow label="Scale" title="100% is the whole picture. Above that it is pushed in.">
+        {/* ⚠ Each ↺ also clears that property's KEYFRAMES, which is the only
+            honest reading of "put this back": a scale left animated from 100%
+            to 100% is not the identity transform this clip started with, and
+            leaving the keys behind would make the reset look like it had
+            failed the moment the playhead moved. */}
+        <PropRow
+          label="Scale"
+          title="100% is the whole picture. Above that it is pushed in."
+          reset={() => resetProp("scale", 1)}
+          changed={(frame.scale ?? 1) !== 1 || keyed("scale")}
+          resetTo="100%"
+        >
           <NumField
             unit="%"
             step="5"
@@ -130,7 +173,13 @@ export default function FrameProperties({
           {kf && <KeyframeControls {...kf} prop="scale" />}
         </PropRow>
 
-        <PropRow label="Position X" title="Across the frame. 50% is centred.">
+        <PropRow
+          label="Position X"
+          title="Across the frame. 50% is centred."
+          reset={() => resetProp("x", 0.5)}
+          changed={(frame.x ?? 0.5) !== 0.5 || keyed("x")}
+          resetTo="50%"
+        >
           <NumField
             unit="%"
             step="1"
@@ -142,7 +191,13 @@ export default function FrameProperties({
           {kf && <KeyframeControls {...kf} prop="x" />}
         </PropRow>
 
-        <PropRow label="Position Y" title="Down the frame. 50% is centred.">
+        <PropRow
+          label="Position Y"
+          title="Down the frame. 50% is centred."
+          reset={() => resetProp("y", 0.5)}
+          changed={(frame.y ?? 0.5) !== 0.5 || keyed("y")}
+          resetTo="50%"
+        >
           <NumField
             unit="%"
             step="1"
@@ -163,6 +218,9 @@ export default function FrameProperties({
           value={frame.opacity ?? 1}
           readout={`${pct(frame.opacity ?? 1)}%`}
           kf={kf && <KeyframeControls {...kf} prop="opacity" />}
+          reset={() => resetProp("opacity", 1)}
+          changed={(frame.opacity ?? 1) !== 1 || keyed("opacity")}
+          resetTo="100%"
           {...gesture}
           onChange={(e) => onChange(frame.id, { opacity: parseFloat(e.target.value) })}
         />
@@ -186,6 +244,11 @@ export default function FrameProperties({
       </PropGroup>
 
       {look}
+
+      {/* Below the Look on purpose: these change the PICTURE ITSELF, on the
+          storyboard, which is a bigger act than anything above them and belongs
+          at the end of the pane rather than in the middle of the framing rows. */}
+      {board}
 
       {/* --- Turn this shot into real footage ---------------------------- */}
       {/* ⚠ SPENDS MONEY, so this button does not render anything — it opens

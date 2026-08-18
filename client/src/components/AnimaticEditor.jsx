@@ -15,7 +15,15 @@
 //   animatic/useAnimaticProject.js   loading, autosave and the dirty baseline
 //   animatic/useTimelineTransport.js the playhead, shuttle, marks, video slaves
 //   animatic/useUndoStack.js         Ctrl+Z, and the gesture bracket
-//   components/properties/           the six Properties panes
+//   animatic/selection.js            what "the selection" is, now that it is a
+//                                    LIST rather than one id — and groups
+//   components/properties/           the Properties panes
+//
+// ⚠ TWO KINDS OF "SELECTED", and they are not the same thing: the six
+// `selected*Id` states are the PRIMARY — the one clip the Properties pane
+// describes — and `selection` is the whole list a rubber band, a shift-click or
+// a group produces. `selectOnly` is the only writer of both; read its comment
+// before adding a third way to select something.
 //
 // Everything here is local and free: no AI call is made, and preview costs
 // nothing. "Export video" and "✨ Animate" are the only two that touch the
@@ -27,6 +35,7 @@ import {
   LOOK_KINDS,
   TEXT_DEFAULTS,
   defaultFor,
+  frameOrigin,
   lookProps,
   lookPropParts,
   lookValueOf,
@@ -48,16 +57,65 @@ import {
   setKeyEase,
 } from "../animatic/keyframes.js";
 import { DEFAULT_TRANSITION_MS } from "../animatic/transitions.js";
+import {
+  audioEndMs,
+  clipAt,
+  clipId,
+  laneClips,
+  MIN_CLIP_MS,
+  splitClip,
+} from "../animatic/audio_clips.js";
+import { CAPTION_LAYER_ID, CAPTION_LAYER_NAME } from "../animatic/captions.js";
+import {
+  PRESETS as EXPORT_PRESETS,
+  applyPreset,
+  matchPreset,
+  containerExt,
+  normaliseContainer,
+} from "../animatic/export_presets.js";
+import {
+  expandGroup,
+  expandSelection,
+  GROUPABLE,
+  selectionLabel,
+  toggleItems,
+  uniqueItems,
+} from "../animatic/selection.js";
 import { clamp } from "../animatic/util.js";
+import {
+  WORKSPACES,
+  getWorkspace,
+  saveWorkspace,
+  workspaceIcon,
+  workspaceLabel,
+} from "../animatic/workspace.js";
+import {
+  clampLayout,
+  defaultLayout,
+  getPaneLayout,
+  paneLimits,
+  savePaneLayout,
+  viewport,
+} from "../animatic/pane_layout.js";
+import {
+  ASPECTS,
+  aspectNumber,
+  frameSizeFor,
+  knownAspect,
+  refitBox,
+} from "../animatic/aspects.js";
+import { MEDIA_VIEWS, getMediaView, saveMediaView } from "../animatic/media_view.js";
 import useAnimaticProject from "../animatic/useAnimaticProject.js";
 import useAudioAnalysis from "../animatic/useAudioAnalysis.js";
 import { forgetAudio } from "../animatic/beats.js";
+import { beatMarks, cutsToDurations, planBeatCuts } from "../animatic/beat_cut.js";
 import useTimelineTransport, { useMonitorVideo } from "../animatic/useTimelineTransport.js";
 import useUndoStack from "../animatic/useUndoStack.js";
 import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
+import PaneSplitter from "./PaneSplitter.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
 import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
@@ -65,14 +123,24 @@ import ShapeGallery, {
   ShapeSwatch,
 } from "./Shapes.jsx";
 import EffectsPanel from "./EffectsPanel.jsx";
+import RegeneratePanelInline, { RelengthShotInline } from "./RegeneratePanelInline.jsx";
 import {
   AudioProperties,
   FrameProperties,
+  SelectionProperties,
   ShapeProperties,
   TextProperties,
   TransitionProperties,
   VideoProperties,
 } from "./properties/index.js";
+// The two layout primitives this file uses directly: `PropRow` for the rows it
+// slots INTO a pane (the reframe button), so they line up with the rows around
+// them, and `PropGroup` for the Media pane's own sections.
+// ⚠ THE MEDIA PANE USES THE PROPERTIES PANE'S SECTION ON PURPOSE. A second,
+// media-only collapsible would be the same control drawn twice — same twist,
+// same count pill, one of them subtly different — and the two panes sit side by
+// side. One component means Frames collapses exactly the way Motion does.
+import { PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
 
 // The timeline's scale, in pixels per second. CONTINUOUS, not a list of steps:
 // the scroll bar's grips ask for whatever scale frames the stretch you dragged
@@ -94,26 +162,33 @@ const RESOLUTIONS = [
   { id: 2160, label: "4K" },
 ];
 
-// The familiar frame sizes, written for a 1080 short edge and scaled from there
-// — the SAME rule `resolve_size()` uses on the server, so the dialog can show
-// the real output size before anything is encoded. Keep the two in step.
-const BASE_SIZES = {
-  "16:9": [1920, 1080],
-  "9:16": [1080, 1920],
-  "1:1": [1080, 1080],
-  "4:3": [1440, 1080],
-  "3:4": [1080, 1440],
-  "4:5": [1080, 1350],
-  "21:9": [1920, 824],
-};
-const even = (n) => (Math.round(n) % 2 === 0 ? Math.round(n) : Math.round(n) + 1);
-function frameSizeFor(aspect, resolution) {
-  const base = BASE_SIZES[aspect] || BASE_SIZES["16:9"];
-  const scale = (resolution || 1080) / 1080;
-  return [even(base[0] * scale), even(base[1] * scale)];
-}
+// The long edge each frame's picture is FETCHED at, for the monitor and the
+// timeline. Half of the export's 1920 (`LONG_EDGE` in animatic.py), which is
+// where the phrase "half-res proxy" comes from — and one of the rungs
+// `proxies.PROXY_EDGES` offers, so every editor session shares one cached file
+// per picture rather than writing one per window size.
+//
+// ⚠ THE PREVIEW, NEVER THE EXPORT. The encoder opens the source files; nothing
+// on this side of the wire can reach it. What this trades away is SHARPNESS at
+// high zoom and nothing else — a proxy is a lossless resize, so colour, timing
+// and geometry are untouched. See the rules at the top of `proxies.py`.
+const PREVIEW_MAX_EDGE = 960;
+
+// The frame shapes and their pixel sizes moved to `animatic/aspects.js` — the
+// Shape chips in Video properties, the Program pane's picker and the export
+// dialog's size table all read the one list now.
 
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+
+// RETIRE a blob that has just been replaced, rather than revoking it on the
+// spot. The <img> or <video> showing it is still showing it until React has
+// committed the new one, and revoking underneath that renders a broken tile for
+// a frame — which on a redraw looks exactly like the redraw failed. The delay
+// is one macrotask, which is a commit and then some. Same rule as
+// `StoryboardBoard.refreshPanelImage`.
+const retireBlob = (url) => {
+  if (url) setTimeout(() => URL.revokeObjectURL(url), 2000);
+};
 
 // A new caption. Defaults to a scrim so it stays readable over a grey
 // storyboard thumbnail, which is what most of these frames are.
@@ -196,10 +271,20 @@ const newShape = (kind, startMs, durationMs) => ({
 // `out_ms` the window of the SOURCE it reads — see `sourceAt` in scene.js for
 // why speed widens that window instead of re-timing the clip. A clip whose file
 // we couldn't measure opens at the default hold rather than at zero length.
-const newVideoClip = (uploadId, durationMs, label) => ({
+//
+// ⚠ `url` IS SET HERE, and it has to be. Every other clip factory that has a
+// file behind it sets one, because the thumbnail effect only fetches frames that
+// HAVE a url — and this one didn't, so a freshly uploaded video sat on the
+// loading spinner in the Media pane until the page was reloaded and the server
+// filled a url in. Reported as "I upload a video file here but it doesn't show
+// in the media panel", and it looked like an upload still running.
+// `?poster=1` because the file itself is a VIDEO: the raw route hands back an
+// MP4, which an <img> can only fail to draw. See `_video_poster` on the server.
+const newVideoClip = (uploadId, durationMs, label, animaticId) => ({
   id: newId(),
   src: { kind: "video", upload_id: uploadId },
   kind: "video",
+  url: `/animatics/${animaticId}/media/${uploadId}?poster=1`,
   duration_ms: clamp(Math.round(durationMs || 2000), MIN_MS, 600000),
   label: label || "",
   in_ms: 0,
@@ -236,8 +321,15 @@ const newColorClip = (color, durationMs) => ({
 // An animatic is stills, captions, shapes and audio: there are no keyframes to
 // pull, so there is no Pen tool. Everything else maps onto a real action.
 const TOOLS = [
-  { id: "select", key: "V", label: "Selection", hint: "Select and move clips" },
-  { id: "razor", key: "C", label: "Razor", hint: "Click a frame to split it there" },
+  {
+    id: "select",
+    key: "V",
+    label: "Selection",
+    hint:
+      "Select and move clips · drag the empty part of a lane to select several · " +
+      "shift-click to add one · double-click a lane's name for the whole row",
+  },
+  { id: "razor", key: "C", label: "Razor", hint: "Click a frame — or an audio clip — to split it there" },
   { id: "ripple", key: "B", label: "Ripple edit", hint: "Drag an edit point; everything after it shifts" },
   { id: "rolling", key: "N", label: "Rolling edit", hint: "Drag an edit point; the next frame absorbs it, so the video stays the same length" },
   { id: "hand", key: "H", label: "Hand", hint: "Drag to scroll the timeline" },
@@ -287,6 +379,12 @@ export default function AnimaticEditor({
   // --- Media ---
   const [urls, setUrls] = useState({}); // frame id → object URL
   const urlsRef = useRef({});
+  // frame id → the SERVER PATH that blob was fetched from, `?v=` and all.
+  // ⚠ Not the same question as "have I got a blob for this clip?", and the
+  // difference is the whole of "I press Regenerate and nothing happens": a
+  // redrawn panel keeps its frame id and its route, and only the version moves.
+  // See the fetch effect below.
+  const urlSrcRef = useRef({});
   // upload_id → object URL, for the overlay pictures.
   const [overlayUrls, setOverlayUrls] = useState({});
   const overlayUrlsRef = useRef({});
@@ -313,6 +411,9 @@ export default function AnimaticEditor({
   const [selectedTransitionId, setSelectedTransitionId] = useState(null);
   // Which half of the Media pane is showing: the footage, or the shape picker.
   const [mediaTab, setMediaTab] = useState("media");
+  // …and how that footage is listed: thumbnails in a grid, or compact rows.
+  // Remembered per browser, like the workspace — see animatic/media_view.js.
+  const [mediaView, setMediaView] = useState(getMediaView);
   // An audio track selected for editing — its controls live in Properties, like
   // everything else that has settings.
   const [selectedTrackId, setSelectedTrackId] = useState(null);
@@ -325,6 +426,40 @@ export default function AnimaticEditor({
   // Which pane is filling the workspace (~), and which one the pointer is over
   // so ~ knows which to maximize — exactly how Premiere decides.
   const [maximized, setMaximized] = useState(null);
+  // Which LAYOUT the panes are arranged in — long-form or reel/shorts. ⚠ UI
+  // ONLY: it rearranges the screen and never touches the project's frame size
+  // or aspect ratio. Remembered per browser, so it survives a reload.
+  const [workspace, setWorkspace] = useState(getWorkspace);
+  // The ⚙ menu in the top bar. Null = closed.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // How big the panes are — three px sizes the seams between them drag (see
+  // `animatic/pane_layout.js`). Loaded for THIS workspace, since the two
+  // layouts want different shapes and each remembers its own.
+  const [layout, setLayout] = useState(() => getPaneLayout(getWorkspace()));
+  // The window, as state rather than a read at render time: the limits a drag is
+  // clamped against are a fraction of it, so they have to change when it does.
+  const [vp, setVp] = useState(viewport);
+  // ⚠ THE PANE-SIZE HOOKS LIVE UP HERE WITH THE REST, and not beside the layout
+  // code they belong to further down. That code sits BELOW `if (loading)
+  // return …`, so a hook there runs on the second render and not the first —
+  // "Rendered more hooks than during the previous render", and a blank editor.
+  useEffect(() => {
+    const onResize = () => setVp(viewport());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Written after the drag rather than during it — a pointer move fires dozens
+  // of times a second and every one of them would be a JSON write.
+  // ⚠ ONLY ONCE A SEAM HAS ACTUALLY BEEN DRAGGED. Saving the defaults on mount
+  // would freeze the sizes this window happened to open at, and the defaults are
+  // deliberately a fraction of the window — opening the editor once on a laptop
+  // would then hand the same panes to a 4K screen forever.
+  const layoutTouched = useRef(false);
+  useEffect(() => {
+    if (!layoutTouched.current) return;
+    const t = setTimeout(() => savePaneLayout(workspace, layout), 250);
+    return () => clearTimeout(t);
+  }, [workspace, layout]);
   const hoverPaneRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [exportJob, setExportJob] = useState(null);
@@ -401,10 +536,37 @@ export default function AnimaticEditor({
   const [speechRunning, setSpeechRunning] = useState(false);
   const [speechProgress, setSpeechProgress] = useState(null);
 
+  // --- Phase 7: reaching back to the BOARD, and framing for a new shape ---
+  // ⚠ THE RE-BLOCK RUNS ON THE STORYBOARD'S JOB, not this one. The key poses
+  // belong to the board, so the id being polled is the board's — which is why
+  // this is its own poll rather than a branch of the one above, and why it is
+  // NOT part of `serverBusy`: this animatic is not busy, so the autosave carries
+  // on as normal and the user can keep cutting while the drawings arrive.
+  const [reblockFor, setReblockFor] = useState(null); // frame id, or null
+  const [reblockJob, setReblockJob] = useState(null); // the BOARD's job id
+  const [reblockProgress, setReblockProgress] = useState(null);
+
+  // Auto-reframe. Two steps like every other paid path here: a panel that
+  // spends nothing, then a priced confirmation, then the call.
+  const [reframeOpen, setReframeOpen] = useState(false);
+  const [reframeAspect, setReframeAspect] = useState("");
+  const [reframeScope, setReframeScope] = useState("all"); // "all" | "selection"
+  const [reframeConfirm, setReframeConfirm] = useState(null);
+  const [reframeBusy, setReframeBusy] = useState(false);
+  // Its own error, inside the panel — the editor's banner renders BEHIND the
+  // modal overlay. Same lesson as `speechError`.
+  const [reframeError, setReframeError] = useState("");
+  const [reframeRunning, setReframeRunning] = useState(false);
+  const [reframeProgress, setReframeProgress] = useState(null);
+
   const textAreaRef = useRef(null);
   const audioInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const assetInputRef = useRef(null);
+  // The Video row's ＋. A picker of its own rather than the general one, because
+  // the row it fills holds one kind of clip: offering images on it would put them
+  // somewhere the user did not press.
+  const videoInputRef = useRef(null);
   const overlayInputRef = useRef(null);
   // Which audio lane a just-picked file belongs to ("" = a lane of its own).
   const pendingAudioLane = useRef("");
@@ -421,7 +583,7 @@ export default function AnimaticEditor({
   // server that writes the caption clips, so an autosave landing mid-run would
   // put the editor's older `texts` back over work that was paid for. That is
   // the same failure the Veo records were moved into `result` to avoid.
-  const serverBusy = exporting || animating || speechRunning;
+  const serverBusy = exporting || animating || speechRunning || reframeRunning;
 
   // ------------------------------------------------------------- the project
   // Loading, autosave and "is this saved?" — see `useAnimaticProject`.
@@ -488,14 +650,47 @@ export default function AnimaticEditor({
   const selectedTrack =
     selectedTransition || selectedText || selectedShape || selectedOverlay
       ? null
-      : audioTracks.find((a) => a.upload_id === selectedTrackId) || null;
+      : // ⚠ By CLIP id, not by upload: after a cut, one file is two clips and
+        // only one of them is the thing the pane is describing.
+        audioTracks.find((a) => clipId(a) === selectedTrackId) || null;
   const selectedFrame =
     selectedTransition || selectedText || selectedShape || selectedOverlay || selectedTrack
       ? null
       : frames.find((f) => f.id === selectedId) || null;
 
+  // --------------------------------------------------------- the selection
+  // ⚠ TWO THINGS, AND THEY ARE NOT THE SAME THING. The six `selected*Id` above
+  // are the PRIMARY — the one clip the Properties pane is describing, and there
+  // is at most one of it. `selection` is the whole LIST, which is what a rubber
+  // band, a shift-click and a group all produce, and what Delete, a drag and
+  // Group act on. `selectOnly` keeps them in step: it is the only writer of
+  // both, so the list can never disagree with the pane.
+  //
+  // Items are `{ kind, id }` — see `animatic/selection.js` for why an id alone
+  // will not do.
+  const [selection, setSelection] = useState([]);
+
+  // The clip lists as `expandGroup` wants them: by kind, each carrying `id` and
+  // `group_id`. ⚠ Audio is keyed by CLIP id, never by upload — after a cut one
+  // file is several clips and only the piece in the group belongs in it.
+  const groupPools = useMemo(
+    () => ({
+      text: texts,
+      shape: shapes,
+      overlay: overlays,
+      audio: audioTracks.map((a) => ({ id: clipId(a), group_id: a.group_id || "" })),
+    }),
+    [texts, shapes, overlays, audioTracks]
+  );
+
   // One helper so every "select this" path clears the others — the pane can
   // then never show something that isn't selected.
+  //
+  // ⚠ IT ALSO SETS THE LIST, and expands a group while doing it: clicking one
+  // member of a group selects every member, which is the whole meaning of a
+  // group. Doing that HERE rather than at the timeline's click handlers is what
+  // makes it true of every path — the media pane, the monitor's handles and the
+  // keyboard all go through this one function.
   function selectOnly({
     frame = null,
     text = null,
@@ -510,17 +705,78 @@ export default function AnimaticEditor({
     setSelectedShapeId(shape);
     setSelectedOverlayId(overlay);
     setSelectedTransitionId(transition);
+    const one = frame
+      ? { kind: "frame", id: frame }
+      : text
+        ? { kind: "text", id: text }
+        : shape
+          ? { kind: "shape", id: shape }
+          : overlay
+            ? { kind: "overlay", id: overlay }
+            : track
+              ? { kind: "audio", id: track }
+              : null;
+    // A transition is not a clip and is never part of a multi-selection: it
+    // belongs to a CUT, has no span to sweep over and nothing to be grouped
+    // with. Selecting one empties the list, which is right — Delete then means
+    // the transition, which is what the pane is showing.
+    setSelection(one ? expandGroup(one, groupPools) : []);
   }
 
-  // How long a track PLAYS: its trim, else the rest of the file after the
-  // offset. The same rule as the timeline's `trackLength`.
-  const playLength = (a) => {
-    const rest = Math.max(0, (a.duration_ms || 0) - (a.offset_ms || 0));
-    return a.trim_ms ? Math.min(a.trim_ms, rest || a.trim_ms) : rest;
-  };
-  // The longest track — what "fit frames to audio" matches, and what the
-  // length comparison in the timeline header reports against.
-  const audioMs = audioTracks.reduce((max, a) => Math.max(max, playLength(a)), 0);
+  /** Replace (or extend) the selection — the rubber band and "select this row". */
+  function selectMany(items, { add = false, lane = "" } = {}) {
+    const picked = expandSelection(items, groupPools);
+    const next = add ? uniqueItems([...selection, ...picked]) : picked;
+    setSelection(next);
+    // The pane follows the FIRST thing picked up, so a selection is never
+    // "nothing is selected" in one panel and forty clips in another.
+    const head = next[0] || null;
+    setSelectedId(head?.kind === "frame" ? head.id : null);
+    setSelectedTextId(head?.kind === "text" ? head.id : null);
+    setSelectedShapeId(head?.kind === "shape" ? head.id : null);
+    setSelectedOverlayId(head?.kind === "overlay" ? head.id : null);
+    setSelectedTrackId(head?.kind === "audio" ? head.id : null);
+    setSelectedTransitionId(null);
+    if (!next.length) {
+      setNotice(lane ? `Nothing on ${lane} to select.` : "Nothing in that area.");
+      return;
+    }
+    setNotice(
+      `${selectionLabel(next)} selected — Delete removes them, Ctrl+G groups them.`
+    );
+  }
+
+  /** Every clip on the timeline — what Ctrl+A means here. */
+  function everything() {
+    return [
+      ...frames.map((f) => ({ kind: "frame", id: f.id })),
+      ...texts.map((c) => ({ kind: "text", id: c.id })),
+      ...shapes.map((s) => ({ kind: "shape", id: s.id })),
+      ...overlays.map((o) => ({ kind: "overlay", id: o.id })),
+      ...audioTracks.map((a) => ({ kind: "audio", id: clipId(a) })),
+    ];
+  }
+
+  /** Shift-click: in if it was out, out if it was in. Groups toggle as one. */
+  function toggleSelect(kind, id) {
+    const next = toggleItems(selection, expandGroup({ kind, id }, groupPools));
+    setSelection(next);
+    // The primary follows what is still in the list, so the pane always
+    // describes something that is actually selected.
+    const head = next.find((item) => item.kind === kind && item.id === id) || next[0] || null;
+    setSelectedId(head?.kind === "frame" ? head.id : null);
+    setSelectedTextId(head?.kind === "text" ? head.id : null);
+    setSelectedShapeId(head?.kind === "shape" ? head.id : null);
+    setSelectedOverlayId(head?.kind === "overlay" ? head.id : null);
+    setSelectedTrackId(head?.kind === "audio" ? head.id : null);
+    setSelectedTransitionId(null);
+  }
+
+  // Where the LAST audio clip ends — what "fit frames to audio" matches, and
+  // what the length comparison in the timeline header reports against. Measured
+  // from where each clip SITS, so a piece dragged out to 0:40 makes the audio
+  // forty seconds long even if the piece itself is two seconds.
+  const audioMs = audioEndMs(audioTracks);
   // How far the TIMELINE reaches. The video is still only as long as the frames
   // — that's what exports — but if the audio runs past them the timeline has to
   // show it, or you can't scrub into your own track to place pictures against it.
@@ -565,6 +821,52 @@ export default function AnimaticEditor({
     onSelectFrame: setSelectedId,
   });
 
+  // ------------------------------------------------------ which rows are OFF
+  // ⚠ A HIDDEN ROW IS A PROPERTY OF THE PROJECT, NOT OF THIS BROWSER, and that
+  // follows from what the eye in the gutter promises: the row is left out of the
+  // VIDEO. A view preference (the workspace, the media view) can live in
+  // localStorage because being wrong about it costs a glance; being wrong about
+  // this costs an export. So it is saved — `settings.hidden_lanes` — and the same
+  // list is read by the monitor below and by the encoder on the server.
+  //
+  // ⚠ IT NAMES A ROW, NOT ITS CLIPS. Emptying a hidden row, or adding more to it,
+  // must not turn anything back on: what you switched off is the row. The token
+  // is `kind:layer_id` for a lane of clips (`text:`, `text:<id>`, `shape:<id>`,
+  // `image:<id>`) and `frames:stills` / `frames:video` for the two rows of the
+  // picture track — an encoding the SERVER can rebuild from a clip's own fields,
+  // which is what lets one list work in both places (`_lane_hidden` in
+  // server/animatics.py). Audio is deliberately not in here: a track has `muted`,
+  // which is this idea for a row you hear rather than see, and two switches for
+  // one idea is worse than either.
+  const hiddenLanes = useMemo(
+    () => new Set(settings.hidden_lanes || []),
+    [settings.hidden_lanes]
+  );
+
+  // The token for one lane — the ONE place the encoding is written on the client.
+  const laneToken = (lane) => {
+    if (lane.kind === "audio") return "";
+    if (lane.kind === "frames") return `frames:${lane.only || "stills"}`;
+    return `${lane.kind}:${lane.layerId || ""}`;
+  };
+
+  const toggleLaneHidden = (lane) => {
+    const token = laneToken(lane);
+    if (!token) return;
+    const wasHidden = hiddenLanes.has(token);
+    setSettings((s) => {
+      const now = new Set(s.hidden_lanes || []);
+      if (now.has(token)) now.delete(token);
+      else now.add(token);
+      return { ...s, hidden_lanes: [...now] };
+    });
+    setNotice(
+      wasHidden
+        ? `${lane.name} is back in the video.`
+        : `${lane.name} is hidden — it stays on the timeline and is left out of the monitor and the export.`
+    );
+  };
+
   // ------------------------------------------------------------------ scene
   // WHAT THE VIEWER SEES RIGHT NOW, and the single place that decides it.
   //
@@ -584,14 +886,43 @@ export default function AnimaticEditor({
   // would correctly return no frame, and the monitor would go black at the end
   // of every playthrough. Reading the last visible instant instead is what a
   // person means by "parked at the end".
+  //
+  // ⚠ WHAT GOES IN IS THE DOCUMENT WITH THE HIDDEN ROWS TAKEN OUT — see
+  // `hiddenLanes` above. The eye in the timeline's gutter has to mean the same
+  // thing here as it does in the MP4, and this is the one place the monitor's
+  // answer comes from, so it is the one place that has to know.
+  //
+  // ⚠ A HIDDEN PICTURE ROW IS BLANKED, NEVER DROPPED, and the two are completely
+  // different edits. `frames` is a sequence laid end to end: remove a clip and
+  // every cut after it moves, the video gets shorter and the audio no longer
+  // lines up — from pressing an eye. Turned into a colour card the clip holds
+  // exactly the time it always held and draws the letterbox colour, which is what
+  // an NLE shows for a track it is not outputting. Same conversion on the server,
+  // for the same reason.
+  const shown = useMemo(() => {
+    const doc = { frames, texts, shapes, overlays, transitions };
+    if (!hiddenLanes.size) return doc;
+    const kept = (kind) => (clip) => !hiddenLanes.has(`${kind}:${clip.layer_id || ""}`);
+    const blank = { stills: hiddenLanes.has("frames:stills"), video: hiddenLanes.has("frames:video") };
+    return {
+      ...doc,
+      frames:
+        blank.stills || blank.video
+          ? frames.map((f) =>
+              blank[frameOrigin(f) === "video" ? "video" : "stills"]
+                ? { ...f, kind: "color", color: settings.background || "#000000" }
+                : f
+            )
+          : frames,
+      texts: texts.filter(kept("text")),
+      shapes: shapes.filter(kept("shape")),
+      overlays: overlays.filter(kept("image")),
+    };
+  }, [frames, texts, shapes, overlays, transitions, hiddenLanes, settings.background]);
+
   const scene = useMemo(
-    () =>
-      sceneAt(
-        { frames, texts, shapes, overlays, transitions },
-        Math.min(timeMs, Math.max(0, spanMs - 1)),
-        spanMs
-      ),
-    [frames, texts, shapes, overlays, transitions, timeMs, spanMs]
+    () => sceneAt(shown, Math.min(timeMs, Math.max(0, spanMs - 1)), spanMs),
+    [shown, timeMs, spanMs]
   );
 
   const currentIndex = scene.frame ? scene.frame.index : -1;
@@ -670,6 +1001,15 @@ export default function AnimaticEditor({
   // ----------------------------------------------------------------- media
   // Fetch each frame's picture as an authed blob, a few at a time so a
   // 60-panel board doesn't open 60 sockets at once.
+  //
+  // ⚠ CACHED BY FRAME ID, RE-FETCHED WHEN THE URL MOVES. Those are two different
+  // questions and this used to answer only the first: "have I got a blob for
+  // this clip?". A storyboard panel redrawn from the Properties pane keeps its
+  // frame id and its route — only the server's `?v=<mtime>` changes — so the
+  // check `!urlsRef.current[f.id]` was true before the redraw and true after,
+  // and the editor went on showing the old drawing for ever. `urlSrcRef`
+  // remembers which url each blob came from, which is what makes a redraw
+  // visible. See `_frame_version` in server/animatics.py.
   useEffect(() => {
     let alive = true;
     const wanted = new Set(frames.map((f) => f.id));
@@ -679,6 +1019,7 @@ export default function AnimaticEditor({
       if (!wanted.has(id)) {
         URL.revokeObjectURL(urlsRef.current[id]);
         delete urlsRef.current[id];
+        delete urlSrcRef.current[id];
       }
     }
 
@@ -687,7 +1028,10 @@ export default function AnimaticEditor({
     // request per card on every load, and a thumbnail stuck on its spinner
     // waiting for a picture that is never coming.
     const missing = frames.filter(
-      (f) => f.url && (f.kind || "image") !== "color" && !urlsRef.current[f.id]
+      (f) =>
+        f.url &&
+        (f.kind || "image") !== "color" &&
+        (!urlsRef.current[f.id] || urlSrcRef.current[f.id] !== f.url)
     );
     if (!missing.length) {
       setUrls({ ...urlsRef.current });
@@ -701,12 +1045,21 @@ export default function AnimaticEditor({
         await Promise.all(
           batch.map(async (f) => {
             try {
-              const url = await api.fetchAnimaticMedia(f.url);
+              // A PROXY, not the source: these blobs draw the monitor and the
+              // timeline tiles, never the MP4. See PREVIEW_MAX_EDGE.
+              const url = await api.fetchAnimaticMedia(f.url, PREVIEW_MAX_EDGE);
               if (!alive) {
                 URL.revokeObjectURL(url);
                 return;
               }
+              // NEW PIXELS FIRST, then retire the old blob — never revoke it on
+              // the spot. The <img> is still showing it until React commits,
+              // and revoking underneath it is a tile that flashes empty on
+              // every redraw. Same rule as `StoryboardBoard.refreshPanelImage`.
+              const stale = urlsRef.current[f.id];
               urlsRef.current[f.id] = url;
+              urlSrcRef.current[f.id] = f.url;
+              if (stale) retireBlob(stale);
             } catch {
               /* a missing picture shows as an empty tile, not an error banner */
             }
@@ -865,6 +1218,7 @@ export default function AnimaticEditor({
     () => () => {
       for (const url of Object.values(urlsRef.current)) URL.revokeObjectURL(url);
       urlsRef.current = {};
+      urlSrcRef.current = {};
       for (const url of Object.values(overlayUrlsRef.current)) URL.revokeObjectURL(url);
       overlayUrlsRef.current = {};
       for (const url of Object.values(videoUrlsRef.current)) URL.revokeObjectURL(url);
@@ -879,21 +1233,95 @@ export default function AnimaticEditor({
     []
   );
 
+  // Is anything on the captions lane? Kept as a boolean rather than reading
+  // `texts` where it is used, so typing in a caption doesn't rebuild the lanes.
+  const hasCaptionClips = useMemo(
+    () => texts.some((c) => (c.layer_id || "") === CAPTION_LAYER_ID),
+    [texts]
+  );
+
+  // ------------------------------------------------- the picture track, split
+  // The same one sequence, grouped by where each clip came from (`frameOrigin`).
+  //
+  // ⚠ THIS IS A VIEW, NOT THREE TRACKS. `frames` is still ONE sequence played in
+  // order, and it has to be: the clips are laid end to end, so a length here is
+  // a time everything else — the audio, the captions, the export — is measured
+  // against. What the grouping buys is the question you actually ask of the
+  // Media pane ("where's the video I just dropped in?") and of the timeline
+  // ("which row is my footage on?"), neither of which the one long strip could
+  // answer once a board ran to thirty panels.
+  //
+  // `at` is what keeps it honest: every clip carries its INDEX IN THE FULL
+  // SEQUENCE, so a number badge, a drop position and a reorder all mean the same
+  // thing in a section as they do in the whole strip.
+  const pictureTrack = useMemo(() => {
+    const groups = { board: [], video: [], image: [] };
+    const at = new Map();
+    frames.forEach((f, i) => {
+      at.set(f.id, i);
+      groups[frameOrigin(f)].push(f);
+    });
+    return { ...groups, at };
+  }, [frames]);
+
+  // A clip's place in the whole sequence — for the strip's numbers, and for
+  // translating a drop inside one section back into the sequence.
+  const seqIndex = useCallback(
+    (frame) => pictureTrack.at.get(frame?.id) ?? 0,
+    [pictureTrack]
+  );
+
   // ----------------------------------------------------------------- lanes
   // ONE list describing every row on the timeline, in top-to-bottom order. The
   // gutter labels and the tracks are both generated from it, so a label can
   // never end up beside the wrong lane (which is exactly what happened when the
   // two were written out separately and matched by position).
   //
-  // Order is by KIND — pictures, images over them, text, shapes, audio — and
-  // within a kind the DEFAULT lane comes first, then the ones the user added.
+  // ⚠ THE ORDER IS THE COMPOSITING ORDER, TOP OF THE STACK FIRST — captions,
+  // text, shapes, overlay pictures, the picture sequence, its video, then audio
+  // at the bottom. That is what an NLE means by a track above another one: it
+  // draws over it. Reading it from the bottom up (audio, video, images, shapes,
+  // text, captions) is reading the export from the back to the front, which is
+  // the order it was asked for and the order it is built in.
+  //
+  // Within a kind the DEFAULT lane comes first, then the ones the user added.
+  //
+  // ⚠ THE CAPTIONS LANE IS FIRST OF ALL. It is written by the server (a captions
+  // or voiceover run), it is the row you check against the audio you just cut,
+  // and burying it among however many text layers the project has is what made
+  // generated captions look like they had landed on top of the user's own text.
+  // Top of the stack is also where a subtitle track sits in every NLE.
+  //
+  // ⚠ AND THE PICTURE TRACK IS TWO ROWS, NOT ONE. `frames` is a single sequence
+  // (see `pictureTrack`), but a video file dropped into a thirty-panel board was
+  // one bar among thirty on a row called "Images" — "I want the video in a video
+  // layer, not the image timeline". Both rows are the same track filtered by
+  // `only`, so every time on them is still the time it plays at; what changed is
+  // that footage now has a row you can find it on.
   const lanes = useMemo(() => {
-    const of = (kind) => layers.filter((l) => l.kind === kind);
-    const out = [
-      { key: "frames", kind: "frames", name: "Images", layerId: null, removable: false },
-    ];
-    for (const l of of("image")) {
-      out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
+    // Everything except the captions lane, which is placed by hand below.
+    const of = (kind) =>
+      layers.filter((l) => l.kind === kind && l.id !== CAPTION_LAYER_ID);
+    const out = [];
+    // ⚠ SHOWN WHENEVER THERE ARE CAPTION CLIPS, even if the layer record is
+    // missing. A clip whose lane doesn't exist is filtered out of every lane
+    // there is — it would be invisible on the timeline while still drawing in
+    // the monitor and the export, which reads as captions that cannot be
+    // deleted. This is the safety net for a project the server wrote a lane for
+    // and something later dropped.
+    const captionLayer = layers.find((l) => l.id === CAPTION_LAYER_ID);
+    if (captionLayer || hasCaptionClips) {
+      out.push({
+        key: CAPTION_LAYER_ID,
+        kind: "text",
+        name: captionLayer?.name || CAPTION_LAYER_NAME,
+        layerId: CAPTION_LAYER_ID,
+        removable: true,
+        icon: "❝",
+        hint: "Captions written from a track — a run replaces this row, never your own text",
+        add: "Add a caption to this row by hand",
+        empty: "❝ No captions yet — write them from an audio track, or click to type one",
+      });
     }
     out.push({ key: "text:", kind: "text", name: "Text", layerId: "", removable: false });
     for (const l of of("text")) {
@@ -903,38 +1331,94 @@ export default function AnimaticEditor({
     for (const l of of("shape")) {
       out.push({ key: l.id, kind: "shape", name: l.name, layerId: l.id, removable: true });
     }
+    // Pictures composited OVER the sequence sit directly above it: they are the
+    // last thing drawn before the frame itself.
+    for (const l of of("image")) {
+      out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
+    }
+    // The picture sequence, and then its footage. `only` is the filter each row
+    // draws through — see `renderLane` — and the clock behind both is the whole
+    // sequence, so a gap on one row is exactly where the other one is playing.
+    out.push({
+      key: "frames",
+      kind: "frames",
+      only: "stills",
+      name: "Images",
+      layerId: null,
+      removable: false,
+    });
+    // ⚠ ONLY ONCE THERE IS FOOTAGE. An empty "Video" row on a board that has
+    // none is furniture — and the ＋ that fills it is the same one the Images row
+    // already carries.
+    if (pictureTrack.video.length) {
+      out.push({
+        key: "frames:video",
+        kind: "frames",
+        only: "video",
+        name: "Video",
+        layerId: null,
+        removable: false,
+        icon: "▶",
+        hint: "Video clips in the picture sequence — the same track as Images, on a row of its own",
+        add: "Add a video file to the end of the sequence",
+      });
+    }
     // Audio: a track saved before layers owns its own lane (that is how it has
     // always been drawn); a track added to a layer sits on that layer's lane,
     // which exists even while it is still empty.
+    //
+    // ⚠ A LANE CARRIES A LIST OF CLIPS, not one track. Cutting a track in half
+    // leaves two entries reading the same file, and they belong on the SAME row
+    // — that is what makes the cut look like a cut rather than like a second
+    // track appearing. So the loose tracks are grouped by their upload: one
+    // file, one lane, however many pieces it has been cut into.
     const loose = audioTracks.filter((a) => !a.layer_id);
+    const byFile = new Map();
     for (const track of loose) {
+      if (!byFile.has(track.upload_id)) byFile.set(track.upload_id, []);
+      byFile.get(track.upload_id).push(track);
+    }
+    for (const [uploadId, clips] of byFile) {
+      const ordered = [...clips].sort((a, b) => (a.start_ms || 0) - (b.start_ms || 0));
       out.push({
-        key: track.upload_id,
+        key: uploadId,
         kind: "audio",
-        name: track.filename,
+        name: ordered[0].filename,
         layerId: "",
-        track,
+        tracks: ordered,
         removable: false,
       });
     }
     for (const l of of("audio")) {
-      const track = audioTracks.find((a) => a.layer_id === l.id) || null;
+      const clips = laneClips(audioTracks, l.id);
       out.push({
         key: l.id,
         kind: "audio",
-        name: track ? track.filename : l.name,
+        name: clips.length ? clips[0].filename : l.name,
         layerId: l.id,
-        track,
+        tracks: clips,
         removable: true,
       });
     }
     // With no audio at all, keep the empty band that has always been there —
     // it is the obvious place to click to add some.
-    if (!loose.length && !of("audio").length) {
-      out.push({ key: "audio:", kind: "audio", name: "Audio", layerId: "", track: null, removable: false });
+    if (!byFile.size && !of("audio").length) {
+      out.push({ key: "audio:", kind: "audio", name: "Audio", layerId: "", tracks: [], removable: false });
     }
-    return out;
-  }, [layers, audioTracks]);
+    // One pass at the end, so no branch above has to remember to do it: every
+    // lane carries its own visibility token and whether it is currently off.
+    // ⚠ HOW MUCH IS ON A ROW IS NOT COMPUTED HERE. That would mean depending on
+    // `texts`, and this list must not rebuild on every keystroke in a caption —
+    // the timeline already holds the clips and counts them itself.
+    return out.map((lane) => {
+      const vis = laneToken(lane);
+      return { ...lane, vis, hidden: !!vis && hiddenLanes.has(vis) };
+    });
+    // ⚠ `hasCaptionClips`, not `texts`, for the reason above — this list only
+    // cares WHETHER any clip is on the captions lane. The picture track is in
+    // here for one boolean too: whether there is any footage, which decides if
+    // the Video row exists.
+  }, [layers, audioTracks, hasCaptionClips, pictureTrack, hiddenLanes]);
 
   // ------------------------------------------------------------ undo / redo
   // One stack for the whole document — see `useUndoStack`. `gestureProps` is
@@ -999,10 +1483,180 @@ export default function AnimaticEditor({
     [frames, starts]
   );
 
+  // ⚠ THE SELECTION, MINUS ANYTHING THAT NO LONGER EXISTS. A clip can leave the
+  // project while it is selected — an undo, a delete from a pane, a captions
+  // run replacing its own row — and a list holding ids of things that are gone
+  // would report "12 clips selected" over an empty timeline. Filtered where it
+  // is READ rather than pruned on every write: there is one place to get that
+  // right instead of one per path, and a stale id can then never survive
+  // anywhere it would be acted on.
+  const liveSelection = useMemo(
+    () =>
+      selection.filter((item) =>
+        item.kind === "frame"
+          ? frames.some((f) => f.id === item.id)
+          : (groupPools[item.kind] || []).some((c) => c.id === item.id)
+      ),
+    [selection, frames, groupPools]
+  );
+
+  const idsOf = (items, kind) =>
+    new Set(items.filter((i) => i.kind === kind).map((i) => i.id));
+
+  // Is the pane describing a SET rather than a clip? One clip selected is still
+  // that clip's own pane — a "1 clip selected" summary would be a pane that
+  // tells you less than the one it replaced.
+  const multiSelected = liveSelection.length > 1;
+
+  /**
+   * The EARLIEST start among the selected clips — how far left a group move is
+   * allowed to travel.
+   *
+   * ⚠ THE CLAMP HAS TO BE ON THE DELTA, NOT ON EACH CLIP. Clamping every clip at
+   * zero on its own looks like the same thing and is not: drag a group hard left
+   * and the ones that hit the front of the video stop while the rest keep going,
+   * so the spacing you were preserving is quietly squashed. One floor for the
+   * whole selection means the group stops when its FIRST clip reaches 0:00 and
+   * everything keeps its distance. The timeline is given this too, so the drag
+   * you see and the write that follows it agree.
+   */
+  const selectionFloorMs = useMemo(() => {
+    let floor = Infinity;
+    const startOf = (list, id) => list.find((c) => c.id === id)?.start_ms;
+    for (const item of liveSelection) {
+      let start;
+      if (item.kind === "text") start = startOf(texts, item.id);
+      else if (item.kind === "shape") start = startOf(shapes, item.id);
+      else if (item.kind === "overlay") start = startOf(overlays, item.id);
+      else if (item.kind === "audio") {
+        start = audioTracks.find((a) => clipId(a) === item.id)?.start_ms;
+      } else continue; // a picture is not moved, so it sets no floor
+      if (start !== undefined) floor = Math.min(floor, Math.max(0, start || 0));
+    }
+    return floor === Infinity ? 0 : floor;
+  }, [liveSelection, texts, shapes, overlays, audioTracks]);
+
+  /**
+   * Delete every selected clip, in one pass and one undo step.
+   *
+   * ⚠ ONE `set…` PER LIST, not one per clip. Forty `deleteText(id)` calls would
+   * be forty renders, forty document signatures and forty presses of Ctrl+Z to
+   * get back — which is exactly the thing this whole feature exists to stop
+   * being a forty-step job.
+   */
+  function deleteMany(items) {
+    if (!items.length) return;
+    const frameIds = idsOf(items, "frame");
+    const textIds = idsOf(items, "text");
+    const shapeIds = idsOf(items, "shape");
+    const overlayIds = idsOf(items, "overlay");
+    const audioIds = idsOf(items, "audio");
+    if (frameIds.size) {
+      // Computed here, not inside the updater: `setTransitions` needs the list
+      // that is about to exist, and writing state from inside another state's
+      // updater is a setState-during-render (see `deleteFrame`).
+      const nextFrames = frames.filter((f) => !frameIds.has(f.id));
+      setFrames(nextFrames);
+      setTransitions((list) => pruneTransitions(list, nextFrames));
+    }
+    if (textIds.size) setTexts((list) => list.filter((c) => !textIds.has(c.id)));
+    if (shapeIds.size) setShapes((list) => list.filter((s) => !shapeIds.has(s.id)));
+    if (overlayIds.size) setOverlays((list) => list.filter((o) => !overlayIds.has(o.id)));
+    if (audioIds.size) {
+      setAudioTracks((list) => list.filter((a) => !audioIds.has(clipId(a))));
+    }
+    selectOnly({});
+    setNotice(`Deleted ${selectionLabel(items)}.`);
+  }
+
+  /**
+   * Slide every selected clip along the timeline by the same amount.
+   *
+   * The delta is the SNAPPED movement of the clip that was actually dragged, so
+   * the spacing between the pieces is exactly what it was — a group move that
+   * re-snapped each clip on its own would shuffle them about relative to each
+   * other, which is the one thing it must never do. The front of the video is a
+   * wall, and it is the WHOLE MOVE that stops there rather than each clip on its
+   * own: see `selectionFloorMs`.
+   *
+   * ⚠ Pictures are not moved — see `MOVABLE` in `animatic/selection.js`. A frame
+   * starts where the one before it ended; "later" is not a thing you can do to
+   * one without re-timing the sequence.
+   */
+  function moveSelection(deltaMs) {
+    const delta = Math.max(-selectionFloorMs, Math.round(deltaMs || 0));
+    if (!delta) return;
+    const items = liveSelection;
+    const textIds = idsOf(items, "text");
+    const shapeIds = idsOf(items, "shape");
+    const overlayIds = idsOf(items, "overlay");
+    const audioIds = idsOf(items, "audio");
+    // No per-clip clamp: the delta above is already the most the whole selection
+    // can travel, so `+ delta` cannot take anything below zero.
+    const slide = (c) => ({ ...c, start_ms: Math.max(0, (c.start_ms || 0) + delta) });
+    if (textIds.size) setTexts((list) => list.map((c) => (textIds.has(c.id) ? slide(c) : c)));
+    if (shapeIds.size) setShapes((list) => list.map((s) => (shapeIds.has(s.id) ? slide(s) : s)));
+    if (overlayIds.size) {
+      setOverlays((list) => list.map((o) => (overlayIds.has(o.id) ? slide(o) : o)));
+    }
+    if (audioIds.size) {
+      setAudioTracks((list) => list.map((a) => (audioIds.has(clipId(a)) ? slide(a) : a)));
+    }
+  }
+
+  /**
+   * Tie the selected clips together, or untie them.
+   *
+   * A group is a `group_id` shared by its members and nothing else — no
+   * container, no list to keep in step (read the field's comment in
+   * `server/schemas.py`). Grouping is therefore one patch per list, and
+   * ungrouping is the same patch with "".
+   *
+   * Pictures cannot be grouped: they are a flow, not free-floating clips, so
+   * there is nothing about them for a group to hold together.
+   */
+  function groupSelection(join = true) {
+    const items = liveSelection.filter((i) => GROUPABLE.includes(i.kind));
+    if (join && items.length < 2) {
+      setNotice("Select at least two clips to group them — shift-click, or drag a box round them.");
+      return;
+    }
+    if (!items.length) {
+      setNotice("Nothing groupable is selected. Pictures can't be grouped — they're a sequence.");
+      return;
+    }
+    const group = join ? `g${newId()}` : "";
+    const textIds = idsOf(items, "text");
+    const shapeIds = idsOf(items, "shape");
+    const overlayIds = idsOf(items, "overlay");
+    const audioIds = idsOf(items, "audio");
+    const tag = (c) => ({ ...c, group_id: group });
+    if (textIds.size) setTexts((list) => list.map((c) => (textIds.has(c.id) ? tag(c) : c)));
+    if (shapeIds.size) setShapes((list) => list.map((s) => (shapeIds.has(s.id) ? tag(s) : s)));
+    if (overlayIds.size) {
+      setOverlays((list) => list.map((o) => (overlayIds.has(o.id) ? tag(o) : o)));
+    }
+    if (audioIds.size) {
+      setAudioTracks((list) => list.map((a) => (audioIds.has(clipId(a)) ? tag(a) : a)));
+    }
+    setNotice(
+      join
+        ? `Grouped ${selectionLabel(items)} — clicking one now selects them all.`
+        : `Ungrouped ${selectionLabel(items)}.`
+    );
+  }
+
   // Delete whatever is selected, in the same order the Properties pane picks
   // what to show — so Delete always removes the thing the pane is describing,
   // which is the only reading of "the selection" a person can act on.
   const deleteSelection = useCallback(() => {
+    // Several things selected: they all go, in one step. The single-selection
+    // path below is kept for the one-clip case because it does more than delete
+    // — it lands the selection on the next frame so Delete-Delete-Delete works.
+    if (liveSelection.length > 1) {
+      deleteMany(liveSelection);
+      return;
+    }
     if (selectedTransition) {
       deleteTransition(selectedTransition.id);
     } else if (selectedText) {
@@ -1015,7 +1669,10 @@ export default function AnimaticEditor({
       deleteOverlay(selectedOverlay.id);
       setNotice("Picture removed from the layer.");
     } else if (selectedTrack) {
-      removeTrack(selectedTrack.upload_id);
+      // ⚠ ONE CLIP, not the whole track. This is what takes a gap out: cut
+      // either side of the pause and press Delete on the middle. The gutter's ✕
+      // is still there for removing the track outright.
+      removeTrack(clipId(selectedTrack));
     } else if (selectedFrame) {
       const at = frames.findIndex((f) => f.id === selectedFrame.id);
       deleteFrame(selectedFrame.id);
@@ -1030,7 +1687,7 @@ export default function AnimaticEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedTransition, selectedText, selectedShape, selectedOverlay,
-    selectedTrack, selectedFrame, frames,
+    selectedTrack, selectedFrame, frames, liveSelection,
   ]);
 
   // ------------------------------------------------------------- shortcuts
@@ -1069,7 +1726,12 @@ export default function AnimaticEditor({
             return;
           case "KeyK":
             e.preventDefault();
-            splitFrameAt(timeRef.current);
+            // ⚠ Cuts what is SELECTED. With an audio clip selected, Ctrl+K is
+            // about that clip — anything else would make the shortcut useless
+            // for the edit it was just asked for, since the picture sequence is
+            // never what you were looking at when you selected a waveform.
+            if (selectedTrack) splitAudioAt(selectedTrackId, timeRef.current);
+            else splitFrameAt(timeRef.current);
             return;
           case "KeyX":
             if (e.shiftKey) {
@@ -1078,6 +1740,18 @@ export default function AnimaticEditor({
               setMarkOut(null);
               setNotice("In and out marks cleared.");
             }
+            return;
+          case "KeyA":
+            // Everything on the timeline. ⚠ Taken from the browser (which would
+            // select the page's TEXT) because in an editor Ctrl+A can only
+            // sensibly mean the clips — selecting the chrome is never useful.
+            e.preventDefault();
+            selectMany(everything());
+            return;
+          case "KeyG":
+            e.preventDefault();
+            // Shift+Ctrl+G unties, the pairing every program with grouping uses.
+            groupSelection(!e.shiftKey);
             return;
           default:
             return; // every other Ctrl combo is the browser's
@@ -1293,7 +1967,15 @@ export default function AnimaticEditor({
     setTexts((list) => {
       const source = list.find((c) => c.id === id);
       if (!source) return list;
-      const copy = { ...source, id: newId(), start_ms: source.start_ms + source.duration_ms };
+      // ⚠ NOT IN THE ORIGINAL'S GROUP. A copy is a new clip, and one that
+      // joined the group silently would move and delete with clips the user
+      // never pointed at — see `group_id` in `server/schemas.py`.
+      const copy = {
+        ...source,
+        id: newId(),
+        group_id: "",
+        start_ms: source.start_ms + source.duration_ms,
+      };
       setSelectedTextId(copy.id);
       return [...list, copy];
     });
@@ -1325,6 +2007,15 @@ export default function AnimaticEditor({
   // and silently moving them to another row would be worse than saying so.
   function removeLayer(layerId) {
     const layer = layers.find((l) => l.id === layerId);
+    // The captions lane is drawn from its CLIPS as well as from its record (see
+    // `lanes`), so removing it has to work even when the record is the half
+    // that went missing — otherwise the ✕ on a visible row does nothing.
+    if (!layer && layerId === CAPTION_LAYER_ID) {
+      setLayers((list) => list.filter((l) => l.id !== layerId));
+      setTexts((list) => list.filter((c) => (c.layer_id || "") !== layerId));
+      setNotice("Captions removed.");
+      return;
+    }
     if (!layer) return;
     setLayers((list) => list.filter((l) => l.id !== layerId));
     if (layer.kind === "text") setTexts((list) => list.filter((c) => c.layer_id !== layerId));
@@ -1335,6 +2026,54 @@ export default function AnimaticEditor({
     setNotice("Layer removed.");
   }
 
+  /**
+   * ✕ on a DEFAULT row: empty it, and leave the row.
+   *
+   * ⚠ NOT `removeLayer`, AND THE DIFFERENCE IS THE POINT. The default rows — Text,
+   * Shapes, Images, Video — are not records that can be deleted; they are where
+   * clips with no lane of their own live, so there is always one of each. Until
+   * now that meant they had no ✕ at all, and emptying one was done clip by clip
+   * or with a marquee that misses whatever is scrolled off the end of the row.
+   * This deletes what is ON the row and keeps the row, which is the only thing
+   * "remove" can honestly mean here.
+   *
+   * ⚠ ASKS FIRST, unlike every other ✕ in the gutter, because this is the one
+   * that can be forty clips — a whole board's worth of pictures behind one click.
+   * Undo covers it (it is an ordinary document edit), but a confirm is cheaper
+   * than finding that out.
+   */
+  function clearLane(lane) {
+    const on = (list) => list.filter((c) => (c.layer_id || "") === (lane.layerId || ""));
+    const off = (list) => list.filter((c) => (c.layer_id || "") !== (lane.layerId || ""));
+    let count = 0;
+    if (lane.kind === "frames") {
+      count =
+        lane.only === "video"
+          ? pictureTrack.video.length
+          : pictureTrack.board.length + pictureTrack.image.length;
+    } else if (lane.kind === "text") count = on(texts).length;
+    else if (lane.kind === "shape") count = on(shapes).length;
+    else if (lane.kind === "image") count = on(overlays).length;
+    if (!count) return;
+
+    const what =
+      lane.kind === "frames"
+        ? `${count} clip${count === 1 ? "" : "s"} from the picture sequence`
+        : `${count} clip${count === 1 ? "" : "s"} on ${lane.name}`;
+    if (!window.confirm(`Delete ${what}? Ctrl+Z puts them back.`)) return;
+
+    if (lane.kind === "frames") {
+      // ⚠ THE SEQUENCE GETS SHORTER. Unlike hiding a row, deleting from the
+      // picture track takes its time with it — that is what deleting a clip has
+      // always done here, and the alternative (a hole that holds nothing) is what
+      // the eye is for.
+      setFrames((list) => list.filter((f) => (frameOrigin(f) === "video") !== (lane.only === "video")));
+    } else if (lane.kind === "text") setTexts(off);
+    else if (lane.kind === "shape") setShapes(off);
+    else if (lane.kind === "image") setOverlays(off);
+    setNotice(`Deleted ${what}.`);
+  }
+
   // The ＋ on a lane. ONE entry point, so "add to this row" behaves the same
   // whether it is pressed in the gutter or on the empty band of the track.
   // Which lane it was pressed on decides what gets added, and where.
@@ -1342,7 +2081,10 @@ export default function AnimaticEditor({
 
   function addToLane(lane) {
     if (lane.kind === "frames") {
-      imageInputRef.current?.click();
+      // The row decides which picker: the two rows of the picture track hold
+      // different kinds of clip, and the ＋ has to fill the row it is on.
+      if (lane.only === "video") videoInputRef.current?.click();
+      else imageInputRef.current?.click();
       return;
     }
     if (lane.kind === "text") {
@@ -1382,7 +2124,15 @@ export default function AnimaticEditor({
     setOverlays((list) => {
       const source = list.find((o) => o.id === id);
       if (!source) return list;
-      const copy = { ...source, id: newId(), start_ms: source.start_ms + source.duration_ms };
+      // ⚠ NOT IN THE ORIGINAL'S GROUP. A copy is a new clip, and one that
+      // joined the group silently would move and delete with clips the user
+      // never pointed at — see `group_id` in `server/schemas.py`.
+      const copy = {
+        ...source,
+        id: newId(),
+        group_id: "",
+        start_ms: source.start_ms + source.duration_ms,
+      };
       setSelectedOverlayId(copy.id);
       return [...list, copy];
     });
@@ -1439,6 +2189,8 @@ export default function AnimaticEditor({
     setShapes((list) => [...list, shape]);
     selectOnly({ shape: shape.id });
     seek(start);
+    // Same reasoning as `addAssets`: the list it joined may be folded shut.
+    openGroup("media:shapes");
     setNotice("Shape added — drag it on the picture to move it, or its corner to resize.");
   }
 
@@ -1689,7 +2441,15 @@ export default function AnimaticEditor({
     setShapes((list) => {
       const source = list.find((s) => s.id === id);
       if (!source) return list;
-      const copy = { ...source, id: newId(), start_ms: source.start_ms + source.duration_ms };
+      // ⚠ NOT IN THE ORIGINAL'S GROUP. A copy is a new clip, and one that
+      // joined the group silently would move and delete with clips the user
+      // never pointed at — see `group_id` in `server/schemas.py`.
+      const copy = {
+        ...source,
+        id: newId(),
+        group_id: "",
+        start_ms: source.start_ms + source.duration_ms,
+      };
       setSelectedShapeId(copy.id);
       return [...list, copy];
     });
@@ -1819,7 +2579,8 @@ export default function AnimaticEditor({
         newVideoClip(
           item.upload_id,
           item.duration_ms,
-          (item.filename || "").replace(/\.[^.]+$/, "")
+          (item.filename || "").replace(/\.[^.]+$/, ""),
+          animaticId
         )
       );
       setFrames((list) => {
@@ -1852,6 +2613,9 @@ export default function AnimaticEditor({
       return next;
     });
     selectOnly({ frame: card.id });
+    setMediaTab("media");
+    // A card is a still you made, so it lists with the images — see `frameOrigin`.
+    openGroup("media:images");
     setNotice("Added a colour card.");
   }
 
@@ -1880,7 +2644,7 @@ export default function AnimaticEditor({
     if (videos.length) addedVideos = await addVideoClips(sortFiles(videos), insertAt);
     // Each audio file becomes its OWN track — dropping music and a voiceover
     // together gives you two layers, which is the point of the layer control.
-    const room = MAX_AUDIO_TRACKS - audioTracks.length;
+    const room = MAX_AUDIO_TRACKS - audioFileCount();
     const taking = audios.slice(0, Math.max(0, room));
     for (const file of taking) await addAudioTrack(file);
 
@@ -1908,7 +2672,29 @@ export default function AnimaticEditor({
           .join(" ")
       );
     }
+
+    // ⚠ SHOW WHAT WAS JUST ADDED. The Media pane's lists are sections you can
+    // fold shut, and this control sits outside them — so with a section closed an
+    // upload moved a count and changed nothing else on screen, reported as "I
+    // uploaded a video but it's not in the media panel". Open the section the
+    // files landed in, and switch to the tab that has it: an add you cannot see
+    // is indistinguishable from an add that failed.
+    //
+    // ⚠ THE SECTION THE KIND LANDS IN, not "the frames one" — images and video
+    // are two sections now (`pictureTrack`), and opening the wrong one would be
+    // the same bug wearing a fix.
+    if (images.length || addedVideos) setMediaTab("media");
+    if (images.length) openGroup("media:images");
+    if (addedVideos) openGroup("media:video");
+    // (`addAudioTrack` opens the Audio section itself, for every way in.)
+    if (taking.length) setMediaTab("media");
   }
+
+  // How many audio FILES the project is carrying. ⚠ Not how many clips: the
+  // razor makes clips out of a file it already has, so counting clips against
+  // the cap would make a track uncuttable after three cuts. Mirrors
+  // `_audio_files_of` on the server, which enforces the same rule.
+  const audioFileCount = () => new Set(audioTracks.map((a) => a.upload_id)).size;
 
   // Adds a NEW track — it never replaces an existing one. The cap is checked by
   // the caller so a multi-file drop can report what it had to leave out.
@@ -1927,19 +2713,29 @@ export default function AnimaticEditor({
       pendingAudioLane.current = "";
       setAudioTracks((list) => [
         // A lane holds one track: dropping a second file on it replaces what
-        // was there, which is what "add audio to this row" has to mean.
+        // was there — every clip of it — which is what "add audio to this row"
+        // has to mean.
         ...list.filter((a) => !layerId || a.layer_id !== layerId),
         {
+          // A fresh clip identity. It happens to equal the upload for a track
+          // nobody has cut yet, which is exactly what the server's backfill
+          // gives an animatic saved before the razor existed.
+          id: res.upload_id,
           upload_id: res.upload_id,
           layer_id: layerId,
           filename: res.filename || file.name,
           duration_ms: durationMs,
+          start_ms: 0,
           offset_ms: 0,
           volume: 1,
           muted: false,
           url: `/animatics/${animaticId}/media/${res.upload_id}`,
         },
       ]);
+      // Here rather than in the callers: this is the one function every audio
+      // add goes through — the pane's drop card, the Audio lane's ＋ and
+      // "Add layer" — so the section that now holds it opens for all three.
+      openGroup("media:audio");
     } catch (e) {
       setError(e.message);
     }
@@ -1948,7 +2744,7 @@ export default function AnimaticEditor({
   // The Audio layer's ＋ and the "Add layer" control both land here.
   async function pickAudio(file) {
     if (!file) return;
-    if (audioTracks.length >= MAX_AUDIO_TRACKS) {
+    if (audioFileCount() >= MAX_AUDIO_TRACKS) {
       setNotice(`That's the limit — an animatic can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
       return;
     }
@@ -1956,15 +2752,72 @@ export default function AnimaticEditor({
     setNotice(`Audio track added — “${file.name}”.`);
   }
 
-  const patchTrack = (uploadId, patch) =>
+  // ⚠ Every one of these takes CLIP ids, never an upload id. Since the razor can
+  // cut one file into several clips, an upload names a sound rather than a thing
+  // on the timeline — patching by upload would change every piece of a track
+  // when you meant to change one.
+  const patchTrack = (id, patch) =>
+    setAudioTracks((list) => list.map((a) => (clipId(a) === id ? { ...a, ...patch } : a)));
+
+  // Takes a LIST, because the gutter's speaker speaks for the whole lane: after
+  // a cut, "mute this track" has to mean all of its pieces.
+  const muteTracks = (ids, muted) =>
     setAudioTracks((list) =>
-      list.map((a) => (a.upload_id === uploadId ? { ...a, ...patch } : a))
+      list.map((a) => (ids.includes(clipId(a)) ? { ...a, muted } : a))
     );
 
-  function removeTrack(uploadId) {
-    setAudioTracks((list) => list.filter((a) => a.upload_id !== uploadId));
-    setNotice("Audio track removed.");
+  function removeTrack(ids) {
+    const list = Array.isArray(ids) ? ids : [ids];
+    setAudioTracks((tracks) => tracks.filter((a) => !list.includes(clipId(a))));
+    if (list.includes(selectedTrackId)) setSelectedTrackId(null);
+    setNotice(list.length > 1 ? "Audio track removed." : "Audio clip removed.");
   }
+
+  /**
+   * THE RAZOR ON AUDIO — the thing this whole `start_ms` business exists for.
+   *
+   * Cuts one clip at `ms` into two that add up to it, so the piece between two
+   * cuts can be deleted (leaving the gap you wanted out) or dragged somewhere
+   * else. `id` is the clip the razor was clicked on; with none — the keyboard
+   * shortcut — it cuts whichever clip the playhead is standing on, preferring
+   * the selected one so Ctrl+K is predictable when several lanes overlap.
+   *
+   * The arithmetic is all in `splitClip`; this is the part that has to know
+   * about React state and about what to say when the cut is refused.
+   */
+  const splitAudioAt = useCallback(
+    (id, ms) => {
+      const at = Math.round(ms);
+      let clip = id ? audioTracks.find((a) => clipId(a) === id) : null;
+      if (!clip) {
+        // Prefer the selected clip, then anything else under the playhead —
+        // "cut what I'm looking at" is the only reading that isn't a lottery.
+        const selected = audioTracks.find((a) => clipId(a) === selectedTrackId);
+        clip =
+          (selected && clipAt([selected], at) ? selected : null) || clipAt(audioTracks, at);
+      }
+      if (!clip) {
+        setNotice("The razor found no audio clip there — click on the waveform itself.");
+        return false;
+      }
+      const halves = splitClip(clip, at, newId());
+      if (!halves) {
+        setNotice(
+          `Too close to the edge of that clip — each side of a cut needs at least ${MIN_CLIP_MS}ms.`
+        );
+        return false;
+      }
+      const [head, tail] = halves;
+      setAudioTracks((list) =>
+        list.flatMap((a) => (clipId(a) === clipId(clip) ? [head, tail] : [a]))
+      );
+      setNotice(
+        "Cut — that's two audio clips now. Delete one to take the gap out, or drag it somewhere else."
+      );
+      return true;
+    },
+    [audioTracks, selectedTrackId]
+  );
 
   // Scale every hold so the sequence lands exactly on the end of the track.
   function fitToAudio() {
@@ -2138,7 +2991,14 @@ export default function AnimaticEditor({
           ? {
               ...f,
               kind: "video",
-              src: { kind: "video", upload_id: clip.upload_id },
+              // ⚠ THE ORIGIN SURVIVES THE ANIMATION. `src` used to be replaced
+              // outright, which threw away `storyboard_id`/`index` — and those
+              // are the only record that this clip is a board shot rather than a
+              // file someone dropped in. The Media pane groups by exactly that
+              // (`frameOrigin`), so an animated Shot 1 would have jumped out of
+              // Storyboard Frames and into Video. Harmless to keep: every server
+              // path branches on `src.kind` first, so the extra ids are inert.
+              src: { ...(f.src || {}), kind: "video", upload_id: clip.upload_id },
               // The clip is as long as we asked Veo for, and it opens showing
               // all of it — trimming and speed are then the ordinary controls.
               duration_ms: clip.duration_ms || f.duration_ms,
@@ -2408,6 +3268,12 @@ export default function AnimaticEditor({
         const project = await api.getAnimatic(animaticId);
         if (!alive) return;
         setTexts(project.texts || []);
+        // ⚠ THE LAYERS TOO, and this is not optional. A captions run writes a
+        // LANE as well as clips (`captions.CAPTION_LAYER_ID`), and taking the
+        // clips without the lane they sit on leaves the editor holding captions
+        // whose row it doesn't know about — the next autosave would then write
+        // that missing row back and delete it from the project.
+        setLayers(project.layers || []);
         setAudioTracks(project.audio_tracks || []);
         setSpeechRunning(false);
         setSpeechProgress(null);
@@ -2425,7 +3291,305 @@ export default function AnimaticEditor({
       alive = false;
       clearTimeout(timer);
     };
-  }, [speechRunning, animaticId, setTexts, setAudioTracks]);
+  }, [speechRunning, animaticId, setTexts, setLayers, setAudioTracks]);
+
+  // -------------------------------------------- Phase 7: back to the board
+  //
+  // ⚠ A FRAME IS A REFERENCE TO A PANEL, NOT A COPY OF ONE. Everything in this
+  // section leans on that: redrawing the panel or re-blocking its poses changes
+  // what this animatic SHOWS without touching this animatic's document at all.
+  // Which is exactly why it is easy to get wrong — nothing in the project
+  // changes, so nothing re-renders, so it looks like nothing happened.
+
+  // The panel behind one clip has been re-drawn. The server answers with the
+  // FRAME, its url carrying a new `?v=<mtime>`, and this is the whole reason it
+  // does: writing that url onto the clip is what makes the fetch effect notice.
+  //
+  // ⚠ The URL IS NOT PART OF THE SAVED DOCUMENT — `frameForSave` drops it, and
+  // the server fills it in fresh on every read — so this is not an edit and
+  // must not go on the undo stack. It is a cache key, and treating it as
+  // content would put "the picture was redrawn" in the middle of the user's
+  // undo history where it can never be undone anyway.
+  const onPanelRedrawn = useCallback(
+    (frame) => {
+      if (!frame?.id) return;
+      setFrames((list) =>
+        list.map((f) => (f.id === frame.id ? { ...f, url: frame.url } : f))
+      );
+      setNotice("Re-drawn — the new picture is on the timeline.");
+    },
+    [setFrames]
+  );
+
+  // "Make this shot 2s longer." Runs on the BOARD's job; when it lands, the run
+  // of pose clips for this shot has to be rebuilt on the timeline.
+  async function relengthShot(frameId, seconds) {
+    if (reblockJob) return;
+    setError("");
+    try {
+      // The server reads the SAVED project to find which panel this clip points
+      // at, so the clip has to be on the server first.
+      await flush();
+      const res = await api.relengthFrameSequence(animaticId, frameId, seconds);
+      setReblockFor(frameId);
+      setReblockJob(res.job_id);
+      setReblockProgress({ percent: 0, message: "Planning the rest of the shot…" });
+      setNotice(res.message);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  // ⚠ POLLS THE BOARD, keyed on `reblockJob` ALONE — the same rule as the Veo
+  // and captions polls, for the same reason: an effect that restarts on what
+  // its own poll writes cancels itself mid-flight, and by then the drawings
+  // have been paid for.
+  useEffect(() => {
+    if (!reblockJob || !reblockFor) return undefined;
+    let alive = true;
+    let timer;
+    async function poll() {
+      try {
+        const job = await api.getJob(reblockJob);
+        if (!alive) return;
+        if (job.status === "running") {
+          setReblockProgress(job.progress || null);
+          timer = setTimeout(poll, 1500);
+          return;
+        }
+        // Which poses exist NOW, counted off disk by the server.
+        const seq = await api.getFrameSequence(animaticId, reblockFor);
+        if (!alive) return;
+        setReblockJob(null);
+        setReblockFor(null);
+        setReblockProgress(null);
+        if (job.error) {
+          setError(job.error);
+          return;
+        }
+        const added = rebuildPoseRun(reblockFor, seq);
+        setNotice(
+          added > 0
+            ? `That shot is ${added} drawing${added === 1 ? "" : "s"} longer.`
+            : "That shot already had every drawing it needs."
+        );
+      } catch (e) {
+        if (!alive) return;
+        setReblockJob(null);
+        setReblockFor(null);
+        setReblockProgress(null);
+        setError(e.message);
+      }
+    }
+    timer = setTimeout(poll, 1500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reblockJob]);
+
+  /**
+   * Put the new key poses on the timeline, next to the ones already there.
+   *
+   * ⚠ THE EXISTING POSE CLIPS ARE LEFT ALONE — not rebuilt, REUSED. They are
+   * the user's clips: one may have been cut, retimed, given a push, dragged
+   * somewhere else entirely. Replacing the run wholesale would be correct about
+   * the pictures and would throw away every edit made to them, which is the
+   * more expensive of the two. So this only ADDS the poses that have no clip
+   * yet, immediately after the last clip of that shot.
+   *
+   * Returns how many were added, so the caller can say something true.
+   */
+  function rebuildPoseRun(frameId, seq) {
+    const numbers = seq?.frame_numbers || [];
+    if (!numbers.length) return 0;
+    // ⚠ COMPUTED OUT HERE, NOT INSIDE A `setFrames` UPDATER. An updater runs
+    // when React commits, not when it is handed over, so a count assigned
+    // inside one is still zero by the time the caller reads it — the message
+    // would have said "0 drawings longer" on every successful run. `framesRef`
+    // is the current list, kept in step by the effect above.
+    const list = framesRef.current;
+    const anchor = list.find((f) => f.id === frameId);
+    const index = anchor?.src?.index;
+    if (index == null) return 0;
+    const boardId = anchor.src.storyboard_id;
+
+    // Every clip of THIS shot, wherever it sits, and which pose each shows.
+    const mine = list.filter(
+      (f) =>
+        f.src?.kind === "pose" &&
+        f.src.storyboard_id === boardId &&
+        f.src.index === index
+    );
+    const have = new Set(mine.map((f) => f.src.frame));
+    const fresh = numbers.filter((n) => !have.has(n));
+    if (!fresh.length) return 0;
+
+    // A pose holds for a quarter of a second at the rate the sequence was
+    // planned at — the same arithmetic `_frames_from_board` uses on the server.
+    // Copying the hold of a clip already there would be wrong the moment the
+    // user has retimed one.
+    const hold = Math.max(MIN_MS, Math.round(1000 / 4));
+    const last = mine.length ? list.lastIndexOf(mine[mine.length - 1]) : -1;
+    const at = last >= 0 ? last + 1 : list.length;
+    const built = fresh.map((n) => ({
+      id: newId(),
+      kind: "image",
+      src: { kind: "pose", storyboard_id: boardId, index, frame: n },
+      duration_ms: hold,
+      label: `Shot ${index + 1}.${n + 1}`,
+    }));
+    setFrames((was) => {
+      const next = [...was];
+      next.splice(Math.min(at, next.length), 0, ...built);
+      return next;
+    });
+    return built.length;
+  }
+
+  // ------------------------------------------------------ auto-reframe
+  // ⚠ WHAT COMES BACK IS `scale` / `x` / `y` ON THE FRAMES — ordinary
+  // keyframable properties the exporter already resolves, written server-side.
+  // There is no crop concept anywhere in this app and this is not the place to
+  // add one: a second way of saying where a picture sits is a second thing for
+  // the preview and the export to disagree about.
+  function openReframe() {
+    setReframeOpen(true);
+    setReframeAspect(settings.aspect_ratio);
+    setReframeScope(liveSelection.some((s) => s.kind === "frame") ? "selection" : "all");
+    setReframeConfirm(null);
+    setReframeError("");
+  }
+
+  const reframeIds = () =>
+    reframeScope === "selection"
+      ? liveSelection.filter((s) => s.kind === "frame").map((s) => s.id)
+      : [];
+
+  // Ask what it would cost. FREE — this is the call that fills the dialog.
+  async function askToReframe() {
+    setReframeError("");
+    setReframeBusy(true);
+    try {
+      // The server looks at the pictures of the SAVED project.
+      await flush();
+      const estimate = await api.estimateReframe(animaticId, {
+        frameIds: reframeIds(),
+        aspectRatio: reframeAspect,
+      });
+      if (!estimate.frames) {
+        setReframeError(
+          "None of these clips is a still with a picture behind it, so there " +
+            "is nothing to re-frame. Video clips are framed by the footage, and " +
+            "a colour card has no picture."
+        );
+        return;
+      }
+      setReframeConfirm({ estimate });
+    } catch (e) {
+      setReframeError(e.message);
+    } finally {
+      setReframeBusy(false);
+    }
+  }
+
+  // The only place this spends. Reached solely from the confirm dialog.
+  async function doReframe() {
+    if (!reframeConfirm) return;
+    setReframeBusy(true);
+    setReframeConfirm(null);
+    try {
+      await api.reframeAnimatic(animaticId, {
+        frameIds: reframeIds(),
+        aspectRatio: reframeAspect,
+      });
+      setReframeOpen(false);
+      setReframeRunning(true);
+      setReframeProgress({ percent: 0, message: "Starting…" });
+      setNotice(`Framing each shot for ${reframeAspect}…`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setReframeBusy(false);
+    }
+  }
+
+  // Keyed on `reframeRunning` alone — see the note above the captions poll.
+  useEffect(() => {
+    if (!reframeRunning) return undefined;
+    let alive = true;
+    let timer;
+    async function poll() {
+      try {
+        const job = await api.getJob(animaticId);
+        if (!alive) return;
+        if (job.status === "running") {
+          setReframeProgress(job.progress || null);
+          timer = setTimeout(poll, 1500);
+          return;
+        }
+        // The server wrote the frames, so re-read them rather than trying to
+        // reconstruct the result locally.
+        const project = await api.getAnimatic(animaticId);
+        if (!alive) return;
+        setFrames(project.frames || []);
+        setReframeRunning(false);
+        setReframeProgress(null);
+        if (job.error) setError(job.error);
+        else setNotice("Re-framed. Every shot is an ordinary pan you can still edit.");
+      } catch (e) {
+        if (!alive) return;
+        setReframeRunning(false);
+        setReframeProgress(null);
+        setError(e.message);
+      }
+    }
+    timer = setTimeout(poll, 1200);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [reframeRunning, animaticId, setFrames]);
+
+  // ------------------------------------------------------------ cut to beat
+  /**
+   * PULL EVERY CUT ONTO THE NEAREST BEAT.
+   *
+   * The arithmetic is `animatic/beat_cut.js` — pure, and checked under node,
+   * because "a cut is not a thing you can move" is three rules deep and none of
+   * them are testable from inside a click handler. Read that file's header
+   * before changing any of this. What is left here is the three things only the
+   * editor knows: whether there is anything to cut, whether there is anything
+   * to cut TO, and what to say when there isn't.
+   */
+  const cutToBeat = useCallback(() => {
+    if (frames.length < 2) {
+      setNotice("There is nothing to cut — a sequence needs at least two clips.");
+      return;
+    }
+    const marks = beatMarks(audioTracks, audioAnalyses);
+    if (!marks.length) {
+      setNotice(
+        "No beats found. Cut to beat reads the audio on the timeline — add a " +
+          "music track (and unmute it) and the markers appear on its lane."
+      );
+      return;
+    }
+    const durations = frames.map((f) => f.duration_ms);
+    const { cuts, moved } = planBeatCuts(durations, marks, { minMs: MIN_MS });
+    if (!moved) {
+      setNotice("Every cut is already on a beat.");
+      return;
+    }
+    // No explicit undo push: the stack watches the document's signature, so one
+    // `setFrames` is one snapshot and therefore one Ctrl+Z. See `useUndoStack`.
+    const timed = cutsToDurations(durations, cuts, { minMs: MIN_MS });
+    setFrames((list) => list.map((f, i) => ({ ...f, duration_ms: timed[i] })));
+    setNotice(
+      `${moved} cut${moved === 1 ? "" : "s"} pulled onto the beat. Ctrl+Z puts them back.`
+    );
+  }, [frames, audioTracks, audioAnalyses, setFrames]);
 
   async function stopExport() {
     try {
@@ -2532,14 +3696,51 @@ export default function AnimaticEditor({
   // What the export will actually be: the whole timeline by default, or just
   // the pictures if that's been chosen.
   const exportMs = settings.end_at === "frames" ? totalMs : spanMs;
+  // Which FILE the Export button will produce. Everything saved before presets
+  // existed has no `container` at all and normalises to "mp4", which is what it
+  // has always written.
+  const exportContainer = normaliseContainer(settings.container);
   const aspectCss = (settings.aspect_ratio || "16:9").replace(":", " / ");
   // The same ratio as a plain number. CSS can hold the shape with `aspect-ratio`
   // alone only when ONE axis is definite; in a box constrained on both (which is
   // what "fit inside this pane" means) it silently gives up and the preview
   // stops matching the exported frame. Sizing the width off the container's
   // height with this number keeps it exact — see `.an-screen-fit`.
-  const [arW, arH] = (settings.aspect_ratio || "16:9").split(":").map(Number);
-  const arNum = arW && arH ? arW / arH : 16 / 9;
+  const arNum = aspectNumber(settings.aspect_ratio);
+  // A workspace is the shape of the SCREEN; the aspect ratio is the shape of the
+  // FILM. They are allowed to disagree — cutting a vertical version of a wide
+  // film is a real job, and it is the one the Reel workspace was built for — but
+  // the commonest reason they disagree is that someone switched workspace and
+  // expected the video to follow it. So the Program head offers the change once,
+  // in one direction only: "Reel / Shorts" says outright what shape it is for,
+  // while Long is the DEFAULT workspace, so a vertical film sitting in it means
+  // nothing and a nag there would fire on every project that isn't wide.
+  const suggestedAspect = workspace === "reel" && arNum > 1 ? "9:16" : "";
+
+  // ⚠ THE ONE WAY IN FOR A CHANGE OF FRAME SHAPE. Every control that can write
+  // `aspect_ratio` goes through here — the Program pane's menu, the Shape chips
+  // in Video properties (including their ↺), the "Make it 9:16" offer and the
+  // export presets, which reshape the film as a side effect of choosing TikTok.
+  // A plain `setSettings` beside any of them would be a route that skips the
+  // carrying-over below, and the bug it reintroduces (a star stretched into a
+  // lozenge) shows up two screens away from the line that caused it.
+  //
+  // The pictures need nothing: `placePicture` re-fits each one from its source
+  // against the new frame on the very next draw, which is what "fit" means. It
+  // is the boxes that have to be carried — see `refitBox`.
+  //
+  // One event, so React commits all three together: one document change, and
+  // therefore ONE Ctrl+Z that puts the shape back AND the boxes with it.
+  function reshapeFrame(patch) {
+    const from = settings.aspect_ratio || "16:9";
+    const next = typeof patch === "function" ? patch(settings) : { ...settings, ...patch };
+    setSettings(next);
+    const to = next.aspect_ratio || "16:9";
+    if (to === from) return;
+    const carry = (list) => list.map((item) => ({ ...item, ...refitBox(item, from, to) }));
+    setShapes(carry);
+    setOverlays(carry);
+  }
   // One step of zoom, from a button or from the Zoom tool. `dir` is ±1.
   const zoomBy = (dir) =>
     setPxPerSec((p) =>
@@ -2576,6 +3777,38 @@ export default function AnimaticEditor({
   // the counterpart of one in `animatic.py`: the same fractions travelling the
   // same way.
 
+  // ⚠ WHAT IS APPLIED IS THE CLAMPED COPY, NOT THE STATE. The window can shrink
+  // under a layout that was fine when it was dragged, and re-clamping on the way
+  // OUT means the pane comes back to the size you chose when the window is
+  // opened up again, instead of being permanently trimmed by the smallest window
+  // it ever saw.
+  const limits = paneLimits(vp);
+  const sized = clampLayout(layout, vp);
+  const setPane = (key, px) => {
+    layoutTouched.current = true;
+    setLayout((l) => ({ ...l, [key]: px }));
+  };
+  // Double-click a seam. Back to this workspace's default for THAT pane only —
+  // the other two are still whatever you made them.
+  const resetPane = (key) => {
+    layoutTouched.current = true;
+    setLayout((l) => ({ ...l, [key]: defaultLayout(workspace, vp)[key] }));
+  };
+
+  // Switching workspaces is a LAYOUT change and nothing else — no setSettings
+  // call belongs here. A maximized pane is dropped on the way, because "which
+  // pane is filling the screen" means something different once the panes have
+  // moved, and the sizes come back to whatever that workspace was left at.
+  const chooseWorkspace = (id) => {
+    setWorkspace(id);
+    saveWorkspace(id);
+    // Loaded, not carried over: these are the sizes that workspace was left in.
+    layoutTouched.current = false;
+    setLayout(getPaneLayout(id, vp));
+    setMaximized(null);
+    setSettingsOpen(false);
+  };
+
   const paneProps = (name) => ({
     onMouseEnter: () => {
       hoverPaneRef.current = name;
@@ -2584,7 +3817,18 @@ export default function AnimaticEditor({
   });
 
   return (
-    <div className={`an-nle ${maximized ? `an-has-max an-max-${maximized}` : ""}`}>
+    <div
+      className={`an-nle an-ws-${workspace} ${
+        maximized ? `an-has-max an-max-${maximized}` : ""
+      }`}
+      // The whole layout, as three custom properties. The grid and the timeline
+      // read them; nothing else in the editor has to know a pane was resized.
+      style={{
+        "--an-col-left": `${sized.left}px`,
+        "--an-col-right": `${sized.right}px`,
+        "--an-timeline-h": `${sized.timeline}px`,
+      }}
+    >
       {/* ------------------------------------------------------- top bar */}
       <header className="an-topbar">
         <button type="button" className="btn small" onClick={handleBack}>
@@ -2615,23 +3859,55 @@ export default function AnimaticEditor({
 
         <span className="an-spacer" />
 
+        {/* The workspace, named and changeable — Premiere puts the same thing
+            in the same corner. The name is here rather than only inside the
+            menu because "which layout am I in?" is a question you ask by
+            LOOKING, not by opening something. */}
+        <span className="an-ws-name" title="The layout you're editing in">
+          {workspaceLabel(workspace)}
+        </span>
+        {/* ⚠ THE BUTTON WEARS THE LAYOUT IT IS IN, not a gear. A cog says
+            "settings live here" and nothing about what pressing it changes;
+            this draws the arrangement you are currently working in — the
+            picture's column filled in — so the icon and the name beside it say
+            the same thing. It changes when you switch workspace. */}
+        <button
+          type="button"
+          className="btn small an-ws-btn"
+          onClick={() => setSettingsOpen(true)}
+          title={`${workspaceLabel(workspace)} — click to switch layout`}
+          aria-label="Workspace layout"
+        >
+          <Icon name={workspaceIcon(workspace)} />
+        </button>
+
         {video && !exporting && (
           <button
             type="button"
             className={`btn small ${video.stale ? "an-stale" : ""}`}
+            // The extension comes off the EXPORT that was made, never off the
+            // dialog's current setting — changing the preset without exporting
+            // again must not rename a file it did not produce.
             onClick={() =>
-              api.downloadAnimaticVideo(animaticId, `${exportName || title || "animatic"}.mp4`)
+              api.downloadAnimaticVideo(
+                animaticId,
+                `${exportName || title || "animatic"}.${containerExt(video.container)}`
+              )
             }
             title={
               video.stale
                 ? "This file is from before your latest edits — export again for an up-to-date one"
-                : `${formatTime(video.duration_ms)} · ${video.width}×${video.height} · ${(
+                : `${
+                    video.duration_ms ? `${formatTime(video.duration_ms)} · ` : ""
+                  }${video.width}×${video.height} · ${(
                     (video.size_bytes || 0) / 1048576
                   ).toFixed(1)} MB`
             }
           >
             <Icon name="download" />
-            {video.stale ? " MP4 (out of date)" : " Download MP4"}
+            {video.stale
+              ? ` ${containerExt(video.container).toUpperCase()} (out of date)`
+              : ` Download ${containerExt(video.container).toUpperCase()}`}
           </button>
         )}
 
@@ -2672,6 +3948,13 @@ export default function AnimaticEditor({
             disabled={!frames.length}
             onClick={() => {
               setExportName((n) => n || title || "animatic");
+              // ⚠ THE PLAYHEAD IS CAPTURED HERE, on the way in, and NOT when
+              // Export is pressed. A still is a picture of a moment, and the
+              // moment it is a picture of has to be settled and shown before
+              // the button is pressed — the dialog prints it. Reading it at
+              // press time instead would race the autosave: `flush()` sends
+              // whatever the doc ref holds, which is last render's settings.
+              setSettings((s) => ({ ...s, still_ms: Math.round(timeMs) }));
               setExportOpen(true);
             }}
             title="Choose the export settings, then encode"
@@ -2724,7 +4007,8 @@ export default function AnimaticEditor({
         )}
       </header>
 
-      {(error || notice || exporting || animating || speechRunning) && (
+      {(error || notice || exporting || animating || speechRunning ||
+        reframeRunning || reblockJob) && (
         <div className="an-statusbar">
           {error && <span className="an-status-error">{error}</span>}
           {!error && notice && <span className="an-status-note">{notice}</span>}
@@ -2764,6 +4048,33 @@ export default function AnimaticEditor({
               {speechProgress?.percent ?? 0}%
             </span>
           )}
+          {/* A reframe pass is the server writing this project's frames, so it
+              says so for exactly the reason the captions pass does. */}
+          {reframeRunning && !exporting && !animating && !speechRunning && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {reframeProgress?.message || "Framing each shot…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
+              </span>
+              {reframeProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
+              made on the STORYBOARD, so this animatic stays fully editable
+              while it runs — which is exactly why it needs to say something,
+              or minutes pass with nothing on screen but a pane that has gone
+              quiet. */}
+          {reblockJob && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {reblockProgress?.message || "Drawing more key poses on the storyboard…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
+              </span>
+              {reblockProgress?.percent ?? 0}%
+            </span>
+          )}
         </div>
       )}
 
@@ -2792,6 +4103,28 @@ export default function AnimaticEditor({
               </button>
             </span>
             <span className="an-spacer" />
+            {/* How the footage is listed. Only on the Media tab: the shape
+                picker is a fixed gallery of tiles, so a view switch over it
+                would be a control that does nothing. */}
+            {mediaTab === "media" && (
+              <span className="an-view-switch">
+                {MEDIA_VIEWS.map((v) => (
+                  <button
+                    type="button"
+                    key={v.id}
+                    className={`an-tool ${mediaView === v.id ? "on" : ""}`}
+                    aria-pressed={mediaView === v.id}
+                    title={`${v.label} — ${v.note}`}
+                    onClick={() => {
+                      setMediaView(v.id);
+                      saveMediaView(v.id);
+                    }}
+                  >
+                    <Icon name={v.ico} title={v.label} />
+                  </button>
+                ))}
+              </span>
+            )}
             <span className="tiny muted">
               {mediaTab === "media"
                 ? `${frames.length} frames`
@@ -2800,23 +4133,22 @@ export default function AnimaticEditor({
           </div>
 
           {mediaTab === "shapes" ? (
-            <div className="an-pane-body">
-              <ShapeGallery
-                onAdd={(kind) => {
-                  addShape(kind, pendingShapeLane);
-                  setPendingShapeLane("");
-                }}
-              />
-              <p className="an-shape-hint tiny muted">
-                A shape lands on the frame at the playhead, then moves and
-                re-times like any other clip. Drag it on the picture to place it.
-              </p>
+            <div className="an-pane-body an-media-body">
+              <PropGroup id="media:shape-library" title="Add a shape">
+                <ShapeGallery
+                  onAdd={(kind) => {
+                    addShape(kind, pendingShapeLane);
+                    setPendingShapeLane("");
+                  }}
+                />
+                <p className="an-shape-hint tiny muted">
+                  A shape lands on the frame at the playhead, then moves and
+                  re-times like any other clip. Drag it on the picture to place it.
+                </p>
+              </PropGroup>
 
               {shapes.length > 0 && (
-                <div className="an-media-audio">
-                  <div className="an-media-sub">
-                    In this animatic <span className="muted">({shapes.length})</span>
-                  </div>
+                <PropGroup id="media:shapes" title="In this animatic" count={shapes.length}>
                   {shapes.map((s, i) => (
                     <button
                       type="button"
@@ -2834,12 +4166,12 @@ export default function AnimaticEditor({
                       <span className="tiny muted">{formatTime(s.start_ms)}</span>
                     </button>
                   ))}
-                </div>
+                </PropGroup>
               )}
             </div>
           ) : (
           <div
-            className={`an-pane-body ${dropping ? "an-dropping" : ""}`}
+            className={`an-pane-body an-media-body ${dropping ? "an-dropping" : ""}`}
             onDragOver={(e) => {
               e.preventDefault();
               setDropping(true);
@@ -2870,68 +4202,174 @@ export default function AnimaticEditor({
               <span className="an-asset-text">
                 {uploading ? "Uploading…" : "Add assets or drop them here"}
               </span>
-              <span className="an-asset-note">Images for frames · an MP3 for the audio track</span>
+              <span className="an-asset-note">
+                Images and video for the picture track · an MP3 for the audio
+              </span>
             </button>
 
-            <FrameStrip
-              vertical
-              showAdd={false}
-              frames={frames}
-              urls={urls}
-              selectedId={selectedId}
-              uploading={uploading}
-              onSelect={(id) => {
-                selectOnly({ frame: id });
-                const i = frames.findIndex((f) => f.id === id);
-                if (i >= 0) seek(starts[i]);
-              }}
-              onReorder={reorder}
-              onDuration={(id, ms) => patchFrame(id, { duration_ms: ms })}
-              onDelete={deleteFrame}
-              onDuplicate={duplicateFrame}
-              onAddFiles={addAssets}
-            />
+            {/* ⚠ EVERY LIST IN THIS PANE IS A SECTION YOU CAN CLOSE, and it is
+                the Properties pane's section (`PropGroup`) — same twist, same
+                count pill, same memory of what you closed. A 31-frame board
+                pushed the audio and the shapes below the fold, so the only way
+                to reach a track was to scroll past every panel; now you fold
+                Frames shut and what you added after it is right there. The
+                header still carries the count, so a closed section says what is
+                inside it.
+                ⚠ The add-assets control stays OUTSIDE the sections: it is what
+                fills them, and a drop target you can collapse is one you cannot
+                drop on. */}
+            {/* ⚠ THREE SECTIONS, ONE SEQUENCE. The picture track is grouped by
+                WHERE EACH CLIP CAME FROM (`pictureTrack` / `frameOrigin`), which
+                is the question you ask this pane: "where is the video I just
+                dropped in?" was unanswerable in a strip of thirty-two panels
+                that happened to end with it. Grouping by origin and not by kind
+                is what keeps an animated board shot — a video clip now — in
+                Storyboard Frames where you left it.
+                Each strip gets `indexOf`, so a number badge, a drop and a
+                reorder still mean a place in the WHOLE sequence: the sections are
+                a way of looking at one track, not three tracks. A section with
+                nothing in it isn't drawn — an empty "Video" heading on a board
+                that has none is a row of furniture. */}
+            {[
+              { id: "media:frames", title: "Storyboard Frames", list: pictureTrack.board },
+              { id: "media:video", title: "Video", list: pictureTrack.video },
+              { id: "media:images", title: "Images", list: pictureTrack.image },
+            ]
+              .filter((sec) => sec.list.length > 0)
+              .map((sec) => (
+                <PropGroup key={sec.id} id={sec.id} title={sec.title} count={sec.list.length}>
+                  <FrameStrip
+                    vertical
+                    view={mediaView}
+                    showAdd={false}
+                    heading={false}
+                    frames={sec.list}
+                    indexOf={seqIndex}
+                    urls={urls}
+                    selectedId={selectedId}
+                    uploading={uploading}
+                    onSelect={(id) => {
+                      selectOnly({ frame: id });
+                      const i = frames.findIndex((f) => f.id === id);
+                      if (i >= 0) seek(starts[i]);
+                    }}
+                    onReorder={reorder}
+                    onDuration={(id, ms) => patchFrame(id, { duration_ms: ms })}
+                    onDelete={deleteFrame}
+                    onDuplicate={duplicateFrame}
+                    onAddFiles={addAssets}
+                  />
+                </PropGroup>
+              ))}
 
             {/* Only appears once there IS audio — an empty "Audio" heading with
                 its own add button was the third of the three controls. */}
             {audioTracks.length > 0 && (
-              <div className="an-media-audio">
-                <div className="an-media-sub">
-                  Audio <span className="muted">({audioTracks.length})</span>
-                </div>
+              <PropGroup id="media:audio" title="Audio" count={audioTracks.length}>
                 {/* A LIST, not a mixer. Volume and the rest live in Properties
                     — click a track to edit it, same as a frame or a caption. */}
                 {audioTracks.map((track) => (
                   <button
                     type="button"
                     className={`an-media-track ${
-                      selectedTrackId === track.upload_id ? "sel" : ""
+                      selectedTrackId === clipId(track) ? "sel" : ""
                     }`}
-                    key={track.upload_id}
-                    onClick={() => selectOnly({ track: track.upload_id })}
+                    key={clipId(track)}
+                    onClick={() => selectOnly({ track: clipId(track) })}
                   >
                     <span className="an-media-ico">♪</span>
                     <span className="an-media-name" title={track.filename}>
                       {track.filename}
+                      {/* Which PIECE of the file this is, once there is more
+                          than one. Without it a cut track reads as the same
+                          name listed twice with no way to tell them apart. */}
+                      {audioTracks.filter((a) => a.upload_id === track.upload_id).length > 1 && (
+                        <span className="muted">
+                          {" "}
+                          · clip{" "}
+                          {audioTracks
+                            .filter((a) => a.upload_id === track.upload_id)
+                            .findIndex((a) => clipId(a) === clipId(track)) + 1}
+                        </span>
+                      )}
                     </span>
                     <span className="tiny muted">
                       {track.muted ? "muted" : `${Math.round((track.volume ?? 1) * 100)}%`}
                     </span>
                   </button>
                 ))}
-              </div>
+              </PropGroup>
             )}
           </div>
           )}
         </section>
 
+        {/* The seam between the first column and the middle. ⚠ IT DOES NOT MOVE
+            WITH THE WORKSPACE: it always sizes the LEFT column, whichever pane
+            the workspace has put there — Media in Long, Program in Reel. Only
+            the panes reorder (CSS `order`); the two seams stay where they are,
+            which is the only arrangement where a drag means one thing. */}
+        <PaneSplitter
+          className="an-split-left"
+          value={sized.left}
+          min={limits.left.min}
+          max={limits.left.max}
+          sign={1}
+          onChange={(px) => setPane("left", px)}
+          onReset={() => resetPane("left")}
+          label={workspace === "reel" ? "Program width" : "Media width"}
+        />
+
         {/* ---- Program: what the viewer would see right now ---- */}
         <section {...paneProps("program")}>
           <div className="an-pane-head">
             <span className="an-pane-title">Program</span>
+            {/* ⚠ THIS WRITES THE PROJECT — it is not the workspace picker. The
+                shape of the film used to be reachable only through Video
+                properties, which is the pane you are NOT looking at whenever a
+                clip is selected; switching to the Reel workspace and finding
+                the video still 16:9 with no visible way to change it is exactly
+                what that cost. It sits here because the monitor is the thing
+                that changes shape when you press it, and it is the same field
+                the Shape chips write — one project, one aspect ratio. */}
+            <select
+              className="an-select an-ar-select"
+              aria-label="Aspect ratio"
+              title="The shape of the video — every export uses this"
+              value={settings.aspect_ratio || "16:9"}
+              onChange={(e) => reshapeFrame({ aspect_ratio: e.target.value })}
+            >
+              {/* A project can carry a shape that isn't a chip (a 21:9 board,
+                  say). Offering it keeps the menu honest about what the film
+                  currently is instead of showing the nearest one it knows. */}
+              {!knownAspect(settings.aspect_ratio) && settings.aspect_ratio && (
+                <option value={settings.aspect_ratio}>{settings.aspect_ratio}</option>
+              )}
+              {ASPECTS.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label} — {a.note}
+                </option>
+              ))}
+            </select>
             <span className="tiny muted">
-              {settings.aspect_ratio} · {settings.fps} fps
+              {frameSizeFor(settings.aspect_ratio, settings.resolution ?? 1080).join("×")} ·{" "}
+              {settings.fps} fps
             </span>
+            {/* The workspace and the film disagree about which way up this is.
+                ⚠ A SUGGESTION, NEVER AN AUTOMATIC CHANGE: `chooseWorkspace` is
+                still forbidden from writing settings, because rearranging your
+                screen must not silently reshape a finished edit. This is the
+                user pressing a button, which is a different thing entirely. */}
+            {suggestedAspect && (
+              <button
+                type="button"
+                className="an-tool an-ar-suggest"
+                title={`This workspace is for ${suggestedAspect} video, but the film is ${settings.aspect_ratio}. Press to reshape it — your shots keep their framing and get bars until you reframe them.`}
+                onClick={() => reshapeFrame({ aspect_ratio: suggestedAspect })}
+              >
+                Make it {suggestedAspect}
+              </button>
+            )}
           </div>
           <div className="an-pane-body an-program-body">
             {/* The fitter is a size container; the screen sizes itself off its
@@ -3149,29 +4587,46 @@ export default function AnimaticEditor({
           </div>
         </section>
 
+        {/* …and the seam on the other side. `sign={-1}`: this handle is on the
+            LEFT of Properties, so travelling right makes that column narrower,
+            not wider. */}
+        <PaneSplitter
+          className="an-split-right"
+          value={sized.right}
+          min={limits.right.min}
+          max={limits.right.max}
+          sign={-1}
+          onChange={(px) => setPane("right", px)}
+          onReset={() => resetPane("right")}
+          label="Properties width"
+        />
+
         {/* ---- Properties: whatever is selected. One pane, three states,
                 so there is only ever one place to look for a setting. ---- */}
         <section {...paneProps("props")}>
           <div className="an-pane-head">
             <span className="an-pane-title">Properties</span>
             <span className="tiny muted">
-              {selectedTransition
-                ? "Transition"
-                : selectedText
-                  ? "Text"
-                  : selectedShape
-                    ? "Shape"
-                    : selectedOverlay
-                      ? "Picture"
-                      : selectedTrack
-                        ? "Audio"
-                        : selectedFrame
-                          ? "Frame"
-                          : "Video"}
+              {multiSelected
+                ? `Selection · ${liveSelection.length}`
+                : selectedTransition
+                  ? "Transition"
+                  : selectedText
+                    ? "Text"
+                    : selectedShape
+                      ? "Shape"
+                      : selectedOverlay
+                        ? "Picture"
+                        : selectedTrack
+                          ? "Audio"
+                          : selectedFrame
+                            ? "Frame"
+                            : "Video"}
             </span>
             {/* Without this there is no way back: selecting anything hides the
                 whole-video settings, and nothing deselects. */}
-            {(selectedTransition ||
+            {(multiSelected ||
+              selectedTransition ||
               selectedText ||
               selectedShape ||
               selectedOverlay ||
@@ -3188,7 +4643,28 @@ export default function AnimaticEditor({
             )}
           </div>
           <div className="an-pane-body">
-            {selectedTransition ? (
+            {/* ⚠ THE SET COMES FIRST. With forty clips lit up on the timeline,
+                showing the first one's colour picker would let you edit one
+                thing while looking at forty — so a multi-selection gets a pane
+                about the SET, and clicking a single clip is how you get back to
+                its own settings. */}
+            {multiSelected ? (
+              <SelectionProperties
+                selection={liveSelection}
+                groupedCount={
+                  liveSelection.filter((item) =>
+                    (groupPools[item.kind] || []).some(
+                      (c) => c.id === item.id && c.group_id
+                    )
+                  ).length
+                }
+                onMove={moveSelection}
+                onGroup={() => groupSelection(true)}
+                onUngroup={() => groupSelection(false)}
+                onDelete={() => deleteMany(liveSelection)}
+                onClose={() => selectOnly({})}
+              />
+            ) : selectedTransition ? (
               <TransitionProperties
                 transition={selectedTransition}
                 frames={frames}
@@ -3236,13 +4712,14 @@ export default function AnimaticEditor({
             ) : selectedTrack ? (
               <AudioProperties
                 track={selectedTrack}
-                index={audioTracks.findIndex((a) => a.upload_id === selectedTrack.upload_id)}
+                index={audioTracks.findIndex((a) => clipId(a) === clipId(selectedTrack))}
                 tracks={audioTracks}
                 gesture={gestureProps}
                 onChange={patchTrack}
                 onRemove={removeTrack}
                 onCaptions={openCaptions}
                 captionsBusy={serverBusy}
+                captionsProgress={speechRunning ? speechProgress : null}
               />
             ) : selectedFrame ? (
               <FrameProperties
@@ -3261,6 +4738,26 @@ export default function AnimaticEditor({
                     : null
                 }
                 look={lookPanel}
+                // BACK TO THE STORYBOARD, from the pane you are already in.
+                // Both render nothing unless this clip's picture comes from a
+                // board panel, so an animatic built from uploads is unchanged.
+                board={
+                  <>
+                    <RegeneratePanelInline
+                      animaticId={animaticId}
+                      frameId={selectedFrame.id}
+                      url={urls[selectedFrame.id]}
+                      onRedrawn={onPanelRedrawn}
+                      onError={setError}
+                    />
+                    <RelengthShotInline
+                      animaticId={animaticId}
+                      frameId={selectedFrame.id}
+                      busy={reblockFor === selectedFrame.id}
+                      onRelength={(seconds) => relengthShot(selectedFrame.id, seconds)}
+                    />
+                  </>
+                }
                 onChange={patchInspected}
                 onDuplicate={duplicateFrame}
                 onDelete={deleteFrame}
@@ -3273,13 +4770,54 @@ export default function AnimaticEditor({
             ) : (
               <VideoProperties
                 settings={settings}
-                onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+                // Through `reshapeFrame`, not `setSettings`: the Shape chips and
+                // their ↺ write the same field the Program menu does, so they
+                // have to carry the shapes over the same way. It is a no-op for
+                // every other setting in this pane.
+                onChange={reshapeFrame}
                 sourceBoard={sourceBoard}
+                // ⚠ OPENS THE PRICED DIALOG, never runs anything. Same rule as
+                // ✨ Animate and the two speech passes: no button in a
+                // Properties pane may spend on its own.
+                reframe={
+                  <PropRow full>
+                    <button
+                      type="button"
+                      className="btn small"
+                      disabled={reframeRunning || serverBusy || !frames.length}
+                      onClick={openReframe}
+                      title={
+                        `Look at each shot and pan it so the subject is framed for ` +
+                        `${settings.aspect_ratio}. You'll see the price first, and what ` +
+                        `it writes is an ordinary pan you can still change.`
+                      }
+                    >
+                      {reframeRunning
+                        ? `Framing for ${settings.aspect_ratio}…`
+                        : `✨ Reframe every shot for ${settings.aspect_ratio}`}
+                    </button>
+                  </PropRow>
+                }
               />
             )}
           </div>
         </section>
       </div>
+
+      {/* The seam between the panes and the timeline. Dragging it DOWN gives the
+          picture the height and takes it off the timeline, so the value goes the
+          other way — hence `sign={-1}` again. */}
+      <PaneSplitter
+        orientation="horizontal"
+        className="an-split-timeline"
+        value={sized.timeline}
+        min={limits.timeline.min}
+        max={limits.timeline.max}
+        sign={-1}
+        onChange={(px) => setPane("timeline", px)}
+        onReset={() => resetPane("timeline")}
+        label="Timeline height"
+      />
 
       {/* ------------------------------------------------------- timeline */}
       <section {...paneProps("timeline")}>
@@ -3343,6 +4881,24 @@ export default function AnimaticEditor({
             aria-pressed={snapping}
           >
             🧲
+          </button>
+          {/* CUT TO BEAT. Beside snapping because it is the same idea done to
+              the whole sequence at once: the beat markers are already drawn on
+              the audio lane and already snap targets, and this is dragging
+              every cut onto the nearest one without dragging any of them.
+              Costs nothing — the decode has already happened. */}
+          <button
+            type="button"
+            className="an-tool"
+            onClick={cutToBeat}
+            disabled={frames.length < 2 || !audioTracks.length}
+            title={
+              !audioTracks.length
+                ? "Cut to beat needs music on the timeline — it reads the beats already marked on the audio lane"
+                : "Pull every cut onto the nearest beat of the music. Free, and one Ctrl+Z puts them all back."
+            }
+          >
+            🥁
           </button>
 
           <button
@@ -3461,19 +5017,21 @@ export default function AnimaticEditor({
             lanes={lanes}
             audioUrls={audioUrls}
             audioAnalyses={audioAnalyses}
-            onToggleMute={(id) =>
-              patchTrack(id, {
-                muted: !audioTracks.find((a) => a.upload_id === id)?.muted,
-              })
-            }
-            onTrimTrack={(id, ms) => patchTrack(id, { trim_ms: ms })}
-            onFadeChange={(id, patch) => patchTrack(id, patch)}
+            onToggleMute={muteTracks}
+            onTrackChange={patchTrack}
             onSelect={(id) => selectOnly({ frame: id })}
             onSelectText={(id) => selectOnly({ text: id })}
             onSelectShape={(id) => selectOnly({ shape: id })}
             onSelectOverlay={(id) => selectOnly({ overlay: id })}
             selectedTrackId={selectedTrackId}
             onSelectTrack={(id) => selectOnly({ track: id })}
+            /* More than one at a time — the rubber band, shift-click, and a
+               whole selection dragged as one. See `animatic/selection.js`. */
+            selection={liveSelection}
+            onSelectMany={selectMany}
+            onToggleSelect={toggleSelect}
+            onMoveSelection={moveSelection}
+            selectionFloorMs={selectionFloorMs}
             onSeek={seek}
             onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
             onTextChange={patchText}
@@ -3484,9 +5042,12 @@ export default function AnimaticEditor({
             onRemoveLayer={removeLayer}
             onAddLayer={() => setLayerMenu(true)}
             onRemoveTrack={removeTrack}
+            onClearLane={clearLane}
+            onToggleHidden={toggleLaneHidden}
             tool={tool}
             snapping={snapping}
             onSplitAt={splitFrameAt}
+            onSplitAudioAt={splitAudioAt}
             onZoomAt={zoomBy}
             /* The scroll bar's grips set the scale outright — see
                ZoomScrollbar.jsx — so they get the setter, not the stepper. */
@@ -3525,9 +5086,40 @@ export default function AnimaticEditor({
                 <span className="tiny muted">.mp4</span>
               </span>
 
+              {/* ⚠ FIRST, because it writes the four rows under it. Choosing a
+                  preset is nothing but a shorthand for setting them, so
+                  changing one afterwards is not a conflict — it just drops the
+                  menu back to Custom (`matchPreset` is the exact inverse of
+                  `applyPreset`). The table is the twin of `export_presets.py`. */}
+              <label className="an-exp-label" htmlFor="exp-preset">
+                Preset
+              </label>
+              <select
+                id="exp-preset"
+                className="an-select"
+                value={matchPreset(settings)}
+                // ⚠ A PRESET RESHAPES THE FILM — TikTok is 9:16, and that is the
+                // whole point of choosing it — so it goes through the same door
+                // as the Program menu. Picking TikTok used to stretch every
+                // shape on the way past, silently, from inside the export
+                // dialog.
+                onChange={(e) => reshapeFrame((s) => applyPreset(e.target.value, s))}
+              >
+                <option value="">Custom</option>
+                {EXPORT_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} — {p.hint}
+                  </option>
+                ))}
+              </select>
+
               <span className="an-exp-label">Format</span>
               <span className="tiny muted an-exp-fixed">
-                MP4 · H.264 + AAC — plays everywhere
+                {exportContainer === "gif"
+                  ? "GIF · silent, loops forever"
+                  : exportContainer === "png"
+                    ? `PNG · one frame, at ${formatTime(settings.still_ms || 0)}`
+                    : "MP4 · H.264 + AAC — plays everywhere"}
               </span>
 
               <label className="an-exp-label" htmlFor="exp-res">
@@ -3558,6 +5150,7 @@ export default function AnimaticEditor({
                 id="exp-fps"
                 className="an-select"
                 value={settings.fps}
+                disabled={exportContainer === "png"}
                 onChange={(e) => setSettings((s) => ({ ...s, fps: Number(e.target.value) }))}
               >
                 <option value={12}>12 fps</option>
@@ -3573,6 +5166,10 @@ export default function AnimaticEditor({
                 id="exp-q"
                 className="an-select"
                 value={settings.quality || "high"}
+                // Quality is an x264 CRF. A GIF is palette-quantised and a PNG
+                // is lossless, so there is nothing for it to mean in either —
+                // disabled rather than hidden, so the row doesn't jump.
+                disabled={exportContainer !== "mp4"}
                 onChange={(e) => setSettings((s) => ({ ...s, quality: e.target.value }))}
               >
                 <option value="high">High — best looking</option>
@@ -3587,6 +5184,7 @@ export default function AnimaticEditor({
                 id="exp-end"
                 className="an-select"
                 value={settings.end_at || "timeline"}
+                disabled={exportContainer === "png"}
                 onChange={(e) => setSettings((s) => ({ ...s, end_at: e.target.value }))}
               >
                 <option value="timeline">
@@ -3599,24 +5197,30 @@ export default function AnimaticEditor({
               <label className="an-check">
                 <input
                   type="checkbox"
-                  checked={settings.include_audio !== false}
-                  disabled={!audioTracks.length}
+                  checked={settings.include_audio !== false && exportContainer === "mp4"}
+                  // A GIF and a PNG have no audio track to carry, so the box is
+                  // off and unclickable rather than ticked and ignored.
+                  disabled={!audioTracks.length || exportContainer !== "mp4"}
                   onChange={(e) =>
                     setSettings((s) => ({ ...s, include_audio: e.target.checked }))
                   }
                 />
-                {audioTracks.length
-                  ? `Include ${audioTracks.length} track${audioTracks.length === 1 ? "" : "s"}`
-                  : "No audio on this animatic"}
+                {exportContainer !== "mp4"
+                  ? `A ${exportContainer.toUpperCase()} carries no sound`
+                  : audioTracks.length
+                    ? `Include ${audioTracks.length} track${audioTracks.length === 1 ? "" : "s"}`
+                    : "No audio on this animatic"}
               </label>
             </div>
 
             <div className="an-exp-summary">
-              <strong>{formatTime(exportMs)}</strong>
+              <strong>
+                {exportContainer === "png" ? "One frame" : formatTime(exportMs)}
+              </strong>
               <span>
                 {frameSizeFor(settings.aspect_ratio, settings.resolution ?? 1080).join("×")}
               </span>
-              <span>{settings.fps} fps</span>
+              {exportContainer !== "png" && <span>{settings.fps} fps</span>}
               <span>
                 {frames.length} frame{frames.length === 1 ? "" : "s"}
               </span>
@@ -3626,12 +5230,33 @@ export default function AnimaticEditor({
                 which compress far better than normal video, so any figure we
                 printed would be wrong by a wide margin. */}
             <p className="tiny muted an-exp-note">
-              {settings.end_at === "frames"
-                ? `Stops at your last image — ${formatTime(totalMs)}. Anything after it is cut.`
-                : spanMs > totalMs
-                  ? `Runs to ${formatTime(spanMs)}: your last image is held on screen while the rest of the audio plays. Choose “Just the images” to stop at ${formatTime(totalMs)} instead.`
-                  : `${formatTime(totalMs)} — your images, text and audio all end together.`}
+              {exportContainer === "png"
+                ? `The picture at ${formatTime(settings.still_ms || 0)} — where the playhead was when you opened this. Close it, move the playhead, and open it again for a different frame.`
+                : exportContainer === "gif"
+                  ? `${formatTime(exportMs)} of silent, looping GIF. They are big and 256 colours; a short stretch reads far better than the whole film.`
+                  : settings.end_at === "frames"
+                    ? `Stops at your last image — ${formatTime(totalMs)}. Anything after it is cut.`
+                    : spanMs > totalMs
+                      ? `Runs to ${formatTime(spanMs)}: your last image is held on screen while the rest of the audio plays. Choose “Just the images” to stop at ${formatTime(totalMs)} instead.`
+                      : `${formatTime(totalMs)} — your images, text and audio all end together.`}
             </p>
+            {/* ⚠ A PRESET CAN RESHAPE THE FILM, and it must say so. YouTube is
+                16:9 and TikTok is 9:16, so choosing one WRITES the project's
+                aspect ratio — a real edit, visible in the monitor behind this
+                dialog the moment it is chosen. What it does not do is re-frame
+                the shots: they keep their framing and get bars. ✨ Reframe, on
+                the Frame tab, is the thing that re-composes them. Shown only
+                when a preset states a shape, so an ordinary export is not
+                lectured about a change nobody made. */}
+            {matchPreset(settings) &&
+              EXPORT_PRESETS.find((p) => p.id === matchPreset(settings))?.aspect_ratio && (
+                <p className="tiny muted an-exp-note">
+                  This preset set the project to {settings.aspect_ratio}. Your shots keep
+                  their framing, so anything that doesn’t fit gets{" "}
+                  {settings.fit === "cover" ? "cropped" : "bars"} — use ✨ Reframe on the
+                  Frame tab to re-compose them for this shape.
+                </p>
+              )}
 
             <div className="an-name-actions">
               <button type="button" className="btn ghost" onClick={() => setExportOpen(false)}>
@@ -3648,6 +5273,59 @@ export default function AnimaticEditor({
               >
                 <Icon name="download" /> Export
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚙ Settings — the workspace picker. */}
+      {/* ⚠ NOTHING HERE WRITES THE PROJECT. A workspace decides where the panes
+          sit and how wide they are; the frame size, the aspect ratio and the
+          fps are the Video tab's business and are left exactly as they were.
+          Switching to Reel / Shorts on a 16:9 animatic gives you a tall monitor
+          to work in and a 16:9 export, which is the point — you can cut a
+          vertical version without converting the video first. */}
+      {settingsOpen && (
+        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="card an-layer-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setSettingsOpen(false)}>
+              ✕
+            </button>
+            <h2>Workspace</h2>
+            {/* ⚠ SAY WHERE THE OTHER THING IS. "Your video stays 16:9" is true
+                and was, on its own, the whole problem: it told you what had NOT
+                happened and left you hunting for the control that would make it
+                happen. The shape of the film is one menu away, in the Program
+                pane's head. */}
+            <p className="muted">
+              How the editor is laid out. This changes the screen only — your
+              video stays {settings.aspect_ratio} at {settings.fps} fps. To
+              change the shape of the video itself, use the ratio menu at the top
+              of the Program pane.
+            </p>
+
+            <div className="an-layer-list">
+              {WORKSPACES.map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  className={`an-layer-opt an-ws-opt ${workspace === w.id ? "on" : ""}`}
+                  onClick={() => chooseWorkspace(w.id)}
+                  aria-pressed={workspace === w.id}
+                >
+                  <span className="an-layer-opt-ico an-ws-opt-ico">
+                    {/* The size is CSS's (`.an-ws-opt-ico .icon`), not this
+                        attribute's — the drawing fills its square in both
+                        places and that rule is where it is decided. */}
+                    <Icon name={w.ico} title={w.label} />
+                  </span>
+                  <span>
+                    <strong>{w.label}</strong>
+                    <span className="tiny muted">{w.note}</span>
+                  </span>
+                  {workspace === w.id && <span className="an-ws-tick">✓</span>}
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -3914,7 +5592,14 @@ export default function AnimaticEditor({
                 <p className="muted">
                   Listens to one audio track and writes a caption for each line,
                   timed to when it is said. They arrive as ordinary text clips —
-                  every one can be edited, restyled or deleted afterwards.
+                  every one can be edited, restyled or deleted afterwards — on
+                  their own <strong>Captions</strong> row at the top of the
+                  timeline, so nothing lands on the text you typed.
+                </p>
+                <p className="muted">
+                  Cuts are followed: a track you have razored is captioned piece
+                  by piece, where each piece actually plays, and the words in the
+                  parts you cut out are not written at all.
                 </p>
                 <div className="an-prop-row">
                   <span className="an-prop-label">Track</span>
@@ -3923,11 +5608,20 @@ export default function AnimaticEditor({
                     value={speechTrack}
                     onChange={(e) => setSpeechTrack(e.target.value)}
                   >
-                    {audioTracks.map((t, i) => (
-                      <option key={t.upload_id} value={t.upload_id}>
-                        {t.filename || `Track ${i + 1}`}
-                      </option>
-                    ))}
+                    {/* ⚠ ONE ENTRY PER FILE. Transcribing is done on the FILE,
+                        so a track cut into three clips is still one thing to
+                        listen to — and three identical options would be three
+                        ways to pay for the same transcript. */}
+                    {audioTracks
+                      .filter(
+                        (t, i) =>
+                          audioTracks.findIndex((a) => a.upload_id === t.upload_id) === i
+                      )
+                      .map((t, i) => (
+                        <option key={t.upload_id} value={t.upload_id}>
+                          {t.filename || `Track ${i + 1}`}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="an-prop-row">
@@ -4067,6 +5761,156 @@ export default function AnimaticEditor({
         </div>
       )}
 
+      {/* AUTO-REFRAME — the setup, then the price, then the call. Same two-step
+          discipline as ✨ Animate and the two speech passes, and kept for the
+          same reason: this one is cheap, and a cheap button is the one that
+          gets pressed forty times. */}
+      {reframeOpen && (
+        <div className="modal-overlay" onClick={() => setReframeOpen(false)}>
+          <div className="card an-speech-card" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setReframeOpen(false)}>
+              ✕
+            </button>
+            <h2>Reframe for a different shape</h2>
+            <p className="muted">
+              Each shot is looked at once to find its subject, then panned and
+              pushed in so that subject is framed for the new shape. What gets
+              written is an ordinary pan — the same Scale and Position you can
+              set by hand — so you can change any of it afterwards.
+            </p>
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Frame for</span>
+              <span className="an-set-chips">
+                {["16:9", "9:16", "1:1", "4:5"].map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    className={`opt-chip ${reframeAspect === a ? "active" : ""}`}
+                    onClick={() => setReframeAspect(a)}
+                  >
+                    {a}
+                    {a === settings.aspect_ratio && (
+                      <span className="opt-chip-note">this video</span>
+                    )}
+                  </button>
+                ))}
+              </span>
+            </div>
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Which shots</span>
+              <span className="an-set-chips">
+                <button
+                  type="button"
+                  className={`opt-chip ${reframeScope === "all" ? "active" : ""}`}
+                  onClick={() => setReframeScope("all")}
+                >
+                  Every shot
+                  <span className="opt-chip-note">{frames.length} on the timeline</span>
+                </button>
+                <button
+                  type="button"
+                  className={`opt-chip ${reframeScope === "selection" ? "active" : ""}`}
+                  disabled={!liveSelection.some((s) => s.kind === "frame")}
+                  onClick={() => setReframeScope("selection")}
+                >
+                  Just the selection
+                  <span className="opt-chip-note">
+                    {liveSelection.filter((s) => s.kind === "frame").length} selected
+                  </span>
+                </button>
+              </span>
+            </div>
+
+            {/* ⚠ The honest limit, said before it is paid for rather than
+                after. Video clips and colour cards are skipped: a clip's
+                framing is a property of its footage, and a card has no
+                picture. */}
+            <p className="tiny muted">
+              Stills only — video clips and colour cards are left alone.
+            </p>
+
+            {/* ⚠ IN HERE, not in the status bar. The banner is behind this
+                overlay, so an error written there is one nobody sees. */}
+            {reframeError && <p className="an-prop-warn">⚠ {reframeError}</p>}
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setReframeOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={reframeBusy}
+                onClick={askToReframe}
+              >
+                {reframeBusy ? "Checking the price…" : "See the price →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reframeConfirm && (
+        <div className="modal-overlay" onClick={() => setReframeConfirm(null)}>
+          <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setReframeConfirm(null)}
+            >
+              ✕
+            </button>
+            <h2>Reframe {reframeConfirm.estimate.frames} shot(s)?</h2>
+
+            <div className="fv-confirm-price">
+              <span className="fv-confirm-usd">
+                ~${reframeConfirm.estimate.usd.toFixed(4)}
+              </span>
+              <span className="tiny muted">estimated</span>
+            </div>
+
+            <p className="muted">
+              {reframeConfirm.estimate.frames} shot(s) framed for{" "}
+              {reframeConfirm.estimate.aspect_ratio} by{" "}
+              {reframeConfirm.estimate.model}.
+            </p>
+            {reframeConfirm.estimate.over_limit && (
+              <p className="an-prop-warn">
+                ⚠ That is over the limit for one run ({reframeConfirm.estimate.limit}).
+                Do it in smaller passes — this is a spend guard, not a technical one.
+              </p>
+            )}
+            <p className="tiny muted">
+              An estimate from list prices, not a quote. Google bills the actual
+              amount. One Ctrl+Z puts every shot back where it was.
+            </p>
+
+            <div className="an-name-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setReframeConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={reframeBusy || reframeConfirm.estimate.over_limit}
+                onClick={doReframe}
+              >
+                <Icon name="play" />{" "}
+                {reframeBusy
+                  ? "Starting…"
+                  : `Go — ~$${reframeConfirm.estimate.usd.toFixed(4)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Save on an unnamed animatic lands here first. */}
       {saveAsName !== null && (
         <div className="modal-overlay" onClick={() => setSaveAsName(null)}>
@@ -4109,14 +5953,19 @@ export default function AnimaticEditor({
       )}
 
       {/* The real clock. Hidden, but it is what the pictures follow — the first
-          track that is actually playing drives the playhead. */}
+          track that is actually playing drives the playhead.
+          ⚠ ONE ELEMENT PER CLIP, keyed by the clip and not by the upload. Two
+          halves of a cut are two windows of one file playing at two different
+          moments; one element between them would be seeked back and forth by
+          both and would play neither. The blob url is still fetched once per
+          FILE — the elements share it. */}
       {audioTracks.map((track) =>
         audioUrls[track.upload_id] ? (
           <audio
-            key={track.upload_id}
+            key={clipId(track)}
             ref={(el) => {
-              if (el) audioElsRef.current[track.upload_id] = el;
-              else delete audioElsRef.current[track.upload_id];
+              if (el) audioElsRef.current[clipId(track)] = el;
+              else delete audioElsRef.current[clipId(track)];
             }}
             src={audioUrls[track.upload_id]}
             preload="auto"
@@ -4167,7 +6016,24 @@ export default function AnimaticEditor({
       <input
         ref={assetInputRef}
         type="file"
-        accept="image/*,audio/*"
+        // ⚠ VIDEO TOO. `addAssets` has routed video files since the picture track
+        // learned to hold them, and the DROP target next to this button always
+        // accepted them — so leaving it out here made the file dialog refuse the
+        // exact thing you could drag in, on the control whose whole promise is
+        // "one way in for everything".
+        accept="image/*,video/*,audio/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) addAssets(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      {/* The Video row's own ＋ — same handler, narrower filter. */}
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/*"
         multiple
         hidden
         onChange={(e) => {

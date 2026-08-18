@@ -80,6 +80,86 @@ const PATHS = {
       <rect x="6.5" y="8" width="11" height="8" rx="1" fill="currentColor" stroke="none" />
     </>
   ),
+  // The two Media-pane views, drawn as what they arrange rather than as
+  // letters: four tiles for the grid, three rows for the list. Same 24-box and
+  // the same stroke, so the pair reads as one switch with two positions.
+  grid: (
+    <>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" {...STROKE} />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" {...STROKE} />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" {...STROKE} />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" {...STROKE} />
+    </>
+  ),
+  list: (
+    <>
+      <rect x="3.5" y="4.5" width="4.5" height="4.5" rx="1.2" {...STROKE} />
+      <rect x="3.5" y="14.5" width="4.5" height="4.5" rx="1.2" {...STROKE} />
+      <path d="M11.5 6.75h9M11.5 16.75h9" {...STROKE} />
+    </>
+  ),
+  // --- Is this layer drawn? ------------------------------------------------
+  // The timeline gutter's switch for a row you can SEE, and the counterpart of
+  // the 🔇 an audio row has always had. Two states of one control, so they are
+  // the same eye with one stroke through it rather than two different drawings:
+  // whichever is showing, you are looking at the same object.
+  eye: (
+    <>
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" {...STROKE} />
+      <circle cx="12" cy="12" r="3" {...STROKE} />
+    </>
+  ),
+  "eye-off": (
+    <>
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" {...STROKE} />
+      <circle cx="12" cy="12" r="3" {...STROKE} />
+      {/* The stroke through it. Drawn last so it reads as one mark ON the eye. */}
+      <path d="M4 20 20 4" {...STROKE} />
+    </>
+  ),
+
+  // --- The two workspaces, drawn as the layout they arrange ----------------
+  // ⚠ THESE ARE MAPS, NOT DECORATION. A workspace is a place for every pane, so
+  // its icon is that arrangement at 1em: the window's outline, the seams where
+  // the real seams are, and the Program pane filled in — because "where does the
+  // picture end up, and how big is it?" is the only question anyone opens this
+  // menu to answer. Redraw them whenever the CSS in the "Workspaces" block of
+  // animatic-editor.css moves a pane, or the icon starts telling a lie.
+  //
+  // ⚠ THE WINDOW FILLS THE 24-BOX (1.6 → 22.4, not the ~3px inset the symbol
+  // icons use). A map is read by its INTERNAL divisions, so the outline has to
+  // be as big as the button will allow — inset like a glyph it came out a
+  // postage stamp in a 2.3rem square, which is what was reported.
+
+  // Long: Media | Program | Properties across the top, timeline full width
+  // under all three. The filled block is the wide monitor.
+  "layout-long": (
+    <>
+      <rect x="1.6" y="2.6" width="20.8" height="18.8" rx="2.6" {...STROKE} />
+      <path d="M1.6 15.1h20.8M7.4 2.6v12.5M16.6 2.6v12.5" {...STROKE} />
+      <rect x="8.6" y="6.9" width="7" height="3.9" rx="0.6" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // Reel / Shorts: one tall monitor down the WHOLE left side, with Media,
+  // Properties and the timeline stacked in the space beside it.
+  "layout-reel": (
+    <>
+      <rect x="1.6" y="2.6" width="20.8" height="18.8" rx="2.6" {...STROKE} />
+      <path d="M9.8 2.6v18.8M9.8 15.1h12.6M16.6 2.6v12.5" {...STROKE} />
+      <rect x="3.3" y="7.1" width="5" height="9" rx="0.6" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // The gear. Eight teeth as one ring of short spokes rather than a scalloped
+  // outline: at 1em a drawn cog turns to mud, while spokes stay readable.
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3.2" {...STROKE} />
+      <path
+        d="M12 2.6v2.6M12 18.8v2.6M21.4 12h-2.6M5.2 12H2.6M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8M18.6 18.6l-1.8-1.8M7.2 7.2 5.4 5.4"
+        {...STROKE}
+      />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = "1.05em", className = "", title }) {

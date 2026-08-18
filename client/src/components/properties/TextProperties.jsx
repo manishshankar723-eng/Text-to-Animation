@@ -37,6 +37,33 @@ const TEXT_BACKDROPS = [
 ];
 
 /**
+ * What a fresh caption is, field for field — and therefore what every ↺ in this
+ * pane goes back to.
+ *
+ * ⚠ A THIRD COPY of the same table, and it has to stay in step with the other
+ * two: the field defaults on `AnimaticTextClip` and `TEXT_DEFAULTS` in
+ * `animatic/scene.js`. A reset that lands on a value the clip was never created
+ * with is worse than no reset at all, because it looks like it worked.
+ */
+const CAPTION_DEFAULTS = {
+  duration_ms: 2000,
+  place: "flow",
+  position: "bottom",
+  align: "center",
+  size: "medium",
+  font: "inter",
+  color: "#ffffff",
+  backdrop: "scrim",
+  opacity: 1,
+  x: 0.5,
+  y: 0.85,
+  letter_spacing: 0,
+  stroke_px: 0,
+  stroke_color: "#000000",
+  shadow: 0,
+};
+
+/**
  * `clip` is the caption RESOLVED AT THE PLAYHEAD — a keyframed opacity reads as
  * what you can see rather than as what it was stored as. `stored` is the raw
  * clip, and the preset buttons need that one: a preset measures its movement
@@ -58,6 +85,21 @@ export default function TextProperties({
 }) {
   const overruns = clip.start_ms + clip.duration_ms > totalMs;
   const free = (clip.place || "flow") === "free";
+  const set = (patch) => onChange(clip.id, patch);
+  // Is this field away from what a fresh caption carries? Compared against the
+  // RESOLVED clip, which is what the row is showing — the ↺ has to light up for
+  // the value you can actually see.
+  const off = (field) => (clip[field] ?? CAPTION_DEFAULTS[field]) !== CAPTION_DEFAULTS[field];
+  const keyed = (prop) => (clip.keyframes?.[prop] || []).length > 0;
+  // A ↺ on an animatable row clears that property's keys as well — see the note
+  // in `FrameProperties`. Reading the keyframe map off `stored` rather than off
+  // `clip` for the same reason the presets do: `clip` is resolved, and a preset
+  // or a reset must work from what is saved.
+  const resetProp = (prop) => {
+    const keys = { ...((stored || clip).keyframes || {}) };
+    delete keys[prop];
+    set({ [prop]: CAPTION_DEFAULTS[prop], keyframes: keys });
+  };
 
   return (
     <div className="an-props">
@@ -73,7 +115,13 @@ export default function TextProperties({
       </PropGroup>
 
       <PropGroup id="text:timing" title="Timing">
-        <PropRow label="Starts at" title="How far into the video this appears">
+        <PropRow
+          label="Starts at"
+          title="How far into the video this appears"
+          reset={() => set({ start_ms: 0 })}
+          changed={clip.start_ms > 0}
+          resetTo="the start of the video"
+        >
           <NumField
             unit="s"
             step="0.1"
@@ -86,7 +134,13 @@ export default function TextProperties({
             }
           />
         </PropRow>
-        <PropRow label="Stays for" title="How long it is on screen">
+        <PropRow
+          label="Stays for"
+          title="How long it is on screen"
+          reset={() => set({ duration_ms: CAPTION_DEFAULTS.duration_ms })}
+          changed={off("duration_ms")}
+          resetTo={`${CAPTION_DEFAULTS.duration_ms / 1000}s`}
+        >
           <NumField
             unit="s"
             step="0.1"
@@ -128,11 +182,20 @@ export default function TextProperties({
           value={clip.opacity ?? 1}
           readout={`${Math.round((clip.opacity ?? 1) * 100)}%`}
           kf={kf && <KeyframeControls {...kf} prop="opacity" />}
+          reset={() => resetProp("opacity")}
+          changed={off("opacity") || keyed("opacity")}
+          resetTo="100%"
           {...gesture}
           onChange={(e) => onChange(clip.id, { opacity: parseFloat(e.target.value) })}
         />
 
-        <PropRow label="Placement" title="Whether this caption flows in a zone or is placed freely">
+        <PropRow
+          label="Placement"
+          title="Whether this caption flows in a zone or is placed freely"
+          reset={() => set({ place: CAPTION_DEFAULTS.place })}
+          changed={off("place")}
+          resetTo="a zone"
+        >
           <span className="an-tp-group">
             {TEXT_PLACES.map((p) => (
               <button
@@ -163,6 +226,9 @@ export default function TextProperties({
               value={clip.x ?? 0.5}
               readout={`${Math.round((clip.x ?? 0.5) * 100)}%`}
               kf={kf && <KeyframeControls {...kf} prop="x" />}
+              reset={() => resetProp("x")}
+              changed={off("x") || keyed("x")}
+              resetTo="50%"
               {...gesture}
               onChange={(e) => onChange(clip.id, { x: parseFloat(e.target.value) })}
             />
@@ -175,12 +241,21 @@ export default function TextProperties({
               value={clip.y ?? 0.85}
               readout={`${Math.round((clip.y ?? 0.85) * 100)}%`}
               kf={kf && <KeyframeControls {...kf} prop="y" />}
+              reset={() => resetProp("y")}
+              changed={off("y") || keyed("y")}
+              resetTo="85%"
               {...gesture}
               onChange={(e) => onChange(clip.id, { y: parseFloat(e.target.value) })}
             />
           </>
         ) : (
-          <PropRow label="Zone" title="Which band of the frame this caption stacks in">
+          <PropRow
+            label="Zone"
+            title="Which band of the frame this caption stacks in"
+            reset={() => set({ position: CAPTION_DEFAULTS.position })}
+            changed={off("position")}
+            resetTo="the bottom"
+          >
             <span className="an-tp-group">
               {TEXT_POSITIONS.map((p) => (
                 <button
@@ -202,7 +277,13 @@ export default function TextProperties({
           loaded here and by the exporter, so a caption cannot wrap onto three
           lines in the video and two in the monitor. See animatic_fonts.py. */}
       <PropGroup id="text:type" title="Type">
-        <PropRow label="Font" title="The typeface — the same file is used for the exported video">
+        <PropRow
+          label="Font"
+          title="The typeface — the same file is used for the exported video"
+          reset={() => set({ font: CAPTION_DEFAULTS.font })}
+          changed={off("font")}
+          resetTo={FONTS.find((f) => f.id === CAPTION_DEFAULTS.font)?.label || "the default"}
+        >
           <select
             className="an-select"
             value={clip.font || "inter"}
@@ -215,7 +296,12 @@ export default function TextProperties({
             ))}
           </select>
         </PropRow>
-        <PropRow label="Size">
+        <PropRow
+          label="Size"
+          reset={() => set({ size: CAPTION_DEFAULTS.size })}
+          changed={off("size")}
+          resetTo="medium"
+        >
           <span className="an-tp-group">
             {TEXT_SIZES.map((s) => (
               <button
@@ -230,7 +316,12 @@ export default function TextProperties({
             ))}
           </span>
         </PropRow>
-        <PropRow label="Align">
+        <PropRow
+          label="Align"
+          reset={() => set({ align: CAPTION_DEFAULTS.align })}
+          changed={off("align")}
+          resetTo="centred"
+        >
           <span className="an-tp-group">
             {TEXT_ALIGNS.map((a) => (
               <button
@@ -245,7 +336,13 @@ export default function TextProperties({
             ))}
           </span>
         </PropRow>
-        <PropRow label="Colour" title="Text colour">
+        <PropRow
+          label="Colour"
+          title="Text colour"
+          reset={() => set({ color: CAPTION_DEFAULTS.color })}
+          changed={off("color")}
+          resetTo="white"
+        >
           <input
             type="color"
             className="an-colour"
@@ -253,7 +350,13 @@ export default function TextProperties({
             onChange={(e) => onChange(clip.id, { color: e.target.value })}
           />
         </PropRow>
-        <PropRow label="Tracking" title="Space between letters, as a fraction of the text size">
+        <PropRow
+          label="Tracking"
+          title="Space between letters, as a fraction of the text size"
+          reset={() => set({ letter_spacing: 0 })}
+          changed={off("letter_spacing")}
+          resetTo="none"
+        >
           <NumField
             step="0.01"
             min="-0.2"
@@ -270,7 +373,13 @@ export default function TextProperties({
 
       {/* --- Kept readable over the art -------------------------------------- */}
       <PropGroup id="text:legibility" title="Readability">
-        <PropRow label="Backdrop" title="How the text is kept readable over the art">
+        <PropRow
+          label="Backdrop"
+          title="How the text is kept readable over the art"
+          reset={() => set({ backdrop: CAPTION_DEFAULTS.backdrop })}
+          changed={off("backdrop")}
+          resetTo="a shaded bar"
+        >
           <select
             className="an-select"
             value={clip.backdrop}
@@ -286,6 +395,9 @@ export default function TextProperties({
         <PropRow
           label="Outline"
           title="Outline thickness, in pixels at 1080p — it scales with the frame"
+          reset={() => set({ stroke_px: 0, stroke_color: CAPTION_DEFAULTS.stroke_color })}
+          changed={off("stroke_px") || off("stroke_color")}
+          resetTo="no outline"
         >
           <NumField
             unit="px"
@@ -310,6 +422,9 @@ export default function TextProperties({
         <PropRow
           label="Shadow"
           title="Drop-shadow offset, as a fraction of the text size. 0 is none."
+          reset={() => set({ shadow: 0 })}
+          changed={off("shadow")}
+          resetTo="no shadow"
         >
           <NumField
             step="0.01"
@@ -346,6 +461,29 @@ export default function TextProperties({
                 {p.label}
               </button>
             ))}
+          </span>
+        </PropRow>
+        {/* A preset writes keys on THREE properties at once, so its ↺ has to
+            clear all three — each row's own ↺ would leave a third of the
+            animation behind, which is not "no animation" and does not look
+            like one either. */}
+        <PropRow
+          label="Animation"
+          title="Every key a preset wrote, on opacity, x and y"
+          reset={() =>
+            set({
+              keyframes: Object.fromEntries(
+                Object.entries((stored || clip).keyframes || {}).filter(
+                  ([prop]) => !["opacity", "x", "y"].includes(prop)
+                )
+              ),
+            })
+          }
+          changed={["opacity", "x", "y"].some(keyed)}
+          resetTo="no animation"
+        >
+          <span className="an-row-read">
+            {["opacity", "x", "y"].some(keyed) ? "keyframed" : "none"}
           </span>
         </PropRow>
         <PropNote>

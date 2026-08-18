@@ -181,6 +181,26 @@
 .an-row-ctl > .an-kf {
   margin-left: auto;
 }
+/* ↺ RESET is the LAST thing on the row, always, so a column of them lines up
+   down the right-hand edge — which is what makes "everything I have changed on
+   this clip" readable at a glance. It takes the right edge itself…  */
+.an-row-ctl > .an-reset {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+/* …unless there is a ⏱, which has already claimed it; then the ↺ simply follows
+   it. Without this the two would each push for the edge and the ⏱ would be
+   shoved back into the value. */
+.an-row-ctl > .an-kf + .an-reset,
+.an-row-ctl > .an-kf ~ .an-reset {
+  margin-left: 0;
+}
+/* Present on every property, lit only on the ones you have actually moved:
+   `.an-kf-btn:disabled` already fades it to 0.3, which is quiet enough not to
+   be clutter and visible enough to be discovered. */
+.an-reset.on {
+  color: var(--primary);
+}
 /* Same trick for a trailing "Use whole clip" / "Use whole track". */
 .an-row-end {
   margin-left: auto;
@@ -406,4 +426,67 @@
   .an-props {
     --an-label-w: 7rem;
   }
+}
+
+/* The Selection pane's breakdown — "3 text clips" per row. A pane about a SET
+   rather than about a clip, so there is no field to align to; the number is what
+   the eye goes to, and the noun after it is support. */
+.an-sel-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.an-sel-count strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-right: 0.2rem;
+}
+
+/* --- Back to the storyboard (Phase 7) --------------------------------------
+   Two groups at the foot of a frame's pane: re-draw this shot, and run it
+   longer. Both reach through to the BOARD, which is why they sit last — they
+   change the picture itself, not how it is framed. */
+
+/* WHICH PICTURE IS BEING REPLACED. Sized by the frame's own aspect so the veil
+   lands exactly on the image and the pane does not jump when a redraw starts —
+   rule 3 of "regenerating a picture that is already on screen". `.is-redrawing`
+   and `.redraw-veil` are the shared treatment from `key-poses.css`; nothing is
+   redefined here, only positioned. */
+.an-redraw-thumb {
+  position: relative;
+  width: 100%;
+  margin: 0 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel-2);
+  line-height: 0;
+}
+.an-redraw-thumb img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The shot's own wording, editable. Taller than one line on purpose: a shot
+   description is a sentence or two, and a single-line box that scrolls sideways
+   is a box nobody edits. */
+.an-redraw-prompt {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.4;
+}
+
+/* The lengths a shot can be run on to, as a row of chips. Wraps rather than
+   scrolling — there are never more than four. */
+.an-relength {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.an-relength .btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
 }

@@ -8,6 +8,10 @@
    and every pane scrolls inside itself.
    ========================================================================= */
 .an-nle {
+  /* How wide a seam between two panes is — the gap the panes used to be given,
+     and now the grab area of the splitter that lives in it. One number, because
+     all three seams have to look like the same thing. */
+  --an-seam: 0.55rem;
   /* Fallback for browsers without :has() — assumes .shell-main's 1.8rem of
      top+bottom padding. The rule below replaces this with a real flex fill, so
      the layout stops depending on that number being right. */
@@ -20,13 +24,20 @@
      height. */
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  /* ⚠ NO GAP, on purpose. The seam between the panes and the timeline is a real
+     element now, and a flex gap would sit on BOTH sides of it — three gaps'
+     worth of space where there used to be one. The children that still need
+     room below them ask for it themselves (`.an-topbar`, `.an-statusbar`). */
+  gap: 0;
   min-height: 0;
 }
 .an-topbar,
 .an-statusbar,
 .an-pane-timeline {
   flex: 0 0 auto;
+}
+.an-statusbar {
+  margin-bottom: var(--an-seam);
 }
 
 /* The editor is the one screen that must FIT the viewport rather than scroll —
@@ -59,13 +70,20 @@
      the window however many optional strips are showing above it. */
   flex: 1 1 auto;
   display: grid;
-  /* Fluid: a 4K screen gives the side panes more room, a 1280 laptop keeps the
-     Program pane from being crushed between two fixed columns. */
+  /* FIVE TRACKS: two panes you can size, the middle one that takes what's left,
+     and the two seams between them. The seams ARE the old 0.55rem gap — same
+     width, same place, now draggable (`PaneSplitter`), which is why `gap` is 0
+     and nothing shifted to make room for them.
+     The widths come from `animatic/pane_layout.js` as inline custom properties;
+     the fallbacks are what the grid used before it could be dragged, and they
+     are what shows for the instant before React mounts. */
   grid-template-columns:
-    clamp(12rem, 15vw, 17rem)
+    var(--an-col-left, clamp(12rem, 15vw, 17rem))
+    var(--an-seam)
     minmax(0, 1fr)
-    clamp(16rem, 20vw, 22rem);
-  gap: 0.55rem;
+    var(--an-seam)
+    var(--an-col-right, clamp(16rem, 20vw, 22rem));
+  gap: 0;
   min-height: 0;
 }
 
@@ -127,6 +145,92 @@
   min-height: 4rem;
 }
 
+/* --- Media pane: the two views ------------------------------------------- */
+/* ⚠ THE ONLY DIFFERENCE BETWEEN THEM IS THIS BLOCK. Both views are the same
+   cards in the same DOM order (see FrameStrip's `view` prop), so reordering by
+   drag, the typed hold and the tools behave identically in either — there is
+   no second code path to keep in step. The choice is remembered per browser in
+   `animatic/media_view.js`. */
+
+/* Icon view — the picture is the card. Fluid columns rather than a fixed
+   number: a Media pane dragged narrow is one card across (exactly the stack
+   this pane always was) and a wide one fills up instead of wasting the room. */
+.fs-vertical.fs-view-icon .fs-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7.4rem, 1fr));
+  align-content: start;
+  overflow: visible;
+}
+.fs-vertical.fs-view-icon .fs-card {
+  width: auto;
+}
+
+/* List view — one compact row each, for finding a shot by NAME and for
+   retiming several in a row without scrolling past a wall of pictures.
+   Placed by explicit grid position, not by source order: the card's markup is
+   thumb → foot → label, and the row wants the name above the hold. */
+.fs-vertical.fs-view-list .fs-card {
+  display: grid;
+  grid-template-columns: 4.4rem 1fr;
+  column-gap: 0.55rem;
+  align-items: center;
+  padding: 0.35rem 0.4rem;
+}
+.fs-vertical.fs-view-list .fs-thumb {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.fs-vertical.fs-view-list .fs-label {
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 0;
+  font-size: 0.74rem;
+  color: var(--text);
+}
+.fs-vertical.fs-view-list .fs-foot {
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 0.15rem;
+}
+/* The badges shrink with the thumb they sit on — at 4.4rem the full-size pills
+   cover the picture they are supposed to be annotating. */
+.fs-vertical.fs-view-list .fs-num,
+.fs-vertical.fs-view-list .fs-kind {
+  font-size: 0.58rem;
+  padding: 0.02rem 0.22rem;
+}
+.fs-vertical.fs-view-list .fs-card.over {
+  transform: translateY(3px);
+}
+
+/* --- Program pane: the shape of the film --------------------------------- */
+/* Small enough to live in a pane head next to the title, and no smaller: this
+   is a control that reshapes the export, so it may not read as a caption. */
+.an-ar-select {
+  padding: 0.15rem 0.3rem;
+  font-size: 0.74rem;
+  border-radius: 6px;
+}
+/* The one-press "your workspace is vertical and your film isn't" offer. Gold,
+   like every other button here that changes the project. */
+.an-ar-suggest {
+  padding: 0 0.45rem;
+  height: 1.5rem;
+  white-space: nowrap;
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+
+/* The view switch in the pane head — the timeline's tool buttons, reused. */
+.an-view-switch {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+.an-view-switch .an-tool {
+  min-width: 1.5rem;
+  height: 1.5rem;
+}
+
 /* The Media pane's single control: click it or drop onto the pane. It replaced
    three separate ones ("Add images", the drop card, "Add an MP3") that all did
    the same job. */
@@ -178,16 +282,43 @@
   background: rgba(229, 193, 88, 0.06);
 }
 
-.an-media-audio {
-  margin-top: 0.9rem;
-  border-top: 1px solid var(--border);
-  padding-top: 0.6rem;
+/* --- The Media pane is a stack of SECTIONS ------------------------------- */
+/* The same collapsible section the Properties pane is built from (`PropGroup`,
+   `.an-grp` in properties.css) — Frames, Audio, and on the Shapes tab the
+   library and what you have placed. Two rules make it sit right in here, and
+   both are about not spacing the same gap twice: the sections space themselves,
+   so the lists inside them drop the margins they used when they were loose
+   blocks in a scrolling body.
+   ⚠ THE ADD-ASSETS CARD IS NOT IN A SECTION and must not be put in one: it is
+   the control that FILLS these lists, and a drop target you can fold away is a
+   drop target you cannot drop on. */
+.an-media-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
-.an-media-sub {
-  font-size: 0.72rem;
-  font-weight: 650;
-  color: var(--muted);
-  margin-bottom: 0.4rem;
+/* ⚠ NOTHING IN HERE MAY SHRINK — THIS IS WHAT SCROLLS THE PANE. A flex item's
+   default is `flex-shrink: 1`, so the Frames section obligingly squeezed itself
+   down to whatever height was left; and because a section is `overflow: hidden`
+   (it has to be, for its rounded corners), the frames past the fold were CLIPPED
+   rather than scrolled — a pane with 31 frames showing eight and no scroll bar,
+   which is exactly what was reported. Pinned at their content height they
+   overflow instead, and `.an-pane-body`'s own `overflow: auto` is the scroll bar
+   again. */
+.an-media-body > * {
+  flex: 0 0 auto;
+}
+/* It carries its own bottom margin from when it was one block among several;
+   the gap above does that job now. */
+.an-media-body > .an-asset-drop {
+  margin-bottom: 0;
+}
+/* The section's body is already a gapped column. */
+.an-grp-body > .an-media-track {
+  margin-bottom: 0;
+}
+.an-grp-body > .an-shape-hint {
+  margin: 0.15rem 0 0;
 }
 .an-media-track {
   background: var(--panel-2);
@@ -286,6 +417,13 @@
   width: min(100cqw, calc(100cqh * var(--ar-num, 1.7778)));
   height: auto;
   max-width: 100%;
+  /* ⚠ THE 56vh CAP FROM `.an-screen` IS OFF IN HERE. The fitter above already
+     bounds the picture on BOTH axes, so the cap only ever did harm: with the
+     width definite, a max-height that bites shortens the box without narrowing
+     it and the preview stops matching the exported frame. It bites as soon as a
+     pane is dragged tall — which is now something you can do. The stacked layout
+     (≤1180px) has no size container, so it puts the cap back. */
+  max-height: none;
   margin: 0 auto;
 }
 
@@ -389,14 +527,77 @@
 
 /* --- Timeline pane ------------------------------------------------------- */
 .an-pane-timeline {
-  /* Tall enough for the ruler + three tracks without the pane scrolling, but it
-     gives room back to the picture on a short screen instead of fighting it. */
-  /* Grows with the number of layers — a second audio lane needs room — but
-     never eats more than half the window, and scrolls beyond that. */
-  height: auto;
-  min-height: clamp(13rem, 24vh, 15.5rem);
-  max-height: 50vh;
+  /* ⚠ THE HEIGHT IS THE ONE YOU DRAGGED — see `animatic/pane_layout.js`. It used
+     to grow with the number of layers between a min and a max, which is a fine
+     guess and a bad answer once there is a handle: a pane that resizes itself
+     when you add a lane is a pane that undoes what you asked for. The lanes
+     scroll inside it instead (`.an-timeline-body`), and the default is still
+     about the height that clamp produced.
+     The min/max that used to be here now live in `paneLimits()`, where the drag
+     can be stopped at them instead of silently overriding the value. */
+  height: var(--an-timeline-h, clamp(13rem, 24vh, 15.5rem));
+  min-height: 0;
+  max-height: none;
   flex-shrink: 0;
+}
+
+/* --- The seams between the panes ----------------------------------------- */
+/* The gap IS the handle. Nothing was moved to fit these in: they occupy exactly
+   the `--an-seam` that used to be a grid gap, so the workspace looks unchanged
+   until the pointer is over one. */
+.an-split {
+  position: relative;
+  align-self: stretch;
+  z-index: 3;
+  touch-action: none;
+}
+.an-split:focus-visible {
+  outline: none;
+}
+.an-split-vertical {
+  width: var(--an-seam);
+  cursor: col-resize;
+}
+.an-split-horizontal {
+  height: var(--an-seam);
+  width: 100%;
+  /* It's a flex child of `.an-nle`, whose panes take all the slack — without
+     this the seam is the thing that gets squeezed. */
+  flex: 0 0 auto;
+  cursor: row-resize;
+}
+/* The line, drawn only when the seam is being used. Centred with `inset: 0` +
+   `margin: auto`, so one rule places it on either axis. */
+.an-split-grip {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+.an-split-vertical .an-split-grip {
+  width: 2px;
+  height: 2.6rem;
+}
+.an-split-horizontal .an-split-grip {
+  height: 2px;
+  width: 2.6rem;
+}
+.an-split:hover .an-split-grip,
+.an-split:focus-visible .an-split-grip,
+.an-split.dragging .an-split-grip {
+  background: var(--primary);
+}
+/* A drag that starts on a seam must not select the pane text either side of it.
+   The pointer is outside the handle within a few pixels, so this has to cover
+   the whole editor rather than the strip. */
+.an-nle:has(.an-split.dragging) {
+  user-select: none;
+  cursor: col-resize;
+}
+.an-nle:has(.an-split-horizontal.dragging) {
+  cursor: row-resize;
 }
 /* ⚠ `overflow: hidden`, and a flex column — the TIMELINE scrolls itself now.
    While this pane scrolled, the ruler and the labels slid away with the tracks
@@ -468,13 +669,196 @@
   color: var(--warn);
 }
 
+/* A server pass reported INSIDE the pane that started it — the captions run,
+   beside its own button. Same spinner and same bar as the status strip at the
+   top of the editor (`.an-status-export` / `.an-status-bar`), because it is the
+   same event; only the place is different. It wraps, unlike the strip, because
+   the pane is a narrow column and the stage messages are sentences. */
+.an-prop-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  width: 100%;
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.an-prop-progress-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.an-prop-progress .an-status-bar {
+  flex: 0 0 100%;
+  width: 100%;
+}
+
+/* --- Workspaces ---------------------------------------------------------- */
+/* Two arrangements of the SAME editor, chosen from ⚙ in the top bar and stamped
+   on `.an-nle` as `an-ws-long` / `an-ws-reel` (see animatic/workspace.js).
+   ⚠ A WORKSPACE IS LAYOUT ONLY — nothing under here may imply a frame size. The
+   picture keeps the project's aspect ratio in both, because `.an-screen-fit` is
+   a size container and `.an-nle .an-screen` fits the shape either way: a 9:16
+   project simply gets a tall thin monitor in the long layout, and a 16:9 one
+   gets a short wide monitor in the reel layout. That is the honest thing to
+   show — the export is unchanged, so the monitor must be too.
+
+   `an-ws-long` is the default and needs no rules; everything below is what the
+   reel layout does differently. */
+
+/* The name, beside its ⚙. Small caps rather than a heading: it's a label for
+   the state you're in, not a control. */
+.an-ws-name {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Icon-only, so it's a square of the top bar's button height — same treatment
+   as `.an-topbar .an-del-btn`.
+   ⚠ THE DRAWING FILLS THE BUTTON, and it is sized in `rem` rather than `em`.
+   The app's icons are 1.05em of a 0.84rem button font — about 12px, which is
+   right for a symbol you recognise by its shape and far too small for a MAP you
+   read by its internal divisions: at that size the three cells and two seams
+   became one grey smudge in the middle of a 2.3rem square. 1.75rem leaves the
+   button's own padding either side and nothing else. `em` is wrong here because
+   the size must follow the BUTTON, not a font size that exists for the label
+   this button doesn't have. */
+.an-topbar .an-ws-btn {
+  width: 2.3rem;
+  padding: 0;
+  color: var(--muted);
+}
+.an-topbar .an-ws-btn .icon {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+.an-topbar .an-ws-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+/* Same in the picker: the option's square is the one place the two layouts are
+   compared side by side, so the drawing fills that too. */
+.an-ws-opt-ico .icon {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+/* The workspace you're already in, in the picker. */
+.an-ws-opt.on {
+  border-color: var(--primary);
+}
+.an-ws-tick {
+  margin-left: auto;
+  color: var(--primary);
+  font-weight: 700;
+}
+/* The tick is a THIRD child, so `.an-layer-opt > span:last-child` — which is
+   what stacks an option's label over its note — would land on the tick instead.
+   Name the label span by position and the option keeps its shape with or
+   without a tick. */
+.an-ws-opt > span:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+/* --- Reel / Shorts: one full-height monitor, the timeline beside it ------- */
+/* A phone cut is edited by watching one tall picture and reaching for footage
+   beside it, so Program leads — and here it is the only pane that does not stop
+   at the timeline.
+   ⚠ A 9:16 PICTURE IS BOUNDED BY HEIGHT, WHICH IS WHY THIS LAYOUT EXISTS. While
+   Program was a pane in the top row like the other two, the tallest it could
+   ever be was "the window minus the timeline", so the monitor stayed a stamp
+   however wide the column was dragged — widening it only added empty gutter
+   either side of the same small picture. That was the report. The fix is not a
+   bigger number: the pane has to reach the BOTTOM of the window, so the
+   timeline moves out of its way and stacks under Media/Properties instead.
+
+   How, without touching the markup: `.an-panes` becomes `display: contents`, so
+   its three panes and two seams become items of the editor's own grid alongside
+   the timeline and its seam, and named areas place all of them. Areas rather
+   than rows-by-position, because the status strip only exists when there is
+   something to say — the bug that made the whole editor a flex column in the
+   first place. An empty `stat` row is simply zero-high.
+
+   ⚠ THE SEAMS STILL SIZE WHAT THEY ALWAYS SIZED. `.an-split-left` is the
+   Program/Media seam and runs the full height beside the monitor;
+   `.an-split-right` sizes Properties; the horizontal one sizes the timeline and
+   now spans only the right-hand side, which is the only part of the window it
+   divides. The WIDTHS aren't here either: they're per-workspace numbers in
+   `animatic/pane_layout.js`, where the monitor's default is derived from the
+   height it can now reach.
+
+   ⚠ `:not(.an-has-max)` on every rule. Maximizing (~) hides everything but one
+   pane, and it does that to a flex column — a grid with five named areas and
+   four hidden items would leave the survivor in a 20%-wide track. With ~ on,
+   this workspace goes back to being the plain column the long one is. */
+.an-nle.an-ws-reel:not(.an-has-max) {
+  display: grid;
+  grid-template-columns:
+    var(--an-col-left, clamp(16rem, 22vw, 30rem))
+    var(--an-seam)
+    minmax(0, 1fr)
+    var(--an-seam)
+    var(--an-col-right, clamp(16rem, 20vw, 22rem));
+  /* The timeline's row is `auto` and takes its height from the pane's own
+     `--an-timeline-h`, so the dragged height still lives in exactly one place. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "top  top  top   top  top"
+    "stat stat stat  stat stat"
+    "prog vsep media rsep props"
+    "prog vsep hsep  hsep hsep"
+    "prog vsep tl    tl   tl";
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-panes {
+  /* The three panes and two seams inside become items of the grid above. */
+  display: contents;
+}
+.an-nle.an-ws-reel:not(.an-has-max) > .an-topbar {
+  grid-area: top;
+}
+.an-nle.an-ws-reel:not(.an-has-max) > .an-statusbar {
+  grid-area: stat;
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-pane-program {
+  grid-area: prog;
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-split-left {
+  grid-area: vsep;
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-pane-media {
+  grid-area: media;
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-split-right {
+  grid-area: rsep;
+}
+.an-nle.an-ws-reel:not(.an-has-max) .an-pane-props {
+  grid-area: props;
+}
+.an-nle.an-ws-reel:not(.an-has-max) > .an-split-timeline {
+  grid-area: hsep;
+}
+.an-nle.an-ws-reel:not(.an-has-max) > .an-pane-timeline {
+  grid-area: tl;
+}
+/* ⚠ THE FRAME CARDS ARE NOT LAID OUT HERE ANY MORE. This workspace used to
+   force them into a grid, because its Media pane is wide and a single column in
+   it wasted the room. That is now the user's call — the pane's own icon/list
+   switch, in the "Media pane: the two views" block above — and a workspace rule
+   would silently overrule the button they just pressed. Icon view is the
+   default, so this layout still opens as a grid; it can now be turned off. */
+
 /* --- Narrow screens ------------------------------------------------------ */
 /* Two stages, because dropping straight from three columns to one wastes a lot
-   of usable width in between. First the side panes give ground to the picture… */
+   of usable width in between. First the side panes give ground to the picture —
+   which is `pane_layout.js`'s job now: every default is a fraction of the window
+   with a floor and a ceiling, so the columns shrink with it and there is nothing
+   left to override here. A width you dragged is YOURS and is never rewritten by
+   a breakpoint; it is only clamped, at `paneLimits()`. */
 @media (max-width: 1400px) {
-  .an-panes {
-    grid-template-columns: 11rem minmax(0, 1fr) 15rem;
-  }
   .an-pane-props .opt-chip {
     font-size: 0.7rem;
     padding: 0.25rem 0.4rem;
@@ -497,20 +881,56 @@
   .shell:has(.an-nle) .an-nle {
     height: auto;
   }
-  .an-panes {
+  /* One column, and the seams go with it: there is nothing left to drag when
+     every pane is full width, and a row of handles between stacked panes would
+     resize the wrong thing. The sizes are kept, not forgotten — widen the window
+     and the panes come back as you left them. */
+  .an-panes,
+  .an-nle.an-ws-reel:not(.an-has-max) .an-panes {
+    display: grid;
     grid-template-columns: 1fr;
+    gap: var(--an-seam);
+  }
+  /* The reel workspace's full-height monitor needs a second column to be beside
+     anything, so at this width it gives up and stacks like everything else: back
+     to the flex column, and the named areas with it. `order` below is all that
+     survives of the layout — and it is the half that still means something in
+     one column, which is that the picture comes first. */
+  .an-nle.an-ws-reel:not(.an-has-max) {
+    display: flex;
+  }
+  .an-nle.an-ws-reel .an-pane-program {
+    order: -1;
+  }
+  .an-split {
+    display: none;
   }
   .an-pane-media,
   .an-pane-props {
     max-height: 22rem;
   }
+  /* Stacked, the reel layout still leads with the monitor — `order` is all that
+     is left of it, and it's the half that still means something in one column.
+     The frame cards keep whichever view is switched on: full width, icon view
+     simply fits more of them per row, which is what it is for. */
+  /* The top bar is tight at this width; the ⚙ still says which workspace it
+     opens. */
+  .an-ws-name {
+    display: none;
+  }
   .an-nle .an-screen {
     width: min(100%, 62vh);
     height: auto;
+    /* Back on: stacked, the pane's height is content-driven, so there is no
+       container height to fit against and a tall project would run off the
+       screen. */
+    max-height: 56vh;
   }
+  /* Stacked, the page scrolls, so a dragged height would only crop the lanes. */
   .an-pane-timeline {
     height: auto;
     min-height: 13.5rem;
+    margin-top: var(--an-seam);
   }
 }
 
@@ -569,19 +989,68 @@
   line-height: 1;
   padding: 0 0.15rem;
   flex-shrink: 0;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
 }
-/* A muted lane is dimmed rather than hidden — it's still part of the edit. */
-.tl-audio.muted {
-  opacity: 0.42;
+.tl-layer-mute:hover {
+  color: var(--text);
 }
+/* The eye on a row you can SEE — the same button in the same place as audio's
+   speaker, because it is the same idea. Drawn (`Icon`) rather than an emoji: 🔇
+   and 🔊 carry their own colour and cannot show "off" in the app's own accent.
+   `.on` is the OFF state of the ROW, which reads backwards written down and is
+   right on screen: the control is lit because it is doing something. */
+.tl-layer-mute .icon {
+  width: 0.95em;
+  height: 0.95em;
+}
+.tl-layer-mute.on {
+  color: var(--primary);
+}
+
+/* --- A row that is switched off ------------------------------------------ */
+/* ⚠ IT MUST STILL BE READABLE. A hidden row is one you are coming back to —
+   that is the whole difference between the eye and the ✕ — so this says "not in
+   the video" and stops there: no strike-through on the name, no collapsing, and
+   the clips keep their places so you can go on editing them while they are off.
+   Both halves of the row are dimmed, because the gutter and the track are the
+   same row and dimming one of them would read as a rendering fault. */
+.tl-gutter-row.off .tl-layer-name,
+.tl-gutter-row.off .tl-layer-ico {
+  opacity: 0.45;
+}
+.tl-lane.off {
+  opacity: 0.34;
+  /* Diagonal hatching, faint, so a row that is off is recognisable at a glance
+     from across the timeline rather than only by its eye. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 6px,
+    rgba(255, 255, 255, 0.05) 6px 12px
+  );
+}
+/* ⚠ "Muted" and "selected" moved onto the CLIP (`.tl-audio-clip` in
+   animatic-tools.css) when the razor learned to cut audio: a lane now holds
+   several clips of one track, and one of them can be the selection while the
+   others are not. Dimming or outlining the whole band would say the wrong thing
+   about all of them. */
 .tl-audio + .tl-audio {
   margin-top: var(--tl-row-gap);
+}
+/* The head of the layer column: as wide as the gutter under it, and a sibling
+   of `.tl-cols` rather than anything inside it — see the comment in
+   Timeline.jsx for why putting it in the gutter would break the alignment
+   between the labels and the tracks. */
+.tl-head {
+  flex: 0 0 auto;
+  width: var(--tl-gutter-w);
+  max-width: 100%;
 }
 .tl-add-layer {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  margin-top: var(--tl-row-gap);
   background: transparent;
   border: 1px dashed var(--border);
   border-radius: 6px;
@@ -679,10 +1148,6 @@
 .an-media-track.sel {
   border-color: var(--primary);
   box-shadow: inset 0 0 0 1px var(--primary);
-}
-.tl-audio.sel {
-  outline: 1px solid var(--primary);
-  outline-offset: -1px;
 }
 .an-media-track {
   display: flex;

@@ -816,6 +816,75 @@ export function voiceAnimatic(id, { voice, frameIds, addCaptions, replace } = {}
   });
 }
 
+// --- Reaching back to the BOARD from inside the editor (Phase 7) ------------
+// ⚠ An animatic frame is a REFERENCE to a storyboard panel, never a copy of one,
+// so redrawing the panel updates the animatic with nothing to re-import. These
+// four calls are what let the editor ask for that without leaving the timeline.
+
+// Free. The board panel behind one clip — its wording, and whether it can be
+// re-drawn at all (an uploaded still and a video clip cannot).
+export function getFramePanel(id, frameId) {
+  return request(`/animatics/${id}/frames/${frameId}/panel`);
+}
+
+// SPENDS QUOTA. Re-draws that panel. Synchronous — one image, so there is no
+// job to poll.
+//
+// ⚠ RETURNS THE FRAME, and its `url` carries a NEW `?v=`. That is the point:
+// every picture here is an authed blob cached BY URL, so the caller re-fetches
+// this one url and the shot updates everywhere at once. Throwing the response
+// away and re-reading the project works too, but re-downloads the whole board.
+export function regenerateFramePanel(id, frameId, overrides = {}) {
+  return request(`/animatics/${id}/frames/${frameId}/panel`, {
+    method: "POST",
+    body: {
+      description: overrides.description ?? null,
+      camera: overrides.camera ?? null,
+      location: overrides.location ?? null,
+    },
+  });
+}
+
+// Free. The key poses of the shot behind this clip, counted off disk — what to
+// read after a re-block finishes to find out how many poses the shot now has.
+export function getFrameSequence(id, frameId) {
+  return request(`/animatics/${id}/frames/${frameId}/sequence`);
+}
+
+// SPENDS QUOTA. Re-blocks the shot at a new length ("make this shot 2s longer").
+// Async, and ⚠ the job it returns is the STORYBOARD's, not this animatic's —
+// the drawings belong to the board. Poll getJob(res.job_id).
+//
+// It RESUMES: the poses already drawn are kept and only the new tail is bought.
+export function relengthFrameSequence(id, frameId, durationSeconds) {
+  return request(`/animatics/${id}/frames/${frameId}/sequence`, {
+    method: "POST",
+    body: { duration_seconds: durationSeconds },
+  });
+}
+
+// --- Auto-reframe -----------------------------------------------------------
+// One vision call per shot says where the subject is; the server turns that into
+// the ordinary `scale`/`x`/`y` a frame already has. Same estimate/run pair as
+// every other paid path here.
+
+// Free. What re-framing these shots would cost.
+export function estimateReframe(id, { frameIds, aspectRatio } = {}) {
+  return request(`/animatics/${id}/reframe/estimate`, {
+    method: "POST",
+    body: { frame_ids: frameIds || [], aspect_ratio: aspectRatio || "" },
+  });
+}
+
+// SPENDS QUOTA. Frames each shot for a new shape, async — poll getJob(id), then
+// re-read the project: the values are written server-side onto the frames.
+export function reframeAnimatic(id, { frameIds, aspectRatio } = {}) {
+  return request(`/animatics/${id}/reframe`, {
+    method: "POST",
+    body: { frame_ids: frameIds || [], aspect_ratio: aspectRatio || "" },
+  });
+}
+
 // Encode the MP4 (async — poll getJob(id) for progress, same as a board).
 export function exportAnimatic(id) {
   return request(`/animatics/${id}/export`, { method: "POST" });
@@ -827,9 +896,19 @@ export function stopAnimaticExport(id) {
 // Frames and audio live behind the bearer token, so an <img>/<audio> src can't
 // point straight at them — fetch as a blob and hand back an object URL. The
 // CALLER owns the URL and must revoke it.
-export async function fetchAnimaticMedia(path) {
+//
+// `maxEdge` asks the server for a PROXY: the same picture, losslessly resized
+// so its long edge is at most that many pixels. The editor holds every frame of
+// a board in memory at once to draw a monitor a few hundred pixels wide, and a
+// 1920px PNG per clip is most of that memory and most of the wait on open. The
+// server falls back to the source for any picture it can't proxy, so this is
+// only ever a size hint. Omit it and nothing changes — which is what every
+// other caller (uploads, audio, final-video stills) does.
+export async function fetchAnimaticMedia(path, maxEdge = 0) {
   const token = getToken();
-  const res = await fetch(`${BASE}${path}`, {
+  let rel = path;
+  if (maxEdge > 0) rel += `${rel.includes("?") ? "&" : "?"}w=${Math.round(maxEdge)}`;
+  const res = await fetch(`${BASE}${rel}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error("Media not available");

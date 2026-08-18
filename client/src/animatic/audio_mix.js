@@ -57,13 +57,30 @@ export const DUCK_ATTACK_MS = 20;
 export const DUCK_RELEASE_MS = 400;
 
 /**
+ * Where on the TIMELINE this clip begins.
+ *
+ * 0 for anything that predates the razor being able to cut audio, which is what
+ * makes those projects mix exactly as they always did.
+ *
+ * ⚠ TWIN of `track_start_ms` in `animatic.py`.
+ */
+export function trackStartMs(track) {
+  return Math.max(0, Math.round(track?.start_ms || 0));
+}
+
+/**
  * How long a track is HEARD for, in milliseconds.
  *
  * Its trim if it has one, otherwise what is left of the file after `offset_ms`
- * — and never longer than the video, because the export is cut there and a fade
- * placed past that is a fade nobody hears.
+ * — and never longer than the room the video leaves AFTER the clip starts,
+ * because the export is cut there and a fade placed past that is a fade nobody
+ * hears.
  */
 export function trackPlayMs(track, totalMs = 0) {
+  const start = trackStartMs(track);
+  // What is left of the video once this clip has waited its turn. A clip
+  // sitting entirely past the end of the video is heard for nothing at all.
+  const room = totalMs ? Math.max(0, Math.round(totalMs) - start) : 0;
   const trim = Math.round(track.trim_ms || 0);
   let play;
   if (trim > 0) {
@@ -72,9 +89,24 @@ export function trackPlayMs(track, totalMs = 0) {
     const duration = Math.round(track.duration_ms || 0);
     play = duration ? Math.max(0, duration - Math.max(0, Math.round(track.offset_ms || 0))) : 0;
   }
-  if (play <= 0) play = Math.max(0, Math.round(totalMs || 0));
-  if (totalMs) play = Math.min(play, Math.round(totalMs));
+  if (play <= 0) play = room;
+  if (totalMs) play = Math.min(play, room);
   return play;
+}
+
+/**
+ * `{ startMs, endMs, playMs }` — the stretch of TIMELINE this clip occupies.
+ *
+ * Editor-side convenience; the exporter has no counterpart and needs none,
+ * because ffmpeg is told where the clip goes with one `adelay` rather than
+ * asked "is it audible at t". Everything that has to know whether a clip is
+ * under the playhead — the mixer, the razor, the drag — reads it from here, so
+ * there is one answer rather than four.
+ */
+export function trackWindow(track, totalMs = 0) {
+  const startMs = trackStartMs(track);
+  const playMs = trackPlayMs(track, totalMs);
+  return { startMs, endMs: startMs + playMs, playMs };
 }
 
 /**

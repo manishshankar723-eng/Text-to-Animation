@@ -49,6 +49,17 @@ export default function ProgramCanvas({
   const mediaRef = useRef(new Map()); // url → the <img> / <video> element
   const [ready, setReady] = useState(0); // bumped when a picture finishes loading
   const [luts, setLuts] = useState(() => new Map());
+  // The canvas's CSS box, as last drawn at.
+  //
+  // ⚠ THIS IS WHAT STOPS THE PICTURE STRETCHING. The backing store is sized
+  // inside the draw effect, so until something re-ran that effect a canvas
+  // whose BOX had changed kept its old pixels and the browser scaled them into
+  // the new shape — a 16:9 composite squashed into a 9:16 monitor. Changing the
+  // aspect ratio did exactly that, and the only way out was to nudge some
+  // unrelated property (Scale, say) until the scene changed and the effect ran
+  // again, which read like "the picture is broken until you retype a number".
+  // Dragging a pane seam or resizing the window had the same fault.
+  const [canvasBox, setCanvasBox] = useState({ w: 0, h: 0 });
 
   const pictures = useMemo(
     () => [scene.frame, scene.frame_b].filter(Boolean),
@@ -134,6 +145,45 @@ export default function ProgramCanvas({
       compositorRef.current = null;
     };
   }, [onUnavailable]);
+
+  // --- The box -------------------------------------------------------------
+  // Watches the canvas itself rather than listening for the things that resize
+  // it: the aspect ratio, a pane seam, the window, ~ maximizing a pane and the
+  // stacked layout below 1180px all end in the same place, and an observer
+  // cannot miss one of them the way a list of callers can.
+  //
+  // Two guards keep a drag cheap. Measuring is coalesced to one animation frame
+  // — a seam drag fires the observer far faster than there is any point
+  // redrawing — and a size that rounds to the same whole pixels returns the
+  // SAME state object, so React bails out and nothing redraws at all.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const measure = () => {
+      const rect = canvas.getBoundingClientRect();
+      setCanvasBox((current) =>
+        Math.round(current.w) === Math.round(rect.width) &&
+        Math.round(current.h) === Math.round(rect.height)
+          ? current
+          : { w: rect.width, h: rect.height }
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    let pending = 0;
+    const ro = new ResizeObserver(() => {
+      if (pending) return;
+      pending = requestAnimationFrame(() => {
+        pending = 0;
+        measure();
+      });
+    });
+    ro.observe(canvas);
+    return () => {
+      if (pending) cancelAnimationFrame(pending);
+      ro.disconnect();
+    };
+  }, []);
 
   // --- The frame -----------------------------------------------------------
   // Runs on every scene change, which is every playhead move — the transport
@@ -301,7 +351,23 @@ export default function ProgramCanvas({
     }
 
     compositor.end();
-  }, [scene, frames, settings.fit, settings.background, luts, ready, sources]);
+    // ⚠ `settings.aspect_ratio` is in here even though nothing above reads it,
+    // and `canvasBox` is not enough on its own: the observer reports a frame
+    // LATER, so on it alone every change of shape would paint the old picture
+    // stretched into the new box first. Named here, the redraw belongs to the
+    // commit that reshaped it — at worst one frame, instead of until the next
+    // unrelated edit, which is what it used to be.
+  }, [
+    scene,
+    frames,
+    settings.fit,
+    settings.background,
+    settings.aspect_ratio,
+    canvasBox,
+    luts,
+    ready,
+    sources,
+  ]);
 
   return (
     <>

@@ -413,6 +413,31 @@ export function clipKind(clip) {
 }
 
 /**
+ * WHERE A CLIP CAME FROM — "board" | "video" | "image".
+ *
+ * ⚠ ORIGIN, NOT KIND, and everything about how the picture track is PRESENTED
+ * hangs off the difference. The Media pane lists the sequence in three sections
+ * and the timeline draws it as two rows, and the question all of them are asking
+ * is "where did this come from?", never "what is it now" — because animating a
+ * storyboard shot with Veo turns it into a video clip (`attachVeoClip`), and a
+ * board shot must not walk out of Storyboard Frames, or off the row its
+ * neighbours are on, because it learned to move. So the board reference is tested
+ * FIRST and the video test only catches files the user dropped in.
+ *
+ * A colour card counts as an image: no file, but it is a still you made by hand,
+ * and a section of its own for two black slugs would be noise.
+ *
+ * ⚠ PRESENTATION ONLY. Nothing here changes what is drawn or exported — `frames`
+ * is one sequence played in order and stays that way. See `clipKind` for the
+ * question the RENDERERS ask.
+ */
+export function frameOrigin(frame) {
+  if (frame?.src?.storyboard_id) return "board";
+  if (clipKind(frame) === "video") return "video";
+  return "image";
+}
+
+/**
  * WHICH MOMENT OF THE SOURCE FILE a video clip is showing, in ms.
  *
  * Null for anything that isn't video — a still and a colour card have no source

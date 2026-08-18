@@ -380,9 +380,11 @@ check("a caption past the end of the video is cut, not left hanging",
       all(l["end_ms"] <= 3000 for l in clipped))
 check("captions.tidy_lines survives an empty transcript", captions.tidy_lines([]) == [])
 
-clips = captions.caption_clips(lines)
+clips = captions.caption_clips(lines, layer_id=captions.CAPTION_LAYER_ID)
 check("every generated clip parses as an ordinary caption",
       all(AnimaticTextClip(**c).text for c in clips))
+check("...and lands on the captions LANE, not on the text the user typed",
+      all(c["layer_id"] == captions.CAPTION_LAYER_ID for c in clips))
 check("...and is marked as generated ONLY by its id, so a re-run replaces them",
       all(c["id"].startswith(captions.CAPTION_ID_PREFIX) for c in clips))
 check("generated ids are unique", len({c["id"] for c in clips}) == len(clips))
@@ -395,6 +397,490 @@ quote = captions.estimate(90_000)
 check("the estimate prices by the audio's length", quote["seconds"] == 90.0 and quote["usd"] > 0)
 check("an over-long track is flagged rather than quietly accepted",
       captions.estimate(int(captions.MAX_AUDIO_SECONDS * 1000) + 60_000)["over_limit"])
+
+
+# ---------------------------------------------------------------------------
+# 4b. Captions THROUGH THE CUTS — captions.clip_lines
+# ---------------------------------------------------------------------------
+# ⚠ THE PART THAT WAS WRONG, and it was wrong in the way that is hardest to see:
+# the captions looked fine on an uncut track. The model transcribes the FILE; the
+# timeline holds CLIPS cut out of it. Cut the pause out of the middle of a take
+# and every word after the cut is heard EARLIER than the transcript says, while
+# the words in the pause are not heard at all.
+print("\nCaptions through the razor — captions.clip_lines\n")
+
+# One recording, three things said, one second apart.
+SAID = [
+    {"start_ms": 1000, "end_ms": 2000, "text": "First thing."},
+    {"start_ms": 3000, "end_ms": 4000, "text": "Second thing."},
+    {"start_ms": 5000, "end_ms": 6000, "text": "Third thing."},
+]
+
+# The whole file, laid at 0:00 and uncut: the identity case. Nothing may move.
+whole = captions.clip_lines(SAID, [{"start_ms": 0, "offset_ms": 0, "play_ms": 7000}])
+check("an uncut track at 0:00 leaves every caption exactly where it was said",
+      [(l["start_ms"], l["end_ms"], l["text"]) for l in whole]
+      == [(l["start_ms"], l["end_ms"], l["text"]) for l in SAID],
+      f"\n    {whole}")
+
+# The same file dropped at 0:10 on the timeline.
+moved = captions.clip_lines(SAID, [{"start_ms": 10_000, "offset_ms": 0, "play_ms": 7000}])
+check("a track moved down the timeline takes its captions with it",
+      [l["start_ms"] for l in moved] == [11_000, 13_000, 15_000],
+      f"({[l['start_ms'] for l in moved]})")
+
+# THE CUT-OUT MIDDLE. Two clips: 0–2.5s of the file at 0:00, then the file from
+# 4.5s butted straight onto it — the second thing said has been cut out, and the
+# third is now heard 2 seconds earlier than it was recorded.
+CUT = [
+    {"start_ms": 0, "offset_ms": 0, "play_ms": 2500},
+    {"start_ms": 2500, "offset_ms": 4500, "play_ms": 2500},
+]
+cut = captions.clip_lines(SAID, CUT)
+check("a line whose audio was CUT OUT gets no caption at all",
+      not any("Second" in l["text"] for l in cut),
+      f"\n    {[l['text'] for l in cut]}")
+check("...and the lines that survive are timed where they are now HEARD",
+      [(l["start_ms"], l["text"]) for l in cut] == [(1000, "First thing."), (3000, "Third thing.")],
+      f"\n    {[(l['start_ms'], l['text']) for l in cut]}")
+
+# THE HEAD OF THE FILE TRIMMED OFF — the case that was silently right before,
+# because it needs only one of the two shifts.
+head = captions.clip_lines(SAID, [{"start_ms": 0, "offset_ms": 2500, "play_ms": 4000}])
+check("trimming the head of a track moves the rest of the captions earlier",
+      [(l["start_ms"], l["text"]) for l in head] == [(500, "Second thing."), (2500, "Third thing.")],
+      f"\n    {[(l['start_ms'], l['text']) for l in head]}")
+check("...and drops what was said before the trim", len(head) == 2)
+
+# THE TAIL TRIMMED OFF.
+tail = captions.clip_lines(SAID, [{"start_ms": 0, "offset_ms": 0, "play_ms": 4200}])
+check("trimming the tail of a track drops the captions past the new end",
+      [l["text"] for l in tail] == ["First thing.", "Second thing."],
+      f"\n    {[l['text'] for l in tail]}")
+
+# A CUT THROUGH THE MIDDLE OF A SENTENCE. Only the words actually heard on each
+# side may be written — the rest of the line was cut out with its audio.
+LONG = [{"start_ms": 0, "end_ms": 4000,
+         "text": "one two three four five six seven eight"}]
+halves = captions.clip_lines(LONG, [
+    {"start_ms": 0, "offset_ms": 0, "play_ms": 2000},
+    {"start_ms": 9000, "offset_ms": 2000, "play_ms": 2000},
+])
+check("a line cut in two is written as two, one per piece", len(halves) == 2,
+      f"\n    {halves}")
+check("...each carrying only the words heard in that piece",
+      halves[0]["text"].startswith("one") and halves[0]["text"].endswith("four")
+      and halves[1]["text"].startswith("five") and halves[1]["text"].endswith("eight"),
+      f"\n    {[h['text'] for h in halves]}")
+check("...and no word is written twice",
+      sorted((halves[0]["text"] + " " + halves[1]["text"]).split())
+      == sorted(LONG[0]["text"].split()),
+      f"\n    {[h['text'] for h in halves]}")
+check("...with the second half timed where its clip actually plays",
+      halves[1]["start_ms"] == 9000, f"({halves[1]['start_ms']})")
+
+# A cut that leaves a few milliseconds of a line behind is not a subtitle.
+sliver = captions.clip_lines(SAID, [
+    {"start_ms": 0, "offset_ms": 0, "play_ms": 1050},   # 50ms of "First thing."
+    {"start_ms": 1000, "offset_ms": 3000, "play_ms": 1000},
+])
+check("a sliver of a line left behind by a cut is dropped, not flashed",
+      [l["text"] for l in sliver] == ["Second thing."],
+      f"\n    {[l['text'] for l in sliver]}")
+# …but a line that is genuinely short and NOT cut is never dropped by that rule.
+short = captions.clip_lines(
+    [{"start_ms": 0, "end_ms": 90, "text": "No."}],
+    [{"start_ms": 0, "offset_ms": 0, "play_ms": 5000}],
+)
+check("a genuinely short line that was not cut still gets its caption",
+      [l["text"] for l in short] == ["No."])
+
+check("clip_lines survives a track with no clips left", captions.clip_lines(SAID, []) == [])
+check("clip_lines survives an empty transcript", captions.clip_lines([], CUT) == [])
+check("captions come back in timeline order, whatever order the clips are in",
+      [l["start_ms"] for l in captions.clip_lines(SAID, list(reversed(CUT)))] == [1000, 3000])
+
+# The rules that make a transcript safe to draw still apply on top, and the
+# result of the two together is what actually gets written.
+drawn = captions.tidy_lines(cut, total_ms=10_000)
+check("cut captions still never overlap once tidied",
+      all(a["end_ms"] <= b["start_ms"] for a, b in zip(drawn, drawn[1:])),
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in drawn]}")
+
+
+# ---------------------------------------------------------------------------
+# 4c. Captions ON THE WAVEFORM — speech_spans / align_lines
+# ---------------------------------------------------------------------------
+# ⚠ THE USER-REPORTED BUG, and it is the one the other two sections cannot see:
+# "the caption generates fine but it shows after the voiceover has said it."
+# `clip_lines` and `tidy_lines` were both correct — they were faithfully placing
+# times that were wrong to begin with. The model's WORDS are excellent and its
+# TIMES are a guess, so the times are recomputed against the sound MEASURED in
+# the file: the same waveform drawn on the timeline the user is checking against.
+#
+# Driven through a STUB ENVELOPE, so the whole thing is proven with no ffmpeg on
+# the box and nothing spent. `peak_envelope` (the ffmpeg half) is exercised
+# against a real generated WAV at the bottom of this section when ffmpeg is
+# there, and skipped with a note when it isn't.
+print("\nCaptions on the waveform — captions.spans_from_envelope / align_lines\n")
+
+# --- The measurement ----------------------------------------------------------
+# An envelope is one PEAK per 20ms window, 0…1 — the same quantity
+# `beats.js::peaksOf` draws the timeline's waveform from, which is the whole
+# point: a run of sound found here is a block of sound the user can SEE.
+W = captions.ENVELOPE_WINDOW_MS
+
+
+def make_envelope(blocks, level=0.8, floor=0.0):
+    """`[(is_sound, ms), …]` → an envelope. `floor` is the track's noise floor,
+    so a track with hiss in its silences can be built as easily as a clean one."""
+    out = []
+    for sound, ms in blocks:
+        out.extend([level if sound else floor] * max(1, round(ms / W)))
+    return out
+
+
+# 0–2s sound, 2–3s silence, 3–6s sound, 6–7s silence, 7–8s sound.
+ENV = make_envelope([(1, 2000), (0, 1000), (1, 3000), (0, 1000), (1, 1000)])
+spans = captions.spans_from_envelope(ENV)
+check("the blocks of sound in the envelope become the runs of sound",
+      [(s["start_ms"], s["end_ms"]) for s in spans] == [(0, 2000), (3000, 6000), (7000, 8000)],
+      f"\n    {spans}")
+check("a track with no silence at all is one run of sound",
+      [(s["start_ms"], s["end_ms"]) for s in
+       captions.spans_from_envelope(make_envelope([(1, 8000)]))] == [(0, 8000)])
+check("a track that starts with silence doesn't get a run of sound before it",
+      [(s["start_ms"], s["end_ms"]) for s in
+       captions.spans_from_envelope(make_envelope([(0, 1240), (1, 6760)]))]
+      == [(1240, 8000)])
+check("a track that is entirely silent has no runs at all",
+      captions.spans_from_envelope([0.0] * 400) == [])
+check("spans_from_envelope survives an empty envelope",
+      captions.spans_from_envelope([]) == [])
+
+# ⚠ THE THRESHOLD IS RELATIVE TO THE TRACK, and this is the check that proves it.
+# The same shape of audio with a noise floor at 0.05 — a compressed upload, a
+# room mic — must give the SAME runs. A fixed dBFS threshold (what
+# `silencedetect` uses, and what this replaced) hears that floor as speech and
+# returns one run covering everything.
+NOISY = make_envelope([(1, 2000), (0, 1000), (1, 3000), (0, 1000), (1, 1000)],
+                      level=0.8, floor=0.05)
+check("A TRACK WITH A NOISE FLOOR GIVES THE SAME RUNS AS A CLEAN ONE",
+      [(s["start_ms"], s["end_ms"]) for s in captions.spans_from_envelope(NOISY)]
+      == [(0, 2000), (3000, 6000), (7000, 8000)],
+      f"\n    {captions.spans_from_envelope(NOISY)}")
+# …and a quietly-spoken passage is still speech, not silence.
+SOFT = make_envelope([(1, 2000), (0, 1000), (1, 3000)], level=0.12)
+check("a quietly spoken track is not mistaken for silence",
+      [(s["start_ms"], s["end_ms"]) for s in captions.spans_from_envelope(SOFT)]
+      == [(0, 2000), (3000, 6000)],
+      f"\n    {captions.spans_from_envelope(SOFT)}")
+
+# The two clean-ups, and they pull in opposite directions.
+STOPPED = make_envelope([(1, 1000), (0, 60), (1, 1000)])
+check("a gap too short to be a pause is the stop inside a word, not a boundary",
+      [(s["start_ms"], s["end_ms"]) for s in captions.spans_from_envelope(STOPPED)]
+      == [(0, 2060)],
+      f"\n    {captions.spans_from_envelope(STOPPED)}")
+CLICK = make_envelope([(1, 2000), (0, 1000), (1, 60), (0, 1000), (1, 2000)])
+check("a blip of sound too short to be speech is not a run",
+      [(s["start_ms"], s["end_ms"]) for s in captions.spans_from_envelope(CLICK)]
+      == [(0, 2000), (4060, 6060)],
+      f"\n    {captions.spans_from_envelope(CLICK)}")
+
+# --- The alignment ------------------------------------------------------------
+# THREE THINGS SAID, each in its own run of sound, with character counts in the
+# same 2:3:1 ratio as the runs are long. A perfect alignment therefore has ONE
+# answer that can be written down — which is what makes this a real test rather
+# than a plausibility check.
+SPOKEN = [
+    {"start_ms": 0, "end_ms": 2000, "text": "Perfectly sized line"},          # 20 chars
+    {"start_ms": 3000, "end_ms": 6000, "text": "A slightly longer line of text"},  # 30
+    {"start_ms": 7000, "end_ms": 8000, "text": "Last bits."},                  # 10
+]
+check("the fixture really is proportional, or the check below proves nothing",
+      [len(l["text"]) for l in SPOKEN] == [20, 30, 10])
+
+# What the model hands back: the right words, and times that are late and
+# invented — a pause it did not hear, a sentence it thought ran on. This is the
+# shape of the real complaint, exaggerated so a failure is unmistakable.
+DRIFTED = [
+    {"start_ms": 900, "end_ms": 2600, "text": SPOKEN[0]["text"]},
+    {"start_ms": 4200, "end_ms": 6400, "text": SPOKEN[1]["text"]},
+    {"start_ms": 7900, "end_ms": 8000, "text": SPOKEN[2]["text"]},
+]
+
+aligned = captions.align_lines(DRIFTED, spans, total_ms=8000)
+check("every word the model heard is still there, in order",
+      [l["text"] for l in aligned] == [l["text"] for l in SPOKEN],
+      f"\n    {[l['text'] for l in aligned]}")
+check("EVERY CAPTION LANDS ON THE SOUND IT BELONGS TO, not where the model guessed",
+      [(l["start_ms"], l["end_ms"]) for l in aligned]
+      == [(l["start_ms"], l["end_ms"]) for l in SPOKEN],
+      f"\n    got    {[(l['start_ms'], l['end_ms']) for l in aligned]}"
+      f"\n    wanted {[(l['start_ms'], l['end_ms']) for l in SPOKEN]}")
+check("NO CAPTION IS LATE — none starts after the words were actually said",
+      all(a["start_ms"] <= s["start_ms"] + 1 for a, s in zip(aligned, SPOKEN)),
+      f"\n    {[a['start_ms'] - s['start_ms'] for a, s in zip(aligned, SPOKEN)]}")
+# The reported symptom in its own words: the voiceover plays, and the caption
+# turns up afterwards. Measured against the drifted input it replaces.
+check("...and it is an improvement on the model's own times, line for line",
+      all(abs(a["start_ms"] - s["start_ms"]) <= abs(d["start_ms"] - s["start_ms"])
+          for a, d, s in zip(aligned, DRIFTED, SPOKEN)))
+
+# --- THE TWO INVARIANTS THE USER ACTUALLY JUDGES THIS BY ----------------------
+# ⚠ THE SECOND REPORT, in the user's own words: *"there is blank space, the
+# caption starts blank — I want each wave's start to the end to be the caption
+# box, not placed before the voiceover wave."* Sharing the time out globally and
+# nudging edges toward a nearby run (the first attempt) still left a box opening
+# in a silence whenever the nudge could not reach that far. Dealing the lines
+# into the runs and filling each run exactly is what makes these two true by
+# construction rather than by luck, so they are checked on EVERY fixture below,
+# not just the tidy one.
+def in_a_run(ms, runs):
+    return any(r["start_ms"] <= ms < r["end_ms"] for r in runs)
+
+
+def covers_runs(placed, runs):
+    """Every run of sound is opened by a caption and closed by one."""
+    return all(
+        any(l["start_ms"] == r["start_ms"] for l in placed)
+        and any(l["end_ms"] >= r["end_ms"] for l in placed)
+        for r in runs
+    )
+
+
+check("NO CAPTION STARTS IN A SILENCE — no box opens with blank space",
+      all(in_a_run(l["start_ms"], spans) for l in aligned),
+      f"\n    starts {[l['start_ms'] for l in aligned]} in {spans}")
+check("EVERY RUN OF SOUND IS COVERED FROM ITS FIRST MS TO ITS LAST",
+      covers_runs(aligned, spans),
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in aligned]} over {spans}")
+check("a caption ends when its sound stops, not when the next sound starts",
+      aligned[0]["end_ms"] == 2000, f"({aligned[0]['end_ms']})")
+
+# --- MORE LINES THAN RUNS: the ordinary case, and the one that used to drift ---
+# Nine short lines over three runs of sound. The lines cannot each own a run, so
+# they share — and the first line of each run must still open exactly on it.
+MANY = [
+    {"start_ms": i * 700, "end_ms": i * 700 + 600, "text": f"Sentence number {i} here"}
+    for i in range(9)
+]
+many = captions.align_lines(MANY, spans, total_ms=8000)
+check("with more lines than runs, every line still lands inside sound",
+      all(in_a_run(l["start_ms"], spans) for l in many),
+      f"\n    {[l['start_ms'] for l in many]}")
+check("...and each run is still opened and closed exactly", covers_runs(many, spans),
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in many]}")
+check("...and no line is lost", len(many) == len(MANY), f"(got {len(many)})")
+check("...and they stay in the order they were said",
+      [l["text"] for l in many] == [l["text"] for l in MANY])
+check("...and the boxes butt up inside a run, leaving the gaps at the SILENCES",
+      all(a["end_ms"] == b["start_ms"] or not in_a_run(a["end_ms"], spans)
+          for a, b in zip(many, many[1:])),
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in many]}")
+
+# --- FEWER LINES THAN RUNS: sound with no line of its own ---------------------
+# One long line over three runs. The sound must not be left bare, and the
+# caption must still not start before its wave.
+FEW = [{"start_ms": 0, "end_ms": 8000, "text": "One long unbroken sentence"}]
+few = captions.align_lines(FEW, spans, total_ms=8000)
+check("a run with no line of its own is HELD by the caption already on screen",
+      len(few) == 1 and few[0]["start_ms"] == 0 and few[0]["end_ms"] == 8000,
+      f"\n    {few}")
+
+# --- A LINE THAT STARTS LATE IN THE FILE --------------------------------------
+# Nothing is said for the first four seconds. The caption must open on the sound
+# at 4s — not at 0, which is the "box before the wave" failure in its purest form.
+LATE_SPANS = captions.spans_from_envelope(make_envelope([(0, 4000), (1, 4000)]))
+late = captions.align_lines(
+    [{"start_ms": 0, "end_ms": 2000, "text": "Said only at the end"}],
+    LATE_SPANS, total_ms=8000,
+)
+check("A TRACK THAT IS SILENT AT THE HEAD GETS NO CAPTION OVER THE SILENCE",
+      late[0]["start_ms"] == 4000 and late[0]["end_ms"] == 8000,
+      f"\n    {late} over {LATE_SPANS}")
+
+# --- It declines to guess -----------------------------------------------------
+# ⚠ THE FALLBACK IS THE OLD BEHAVIOUR. A measurement that fails must leave the
+# captions exactly where they were, never somewhere worse.
+check("with nothing measured, the model's own times come back untouched",
+      [(l["start_ms"], l["end_ms"]) for l in captions.align_lines(DRIFTED, [], total_ms=8000)]
+      == [(l["start_ms"], l["end_ms"]) for l in DRIFTED])
+tiny = [{"start_ms": 0, "end_ms": 300}]
+check("a measurement that found almost no sound is disbelieved, not obeyed",
+      [(l["start_ms"], l["end_ms"]) for l in captions.align_lines(DRIFTED, tiny, total_ms=8000)]
+      == [(l["start_ms"], l["end_ms"]) for l in DRIFTED],
+      "(0.3s of sound in an 8s track is a failed detection, not a quiet track)")
+check("align_lines survives an empty transcript", captions.align_lines([], spans) == [])
+check("align_lines survives a transcript of blank lines",
+      captions.align_lines([{"start_ms": 0, "end_ms": 1, "text": "  "}], spans) == [])
+check("no aligned caption runs past the end of the file",
+      all(l["end_ms"] <= 8000 for l in aligned))
+
+# And the result still has to survive the rules that make it safe to draw.
+drawn = captions.tidy_lines(aligned, total_ms=8000)
+check("aligned captions still never overlap once tidied",
+      all(a["end_ms"] <= b["start_ms"] for a, b in zip(drawn, drawn[1:])),
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in drawn]}")
+check("...and tidying does not undo the alignment by pushing them late",
+      [l["start_ms"] for l in drawn] == [l["start_ms"] for l in aligned],
+      f"\n    {[l['start_ms'] for l in drawn]} vs {[l['start_ms'] for l in aligned]}")
+
+# --- The ffmpeg half, against REAL audio --------------------------------------
+# Everything above is the pure arithmetic driven by a stub envelope. This is the
+# one check that the ffmpeg decode actually produces such an envelope from a real
+# file — without it, the whole section could pass against a measurement that
+# never works. Skipped with a note (not a pass) where there is no ffmpeg.
+try:
+    import animatic as _animatic
+
+    _have_ffmpeg = _animatic.ffmpeg_available()
+except Exception:  # noqa: BLE001
+    _have_ffmpeg = False
+
+if not _have_ffmpeg:
+    print("  ---- no ffmpeg on PATH — the decode half of the measurement is UNCHECKED.")
+    print("       The alignment arithmetic above is still proven; what is not is")
+    print("       that a real file turns into an envelope at all.")
+else:
+    import math
+    import struct
+
+    def tone_wav(blocks, path, hz=24_000):
+        """A WAV of alternating tone and digital silence: `[(is_sound, ms), …]`."""
+        pcm = bytearray()
+        phase = 0
+        for sound, ms in blocks:
+            for _ in range(int(hz * ms / 1000)):
+                pcm += struct.pack(
+                    "<h", int(12000 * math.sin(2 * math.pi * 220 * phase / hz)) if sound else 0
+                )
+                phase += 1
+        with wave.open(path, "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(hz)
+            out.writeframes(bytes(pcm))
+
+    tmp = tempfile.mkdtemp(prefix="captions_wav_")
+    try:
+        probe = os.path.join(tmp, "probe.wav")
+        tone_wav([(1, 2000), (0, 1000), (1, 3000), (0, 1000), (1, 1000)], probe)
+        real = captions.speech_spans(probe, 8000)
+        check("A REAL FILE MEASURES INTO THE RUNS OF SOUND IT ACTUALLY CONTAINS",
+              [(s["start_ms"], s["end_ms"]) for s in real]
+              == [(0, 2000), (3000, 6000), (7000, 8000)],
+              f"\n    {real}")
+        check("...and the envelope is one peak per window, in 0…1",
+              (lambda e: e and len(e) > 300 and max(e) <= 1.0 and min(e) >= 0.0)(
+                  captions.peak_envelope(probe)))
+        check("a file that isn't audio measures as nothing, rather than raising",
+              captions.speech_spans(os.path.join(tmp, "not-here.wav"), 8000) == [])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# 4d. A caption is never LATE — tidy_lines rule 2
+# ---------------------------------------------------------------------------
+# The second half of the same report, and the half that is pure arithmetic. A
+# start is WHEN THE WORD IS SAID; an end is only how long the line has been left
+# up. So two captions colliding are separated by shortening the EARLIER one, and
+# the later one keeps the start it was measured at. Doing it the other way round
+# (which it did) delayed every caption after the first by GAP_MS for nothing.
+print("\nA caption is never late — captions.tidy_lines rule 2\n")
+
+# A transcript with no gaps in it at all — what a model returns for continuous
+# narration, and the case where every line collides with the one before it.
+BUTTED = [
+    {"start_ms": i * 1500, "end_ms": (i + 1) * 1500,
+     "text": f"Line number {i} with a fair few words in it"}
+    for i in range(8)
+]
+butted = captions.tidy_lines(BUTTED, total_ms=20_000)
+check("EVERY CAPTION KEEPS THE START IT WAS MEASURED AT",
+      [l["start_ms"] for l in butted] == [l["start_ms"] for l in BUTTED],
+      f"\n    got    {[l['start_ms'] for l in butted]}"
+      f"\n    wanted {[l['start_ms'] for l in BUTTED]}")
+check("...and the room between them is taken off the line in front",
+      all(b["start_ms"] - a["end_ms"] == captions.GAP_MS for a, b in zip(butted, butted[1:])),
+      f"\n    {[b['start_ms'] - a['end_ms'] for a, b in zip(butted, butted[1:])]}")
+check("...so no two are ever on screen at once",
+      all(a["end_ms"] <= b["start_ms"] for a, b in zip(butted, butted[1:])))
+
+# The exception, and the reason it is an exception: a line with nothing left to
+# give is not squeezed into a blink. Two words 200ms apart — shortening the first
+# would leave it below MIN_HOLD_MS, so the second moves instead.
+CRAMMED = [
+    {"start_ms": 0, "end_ms": 5000, "text": "A long line that is about to be interrupted"},
+    {"start_ms": 200, "end_ms": 900, "text": "Interruption"},
+]
+crammed = captions.tidy_lines(CRAMMED, total_ms=10_000)
+check("a caption that would be trimmed to a blink is not trimmed — the next one moves",
+      crammed[0]["end_ms"] - crammed[0]["start_ms"] >= captions.MIN_HOLD_MS
+      and crammed[1]["start_ms"] > CRAMMED[1]["start_ms"],
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in crammed]}")
+check("...and they still don't overlap",
+      crammed[0]["end_ms"] <= crammed[1]["start_ms"])
+
+# The pieces of one split line are exactly consecutive, so every boundary in a
+# split collides. None of them may drift.
+LONG_ONE = [{"start_ms": 1000, "end_ms": 9000, "text": " ".join(["word"] * 60)}]
+split = captions.tidy_lines(LONG_ONE, total_ms=12_000)
+check("splitting a long line does not walk its pieces later and later",
+      split[0]["start_ms"] == 1000 and split[-1]["end_ms"] == 9000,
+      f"\n    {[(l['start_ms'], l['end_ms']) for l in split]}")
+check("...and the pieces still never overlap",
+      all(a["end_ms"] <= b["start_ms"] for a, b in zip(split, split[1:])))
+
+
+# ---------------------------------------------------------------------------
+# 4e. The captions LANE — the same id on both sides
+# ---------------------------------------------------------------------------
+# The SERVER writes generated captions onto a lane the BROWSER has to recognise
+# in order to draw it, name it and keep it at the top of the timeline. Two
+# strings, one contract; if they drift, the captions land on a lane that does not
+# exist and are invisible on the timeline while still burning into the export.
+print("\nThe captions lane — captions.py vs client/src/animatic/captions.js\n")
+
+CAPTIONS_JS = os.path.join(ROOT, "client", "src", "animatic", "captions.js")
+CAPTIONS_HARNESS = """
+import { CAPTION_LAYER_ID, CAPTION_LAYER_NAME, CAPTION_ID_PREFIX } from %(mod)s;
+process.stdout.write(JSON.stringify({
+  layer: CAPTION_LAYER_ID, name: CAPTION_LAYER_NAME, prefix: CAPTION_ID_PREFIX,
+}));
+"""
+
+
+def read_js_captions() -> dict:
+    tmp = tempfile.mkdtemp(prefix="captions_")
+    try:
+        path = os.path.join(tmp, "harness.mjs")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(CAPTIONS_HARNESS % {"mod": json.dumps(_file_url(CAPTIONS_JS))})
+        proc = subprocess.run(
+            ["node", path], capture_output=True, text=True, encoding="utf-8", timeout=60
+        )
+        if proc.returncode != 0:
+            print(proc.stderr.strip()[:2000])
+            print("  captions.js could not be evaluated (see above).")
+            sys.exit(1)
+        return json.loads(proc.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+js_captions = read_js_captions()
+check("both sides name the captions lane the same thing",
+      js_captions["layer"] == captions.CAPTION_LAYER_ID,
+      f"(js={js_captions['layer']} py={captions.CAPTION_LAYER_ID})")
+check("both sides label it the same thing",
+      js_captions["name"] == captions.CAPTION_LAYER_NAME,
+      f"(js={js_captions['name']} py={captions.CAPTION_LAYER_NAME})")
+check("both sides know a generated caption by the same prefix",
+      js_captions["prefix"] == captions.CAPTION_ID_PREFIX,
+      f"(js={js_captions['prefix']} py={captions.CAPTION_ID_PREFIX})")
 
 
 # ---------------------------------------------------------------------------

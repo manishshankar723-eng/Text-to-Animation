@@ -266,6 +266,25 @@ For each, give the frame number it lands on (0 to {last}) and the pose.
 Remember: drawing 1 is the panel itself, the motion starts at drawing 2, and the
 shot may not go one step further through the story than its description says."""
 
+# THE SAME SHOT, RUN LONGER. Making a shot two seconds longer must not re-plan
+# the drawings already on disk: they are paid for, they are what the user
+# approved, and a fresh plan for all of them would leave every later drawing
+# continuing a motion its predecessors never made. So the existing poses go in
+# VERBATIM and the model is asked only for the tail.
+_EXTEND_PROMPT = """Shot description: {description}
+{camera_line}{location_line}{flow}This shot has been LENGTHENED to {seconds} seconds at {fps}fps = {total} frames in total.
+
+Its first {have} key drawings are ALREADY DRAWN and cannot change. In order:
+{drawn}
+
+Give me the {count} key drawings that come AFTER those, continuing the same
+motion from where drawing {have} leaves off, and filling the extra time.
+For each, give the frame number it lands on (0 to {last}) and the pose.
+The shot is now longer, not different: the camera still does not move, and the
+shot still may not go one step further through the story than its description
+says. If the extra time has no action to fill it, the new drawings are the small
+involuntary motion of the state the shot is already in — that IS the animation."""
+
 
 def _flow_lines(story_context: dict | None) -> str:
     """What runs either side of this shot, for the PLANNER.
@@ -330,6 +349,23 @@ def _beats_schema(count: int):
 OPENING_POSE = "the panel exactly as drawn — the shot starts here"
 
 
+def respace(poses: list[str], total_frames: int) -> list[dict]:
+    """Pose LINES laid evenly across `total_frames`, as a beat plan.
+
+    Where the frame numbers come from when a shot's length changes. The poses
+    are the same drawings in the same order — what changed is how much time they
+    have to happen in — so they are simply spread over the new span. Pure, and
+    the one arithmetic both the fresh and the extended plan finish with, so a
+    4s plan re-spaced to 6s is spaced exactly as a 6s plan would have been.
+    """
+    n = len(poses)
+    last = max(0, int(total_frames) - 1)
+    return [
+        {"frame": round(i * last / max(1, n - 1)), "pose": str(poses[i])}
+        for i in range(n)
+    ]
+
+
 def plan_beats(
     description: str,
     duration_seconds: int,
@@ -338,6 +374,7 @@ def plan_beats(
     provider: str | None = None,
     location: str = "",
     story_context: dict | None = None,
+    existing_poses: list | None = None,
 ) -> tuple[list[dict], str]:
     """Break one shot into `count` key poses.
 
@@ -352,24 +389,61 @@ def plan_beats(
     back as eight drawings of him waking up and sitting on the edge of the bed,
     immediately before a close-up of him still asleep.
 
+    ⚠ `existing_poses` MAKES THIS AN EXTENSION, NOT A RE-PLAN. It is the plan a
+    shorter version of this shot was already drawn from, and it is preserved
+    WORD FOR WORD: those drawings exist on disk, they were paid for, and the
+    user approved them. Only the tail is asked for, and only the FRAME NUMBERS
+    of the existing poses move — they have to, because the same drawings now
+    span a longer shot. Re-planning the lot (which is what a plain call with a
+    bigger `count` does) leaves drawing 17 continuing a motion drawings 1–16
+    never made, and there is nothing in the pictures to reveal that until you
+    play it. See `respace`.
+
     Falls back to an evenly-spaced generic plan if the model can't be reached —
     a rough sequence beats refusing to draw anything, and the images are what
-    the user is actually here for.
+    the user is actually here for. On an extension the fallback still keeps
+    every existing pose: what is lost is the quality of the new lines, never the
+    drawings already on disk.
     """
     from script_breakdown import _model_id, _resolve_provider, _sampling_kwargs, get_client
 
     total = duration_seconds * FPS
-    prompt = _PROMPT.format(
-        description=(description or "").strip() or "the scene as drawn",
-        camera_line=f"Camera: {camera.strip()}\n" if (camera or "").strip() else "",
-        location_line=f"Location: {location.strip()}\n" if (location or "").strip() else "",
-        flow=_flow_lines(story_context),
-        seconds=duration_seconds,
-        fps=FPS,
-        total=total,
-        count=count,
-        last=total - 1,
-    )
+    kept = [str(p).strip() for p in (existing_poses or []) if str(p or "").strip()][:count]
+    wanted = count - len(kept)
+
+    if kept and wanted <= 0:
+        # The shot got SHORTER (or stayed the same). Nothing to ask for and
+        # nothing to pay for: the plan is the first `count` poses it already
+        # had, re-spaced over the new span. The drawings past the new end stay
+        # on disk untouched, so lengthening it again later is free.
+        return respace(kept[:count], total), ""
+
+    if kept:
+        prompt = _EXTEND_PROMPT.format(
+            description=(description or "").strip() or "the scene as drawn",
+            camera_line=f"Camera: {camera.strip()}\n" if (camera or "").strip() else "",
+            location_line=f"Location: {location.strip()}\n" if (location or "").strip() else "",
+            flow=_flow_lines(story_context),
+            seconds=duration_seconds,
+            fps=FPS,
+            total=total,
+            have=len(kept),
+            drawn="\n".join(f"{i + 1}. {p}" for i, p in enumerate(kept)),
+            count=wanted,
+            last=total - 1,
+        )
+    else:
+        prompt = _PROMPT.format(
+            description=(description or "").strip() or "the scene as drawn",
+            camera_line=f"Camera: {camera.strip()}\n" if (camera or "").strip() else "",
+            location_line=f"Location: {location.strip()}\n" if (location or "").strip() else "",
+            flow=_flow_lines(story_context),
+            seconds=duration_seconds,
+            fps=FPS,
+            total=total,
+            count=count,
+            last=total - 1,
+        )
 
     try:
         provider = _resolve_provider(provider)
@@ -379,8 +453,11 @@ def plan_beats(
             contents=[prompt],
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM,
+                # Only the NEW drawings are asked for on an extension, so the
+                # schema counts those — asking for `count` again would refuse
+                # the model's answer for being the wrong length.
+                response_schema=_beats_schema(wanted),
                 response_mime_type="application/json",
-                response_schema=_beats_schema(count),
                 **_sampling_kwargs(),
             ),
         )
@@ -391,6 +468,23 @@ def plan_beats(
         logger.warning("[sequence] beat planning failed (%s); using even spacing", e)
         poses = []
         hold = ""
+
+    if kept:
+        # THE EXISTING DRAWINGS COME FIRST, WHATEVER CAME BACK. The model was
+        # asked for the tail; anything it returned for the head is discarded
+        # rather than merged, because a pose line that disagrees with the
+        # picture already on disk is worse than no pose line at all.
+        tail = [
+            str((item or {}).get("pose") or "").strip()
+            for item in poses[:wanted]
+        ]
+        tail = [p for p in tail if p]
+        while len(tail) < wanted:
+            tail.append(
+                "the same moment, a fraction later — the motion described in the "
+                "shot carried a little further"
+            )
+        return respace(kept + tail, total), hold
 
     if not hold:
         # No invariant from the model is not a reason to draw without one. This
@@ -549,6 +643,7 @@ def run_panel_sequence(
     limit: int | None = None,
     redraw: list | None = None,
     beats: list | None = None,
+    existing_poses: list | None = None,
     hold: str = "",
     cast: list | dict | None = None,
     assets: list | dict | None = None,
@@ -578,9 +673,17 @@ def run_panel_sequence(
             one. A redraw passes the plan the sequence was built from, so pose 7
             is redrawn as the SAME pose 7 rather than whatever a fresh planning
             call happens to invent.
+        existing_poses: the plan a SHORTER version of this shot was drawn from,
+            when `duration_seconds` has since grown. Unlike `beats` it does not
+            cover the new length, so it does not skip the planning call — it
+            FENCES it: those lines are preserved verbatim and only the tail is
+            asked for. This is what makes "make this shot 2s longer" cost the
+            new drawings and nothing else. See plan_beats.
         hold: the shot's invariant that goes with those `beats`. Travels with
             them for the same reason: a pose redrawn without it is redrawn
-            without the rule that kept it inside the shot.
+            without the rule that kept it inside the shot. Kept when a planning
+            call returns none of its own, so a lengthened shot stays fenced by
+            the sentence its first drawings were made under.
         cast / assets: the written continuity bible (see storyboard_pipeline),
             so sixteen drawings of a face stay the same face.
         board_panels: the whole board, so the planner can be told which shots
@@ -731,8 +834,16 @@ def run_panel_sequence(
     if beats and len(beats) >= total:
         _report(len(have), "Re-drawing from the existing pose plan…", "planning")
     else:
-        _report(len(have), f"Planning {total} key poses for {duration_seconds}s…", "planning")
-        beats, hold = plan_beats(
+        if existing_poses:
+            _report(
+                len(have),
+                f"Carrying the shot on to {duration_seconds}s — "
+                f"planning {total - len(existing_poses)} more key pose(s)…",
+                "planning",
+            )
+        else:
+            _report(len(have), f"Planning {total} key poses for {duration_seconds}s…", "planning")
+        beats, planned_hold = plan_beats(
             description=str(panel.get("description") or ""),
             duration_seconds=duration_seconds,
             count=total,
@@ -743,7 +854,14 @@ def run_panel_sequence(
             # action when it had nothing else to animate; this is what tells it
             # that action already belongs to someone else.
             story_context=story_context_for(board_panels, panel),
+            # THE DRAWINGS ALREADY ON DISK, when this is a lengthened shot. They
+            # are kept word for word and only the tail is planned.
+            existing_poses=existing_poses,
         )
+        # ⚠ `or hold` — a lengthened shot keeps the invariant its first drawings
+        # were fenced by when this call brings back none of its own. Without it,
+        # extending a shot is the one path that draws with the fence down.
+        hold = planned_hold or hold
 
     failed: list[int] = []
     done = len(have)

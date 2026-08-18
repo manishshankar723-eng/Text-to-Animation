@@ -114,6 +114,17 @@ def submit_animatic_voiceover(job_id: str, body: dict):
     _video_executor.submit(_run_animatic_voiceover, job_id, body)
 
 
+def submit_animatic_reframe(job_id: str, body: dict):
+    """Enqueue an auto-reframe pass over an animatic's shots.
+
+    On the VIDEO pool, like the other two AI passes in the editor. It is one
+    vision call per shot and a forty-shot board holds the thread for a couple of
+    minutes; the pipeline pool is where every storyboard draw queues, and one
+    reframe would sit in front of all of them.
+    """
+    _video_executor.submit(_run_animatic_reframe, job_id, body)
+
+
 def submit_final_assemble(job_id: str, kwargs: dict):
     """Enqueue the assembly of a final video's rendered clips (step 3).
 
@@ -333,6 +344,11 @@ def _run_animatic_export(job_id: str, kwargs: dict):
                 "video": {
                     "url": f"/animatics/{job_id}/video",
                     "exported_at": datetime.now(timezone.utc).isoformat(),
+                    # Which FILE this is — 'mp4' | 'gif' | 'png'. The editor
+                    # decides from it whether it has something to play or a
+                    # picture to show, and the download route serves it with a
+                    # matching type and extension.
+                    "container": summary.get("container", "mp4"),
                     "duration_ms": summary.get("duration_ms", 0),
                     "frame_count": summary.get("frame_count", 0),
                     "text_count": summary.get("text_count", 0),
@@ -521,9 +537,17 @@ def _run_animatic_captions(job_id: str, body: dict):
     store.mark_running(job_id)
     logger.info("[job %s] animatic captions started.", job_id)
 
+    def _progress(percent: int, message: str):
+        try:
+            store.update(job_id, progress={
+                "percent": int(percent), "stage": "captions", "message": message,
+            })
+        except Exception:  # noqa: BLE001 — progress writes must not kill the run
+            logger.debug("[job %s] captions progress failed (ignored)", job_id, exc_info=True)
+
     error = None
     try:
-        run_captions(job_id, body)
+        run_captions(job_id, body, progress_cb=_progress)
     except Exception as e:  # noqa: BLE001 — every failure here is a message, not a crash
         error = str(e) or f"{type(e).__name__}"
         logger.exception("[job %s] animatic captions failed.", job_id)
@@ -578,6 +602,48 @@ def _run_animatic_voiceover(job_id: str, body: dict):
         progress={"percent": 100, "stage": "done", "message": ""},
     )
     logger.info("[job %s] animatic voiceover finished%s.", job_id, " with an error" if error else "")
+
+
+def _run_animatic_reframe(job_id: str, body: dict):
+    """Re-frame an animatic's shots for a new screen shape.
+
+    ⚠ BACK TO QUEUED, NEVER FAILED — the same rule the captions and voiceover
+    passes follow, and for the same reason: an animatic's status describes its
+    EXPORT, and a reframe that didn't work has not broken the animatic. Every
+    shot re-framed before the failure is already written and still there.
+    """
+    from .animatics import run_reframe
+
+    store = get_store()
+    store.mark_running(job_id)
+    logger.info("[job %s] animatic reframe started.", job_id)
+
+    def _progress(done: int, total: int, label: str):
+        try:
+            store.update(job_id, progress={
+                "percent": int(done * 100 / max(1, total)),
+                "stage": "reframe",
+                "message": f"Framing {label} — shot {done + 1} of {total}…",
+                "done_parts": done,
+                "total_parts": total,
+            })
+        except Exception:  # noqa: BLE001 — progress writes must not kill the run
+            logger.debug("[job %s] reframe progress failed (ignored)", job_id, exc_info=True)
+
+    error = None
+    try:
+        run_reframe(job_id, body, progress_cb=_progress)
+    except Exception as e:  # noqa: BLE001 — every failure here is a message, not a crash
+        error = str(e) or f"{type(e).__name__}"
+        logger.exception("[job %s] animatic reframe failed.", job_id)
+
+    store.update(
+        job_id,
+        status=JobStatus.QUEUED,
+        error=error,
+        progress={"percent": 100, "stage": "done", "message": ""},
+    )
+    logger.info("[job %s] animatic reframe finished%s.", job_id, " with an error" if error else "")
 
 
 def _run_shot_renders(job_id: str, shot_ids: list[str]):

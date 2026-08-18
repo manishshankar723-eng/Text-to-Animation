@@ -93,9 +93,14 @@ MAX_ANIMATIC_SHAPES = int(os.environ.get("API_MAX_ANIMATIC_SHAPES", "400"))
 # Lanes on the timeline. This is a rough cut, not a compositing suite — past a
 # couple of dozen rows nothing is legible anyway.
 MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
-# Audio tracks per animatic (music + voiceover is the usual pair). Every extra
-# track is another ffmpeg input to decode and mix, so this stays small.
+# Audio FILES per animatic (music + voiceover is the usual pair). Every extra
+# file is another upload to store, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
+# Audio CLIPS per animatic. ⚠ NOT the same cap: the razor cuts one file into
+# several clips without uploading anything, so counting clips against the file
+# limit above would make a track uncuttable after three cuts. Every clip is one
+# more ffmpeg input to decode, which is why there is a ceiling at all.
+MAX_ANIMATIC_AUDIO_CLIPS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_CLIPS", "48"))
 # Transitions per animatic. There is at most one per cut, so the frame cap is
 # the real ceiling; this only stops a malformed save carrying thousands.
 MAX_ANIMATIC_TRANSITIONS = int(

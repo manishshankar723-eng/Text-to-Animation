@@ -7,6 +7,7 @@
 
 import Icon from "../Icon.jsx";
 import {
+  DEFAULT_TRANSITION_MS,
   MAX_TRANSITION_MS,
   MIN_TRANSITION_MS,
   TRANSITIONS,
@@ -61,7 +62,13 @@ export default function TransitionProperties({ transition, frames, onChange, onD
           </span>
         </PropRow>
 
-        <PropRow label="Lasts" title="How long the blend takes">
+        <PropRow
+          label="Lasts"
+          title="How long the blend takes"
+          reset={() => onChange(transition.id, { duration_ms: DEFAULT_TRANSITION_MS })}
+          changed={transition.duration_ms !== DEFAULT_TRANSITION_MS}
+          resetTo={`${DEFAULT_TRANSITION_MS / 1000}s`}
+        >
           <NumField
             unit="s"
             step="0.1"

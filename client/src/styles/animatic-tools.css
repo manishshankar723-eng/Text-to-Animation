@@ -90,6 +90,11 @@
 .an-nle.an-has-max > .an-pane-timeline:not(.an-maxed) {
   display: none;
 }
+/* The seams go too. A handle between a maximized pane and a hidden one has
+   nothing to divide, and dragging it would resize a pane you cannot see. */
+.an-nle.an-has-max .an-split {
+  display: none;
+}
 .an-nle.an-has-max .an-panes {
   display: block;
 }
@@ -105,6 +110,10 @@
 }
 .an-nle.an-max-timeline .an-pane-timeline {
   flex: 1 1 auto;
+  /* ⚠ `height: auto` beats the dragged `--an-timeline-h` for as long as ~ is
+     on. Maximizing means "fill the workspace", so the size you dragged has to
+     step aside — and come back untouched when it is turned off. */
+  height: auto;
   min-height: 0;
   max-height: none;
 }
@@ -234,16 +243,57 @@
   margin: 0.5rem 0 0;
   line-height: 1.5;
 }
-/* An audio CLIP: as wide as the track actually plays, with a trim handle on its
-   right edge — the same gesture as a frame hold or a text clip. */
+/* An audio CLIP: as wide as it actually plays, sitting WHERE it plays.
+   ⚠ ABSOLUTELY POSITIONED, like a caption and for the same reason: since the
+   razor learned to cut audio, a lane holds several clips and a clip's start is
+   independent of everything above it. It used to be `position: relative` and
+   pinned to the head of the lane, which is exactly why a pause in the middle of
+   a take could not be taken out. A grip at each end, and the body itself drags
+   the clip somewhere else. */
 .tl-audio-clip {
-  position: relative;
-  height: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
   overflow: hidden;
-  border-right: 2px solid var(--border-gold);
+  border: 1px solid var(--border-gold);
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: grab;
+  background: var(--panel-2);
+}
+.tl-audio-clip.dragging {
+  cursor: grabbing;
+  /* Above its neighbours while it is moving, so a clip being dragged past
+     another one stays the thing you can see. */
+  z-index: 5;
+}
+/* A muted clip is dimmed rather than hidden — it's still part of the edit. */
+.tl-audio-clip.muted {
+  opacity: 0.42;
+}
+.tl-audio-clip.sel {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+/* Still loading its blob: a placeholder that occupies the clip's place rather
+   than a message across the whole lane, which would hide the clips that ARE
+   ready on a project with several. */
+.tl-audio-clip.loading {
+  border-style: dashed;
+  cursor: default;
 }
 .tl-audio-clip .tl-handle {
   z-index: 2;
+}
+/* The head grip. `.tl-handle` puts itself on the right; this moves it to the
+   left and turns its gradient round so both edges read as grabbable. */
+.tl-audio-clip .tl-handle-l {
+  right: auto;
+  left: 0;
+  background: linear-gradient(270deg, transparent, var(--border));
+}
+.tl-audio-clip .tl-handle-l:hover {
+  background: var(--primary);
 }
 
 /* --- Beats --------------------------------------------------------------- */

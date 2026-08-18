@@ -22,9 +22,12 @@
   background: var(--panel-2);
   overflow: hidden;
 }
-/* The picture sequence is a row of butted-up bars, not a band with clips in it. */
+/* The picture sequence is a row of butted-up bars, not a band with clips in it.
+   ⚠ `block`, not `flex`: each bar is placed at its own `left` in time, exactly
+   like a clip on any other lane. See `.tl-bars` in `animatic.css` for why a row
+   that adds itself up cannot be trusted to line up with the ruler. */
 .tl-lane.tl-bars {
-  display: flex;
+  display: block;
   border: none;
   border-radius: 0;
   background: none;
@@ -204,3 +207,74 @@
   background: var(--panel-2);
 }
 
+
+/* =========================================================================
+   SELECTING MORE THAN ONE THING
+   The rubber band, what it is currently over, and the mark on a grouped clip.
+   The selection itself is `.sel`, which every lane already draws — these are
+   the three states that only exist once a selection can hold more than one
+   clip. See `client/src/animatic/selection.js`.
+   ========================================================================= */
+
+/* The band, drawn inside the scrolling content so it stays put over the clips
+   while it is dragged. ⚠ `pointer-events: none` is load-bearing: the band sits
+   under the pointer for the whole gesture, and a box that took the pointer
+   would swallow the pointerup that ends its own drag. */
+.tl-marquee {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  border: 1px solid var(--primary);
+  border-radius: 3px;
+  background: rgba(229, 193, 88, 0.1);
+}
+/* How many clips it has caught, so the count is where you are looking rather
+   than in a panel at the other end of the window. */
+.tl-marquee-count {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--gold-ink);
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+/* Under the band right now, but not yet selected — the drag has not finished.
+   A DASHED outline rather than the solid one `.sel` uses, so "this is what you
+   are about to get" and "this is what you have" can be told apart at a glance
+   while both are on screen. */
+.tl-bar.banded,
+.tl-text.banded,
+.tl-shape.banded,
+.tl-overlay.banded,
+.tl-audio-clip.banded {
+  outline: 1px dashed var(--primary);
+  outline-offset: -2px;
+}
+
+/* Grouped: click one and you get them all. A stripe along the BOTTOM edge,
+   which is the one band of a clip nothing else uses — the keyframe diamonds own
+   the top, the transition badges the middle, and a border would fight with the
+   selection outline. */
+.tl-text.grp::after,
+.tl-shape.grp::after,
+.tl-overlay.grp::after,
+.tl-audio-clip.grp::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--primary) 0 4px,
+    transparent 4px 8px
+  );
+  pointer-events: none;
+}

@@ -28,11 +28,26 @@ Two deliberate choices:
    — every frame of a dissolve is a different picture — so one anywhere in the
    project puts the whole export on the sampling planner.
 
+4. **The stills are drawn ACROSS PROCESSES, and the plan comes first.** Which
+   stills exist and what each is called is decided in one pass; drawing them is
+   a second pass that can happen in any order, because no still depends on any
+   other. That split is the whole reason a pool is safe here: a parallel export
+   and a serial one write the same files under the same names and therefore
+   encode to the same bytes, which `tests/export_perf_check.py` asserts by
+   hashing both. See `_render_all_stills` — and `_detached_main` for why this
+   does not require every caller to guard its entry point.
+
+5. **An export is not always an MP4.** `container` is 'mp4', 'gif' or 'png';
+   the presets in `export_presets.py` are what choose one. A PNG never reaches
+   ffmpeg at all — the composite Pillow just made IS the file — which is what
+   makes a poster frame provably the same picture the video shows.
+
 Nothing here spends AI quota — an animatic is images, timing and audio.
 """
 
 import logging
 import math
+import multiprocessing
 import os
 import re
 import shutil
@@ -42,6 +57,7 @@ import threading
 from PIL import Image, ImageDraw, ImageFont
 
 import animatic_fonts
+import export_presets
 from animatic_effects import apply_effects, apply_mask, blend_onto
 from animatic_render import (
     DEFAULT_BLEND,
@@ -65,6 +81,24 @@ logger = logging.getLogger(__name__)
 # thousands of PNGs, and filling the disk mid-export is a worse failure than
 # refusing up front with a number the user can act on.
 MAX_RENDERED_STILLS = 20_000
+
+# --- Rendering the stills in parallel ---------------------------------------
+# Compositing a still is pure CPU on one picture and knows nothing about the
+# stills either side of it, so the loop is embarrassingly parallel. It was
+# single-threaded until Phase 8, which on a 200-segment project meant one core
+# busy and the rest idle for minutes.
+#
+# Below this many DISTINCT stills the pool is not worth starting: on Windows
+# every worker is a fresh interpreter that has to import Pillow, which costs
+# more than a few dozen composites.
+_POOL_MIN_STILLS = 48
+# `ANIMATIC_EXPORT_WORKERS=1` forces the old serial loop — the escape hatch for
+# a machine where the pool misbehaves, and what the parity half of
+# `tests/export_perf_check.py` sets to get a serial export to compare against.
+_ENV_WORKERS = "ANIMATIC_EXPORT_WORKERS"
+# One core is left for the parent (which is draining results and writing
+# progress) and for the rest of the server, which is still serving requests.
+_MAX_WORKERS = 8
 
 
 class AnimaticError(RuntimeError):
@@ -1255,6 +1289,26 @@ def plan_animated_segments(
     return segments, total_ms
 
 
+def _segment_at(segments: list[dict], at_ms: float, total_ms: int) -> list[dict]:
+    """Just the segment showing at `at_ms` — a still export's whole plan.
+
+    Returned as a LIST because that is what the renderer downstream takes, and
+    a still that went through a different code path than the video would be a
+    poster frame nobody could trust.
+
+    A moment past the end clamps to the last segment rather than returning
+    nothing: the playhead can sit on the very end of the timeline, and the frame
+    you are looking at there is the last one.
+    """
+    if not segments:
+        return []
+    at = max(0.0, min(float(at_ms or 0), max(0.0, total_ms - 1)))
+    for segment in segments:
+        if segment["start_ms"] <= at < segment["start_ms"] + segment["duration_ms"]:
+            return [segment]
+    return [segments[-1]]
+
+
 def _transform_of(picture: dict) -> dict:
     """The four values `render_frame` needs off a resolved picture."""
     return {
@@ -1386,18 +1440,33 @@ _DUCK_RELEASE_MS = 400      # slow enough not to pump between words
 _DUCK_FORMAT = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
 
 
+def track_start_ms(track: dict) -> int:
+    """Where on the TIMELINE this clip begins. 0 for anything that predates the
+    razor being able to cut audio, which is what makes those projects mix
+    exactly as they always did.
+
+    ⚠ TWIN of `trackStartMs` in `client/src/animatic/audio_mix.js`.
+    """
+    return max(0, int(track.get("start_ms") or 0))
+
+
 def track_play_ms(track: dict, total_ms: int = 0) -> int:
     """How long this track is HEARD for, in milliseconds.
 
     Its trim if it has one, otherwise whatever is left of the file after
-    `offset_ms` — and never longer than the video, because the export is cut at
-    `total_ms` and a fade placed past that is a fade nobody hears.
+    `offset_ms` — and never longer than the room the video leaves AFTER the clip
+    starts, because the export is cut at `total_ms` and a fade placed past that
+    is a fade nobody hears.
 
     A track whose `duration_ms` never reached us (the browser measures it, so a
     project saved by something else may not carry one) is assumed to play to the
     end of the video. That is the only assumption available without an ffprobe,
     and it is the right one: it is what an untrimmed track does.
     """
+    start = track_start_ms(track)
+    # What is left of the video once this clip has waited its turn. A clip
+    # sitting entirely past the end of the video is heard for nothing at all.
+    room = max(0, int(total_ms) - start) if total_ms else 0
     trim = track.get("trim_ms")
     if trim:
         play = max(0, int(trim))
@@ -1405,9 +1474,9 @@ def track_play_ms(track: dict, total_ms: int = 0) -> int:
         duration = int(track.get("duration_ms") or 0)
         play = max(0, duration - max(0, int(track.get("offset_ms") or 0))) if duration else 0
     if play <= 0:
-        play = max(0, int(total_ms or 0))
+        play = room
     if total_ms:
-        play = min(play, int(total_ms))
+        play = min(play, room)
     return play
 
 
@@ -1461,7 +1530,17 @@ def _duck_pairs(tracks: list[dict]) -> list[tuple[int, int]]:
     harder to diagnose than one that doesn't duck at all.
     """
     voices = [i for i, t in enumerate(tracks) if (t.get("role") or "") == "voice"]
-    by_id = {t.get("upload_id"): i for i, t in enumerate(tracks) if t.get("upload_id")}
+    # ⚠ Keyed by the CLIP's id, falling back to the upload. `duck_target` names
+    # one entry in this list, and since the razor can cut a file into several
+    # clips the upload is no longer unique — two halves of one voiceover would
+    # both answer to the same key and the second would win at random. In every
+    # project that predates the razor `id` IS the upload, so the fallback keeps
+    # those resolving exactly as they did.
+    by_id = {
+        (t.get("id") or t.get("upload_id")): i
+        for i, t in enumerate(tracks)
+        if (t.get("id") or t.get("upload_id"))
+    }
     sources: set[int] = set()  # filled below, to reject two-tier ducking
 
     pairs: list[tuple[int, int]] = []
@@ -1503,6 +1582,7 @@ def audio_graph(tracks: list[dict], total_ms: int = 0) -> tuple[list[str], str] 
     volumes = [float(t.get("volume", 1.0) or 0.0) for t in tracks]
     windows = [fade_window(t, total_ms) for t in tracks]
     tones = [eq_chain(t) for t in tracks]
+    starts = [track_start_ms(t) for t in tracks]
     ducks = _duck_pairs(tracks)
     plain = (
         len(tracks) == 1
@@ -1510,6 +1590,11 @@ def audio_graph(tracks: list[dict], total_ms: int = 0) -> tuple[list[str], str] 
         and not windows[0][0]
         and not windows[0][2]
         and not tones[0]
+        # A clip that does not start at the head of the video needs `adelay`,
+        # and there is nowhere but a graph to put it. Without this the plain
+        # path would map the input straight through and the piece you cut out of
+        # the middle of a take would be heard from the first frame instead.
+        and not starts[0]
         and not ducks
     )
     if plain:
@@ -1528,6 +1613,14 @@ def audio_graph(tracks: list[dict], total_ms: int = 0) -> tuple[list[str], str] 
             chain.append(f"afade=t=in:st=0:d={fade_in / 1000:.3f}")
         if fade_out:
             chain.append(f"afade=t=out:st={out_at / 1000:.3f}:d={fade_out / 1000:.3f}")
+        # ⚠ AFTER THE FADES, NEVER BEFORE. Both `afade` windows are measured from
+        # the start of the CLIP — that is what makes a fade travel with a trim —
+        # so delaying first would push the clip along the timeline and leave its
+        # ramps behind at the head of the video. `all=1` because without it
+        # adelay silences every channel it wasn't given a delay for, which turns
+        # a stereo bed into a left-channel-only one.
+        if starts[i]:
+            chain.append(f"adelay=delays={starts[i]}:all=1")
         if ducks:
             chain.append(_DUCK_FORMAT)
         parts.append(f"[{i + 1}:a]" + ",".join(chain) + f"[a{i}]")
@@ -1646,6 +1739,185 @@ def run_ffmpeg(
     return True
 
 
+# ---------------------------------------------------------------------------
+# Rendering the stills — the parallel half
+# ---------------------------------------------------------------------------
+def export_workers(still_count: int) -> int:
+    """How many processes to render `still_count` stills with. 1 = serial.
+
+    ⚠ THE ANSWER IS OFTEN 1, AND THAT IS THE POINT. A pool that is started for
+    twelve stills is slower than the loop it replaced, so the threshold is
+    checked before the machine is: a short export must not get slower because a
+    long one got faster.
+    """
+    raw = (os.environ.get(_ENV_WORKERS) or "").strip()
+    if raw:
+        try:
+            forced = max(1, int(raw))
+        except ValueError:
+            logger.warning("%s=%r is not a number — ignored", _ENV_WORKERS, raw)
+        else:
+            return 1 if forced <= 1 else min(forced, still_count)
+    if still_count < _POOL_MIN_STILLS:
+        return 1
+    return max(1, min(_MAX_WORKERS, (os.cpu_count() or 1) - 1, still_count))
+
+
+def _render_still(task: dict) -> dict:
+    """Composite ONE still and write it. Runs in a worker process.
+
+    ⚠ MODULE LEVEL, AND EVERY ARGUMENT IS PLAIN DATA — paths, dicts, lists,
+    numbers. That is not style, it is the contract: Windows has no fork, so a
+    worker is a fresh interpreter that receives its argument by PICKLE and its
+    function by NAME. A closure could not be sent, and a Pillow image passed in
+    or out would be the whole picture down a pipe twice per still, which is
+    slower than rendering it single-threaded.
+    `_source_for` has therefore already been called in the parent: what arrives
+    here is the resolved `{"path": …}` / `{"color": …}`, so a worker never has
+    to know that `video_frames` exists.
+
+    Returns a verdict rather than raising, because an exception crossing a pool
+    boundary loses the one thing the caller needs — WHICH still it was.
+    """
+    try:
+        image = render_frame(size=tuple(task["size"]), **task["args"])
+        image.save(task["out"], "PNG")
+    except AnimaticError as e:
+        # The export-killing kind: a source with no pixels. Flagged rather than
+        # swallowed, so the parent re-raises it exactly as the serial loop did.
+        return {"index": task["index"], "ok": False, "fatal": True, "error": str(e)}
+    except Exception as e:  # noqa: BLE001 — one bad file, not a dead export
+        return {"index": task["index"], "ok": False, "fatal": False, "error": f"{e}"}
+    return {"index": task["index"], "ok": True}
+
+
+def _detached_main():
+    """A context manager that hides `__main__` while a Pool is being started.
+
+    ⚠ THIS IS THE "SPAWN-SAFE ENTRY POINT" PROBLEM, SOLVED ONCE, HERE.
+
+    Windows has no fork, so every worker is a fresh interpreter — and before it
+    runs anything of ours, `multiprocessing` tries to reconstruct the parent's
+    `__main__` module in it. When the parent was started as a plain script
+    (`python tests/export_perf_check.py`, `python animatic.py …`) that means
+    RE-EXECUTING that script inside every worker: the classic fork bomb, and the
+    reason the textbook advice is "guard your entry point with
+    `if __name__ == '__main__'`".
+
+    Requiring that guard of every present and future caller is a rule that will
+    be broken by someone who has no idea this module started a pool. So instead
+    the parent's `__main__` is swapped for an empty stub whose spec is named
+    `__main__` for exactly as long as the pool is being created. multiprocessing
+    reads the name, hands the child `init_main_from_name="__main__"`, and the
+    child's own `_fixup_main_from_name` returns immediately without importing or
+    running anything. Workers reach `_render_still` by importing `animatic` off
+    the inherited `sys.path`, which is all they ever needed.
+
+    The swap lasts microseconds and is undone in a `finally`, so nothing else in
+    the process can observe it.
+    """
+    import contextlib
+    import importlib.machinery
+    import sys
+    import types
+
+    @contextlib.contextmanager
+    def _swap():
+        real = sys.modules.get("__main__")
+        stub = types.ModuleType("__main__")
+        stub.__spec__ = importlib.machinery.ModuleSpec("__main__", None)
+        sys.modules["__main__"] = stub
+        try:
+            yield
+        finally:
+            if real is not None:
+                sys.modules["__main__"] = real
+            else:  # pragma: no cover — an interpreter with no __main__ at all
+                sys.modules.pop("__main__", None)
+
+    return _swap()
+
+
+def _render_all_stills(tasks: list[dict], cancelled, report) -> dict:
+    """Render every task, in parallel when there are enough of them.
+
+    Returns {"stopped", "failed"} — `failed` is the set of task indexes whose
+    still could not be written, whose segments the caller then drops from the
+    cut. Raises AnimaticError for the fatal kind, exactly where the serial loop
+    used to raise it.
+
+    ⚠ CANCELLATION IS THE PARENT'S JOB. A worker cannot answer "has the user
+    pressed stop" — the flag lives in the job store, in the server process — so
+    the check stays here, between results, and the pool is terminated when it
+    trips. That is what keeps stop working mid-batch: results arrive one at a
+    time, so the longest a stop can take is one still.
+    """
+    total = len(tasks)
+    workers = export_workers(total)
+    failed: set[int] = set()
+    done = 0
+
+    def _finish(result: dict) -> None:
+        """Book one verdict in. Raises for the fatal kind."""
+        nonlocal done
+        done += 1
+        if not result["ok"]:
+            if result.get("fatal"):
+                raise AnimaticError(result["error"])
+            failed.add(result["index"])
+            logger.warning(
+                "[animatic] still %d could not be rendered (%s) — skipped",
+                result["index"], result.get("error"),
+            )
+        report(done, total)
+
+    if workers <= 1:
+        logger.info("[animatic] rendering %d still(s) serially", total)
+        for task in tasks:
+            if cancelled():
+                return {"stopped": True, "failed": failed}
+            _finish(_render_still(task))
+        return {"stopped": False, "failed": failed}
+
+    logger.info("[animatic] rendering %d still(s) across %d worker(s)", total, workers)
+    # `spawn`, stated rather than inherited: it is what Windows does anyway, and
+    # saying so means this behaves identically on Linux instead of quietly
+    # forking a process that has half a FastAPI app and an ffmpeg pipe in it.
+    ctx = multiprocessing.get_context("spawn")
+    # Small chunks so a stop is felt quickly and a slow still doesn't leave one
+    # worker holding a long tail while the others idle.
+    chunksize = max(1, min(8, total // (workers * 4) or 1))
+    try:
+        # See `_detached_main` — this is what makes the pool safe to start from
+        # a plain script as well as from the server.
+        with _detached_main():
+            pool = ctx.Pool(processes=workers)
+    except Exception:  # noqa: BLE001 — no pool is a slow export, not a failed one
+        logger.warning(
+            "[animatic] could not start a worker pool — rendering serially", exc_info=True
+        )
+        for task in tasks:
+            if cancelled():
+                return {"stopped": True, "failed": failed}
+            _finish(_render_still(task))
+        return {"stopped": False, "failed": failed}
+
+    try:
+        for result in pool.imap_unordered(_render_still, tasks, chunksize=chunksize):
+            _finish(result)
+            if cancelled():
+                pool.terminate()
+                return {"stopped": True, "failed": failed}
+        pool.close()
+        pool.join()
+    finally:
+        # Runs on the fatal-error path too: an AnimaticError out of `_finish`
+        # must not leave eight interpreters composing stills for an export that
+        # has already failed.
+        pool.terminate()
+    return {"stopped": False, "failed": failed}
+
+
 def build_animatic(
     job_id: str,
     frames: list[dict],
@@ -1663,6 +1935,8 @@ def build_animatic(
     fit: str = "contain",
     background: str = "#000000",
     show_labels: bool = False,
+    container: str = "mp4",
+    still_ms: int = 0,
     output_dir: str = "output",
     progress_cb=None,
     cancel_check=None,
@@ -1698,13 +1972,22 @@ def build_animatic(
             taking d/2 from the tail of one picture and the head of the next, so
             the encoded video is exactly as long as it would be without them.
             One naming a frame that isn't there, or the last frame, is inert.
-        audio_tracks: [{"path", "offset_ms", "trim_ms", "volume", …}] laid under
-            the sequence and MIXED together — music under a voiceover is the
-            usual pair. `offset_ms` is how far into that file playback starts;
-            `volume` is 1.0 for as-recorded. `fade_in_ms` / `fade_out_ms` shape
-            each end, and `duck_to` + `role`/`duck_target` pull a bed down under
-            the voice — all of that is `audio_graph`'s business. A track whose
-            file is missing is skipped.
+        audio_tracks: [{"path", "start_ms", "offset_ms", "trim_ms", "volume", …}]
+            laid under the sequence and MIXED together — music under a voiceover
+            is the usual pair. `start_ms` is where the CLIP sits on the timeline
+            and `offset_ms` is how far into the FILE it starts reading (the
+            razor sets both when it cuts one in half); `volume` is 1.0 for
+            as-recorded. `fade_in_ms` / `fade_out_ms` shape each end, and
+            `duck_to` + `role`/`duck_target` pull a bed down under the voice —
+            all of that is `audio_graph`'s business. A track whose file is
+            missing is skipped.
+        container: what FILE to write — 'mp4' (H.264 + AAC, what every export
+            has always been), 'gif' (silent, looping, palette-quantised) or
+            'png' (ONE frame, at `still_ms`). See `export_presets.py`; anything
+            unrecognised falls back to mp4 rather than failing.
+        still_ms: which moment a 'png' export is of. Ignored by the other two.
+            Only the stills that moment needs are rendered, so a poster frame
+            costs one composite rather than a whole export.
         progress_cb: called with {"percent", "message", "stage"}.
         cancel_check: called between frames and during encoding; True stops.
 
@@ -1713,7 +1996,12 @@ def build_animatic(
     if not frames:
         raise AnimaticError("This animatic has no frames yet — add some images first.")
 
-    exe = ffmpeg_exe()  # fail early, before any work is done
+    container = export_presets.normalise_container(container)
+    # A PNG never reaches ffmpeg — Pillow already has the finished frame, and
+    # writing it out IS the export — so a still must not fail for want of an
+    # encoder. Video clips still need one, and `video_frames` raises the same
+    # advice if it comes to that.
+    exe = ffmpeg_exe() if container != "png" else ""  # fail early, before any work
     size = resolve_size(aspect_ratio, resolution)
     fps = max(1, min(60, int(fps or 24)))
 
@@ -1801,6 +2089,16 @@ def build_animatic(
             usable, texts or [], end_ms, shapes or [], overlays or []
         )
 
+    # --- 1a. A still is ONE segment ----------------------------------------
+    # Everything above this line is unchanged: a poster frame is planned by the
+    # same planner as the video it is a frame OF, which is the only way it can
+    # be provably the same picture. Then all but one sample is thrown away.
+    if container == "png":
+        segments = _segment_at(segments, still_ms, total_ms)
+        if not segments:
+            shutil.rmtree(build_dir, ignore_errors=True)
+            raise AnimaticError("There is nothing on the timeline at that moment.")
+
     # --- 1b. Tear any video clips into stills ------------------------------
     # Pillow cannot decode video, so every video clip becomes numbered PNGs
     # before the renderer sees it. Only the SOURCE RANGE each clip actually
@@ -1810,7 +2108,16 @@ def build_animatic(
     # ⚠ This happens AFTER the planner has run and BEFORE anything is drawn: the
     # planner is what decides which source moments will be asked for, and the
     # renderer is what asks for them.
-    videos = [f for f in usable if clip_kind(f) == "video"]
+    # ⚠ THE CLIPS THE PLAN ACTUALLY NAMES, not every video clip in the project.
+    # For an ordinary export those are the same list (every clip is on screen at
+    # some point). For a STILL they are not — one segment names one or two
+    # pictures — and extracting a two-minute clip to write a single poster frame
+    # would be the whole export's cost for one PNG.
+    wanted_clips = {s["frame"] for s in segments}
+    wanted_clips |= {s["frame_b"] for s in segments if s.get("frame_b") is not None}
+    videos = [
+        usable[i] for i in sorted(wanted_clips) if clip_kind(usable[i]) == "video"
+    ]
     if videos:
         import video_frames
 
@@ -1842,16 +2149,24 @@ def build_animatic(
             job_id, len(videos), sum(v["_stills"]["count"] for v in videos),
         )
 
-    # --- 2. Render one PNG per segment -------------------------------------
+    # --- 2. Render one PNG per DISTINCT still ------------------------------
     # A text clip can start or end part-way through a held image, so the unit of
     # rendering is a SEGMENT (a stretch where both the picture and the visible
     # text are constant), not a frame. With no text there is exactly one segment
     # per frame, so this costs nothing in the common case.
-    entries: list[tuple[str, float]] = []
-    rendered: dict[object, str] = {}  # cache key → filename
-    total = len(segments)
+    #
+    # ⚠ PLANNED, THEN RENDERED — one pass to decide what the distinct stills are
+    # and what each is called, a second to actually draw them. It used to be one
+    # pass, and splitting it is what lets the drawing go across processes: the
+    # names no longer depend on which still finishes first. Both halves of the
+    # split are deterministic, so a parallel export and a serial one write the
+    # same files under the same names and encode to the same bytes — which is
+    # the first thing `tests/export_perf_check.py` asserts.
+    tasks: list[dict] = []          # one per distinct still, in first-appearance order
+    names: dict[object, str] = {}   # cache key → filename
+    plan: list[tuple[object, float]] = []  # per segment: (key, seconds on screen)
 
-    for n, segment in enumerate(segments):
+    for segment in segments:
         if _cancelled():
             shutil.rmtree(build_dir, ignore_errors=True)
             return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
@@ -1872,56 +2187,53 @@ def build_animatic(
             tuple(s.get("id") for s in segment.get("shapes") or ()),
             tuple(o.get("id") for o in segment.get("overlays") or ()),
         )
-        name = rendered.get(key)
-
-        if name is None:
-            name = f"f{len(rendered):04d}.png"
+        if key not in names:
+            names[key] = f"f{len(names):04d}.png"
             # Mid-transition the segment names a SECOND picture to blend with.
             # It indexes `usable` like `frame` does, so a frame dropped for a
             # missing image can't be picked up here either.
             index_b = segment.get("frame_b")
-            try:
-                image = render_frame(
-                    # WHAT this clip is a picture of at this instant: its own
-                    # still, its colour, or the extracted frame of its source
-                    # video covering `source_ms`. See `_source_for`.
-                    _source_for(frame, segment.get("source_ms")),
-                    size,
-                    fit=fit,
-                    background=background,
-                    label=frame.get("label", "") if show_labels else "",
-                    texts=segment["texts"],
-                    shapes=segment.get("shapes") or [],
-                    overlays=segment.get("overlays") or [],
-                    # ⚠ `or _static_transform(frame)`, and the same for the
-                    # look. `plan_segments` — the planner a project with no
-                    # animation gets — produces neither, so a STORED zoom or a
-                    # STORED grade would be dropped from the MP4 while the
-                    # monitor showed it. Falling back to the clip's own values
-                    # makes the two agree whichever planner ran.
-                    transform=segment.get("transform") or _static_transform(frame),
-                    look=segment.get("look") or _resolved_look(frame),
-                    picture_b=(
-                        _source_for(usable[index_b], segment.get("source_ms_b"))
-                        if index_b is not None
-                        else None
-                    ),
-                    transform_b=segment.get("transform_b"),
-                    transition=segment.get("transition"),
-                    mix=segment.get("mix") or 0.0,
-                    look_b=segment.get("look_b"),
-                )
-                image.save(os.path.join(build_dir, name), "PNG")
-            except AnimaticError:
-                raise
-            except Exception as e:  # noqa: BLE001 — one bad file, not a dead export
-                logger.warning(
-                    "[animatic %s] segment %d (frame %d) unreadable (%s) — skipped",
-                    job_id, n, segment["frame"], e,
-                )
-                continue
-            rendered[key] = name
-
+            tasks.append(
+                {
+                    "index": len(tasks),
+                    "key": key,
+                    "out": os.path.join(build_dir, names[key]),
+                    "size": size,
+                    # ⚠ PLAIN DATA ONLY — this dict is pickled to a worker
+                    # process. See `_render_still`.
+                    "args": {
+                        # WHAT this clip is a picture of at this instant: its own
+                        # still, its colour, or the extracted frame of its source
+                        # video covering `source_ms`. Resolved HERE, in the
+                        # parent, because it is the only side that knows about
+                        # `_stills`. See `_source_for`.
+                        "source": _source_for(frame, segment.get("source_ms")),
+                        "fit": fit,
+                        "background": background,
+                        "label": frame.get("label", "") if show_labels else "",
+                        "texts": segment["texts"],
+                        "shapes": segment.get("shapes") or [],
+                        "overlays": segment.get("overlays") or [],
+                        # ⚠ `or _static_transform(frame)`, and the same for the
+                        # look. `plan_segments` — the planner a project with no
+                        # animation gets — produces neither, so a STORED zoom or
+                        # a STORED grade would be dropped from the MP4 while the
+                        # monitor showed it. Falling back to the clip's own
+                        # values makes the two agree whichever planner ran.
+                        "transform": segment.get("transform") or _static_transform(frame),
+                        "look": segment.get("look") or _resolved_look(frame),
+                        "picture_b": (
+                            _source_for(usable[index_b], segment.get("source_ms_b"))
+                            if index_b is not None
+                            else None
+                        ),
+                        "transform_b": segment.get("transform_b"),
+                        "transition": segment.get("transition"),
+                        "mix": segment.get("mix") or 0.0,
+                        "look_b": segment.get("look_b"),
+                    },
+                }
+            )
         # ⚠ The floor is ONE VIDEO FRAME, not 0.1s as it used to be. A segment
         # shorter than 1/fps cannot be shown at all, so that is the smallest
         # meaningful duration — but at 24fps an animated segment IS 1/24s, and
@@ -1929,16 +2241,33 @@ def build_animatic(
         # the export run 2.4× long. It was also quietly wrong before this: a
         # 40–99ms segment (which `plan_segments` can produce) was already being
         # padded out to 100ms and lengthening the video.
-        entries.append((name, max(1.0 / fps, segment["duration_ms"] / 1000)))
-        # Preparing frames is the first 55% — it's real work on big images. With
-        # video clips the first 15 went on tearing them into stills, so this
-        # picks up from there; with none it is the 0–55 it has always been.
-        base = 15 if videos else 0
+        plan.append((key, max(1.0 / fps, segment["duration_ms"] / 1000)))
+
+    # Preparing frames is the first 55% — it's real work on big images. With
+    # video clips the first 15 went on tearing them into stills, so this picks
+    # up from there; with none it is the 0–55 it has always been.
+    base = 15 if videos else 0
+
+    def _still_progress(done: int, count: int) -> None:
         _report(
-            base + int((55 - base) * (n + 1) / total),
-            f"Preparing frame {n + 1} of {total}",
+            base + int((55 - base) * done / max(1, count)),
+            f"Preparing frame {done} of {count}",
             "frames",
         )
+
+    outcome = _render_all_stills(tasks, _cancelled, _still_progress)
+    if outcome["stopped"]:
+        shutil.rmtree(build_dir, ignore_errors=True)
+        logger.info("[animatic %s] export STOPPED while rendering stills", job_id)
+        return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
+
+    # A still that could not be drawn takes its segments out of the cut with it
+    # — exactly what the old `continue` did, one pass later.
+    lost = {tasks[i]["key"] for i in outcome["failed"]}
+    rendered = {key: name for key, name in names.items() if key not in lost}
+    entries: list[tuple[str, float]] = [
+        (rendered[key], seconds) for key, seconds in plan if key in rendered
+    ]
 
     if not entries:
         shutil.rmtree(build_dir, ignore_errors=True)
@@ -1947,18 +2276,43 @@ def build_animatic(
         )
 
     total_ms = int(round(sum(sec for _, sec in entries) * 1000))
+    out_path = os.path.join(out_root, export_presets.output_name(container))
+
+    # --- 2a. A still needs no encoder --------------------------------------
+    # The composite is already on disk: the one thing an encode could add here
+    # is a way for the poster frame to disagree with the video it came from.
+    if container == "png":
+        shutil.move(os.path.join(build_dir, entries[0][0]), out_path)
+        shutil.rmtree(build_dir, ignore_errors=True)
+        _report(100, "Done")
+        size_bytes = os.path.getsize(out_path)
+        logger.info(
+            "[animatic %s] wrote a still at %dms → %s (%.0f kB)",
+            job_id, still_ms, out_path, size_bytes / 1024,
+        )
+        return _summary(
+            out_path, container, size_bytes, size, fps,
+            # A still is one frame, so it has no duration and no sound. Saying
+            # `duration_ms: 0` rather than the timeline's length is what stops
+            # the editor offering to play a PNG.
+            duration_ms=0, segment_count=1, still_count=1, animated=animated,
+            frames=usable, texts=texts, shapes=shapes, overlays=overlays,
+            transitions=transitions, videos=videos, skipped=skipped, tracks=[],
+        )
+
     list_path = os.path.join(build_dir, "list.txt")
     _write_concat_list(list_path, entries)
 
-    # --- 2. Encode ---------------------------------------------------------
-    out_path = os.path.join(out_root, "animatic.mp4")
-    tmp_path = os.path.join(build_dir, "out.mp4")
+    # --- 2b. Encode --------------------------------------------------------
+    tmp_path = os.path.join(build_dir, f"out.{export_presets.CONTAINER_EXT[container]}")
 
     # Tracks whose file has gone are dropped rather than failing the export.
+    # A GIF has no audio stream at all, so its tracks are dropped HERE rather
+    # than being mixed into a graph whose output nothing could map.
     tracks = [
         t for t in (audio_tracks or [])
         if t.get("path") and os.path.isfile(t["path"])
-    ]
+    ] if container != "gif" else []
     has_audio = bool(tracks)
 
     cmd = [exe, "-y", "-hide_banner", "-nostdin", "-loglevel", "error"]
@@ -1984,9 +2338,26 @@ def build_animatic(
     # Levels, fades and ducking are one graph, built (and unit-tested) in
     # `audio_graph`. None back from it means nothing on this mix needs a filter
     # at all — one track at its recorded level, the plain path, unchanged.
-    graph = audio_graph(tracks, total_ms)
+    graph = audio_graph(tracks, total_ms) if container != "gif" else None
 
-    if graph is None:
+    if container == "gif":
+        # ⚠ A PALETTE, IN ONE PASS. A GIF is 256 colours, and ffmpeg's DEFAULT
+        # palette is a fixed web-safe one that turns any gradient — every sky,
+        # every dissolve — into bands. `palettegen` reads the actual frames and
+        # `paletteuse` maps them onto what it found, which is the difference
+        # between a usable GIF and an obviously broken one. `stats_mode=diff`
+        # weights the palette toward what MOVES, which for an animatic is the
+        # picture rather than the letterbox bars.
+        # `split` is what makes it one pass: the same decoded stream feeds the
+        # palette generator and the mapper, so the stills are not read twice.
+        cmd += [
+            "-an",
+            "-filter_complex",
+            f"fps={fps},split[gs][gm];[gs]palettegen=stats_mode=diff[gp];"
+            f"[gm][gp]paletteuse=dither=bayer:bayer_scale=3",
+            "-loop", "0",  # 0 means forever, which is what a GIF is for
+        ]
+    elif graph is None:
         cmd += ["-vf", f"fps={fps}", "-map", "0:v:0"]
         if has_audio:
             cmd += ["-map", "1:a:0"]
@@ -1999,24 +2370,28 @@ def build_animatic(
 
     if has_audio:
         cmd += ["-c:a", "aac", "-b:a", "192k"]
+    if container != "gif":
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", str(_CRF.get((quality or "high").lower(), _CRF["high"])),
+            "-pix_fmt", "yuv420p",  # required for playback in browsers / QuickTime
+            "-r", str(fps),
+            "-movflags", "+faststart",
+        ]
     cmd += [
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", str(_CRF.get((quality or "high").lower(), _CRF["high"])),
-        "-pix_fmt", "yuv420p",  # required for playback in browsers / QuickTime
-        "-r", str(fps),
         # The frames decide the length: a short audio file must not truncate the
         # video (which is what -shortest would do), and a long one must not run on.
         "-t", f"{total_ms / 1000:.3f}",
-        "-movflags", "+faststart",
         "-progress", "pipe:1",
         tmp_path,
     ]
 
     _report(58, "Encoding video…")
     logger.info(
-        "[animatic %s] encoding %d frame(s) in %d segment(s), %.1fs, %dx%d @%dfps%s",
+        "[animatic %s] encoding %d frame(s) in %d segment(s), %.1fs, %dx%d @%dfps as %s%s",
         job_id, len(usable), len(entries), total_ms / 1000, size[0], size[1], fps,
+        container,
         f" + {len(tracks)} audio track(s)" if has_audio else "",
     )
 
@@ -2037,20 +2412,60 @@ def build_animatic(
     logger.info(
         "[animatic %s] exported %s (%.1f MB)", job_id, out_path, size_bytes / 1_048_576
     )
+    return _summary(
+        out_path, container, size_bytes, size, fps,
+        duration_ms=total_ms, segment_count=len(entries), still_count=len(rendered),
+        animated=animated, frames=usable, texts=texts, shapes=shapes,
+        overlays=overlays, transitions=transitions, videos=videos,
+        skipped=skipped, tracks=tracks,
+    )
+
+
+def _summary(
+    out_path: str,
+    container: str,
+    size_bytes: int,
+    size: tuple[int, int],
+    fps: int,
+    *,
+    duration_ms: int,
+    segment_count: int,
+    still_count: int,
+    animated: bool,
+    frames: list[dict],
+    texts,
+    shapes,
+    overlays,
+    transitions,
+    videos: list[dict],
+    skipped: list[int],
+    tracks: list[dict],
+) -> dict:
+    """What an export tells its caller about itself.
+
+    One function because there are two exits now — the encoder's and the still's
+    — and the job store reads these keys by name. A summary written twice is a
+    summary where one copy quietly loses a field, which is the same mistake the
+    export payload in `server/animatics.py` made for three phases.
+    """
     return {
         "stopped": False,
         "video": out_path,
-        "duration_ms": total_ms,
+        # What was actually written. The download route needs it to serve the
+        # right file with the right type, and the editor needs it to know
+        # whether it has a video to play or a picture to show.
+        "container": container,
+        "duration_ms": duration_ms,
         # Pictures in the finished cut — NOT the number of segments encoded, which
         # is higher whenever text starts or ends part-way through a held image.
-        "frame_count": len(usable),
-        "segment_count": len(entries),
+        "frame_count": len(frames),
+        "segment_count": segment_count,
         # Which planner ran. Worth reporting: an animated export renders far more
         # stills and takes correspondingly longer, and when someone asks why an
         # export that used to take 20 seconds now takes three minutes, this is
         # the answer.
         "animated": animated,
-        "still_count": len(rendered),
+        "still_count": still_count,
         "text_count": len([t for t in (texts or []) if (t.get("text") or "").strip()]),
         "shape_count": len(shapes or []),
         "overlay_count": len(overlays or []),
@@ -2064,7 +2479,7 @@ def build_animatic(
         "width": size[0],
         "height": size[1],
         "fps": fps,
-        "has_audio": has_audio,
+        "has_audio": bool(tracks),
         "audio_track_count": len(tracks),
         "size_bytes": size_bytes,
     }

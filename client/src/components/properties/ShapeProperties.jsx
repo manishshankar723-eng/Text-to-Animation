@@ -7,9 +7,22 @@
 
 import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
-import { SHAPE_KINDS, ShapeSwatch } from "../Shapes.jsx";
+import { DEFAULT_SHAPE_COLOR, SHAPE_KINDS, ShapeSwatch } from "../Shapes.jsx";
 import { PropGroup, PropRow, NumField, PropSlider, PropNote } from "./PropGroup.jsx";
 import { clamp } from "../../animatic/util.js";
+
+// How long a shape or an overlay is created for, and therefore what ↺ on
+// "Stays for" goes back to. ⚠ Matches `duration_ms`'s default on
+// `AnimaticShape` / `AnimaticOverlay` and the clips the editor makes.
+const DEFAULT_CLIP_MS = 2000;
+
+// Where a fresh box sits and how big it is — what every ↺ in the Transform
+// group goes back to. ⚠ THE TWO KINDS DIFFER, and only in size: `AnimaticShape`
+// is created at 25% of the frame and `AnimaticOverlay` at 30%. Reading both
+// from one table would make the reset on a picture put it back to a size it had
+// never been.
+const SHAPE_GEO = { x: 0.5, y: 0.5, w: 0.25, h: 0.25 };
+const OVERLAY_GEO = { x: 0.5, y: 0.5, w: 0.3, h: 0.3 };
 
 // A shape's settings. Position and size are shown as PERCENTAGES of the frame,
 // because that is what they are — the project stores fractions so the same
@@ -38,6 +51,16 @@ export default function ShapeProperties({
   const pct = (v) => Math.round(v * 100);
   const setPct = (field, value, lo, hi) =>
     onChange(shape.id, { [field]: clamp((parseFloat(value) || 0) / 100, lo, hi) });
+  const geo = isPicture ? OVERLAY_GEO : SHAPE_GEO;
+  // A ↺ on a transform row also clears that property's KEYS — see the note in
+  // `FrameProperties`: a property left animated is not back where it started,
+  // whatever the number under the playhead says.
+  const keyed = (prop) => (shape.keyframes?.[prop] || []).length > 0;
+  const resetProp = (prop, value) => {
+    const keys = { ...(shape.keyframes || {}) };
+    delete keys[prop];
+    onChange(shape.id, { [prop]: value, keyframes: keys });
+  };
 
   return (
     <div className="an-props">
@@ -74,7 +97,13 @@ export default function ShapeProperties({
               ))}
             </span>
           </PropRow>
-          <PropRow label="Fill" title="Fill colour">
+          <PropRow
+            label="Fill"
+            title="Fill colour"
+            reset={() => onChange(shape.id, { color: DEFAULT_SHAPE_COLOR })}
+            changed={(shape.color || "").toLowerCase() !== DEFAULT_SHAPE_COLOR.toLowerCase()}
+            resetTo="the default fill"
+          >
             <input
               type="color"
               className="an-colour"
@@ -86,7 +115,13 @@ export default function ShapeProperties({
       )}
 
       <PropGroup id="shape:timing" title="Timing">
-        <PropRow label="Starts at" title="How far into the video this appears">
+        <PropRow
+          label="Starts at"
+          title="How far into the video this appears"
+          reset={() => onChange(shape.id, { start_ms: 0 })}
+          changed={shape.start_ms > 0}
+          resetTo="the start of the video"
+        >
           <NumField
             unit="s"
             step="0.1"
@@ -99,7 +134,13 @@ export default function ShapeProperties({
             }
           />
         </PropRow>
-        <PropRow label="Stays for" title="How long it is on screen">
+        <PropRow
+          label="Stays for"
+          title="How long it is on screen"
+          reset={() => onChange(shape.id, { duration_ms: DEFAULT_CLIP_MS })}
+          changed={shape.duration_ms !== DEFAULT_CLIP_MS}
+          resetTo={`${DEFAULT_CLIP_MS / 1000}s`}
+        >
           <NumField
             unit="s"
             step="0.1"
@@ -125,7 +166,13 @@ export default function ShapeProperties({
         title="Transform"
         hint="Press ⏱, move the playhead, change the value"
       >
-        <PropRow label="Position X" title="Across the frame. 50% is centred.">
+        <PropRow
+          label="Position X"
+          title="Across the frame. 50% is centred."
+          reset={() => resetProp("x", geo.x)}
+          changed={shape.x !== geo.x || keyed("x")}
+          resetTo="50%"
+        >
           <NumField
             unit="%"
             step="1"
@@ -134,7 +181,13 @@ export default function ShapeProperties({
           />
           {kf && <KeyframeControls {...kf} prop="x" />}
         </PropRow>
-        <PropRow label="Position Y" title="Down the frame. 50% is centred.">
+        <PropRow
+          label="Position Y"
+          title="Down the frame. 50% is centred."
+          reset={() => resetProp("y", geo.y)}
+          changed={shape.y !== geo.y || keyed("y")}
+          resetTo="50%"
+        >
           <NumField
             unit="%"
             step="1"
@@ -143,7 +196,13 @@ export default function ShapeProperties({
           />
           {kf && <KeyframeControls {...kf} prop="y" />}
         </PropRow>
-        <PropRow label="Width" title="As a percentage of the frame's width">
+        <PropRow
+          label="Width"
+          title="As a percentage of the frame's width"
+          reset={() => resetProp("w", geo.w)}
+          changed={shape.w !== geo.w || keyed("w")}
+          resetTo={`${Math.round(geo.w * 100)}%`}
+        >
           <NumField
             unit="%"
             step="1"
@@ -153,7 +212,13 @@ export default function ShapeProperties({
           />
           {kf && <KeyframeControls {...kf} prop="w" />}
         </PropRow>
-        <PropRow label="Height" title="As a percentage of the frame's height">
+        <PropRow
+          label="Height"
+          title="As a percentage of the frame's height"
+          reset={() => resetProp("h", geo.h)}
+          changed={shape.h !== geo.h || keyed("h")}
+          resetTo={`${Math.round(geo.h * 100)}%`}
+        >
           <NumField
             unit="%"
             step="1"
@@ -171,10 +236,19 @@ export default function ShapeProperties({
           value={shape.opacity ?? 1}
           readout={`${Math.round((shape.opacity ?? 1) * 100)}%`}
           kf={kf && <KeyframeControls {...kf} prop="opacity" />}
+          reset={() => resetProp("opacity", 1)}
+          changed={(shape.opacity ?? 1) !== 1 || keyed("opacity")}
+          resetTo="100%"
           {...gesture}
           onChange={(e) => onChange(shape.id, { opacity: parseFloat(e.target.value) })}
         />
-        <PropRow label="Rotation" title="Clockwise, in degrees">
+        <PropRow
+          label="Rotation"
+          title="Clockwise, in degrees"
+          reset={() => resetProp("rotation", 0)}
+          changed={(shape.rotation || 0) !== 0 || keyed("rotation")}
+          resetTo="0°"
+        >
           <NumField
             unit="°"
             step="5"

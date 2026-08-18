@@ -44,6 +44,9 @@ from .videos import router as videos_router
 from .common import (
     board_dir as _board_dir,
     get_owned_job as _get_owned_job,
+    regenerate_board_panel as _regenerate_board_panel,
+    sequence_summary as _sequence_summary,
+    submit_sequence_run as _submit_sequence_run,
     variants_of as _variants_of,
 )
 from .jobs import get_store
@@ -1100,78 +1103,14 @@ def get_storyboard_panel(
 # ---------------------------------------------------------------------------
 # Image to Animatic Image — one panel → its key-pose sequence (the "flipbook")
 # ---------------------------------------------------------------------------
-def _panel_for_index(job: Job, index: int) -> dict | None:
-    """The panel dict at `index` on the ACTIVE variant, or None.
-
-    Same three-step lookup the regenerate endpoint does — by `index` field, then
-    by position, then rebuilt from the stored shots — so a panel that never made
-    it into the streamed result can still be worked on.
-    """
-    variants, active = _variants_of(job.result or {})
-    panels = list(variants[active].get("panels") or [])
-    panel = next((p for p in panels if p.get("index") == index), None)
-    if panel is None and 0 <= index < len(panels):
-        panel = panels[index]
-    if panel is not None:
-        return dict(panel)
-    shots = (job.params or {}).get("shots") or []
-    if 0 <= index < len(shots):
-        s = shots[index]
-        return {
-            "index": index,
-            "description": s.get("description", ""),
-            "characters": s.get("characters", []) or [],
-            "assets": s.get("assets", []) or [],
-            "location": s.get("location", "") or "",
-            "camera": s.get("camera", "") or "",
-        }
-    return None
-
-
 def _sequence_info(job: Job, index: int) -> PanelSequenceInfo:
     """This panel's sequence as the client sees it, urls filled from DISK.
 
-    Counting files rather than trusting the stored summary matters for RESUME:
-    after a stop the job says "8 frames" and the disk agrees, but if a run
-    crashed mid-write the disk is the honest answer.
-
-    EVERY planned index is checked, not a `while` loop from zero. That loop was
-    a real bug: one refused frame in the middle of a sixteen-pose run hid the
-    ten good drawings after it, reported the sequence as short, and made the
-    next Generate redraw pictures that had already been paid for. `missing`
-    names the holes so the strip can show them as gaps to fill rather than
-    pretending the sequence simply ended early.
+    The arithmetic is `common.sequence_summary` — the animatic editor asks the
+    same question about the shot behind one of its frames, and one answer to it
+    is the point of that module.
     """
-    stored = ((job.result or {}).get("sequences") or {}).get(str(index)) or {}
-    board_dir = _board_dir(job.job_id)
-    planned = int(stored.get("planned") or 0)
-    # A sequence with no stored summary (an older board) is still discoverable:
-    # scan up to the largest run this endpoint could ever have produced.
-    on_disk = panel_sequence.frames_on_disk(
-        board_dir, index, planned or panel_sequence.MAX_FRAMES
-    )
-    return PanelSequenceInfo(
-        index=index,
-        frames=len(on_disk),
-        planned=planned,
-        duration_seconds=int(stored.get("duration_seconds") or 0),
-        fps=int(stored.get("fps") or panel_sequence.FPS),
-        stopped=bool(stored.get("stopped")),
-        failed=list(stored.get("failed") or []),
-        missing=[n for n in range(planned) if n not in set(on_disk)],
-        # `?v=<mtime>` so a REDRAWN pose is a different URL. Without it the
-        # client — which caches one object URL per path and never re-fetches a
-        # path it already holds — kept showing the old drawing, and both "redraw
-        # this pose" and a full regenerate looked like they did nothing.
-        urls=[
-            f"/storyboards/{job.job_id}/panels/{index}/frames/{n}"
-            f"?v={panel_sequence.frame_version(board_dir, index, n)}"
-            for n in on_disk
-        ],
-        frame_numbers=on_disk,
-        poses=[str(p) for p in (stored.get("poses") or [])],
-        hold=str(stored.get("hold") or ""),
-    )
+    return PanelSequenceInfo(**_sequence_summary(job, index))
 
 
 @app.get("/storyboards/{job_id}/panels/{index}/sequence", response_model=PanelSequenceInfo)
@@ -1207,92 +1146,19 @@ def generate_panel_sequence(
     the frames already on disk, so nothing already drawn is paid for twice.
     """
     job = _get_owned_board(job_id, current)
-    if job.status == JobStatus.RUNNING:
-        raise HTTPException(
-            status_code=409,
-            detail="This board is already busy — wait for it to finish, or stop it first.",
-        )
-
-    try:
-        duration = panel_sequence.validate_duration(body.duration_seconds)
-    except panel_sequence.SequenceError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-
-    panel = _panel_for_index(job, index)
-    if panel is None:
-        raise HTTPException(status_code=404, detail=f"Shot {index} not found.")
-    panel["index"] = index
-
-    variants, active = _variants_of(job.result or {})
-    params = job.params or {}
-
-    total = panel_sequence.frame_count_for(duration)
-    # How many drawings this run will actually pay for. On a resume that is the
-    # HOLES, wherever they fall — not "everything after the last one", which
-    # both skipped gaps in the middle and re-bought frames already on disk.
-    if body.resume:
-        have = len(panel_sequence.frames_on_disk(_board_dir(job_id), index, total))
-    else:
-        have = 0
-
-    # A redraw reuses the plan this sequence was already built from, so the pose
-    # that comes back is the same pose — a fresh planning call would invent a
-    # different one and the drawing would no longer fit its neighbours.
-    stored_seq = ((job.result or {}).get("sequences") or {}).get(str(index)) or {}
-    stored_poses = list(stored_seq.get("poses") or [])
-    redraw = sorted({n for n in (body.redraw or []) if 0 <= n < total})
-    beats = None
-    # The shot's invariant travels with the plan. Redrawing one pose without it
-    # would redraw the single drawing that is NOT fenced by the rule the other
-    # fifteen were drawn under — and that one is then free to wander back out of
-    # the shot, which is the whole bug this fences off.
-    hold = str(stored_seq.get("hold") or "")
-    if redraw and len(stored_poses) >= total:
-        beats = [
-            {"frame": round(i * (duration * panel_sequence.FPS - 1) / max(1, total - 1)),
-             "pose": stored_poses[i]}
-            for i in range(total)
-        ]
-
-    worker.submit_panel_sequence(job_id, {
-        "panel": panel,
-        "duration_seconds": duration,
-        "style": variants[active].get("style") or params.get("style", "custom"),
-        "aspect_ratio": params.get("aspect_ratio", "16:9"),
-        "output_dir": config.OUTPUT_DIR,
-        "character_ref_paths": params.get("character_ref_paths") or {},
-        "asset_ref_paths": params.get("asset_ref_paths") or {},
-        "provider": params.get("provider"),
-        "world": params.get("world") or {},
-        # The written bible, so a face holds still across sixteen drawings.
-        "cast": params.get("cast") or [],
-        "assets": params.get("assets") or [],
-        "variant": active,
-        "resume": bool(body.resume),
-        "limit": panel_sequence.PREVIEW_POSES if body.preview else None,
-        "redraw": redraw or None,
-        "beats": beats,
-        "hold": hold,
-        # THE WHOLE BOARD, so the pose planner can see which shots run either
-        # side of this one. A shot planned from its own sentence alone animates
-        # straight on into the next one — an establishing wide of a sleeping man
-        # came back as eight drawings of him waking up, immediately before the
-        # close-up that shows him still asleep. See panel_sequence.plan_beats.
-        "board_panels": list(variants[active].get("panels") or []),
-    })
-
-    if redraw:
-        wanted = len(redraw)
-    elif body.preview:
-        wanted = min(total - have, panel_sequence.PREVIEW_POSES)
-    else:
-        wanted = total - have
-    logger.info(
-        "[storyboard %s] panel %d sequence queued: %ss → %d poses, drawing %d "
-        "(%d already drawn)%s",
-        job_id, index, duration, total, wanted, have,
-        f" [REDRAW {redraw}]" if redraw else (" [PREVIEW]" if body.preview else ""),
+    # The whole of this — the busy check, the duration, the panel lookup, the
+    # resume arithmetic and the plan handling — is `common.submit_sequence_run`,
+    # because the animatic editor queues exactly the same run for the shot
+    # behind one of its frames.
+    queued = _submit_sequence_run(
+        job, index, body.duration_seconds,
+        resume=body.resume, preview=body.preview, redraw=body.redraw,
     )
+    duration = queued["duration_seconds"]
+    total = queued["total"]
+    wanted = queued["wanted"]
+    redraw = sorted({n for n in (body.redraw or []) if 0 <= n < total})
+
     message = (
         f"Drawing {wanted} key pose(s) for a {duration}s shot "
         f"({duration}s × {panel_sequence.FPS}fps = {duration * panel_sequence.FPS} frames)."
@@ -1300,6 +1166,11 @@ def generate_panel_sequence(
     if redraw:
         which = ", ".join(str(n + 1) for n in redraw)
         message = f"Re-drawing key pose{'' if len(redraw) == 1 else 's'} {which}."
+    elif queued["lengthened"]:
+        message = (
+            f"Carrying this shot on to {duration}s — drawing {wanted} more key "
+            f"pose(s). The {queued['have']} already drawn are kept."
+        )
     elif body.preview:
         message = (
             f"Drawing the first {wanted} key pose(s) so you can check the motion "
@@ -1500,99 +1371,18 @@ def regenerate_storyboard_panel(
     Robust to a panel that isn't in the streamed result yet: it's located by its
     `index` field and, failing that, rebuilt from the shots stored on the job.
     Optional description/camera/location overrides let the user edit the prompt.
+
+    The work is `common.regenerate_board_panel` — the animatic editor redraws
+    the same panels from its Properties pane, and a second copy of the variant
+    handling and the write-back is a second thing to keep in step.
     """
     job = _get_owned_job(job_id, current)
     if job.kind != JobKind.STORYBOARD:
         raise HTTPException(status_code=400, detail="Not a storyboard job.")
-
-    result = job.result or {}
-    # Regenerate within the ACTIVE style variant so its subfolder + style are used.
-    variants, active = _variants_of(result)
-    panels = list(variants[active].get("panels") or [])
-    variant_style = variants[active].get("style") or job.params.get("style", "custom")
-    shots = job.params.get("shots") or []
-    count = int(job.params.get("count") or len(shots) or len(panels))
-
-    # Find the panel by its index field; fall back to list position, then to the
-    # original shot list (so a not-yet-streamed panel can still be re-drawn).
-    panel = next((p for p in panels if p.get("index") == body.index), None)
-    if panel is None and 0 <= body.index < len(panels):
-        panel = panels[body.index]
-    if panel is None:
-        if 0 <= body.index < len(shots):
-            s = shots[body.index]
-            panel = {
-                "index": body.index,
-                "scene_number": s.get("scene_number", 1),
-                "shot_number": s.get("shot_number", body.index + 1),
-                "description": s.get("description", ""),
-                "characters": s.get("characters", []) or [],
-                "dialogue": s.get("dialogue", []) or [],
-                "assets": s.get("assets", []) or [],
-                "location": s.get("location", "") or "",
-                "camera": s.get("camera", "") or "",
-                "url": None,
-                "failed": True,
-            }
-        else:
-            raise HTTPException(status_code=404, detail=f"Panel {body.index} not found.")
-
-    # Apply any edited prompt fields before re-drawing.
-    panel = dict(panel)
-    if body.description is not None:
-        panel["description"] = body.description
-    if body.camera is not None:
-        panel["camera"] = body.camera
-    if body.location is not None:
-        panel["location"] = body.location
-
-    from storyboard_pipeline import regenerate_panel
-
-    try:
-        updated = regenerate_panel(
-            job_id=job_id,
-            panel=panel,
-            style=variant_style,
-            aspect_ratio=job.params.get("aspect_ratio", "16:9"),
-            output_dir=config.OUTPUT_DIR,
-            character_ref_paths=job.params.get("character_ref_paths") or {},
-            asset_ref_paths=job.params.get("asset_ref_paths") or {},
-            variant=active,
-            provider=job.params.get("provider"),
-            world=job.params.get("world") or {},
-            # A redraw gets the same continuity the first draw had: who these
-            # people are, and where this shot sits in the film. Without them the
-            # Regenerate button was the easiest way to knock a panel off-model.
-            cast=job.params.get("cast") or [],
-            assets=job.params.get("assets") or [],
-            board_panels=panels,
-        )
-    except Exception as e:  # noqa: BLE001 — report clearly
-        logger.exception("[storyboard %s] panel %d regen failed", job_id, body.index)
-        raise HTTPException(status_code=502, detail=f"Panel regeneration failed: {e}")
-
-    # Write the panel back in place (or insert it, keeping index order).
-    replaced = False
-    for i, p in enumerate(panels):
-        if p.get("index") == body.index:
-            panels[i] = updated
-            replaced = True
-            break
-    if not replaced:
-        panels.append(updated)
-        panels.sort(key=lambda p: p.get("index", 0))
-
-    ok = sum(1 for p in panels if not p.get("failed"))
-    variants[active]["panels"] = panels
-    variants[active]["ok_count"] = ok
-    result["variants"] = variants
-    result["active_variant"] = active
-    result["panels"] = panels  # mirror the active variant
-    result["ok_count"] = ok
-    result.setdefault("count", count)
-    result.setdefault("style", variant_style)
-    result.setdefault("aspect_ratio", job.params.get("aspect_ratio"))
-    get_store().update(job_id, result=result)
+    updated = _regenerate_board_panel(
+        job, body.index,
+        description=body.description, camera=body.camera, location=body.location,
+    )
     return {"panel": updated}
 
 

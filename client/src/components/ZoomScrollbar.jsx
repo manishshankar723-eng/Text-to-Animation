@@ -129,7 +129,14 @@ export default function ZoomScrollbar({
       <div
         className="tl-sbar-thumb"
         style={{
-          [ax.start]: `${from * 100}%`,
+          // ⚠ CLAMPED SO THE THUMB CANNOT HANG OFF THE END. When the proportional
+          // size is below the minimum the thumb is DRAWN bigger than it is, and
+          // at full scroll that surplus hung past the end of the track: the
+          // scroll had reached the end while the bar still looked like it had
+          // somewhere left to go, which reads as content you cannot get to. The
+          // position is a fraction of the bar, the minimum is in pixels, so the
+          // clamp has to be a `min()` of the two units.
+          [ax.start]: `min(${from * 100}%, 100% - max(${MIN_THUMB_PX}px, ${(to - from) * 100}%))`,
           [ax.size]: `max(${MIN_THUMB_PX}px, ${(to - from) * 100}%)`,
         }}
         onPointerDown={(e) => begin(e, "pan")}

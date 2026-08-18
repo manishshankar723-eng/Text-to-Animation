@@ -28,7 +28,7 @@
 // knowledge of what a clip is — so panes keep writing through their own handlers
 // and can never disagree with the document.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // Which groups are open, remembered for the tab rather than for the selection.
 // Module-level ON PURPOSE: collapsing "Look" because you are working on timing
@@ -36,6 +36,30 @@ import { useState } from "react";
 // worth doing. It is deliberately NOT persisted to the project — it is a view
 // preference, and it must never end up in an exported animatic.
 const OPEN = new Map();
+
+// Every mounted group's setter, by id — what lets `openGroup()` below reach a
+// section that is already on screen.
+const WATCHERS = new Map();
+
+/**
+ * REVEAL A SECTION, because something just landed in it.
+ *
+ * ⚠ THE ONE THING A COLLAPSIBLE PANE OWES YOU. A closed section is a promise
+ * that nothing you can't see is changing — and the moment an ADD control sits
+ * outside the sections it fills, that promise breaks: uploading a video with
+ * Frames folded shut moved a count from 31 to 32 and showed nothing else,
+ * reported as "I upload a video but it's not in the media panel". It was; it was
+ * in the drawer. So anything that puts content into a section opens it.
+ *
+ * Works whether or not the group is mounted: the memory is written either way,
+ * so a section on the tab you are not looking at is already open when you get
+ * there. It only ever OPENS — nothing here may close a section for you, which
+ * would be the same surprise pointing the other way.
+ */
+export function openGroup(id) {
+  OPEN.set(id, true);
+  WATCHERS.get(id)?.forEach((setOpen) => setOpen(true));
+}
 
 /**
  * A named, collapsible section of the pane.
@@ -69,6 +93,18 @@ export function PropGroup({
       return !was;
     });
 
+  // Subscribe this instance to `openGroup(id)`. Keyed by id and not by
+  // instance, so two panes showing the same section both open.
+  useEffect(() => {
+    let subs = WATCHERS.get(id);
+    if (!subs) WATCHERS.set(id, (subs = new Set()));
+    subs.add(setOpen);
+    return () => {
+      subs.delete(setOpen);
+      if (!subs.size) WATCHERS.delete(id);
+    };
+  }, [id]);
+
   return (
     <section className={`an-grp ${tone ? `an-grp-${tone}` : ""} ${open ? "open" : ""}`}>
       <div className="an-grp-head">
@@ -96,20 +132,82 @@ export function PropGroup({
 }
 
 /**
+ * ↺ — PUT THIS PROPERTY BACK THE WAY IT CAME.
+ *
+ * WHY IT EXISTS ON EVERY ROW. Until this, undoing one setting meant remembering
+ * what its default had been and typing it back in; the only escape hatches were
+ * a handful of hand-written "Reset motion" / "Flat" buttons on the groups that
+ * someone had happened to need one on. Everything else you could change, you
+ * could not un-change without knowing the number.
+ *
+ * ⚠ ALWAYS RENDERED, NEVER CONDITIONAL, and that is deliberate even though it
+ * costs a faint disabled button on most rows. Two reasons, and the second is the
+ * one that decided it:
+ *
+ *   1. a control that appears only once you have touched the property is a
+ *      control you have to discover twice;
+ *   2. because it is always there, its STATE is information — a lit ↺ down the
+ *      pane is the list of things you have changed on this clip, which is the
+ *      question you are actually asking when you go looking for a reset.
+ *
+ * `changed` decides which of the two it is. It is passed in rather than worked
+ * out here because only the caller knows what this property's default is, and
+ * putting a table of defaults in a layout file is how the pane and the document
+ * start disagreeing about them.
+ *
+ * @param onReset  what to write. Called with no arguments.
+ * @param changed  is the value away from its default right now?
+ * @param title    what it goes back TO ("100%", "flat", "the whole file").
+ */
+export function ResetButton({ onReset, changed = false, title }) {
+  return (
+    <button
+      type="button"
+      className={`an-kf-btn an-reset ${changed ? "on" : ""}`}
+      disabled={!changed}
+      onClick={onReset}
+      title={
+        changed
+          ? `Reset${title ? ` to ${title}` : ""}`
+          : `Already at its default${title ? ` (${title})` : ""}`
+      }
+      aria-label="Reset this property"
+    >
+      ↺
+    </button>
+  );
+}
+
+/**
  * One property: a label in the left column, its controls in the right.
  *
  * The ⏱ goes in `children` as the LAST item — it is pushed to the right edge by
  * `margin-left:auto`, and wraps under the value on a narrow pane instead of
- * squeezing it.
+ * squeezing it. The ↺ goes AFTER it, at the very end of the row, so the two
+ * always sit in the same order however many controls the row has.
  *
- * @param label  the property name. Nothing else in the left column, ever: a
- *               value or a unit in there is what breaks the alignment.
- * @param title  the tooltip — where the long explanation goes.
- * @param hint   a line of prose under the row, spanning both columns.
- * @param full   controls take the whole width and the label sits above them.
- *               For sliders that need the room, and for buttons.
+ * @param label   the property name. Nothing else in the left column, ever: a
+ *                value or a unit in there is what breaks the alignment.
+ * @param title   the tooltip — where the long explanation goes.
+ * @param hint    a line of prose under the row, spanning both columns.
+ * @param full    controls take the whole width and the label sits above them.
+ *                For sliders that need the room, and for buttons.
+ * @param reset   () => void — put this property back to its default. Omit only
+ *                on rows that HAVE no default: a read-out, a button, a pile of
+ *                presets. Every row with a value should pass one.
+ * @param changed is that value away from its default right now?
+ * @param resetTo what it goes back to, for the tooltip.
  */
-export function PropRow({ label, title, hint, full = false, children }) {
+export function PropRow({
+  label,
+  title,
+  hint,
+  full = false,
+  reset,
+  changed = false,
+  resetTo,
+  children,
+}) {
   return (
     <div className={`an-row ${full ? "full" : ""}`}>
       {label != null && (
@@ -117,7 +215,10 @@ export function PropRow({ label, title, hint, full = false, children }) {
           {label}
         </span>
       )}
-      <div className="an-row-ctl">{children}</div>
+      <div className="an-row-ctl">
+        {children}
+        {reset ? <ResetButton onReset={reset} changed={changed} title={resetTo} /> : null}
+      </div>
       {hint ? <p className="an-row-hint">{hint}</p> : null}
     </div>
   );
@@ -144,7 +245,17 @@ export function NumField({ tag, unit, ...input }) {
  * A slider with its value read out beside it, sized to the row like every other
  * control. `kf` is the ⏱ node, which sits after the readout.
  */
-export function PropSlider({ label, title, readout, kf, hint, ...input }) {
+export function PropSlider({
+  label,
+  title,
+  readout,
+  kf,
+  hint,
+  reset,
+  changed = false,
+  resetTo,
+  ...input
+}) {
   return (
     <div className="an-row">
       <span className="an-row-label" title={title}>
@@ -154,6 +265,7 @@ export function PropSlider({ label, title, readout, kf, hint, ...input }) {
         <input type="range" {...input} />
         <span className="an-num-read">{readout}</span>
         {kf}
+        {reset ? <ResetButton onReset={reset} changed={changed} title={resetTo} /> : null}
       </div>
       {hint ? <p className="an-row-hint">{hint}</p> : null}
     </div>

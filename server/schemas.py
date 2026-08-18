@@ -921,20 +921,48 @@ class AnimaticFrame(BaseModel):
 
 
 class AnimaticAudio(BaseModel):
-    """One audio track laid under the sequence.
+    """One audio CLIP laid under the sequence.
 
     An animatic can carry several — music under a voiceover is the usual pair —
     and they are MIXED on export, each at its own volume.
+
+    ⚠ A CLIP, NOT A FILE. Since the razor learned to cut audio, several entries
+    can share one `upload_id`: cutting a track in half leaves two clips reading
+    two different windows of the same upload, and neither is "the track". So the
+    identity of an entry is `id`, and `upload_id` says only which file it reads.
+    Everything the editor keys per clip — the selection, its <audio> element, a
+    patch, a mute — keys on `id`; everything that is about the FILE (the blob
+    url, the decoded waveform, a transcript) keys on `upload_id`.
     """
 
+    # The clip's own identity. "" on every animatic saved before the razor could
+    # cut audio; `_audio_tracks_of` fills those in with the `upload_id`, which is
+    # unique in exactly the projects that predate this and keeps their selection
+    # and element keys byte-for-byte what they were.
+    id: str = ""
     upload_id: str
     # The lane this track sits on. "" = a lane of its own, which is how every
     # track written before layers existed is laid out.
     layer_id: str = ""
+    # Selected, moved and deleted with whatever shares it — see the field's
+    # canonical comment on `AnimaticTextClip`. ⚠ Per CLIP, like everything else
+    # keyed by `id`: cutting a track leaves two clips and only the piece you
+    # grouped is in the group.
+    group_id: str = ""
     filename: str = ""
     # Measured in the BROWSER (decodeAudioData) and sent up — the server has no
     # audio decoder of its own, and ffmpeg doesn't need to be told.
     duration_ms: int = 0
+    # WHERE ON THE TIMELINE this clip begins. 0 is every animatic saved before
+    # the razor could cut audio — a track used to be pinned to the head of the
+    # video and could only be trimmed at its ends, which is exactly why a gap in
+    # the middle of a take could not be cut out.
+    #
+    # ⚠ Do not confuse it with `offset_ms`. This one moves the clip along the
+    # TIMELINE; `offset_ms` moves the playhead INSIDE the file. A cut in the
+    # middle sets both on the second half: it starts later on the timeline and
+    # further into the file, by the same amount.
+    start_ms: int = Field(0, ge=0)
     # How far into the audio file playback starts (skips an intro). Never negative.
     offset_ms: int = Field(0, ge=0)
     # How long the track PLAYS from `offset_ms`. None = to the end of the file.
@@ -1006,6 +1034,9 @@ class AnimaticOverlay(BaseModel):
 
     id: str
     layer_id: str = ""
+    # Selected, moved and deleted with whatever shares it — see the field's
+    # canonical comment on `AnimaticTextClip`.
+    group_id: str = ""
     upload_id: str
     start_ms: int = Field(0, ge=0)
     duration_ms: int = Field(2000, ge=100, le=600_000)
@@ -1043,6 +1074,26 @@ class AnimaticTextClip(BaseModel):
     # Which lane it sits on. "" is the default text lane — what every clip
     # written before layers existed belongs to.
     layer_id: str = ""
+    # --- Grouping -----------------------------------------------------------
+    # ⚠ THE CANONICAL DEFINITION. `AnimaticShape`, `AnimaticOverlay` and
+    # `AnimaticAudio` carry the same field with the same meaning; read this one.
+    #
+    # Clips sharing a `group_id` are selected, moved and deleted as ONE thing.
+    # "" is not in a group, which is every clip saved before this existed.
+    #
+    # A SHARED STRING ON THE MEMBERS, deliberately, rather than a group object
+    # holding a list of ids. A container has to be kept in step with every
+    # delete, split, duplicate and undo in the app, and one missed path leaves a
+    # group pointing at a clip that no longer exists; a string on the clip
+    # itself cannot go stale — delete a member and the group is whatever is
+    # left. A group may span kinds (a caption and the shape behind it are
+    # exactly the pair you want moving together), which is also why it is not a
+    # field on the LAYER: grouping is not "same row", it is "same thing".
+    #
+    # ⚠ EDITOR-ONLY, and the renderer must stay unaware of it: nothing about how
+    # a clip DRAWS may depend on who it is grouped with, or the export would
+    # change when you group something. See `client/src/animatic/selection.js`.
+    group_id: str = ""
     text: str = ""
     # Where it sits on the timeline, in video time.
     start_ms: int = Field(0, ge=0)
@@ -1118,6 +1169,9 @@ class AnimaticShape(BaseModel):
 
     id: str
     layer_id: str = ""
+    # Selected, moved and deleted with whatever shares it — see the field's
+    # canonical comment on `AnimaticTextClip`.
+    group_id: str = ""
     kind: str = Field("rect", description="'rect' | 'ellipse' | 'pentagon' | 'star'.")
     # Where it sits on the timeline, in video time — same as a text clip.
     start_ms: int = Field(0, ge=0)
@@ -1193,6 +1247,46 @@ class AnimaticSettings(BaseModel):
     fit: str = Field("contain", description="'contain' (letterbox) or 'cover' (crop to fill).")
     background: str = Field("#000000", description="Letterbox colour, #rrggbb.")
     show_labels: bool = Field(False, description="Burn each frame's label into the video.")
+    # --- Export presets (Phase 8) ------------------------------------------
+    # ⚠ ALL THREE DEFAULT TO WHAT THIS ALWAYS DID: no preset, an MP4, and a
+    # still taken from the head of the timeline. Every animatic saved before
+    # presets existed therefore opens and exports byte for byte as it did.
+    #
+    # Which named preset the settings currently ARE — see `export_presets.py`.
+    # Stored rather than derived so the dialog reopens on the choice that was
+    # made, and deliberately NOT authoritative: the fields below are what the
+    # encoder reads, so a preset that has since been edited by hand simply
+    # stops matching and the dialog says "Custom".
+    preset: str = Field("", description="'youtube' | 'tiktok' | 'reels' | 'gif' | 'still' | ''.")
+    # What FILE to write. Not constrained to the known set on purpose — same
+    # rule as a transition `kind` — because `normalise_container` folds anything
+    # it doesn't know down to mp4, so a project written by a newer client still
+    # exports here instead of failing validation.
+    container: str = Field("mp4", description="'mp4' | 'gif' | 'png'.")
+    # Which moment a 'png' export is a picture of; ignored by the other two.
+    # The editor sends the playhead, so "export a still" means the frame you are
+    # looking at.
+    still_ms: int = Field(0, ge=0)
+    # --- Rows the user has switched off (the eye in the timeline's gutter) ---
+    # ⚠ THE EYE HAS TO REACH THE ENCODER, which is why this is a project setting
+    # and not something the browser remembers. A switch that dimmed the preview
+    # and then exported the row anyway would be lying at the one moment it
+    # matters.
+    #
+    # ⚠ IT NAMES A ROW, NOT ITS CLIPS: `"<kind>:<layer_id>"` for a lane of clips
+    # ("text:" is the default text row, "shape:<id>" one the user added,
+    # "image:<id>" an overlay row) and "frames:stills" / "frames:video" for the
+    # two rows the picture track is drawn as. Emptying a hidden row or adding to
+    # it therefore changes nothing about what is switched off. The client writes
+    # the same tokens — `laneToken` in AnimaticEditor.jsx — and `_lane_hidden`
+    # here is what reads them back off a clip.
+    #
+    # Audio is NOT in here. A track has `muted`, which is this idea for a row you
+    # hear rather than see; two switches for one idea would be worse than either.
+    #
+    # Empty on every animatic that predates it, which then exports exactly as it
+    # always did.
+    hidden_lanes: list[str] = Field(default_factory=list)
 
 
 class AnimaticProject(BaseModel):
@@ -1708,6 +1802,93 @@ class AnimaticVoiceoverRequest(BaseModel):
     # `tts.synthesise_timed`). Free: the timings come back with the audio.
     add_captions: bool = True
     replace: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — reaching back to the BOARD from inside the editor
+#
+# ⚠ A frame is a REFERENCE to a storyboard panel, never a copy of one
+# (`AnimaticFrameSource`), and these three requests are what makes that
+# reference worth having: redraw the shot, block out more of it, or re-frame it
+# — without leaving the timeline you are cutting on. Everything they change is
+# on the BOARD or is an ordinary frame property; nothing here invents a new
+# thing for the exporter to know about.
+# ---------------------------------------------------------------------------
+class AnimaticPanelSource(BaseModel):
+    """The board panel behind ONE animatic frame — what the inline pane edits.
+
+    `can_regenerate` is False with a `reason` for every frame that is not a
+    board panel (an upload, a video clip, a colour card) and for a panel whose
+    board has gone. The pane reads the reason out rather than showing a button
+    that 400s.
+    """
+
+    frame_id: str
+    storyboard_id: str | None = None
+    index: int | None = None
+    # The prompt fields, so the pane opens on the wording this shot was drawn
+    # from rather than making the user retype it to change one word.
+    description: str = ""
+    camera: str = ""
+    location: str = ""
+    title: str = ""
+    can_regenerate: bool = False
+    reason: str = ""
+
+
+class AnimaticPanelRegenerateRequest(BaseModel):
+    """Body for POST /animatics/{id}/frames/{frame_id}/panel — redraw this shot.
+
+    Every field is optional and None means "leave it as the board has it", so
+    the plain Regenerate button sends an empty body.
+    """
+
+    description: str | None = None
+    camera: str | None = None
+    location: str | None = None
+
+
+class AnimaticRelengthRequest(BaseModel):
+    """Body for POST /animatics/{id}/frames/{frame_id}/sequence — a longer shot.
+
+    "Make this shot 2s longer". The key poses already on disk are KEPT and only
+    the new tail is drawn, so the price is the difference rather than the whole
+    sequence — see `panel_sequence.plan_beats`.
+    """
+
+    duration_seconds: int = Field(
+        ..., description="The shot's new length. One of panel_sequence.ALLOWED_DURATIONS."
+    )
+
+
+class AnimaticReframeRequest(BaseModel):
+    """Body for the two /reframe endpoints — estimate (free) and run (paid)."""
+
+    # Which shots. Empty = every frame with a picture, which is the "reframe the
+    # whole thing for vertical" the button exists for.
+    frame_ids: list[str] = Field(default_factory=list)
+    # The shape to frame FOR. Defaults to the project's own aspect ratio, which
+    # is what you want after switching the project to 9:16 — the frames are
+    # still composed for the shape they were drawn in.
+    aspect_ratio: str = Field(
+        "", description="Target aspect, e.g. '9:16'. Blank = the project's own."
+    )
+
+
+class ReframeCostEstimate(BaseModel):
+    """FREE advisory quote for an auto-reframe pass.
+
+    Priced per SHOT, because it is one vision call per picture — which is why it
+    is neither `CostEstimate` (per rendered video shot) nor `AudioCostEstimate`
+    (per second of sound).
+    """
+
+    frames: int = 0
+    usd: float = 0.0
+    model: str = ""
+    aspect_ratio: str = ""
+    over_limit: bool = False
+    limit: str = Field("", description="What the limit is, in words, when over_limit.")
 
 
 class VideoBackendStatus(BaseModel):

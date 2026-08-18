@@ -24,6 +24,7 @@
 
 import Icon from "../Icon.jsx";
 import { PropGroup, PropRow, NumField, PropNote } from "./PropGroup.jsx";
+import { DEFAULT_CLIP_COLOR as DEFAULT_CARD_COLOR } from "../../animatic/scene.js";
 import { clamp } from "../../animatic/util.js";
 
 // The speeds worth one click. Anything else is typed into the box below them.
@@ -57,7 +58,13 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
   return (
     <>
       <PropGroup id="clip:source" title="Source" hint="Which part of the file this clip plays">
-        <PropRow label="In" title="How far INTO the file this clip starts">
+        <PropRow
+          label="In"
+          title="How far INTO the file this clip starts"
+          reset={() => set({ in_ms: 0 })}
+          changed={inMs > 0}
+          resetTo="the start of the file"
+        >
           <NumField
             unit="s"
             step="0.1"
@@ -73,9 +80,16 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
           />
         </PropRow>
 
+        {/* ⚠ The old "Use whole clip" button is gone: the ↺ on this row does
+            exactly that, and every other row has one now — a second, differently
+            worded control for the same thing is what made this pane feel like
+            fifteen unrelated forms in the first place. */}
         <PropRow
           label="Out"
           title="Where in the file this clip stops. Empty means the end of the file."
+          reset={() => set({ out_ms: null })}
+          changed={outMs !== null}
+          resetTo="the end of the file"
         >
           <NumField
             unit="s"
@@ -92,16 +106,6 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
               set({ out_ms: Math.max(inMs + 100, Math.round(raw * 1000)) });
             }}
           />
-          {outMs !== null && (
-            <button
-              type="button"
-              className="btn small ghost an-row-end"
-              onClick={() => set({ out_ms: null })}
-              title="Read to the end of the file"
-            >
-              Use whole clip
-            </button>
-          )}
         </PropRow>
 
         <PropRow label="Selected" title="How much footage the in and out points leave">
@@ -136,7 +140,13 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
           </span>
         </PropRow>
 
-        <PropRow label="Exactly" title="Any speed between 0.1× and 10×">
+        <PropRow
+          label="Exactly"
+          title="Any speed between 0.1× and 10×"
+          reset={() => set({ speed: 1 })}
+          changed={Math.abs(speed - 1) > 1e-6}
+          resetTo="1× (real time)"
+        >
           <NumField
             unit="×"
             step="0.05"
@@ -185,11 +195,17 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
 export function ColorCardProperties({ clip, onChange }) {
   return (
     <PropGroup id="clip:card" title="Card">
-      <PropRow label="Colour" title="What the card is filled with">
+      <PropRow
+        label="Colour"
+        title="What the card is filled with"
+        reset={() => onChange(clip.id, { color: DEFAULT_CARD_COLOR })}
+        changed={(clip.color || DEFAULT_CARD_COLOR) !== DEFAULT_CARD_COLOR}
+        resetTo="black"
+      >
         <input
           type="color"
           className="an-colour"
-          value={clip.color || "#000000"}
+          value={clip.color || DEFAULT_CARD_COLOR}
           onChange={(e) => onChange(clip.id, { color: e.target.value })}
         />
       </PropRow>

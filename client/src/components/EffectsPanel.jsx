@@ -27,6 +27,7 @@ import {
   BLEND_MODES,
   EFFECT_KINDS,
   EFFECT_PARAMS,
+  DEFAULT_MASK,
   MASK_KINDS,
   effectParams,
   effectKey,
@@ -169,6 +170,28 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
       [`mask:${axis}`]: clamp((parseFloat(value) || 0) / 100, lo, hi),
     });
 
+  // --- Putting things back -------------------------------------------------
+  // ⚠ A ↺ HERE HAS TO CLEAR THE KEYFRAME TRACK TOO, and the track name is the
+  // flat string the property is addressed by ("mask:x", "fx:e3:amount"). Miss
+  // that and the reset appears to work until the playhead moves, at which point
+  // the old animation puts the value straight back.
+  const keyedTrack = (track) => ((stored.keyframes || {})[track] || []).length > 0;
+  const withoutTrack = (track) => {
+    const keys = { ...(stored.keyframes || {}) };
+    delete keys[track];
+    return keys;
+  };
+  const resetMask = (axis, value) =>
+    onChange(stored.id, {
+      [`mask:${axis}`]: value,
+      keyframes: withoutTrack(`mask:${axis}`),
+    });
+  const resetParam = (id, param, value) =>
+    onChange(stored.id, {
+      [`fx:${id}:${param}`]: value,
+      keyframes: withoutTrack(`fx:${id}:${param}`),
+    });
+
   return (
     <>
       {/* --- Look: blend and mask ------------------------------------------- */}
@@ -180,6 +203,9 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
         <PropRow
           label="Blend"
           title="How this clip combines with everything composited under it"
+          reset={() => onChange(stored.id, { blend: "normal" })}
+          changed={blend !== "normal"}
+          resetTo="Normal"
         >
           <select
             value={blend}
@@ -193,7 +219,13 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
           </select>
         </PropRow>
 
-        <PropRow label="Mask" title="Show this clip only inside a region of the frame">
+        <PropRow
+          label="Mask"
+          title="Show this clip only inside a region of the frame"
+          reset={() => onChange(stored.id, { mask: { ...mask, kind: "none" } })}
+          changed={masked}
+          resetTo="no mask"
+        >
           <select
             value={mask.kind || "none"}
             onChange={(e) => onChange(stored.id, { mask: { ...mask, kind: e.target.value } })}
@@ -212,7 +244,13 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
             reason the Motion rows follow `ANIMATABLE`. */}
         {masked && (
           <div className="an-sub">
-            <PropRow label="X" title="Centre of the mask, across the frame">
+            <PropRow
+              label="X"
+              title="Centre of the mask, across the frame"
+              reset={() => resetMask("x", DEFAULT_MASK.x)}
+              changed={(mask.x ?? DEFAULT_MASK.x) !== DEFAULT_MASK.x || keyedTrack("mask:x")}
+              resetTo="50%"
+            >
               <NumField
                 unit="%"
                 step="1"
@@ -221,7 +259,13 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
               />
               {kf && <KeyframeControls {...kf} prop="mask:x" />}
             </PropRow>
-            <PropRow label="Y" title="Centre of the mask, down the frame">
+            <PropRow
+              label="Y"
+              title="Centre of the mask, down the frame"
+              reset={() => resetMask("y", DEFAULT_MASK.y)}
+              changed={(mask.y ?? DEFAULT_MASK.y) !== DEFAULT_MASK.y || keyedTrack("mask:y")}
+              resetTo="50%"
+            >
               <NumField
                 unit="%"
                 step="1"
@@ -230,7 +274,12 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
               />
               {kf && <KeyframeControls {...kf} prop="mask:y" />}
             </PropRow>
-            <PropRow label="Width">
+            <PropRow
+              label="Width"
+              reset={() => resetMask("w", DEFAULT_MASK.w)}
+              changed={(mask.w ?? DEFAULT_MASK.w) !== DEFAULT_MASK.w || keyedTrack("mask:w")}
+              resetTo={`${Math.round(DEFAULT_MASK.w * 100)}%`}
+            >
               <NumField
                 unit="%"
                 step="1"
@@ -240,7 +289,12 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
               />
               {kf && <KeyframeControls {...kf} prop="mask:w" />}
             </PropRow>
-            <PropRow label="Height">
+            <PropRow
+              label="Height"
+              reset={() => resetMask("h", DEFAULT_MASK.h)}
+              changed={(mask.h ?? DEFAULT_MASK.h) !== DEFAULT_MASK.h || keyedTrack("mask:h")}
+              resetTo={`${Math.round(DEFAULT_MASK.h * 100)}%`}
+            >
               <NumField
                 unit="%"
                 step="1"
@@ -259,6 +313,12 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
               value={mask.feather ?? 0.1}
               readout={`${Math.round((mask.feather ?? 0.1) * 100)}%`}
               kf={kf && <KeyframeControls {...kf} prop="mask:feather" />}
+              reset={() => resetMask("feather", DEFAULT_MASK.feather)}
+              changed={
+                (mask.feather ?? DEFAULT_MASK.feather) !== DEFAULT_MASK.feather ||
+                keyedTrack("mask:feather")
+              }
+              resetTo={`${Math.round(DEFAULT_MASK.feather * 100)}%`}
               {...gesture}
               onChange={(e) => onChange(stored.id, { "mask:feather": parseFloat(e.target.value) })}
             />
@@ -345,7 +405,13 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
               ) : (
                 <>
                   {kind === "lut" && (
-                    <PropRow label="Look" title="Which colour look to load">
+                    <PropRow
+                      label="Look"
+                      title="Which colour look to load"
+                      reset={() => setText(index, "name", "")}
+                      changed={Boolean(params.name)}
+                      resetTo="none"
+                    >
                       <select
                         value={params.name || ""}
                         onChange={(e) => setText(index, "name", e.target.value)}
@@ -364,6 +430,9 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
                     <PropRow
                       label="Screen"
                       title="The colour to key out — pick it off your green screen"
+                      reset={() => setText(index, "color", EFFECT_PARAMS.chroma.color)}
+                      changed={(params.color || "").toLowerCase() !== EFFECT_PARAMS.chroma.color}
+                      resetTo="green"
                     >
                       <input
                         type="color"
@@ -380,8 +449,18 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
                       const field = FIELD[param] || {
                         label: param, scale: 100, unit: "%", min: 0, max: 300, step: 1,
                       };
+                      const fallback = EFFECT_PARAMS[kind][param];
                       return (
-                        <PropRow label={field.label} key={param}>
+                        <PropRow
+                          label={field.label}
+                          key={param}
+                          reset={() => resetParam(id, param, fallback)}
+                          changed={
+                            (params[param] ?? fallback) !== fallback ||
+                            keyedTrack(`fx:${id}:${param}`)
+                          }
+                          resetTo={`${Math.round(fallback * field.scale)}${field.unit}`}
+                        >
                           <NumField
                             unit={field.unit}
                             step={field.step}
