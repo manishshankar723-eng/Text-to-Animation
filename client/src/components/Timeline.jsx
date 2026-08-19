@@ -75,9 +75,11 @@ import {
   ANIMATABLE,
   clipKind,
   DEFAULT_SPEED,
+  frameOrigin,
   frameSpans,
   frameTrack,
 } from "../animatic/scene.js";
+import { CAPTION_LAYER_ID } from "../animatic/captions.js";
 import {
   MAX_TRANSITION_MS,
   MIN_TRANSITION_MS,
@@ -2298,13 +2300,17 @@ export default function Timeline({
   // Every row on the timeline goes through here, picked out of `lanes`. Text,
   // shapes and overlay pictures are the same free-floating clip drawn three
   // ways, so they share `clipLane` and one drag implementation.
-  function clipLane(lane, items, className, body, emptyLabel) {
+  function clipLane(lane, items, className, body) {
     return (
       <div
         key={lane.key}
         className={[
           "tl-lane",
           className,
+          /* The captions row is a TEXT row — same clips, same drag — so it is
+             marked rather than branched: `.tl-captions .tl-text` is what makes a
+             caption green where text you typed yourself is yellow. */
+          lane.layerId === CAPTION_LAYER_ID ? "tl-captions" : "",
           lane.hidden ? "off" : "",
           dropClass(lane),
           laneIsTarget(lane) ? "drop-lane" : "",
@@ -2383,17 +2389,38 @@ export default function Timeline({
             </div>
           );
         })}
-        {!items.length && (
-          <button
-            type="button"
-            className="tl-track-empty tl-track-add"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onAddToLane(lane)}
-          >
-            {emptyLabel}
-          </button>
-        )}
+        {emptyBand(lane, items.length)}
       </div>
+    );
+  }
+
+  /**
+   * The clickable band of a row with nothing on it.
+   *
+   * ⚠ IT IS BLANK, AND THAT IS THE POINT. Every empty row used to carry a line
+   * of prose — "T No text yet — click to caption the shot at the playhead",
+   * "◆ No shapes yet — click to add one" — and with four or five layers open the
+   * timeline read as a page of instructions with a few clips on it. Asked for
+   * directly: "remove information text look in blanck layer". An empty row is
+   * now an empty row, which is also what it looks like in every NLE.
+   *
+   * ⚠ NOTHING WAS LOST WITH THE TEXT. The whole band is still the row's add
+   * button, it still lights on hover, and what it does is on its `title` — the
+   * SAME string the row's ＋ carries in the gutter, so there is one sentence per
+   * lane instead of two that could drift apart.
+   */
+  function emptyBand(lane, count) {
+    if (count) return null;
+    const what = lane.add || LANE_ADD[lane.kind];
+    return (
+      <button
+        type="button"
+        className="tl-track-empty tl-track-add"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={() => onAddToLane(lane)}
+        title={what}
+        aria-label={what}
+      />
     );
   }
 
@@ -2446,6 +2473,16 @@ export default function Timeline({
                 data-sel={selKey("frame", f.id)}
                 className={[
                   "tl-bar",
+                  /* WHAT THIS BAR HOLDS, IN ONE WORD, AND THE CSS TURNS IT INTO A
+                     COLOUR (`.tl-bar.is-video` / `.is-still` in
+                     animatic-lanes.css): footage is orange, a picture is pink.
+                     ⚠ `frameOrigin`, WHICH IS BACK IN THIS FILE FOR THIS AND ONLY
+                     THIS. It stopped deciding WHERE a clip is drawn when picture
+                     tracks landed — that is `frameTrack` now, and re-using origin
+                     for placement is the bug that change existed to fix. Saying
+                     what a clip IS is a different question, and the honest one to
+                     ask it. "board" is a storyboard panel: a still, like an image. */
+                  frameOrigin(f) === "video" ? "is-video" : "is-still",
                   isSel("frame", f.id) ? "sel" : "",
                   inBand("frame", f.id) ? "banded" : "",
                   dropOnto(lane, start, ms) ? "drop-onto" : "",
@@ -2512,16 +2549,7 @@ export default function Timeline({
               only — see `renderTransitions`. */}
           {renderTransitions(lane.track || 0)}
           {/* The empty state belongs to a row with nothing on it at all. */}
-          {!on.length && (
-            <button
-              type="button"
-              className="tl-track-empty tl-track-add"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => onAddToLane(lane)}
-            >
-              🖼 Nothing on this picture track — click to add some
-            </button>
-          )}
+          {emptyBand(lane, on.length)}
         </div>
       );
     }
@@ -2534,8 +2562,7 @@ export default function Timeline({
         {
           title: (c) => c.text || "Empty text",
           render: (c) => <span className="tl-text-label">{c.text || "empty"}</span>,
-        },
-        lane.empty || "T No text yet — click to caption the shot at the playhead"
+        }
       );
     }
 
@@ -2555,8 +2582,7 @@ export default function Timeline({
               {w > 44 && <span className="tl-shape-label">{s.kind}</span>}
             </>
           ),
-        },
-        "◆ No shapes yet — click to add one"
+        }
       );
     }
 
@@ -2577,8 +2603,7 @@ export default function Timeline({
               {w > 52 && <span className="tl-shape-label">picture</span>}
             </>
           ),
-        },
-        "🖼 Empty layer — click to add a picture over the video"
+        }
       );
     }
 
@@ -2597,14 +2622,7 @@ export default function Timeline({
         >
           {dropMark(lane)}
           {laneGhost(lane)}
-          <button
-            type="button"
-            className="tl-track-empty tl-track-add"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={() => onAddToLane(lane)}
-          >
-            ♪ No audio yet — click to add an MP3 to time against
-          </button>
+          {emptyBand(lane, 0)}
         </div>
       );
     }
@@ -2821,6 +2839,10 @@ export default function Timeline({
               // `clearLane` in AnimaticEditor. `count` is what its ✕ would take.
               const clearable = !lane.removable && lane.kind !== "audio";
               const count = clearable ? laneCount(lane) : 0;
+              // Has this row's ✕ anything to do? It is rendered either way — see
+              // the cluster comment below — so this is what decides faint or live.
+              const deletable =
+                lane.removable || (clips.length > 0 && !lane.layerId) || count > 0;
               return (
                 <div
                   key={lane.key}
@@ -2839,7 +2861,14 @@ export default function Timeline({
                   onDoubleClick={() => selectLane(lane)}
                 >
                   <span className="tl-layer-ico">{lane.icon || LANE_ICON[lane.kind]}</span>
-                  <span className="tl-layer-name">{lane.name}</span>
+                  {/* ⚠ ITS OWN `title`, ON TOP OF THE ROW'S. The column is a fixed
+                      width and a long name still ends in an ellipsis there, so the
+                      one place that has to be able to say the whole name is the
+                      name itself — an audio row is called by its filename. The rest
+                      of the row goes on showing the lane's hint. */}
+                  <span className="tl-layer-name" title={lane.name}>
+                    {lane.name}
+                  </span>
                   {/* Only while there IS footage mixed in with stills on this row.
                       It disappears the moment it has been used, which is the whole
                       of its life cycle — see `onSplitFootage`. */}
@@ -2860,86 +2889,110 @@ export default function Timeline({
                       ▶⇧
                     </button>
                   )}
-                  {/* TURN THE ROW OFF. Audio has had its 🔇 since there were
-                      tracks to mute, and every other row had nothing — so the way
-                      to check a shot without its captions was to delete them.
-                      This is that speaker for the rows you can SEE, and it means
-                      the same thing: the row stays exactly where it is, and
-                      nothing on it is drawn — in the monitor OR in the export.
-                      ⚠ IT MUST AFFECT THE EXPORT. An eye that only dimmed the
-                      preview would be a switch that lies at the one moment it
-                      matters. See `hidden_lanes` in server/schemas.py.
-                      Audio keeps the speaker instead: two controls for one idea
-                      on the same row would be a choice nobody asked for. */}
-                  {lane.kind === "audio"
-                    ? clips.length > 0 && (
-                        <button
-                          type="button"
-                          className={`tl-layer-mute ${muted ? "on" : ""}`}
-                          onClick={() => onToggleMute(ids, !muted)}
-                          title={muted ? "Unmute this track" : "Mute this track"}
-                        >
-                          {muted ? "🔇" : "🔊"}
-                        </button>
-                      )
-                    : lane.vis && (
-                        <button
-                          type="button"
-                          className={`tl-layer-mute ${lane.hidden ? "on" : ""}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleHidden?.(lane);
-                          }}
-                          title={
-                            lane.hidden
+                  {/* ⚠ ONE CLUSTER, THREE SLOTS, ON EVERY ROW WITHOUT EXCEPTION:
+                      hide · add · remove, in that order, in three fixed columns
+                      (`.tl-layer-acts` in animatic-editor.css). Each button used to
+                      be rendered only when it had something to do, and each pushed
+                      itself right on its own — so a row with no eye put its ＋ in
+                      the eye's column and the icons zig-zagged down the gutter
+                      (user-reported against a reference NLE, where a track head's
+                      controls never move).
+                      ⚠ SO A CONTROL WITH NOTHING TO DO IS `disabled`, NOT ABSENT.
+                      That is the whole reason the columns stay straight, and a
+                      ghost ✕ also says "this row CAN be emptied, once there is
+                      something on it", where a gap said nothing at all. Faint and
+                      inert comes from `.tl-layer-btn:disabled`. */}
+                  <div className="tl-layer-acts">
+                    {/* TURN THE ROW OFF. Audio has had its 🔇 since there were
+                        tracks to mute, and every other row had nothing — so the way
+                        to check a shot without its captions was to delete them.
+                        This is that speaker for the rows you can SEE, and it means
+                        the same thing: the row stays exactly where it is, and
+                        nothing on it is drawn — in the monitor OR in the export.
+                        ⚠ IT MUST AFFECT THE EXPORT. An eye that only dimmed the
+                        preview would be a switch that lies at the one moment it
+                        matters. See `hidden_lanes` in server/schemas.py.
+                        Audio keeps the speaker instead: two controls for one idea
+                        on the same row would be a choice nobody asked for. */}
+                    {lane.kind === "audio" ? (
+                      <button
+                        type="button"
+                        className={`tl-layer-btn tl-layer-mute ${muted ? "on" : ""}`}
+                        onClick={() => clips.length && onToggleMute(ids, !muted)}
+                        disabled={clips.length === 0}
+                        title={
+                          clips.length === 0
+                            ? `Nothing on ${lane.name} to mute yet`
+                            : muted
+                              ? "Unmute this track"
+                              : "Mute this track"
+                        }
+                      >
+                        {muted ? "🔇" : "🔊"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`tl-layer-btn tl-layer-mute ${lane.hidden ? "on" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (lane.vis) onToggleHidden?.(lane);
+                        }}
+                        disabled={!lane.vis}
+                        title={
+                          !lane.vis
+                            ? "This row is always drawn"
+                            : lane.hidden
                               ? `Show ${lane.name} again — it is left out of the video while it is off`
                               : `Hide ${lane.name} — it stays on the timeline but is left out of the monitor and the video`
-                          }
-                          aria-pressed={!!lane.hidden}
-                        >
-                          <Icon name={lane.hidden ? "eye-off" : "eye"} />
-                        </button>
-                      )}
-                  <button
-                    type="button"
-                    className="tl-layer-add"
-                    onClick={() => onAddToLane(lane)}
-                    title={lane.add || LANE_ADD[lane.kind]}
-                  >
-                    ＋
-                  </button>
-                  {/* ✕ ON EVERY ROW THAT HAS ANYTHING ON IT, which the default
-                      rows did not: text, shapes, images and video could only be
-                      emptied clip by clip, or with a marquee that misses whatever
-                      is scrolled off the end. What it does differs by what the
-                      row IS, and the tooltip says which:
-                        · a lane you added      — the row goes, contents and all
-                        · an audio file         — that track goes
-                        · a default row         — the row stays (it is structural)
-                                                  and everything on it is deleted
-                      A default row with nothing on it has no ✕: there would be
-                      nothing for it to do. */}
-                  {(lane.removable || (clips.length > 0 && !lane.layerId) || count > 0) && (
+                        }
+                        aria-pressed={!!lane.hidden}
+                      >
+                        <Icon name={lane.hidden ? "eye-off" : "eye"} />
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="tl-layer-del"
+                      className="tl-layer-btn tl-layer-add"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddToLane(lane);
+                      }}
+                      title={lane.add || LANE_ADD[lane.kind]}
+                    >
+                      ＋
+                    </button>
+                    {/* ✕ ON EVERY ROW, AND IT DOES WHAT THE ROW *IS* — the tooltip
+                        says which:
+                          · a lane you added      — the row goes, contents and all
+                          · an audio file         — that track goes
+                          · a default row         — the row stays (it is structural)
+                                                    and everything on it is deleted
+                        A default row with nothing on it keeps the ghost: see the
+                        cluster comment above for why it is disabled and not gone. */}
+                    <button
+                      type="button"
+                      className="tl-layer-btn tl-layer-del"
                       onClick={(e) => {
                         e.stopPropagation();
                         if (lane.removable) onRemoveLayer(lane.layerId);
                         else if (clips.length) onRemoveTrack(ids);
-                        else onClearLane?.(lane);
+                        else if (count > 0) onClearLane?.(lane);
                       }}
+                      disabled={!deletable}
                       title={
                         lane.removable
                           ? `Remove ${lane.name}`
                           : clips.length
                             ? `Remove ${clips[0].filename}`
-                            : `Delete everything on ${lane.name} (${count})`
+                            : count > 0
+                              ? `Delete everything on ${lane.name} (${count})`
+                              : `Nothing on ${lane.name} to delete yet`
                       }
                     >
                       <Icon name="close" />
                     </button>
-                  )}
+                  </div>
                 </div>
               );
             })}

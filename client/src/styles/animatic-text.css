@@ -10,9 +10,14 @@
    happens to sit in — the gutter rows and the tracks are matched against these,
    so if they ever went missing every track would collapse to nothing. */
 .tl-wrap {
-  /* Wide enough for a track's filename beside its mute button — at 6.6rem a
-     name truncated to "m..." told you nothing about which lane was which. */
-  --tl-gutter-w: 9rem;
+  /* Wide enough for a LAYER NAME beside the three row controls — the two are
+     budgeted together, and the controls win because they are fixed: 3 ×
+     `--tl-act-w` and their gaps, the icon, and the row's padding come off the
+     top, and whatever is left is the name. At 6.6rem a name truncated to "m..."
+     told you nothing about which lane was which; at 9rem it was still only
+     "Capti..." / "Eleve..." (user-reported, with a screenshot). This leaves
+     ~10 characters, which is "Captions", "Pictures" and "Shapes" whole. */
+  --tl-gutter-w: 11rem;
   /* Two rows of ruler now — the timecode over its own tick — where it used to be
      one row of bare "0:05". `.tl-ruler` and the gutter's spacer both read this. */
   --tl-ruler-h: 1.5rem;
@@ -187,8 +192,10 @@
   gap: 0.3rem;
   box-sizing: border-box;
   padding: 0 0.4rem;
-  background: rgba(229, 193, 88, 0.22);
-  border: 1px solid var(--border-gold);
+  /* Yellow for text, green on the captions row — both set as `--clip-tint` in
+     animatic-lanes.css, for the reason spelled out on `.tl-bar`. */
+  background: var(--clip-tint, rgba(229, 193, 88, 0.22));
+  border: 1px solid var(--clip-edge, var(--border-gold));
   border-radius: 5px;
   cursor: grab;
   overflow: hidden;
@@ -279,15 +286,19 @@
   font-size: 0.72rem;
   line-height: 1.2;
   color: var(--muted);
-  /* ⚠ NO VERTICAL PADDING HERE — THE PROMPT IS CENTRED, NOT TOPPED OUT.
-     It used to be `padding: 0.45rem 0.6rem`: a FIXED offset inside a box whose
-     height is a variable the VERTICAL zoom writes (`--tl-track-h`, floor
+  /* ⚠ NO VERTICAL PADDING HERE — ANY TEXT IN THIS BOX IS CENTRED, NOT TOPPED
+     OUT. It used to be `padding: 0.45rem 0.6rem`: a FIXED offset inside a box
+     whose height is a variable the VERTICAL zoom writes (`--tl-track-h`, floor
      1.5rem — see MIN_TRACK_H in Timeline.jsx). Zoom the rows down and that
      offset pushed the text onto the lane's bottom edge, where the lane's own
      `overflow: hidden` sliced its descenders off — reported as "empty text
      layer not view full, i see it goes in down", and the audio row's
      `padding: 0.9rem` override made it worse still. A centred single line
-     cannot clip at ANY track height, which is the property this needs. */
+     cannot clip at ANY track height, which is the property this needs.
+     ⚠ THE EMPTY-ROW PROMPT IS GONE and these rules did NOT go with it — the
+     audio clip's "Loading …" placeholder below is the one thing still putting
+     text in this box, and it is in a lane of exactly the same variable height.
+     See `emptyBand` in Timeline.jsx for why the prompt went. */
   padding: 0 0.6rem;
   user-select: none;
   /* A lane is one track high. Without this the prompt wrapped to a second line
@@ -296,7 +307,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The empty band of a layer IS its add button — the obvious thing to click. */
+/* The empty band of a layer IS its add button — the obvious thing to click.
+   ⚠ AND IT IS BLANK NOW, so the hover below is the whole of the affordance:
+   there is no longer a line of prose saying what the row would do. That is
+   deliberate (`emptyBand` in Timeline.jsx has the report), and it is why the
+   hover tint is worth keeping strong enough to notice. */
 .tl-track-add {
   display: block;
   width: 100%;
@@ -317,7 +332,7 @@
 }
 .tl-track-add:hover {
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.07);
+  background: rgba(229, 193, 88, 0.1);
 }
 /* Same rule as above: the horizontal breathing room is this row's own, the
    vertical centring is shared. `0.9rem` of top padding here was what clipped
@@ -556,10 +571,10 @@
 
 @media (max-width: 720px) {
   .tl-wrap {
-    --tl-gutter-w: 6.4rem;
+    --tl-gutter-w: 8rem;
     /* Narrower gutter, narrower controls — otherwise three 1.15rem slots plus
-       their gaps eat most of 6.4rem and the layer name is down to an ellipsis
-       again. */
+       their gaps eat most of the column and the layer name is down to an
+       ellipsis again. */
     --tl-act-w: 1rem;
   }
   .tl-gutter {

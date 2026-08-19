@@ -1355,7 +1355,6 @@ export default function AnimaticEditor({
         icon: "❝",
         hint: "Captions written from a track — a run replaces this row, never your own text",
         add: "Add a caption to this row by hand",
-        empty: "❝ No captions yet — write them from an audio track, or click to type one",
       });
     }
     out.push({ key: "text:", kind: "text", name: "Text", layerId: "", removable: false });

@@ -22,15 +22,31 @@
   background: var(--panel-2);
   overflow: hidden;
 }
-/* The picture sequence is a row of butted-up bars, not a band with clips in it.
-   ⚠ `block`, not `flex`: each bar is placed at its own `left` in time, exactly
+/* ⚠ `block`, not `flex`: each bar is placed at its own `left` in time, exactly
    like a clip on any other lane. See `.tl-bars` in `animatic.css` for why a row
-   that adds itself up cannot be trusted to line up with the ruler. */
+   that adds itself up cannot be trusted to line up with the ruler.
+
+   ⚠ IT KEEPS THE LANE'S OWN PANEL NOW. This rule used to strip the background,
+   the border and the radius — the note said a band round butted-up bars reads as
+   a box they sit in, which was true while the picture WAS one unbroken sequence.
+   It stopped being true when a picture track became a stack of independently
+   placed clips: a gap is legal, and a gap in a row with no panel is a hole
+   straight through to the timeline, so the two picture rows were the only ones
+   on the bar with no surface at all — reported as "both layer no Backgrond fill
+   panel like other, not match other layer type bg look". Same panel, same
+   radius, same edge as every other lane, and the gaps now read as gaps IN
+   something.
+
+   ⚠ AN INSET SHADOW, NOT A BORDER, and this is the same rule `.drop-ok` below
+   is written against: a real border moves the content box in by a pixel, and
+   every bar on this row is placed at an absolute `left` measured against the
+   ruler. A shadow is painted inside the box and shifts nothing. */
 .tl-lane.tl-bars {
   display: block;
   border: none;
-  border-radius: 0;
-  background: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
   overflow: visible;
 }
 
@@ -103,7 +119,11 @@
    editor needs you to press. See `onSplitFootage` in Timeline.jsx. */
 .tl-layer-split {
   flex: 0 0 auto;
-  margin-left: auto;
+  /* ⚠ NO `margin-left: auto`. The cluster of three (`.tl-layer-acts`) carries
+     the one auto margin on this row; a second one here split the free space
+     between them and parked this button in the middle of the gutter, on the one
+     kind of row that has it — which is the zig-zag `.tl-layer-acts` exists to
+     stop. This sits where it belongs instead: straight after the name. */
   padding: 0 0.25rem;
   font-size: 0.6rem;
   line-height: 1;
@@ -376,8 +396,10 @@
   gap: 0.35rem;
   box-sizing: border-box;
   padding: 0 0.4rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  /* An overlay clip IS a picture, so it takes the picture pink — see the block
+     at the end of this file. The neutral panel is the fallback. */
+  background: var(--clip-tint, var(--panel));
+  border: 1px solid var(--clip-edge, var(--border));
   border-radius: 5px;
   cursor: grab;
   overflow: hidden;
@@ -485,4 +507,64 @@
     transparent 4px 8px
   );
   pointer-events: none;
+}
+
+/* --- WHAT A CLIP IS, IN COLOUR ------------------------------------------- */
+/* One hue per kind of content, so a bar says what it holds before you read its
+   label — which at eight pixels of bar is the only chance you get. Asked for
+   directly: footage orange, pictures pink, text yellow, captions green.
+
+   ⚠ EVERY RULE HERE ASSIGNS CUSTOM PROPERTIES AND NOTHING ELSE. The base rules
+   (`.tl-bar` in animatic.css, `.tl-text` in animatic-text.css, `.tl-overlay`
+   above) read `--clip-tint` / `--clip-tint-alt` / `--clip-edge` / `--clip-seam`
+   with their old gold as the fallback. Writing `background` here instead would
+   have been simpler and wrong: `.tl-bar.is-video` out-specifies `.tl-bar:hover`
+   and `.tl-bar.sel`, so a coloured clip would have lost its hover edge AND its
+   gold selection fill — and the selection is the one signal on this bar that
+   cannot be allowed to go quiet. Through a variable, every state rule keeps
+   exactly the specificity it had.
+
+   ⚠ THE PALETTE ITSELF IS IN `theme.css`, both themes, with the reasoning. Do
+   not put a literal colour in this file.
+
+   ⚠ SHAPES AND AUDIO ARE NOT LISTED, ON PURPOSE — a shape clip carries the
+   shape's own colour in its swatch and audio carries a waveform, so both are
+   already saying what they hold. Adding a fifth and sixth hue would only make
+   the four that mean something harder to tell apart. */
+
+/* Footage on a picture track. `frameOrigin` decides which of these two a bar
+   gets — see `renderLane` in Timeline.jsx. */
+.tl-bar.is-video {
+  --clip-tint: var(--clip-video-tint);
+  --clip-tint-alt: var(--clip-video-tint-alt);
+  --clip-edge: var(--clip-video-edge);
+  --clip-seam: var(--clip-video-edge);
+}
+/* A still on a picture track: a generated image or a storyboard panel. Both are
+   pictures, and the timeline's question is "is this moving?" — where the still
+   CAME from is the Media pane's filing, not a third colour here. */
+.tl-bar.is-still {
+  --clip-tint: var(--clip-image-tint);
+  --clip-tint-alt: var(--clip-image-tint-alt);
+  --clip-edge: var(--clip-image-edge);
+  --clip-seam: var(--clip-image-edge);
+}
+/* A picture composited OVER the video is still a picture, so it takes the same
+   pink rather than a colour of its own. */
+.tl-overlay {
+  --clip-tint: var(--clip-image-tint);
+  --clip-edge: var(--clip-image-edge);
+}
+.tl-text {
+  --clip-tint: var(--clip-text-tint);
+  --clip-edge: var(--clip-text-edge);
+}
+/* ⚠ AFTER `.tl-text`, AND IT HAS TO BE. The captions row is a text lane — it
+   carries `tl-texts` as well as this class — so green wins over yellow by
+   coming later at higher specificity. A caption is written FROM a track and a
+   run replaces the whole row, which is why it is worth telling apart from text
+   you typed yourself. */
+.tl-captions .tl-text {
+  --clip-tint: var(--clip-caption-tint);
+  --clip-edge: var(--clip-caption-edge);
 }

@@ -46,6 +46,34 @@
   --tl-clip-bg: rgba(229, 193, 88, 0.13);
   --tl-clip-bg-alt: rgba(229, 193, 88, 0.2);
   --tl-clip-seam: rgba(229, 193, 88, 0.34);
+  /* --- ONE COLOUR PER KIND OF CONTENT --------------------------------------
+     ⚠ THE TIMELINE USED TO BE GOLD FROM END TO END — stills, footage, text and
+     captions all carried the same tint, so the only way to tell what a bar held
+     was to read its label, and at eight pixels of bar there is no label. Asked
+     for directly: "i want keep color of content so user understand easily color
+     byies content".
+     ⚠ THEY ARE PASTELS, AND THAT IS NOT A STYLE CHOICE. Gold still means "this
+     is selected" on every lane — one selection language across the bar — so a
+     content colour has to sit UNDER it without competing. Saturated fills would
+     have made "orange clip" and "selected clip" the same kind of signal.
+     `-alt` is the second shade the picture tracks alternate between so two
+     neighbouring shots stay tellable apart when zoomed out; only the bars use
+     it. `-edge` is the border.
+     ⚠ SHAPES ARE DELIBERATELY NOT IN HERE. A shape clip stays neutral because
+     the swatch inside it already carries the shape's OWN colour — see the
+     `.tl-shape` comment — and two unrelated colours in one box is exactly what
+     that rule was written to avoid. Audio is out for the same kind of reason:
+     the waveform is the content, and it is already its own colour. */
+  --clip-video-tint: rgba(244, 168, 104, 0.17);
+  --clip-video-tint-alt: rgba(244, 168, 104, 0.25);
+  --clip-video-edge: rgba(244, 168, 104, 0.52);
+  --clip-image-tint: rgba(244, 156, 190, 0.17);
+  --clip-image-tint-alt: rgba(244, 156, 190, 0.25);
+  --clip-image-edge: rgba(244, 156, 190, 0.52);
+  --clip-text-tint: rgba(244, 216, 122, 0.2);
+  --clip-text-edge: rgba(244, 216, 122, 0.55);
+  --clip-caption-tint: rgba(150, 214, 160, 0.2);
+  --clip-caption-edge: rgba(150, 214, 160, 0.55);
   --disabled-opacity: 0.45;
   /* Plain-button surface — see the .btn comment. */
   --btn-bg: var(--panel-2);
@@ -114,6 +142,19 @@
   --tl-clip-bg: rgba(138, 107, 23, 0.1);
   --tl-clip-bg-alt: rgba(138, 107, 23, 0.17);
   --tl-clip-seam: rgba(138, 107, 23, 0.34);
+  /* The same four kinds, light mode. The dark theme's pastels are near-white
+     washes on a white track, so these keep the HUE and go deeper — exactly what
+     the gold tints above do, and for the same reason. */
+  --clip-video-tint: rgba(180, 96, 14, 0.14);
+  --clip-video-tint-alt: rgba(180, 96, 14, 0.22);
+  --clip-video-edge: rgba(180, 96, 14, 0.5);
+  --clip-image-tint: rgba(176, 58, 102, 0.13);
+  --clip-image-tint-alt: rgba(176, 58, 102, 0.21);
+  --clip-image-edge: rgba(176, 58, 102, 0.5);
+  --clip-text-tint: rgba(138, 107, 23, 0.16);
+  --clip-text-edge: rgba(138, 107, 23, 0.52);
+  --clip-caption-tint: rgba(31, 122, 61, 0.14);
+  --clip-caption-edge: rgba(31, 122, 61, 0.5);
   /* 0.45 washes a disabled button out to nothing on a light surface. */
   --disabled-opacity: 0.6;
   --btn-bg: var(--panel);

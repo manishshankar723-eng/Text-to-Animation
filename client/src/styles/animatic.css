@@ -529,10 +529,16 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  background: var(--tl-clip-bg);
-  border: 1px solid var(--border-gold);
+  /* ⚠ THE COLOUR COMES OFF THE CLIP, NOT OFF THIS RULE. `--clip-tint` /
+     `--clip-edge` / `--clip-seam` are set per KIND of content in
+     animatic-lanes.css (`.tl-bar.is-video` is orange, `.tl-bar.is-still` pink),
+     and the gold here is the fallback for a bar nobody has filed. Written as a
+     custom property on PURPOSE: a plain `.tl-bar.is-video { background }` rule
+     would out-specify `.tl-bar:hover` and `.tl-bar.sel` below and kill both. */
+  background: var(--clip-tint, var(--tl-clip-bg));
+  border: 1px solid var(--clip-edge, var(--border-gold));
   /* The seam between two shots, so the strip doesn't read as one long block. */
-  border-right: 1px solid var(--tl-clip-seam);
+  border-right: 1px solid var(--clip-seam, var(--tl-clip-seam));
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -551,7 +557,7 @@
 /* Alternating shades: at 2s a shot the seam alone is a thin cue, this makes the
    boundary readable even when the timeline is zoomed out. */
 .tl-bar:nth-child(even) {
-  background: var(--tl-clip-bg-alt);
+  background: var(--clip-tint-alt, var(--tl-clip-bg-alt));
 }
 .tl-bar:hover {
   border-color: var(--primary);
@@ -565,7 +571,7 @@
   border-radius: 6px 0 0 6px;
 }
 .tl-bar:last-of-type {
-  border-right: 1px solid var(--border-gold);
+  border-right: 1px solid var(--clip-edge, var(--border-gold));
   border-radius: 0 6px 6px 0;
 }
 /* Matches the selected TEXT clip — one selection language across the layers. */

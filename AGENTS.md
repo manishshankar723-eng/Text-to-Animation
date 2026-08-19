@@ -192,7 +192,33 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **THE PICTURE IS A STACK OF INDEPENDENT TRACKS
+**Last updated:** 2026-08-20 — **THE TIMELINE SAYS WHAT A CLIP IS IN COLOUR,
+THE EMPTY ROWS STOPPED TALKING, AND THE PICTURE ROWS GOT A SURFACE** (three
+user-reported faults in one message). Footage orange, pictures pink, text
+yellow, captions green — shapes and audio untouched, because a swatch and a
+waveform already say what they hold. ⚠ **THE TINTS ARE ASSIGNED AS CUSTOM
+PROPERTIES, NEVER AS `background`**: a plain `.tl-bar.is-video` rule
+out-specifies `.tl-bar:hover` and `.tl-bar.sel` and would have killed the hover
+edge and the gold selection fill — and gold meaning "selected" on every lane is
+why the four content colours are PASTEL in the first place. ⚠ **`.tl-lane.tl-bars`
+KEEPS THE LANE PANEL NOW**: stripping it was right while the picture was one
+unbroken sequence and wrong the moment a gap became legal. ⚠ **AN EMPTY ROW IS
+BLANK** — the five prompts are gone, the band is still the add button, and what
+it does is on its `title`. See the Work Log.
+
+**Previously:** **THE LAYER ROW’S THREE CONTROLS ARE FINALLY
+IN THEIR CLUSTER, AND THE LAYER NAME HAS ROOM AGAIN** (user-reported, with a
+screenshot of the gutter reading "Capti…" / "Eleve…"). ⚠ **THE 2026-08-19 FIX
+FOR THIS WAS WRITTEN IN CSS AND NEVER IN THE MARKUP** — `.tl-layer-acts` and
+`.tl-layer-btn` had been in `animatic-editor.css` since `b47c9e9` and
+`Timeline.jsx` rendered neither, so the rules were dead, the three buttons were
+bare `<button>`s at the browser’s own size, and the name — the one item on a
+fixed-width row that shrinks — paid for the difference. The cluster now exists in
+the JSX, all three controls are always rendered with `disabled` standing for
+"nothing to do", and `--tl-gutter-w` went 9rem → 11rem because **the controls and
+the name are ONE budget and the controls are the fixed half**. See the Work Log.
+
+**Previously:** **THE PICTURE IS A STACK OF INDEPENDENT TRACKS
 NOW, NOT ONE SEQUENCE DRAWN TWICE** (user-reported, and the request was "do best
 for me, i make production level editor"). *"when i do video trim so i see my image
 layer conetnt move like snip … i want user move independaly each asstes/conetnt in
@@ -1329,7 +1355,165 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — THE PICTURE TRACK BECAME A STACK OF INDEPENDENT TRACKS (user-reported)
+### 2026-08-20 (latest) — THE EMPTY ROWS STOPPED TALKING, THE PICTURE ROWS GOT A SURFACE, AND A CLIP NOW SAYS WHAT IT IS IN COLOUR (all three user-reported)
+
+> "first remove information text look in blanck layer … and see picture both
+>  layer no Backgrond fill panel like other not match other layer type bg look …
+>  i want keep color of content so user understand easily color byies content
+>  like video clip keep pastel orange coloue in layer so i wnat also image clip
+>  color is pastel pink, text clip color is pastel yellow, and caption clip color
+>  pastel green shapes till nw good not chnage in shapes"
+
+**1. AN EMPTY ROW IS AN EMPTY ROW.** Every lane with nothing on it carried a
+line of prose — "T No text yet — click to caption the shot at the playhead",
+"◆ No shapes yet — click to add one", and three more — so a project with five
+layers open read as a page of instructions with a few clips on it. All five are
+gone. ⚠ **NOTHING WENT WITH THE TEXT**: the whole band is still the row's add
+button, it still lights on hover (the tint went 0.07 → 0.1, because the hover is
+now the entire affordance), and what it does is on its `title` — **the same
+string the row's ＋ carries in the gutter** (`lane.add || LANE_ADD[kind]`), so
+there is one sentence per lane instead of two that could drift apart. One
+`emptyBand(lane, count)` in `Timeline.jsx` replaces five copies of the button.
+`lane.empty` on the captions lane is deleted with them; `.tl-track-empty`'s
+centring rules stay, because the audio clip's "Loading …" placeholder is still
+text in a lane of variable height.
+
+**2. ⚠ THE PICTURE ROWS KEEP THE LANE'S OWN PANEL NOW.** `.tl-lane.tl-bars`
+stripped the background, the border and the radius, and the note said a band
+round butted-up bars reads as a box they sit in. That was true while the picture
+WAS one unbroken sequence. **It stopped being true the moment a picture track
+became a stack of independently placed clips** (2026-08-20, the entry below): a
+gap is legal now, and a gap in a row with no panel is a hole straight through to
+the timeline — so the two picture rows were the only ones on the bar with no
+surface at all. Same `--panel-2`, same 6px radius, same edge as every other lane,
+and the gaps read as gaps IN something. ⚠ **AN INSET BOX-SHADOW, NOT A BORDER** —
+the same rule `.drop-ok` is written against: a real border moves the content box
+in by a pixel and every bar on this row is placed at an absolute `left` measured
+against the ruler. `overflow` stays `visible` (`.tl-tr-add` hangs 7px left of its
+cut) and the bars keep `:first-of-type` / `:last-of-type` rounding — rounding
+every bar would put a pinch at each butt joint, which is most joints.
+
+**3. ONE COLOUR PER KIND OF CONTENT.** Footage **orange**, pictures **pink**,
+text **yellow**, captions **green**. Shapes and audio are deliberately untouched:
+a shape clip carries the shape's own colour in its swatch and audio carries a
+waveform, so both already say what they hold, and two more hues would only make
+the four that mean something harder to tell apart.
+
+- ⚠ **EVERY NEW RULE ASSIGNS CUSTOM PROPERTIES AND NOTHING ELSE.** The base rules
+  (`.tl-bar`, `.tl-text`, `.tl-overlay`) read `--clip-tint` / `--clip-tint-alt` /
+  `--clip-edge` / `--clip-seam` with their old gold as the fallback; the block at
+  the end of `animatic-lanes.css` only sets those variables. Writing
+  `.tl-bar.is-video { background }` would have been the obvious way and **would
+  have broken two things**: it out-specifies `.tl-bar:hover` AND `.tl-bar.sel`,
+  so a coloured clip would have lost its hover edge and its gold selection fill.
+  Through a variable every state rule keeps exactly the specificity it had.
+- ⚠ **THE PASTELS ARE PASTEL BECAUSE GOLD MEANS "SELECTED"** on every lane — one
+  selection language across the bar, which is the rule `.tl-bar.sel` was written
+  to hold. A content colour has to sit UNDER that without competing; saturated
+  fills would have made "orange clip" and "selected clip" the same kind of
+  signal. Palette in `theme.css`, both themes (light keeps the hue and goes
+  deeper, exactly as the gold tints do); no literal colour in the lane file.
+- ⚠ **`frameOrigin` IS BACK IN `Timeline.jsx` FOR THIS AND ONLY THIS.** It
+  stopped deciding WHERE a picture is drawn when tracks landed — that is
+  `frameTrack`, and re-using origin for placement is the exact bug that change
+  existed to fix. What a clip IS is a different question and origin is the honest
+  answer to it: `video` → `is-video`, `board`/`image` → `is-still` (a storyboard
+  panel is a still, so it is pink like any other picture).
+- The captions row is marked `tl-captions` rather than branched — it is a text
+  lane, same clips and same drag code — so `.tl-captions .tl-text` beats
+  `.tl-text` by coming later at higher specificity, and green wins over yellow.
+
+**Files:** `client/src/components/Timeline.jsx`, `client/src/styles/theme.css`
+(20 new tokens, both themes), `animatic.css` (`.tl-bar` reads the vars),
+`animatic-text.css` (`.tl-text` reads them; the `.tl-track-empty` comments no
+longer describe a prompt that exists), `animatic-lanes.css` (the picture lane's
+panel, `.tl-overlay` reads the vars, and the new colour block),
+`AnimaticEditor.jsx` (the dead `empty:` field).
+
+**Not verified in a browser.** This is markup, tokens and cascade only: checked
+by esbuild parse of both components, by bundling the whole stylesheet
+(`esbuild index.css --bundle`) to confirm it compiles, and by reading the bundled
+output to confirm the new rules land AFTER the base rules and that nothing in
+`animatic-tools.css` or later re-declares a clip background. **The four colours
+have not been looked at on a real timeline** — pastel alphas are the one thing a
+screenshot decides better than arithmetic, so if orange and pink read too alike
+at 0.17, that is the number to move. No test asserts on clip colours or on the
+empty-row prompts.
+
+### 2026-08-20 — THE LAYER ROW'S CONTROLS WERE NEVER PUT IN THEIR CLUSTER, SO THE NAME HAD NOTHING LEFT (user-reported, with a screenshot)
+
+> "see my previous look icon and name of layer in Storynoard to Animatics
+>  worklfow / fixt it please" — a screenshot of the gutter, where the layer names
+>  were down to "Capti…" and "Eleve…".
+
+⚠ **THE 2026-08-19 FIX WAS WRITTEN IN CSS AND NEVER IN THE MARKUP.** That entry
+("TRACK HEADS LINE UP…", further down) says every layer row got the same three
+controls in the same three places, in one `.tl-layer-acts` cluster, with each
+button carrying `.tl-layer-btn` and a `disabled` state instead of being left out.
+`.tl-layer-acts`, `.tl-layer-btn`, `.tl-layer-btn:hover:not(:disabled)` and
+`.tl-layer-btn:disabled` have been in `animatic-editor.css` since `b47c9e9` —
+**and `Timeline.jsx` has never rendered any of those classes.** `grep -r
+tl-layer-acts client/src` returned CSS and nothing else. So the rules were dead,
+the three buttons were bare `<button>`s taking the browser's own padding, and the
+consequences were exactly what the screenshot shows:
+
+- **The name was starved.** The row is a fixed-width flex line, and the name is
+  the only item on it that shrinks (`text-overflow: ellipsis`, `min-width: 0`).
+  Unsized buttons ate ~25px more than the three 1.15rem slots they were budgeted,
+  and the name paid for all of it — "Captions" became "Capti…".
+- **The controls could still zig-zag**, which is the fault that entry was written
+  against: no `margin-left: auto` on a cluster that didn't exist, so they sat
+  wherever the name ended, and only `.tl-layer-split` (`▶⇧`, picture rows with
+  mixed stills and footage) had an auto margin of its own — so *that* row pushed
+  its controls right and the others did not.
+- **A control with nothing to do was absent, not ghosted.** The ✕ was rendered
+  behind `(lane.removable || … || count > 0)`, so an empty Text or Shapes row had
+  no third slot and no ghost.
+
+**What changed** — `client/src/components/Timeline.jsx`, the gutter row only:
+- The eye/speaker, the ＋ and the ✕ are wrapped in `<div className="tl-layer-acts">`
+  and each carries `tl-layer-btn` alongside its own class. The CSS is now reached.
+- **All three are always rendered**; `disabled` is what says "nothing to do" —
+  `clips.length === 0` for audio's speaker, `!lane.vis` for the eye (dead in
+  practice: `laneToken` returns a token for every non-audio lane, kept as the
+  safety net the CSS assumes), and a new `deletable` const for the ✕, which is the
+  old render condition moved off the JSX and into a name. Each disabled state has
+  its own tooltip ("Nothing on Shapes to delete yet") rather than an inert button
+  that explains nothing.
+- **What the controls DO is unchanged** — `onToggleMute` / `onToggleHidden`,
+  `onAddToLane`, and the same `onRemoveLayer` / `onRemoveTrack` / `onClearLane`
+  three-way on the ✕, now with `count > 0` guarding the last one because the
+  button is reachable when it is 0.
+- The ＋ gained `stopPropagation`, which the 2026-08-19 entry says it should have
+  had: a click on a control is not also a click on the row.
+
+**And the name got a budget worth having** — `animatic-text.css`:
+- `--tl-gutter-w` 9rem → **11rem** (720px breakpoint: 6.4rem → 8rem). ⚠ **THE
+  CONTROLS AND THE NAME ARE ONE BUDGET AND THE CONTROLS ARE THE FIXED HALF**:
+  padding + icon + gaps + 3 × `--tl-act-w` is ~101px of it, so at 9rem the name
+  had 43px — five characters, which is what was reported. 11rem leaves ~10, which
+  is "Captions", "Pictures" and "Shapes" whole. The comment there now records the
+  arithmetic so the next person widening it knows what they are trading.
+- `.tl-layer-name` carries its own `title={lane.name}`, because a fixed column
+  will always truncate SOMETHING (an audio row is named by its filename) and the
+  one element that must be able to say the whole name is the name. The rest of the
+  row still shows the lane's hint.
+- `.tl-layer-split` **lost its `margin-left: auto`** — the cluster carries the one
+  auto margin now, and two of them would have split the free space and parked the
+  ▶⇧ in the middle of the gutter.
+
+**Not done / not verified:** the lane icons are still emoji (`🖼 T ◆ ♪ ❝`, plus
+🔇/🔊 on audio) and 🖼 carries its own colour beside four monochrome glyphs —
+which is the exact complaint `Icon.jsx`'s own header was written about. Left
+alone because the screenshot the user pointed at has those icons and the ask was
+to get the row back, not to redraw it; noted under Next Steps. **Nothing was
+opened in a browser** — the change is markup + two CSS variables, verified by
+esbuild parse and by grep (`tl-layer-acts` and `tl-layer-btn` now appear in the
+JSX as well as the CSS). No test asserts on these buttons, so none needed
+updating: `tests/` references only `.tl-gutter-row` (heights, in
+`e2e_animatic.py`) and `.tl-layer-split`, both untouched.
+
+### 2026-08-20 — THE PICTURE TRACK BECAME A STACK OF INDEPENDENT TRACKS (user-reported)
 
 > "when i do video trim so i see my image layer conetnt move like snip and same
 >  with image when i trim image so my video layer content move. i want user move
@@ -10214,6 +10398,16 @@ language — do NOT copy the Drawstory reference's look/colours.
       this item asked ("what does a gap show?") was answered "the track below it,
       and the letterbox colour when there is nothing below" — which is what made
       the rest of it fall out.
+- [ ] **THE LANE ICONS ARE STILL EMOJI, AND ONE OF THEM CARRIES ITS OWN COLOUR.**
+      `LANE_ICON` in `Timeline.jsx` is `🖼 T ◆ ♪` with `❝` on the captions row and
+      🔇/🔊 on audio’s speaker. 🖼 and 🔇/🔊 render as full-colour emoji beside four
+      monochrome gold glyphs — which is the exact fault `Icon.jsx`’s header comment
+      was written about ("put them in a row and they look like they came from three
+      different apps"), and it is why the eye and the ✕ are drawn SVG already. The
+      work is four paths in `PATHS` (picture, shape, note, quote), `LANE_ICON`
+      holding icon NAMES, and `<Icon>` in the row. Left out of the 2026-08-20 fix
+      deliberately: the screenshot the user asked to get back has those emoji in it,
+      so changing them in the same pass would have answered a question nobody asked.
 - [ ] **EYES ON THE PICTURE TRACKS, IN THE REAL EDITOR.** Two browser suites drive
       every gesture and assert on what moved; neither can say whether the bar READS
       as a stack. What needs looking at: does a GAP look like a deliberate hole
