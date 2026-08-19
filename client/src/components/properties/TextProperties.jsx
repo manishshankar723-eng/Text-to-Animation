@@ -481,15 +481,12 @@ export default function TextProperties({
           }
           changed={["opacity", "x", "y"].some(keyed)}
           resetTo="no animation"
+          info="These write keyframes you can then drag on the timeline — a preset isn't a mode, it's a starting point."
         >
           <span className="an-row-read">
             {["opacity", "x", "y"].some(keyed) ? "keyframed" : "none"}
           </span>
         </PropRow>
-        <PropNote>
-          These write keyframes you can then drag on the timeline — a preset
-          isn't a mode, it's a starting point.
-        </PropNote>
       </PropGroup>
 
       <div className="an-prop-actions">

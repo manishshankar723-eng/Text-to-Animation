@@ -882,7 +882,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         jobId={jobId}
         styleLabel={styleLabel}
         aspect={effectiveAspect()}
-        backLabel={boardOrigin === "library" ? "← Your Storyboards" : "← Back to shots"}
+        backLabel={boardOrigin === "library" ? "Your Storyboards" : "Back to shots"}
         onBack={() => setStep(boardOrigin)}
         onOpenAnimatic={onOpenAnimatic}
         onRestart={() => {
@@ -920,14 +920,16 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         <div className="review-actions top-actions">
           <button
             type="button"
-            className="btn"
+            className="btn back-btn"
+            title="Back"
+            aria-label="Back"
             onClick={() => {
               setNotice("");
               setError("");
               setStep("form");
             }}
           >
-            ← Back
+            ←
           </button>
           <div className="review-actions-right">
             {/* Board already drawn from these exact shots → offer to reopen it
@@ -1149,8 +1151,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
       </div>
 
       <div className="review-actions top-actions sb-form-actions">
-        <button type="button" className="btn" onClick={() => setStep("library")}>
-          ← Your Storyboards
+        <button
+          type="button"
+          className="btn back-btn"
+          onClick={() => setStep("library")}
+          title="Your Storyboards"
+          aria-label="Your Storyboards"
+        >
+          ←
         </button>
       </div>
 

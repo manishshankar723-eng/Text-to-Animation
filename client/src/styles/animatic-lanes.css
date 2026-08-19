@@ -34,6 +34,159 @@
   overflow: visible;
 }
 
+/* --- Dropping an asset on a lane ------------------------------------------ */
+/* Drag a picture out of the Media pane, or a file off the desktop, and the row
+   that would take it says so while the drag is still in flight — see
+   `dropProps` in Timeline.jsx.
+   ⚠ AN INSET BOX-SHADOW, NOT A BORDER. The picture rows are `border: none` on
+   purpose (a band round butted-up bars reads as a box they sit in), and giving
+   one back for the duration of a drag would move every bar by a pixel. A shadow
+   is drawn inside the box and shifts nothing. */
+.tl-lane.drop-ok {
+  box-shadow: inset 0 0 0 1px var(--primary);
+  background-color: var(--tl-clip-bg);
+}
+/* The row REFUSES this: a video over the Images row, a picture over Audio. The
+   cursor already says no — the browser's own, because a lane that will not take
+   a drop simply never calls `preventDefault` — and this is the same answer from
+   the row itself, so you can see WHICH row said it. */
+.tl-lane.drop-no {
+  box-shadow: inset 0 0 0 1px var(--fail);
+}
+/* Where it would land. On the picture rows the drop snaps to the nearest CUT
+   (the sequence has no gaps), so this line is standing on a cut and not on the
+   pointer — which is the whole reason it is drawn. */
+.tl-drop-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--primary);
+  pointer-events: none;
+  z-index: 6;
+}
+.tl-drop-time {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0.1rem 0.2rem;
+  border-radius: 3px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  white-space: nowrap;
+}
+
+/* ⚠ AN EFFECT LANDS ON A CLIP, NOT AT A MOMENT, so the bar lights up instead
+   of the line above. A line between two pictures would be a straight lie about
+   which one is about to be graded — the one question the drag has to answer
+   before you let go. `dropOnto` in Timeline.jsx decides which bar this is. */
+.tl-bar.drop-onto,
+.tl-overlay.drop-onto,
+.tl-text.drop-onto,
+.tl-shape.drop-onto,
+/* A crossfade lands on a CLIP the same way, and for the same reason: which
+   sound is about to be shaped is the question, and the answer is a bar. */
+.tl-audio-clip.drop-onto {
+  box-shadow: inset 0 0 0 2px var(--primary);
+  z-index: 3;
+}
+
+/* --- Moving a clip to another row ---------------------------------------- */
+/* A MOVE drag has a vertical half now: let go over another row of the same kind
+   and the clip goes there (`laneMoveTarget` in Timeline.jsx). Three marks say so
+   while the gesture is still in flight.
+
+   ⚠ THE BAR ITSELF DOES NOT TRAVEL BETWEEN THE ROWS. A clip is a CHILD of its
+   own lane, so re-parenting it mid-drag would move the node the pointer is
+   captured on and the drag would simply end. The original dims, an outline is
+   drawn where it would land, and the destination row lights up — which says the
+   same thing and survives the gesture. */
+.tl-lane.drop-lane {
+  /* The same inset ring an accepted asset drop gets, deliberately: "this row
+     will take it" is one answer and should not have two appearances. */
+  box-shadow: inset 0 0 0 1px var(--primary);
+  background-color: var(--tl-clip-bg);
+}
+/* Where it would land, at the width it will be — so a clip about to overlap
+   something already on that row shows you before you let go. */
+.tl-ghost {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  box-sizing: border-box;
+  border: 1px dashed var(--primary);
+  border-radius: 4px;
+  /* The theme's own clip tint, so the outline reads as "a clip goes here" in
+     both light and dark rather than as a hard-coded gold in one of them. */
+  background: var(--tl-clip-bg-alt);
+  pointer-events: none;
+  z-index: 6;
+}
+.tl-ghost-time {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0.1rem 0.2rem;
+  border-radius: 3px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  white-space: nowrap;
+}
+/* The clip being carried off this row. Dimmed rather than hidden: a gap where it
+   used to be would make the row it is LEAVING look edited already, and the move
+   can still be abandoned by dragging back. */
+.tl-text.lifting,
+.tl-shape.lifting,
+.tl-overlay.lifting,
+.tl-audio-clip.lifting {
+  opacity: 0.34;
+}
+
+/* The ƒx badge — "this clip is graded, and here is the way in".
+   ⚠ IT IS A COUNT, NOT A LIST: at eight pixels of bar the timeline can only
+   usefully say THAT there are effects, and which ones at what values needs a
+   pane's worth of room. Before this a clip you had graded looked exactly like
+   one you hadn't, which is the whole reason it is drawn.
+   Placed clear of `.tl-handle` (the resize grip owns the last few pixels) and
+   vertically centred, between the keyframe band above and the transition band
+   below — the two strips that may not be grown into. */
+.tl-fx {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0.85rem;
+  height: 0.85rem;
+  padding: 0 0.2rem;
+  background: var(--panel-2);
+  border: none;
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tl-fx:hover {
+  color: var(--primary-ink);
+  background: var(--primary);
+  box-shadow: none;
+}
+
 /* --- Transitions on the cuts ---------------------------------------------- */
 /* A transition is BOUNDARY-LOCAL — it straddles the edit point, taking half its
    length from the tail of one picture and half from the head of the next, and
@@ -67,6 +220,15 @@
   border: 1px solid var(--tl-tr-ink);
   border-radius: 4px;
   cursor: pointer;
+  /* ⚠ THE FAMILY FILL, and it is here so that there is no unstyled case. Each
+     kind overrides it below; a kind added to `TRANSITIONS` before its own rule
+     is written still draws as a transition rather than as an empty outline
+     nobody can see against the gold bar. */
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(139, 108, 224, 0.65) 0 4px,
+    rgba(139, 108, 224, 0.18) 4px 8px
+  );
 }
 .tl-transition:hover {
   --tl-tr-ink: #a98cf5;
@@ -80,10 +242,16 @@
   box-shadow: 0 0 0 2px #c0a7ff;
 }
 /* The kinds, told apart by the pattern rather than by a label: at a typical
-   0.6s the badge is a few pixels wide and no word would fit. Every kind gets
-   its own rule and the base carries no fill — `transitionWindow` folds an
-   unrecognised kind down to "dissolve" before it ever reaches the DOM, so the
-   class is always one of these four and there is no unstyled case to cover. */
+   0.6s the badge is a few pixels wide and no word would fit. `transitionWindow`
+   folds an unrecognised kind down to "dissolve" before it ever reaches the DOM,
+   so today the class is always one of these four — but the base above carries
+   the family fill anyway, because "today" is what makes an unstyled badge the
+   kind of bug nobody notices until it ships.
+
+   ⚠ NOT VARIED BY DIRECTION. A wipe that travels up and one that travels right
+   are the same badge: the timeline says WHICH treatment is on a cut, and four
+   variants of each would be sixteen patterns to tell apart at eight pixels
+   wide. The direction lives in the properties pane, where it can be read. */
 .tl-transition.tr-dissolve {
   background: repeating-linear-gradient(
     -45deg,

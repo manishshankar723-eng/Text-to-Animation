@@ -863,7 +863,7 @@ class AnimaticFrameSource(BaseModel):
 
 
 class AnimaticFrame(BaseModel):
-    """ONE CLIP in the sequence, and how long it holds the screen.
+    """ONE PICTURE CLIP: where it sits, which track it is on, how long it holds.
 
     Called a "frame" throughout for history's sake — it started life as one held
     picture. It is now a clip that may be a still, a piece of a video file, or a
@@ -880,6 +880,36 @@ class AnimaticFrame(BaseModel):
     src: AnimaticFrameSource
     # 0.1s–10min. The whole point of the editor is that this is per-frame.
     duration_ms: int = Field(2000, ge=100, le=600_000)
+    # --- Where it sits ------------------------------------------------------
+    # ⚠ THE PICTURE TRACK IS A STACK NOW, AND THESE TWO FIELDS ARE THE WHOLE OF
+    # IT. The picture used to be ONE sequence laid end to end: a clip's place was
+    # the sum of the clips before it, so trimming any clip moved every clip after
+    # it — reported as "when i do video trim so i see my image layer conetnt move
+    # like snip", and true by construction rather than by accident.
+    #
+    # `track` — 0 is the base track, the bottom of the stack. A HIGHER NUMBER IS
+    # DRAWN OVER A LOWER ONE, so a gap on an upper track shows whatever is on the
+    # track below it and a moment with nothing on any track shows
+    # `settings.background`. See `frame_track` / `frameSpans`.
+    #
+    # `start_ms` — where the clip sits on the timeline. ⚠ `None` MEANS "AFTER THE
+    # LAST CLIP ON MY TRACK", and that is the compatibility hinge: every animatic
+    # saved before tracks existed carries no starts at all, so the evaluators lay
+    # it out exactly as the old running total did, at every cut, and nothing about
+    # such a project renders differently. It is also what makes "add these
+    # pictures to the end of the sequence" a write of nothing rather than
+    # arithmetic the client would have to keep in step with the server.
+    #
+    # Both are read through the evaluators and never trusted raw — a negative
+    # start, a fractional track or a missing field all fold down there, in ONE
+    # place, so the preview and the export cannot fold differently.
+    track: int = Field(0, ge=0, le=15, description="Picture track; 0 is the base, higher draws over.")
+    start_ms: int | None = Field(
+        None,
+        ge=0,
+        le=24 * 3_600_000,
+        description="Where it sits on the timeline. None = after the last clip on its track.",
+    )
     label: str = Field("", description="Caption, e.g. 'Shot 3'. Burned in only if show_labels.")
     # What this clip is made of. Optional with an "image" default, so every
     # animatic saved before video clips existed opens as exactly what it was.
@@ -982,6 +1012,30 @@ class AnimaticAudio(BaseModel):
     # export and by the same window in the editor; see `fade_window`.
     fade_in_ms: int = Field(0, ge=0, le=60_000)
     fade_out_ms: int = Field(0, ge=0, le=60_000)
+    # WHICH CURVE each of those two ramps follows — Premiere's three crossfades,
+    # which are three curves and not three mechanisms. A crossfade between two
+    # clips IS the outgoing one's fade out overlapping the incoming one's fade
+    # in, so there is no transition object here to go with `AnimaticTransition`:
+    # the pair of fades is the transition, and the export already mixes whatever
+    # overlaps.
+    #
+    # ⚠ PER END, NOT PER CLIP. A crossfade writes one end of one clip and the
+    # opposite end of its neighbour, so one curve per clip would mean the second
+    # crossfade you laid changed the shape of the first.
+    #
+    # ⚠ Unconstrained on purpose, exactly like `AnimaticTransition.kind`: both
+    # sides fold an unknown curve down to "linear", so a project saved by a newer
+    # client opens here instead of failing validation. And "linear" is `afade`'s
+    # own default (`curve=tri`), which is what every fade in every project saved
+    # before this field already was — so nothing needed migrating.
+    fade_in_curve: str = Field(
+        "linear",
+        description="'linear' (Constant Gain) | 'power' (Constant Power) | 'exponential'.",
+    )
+    fade_out_curve: str = Field(
+        "linear",
+        description="'linear' (Constant Gain) | 'power' (Constant Power) | 'exponential'.",
+    )
     # --- Tone ---------------------------------------------------------------
     # Three fixed bands, in dB, 0 = untouched. FIXED rather than parametric so
     # that each band is exactly one biquad in the browser and one filter in
@@ -1193,7 +1247,7 @@ class AnimaticShape(BaseModel):
 
 
 class AnimaticTransition(BaseModel):
-    """What happens ON one cut — a dissolve, a dip, a wipe, a slide.
+    """What happens ON one cut — a dissolve, a dip, a wipe, a reveal, a slide.
 
     Anchored to the frame it comes AFTER rather than to a time, so it rides
     along when that frame is re-timed, moved or trimmed, exactly as a keyframe
@@ -1215,8 +1269,25 @@ class AnimaticTransition(BaseModel):
     # keyframe. Both evaluators fold an unrecognised kind down to "dissolve", so
     # a project written by a newer client still opens and still plays here.
     kind: str = Field(
-        "dissolve", description="'dissolve' | 'dip' | 'wipe' | 'slide'."
+        "dissolve",
+        description=(
+            "'dissolve' | 'dip' | 'slide', or one of the REVEALS — 'wipe', "
+            "'diagonal', 'split', 'radial', 'diamond', 'box', 'angular', "
+            "'blinds', 'checker'. Every reveal is the same code path: a shape "
+            "multiplied into the arriving picture's alpha. See MATTE_KINDS in "
+            "animatic_render.py."
+        ),
     )
+    # HOW that kind behaves — which way a wipe or a slide travels, which colour
+    # a dip goes out through, how soft a reveal's edge is and how many bands a
+    # blinds wipe has. A free dict for exactly the reason `kind` is
+    # unconstrained and `AnimaticEffect.params` is free: every parameter is
+    # filled from `TRANSITION_PARAMS` when it is read (`transition_params` in
+    # `animatic_render.py`), so a project saved before a parameter existed picks
+    # up its default instead of failing validation, and one saved by a NEWER
+    # client keeps the parameter it wrote rather than losing it on a round trip.
+    # No migration, and nothing to write for the animatics that already exist.
+    params: dict[str, float | str] = Field(default_factory=dict)
     # Clamped again at render time to the SHORTER of the two holds it joins, so
     # a transition can never eat more than half of either neighbour — which is
     # what stops two of them overlapping on a short picture.
@@ -1275,7 +1346,7 @@ class AnimaticSettings(BaseModel):
     #
     # ⚠ IT NAMES A ROW, NOT ITS CLIPS: `"<kind>:<layer_id>"` for a lane of clips
     # ("text:" is the default text row, "shape:<id>" one the user added,
-    # "image:<id>" an overlay row) and "frames:stills" / "frames:video" for the
+    # "image:<id>" an overlay row) and "frames:<n>" for picture track n (the
     # two rows the picture track is drawn as. Emptying a hidden row or adding to
     # it therefore changes nothing about what is switched off. The client writes
     # the same tokens — `laneToken` in AnimaticEditor.jsx — and `_lane_hidden`

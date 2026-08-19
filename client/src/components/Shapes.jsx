@@ -48,7 +48,8 @@ export function ShapeSwatch({ kind, color = "currentColor", className = "" }) {
   );
 }
 
-// The picker: click a shape, get that shape on the timeline at the playhead.
+// The picker: click a shape, get that shape on the timeline at the playhead —
+// or DRAG one onto a shape row, and it lands where you dropped it instead.
 export default function ShapeGallery({ onAdd, disabled = false }) {
   return (
     <div className="shape-gallery">
@@ -59,7 +60,20 @@ export default function ShapeGallery({ onAdd, disabled = false }) {
           className="shape-tile"
           disabled={disabled}
           onClick={() => onAdd(s.id)}
-          title={`Add a ${s.label.toLowerCase()} at the playhead`}
+          /* ⚠ TWO ENTRIES ON THE CLIPBOARD, and the `…-shape` one is an empty
+             MARKER, not data: a timeline lane has to know what is coming during
+             `dragover`, where `getData` reads blank in every browser. See
+             `dragKind` in Timeline.jsx. */
+          draggable={!disabled}
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "copy";
+            e.dataTransfer.setData(
+              "application/x-anim-asset",
+              JSON.stringify({ kind: "shape", id: s.id })
+            );
+            e.dataTransfer.setData("application/x-anim-shape", "");
+          }}
+          title={`Add a ${s.label.toLowerCase()} at the playhead — or drag it onto a shape row`}
         >
           <ShapeSwatch kind={s.id} color="#ffffff" className="shape-tile-art" />
           <span className="tiny muted">{s.label}</span>

@@ -1361,11 +1361,19 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     # picture comes from — and `url` because it is a read-only convenience the
     # encoder has no use for.
     #
-    # ⚠ A HIDDEN PICTURE ROW IS BLANKED, NEVER DROPPED. `frames` is a sequence laid
-    # end to end, so dropping a clip moves every cut after it, shortens the video
-    # and pulls the audio out of sync — from pressing an eye. Turned into a colour
-    # card of the letterbox colour it holds exactly the time it always held and
-    # draws nothing, which is what an NLE shows for a track it is not outputting.
+    # ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON TRACK 0 AND DROPPED ABOVE IT, and the
+    # asymmetry is not a compromise — the two are the SAME PICTURE where each one
+    # applies, and only one of them is safe in each case.
+    #
+    #   TRACK 0 is the bottom of the stack, so what a dropped clip would reveal is
+    #     the letterbox colour — which is exactly what a colour card of the
+    #     letterbox colour draws. Blanking is chosen because it also HOLDS THE
+    #     TIME: a base track hidden in full would otherwise leave the export with
+    #     no pictures at all, and `build_animatic` cannot encode that.
+    #   ABOVE IT a dropped clip reveals the track UNDERNEATH, and an opaque card
+    #     would hide it. So those are dropped, which is what an NLE shows for a
+    #     track it is not outputting.
+    #
     # The monitor does the identical conversion (`shown` in AnimaticEditor.jsx),
     # which is what keeps the preview and the MP4 the same picture.
     hidden = set(settings.hidden_lanes or [])
@@ -1374,8 +1382,9 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         item = f.model_dump(exclude={"url", "src"})
         item["path"] = None
         item["video_path"] = None
-        row = "video" if _frame_origin(f) == "video" else "stills"
-        if f"frames:{row}" in hidden:
+        if f"frames:{animatic_render.frame_track(item)}" in hidden:
+            if animatic_render.frame_track(item) > 0:
+                continue
             item["kind"] = "color"
             item["color"] = settings.background or "#000000"
         elif f.kind == "video":

@@ -36,8 +36,10 @@
 .an-pane-timeline {
   flex: 0 0 auto;
 }
+/* It sits UNDER the timeline now (see the JSX), so the seam it asks for is
+   above it rather than below. */
 .an-statusbar {
-  margin-bottom: var(--an-seam);
+  margin-top: var(--an-seam);
 }
 
 /* The editor is the one screen that must FIT the viewport rather than scroll —
@@ -88,13 +90,19 @@
 }
 
 /* --- A panel: title strip + a body that scrolls on its own ---------------- */
+/* ⚠ ALL FOUR PANES SHARE ONE SOFT BLUE (`--pane-*` in theme.css). Four
+   identical grey heads made the editor read as one slab — but giving each pane
+   its OWN pastel was tried and rejected on sight: four hues plus gold is five
+   accents on one screen. One colour lifts the heads off the grey, which was the
+   whole job. It lands in three quiet places only — the head fill, the hairline
+   under it and the pane's border — because gold is still the app's accent. */
 .an-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   background: var(--panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--pane-edge, var(--border));
   border-radius: 10px;
   overflow: hidden;
 }
@@ -104,15 +112,33 @@
   gap: 0.5rem;
   flex-wrap: wrap;
   padding: 0.4rem 0.6rem;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
+  /* The tint sits ON `--panel-2`, not instead of it: the pastels are alphas, so
+     a head that lost its own surface would show the pane body through it. */
+  background:
+    linear-gradient(var(--pane-tint, transparent), var(--pane-tint, transparent)),
+    var(--panel-2);
+  border-bottom: 1px solid var(--pane-edge, var(--border));
+  flex-shrink: 0;
+}
+/* A blue dot at the start of every head. The tint alone is faint by design;
+   this is the part that carries at a glance, and it is what ties a head to the
+   border running down its pane.
+   ⚠ ON THE HEAD, NOT THE TITLE. Media's head opens with its Media / Shapes
+   tabs and has no `.an-pane-title` at all, so a dot hung on the title would
+   have appeared on three panes out of four. */
+.an-pane-head::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--pane-ink, var(--muted));
   flex-shrink: 0;
 }
 .an-pane-title {
   font-size: 0.78rem;
   font-weight: 650;
   letter-spacing: 0.02em;
-  color: var(--text);
+  color: var(--pane-ink, var(--text));
 }
 .an-pane-body {
   flex: 1 1 auto;
@@ -207,9 +233,25 @@
 /* Small enough to live in a pane head next to the title, and no smaller: this
    is a control that reshapes the export, so it may not read as a caption. */
 .an-ar-select {
+  /* ⚠ `width: auto` IS THE WHOLE FIX, and it is not cosmetic. `theme.css` sets
+     `input, select, textarea { width: 100% }` for the app's forms, so this menu
+     inherited a full-width slab in a flex row — which pushed "1920×1080 · 24
+     fps" onto a THIRD line and cost the monitor two rows of height on every
+     screen. Sized to its own longest option ("16:9 — Wide") the whole head is
+     one line: title, shape, size. */
+  width: auto;
+  flex: 0 0 auto;
   padding: 0.15rem 0.3rem;
   font-size: 0.74rem;
   border-radius: 6px;
+}
+/* The size and frame rate are a read-out, not a control: they never wrap the
+   head open on their own, they elide. */
+.an-pane-program .an-pane-head > .tiny.muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* The one-press "your workspace is vertical and your film isn't" offer. Gold,
    like every other button here that changes the project. */
@@ -296,29 +338,101 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  /* ⚠ THE HEIGHT OF THE PINNED ＋ CARD, AS A NUMBER TWO RULES SHARE. The card
+     sticks at the top of the scrollport and every section heading sticks
+     directly UNDER it, so the two offsets have to be the same value or a band of
+     scrolling frames shows through between them. That is why the card is a
+     FIXED height rather than its content's: nothing else can keep the pair in
+     step, and the note inside it wraps to two lines on a narrow pane. */
+  --an-drop-h: 7rem;
+}
+/* The Shapes tab has no ＋ card, so its headings stick to the very top. */
+.an-media-body:not(:has(> .an-asset-drop)) {
+  --an-drop-h: 0rem;
+}
+/* ⚠ NO TOP PADDING ON THE PANE THAT HAS THE ＋ CARD. `.an-pane-body` gives every
+   pane 0.6rem all round, and that band is the ONLY thing between the pane head
+   and a card pinned at `top: 0` — so frames scrolled up through it and a sliver
+   of the next thumbnail sat above the card, which is what was reported twice.
+   Taking the padding off makes the card genuinely flush with the top of the
+   pane, and it also removes the question of whether a sticky item pins to the
+   padding box or the content box: with no padding they are the same edge. The
+   card's own 0.9rem of padding is the breathing room now. */
+.an-media-body:has(> .an-asset-drop) {
+  padding-top: 0;
 }
 /* ⚠ NOTHING IN HERE MAY SHRINK — THIS IS WHAT SCROLLS THE PANE. A flex item's
    default is `flex-shrink: 1`, so the Frames section obligingly squeezed itself
-   down to whatever height was left; and because a section is `overflow: hidden`
-   (it has to be, for its rounded corners), the frames past the fold were CLIPPED
-   rather than scrolled — a pane with 31 frames showing eight and no scroll bar,
-   which is exactly what was reported. Pinned at their content height they
-   overflow instead, and `.an-pane-body`'s own `overflow: auto` is the scroll bar
-   again. */
+   down to whatever height was left; and because a section was `overflow: hidden`
+   at the time, the frames past the fold were CLIPPED rather than scrolled — a
+   pane with 31 frames showing eight and no scroll bar, which is exactly what was
+   reported. (The clipping is gone from THIS pane now — sticky headings needed it
+   gone — but the shrinking is not, so this rule stays.) Pinned at their content
+   height they overflow instead, and `.an-pane-body`'s own `overflow: auto` is
+   the scroll bar again. */
 .an-media-body > * {
   flex: 0 0 auto;
 }
 /* It carries its own bottom margin from when it was one block among several;
-   the gap above does that job now. */
+   the gap above does that job now.
+
+   ⚠ IT DOES NOT SCROLL AWAY. This is the pane's ONLY add control and its drop
+   target, and a board of thirty-odd frames pushed it off the top after one
+   flick of the wheel — so the answer to "where do I put this file?" was "scroll
+   back up first". Pinned to the head of the scrollport it is reachable at any
+   scroll position, which is the whole reason it was kept outside the
+   collapsible sections in the first place.
+ */
 .an-media-body > .an-asset-drop {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  /* Fixed — see `--an-drop-h`: every section heading pins at exactly this
+     number, so it cannot be left to the content. */
+  height: var(--an-drop-h);
+  overflow: hidden;
   margin-bottom: 0;
+  /* Belt and braces over the strip between the card and the pane head: a solid
+     slab of pane colour painted ABOVE the card, so nothing can be seen sliding
+     through it even if some future padding creeps back in.
+     ⚠ A BOX-SHADOW AND NOT A `::before`. The first attempt was a pseudo-element
+     at `bottom: 100%`, which the `overflow: hidden` on the line above clipped
+     away entirely — so the cover never painted and the sliver stayed, reported a
+     second time. An outer box-shadow is painted outside the border box and an
+     element's own overflow does not touch it; it is drawn BEHIND the background,
+     so the card still covers it. Up 1.2rem, spread 0.8rem, which reaches past
+     the pane's side padding too. */
+  box-shadow: 0 -1.2rem 0 0.8rem var(--panel);
+}
+
+/* ⚠ A SECTION HEADING STAYS PUT WHILE ITS OWN FRAMES SCROLL UNDER IT. Reported
+   as "Storyboard Frames goes under Add assets and I can't see what I'm
+   scrolling": with thirty-odd cards in a section, the heading naming them is off
+   the top for the entire time you are looking at them, and Video / Images /
+   Audio are the same. Each heading now pins directly beneath the ＋ card and is
+   pushed out by the NEXT section, which is what makes the pane say at all times
+   which list you are in.
+
+   ⚠ `overflow: visible` on the section is what makes this work at all: an
+   `overflow: hidden` ancestor is a scrollport of its own, and a sticky child of
+   one is pinned to a box that never scrolls — i.e. it does nothing. It is
+   dropped HERE ONLY (`.an-media-body`), because the Properties pane's sections
+   want the clipping for their corners. The heading takes those corners over. */
+.an-media-body .an-grp {
+  overflow: visible;
+}
+.an-media-body .an-grp-head {
+  position: sticky;
+  top: var(--an-drop-h);
+  z-index: 2;
+  border-radius: 8px 8px 0 0;
+}
+.an-media-body .an-grp:not(.open) > .an-grp-head {
+  border-radius: 8px;
 }
 /* The section's body is already a gapped column. */
 .an-grp-body > .an-media-track {
   margin-bottom: 0;
-}
-.an-grp-body > .an-shape-hint {
-  margin: 0.15rem 0 0;
 }
 .an-media-track {
   background: var(--panel-2);
@@ -625,16 +739,29 @@
 /* --- Status strip -------------------------------------------------------- */
 /* One line for errors, notices and export progress, so none of them push the
    panes around by appearing and disappearing. */
+/* Deliberately the SHORTEST thing in the editor. It is a footer that comes and
+   goes, so every millimetre it takes is a millimetre off the picture the moment
+   there is a notice — and `nowrap` keeps it one line high whatever it is
+   saying, with the message itself doing the eliding. */
 .an-statusbar {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-  font-size: 0.78rem;
+  gap: 0.8rem;
+  flex-wrap: nowrap;
+  font-size: 0.72rem;
+  line-height: 1.3;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.35rem 0.7rem;
+  padding: 0.22rem 0.6rem;
+}
+/* The prose ends in an ellipsis rather than growing the strip. */
+.an-status-error,
+.an-status-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .an-status-error {
   color: var(--fail);
@@ -646,6 +773,7 @@
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  flex: none;
   margin-left: auto;
   color: var(--primary);
   font-variant-numeric: tabular-nums;
@@ -805,13 +933,13 @@
     var(--an-col-right, clamp(16rem, 20vw, 22rem));
   /* The timeline's row is `auto` and takes its height from the pane's own
      `--an-timeline-h`, so the dragged height still lives in exactly one place. */
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   grid-template-areas:
     "top  top  top   top  top"
-    "stat stat stat  stat stat"
     "prog vsep media rsep props"
     "prog vsep hsep  hsep hsep"
-    "prog vsep tl    tl   tl";
+    "prog vsep tl    tl   tl"
+    "stat stat stat  stat stat";
 }
 .an-nle.an-ws-reel:not(.an-has-max) .an-panes {
   /* The three panes and two seams inside become items of the grid above. */
@@ -913,6 +1041,15 @@
      is left of it, and it's the half that still means something in one column.
      The frame cards keep whichever view is switched on: full width, icon view
      simply fits more of them per row, which is what it is for. */
+  /* Stacked, the editor is a scrolling page again — so the strip that reports an
+     export would sit at the far end of it, minutes of encoding away from
+     wherever you are reading. Pinned to the bottom of the window it says the
+     same thing it says in the workspace: here is what the server is doing. */
+  .an-statusbar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
   /* The top bar is tight at this width; the ⚙ still says which workspace it
      opens. */
   .an-ws-name {
@@ -980,21 +1117,53 @@
   white-space: nowrap;
   min-width: 0;
 }
-.tl-layer-mute {
+/* --- The three row controls: hide · add · remove -------------------------- */
+/* ⚠ ONE CLUSTER, THREE FIXED SLOTS, ON EVERY ROW. The buttons used to place
+   themselves — each carried `margin-left: auto` and was rendered only when it
+   had something to do, so a row without an eye put its ＋ in the eye's column
+   and the icons zig-zagged down the gutter (user-reported against a reference
+   NLE, where a track head's controls never move). A grid of three equal
+   columns cannot do that, and Timeline.jsx now always renders all three —
+   disabled when there is nothing for one to do — so no slot is ever empty. */
+.tl-layer-acts {
   margin-left: auto;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 0.66rem;
-  line-height: 1;
-  padding: 0 0.15rem;
+  display: grid;
+  grid-template-columns: repeat(3, var(--tl-act-w));
+  align-items: center;
+  justify-items: center;
+  gap: 0.16rem;
   flex-shrink: 0;
-  color: var(--muted);
+}
+.tl-layer-btn {
+  width: var(--tl-act-w);
+  height: var(--tl-act-w);
+  padding: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  background: transparent;
+  /* Transparent, not absent: a border that appears on hover would resize the
+     button and nudge the two beside it. */
+  border: 1px solid transparent;
+  border-radius: 4px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
 }
-.tl-layer-mute:hover {
+.tl-layer-btn:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--border);
   color: var(--text);
+}
+/* A control with nothing to do. Faint and inert, but STILL THERE — this is the
+   whole reason the columns line up, and a ghost ✕ also says "this row can be
+   emptied, once there is something on it" where a gap said nothing at all. */
+.tl-layer-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.tl-layer-mute {
+  font-size: 0.66rem;
 }
 /* The eye on a row you can SEE — the same button in the same place as audio's
    speaker, because it is the same idea. Drawn (`Icon`) rather than an emoji: 🔇
@@ -1042,25 +1211,72 @@
    of `.tl-cols` rather than anything inside it — see the comment in
    Timeline.jsx for why putting it in the gutter would break the alignment
    between the labels and the tracks. */
+/* ⚠ THE SAME 0.5rem GAP AS `.tl-cols`, so the add-buttons start exactly where
+   the tracks start — the head reads as two columns continuing down the pane,
+   not as a toolbar that happens to sit above one. */
+.tl-headbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  /* A row of buttons keeps its height; the tracks below take the slack. */
+  flex: 0 0 auto;
+}
 .tl-head {
   flex: 0 0 auto;
   width: var(--tl-gutter-w);
   max-width: 100%;
 }
+/* Text / Colour card / Voiceover, handed in by the editor (`addTools`). Over
+   the tracks, beside the only other control that adds anything — that pairing
+   is the whole point of moving them here, so they must not drift back into a
+   toolbar of their own. They WRAP rather than scroll: this row is above the
+   ruler, and a second line of buttons costs a little height, where clipping
+   them would cost you the voiceover button on a narrow pane. */
+.tl-add-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* ⚠ IT TAKES ITS BOX FROM THE ROWS BELOW IT. As a small dashed strip it read
+   as a caption over the column rather than the head of it — different height,
+   different type, different colour from the layer rows it sits above
+   (user-reported). Same radius, same border width, same type size as
+   `.tl-gutter-row`, and the same height as a lane, so the column starts with a
+   button that looks like the things it makes. The gold tint and dashed edge
+   are what still tell it apart: dashed = "there is nothing here yet". */
 .tl-add-layer {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
   width: 100%;
   box-sizing: border-box;
-  background: transparent;
-  border: 1px dashed var(--border);
+  height: var(--tl-track-h);
+  min-height: 1.6rem;
+  max-height: 2.1rem;
+  /* The same gold tints the clips on the tracks use, so the head of the
+     column is lit by the timeline's own accent and not a new colour. */
+  background: var(--tl-clip-bg);
+  border: 1px dashed var(--border-gold);
   border-radius: 6px;
-  color: var(--muted);
+  color: var(--primary);
   cursor: pointer;
-  font-size: 0.7rem;
-  padding: 0.3rem 0.2rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0 0.4rem;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .tl-add-layer:hover:not(:disabled) {
+  background: var(--tl-clip-bg-alt);
   border-color: var(--primary);
+  border-style: solid;
   color: var(--text);
 }
 .tl-add-layer:disabled {
@@ -1068,19 +1284,11 @@
   cursor: not-allowed;
 }
 
-.tl-layer-del {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0 0.1rem;
-  line-height: 1;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-}
-.tl-layer-del:hover {
+/* Size and hover surface come from `.tl-layer-btn`; only the danger colour is
+   the ✕'s own. */
+.tl-layer-del:hover:not(:disabled) {
   color: var(--fail);
+  border-color: var(--fail);
 }
 .tl-layer-del .icon {
   width: 0.85em;

@@ -1,8 +1,8 @@
 // audio_mix.js — what a track sounds like at a given moment: its tone, its
 // fader, its fades, and the duck it sits under.
 //
-// ⚠ TWIN FILE: `animatic.py` (`track_play_ms`, `fade_window`, `duck_ratio`,
-// `EQ_BANDS`).
+// ⚠ TWIN FILE: `animatic.py` (`track_play_ms`, `fade_window`, `curve_gain`,
+// `duck_ratio`, `EQ_BANDS`).
 // The editor previews the mix by setting each <audio> element's volume every
 // animation frame; the exporter builds an ffmpeg graph. Those are two completely
 // different machines, so the ONE thing that must not drift is where the ramps
@@ -109,6 +109,106 @@ export function trackWindow(track, totalMs = 0) {
   return { startMs, endMs: startMs + playMs, playMs };
 }
 
+// --- The shape of a fade ----------------------------------------------------
+// WHAT A CROSSFADE IS, and why it is a parameter rather than an object.
+//
+// Premiere files three things under Audio Transitions → Crossfade, and they are
+// three CURVES, not three mechanisms: Constant Gain ramps the gain on a straight
+// line, Constant Power on a quarter sine, Exponential Fade on a decade curve.
+// Nothing else about them differs. And a crossfade between two clips is just
+// the outgoing one's fade OUT overlapping the incoming one's fade IN — which
+// this editor already had, because audio clips are placed absolutely and the
+// exporter already mixes whatever overlaps. So the whole feature is a curve on
+// each end of a clip; see `crossfadePatch` in `audio_clips.js` for the gesture
+// that sets both ends of a cut at once.
+//
+// ⚠ THE FORMULAE ARE FFMPEG'S, TRANSCRIBED AND NOT INVENTED. Each curve is a
+// `curve=` on `afade`, and `afade` is what actually shapes the exported audio —
+// so a nicer-looking curve here would be a preview that lies about the MP4.
+// They are `fade_gain()` in libavfilter/af_afade.c at afade's default
+// silence=0 / unity=1.
+//
+// ⚠ "linear" IS THE DEFAULT EVERYWHERE, because it IS what already shipped:
+// every fade in every existing project is `afade`'s default `curve=tri`. A
+// project that has never heard of this field therefore mixes exactly as it
+// always did, and nothing needed migrating.
+//
+// ⚠ TWIN of `FADE_CURVES` and `FADE_FF_CURVE` in `animatic.py`.
+export const FADE_CURVES = ["linear", "power", "exponential"];
+
+/**
+ * What each curve is CALLED — Premiere's three names, because they are the ones
+ * an editor arrives already looking for.
+ *
+ * The note is what the name doesn't say. "Constant gain" and "constant power"
+ * are the same two words to anybody who has not already been told the
+ * difference, so each note says what you HEAR instead.
+ *
+ * `ff` is the `afade` curve it becomes on export, kept here so the reader can
+ * see the correspondence without opening the Python. `tests/audio_mix_check.py`
+ * asserts it against `FADE_FF_CURVE` rather than trusting the comment.
+ */
+export const FADE_CURVE_INFO = {
+  linear: {
+    label: "Constant Gain",
+    note: "A straight line — dips through the middle of a crossfade",
+    ff: "tri",
+  },
+  power: {
+    label: "Constant Power",
+    note: "Holds the level through a crossfade — usually the one you want",
+    ff: "qsin",
+  },
+  exponential: {
+    label: "Exponential Fade",
+    note: "Holds on, then drops away late — a long tail",
+    ff: "exp",
+  },
+};
+
+/**
+ * The curve on ONE END of one clip, folded to "linear" if it is not one.
+ *
+ * Folded rather than validated, the same rule `transitionKind` follows: a
+ * project written by a newer client naming a curve this build has never heard
+ * of still opens and still plays, at the shape every project used to have.
+ *
+ * ⚠ TWIN of `fade_curve` in `animatic.py`.
+ */
+export function fadeCurve(track, side) {
+  const raw = String(track?.[side === "in" ? "fade_in_curve" : "fade_out_curve"] || "");
+  return FADE_CURVES.includes(raw) ? raw : "linear";
+}
+
+/**
+ * The gain a curve gives at `x`, where x is 0 at silence and 1 at full level.
+ *
+ * ⚠ BOTH ENDS READ THE SAME CURVE, with x running towards 1 at full level — a
+ * fade out is this function read backwards, not a second formula. That is also
+ * exactly why constant power holds a crossfade up: sin(x·π/2) coming in against
+ * sin((1−x)·π/2) going out sums to unity in POWER, which is what the name is
+ * claiming. Constant gain sums to unity in AMPLITUDE instead, so two of them
+ * crossing leave an audible −3 dB scoop in the middle — the dip its note warns
+ * about, and the reason the other two curves exist at all.
+ *
+ * ⚠ TWIN of `curve_gain` in `animatic.py`.
+ */
+export function curveGain(curve, x) {
+  const t = clamp(x, 0, 1);
+  switch (curve) {
+    case "power":
+      return Math.sin((t * Math.PI) / 2);
+    case "exponential":
+      // −11.5129… is 5·ln(0.1): a decade curve bottoming out at −100 dB, which
+      // is ffmpeg's `exp` to the digit. It is STEEPER than Premiere's fade of
+      // the same name — matching the encoder we can measure beats matching an
+      // editor we cannot, because only one of the two ends up in the MP4.
+      return Math.exp(-11.512925464970227 * (1 - t));
+    default:
+      return t;
+  }
+}
+
 /**
  * `{ inMs, outAtMs, outMs }` — the two ramps, in TRACK time.
  *
@@ -134,16 +234,26 @@ export function fadeWindow(track, totalMs = 0) {
 }
 
 /**
- * The fade's gain at `ms` — 0 → 1 over the fade in, 1 → 0 over the fade out.
+ * The fade's gain at `ms` — 0 → 1 over the fade in, 1 → 0 over the fade out,
+ * along whichever curve each END of the clip carries.
  *
- * Linear, because ffmpeg's `afade` is linear by default (`curve=tri`). Both
- * sides ramping on a straight line is the whole reason not to pick a nicer one.
+ * ⚠ THE TWO ENDS ARE READ SEPARATELY, and they have to be: a crossfade sets one
+ * end of one clip and the opposite end of its neighbour, so a single curve per
+ * clip would make the second crossfade you added change the shape of the first.
+ *
+ * `min` of the two is belt and braces — `fadeWindow` has already scaled them so
+ * they cannot overlap — and it is kept because the alternative is one multiply
+ * that silently squares the gain in the case that is supposed to be impossible.
  */
 export function fadeGainAt(track, ms, totalMs = 0) {
   const { inMs, outAtMs, outMs } = fadeWindow(track, totalMs);
   let gain = 1;
-  if (inMs > 0 && ms < inMs) gain = Math.max(0, ms) / inMs;
-  if (outMs > 0 && ms > outAtMs) gain = Math.min(gain, Math.max(0, 1 - (ms - outAtMs) / outMs));
+  if (inMs > 0 && ms < inMs) {
+    gain = curveGain(fadeCurve(track, "in"), Math.max(0, ms) / inMs);
+  }
+  if (outMs > 0 && ms > outAtMs) {
+    gain = Math.min(gain, curveGain(fadeCurve(track, "out"), 1 - (ms - outAtMs) / outMs));
+  }
   return clamp(gain, 0, 1);
 }
 

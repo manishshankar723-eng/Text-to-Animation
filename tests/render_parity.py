@@ -34,7 +34,14 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from animatic_render import is_animated, scene_at, scene_signature
+from animatic_render import (
+    MATTE_KINDS,
+    TRANSITION_KINDS,
+    is_animated,
+    scene_at,
+    scene_signature,
+    transition_matte,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCENE_JS = os.path.join(ROOT, "client", "src", "animatic", "scene.js")
@@ -280,7 +287,13 @@ PROJECT = {
         # 600ms straddling 4000 → the window is 3700–4300, and 3999 / 4000 /
         # 4001 are all sampled, so both sides have to agree about the moment the
         # picture underneath changes as well as about the blend either side.
-        {"id": "tr1", "after_frame_id": "fr2", "kind": "dissolve", "duration_ms": 600},
+        # Carries a parameter its kind does not offer — a dissolve has none. Both
+        # sides must resolve it to an EMPTY dict: parameters are scoped to the
+        # KIND, so a direction left behind by switching a wipe to a dissolve is
+        # ignored by both renderers. It stays in the saved project (and comes
+        # back if you switch the kind back), exactly as an unknown effect does.
+        {"id": "tr1", "after_frame_id": "fr2", "kind": "dissolve", "duration_ms": 600,
+         "params": {"direction": "up"}},
         # Anchored to the LAST frame — the inert case: there is nothing to cut
         # to, so it must be skipped rather than crash.
         {"id": "tr2", "after_frame_id": "fr6", "kind": "wipe", "duration_ms": 5000},
@@ -291,7 +304,12 @@ PROJECT = {
         # both evaluators must cut it to 500 — and to the SAME 500, or the
         # windows differ. It also lands ON a colour card, which is the cheapest
         # proof that a transition does not care what kind its neighbours are.
-        {"id": "tr4", "after_frame_id": "fr5", "kind": "wipe", "duration_ms": 5000},
+        # And it carries PARAMETERS: a non-default direction, which both sides
+        # must keep, next to a parameter belonging to a different kind, which
+        # both must drop. Getting either wrong shows up as the preview and the
+        # export wiping opposite ways.
+        {"id": "tr4", "after_frame_id": "fr5", "kind": "wipe", "duration_ms": 5000,
+         "params": {"direction": "up", "color": "#ff0000"}},
     ],
 }
 
@@ -544,6 +562,87 @@ check("the render key changes as the blend progresses",
 check("a moment off a transition signs exactly as it did before they existed",
       scene_signature(scene_at(PROJECT, 1000, END_MS))
       == scene_signature(scene_at({**PROJECT, "transitions": []}, 1000, END_MS)))
+
+# --- Transition parameters -------------------------------------------------
+# A transition's `params` is resolved the way an effect's is: every parameter
+# the KIND offers, filled in from `TRANSITION_PARAMS`, and nothing else. The
+# fixture's tr4 is a wipe travelling "up" that also carries a dip's `color`, and
+# tr1 is a dissolve carrying a wipe's `direction` — so both halves of that rule
+# are compared across the two languages, not just asserted here.
+tr4 = scene_at(PROJECT, 7000, END_MS)
+check("a transition's parameters reach the scene, resolved",
+      tr4["transition_params"] == {"direction": "up", "softness": 0.0},
+      f"({tr4['transition_params']})")
+check("a parameter the kind does not offer is dropped",
+      "color" not in tr4["transition_params"])
+check("a kind that offers none resolves an EMPTY dict, not a missing key",
+      scene_at(PROJECT, 4000, END_MS)["transition_params"] == {})
+check("and off a transition it is empty too, rather than absent",
+      scene_at(PROJECT, 3699, END_MS)["transition_params"] == {})
+
+
+def _wipe(params=None):
+    """The fixture with ONE wipe on the 4000ms cut, so 4000 is mid-window."""
+    t = {"id": "t", "after_frame_id": "fr2", "kind": "wipe", "duration_ms": 600}
+    if params is not None:
+        t["params"] = params
+    return {**PROJECT, "transitions": [t]}
+
+
+# Forgiveness, the same rule an unrecognised `kind` and `ease` get: fold down to
+# the default rather than refuse, so a project written by a newer client still
+# opens and still plays here.
+check("a direction this build has never heard of folds down to the default",
+      scene_at(_wipe({"direction": "sideways"}), 4000, END_MS)["transition_params"]
+      == {"direction": "right", "softness": 0.0})
+# The NUMERIC half of the same forgiveness rule. A number out of range is
+# clamped in the RESOLVER, on both sides, rather than in each renderer — so a
+# monitor and an exporter cannot clamp it differently, and `scene_signature`
+# signs the value that will actually be drawn.
+check("a softness out of range is clamped, not refused",
+      scene_at(_wipe({"softness": 4}), 4000, END_MS)["transition_params"]["softness"] == 1.0)
+check("and one that isn't a number at all falls back to the default",
+      scene_at(_wipe({"softness": "very"}), 4000, END_MS)["transition_params"]["softness"] == 0.0)
+# ⚠ THE RENDER KEY HAS TO TELL TWO SOFTNESSES APART, for the same reason it has
+# to tell two directions apart: they resolve to the same two pictures at the
+# same mix and differ only here.
+check("the render key tells two softnesses apart",
+      scene_signature(scene_at(_wipe({"softness": 0.3}), 4000, END_MS))
+      != scene_signature(scene_at(_wipe(), 4000, END_MS)))
+check("a wipe at its defaults signs as it did before softness existed",
+      scene_signature(scene_at(_wipe({"softness": 0}), 4000, END_MS))
+      == scene_signature(scene_at(_wipe(), 4000, END_MS)))
+
+# --- The matte model -------------------------------------------------------
+# A REVEAL IS A MASK ON THE ARRIVING PICTURE, so the thing that has to be
+# twinned is which matte each kind draws through and in what ORDER the kinds are
+# listed — the shader turns a matte name into an integer by its index, so a list
+# that drifted by one would silently draw a clock where the project says iris.
+# The JS side of both tables is compared by `run_node` below; these are the
+# invariants that hold on either side alone.
+check("every transition kind resolves a matte, even if it is none",
+      all(isinstance(transition_matte(k), str) for k in TRANSITION_KINDS))
+check("every matte a kind names is one the renderer has",
+      all(transition_matte(k) in MATTE_KINDS for k in TRANSITION_KINDS))
+check("none is index 0 — the shader tests kind == 0 as its early out",
+      MATTE_KINDS[0] == "none")
+check("the three that are not reveals draw through no matte",
+      [transition_matte(k) for k in ("dissolve", "dip", "slide")] == ["none"] * 3)
+check("and every other kind does draw through one",
+      all(transition_matte(k) != "none"
+          for k in TRANSITION_KINDS if k not in ("dissolve", "dip", "slide")))
+# ⚠ THE RENDER KEY HAS TO TELL TWO DIRECTIONS APART. Two wipes at the same `mix`
+# resolve to the same two pictures at the same transforms and differ ONLY in the
+# parameter, so leaving it out of the key would let a re-export reuse the stills
+# from the last one and come back with the direction unchanged.
+check("the render key tells two directions apart",
+      scene_signature(scene_at(_wipe({"direction": "up"}), 4000, END_MS))
+      != scene_signature(scene_at(_wipe(), 4000, END_MS)))
+# The other half: only NON-DEFAULT parameters are written into the key, so a
+# transition nobody has touched signs what it signed before parameters existed.
+check("a transition at its default direction signs as it did before params",
+      scene_signature(scene_at(_wipe({"direction": "right"}), 4000, END_MS))
+      == scene_signature(scene_at(_wipe(), 4000, END_MS)))
 
 # --- Clips: image / video / colour ----------------------------------------
 # The scene model's job for a video clip is to answer ONE new question — which

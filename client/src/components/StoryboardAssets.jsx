@@ -148,8 +148,15 @@ export default function StoryboardAssets({
       </div>
 
       <div className="review-actions board-actions top-actions">
-        <button type="button" className="btn" onClick={onBack} disabled={busy}>
-          ← Back
+        <button
+          type="button"
+          className="btn back-btn"
+          onClick={onBack}
+          disabled={busy}
+          title="Back"
+          aria-label="Back"
+        >
+          ←
         </button>
         <button
           type="button"

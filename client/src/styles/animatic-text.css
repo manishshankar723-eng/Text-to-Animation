@@ -13,7 +13,9 @@
   /* Wide enough for a track's filename beside its mute button — at 6.6rem a
      name truncated to "m..." told you nothing about which lane was which. */
   --tl-gutter-w: 9rem;
-  --tl-ruler-h: 1.15rem;
+  /* Two rows of ruler now — the timecode over its own tick — where it used to be
+     one row of bare "0:05". `.tl-ruler` and the gutter's spacer both read this. */
+  --tl-ruler-h: 1.5rem;
   /* ONE height for all three tracks, so the Images / Text / Audio buttons in
      the gutter are identical — three different sizes read as three different
      kinds of thing, which they aren't. The waveform is drawn to whatever this
@@ -24,6 +26,11 @@
   --tl-shp-h: var(--tl-track-h);
   --tl-aud-h: var(--tl-track-h);
   --tl-row-gap: 0.3rem;
+  /* One width for all three row controls (hide / add / remove), so they sit in
+     three fixed columns down the gutter instead of each finding its own place.
+     The gutter width above has to keep room for the name BESIDE this cluster —
+     the two are budgeted together. */
+  --tl-act-w: 1.15rem;
   /* Keyframe rows: one per ANIMATED property, stacked down the clip.
      ⚠ In `rem`, like the track they sit in — NOT px. Mixing the two means the
      rows keep their size while the track shrinks with the browser's font size,
@@ -52,6 +59,12 @@
      the bottom is where a scroll bar belongs — at the edge — instead of half
      way up a half-empty timeline. */
   flex: 1 1 auto;
+  /* ⚠ NOTHING ON THIS BAR IS SELECTABLE TEXT. Every drag here means something —
+     scrub, marquee, move a clip, trim an edge — and the bar is wall-to-wall
+     labels, so any drag that got through to the browser left the track names and
+     clip titles highlighted in blue under the gesture. There are no inputs in
+     the timeline; the labels are read, not edited. */
+  user-select: none;
 }
 /* The two columns and the vertical bar. This is the row that `.tl-wrap` used to
    be; the bar along the bottom is its sibling, so it spans the labels too. */
@@ -122,21 +135,18 @@
   font-weight: 700;
   flex-shrink: 0;
 }
+/* ⚠ NO `margin-left: auto` HERE ANY MORE — the cluster (`.tl-layer-acts` in
+   animatic-editor.css) carries it for all three controls at once. When each
+   button pushed itself right on its own, whichever one happened to be rendered
+   first landed under whichever one was first on the row above, and the icons
+   walked sideways down the gutter. Size and hover come from `.tl-layer-btn`;
+   this rule is only the ＋'s own colour. */
 .tl-layer-add {
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
   color: var(--primary);
-  cursor: pointer;
   font-size: 0.72rem;
-  line-height: 1;
-  padding: 0.1rem 0.25rem;
-  flex-shrink: 0;
 }
-.tl-layer-add:hover {
+.tl-layer-add:hover:not(:disabled) {
   border-color: var(--primary);
-  background: var(--panel);
 }
 
 .tl-scroll {
@@ -267,8 +277,18 @@
 }
 .tl-track-empty {
   font-size: 0.72rem;
+  line-height: 1.2;
   color: var(--muted);
-  padding: 0.45rem 0.6rem;
+  /* ⚠ NO VERTICAL PADDING HERE — THE PROMPT IS CENTRED, NOT TOPPED OUT.
+     It used to be `padding: 0.45rem 0.6rem`: a FIXED offset inside a box whose
+     height is a variable the VERTICAL zoom writes (`--tl-track-h`, floor
+     1.5rem — see MIN_TRACK_H in Timeline.jsx). Zoom the rows down and that
+     offset pushed the text onto the lane's bottom edge, where the lane's own
+     `overflow: hidden` sliced its descenders off — reported as "empty text
+     layer not view full, i see it goes in down", and the audio row's
+     `padding: 0.9rem` override made it worse still. A centred single line
+     cannot clip at ANY track height, which is the property this needs. */
+  padding: 0 0.6rem;
   user-select: none;
   /* A lane is one track high. Without this the prompt wrapped to a second line
      and was sliced in half by the lane's own `overflow: hidden`. */
@@ -287,13 +307,29 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+  /* ⚠ CENTRED BY `line-height`, NOT BY FLEX. Flex would make the text an
+     ANONYMOUS flex item and `text-overflow: ellipsis` above would stop
+     applying to it — a long prompt would then overflow instead of truncating,
+     which is the bug this rule exists to prevent. One line, its height the
+     lane's inner height (the 2px is the lane's own border), so it sits on the
+     middle of the row whatever the vertical zoom has made that. */
+  line-height: calc(var(--tl-track-h) - 2px);
 }
 .tl-track-add:hover {
   color: var(--primary);
   background: rgba(229, 193, 88, 0.07);
 }
+/* Same rule as above: the horizontal breathing room is this row's own, the
+   vertical centring is shared. `0.9rem` of top padding here was what clipped
+   the audio row's prompt first — 14px of it in a 24px lane. */
 .tl-audio .tl-track-empty {
-  padding: 0.9rem 0.7rem;
+  padding: 0 0.7rem;
+}
+/* The "Loading …" placeholder is not a button, so it needs the centring itself.
+   It sits in a clip that spans the lane top to bottom, so the same height. */
+.tl-audio-clip.loading .tl-track-empty {
+  display: block;
+  line-height: calc(var(--tl-track-h) - 2px);
 }
 
 /* --- Text over the preview ---------------------------------------------- */
@@ -444,9 +480,10 @@
 }
 
 /* --- Add-text button ---------------------------------------------------- */
-/* The two "make a clip out of nothing" buttons in the timeline header. They are
-   a pair and must read as one, so they share the weight — the alternative is
-   Text looking like the real control and Colour card like an afterthought. */
+/* The two "make a clip out of nothing" buttons, now in the timeline's own head
+   row beside ＋ Add layer (`.tl-add-tools`). They are a pair and must read as
+   one, so they share the weight — the alternative is Text looking like the real
+   control and Colour card like an afterthought. */
 .an-add-text,
 .an-add-card {
   font-weight: 650;
@@ -520,6 +557,10 @@
 @media (max-width: 720px) {
   .tl-wrap {
     --tl-gutter-w: 6.4rem;
+    /* Narrower gutter, narrower controls — otherwise three 1.15rem slots plus
+       their gaps eat most of 6.4rem and the layer name is down to an ellipsis
+       again. */
+    --tl-act-w: 1rem;
   }
   .tl-gutter {
     font-size: 0.68rem;

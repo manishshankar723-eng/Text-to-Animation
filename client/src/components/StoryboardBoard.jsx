@@ -35,6 +35,8 @@ export default function StoryboardBoard({
   jobId,
   styleLabel,
   aspect,
+  // WHERE the back arrow goes ("Your Storyboards"). Prose only — no arrow in
+  // it: the button draws that itself, and this is read as a tooltip.
   backLabel,
   onBack,
   onRestart,
@@ -531,8 +533,16 @@ export default function StoryboardBoard({
       </div>
 
       <div className="review-actions board-actions top-actions">
-        <button type="button" className="btn" onClick={onBack}>
-          {backLabel || "← Back to shots"}
+        {/* Arrow only, like every other back control in the app — `backLabel`
+            is now WHERE it goes, and that reads in the tooltip. */}
+        <button
+          type="button"
+          className="btn back-btn"
+          onClick={onBack}
+          title={backLabel || "Back to shots"}
+          aria-label={backLabel || "Back to shots"}
+        >
+          ←
         </button>
         {/* "Start over" belongs to the workflow that BUILDS a board (it resets
             the script→shots flow). In sequenceMode there is nothing to start

@@ -20,7 +20,7 @@
  * the same evaluator for resolved values at a given time.
  */
 
-import { transitionAt } from "./transitions.js";
+import { TRANSITION_PARAMS, transitionAt } from "./transitions.js";
 
 // Rounding is part of the contract. Two languages doing the same float maths
 // drift in the last bits; the parity test would then fail on noise rather than
@@ -161,6 +161,23 @@ export const EFFECT_PARAMS = {
   saturation: { amount: 1 },
   lut: { name: "", amount: 1 },
   chroma: { color: "#00ff00", similarity: 0.35, smoothness: 0.08, spill: 0 },
+  // ⚠ APPENDED, NEVER INSERTED. An effect reaches the shader as its INDEX in
+  // this table (`fxIndex`), so putting a new kind in the middle would silently
+  // re-number every kind after it and a saved project would come back graded by
+  // the wrong effect. New ones go on the end.
+  //
+  // These six are all POINT-WISE: every one is a function of a single pixel and
+  // nothing else. That is not a coincidence, it is the admission price — the
+  // monitor grades in one fragment shader pass with no neighbourhood available,
+  // so blur, sharpen and grain cannot join this list without a second pass and
+  // an answer to "at which resolution", which the export and the preview do not
+  // share. They stay out until that is settled.
+  exposure: { stops: 0 },
+  gamma: { gamma: 1 },
+  temperature: { temperature: 0, tint: 0 },
+  hue: { degrees: 0 },
+  sepia: { amount: 1 },
+  posterize: { levels: 8 },
 };
 export const EFFECT_KINDS = Object.keys(EFFECT_PARAMS);
 
@@ -537,26 +554,112 @@ function resolve(clip, kind, tRel) {
 // The timeline
 // ---------------------------------------------------------------------------
 /**
- * Where each frame sits, in play order. One hold per frame, back to back.
+ * WHICH PICTURE TRACK a clip is on. 0 is the base track — the bottom of the
+ * stack, and where every clip written before tracks existed lives.
  *
- * `endMs` extends the LAST picture — that is what makes an export cover a music
- * bed which outlasts the pictures instead of stopping dead on the final image.
- * `plan_segments` has always done this; it lives here now so the preview holds
- * the last frame over a long audio track too, which it previously did not.
+ * ⚠ A HIGHER NUMBER IS DRAWN OVER A LOWER ONE, which is what a track above
+ * another one means in every editor. A gap on an upper track therefore shows
+ * whatever is on the track below it, and a moment with nothing on any track
+ * shows the letterbox colour — see `sceneAt`.
+ *
+ * ⚠ TWIN of `frame_track` in `animatic_render.py`.
+ */
+export function frameTrack(frame) {
+  const n = Math.trunc(Number(frame?.track) || 0);
+  return n > 0 ? n : 0;
+}
+
+/**
+ * Where each frame sits — ONE SPAN PER FRAME, IN LIST ORDER.
+ *
+ * ⚠ A PICTURE IS PLACED BY `start_ms` ON ITS OWN TRACK, not by adding up the
+ * clips before it. That is the whole of the multi-track change. The picture rows
+ * used to be one sequence laid end to end, so trimming any clip moved every clip
+ * after it — including the ones on the row above, which is what made "when i do
+ * video trim so i see my image layer conetnt move" true by construction
+ * (user-reported). With a start of its own a clip moves when you move it and at
+ * no other time.
+ *
+ * ⚠ A MISSING `start_ms` MEANS "AFTER THE LAST CLIP ON MY TRACK", and that is the
+ * compatibility hinge. Every animatic written before this carries no starts at
+ * all and sits on one track, so this rule lays it out exactly as the old running
+ * total did — the same number at every cut. It is also what makes "add these
+ * pictures to the end of the sequence" a write of nothing rather than arithmetic.
+ *
+ * ⚠ THE SPANS STAY PARALLEL TO `frames`: `spans[i]` is the i-th frame's and
+ * carries `index` too. `transitionWindow` and `server/animatics.py` both index it
+ * that way, so sorting it into play order here would break them.
+ *
+ * `endMs` HOLDS THE LAST PICTURE out to that moment — what makes an export cover
+ * a music bed which outlasts the pictures instead of stopping dead on the final
+ * image. With several tracks "the last picture" is the one that ENDS LAST, and
+ * the topmost of those if two tie: that is the picture you can see.
  */
 export function frameSpans(frames, endMs = null) {
+  const list = frames || [];
   const spans = [];
-  let clock = 0;
-  for (let i = 0; i < frames.length; i++) {
-    const length = Math.max(100, Number(frames[i].duration_ms) || 2000);
-    spans.push({ start: clock, end: clock + length, index: i });
-    clock += length;
+  // Where the next clip with no start of its own goes, per track.
+  const clock = new Map();
+  for (let i = 0; i < list.length; i++) {
+    const frame = list[i];
+    const track = frameTrack(frame);
+    const length = Math.max(100, Number(frame.duration_ms) || 2000);
+    const at = Number(frame.start_ms);
+    const start =
+      frame.start_ms === null || frame.start_ms === undefined || !Number.isFinite(at)
+        ? clock.get(track) || 0
+        : Math.max(0, Math.round(at));
+    spans.push({ start, end: start + length, index: i, track });
+    clock.set(track, Math.max(clock.get(track) || 0, start + length));
   }
-  if (spans.length && endMs && endMs > clock) {
-    spans[spans.length - 1].end = endMs;
-    clock = endMs;
+  let totalMs = 0;
+  for (const span of spans) totalMs = Math.max(totalMs, span.end);
+  if (spans.length && endMs && endMs > totalMs) {
+    let last = null;
+    for (const span of spans) {
+      if (!last || span.end > last.end || (span.end === last.end && span.track > last.track)) {
+        last = span;
+      }
+    }
+    last.end = endMs;
+    totalMs = endMs;
   }
-  return { spans, totalMs: clock };
+  return { spans, totalMs };
+}
+
+/**
+ * The span showing on each track at `t`, BOTTOM TRACK FIRST — which is the
+ * compositing order, and the order `sceneAt` returns its pictures in.
+ *
+ * ⚠ ONE CLIP PER TRACK, AND THE LATER ONE WINS WHERE TWO OVERLAP. Free placement
+ * makes an overlap possible where a butt-jointed sequence could not, and this is
+ * the only tie-break a person can predict: whichever starts later is the one you
+ * just put there. The timeline marks a clash (`.tl-bar.clash`) so it can be seen
+ * and fixed rather than silently deciding the picture.
+ *
+ * ⚠ TWIN of `_stack_at` in `animatic_render.py`.
+ */
+export function stackAt(spans, t) {
+  const byTrack = new Map();
+  for (const span of spans) {
+    if (t < span.start || t >= span.end) continue;
+    const held = byTrack.get(span.track);
+    if (
+      !held ||
+      span.start > held.start ||
+      (span.start === held.start && span.index > held.index)
+    ) {
+      byTrack.set(span.track, span);
+    }
+  }
+  return [...byTrack.keys()].sort((a, b) => a - b).map((track) => byTrack.get(track));
+}
+
+/** Every picture track the project uses, lowest first. Always includes 0. */
+export function pictureTracks(frames) {
+  const seen = new Set([0]);
+  for (const frame of frames || []) seen.add(frameTrack(frame));
+  return [...seen].sort((a, b) => a - b);
 }
 
 // A clip is on screen from its start UP TO BUT NOT INCLUDING its end. The same
@@ -605,31 +708,67 @@ function pictureAt(frames, spans, index, t) {
  * art, while an overlay is a picture element that belongs above it; text is last
  * so a caption is always readable. `render_frame` stacks them the same way.
  *
- * ON A TRANSITION there are two pictures: `frame` is the OUTGOING one for the
+ * ⚠ `pictures` IS THE PICTURE, AND IT IS A STACK — one entry per picture track
+ * that has something on it at `t`, BOTTOM TRACK FIRST. Every renderer must walk
+ * it; nothing may read `frame` and think it has drawn the film. An EMPTY stack is
+ * legal and means the letterbox colour: with clips placed freely a track can have
+ * a gap in it, and a gap on the bottom track with nothing above it is a moment
+ * where the picture is the backdrop. (Before tracks the sequence had no holes, so
+ * "no picture" only happened past the end.)
+ *
+ * ⚠ `frame` / `frame_b` / `mix` / `transition` / `transition_params` ARE THE
+ * TOPMOST ENTRY, DERIVED — never computed a second way. They are what the
+ * Properties pane and the transport mean by "the clip at the playhead", which is
+ * a different question from "what is on screen"; keeping them is also what let
+ * every caller that only ever wanted that one clip stay as it was. On a project
+ * with one picture track — which is every animatic written before tracks — the
+ * stack has exactly one entry and these are it, so nothing about such a project
+ * resolves differently than it did.
+ *
+ * ON A TRANSITION a track has two pictures: `frame` is the OUTGOING one for the
  * whole window (see the note in `transitions.js` for why that, and not the one
  * `frameSpans` would pick, for the half past the cut), `frame_b` is the picture
  * arriving, and `mix` says how far through we are. Off a transition `frame_b` is
- * null, `mix` is 0 and `transition` is null — which is every animatic that
- * existed before this, resolving exactly as it always did.
+ * null, `mix` is 0 and `transition` is null.
  */
 export function sceneAt(project, tMs, endMs = null) {
   const frames = project.frames || [];
   const { spans, totalMs } = frameSpans(frames, endMs);
   const t = Math.max(0, Number(tMs) || 0);
 
-  const span = spans.find((s) => t >= s.start && t < s.end) || null;
-  let frame = span == null ? null : pictureAt(frames, spans, span.index, t);
-
-  // A transition overrides which picture is "the frame", because for the half
-  // of the window past the cut the answer is the one that is on its way OUT.
-  // Both pictures are resolved outside their own span here — keys hold at the
-  // ends rather than extrapolating, so neither flies off screen.
-  const active = frame == null ? null : transitionAt(project, t, spans);
-  let frameB = null;
-  if (active) {
-    frame = pictureAt(frames, spans, active.fromIndex, t);
-    frameB = pictureAt(frames, spans, active.toIndex, t);
-  }
+  // ⚠ ONE PASS PER TRACK, bottom to top, and each track resolves its own
+  // transition. A transition is track-local (`transitionWindow`), so asking the
+  // project once and applying the answer to every track would put one track's
+  // dissolve on another's picture.
+  const pictures = stackAt(spans, t).map((span) => {
+    let frame = pictureAt(frames, spans, span.index, t);
+    // The transition overrides which picture is "the frame", because for the half
+    // of the window past the cut the answer is the one on its way OUT. Both
+    // pictures are resolved outside their own span here — keys hold at the ends
+    // rather than extrapolating, so neither flies off screen.
+    const active = transitionAt(project, t, spans, span.track);
+    let frameB = null;
+    if (active) {
+      frame = pictureAt(frames, spans, active.fromIndex, t);
+      frameB = pictureAt(frames, spans, active.toIndex, t);
+    }
+    return {
+      track: span.track,
+      frame,
+      frame_b: frameB,
+      mix: active ? active.mix : 0,
+      transition: active ? active.kind : null,
+      // ⚠ ALWAYS AN OBJECT, empty off a transition rather than absent — see the
+      // note on the scene's own copy of this field below.
+      transition_params: active ? active.params : {},
+    };
+  });
+  // The topmost track's, derived. See the docstring: this is "the clip at the
+  // playhead", not "the picture", and it is never worked out a second way.
+  const top = pictures.length ? pictures[pictures.length - 1] : null;
+  const frame = top ? top.frame : null;
+  const frameB = top ? top.frame_b : null;
+  const active = top && top.transition ? top : null;
 
   // An empty caption is skipped HERE, which means the preview and the exporter
   // skip it for the same reason in the same place — an unfinished caption never
@@ -655,12 +794,21 @@ export function sceneAt(project, tMs, endMs = null) {
   return {
     t_ms: t,
     total_ms: totalMs,
+    // ⚠ THE PICTURE, bottom track first. Renderers walk this; `frame` below is
+    // the topmost entry and answers a different question. See the docstring.
+    pictures,
     frame,
     // The transition, flattened onto the scene: the second picture, how far
     // through the blend we are, and which blend. Null / 0 / null off a cut.
     frame_b: frameB,
     mix: active ? active.mix : 0,
-    transition: active ? active.kind : null,
+    transition: active ? active.transition : null,
+    // ⚠ ALWAYS AN OBJECT, empty off a transition rather than absent. A missing
+    // key here is `undefined`, which JSON drops, and the resolved scene would
+    // then be a different SHAPE from the Python side — which is exactly how
+    // `tests/render_parity.py` ends up comparing two things it thinks are equal
+    // for the wrong reason. Same rule `place` and `blend` follow.
+    transition_params: active ? active.transition_params : {},
     shapes,
     overlays,
     texts,
@@ -779,26 +927,53 @@ export function sceneSignature(scene) {
     return bits.length ? `:L${bits.join("+")}` : "";
   };
   const parts = [];
-  if (scene.frame) {
-    const f = scene.frame;
-    parts.push(
-      `f${f.index}:${n(f.scale)}:${n(f.x)}:${n(f.y)}:${n(f.opacity)}` +
-        clipExtra(f) +
-        lookExtra(f)
-    );
-  } else {
-    parts.push("f-");
-  }
   // ⚠ `mix` MUST be in the key. Without it every video frame of a dissolve
   // resolves to one signature, the exporter renders a single still and reuses
   // it for the whole blend, and the transition SNAPS instead of blending —
   // exactly the reuse bug this key already guards against for keyframes.
   // Added only when there IS a second picture, so a project with no transitions
   // produces byte-for-byte the signature it produced before they existed.
-  if (scene.frame_b) {
-    const b = scene.frame_b;
+  //
+  // ⚠ AND SO MUST ITS PARAMETERS, for the same reason once more: a wipe
+  // travelling left and one travelling right resolve to the same two pictures at
+  // the same `mix` and differ ONLY here. Leaving them out would render one still
+  // per `mix` value and reuse it across directions — and worse, a project whose
+  // only edit was the direction would hit the cache from the previous export and
+  // come back unchanged.
+  //
+  // Only NON-DEFAULT parameters are written, so a plain wipe or dissolve signs
+  // byte-for-byte what it signed before parameters existed.
+  const paramExtra = (kind, params) => {
+    const defaults = TRANSITION_PARAMS[kind] || {};
+    const bits = Object.keys(defaults)
+      .sort()
+      .map((name) => [name, params[name] ?? defaults[name]])
+      .filter(([name, value]) => value !== defaults[name])
+      .map(([name, value]) => `${name}=${typeof value === "string" ? value : n(value)}`);
+    return bits.length ? `:p${bits.join(",")}` : "";
+  };
+  // ⚠ EVERY TRACK, bottom first — not just the topmost. Two moments that differ
+  // only in what an upper track is showing are two different frames, and signing
+  // one of them would make the exporter reuse the other's still.
+  //
+  // With ONE track this writes byte-for-byte the string it always wrote (an `f…`
+  // part, then an `x…` part on a transition), so a project that predates tracks
+  // hits the render cache from its previous export exactly as before.
+  if (!(scene.pictures || []).length) parts.push("f-");
+  for (const picture of scene.pictures || []) {
+    const f = picture.frame;
+    if (!f) continue;
     parts.push(
-      `x${scene.transition}:${n(scene.mix)}:b${b.index}:${n(b.scale)}:${n(b.x)}:${n(b.y)}:${n(b.opacity)}` +
+      `f${f.index}:${n(f.scale)}:${n(f.x)}:${n(f.y)}:${n(f.opacity)}` +
+        clipExtra(f) +
+        lookExtra(f)
+    );
+    const b = picture.frame_b;
+    if (!b) continue;
+    parts.push(
+      `x${picture.transition}:${n(picture.mix)}` +
+        paramExtra(picture.transition, picture.transition_params || {}) +
+        `:b${b.index}:${n(b.scale)}:${n(b.x)}:${n(b.y)}:${n(b.opacity)}` +
         clipExtra(b) +
         lookExtra(b)
     );

@@ -50,7 +50,7 @@ export default function CreateAnimaticImage({ onOpenAnimatic }) {
         jobId={board.job_id}
         styleLabel={styleLabelFor(board.style)}
         aspect={board.aspect_ratio || "16:9"}
-        backLabel="← Your Boards"
+        backLabel="Your Boards"
         onBack={() => setBoard(null)}
         onRestart={() => setBoard(null)}
         onOpenAnimatic={onOpenAnimatic}

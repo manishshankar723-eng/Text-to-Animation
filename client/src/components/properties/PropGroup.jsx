@@ -73,6 +73,12 @@ export function openGroup(id) {
  * @param count      a number shown as a pill after the title (effects: 3).
  * @param actions    buttons for the header — rendered OUTSIDE the toggle, since
  *                   a <button> may not contain another one.
+ * @param info       prose behind an ⓘ at the right of the HEADER, for a note
+ *                   that is about the whole section and so has no one row to
+ *                   sit on. Prefer `PropRow`'s own `info`: a note attached to
+ *                   the property it describes is a note you find when you need
+ *                   it. Rendered in the header so it is reachable with the
+ *                   section shut.
  * @param tone       "fx" draws the effect-card treatment instead of a section.
  */
 export function PropGroup({
@@ -81,11 +87,13 @@ export function PropGroup({
   hint,
   count,
   actions,
+  info,
   tone = "",
   defaultOpen = true,
   children,
 }) {
   const [open, setOpen] = useState(() => OPEN.get(id) ?? defaultOpen);
+  const [noteOpen, setNoteOpen] = useState(false);
 
   const toggle = () =>
     setOpen((was) => {
@@ -106,7 +114,11 @@ export function PropGroup({
   }, [id]);
 
   return (
-    <section className={`an-grp ${tone ? `an-grp-${tone}` : ""} ${open ? "open" : ""}`}>
+    <section
+      className={`an-grp ${tone ? `an-grp-${tone}` : ""} ${open ? "open" : ""} ${
+        noteOpen ? "note-on" : ""
+      }`}
+    >
       <div className="an-grp-head">
         <button
           type="button"
@@ -122,8 +134,19 @@ export function PropGroup({
           {count != null && <span className="an-grp-count">{count}</span>}
           {hint && <span className="an-grp-hint">{hint}</span>}
         </button>
-        {actions ? <span className="an-grp-actions">{actions}</span> : null}
+        {(actions || info) && (
+          <span className="an-grp-actions">
+            {actions}
+            {/* Last in the cluster, on the same right-hand edge every row's ⓘ
+                sits on — one column of them down the whole pane. */}
+            {info ? (
+              <InfoDot open={noteOpen} onToggle={() => setNoteOpen((was) => !was)} />
+            ) : null}
+          </span>
+        )}
       </div>
+      {/* Outside the body, so a shut section can still be asked what it is for. */}
+      {info ? <p className="an-note an-note-pop an-grp-note">{info}</p> : null}
       {/* Unmounted rather than hidden, so a collapsed group costs nothing —
           this pane re-renders on every playhead move. */}
       {open && <div className="an-grp-body">{children}</div>}
@@ -179,6 +202,50 @@ export function ResetButton({ onReset, changed = false, title }) {
 }
 
 /**
+ * ⓘ — THE EXPLANATION FOR THIS PROPERTY, FOLDED UNTIL YOU ASK FOR IT.
+ *
+ * It lives ON THE ROW, in the cluster at the right-hand edge with ⏱ and ↺, and
+ * never on a line of its own. That is the whole point: the teaching prose used
+ * to be printed under the group as a paragraph, so a pane of five sections
+ * carried five grey blocks and the properties people came to change were the
+ * shortest thing on screen. Given a line of its own the ICON has the same fault
+ * in miniature — every note pushes the next property down, and the column of
+ * ↺'s that tells you what you have changed stops being a column.
+ *
+ * Hover shows it. Click PINS it open, which is what makes it work on a touch
+ * screen and what lets you read a long note without holding the pointer still.
+ *
+ * The prose opens IN FLOW under the row (`.an-note-pop` spans both columns, like
+ * `.an-row-hint`) rather than floating over the pane: `.an-grp` is
+ * `overflow: hidden` for its corners and `.an-pane-body` scrolls, so a popover
+ * would be clipped by one or the other.
+ */
+/**
+ * ⓘ — the explanation, on ask.
+ *
+ * ⚠ EXPORTED, because it is not only a Properties control any more. The Effects
+ * library's rows carry one too: every entry there used to print its whole
+ * description beside its name, which is the same fault this exists to fix, one
+ * pane over (user-reported, twice). One component rather than a second circle
+ * that is nearly the same size — the ⓘ has to be the SAME thing everywhere or
+ * it stops reading as a convention and starts reading as decoration.
+ */
+export function InfoDot({ open, onToggle }) {
+  return (
+    <button
+      type="button"
+      className="an-note-i"
+      aria-expanded={open}
+      onClick={onToggle}
+      title={open ? "Hide this explanation" : "What this does"}
+      aria-label="What this does"
+    >
+      i
+    </button>
+  );
+}
+
+/**
  * One property: a label in the left column, its controls in the right.
  *
  * The ⏱ goes in `children` as the LAST item — it is pushed to the right edge by
@@ -189,7 +256,12 @@ export function ResetButton({ onReset, changed = false, title }) {
  * @param label   the property name. Nothing else in the left column, ever: a
  *                value or a unit in there is what breaks the alignment.
  * @param title   the tooltip — where the long explanation goes.
- * @param hint    a line of prose under the row, spanning both columns.
+ * @param hint    a line of prose under the row, spanning both columns. ALWAYS
+ *                shown — for the one thing about this row you cannot leave to a
+ *                tooltip. If it is teaching prose, it wants `info` instead.
+ * @param info    the same prose, behind the ⓘ in the row's right-hand cluster.
+ *                This is where an explanation belongs; `hint` is for a fact the
+ *                user must not be able to miss.
  * @param full    controls take the whole width and the label sits above them.
  *                For sliders that need the room, and for buttons.
  * @param reset   () => void — put this property back to its default. Omit only
@@ -202,14 +274,20 @@ export function PropRow({
   label,
   title,
   hint,
+  info,
   full = false,
   reset,
   changed = false,
   resetTo,
   children,
 }) {
+  // Pinned open by a click. Per-row, so two notes can be open at once — which is
+  // what you want when you are comparing two properties, and there is nothing
+  // here that a second open note can break.
+  const [noteOpen, setNoteOpen] = useState(false);
+
   return (
-    <div className={`an-row ${full ? "full" : ""}`}>
+    <div className={`an-row ${full ? "full" : ""} ${noteOpen ? "note-on" : ""}`}>
       {label != null && (
         <span className="an-row-label" title={title}>
           {label}
@@ -217,8 +295,13 @@ export function PropRow({
       )}
       <div className="an-row-ctl">
         {children}
+        {/* ⚠ ⓘ BEFORE ↺, ALWAYS. The reset is the last thing on every row — that
+            is what makes a column of them readable as "everything I have
+            changed" — so the note tucks in beside it rather than past it. */}
+        {info ? <InfoDot open={noteOpen} onToggle={() => setNoteOpen((was) => !was)} /> : null}
         {reset ? <ResetButton onReset={reset} changed={changed} title={resetTo} /> : null}
       </div>
+      {info ? <p className="an-note an-note-pop">{info}</p> : null}
       {hint ? <p className="an-row-hint">{hint}</p> : null}
     </div>
   );
@@ -251,13 +334,16 @@ export function PropSlider({
   readout,
   kf,
   hint,
+  info,
   reset,
   changed = false,
   resetTo,
   ...input
 }) {
+  const [noteOpen, setNoteOpen] = useState(false);
+
   return (
-    <div className="an-row">
+    <div className={`an-row ${noteOpen ? "note-on" : ""}`}>
       <span className="an-row-label" title={title}>
         {label}
       </span>
@@ -265,17 +351,35 @@ export function PropSlider({
         <input type="range" {...input} />
         <span className="an-num-read">{readout}</span>
         {kf}
+        {info ? <InfoDot open={noteOpen} onToggle={() => setNoteOpen((was) => !was)} /> : null}
         {reset ? <ResetButton onReset={reset} changed={changed} title={resetTo} /> : null}
       </div>
+      {info ? <p className="an-note an-note-pop">{info}</p> : null}
       {hint ? <p className="an-row-hint">{hint}</p> : null}
     </div>
   );
 }
 
 /**
- * A line of prose in the pane. `tone` is "" for an explanation, "warn" for
- * "this is probably not what you meant" — never red, because nothing this pane
- * can say is an error.
+ * A line of prose in the pane, in plain sight.
+ *
+ * ⚠ THIS IS FOR WARNINGS. Teaching prose goes behind the ⓘ — `info` on the
+ * `PropRow` it is about, or on the `PropGroup` if it is about all of them.
+ *
+ * The difference is what KIND of sentence it is:
+ *
+ *   info    "100% is the file as recorded…". True forever, and useful exactly
+ *           once. Behind the ⓘ, because printed in full it out-shouts the
+ *           controls — a pane of five sections carried five grey paragraphs and
+ *           the properties people came to change were the shortest thing on
+ *           screen.
+ *   warn    "this clip runs past the end of the video". Conditional, about the
+ *           state you are in RIGHT NOW, and only rendered when it is true — so
+ *           it stays where you cannot miss it. ⚠ Never fold one behind an ⓘ: a
+ *           notice you have to go looking for is a notice nobody reads.
+ *
+ * `tone` defaults to "" so an older call still renders — as plain prose, which
+ * is what it always was.
  */
 export function PropNote({ tone = "", children }) {
   return <p className={`an-note ${tone ? `an-note-${tone}` : ""}`}>{children}</p>;

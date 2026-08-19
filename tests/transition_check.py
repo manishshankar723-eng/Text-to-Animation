@@ -23,6 +23,14 @@ The last two are each other's opposite on purpose: a renderer that drew a wipe
 where a slide was asked for would pass any test that only checked "something
 moved".
 
+⚠ AND THE SAME TRICK MEASURES A PARAMETER. Every one of those four sentences
+names a HALF of the frame, so a direction is proved by asserting the OPPOSITE
+half — a wipe told to travel left must uncover the right side first, or it
+ignored what it was told. A dip's colour is proved the same way, by dipping a
+black shot through white: the middle of the window can only get brighter if the
+colour arrived. Reading a parameter back off the project would prove nothing;
+these decode the encoded video.
+
     python tests/transition_check.py
 
 Needs ffmpeg for the second half (imageio-ffmpeg provides one; `GET /health`
@@ -64,8 +72,16 @@ def check(label, good, detail=""):
         failures.append(label)
 
 
-def transition(after, kind="dissolve", ms=600, ident="t1"):
-    return {"id": ident, "after_frame_id": after, "kind": kind, "duration_ms": ms}
+def transition(after, kind="dissolve", ms=600, ident="t1", params=None):
+    return {
+        "id": ident,
+        "after_frame_id": after,
+        "kind": kind,
+        "duration_ms": ms,
+        # Omitted entirely when there is nothing to say, which is the shape every
+        # animatic saved before parameters existed has on disk.
+        **({"params": params} if params else {}),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +160,22 @@ check("one transition makes the whole project animated", is_animated(project) is
 
 segs, seg_total = plan_animated_segments(FRAMES, [], None, [], [], 24, project["transitions"])
 check("sampling covers the timeline and no more", seg_total == TOTAL, f"(got {seg_total})")
-blended = [s for s in segs if s.get("frame_b") is not None]
+# ⚠ READ OFF THE PICTURE, NOT THE SEGMENT. A transition is TRACK-LOCAL now, so
+# the second picture rides on the entry for the track whose cut it is on — a
+# segment is a stack of those. See `plan_animated_segments`.
+blended = [
+    item
+    for s in segs
+    for item in s["pictures"]
+    if item.get("frame_b") is not None
+]
 check("only the samples inside the window carry a second picture",
       len(blended) == 15, f"(got {len(blended)} of {len(segs)})")
 check("and each of those names the picture arriving",
-      all(s["frame"] == 0 and s["frame_b"] == 1 for s in blended))
+      all(item["frame"] == 0 and item["frame_b"] == 1 for item in blended))
+check("and every sample names exactly one picture — these shots are one track",
+      all(len(s["pictures"]) == 1 for s in segs),
+      f"(stacks: {sorted({len(s['pictures']) for s in segs})})")
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +216,18 @@ def mean(im):
 
 
 def half(im, side):
+    """One half of the frame — the unit every direction assertion is made in."""
     w, h = im.size
-    return im.crop((0, 0, w // 2, h) if side == "left" else (w // 2, 0, w, h))
+    box = {
+        "left": (0, 0, w // 2, h),
+        "right": (w // 2, 0, w, h),
+        "top": (0, 0, w, h // 2),
+        "bottom": (0, h // 2, w, h),
+    }[side]
+    return im.crop(box)
 
 
-def encode(name, shades, kind, ms=600, background="#000000"):
+def encode(name, shades, kind, ms=600, background="#000000", params=None):
     """Two flat pictures, 1s each, with one transition on the cut between."""
     frames = [
         {"id": "a", "path": flat(os.path.join(work, f"{name}_a.png"), shades[0]),
@@ -203,16 +237,26 @@ def encode(name, shades, kind, ms=600, background="#000000"):
     ]
     return build_animatic(
         name, frames,
-        transitions=[transition("a", kind=kind, ms=ms)] if kind else None,
+        transitions=(
+            [transition("a", kind=kind, ms=ms, params=params)] if kind else None
+        ),
         output_dir=os.path.join(work, "out"),
         resolution=360, fps=24, aspect_ratio="16:9", background=background,
     )
 
 
+def middle_of(name, kind, shades=(0, 255), params=None, background="#000000"):
+    """Half way through one transition's window, decoded back out of the MP4."""
+    video = encode(name, shades, kind, params=params, background=background)["video"]
+    return decode(video, MIDDLE, os.path.join(work, f"{name}_mid.png"))
+
+
+# The window is 700–1300ms, so a quarter / half / three-quarters of the way
+# through it are 850 / 1000 / 1150ms. At module scope because `middle_of` above
+# reads MIDDLE.
+QUARTER, MIDDLE, THREE_Q = 0.850, 1.000, 1.150
+
 try:
-    # The window is 700–1300ms, so a quarter / half / three-quarters of the way
-    # through it are 850 / 1000 / 1150ms.
-    QUARTER, MIDDLE, THREE_Q = 0.850, 1.000, 1.150
 
     # ------------------------------------------------------------- dissolve
     print("\nA dissolve — black into white")
@@ -288,6 +332,54 @@ try:
           sr > sl + 100, f"(left {sl:.1f}, right {sr:.1f})")
     check("so the two are not the same effect under different names",
           (wl > wr) != (sl > sr))
+
+    # ------------------------------------------------- direction and colour
+    # ⚠ EVERY ASSERTION HERE IS THE OPPOSITE OF THE DEFAULT ONE ABOVE. A
+    # renderer that dropped `params` on the floor anywhere along the way — the
+    # schema, `transition_params`, the segment, the worker's task args — would
+    # draw the default and fail these while passing every check before them.
+    # That is the whole point: the four places a parameter can be lost are all
+    # downstream of a project that looks perfectly correct on disk.
+    print("\nDirection — the opposite half of the frame from the default")
+
+    left_wipe = middle_of("wipe_left", "wipe", params={"direction": "left"})
+    lw_l, lw_r = mean(half(left_wipe, "left")), mean(half(left_wipe, "right"))
+    check("a wipe told to travel left uncovers the RIGHT of the frame first",
+          lw_r > lw_l + 100, f"(left {lw_l:.1f}, right {lw_r:.1f})")
+
+    down_wipe = middle_of("wipe_down", "wipe", params={"direction": "down"})
+    dw_t, dw_b = mean(half(down_wipe, "top")), mean(half(down_wipe, "bottom"))
+    check("a wipe told to travel down uncovers the TOP of the frame first",
+          dw_t > dw_b + 100, f"(top {dw_t:.1f}, bottom {dw_b:.1f})")
+
+    right_slide = middle_of("slide_right", "slide", params={"direction": "right"})
+    rs_l, rs_r = mean(half(right_slide, "left")), mean(half(right_slide, "right"))
+    check("a slide told to travel right brings the incoming shot in from the LEFT",
+          rs_l > rs_r + 100, f"(left {rs_l:.1f}, right {rs_r:.1f})")
+
+    up_slide = middle_of("slide_up", "slide", params={"direction": "up"})
+    us_t, us_b = mean(half(up_slide, "top")), mean(half(up_slide, "bottom"))
+    check("a slide told to travel up brings it in from the BOTTOM",
+          us_b > us_t + 100, f"(top {us_t:.1f}, bottom {us_b:.1f})")
+
+    # Forgiveness, the same rule an unknown `kind` gets: fold to the default
+    # rather than refuse, so a project written by a newer client still plays.
+    bogus = middle_of("wipe_bogus", "wipe", params={"direction": "sideways"})
+    bg_l, bg_r = mean(half(bogus, "left")), mean(half(bogus, "right"))
+    check("a direction this build has never heard of falls back to the default",
+          bg_l > bg_r + 100, f"(left {bg_l:.1f}, right {bg_r:.1f})")
+
+    print("\nColour — a dip through white, on a shot that is already black")
+    # Black into black, so the ONLY thing that can move the brightness is the
+    # colour the dip goes out through. The default dip is the bar colour, which
+    # here is black, so it must not move at all.
+    plain_dip = mean(middle_of("dip_plain", "dip", shades=(0, 0)))
+    white_dip = mean(middle_of("dip_white", "dip", shades=(0, 0),
+                               params={"color": "#ffffff"}))
+    check("a dip that names no colour still goes out through the bar colour",
+          plain_dip < 8, f"({plain_dip:.1f})")
+    check("a dip through white goes BRIGHT in the middle instead",
+          white_dip > 225, f"({white_dip:.1f})")
 
     # ---------------------------------------------------------- the clamp
     print("\nA transition longer than the shots it joins")

@@ -39,11 +39,51 @@
 }
 
 /* The tool decides what the pointer over the timeline MEANS, so it has to look
-   different — a razor that still shows an I-beam is a razor nobody trusts. */
-.tl-inner.tool-razor,
+   different — a razor that still shows an I-beam is a razor nobody trusts.
+
+   ---------------------------------------------------------------------------
+   ⚠ THE RAZOR IS THE ONE TOOL WHOSE CURSOR IS NOT SIMPLY "EVERYWHERE"
+   ---------------------------------------------------------------------------
+   Hand and zoom mean the same thing over any pixel of the timeline. Cutting
+   does not: it happens to a CLIP. So the blade is shown on the clips and
+   nowhere else, and the two halves of that were both reported as bugs:
+
+     • **It was shown on the time ruler, and the ruler CUT** — of the picture
+       sequence, from a press nowhere near it ("I click in the seconds row and
+       my image clip got cut"). The ruler scrubs while the razor is up now, and
+       wears its ordinary cursor to say so.
+     • **It was NOT shown on an audio clip**, because `.tl-audio-clip` sets its
+       own `grab` and won over the container's rule ("I cut audio so I not see
+       cut icon like when I cut video"). Every kind of clip is named below, so
+       there is ONE cut cursor for every layer rather than a different pointer
+       per row.
+
+   `*` inside each clip on purpose: a clip is full of labels, thumbnails and
+   waveforms, and a cursor that changed as you crossed a caption's own text
+   would be the same complaint one level down. */
 .tl-inner.tool-razor .tl-bar,
-.tl-inner.tool-razor .tl-ruler {
+.tl-inner.tool-razor .tl-bar *,
+.tl-inner.tool-razor .tl-audio-clip,
+.tl-inner.tool-razor .tl-audio-clip *,
+.tl-inner.tool-razor .tl-overlay,
+.tl-inner.tool-razor .tl-overlay *,
+.tl-inner.tool-razor .tl-text,
+.tl-inner.tool-razor .tl-text *,
+.tl-inner.tool-razor .tl-shape,
+.tl-inner.tool-razor .tl-shape * {
   cursor: crosshair;
+}
+/* ⚠ AND NOTHING INSIDE A CLIP MAY ANSWER THE PRESS. A trim handle, a fade grip
+   or a keyframe diamond under the blade would resize or drag instead of cut —
+   and each of them carries its own cursor, which is the other half of "one cut
+   icon, not a different one per layer". `razorPress` guards the same handlers
+   in JS; this is what stops the pointer ever reaching them, so the two are belt
+   and braces rather than one mechanism written twice. */
+.tl-inner.tool-razor .tl-handle,
+.tl-inner.tool-razor .tl-fade-grip,
+.tl-inner.tool-razor .tl-key,
+.tl-inner.tool-razor .tl-fx {
+  pointer-events: none;
 }
 .tl-inner.tool-hand,
 .tl-inner.tool-hand .tl-bar,
@@ -175,9 +215,190 @@
   width: 2.1rem;
   height: 2.1rem;
 }
-.an-shape-hint {
-  margin: 0.6rem 0 0.9rem;
-  line-height: 1.45;
+/* `.an-shape-hint` is gone: the shape picker's standing paragraph is the
+   section's ⓘ now (`info` on its `PropGroup`). */
+
+/* --- The Effects tab in the Media pane ------------------------------------ */
+/* A TREE, not a grid of tiles like the shape picker beside it, and the
+   difference is the content: a shape IS its picture, so a tile shows you what
+   you are getting, while "Chroma key" is a word and a row of words in a grid is
+   a wall. A tree also gives the list somewhere to grow — the folders are what
+   keep it findable once there are thirty of these rather than nine.
+
+   ⚠ THE ROWS ARE ALL ONE HEIGHT AND ONE SHAPE, folders and entries alike.
+   They are the same list at different depths; making the folders bigger or
+   bolder turns a tree into two competing lists, and the indent already says
+   which is which. */
+.fx-lib {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+.fx-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-height: 1.45rem;
+  padding: 0.15rem 0.3rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 0.76rem;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.fx-row:hover {
+  background: var(--panel-2);
+}
+.fx-row-name {
+  /* The one part that may shrink: a long effect name truncates rather than
+     pushing the count off the end of a narrow pane. */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The same ▸ the Properties pane's sections use, rotated the same way. A
+   second disclosure idiom on one screen is a second thing to learn. */
+.fx-twist {
+  flex: 0 0 auto;
+  width: 0.7rem;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--muted);
+  transition: transform 0.12s ease;
+}
+.fx-twist.on {
+  transform: rotate(90deg);
+}
+.fx-folder-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--muted);
+}
+.fx-folder-row:hover .fx-folder-ico,
+.fx-folder-row:hover .fx-twist {
+  color: var(--primary);
+}
+.fx-count {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+/* One indent per level, drawn as a rule so the eye can follow a long folder
+   back to its heading — the thing a plain indent stops doing at four rows. */
+.fx-folder-body {
+  margin-left: 0.65rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--border);
+}
+
+/* An entry is DRAGGABLE, and it has to look it. The grab cursor is the only
+   affordance a row like this can carry — there is no handle to show. */
+.fx-entry {
+  cursor: grab;
+}
+.fx-entry:active {
+  cursor: grabbing;
+}
+.fx-entry:hover {
+  border-color: var(--primary);
+}
+/* Effects and transitions are told apart by the dot, not by a word: the folder
+   above already says which is which, and repeating it on every row would be
+   the same label nine times. */
+.fx-entry-ico {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+  background: var(--muted);
+}
+.fx-ico-effect {
+  background: var(--primary);
+}
+.fx-ico-transition {
+  /* The violet the timeline's transition badges already use — a transition is
+     the same kind of thing in both places, so it is the same colour. */
+  background: #8b6ce0;
+  border-radius: 999px;
+}
+/* ⚠ A THIRD DOT FOR THE THIRD FAMILY, differing in COLOUR AND SHAPE rather than
+   in colour alone. The dot is what tells you where a row can be dropped, and
+   this one is the family that lands somewhere else entirely — on the audio rows,
+   where neither of the other two is accepted. Colour-blind readers get the
+   diamond; everyone else gets the colour first. */
+.fx-ico-audioTransition {
+  background: #3fa9a0;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+/* A DIRECTIONAL preset trades the dot for its arrow. Same box, so the names
+   still line up in a column whether or not a row has one — a list that jogged
+   left and right down the folder would be harder to read than the dots it was
+   meant to improve on. */
+.fx-entry-ico.fx-ico-glyph {
+  width: 0.8rem;
+  height: 0.8rem;
+  margin: 0 -0.15rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border-radius: 0;
+  font-size: 0.72rem;
+  line-height: 1;
+  color: #a98cf5;
+}
+/* The note is the first thing to go when the pane is narrow: the name alone is
+   enough to drag the right one, and a wrapped second line per row would make
+   the tree twice as tall as the pane. */
+/* ⚠ THE ROW IS A WRAPPER NOW, not a bare button: the draggable part, the ⓘ
+   beside it, and the note underneath when it is open. A button cannot hold
+   another button, and the ⓘ has to be its own control — a note that opened on
+   clicking the ROW would fire on every attempt to add an effect by clicking. */
+.fx-entry-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+.fx-entry-wrap > .fx-entry {
+  /* The name takes the row; the ⓘ keeps its size and never shrinks. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Smaller than the pane's, because this is a dense tree rather than a column of
+   properties — but the same circle, the same serif i, the same lit state. */
+.fx-entry-wrap > .an-note-i {
+  width: 1rem;
+  height: 1rem;
+  font-size: 0.64rem;
+}
+/* ⚠ THE NOTE IS A FULL ROW OF ITS OWN NOW, wrapped under the entry rather than
+   printed beside the name.
+   It used to be a nowrap column next to every label, and it was the WIDER half
+   of the row: the one word you were actually looking for ("Blinds up") was the
+   part getting the ellipsis, and thirty-two of them made a folder you had to
+   read rather than scan. It also `display: none`d itself under 1100px, so the
+   answer to "what does this do" simply disappeared on a narrow pane. Behind the
+   ⓘ it is a paragraph you asked for, at any width.
+   The gold rule is the same marker `.an-note-pop` uses in the Properties pane,
+   so an open note looks the same wherever you open one. */
+.fx-entry-note {
+  flex: 1 0 100%;
+  margin: 0 0 0.2rem 1.1rem;
+  border-left: 2px solid var(--border-gold);
+  padding-left: 0.5rem;
+  font-size: 0.68rem;
 }
 /* The kind picker in Properties: swatches, not words — four names in a row of
    buttons is unreadable at this width, and the shape IS the label. */
@@ -282,18 +503,12 @@
   border-style: dashed;
   cursor: default;
 }
+/* Over the waveform and the two fade veils, which are drawn across the whole
+   clip — without this the grips are under them and only look grabbable.
+   ⚠ The head grip's own placement is NOT here any more: `.tl-handle-l` in
+   `animatic.css` is general, because every clip on the timeline has one now. */
 .tl-audio-clip .tl-handle {
   z-index: 2;
-}
-/* The head grip. `.tl-handle` puts itself on the right; this moves it to the
-   left and turns its gradient round so both edges read as grabbable. */
-.tl-audio-clip .tl-handle-l {
-  right: auto;
-  left: 0;
-  background: linear-gradient(270deg, transparent, var(--border));
-}
-.tl-audio-clip .tl-handle-l:hover {
-  background: var(--primary);
 }
 
 /* --- Beats --------------------------------------------------------------- */
@@ -322,13 +537,46 @@
   pointer-events: none;
   z-index: 1;
 }
+/* ⚠ THE MIDPOINT IS THE CURVE, and one number carries all three of them.
+   The veil is opaque where the track is silent, so its alpha is 1 − gain — and
+   the only thing that distinguishes the three curves at this size is WHERE the
+   veil is half way out. That is a colour-interpolation hint, which is a single
+   position in the gradient and needs no alpha arithmetic, so it stays
+   theme-aware: `var(--panel-2)` is still the only colour named.
+
+   Solve 1 − gain(x) = 0.5 for each curve in `audio_mix.js` and you get these:
+     linear       gain = x                    → half way at 50%
+     power        gain = sin(x·π/2)           → half way at 33%, out early
+     exponential  gain = 10^(−5(1−x))         → half way at 94%, holds then drops
+
+   Measured from the SILENT end, which is why the fade in and the fade out share
+   the numbers and differ only in the direction the gradient runs. */
 .tl-fade-in {
   left: 0;
-  background: linear-gradient(90deg, var(--panel-2) 15%, rgba(0, 0, 0, 0));
+  background: linear-gradient(
+    90deg,
+    var(--panel-2),
+    var(--tl-curve-mid, 50%),
+    rgba(0, 0, 0, 0)
+  );
 }
 .tl-fade-out {
   right: 0;
-  background: linear-gradient(270deg, var(--panel-2) 15%, rgba(0, 0, 0, 0));
+  background: linear-gradient(
+    270deg,
+    var(--panel-2),
+    var(--tl-curve-mid, 50%),
+    rgba(0, 0, 0, 0)
+  );
+}
+/* `linear` is the default and states nothing on purpose: it is what every clip
+   saved before crossfades existed already is, so it must not depend on a rule
+   being matched. */
+.tl-curve-power {
+  --tl-curve-mid: 33%;
+}
+.tl-curve-exponential {
+  --tl-curve-mid: 94%;
 }
 /* The grip sits ON the top edge at the end of its ramp — Premiere's gesture,
    and the only place it can be where dragging it means one thing. */

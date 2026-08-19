@@ -564,8 +564,13 @@ export default function PlanAndScript() {
       </div>
 
       <div className="review-actions top-actions">
-        <button className="btn" onClick={() => { setStep("library"); loadSessions(); }}>
-          ← Your plans
+        <button
+          className="btn back-btn"
+          onClick={() => { setStep("library"); loadSessions(); }}
+          title="Your plans"
+          aria-label="Your plans"
+        >
+          ←
         </button>
         <div className="review-actions-right">
           {/* Wrapped, not passed directly: onClick would hand rename() the

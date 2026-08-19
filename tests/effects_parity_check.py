@@ -37,6 +37,17 @@ the project build a C++ GL binding would be a poor trade.
 On Windows that needs the Visual Studio "Desktop development with C++"
 workload; on Linux, libx11-dev/libxi-dev/mesa. If it isn't there this test
 EXITS 2 and says so rather than passing: a skip here is a real gap, not a pass.
+
+⚠ AND WHEN IT CANNOT BE BUILT, THE GAP IS CLOSED ELSEWHERE, not left open:
+
+    python tests/monitor_effects_check.py
+
+runs the SAME shaders in Chromium on SwiftShader — a real GL driver, no GPU
+needed, and nothing to compile. It grades a flat colour rather than a whole
+frame, so it is a weaker comparison than this file's, but it executes every
+chunk in `shaders/` against the same Python twins. On a machine without the C++
+toolchain that run is the evidence; this file is the stronger check for a
+machine that has it.
 """
 
 import base64
@@ -145,6 +156,44 @@ CASES = [
     {
         "name": "chroma key with spill removal",
         "effects": [fx("chroma", color="#00d90d", similarity=0.25, smoothness=0.1, spill=0.8)],
+    },
+    # -----------------------------------------------------------------------
+    # The point-wise grades. ⚠ These had NO CASES here at all while they shipped
+    # in both renderers — `tests/effects_check.py` pinned the Python numbers and
+    # nothing ever compared them to the GLSL. A twin with no parity case is a
+    # twin on trust.
+    # -----------------------------------------------------------------------
+    {"name": "exposure +1 stop", "effects": [fx("exposure", stops=1.0)]},
+    {"name": "exposure -1.5 stops", "effects": [fx("exposure", stops=-1.5)]},
+    {"name": "gamma 2.2 (lifts)", "effects": [fx("gamma", gamma=2.2)]},
+    {"name": "gamma 0.5 (crushes)", "effects": [fx("gamma", gamma=0.5)]},
+    # 1/0 is the difference between a clamp and a black frame, and both sides
+    # have to clamp to the SAME floor or they disagree by the whole picture.
+    {"name": "gamma 0 (clamped both sides)", "effects": [fx("gamma", gamma=0.0)]},
+    {"name": "temperature warm", "effects": [fx("temperature", temperature=0.5, tint=0.0)]},
+    {"name": "temperature cool + tint",
+     "effects": [fx("temperature", temperature=-0.4, tint=0.25)]},
+    {"name": "hue 120", "effects": [fx("hue", degrees=120.0)]},
+    {"name": "hue -90", "effects": [fx("hue", degrees=-90.0)]},
+    {"name": "sepia full", "effects": [fx("sepia", amount=1.0)]},
+    {"name": "sepia half", "effects": [fx("sepia", amount=0.5)]},
+    # ⚠ THE ONE THAT CATCHES A round() ON EITHER SIDE. A band edge is exactly
+    # where the halves land, so numpy's round-half-to-even and GLSL's
+    # round-half-away would move whole regions a full band apart — far more than
+    # the tolerance, which is the point of testing this at 2 levels as well.
+    {"name": "posterize 4 bands", "effects": [fx("posterize", levels=4)]},
+    {"name": "posterize 2 bands", "effects": [fx("posterize", levels=2)]},
+    {
+        # The six above, stacked, so a mis-ORDERED chain of them fails too.
+        "name": "a chain of the point-wise grades",
+        "effects": [
+            fx("exposure", stops=0.5),
+            fx("gamma", gamma=1.6),
+            fx("temperature", temperature=0.3, tint=-0.1),
+            fx("hue", degrees=25.0),
+            fx("sepia", amount=0.4),
+            fx("posterize", levels=12),
+        ],
     },
     {
         # ⚠ ORDER, not just presence. Reversed, this is a visibly different
@@ -374,15 +423,20 @@ def run_node() -> list[np.ndarray]:
 # runs even when the rest is skipped.
 STATIC_HARNESS = r"""
 import { EFFECT_KINDS, BLEND_MODES, MASK_KINDS } from %(scene)s;
-import { FRAGMENT, MAX_EFFECTS, blendIndex, fxIndex } from %(layer)s;
+import { MATTE_KINDS, TRANSITION_DIRECTIONS, TRANSITION_MATTE } from %(transitions)s;
+import { FRAGMENT, MAX_EFFECTS, blendIndex, dirIndex, fxIndex, matteIndex } from %(layer)s;
 process.stdout.write(JSON.stringify({
   fragment: FRAGMENT,
   effects: EFFECT_KINDS,
   blends: BLEND_MODES,
   masks: MASK_KINDS,
+  mattes: MATTE_KINDS,
+  transitionMatte: TRANSITION_MATTE,
   maxEffects: MAX_EFFECTS,
   fxIndices: Object.fromEntries(EFFECT_KINDS.map((k) => [k, fxIndex(k)])),
   blendIndices: Object.fromEntries(BLEND_MODES.map((m) => [m, blendIndex(m)])),
+  matteIndices: Object.fromEntries(MATTE_KINDS.map((k) => [k, matteIndex(k)])),
+  dirIndices: Object.fromEntries(TRANSITION_DIRECTIONS.map((d) => [d, dirIndex(d)])),
 }));
 """
 
@@ -405,6 +459,10 @@ def run_static() -> dict:
                         _file_url(os.path.join(CLIENT, "src", "animatic", "gl",
                                                "shaders", "layer.js"))
                     ),
+                    "transitions": json.dumps(
+                        _file_url(os.path.join(CLIENT, "src", "animatic",
+                                               "transitions.js"))
+                    ),
                 }
             )
         proc = subprocess.run(
@@ -424,11 +482,40 @@ print(f"tolerance: mean |Δ| < {MEAN_TOLERANCE}/255, no channel off by more than
       f"{MAX_TOLERANCE}/255\n")
 
 print("The shader source, checked against the scene model (no GPU needed)\n")
+# ---------------------------------------------------------------------------
+# ⚠ A BACKTICK INSIDE A GLSL CHUNK ENDS THE JAVASCRIPT STRING, and this has to
+# be checked on the SOURCE TEXT rather than on the loaded module: if one gets in,
+# the module does not import at all, so every check that reads it fails with a
+# parse error instead — and rollup reports that error dozens of lines from the
+# cause ("Expected a semicolon" pointing at the line AFTER the chunk).
+#
+# It is an easy mistake because the chunks are full of prose, and prose in this
+# codebase quotes identifiers in backticks. It cost two build failures in one
+# session. Reading the files as text costs nothing and names it exactly.
+# ---------------------------------------------------------------------------
+SHADER_DIR = os.path.join(CLIENT, "src", "animatic", "gl", "shaders")
+GLSL_CHUNK = re.compile(r"/\* glsl \*/ `(.*?)`;", re.S)
+
+for _file in ("effects.js", "mattes.js", "layer.js"):
+    _path = os.path.join(SHADER_DIR, _file)
+    if not os.path.exists(_path):
+        continue
+    with open(_path, encoding="utf-8") as _fh:
+        _src = _fh.read()
+    _chunks = GLSL_CHUNK.findall(_src)
+    _stray = [c for c in _chunks if "`" in c]
+    check(f"every GLSL chunk in {_file} is backtick-free",
+          not _stray and len(_chunks) > 0,
+          f"({len(_stray)} chunk(s) with a stray backtick, of {len(_chunks)})")
+
 static = run_static()
 
 from animatic_render import BLEND_MODES as PY_BLENDS
 from animatic_render import EFFECT_KINDS as PY_EFFECTS
 from animatic_render import EFFECT_PARAMS, MASK_KINDS as PY_MASKS
+from animatic_render import MATTE_KINDS as PY_MATTES
+from animatic_render import TRANSITION_DIRECTIONS as PY_DIRECTIONS
+from animatic_render import TRANSITION_MATTE as PY_TRANSITION_MATTE
 
 check("both sides know the same effect kinds",
       list(static["effects"]) == list(PY_EFFECTS),
@@ -470,6 +557,45 @@ check("the chroma branch writes back the alpha, not just the colour",
       "vec4 keyed = fxChroma(" in fragment and "a = keyed.a;" in fragment)
 check("every effect's parameters exist on the Python side too",
       all(kind in EFFECT_PARAMS for kind in static["effects"]))
+
+# --- The transition mattes -------------------------------------------------
+# ⚠ A MATTE REACHES THE SHADER AS AN INTEGER — its index in `MATTE_KINDS`. So
+# the ORDER of that list is load-bearing in a way a name never is: two lists
+# that drift by one entry would draw a clock where the project says iris, on
+# every machine, with nothing anywhere reporting it. This is the one check that
+# catches that, and like the effect checks above it needs no GPU.
+check("both sides know the same matte kinds, in the same order",
+      list(static["mattes"]) == list(PY_MATTES),
+      f"(js={static['mattes']} py={list(PY_MATTES)})")
+check("both sides agree which matte each transition draws through",
+      dict(static["transitionMatte"]) == dict(PY_TRANSITION_MATTE),
+      f"(js={static['transitionMatte']} py={dict(PY_TRANSITION_MATTE)})")
+check("both sides number the directions the same way",
+      static["dirIndices"] == {d: i for i, d in enumerate(PY_DIRECTIONS)},
+      f"({static['dirIndices']})")
+# "none" is the shader's early out — it tests `kind == 0` rather than naming it,
+# so a list that stopped putting "none" first would turn "no matte" into a real
+# shape and cut a hole in every layer that isn't in a transition at all.
+check("none is index 0 on both sides",
+      static["matteIndices"].get("none") == 0 and PY_MATTES[0] == "none")
+for kind in static["mattes"]:
+    if kind == "none":
+        continue
+    token = f"MATTE_{kind.upper()}"
+    check(f"the shader has a field for '{kind}'",
+          f"#define {token} " in fragment and f"kind == {token}" in fragment)
+matte_defines = dict(re.findall(r"#define MATTE_(\w+)\s+(-?\d+)", fragment))
+check("the matte numbering is generated, not written out twice",
+      {k.upper(): str(i) for k, i in static["matteIndices"].items() if k != "none"}
+      == matte_defines,
+      f"(shader={matte_defines} js={static['matteIndices']})")
+# The whole design in one assertion: the matte multiplies the ALPHA, next to the
+# mask, rather than mixing two textures. Lose this line and a reveal silently
+# becomes a straight cut — the arriving picture drawn at full coverage from the
+# first frame of the window.
+check("the matte is multiplied into the alpha, beside the mask",
+      "a *= maskCoverage(" in fragment and "a *= matteCoverage(" in fragment
+      and fragment.index("a *= maskCoverage(") < fragment.index("a *= matteCoverage("))
 
 # Stop HERE if the source-level checks failed. Running the GPU half after them
 # would either bury the failure in a wall of pixel numbers or — on a machine

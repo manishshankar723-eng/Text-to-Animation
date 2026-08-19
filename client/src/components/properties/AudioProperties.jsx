@@ -11,10 +11,17 @@
 // the captions button, because transcribing is done on the file.
 
 import Icon from "../Icon.jsx";
-import { EQ_BANDS, EQ_EPSILON, eqGains } from "../../animatic/audio_mix.js";
+import {
+  EQ_BANDS,
+  EQ_EPSILON,
+  eqGains,
+  fadeCurve,
+  FADE_CURVE_INFO,
+  FADE_CURVES,
+} from "../../animatic/audio_mix.js";
 import { clipId } from "../../animatic/audio_clips.js";
 import { formatTime } from "../Timeline.jsx";
-import { PropGroup, PropRow, NumField, PropNote } from "./PropGroup.jsx";
+import { PropGroup, PropRow, NumField } from "./PropGroup.jsx";
 
 export default function AudioProperties({
   track,
@@ -49,6 +56,59 @@ export default function AudioProperties({
   const siblings = tracks.filter((t) => t.upload_id === track.upload_id);
   const piece = siblings.findIndex((t) => clipId(t) === id) + 1;
 
+  /**
+   * The curve chips for one END of this clip — Premiere's three crossfades,
+   * which are three shapes for one ramp.
+   *
+   * ⚠ ONLY WHERE THERE IS A RAMP TO SHAPE. A curve on a fade of zero does
+   * nothing at all, so on the ordinary clip with hard edges these two rows are
+   * not drawn — and the moment you drag a fade grip out, the row for that end
+   * appears under the number it belongs to. Every other row in this pane is
+   * always present because every other row always means something.
+   *
+   * ⚠ ONE ROW PER END, not one for the clip. A crossfade writes one end of one
+   * clip and the opposite end of its neighbour, so the two ends genuinely differ
+   * — and a single control would quietly rewrite the crossfade at the other end
+   * of the clip every time you shaped this one.
+   */
+  function curveRow(side) {
+    const ms = side === "in" ? track.fade_in_ms || 0 : track.fade_out_ms || 0;
+    if (ms <= 0) return null;
+    const field = side === "in" ? "fade_in_curve" : "fade_out_curve";
+    const current = fadeCurve(track, side);
+    return (
+      <PropRow
+        label={side === "in" ? "In shape" : "Out shape"}
+        title="The curve the ramp follows"
+        reset={() => set({ [field]: "linear" })}
+        changed={current !== "linear"}
+        resetTo={FADE_CURVE_INFO.linear.label}
+        info="Constant Gain is a straight line; two of them crossing scoop about 3 dB out of the middle of the crossfade. Constant Power crosses at equal power instead, which is why it holds its level — it is the one to reach for on a cut between two pieces of music. Exponential Fade holds on and drops away late, for a long tail at the end of a track. These are the same three curves as the Crossfade folder in the Effects tab, and dropping one there sets this."
+      >
+        <span className="an-set-chips">
+          {FADE_CURVES.map((curve) => (
+            <button
+              key={curve}
+              type="button"
+              /* The FOLDED curve, not the stored one, so the chip that lights up
+                 is the shape the monitor is actually playing. */
+              className={`opt-chip ${current === curve ? "active" : ""}`}
+              onClick={() => set({ [field]: curve })}
+            >
+              {/* ⚠ THE NAME ONLY. The three notes live behind this row's ⓘ,
+                  where the difference between them can be put in one paragraph
+                  rather than three fragments that each need the other two to
+                  make sense — and three chips carrying a sentence each made one
+                  control taller than most of the pane it sits in. The note text
+                  is still in `FADE_CURVE_INFO`, where the library reads it. */}
+              {FADE_CURVE_INFO[curve].label}
+            </button>
+          ))}
+        </span>
+      </PropRow>
+    );
+  }
+
   return (
     <div className="an-props">
       <div className="an-prop-ident">
@@ -75,6 +135,11 @@ export default function AudioProperties({
           reset={() => set({ volume: 1, muted: false })}
           changed={Math.abs(volume - 1) > 1e-6 || Boolean(track.muted)}
           resetTo="100%, unmuted"
+          /* ⚠ This used to end "above 100% the editor previews at 100%, but the
+             export uses the real figure" — an apology for an <audio> element's
+             volume being clamped to 1. Playback goes through a gain node now
+             (`audio_engine.js`), so the sentence is gone because the limit is. */
+          info="100% is the file as recorded. Pull a music bed down to sit under a voice — the tracks are mixed together when the video is exported."
         >
           <button
             type="button"
@@ -97,14 +162,6 @@ export default function AudioProperties({
           />
           <span className="an-num-read">{Math.round(volume * 100)}%</span>
         </PropRow>
-        {/* ⚠ This used to end "above 100% the editor previews at 100%, but the
-            export uses the real figure" — an apology for an <audio> element's
-            volume being clamped to 1. Playback goes through a gain node now
-            (`audio_engine.js`), so the sentence is gone because the limit is. */}
-        <PropNote>
-          100% is the file as recorded. Pull a music bed down to sit under a
-          voice — the tracks are mixed together when the video is exported.
-        </PropNote>
 
         {/* ⚠ STATED, NEVER GUESSED. The duck below needs to know which track is
             the voice, and "the other one" is wrong the first time someone lays
@@ -133,6 +190,15 @@ export default function AudioProperties({
           reset={() => set({ duck_to: 1, duck_target: "" })}
           changed={duckTo < 1 || Boolean(track.duck_target)}
           resetTo="off"
+          /* ⚠ HERE, and not on "Ducks under" below — that row only exists when
+             the project has two voices, and this is needed most when it has
+             none. */
+          info={
+            (voices.length
+              ? "While the voice is talking this track is pulled down to about that level, and comes back up between lines."
+              : "Ducking needs a voice: mark the dialogue track as “A voice” and this comes alive.") +
+            " The editor previews the duck; the export applies the real compressor, so it is close rather than identical."
+          }
         >
           <input
             className="an-vol"
@@ -175,13 +241,6 @@ export default function AudioProperties({
             </select>
           </PropRow>
         )}
-
-        <PropNote>
-          {voices.length
-            ? "While the voice is talking this track is pulled down to about that level, and comes back up between lines."
-            : "Ducking needs a voice: mark the dialogue track as “A voice” and this comes alive."}
-          {" The editor previews the duck; the export applies the real compressor, so it is close rather than identical."}
-        </PropNote>
       </PropGroup>
 
       {/* --- Tone ------------------------------------------------------------
@@ -192,6 +251,9 @@ export default function AudioProperties({
       <PropGroup
         id="audio:tone"
         title="Tone"
+        /* On the section, not a row: it explains all three bands at once, and
+           there is no one band it is more about than the others. */
+        info="Low is a shelf at 120 Hz, Mid a bell at 1 kHz, High a shelf at 6 kHz. Pull Mid down on a music bed to make room for a voice, or Low down to take the rumble off a room recording — what you hear here is the filter the export applies."
         actions={
           flat ? null : (
             <button
@@ -230,12 +292,6 @@ export default function AudioProperties({
             </span>
           </PropRow>
         ))}
-        <PropNote>
-          Low is a shelf at 120 Hz, Mid a bell at 1 kHz, High a shelf at 6 kHz.
-          Pull Mid down on a music bed to make room for a voice, or Low down to
-          take the rumble off a room recording — what you hear here is the
-          filter the export applies.
-        </PropNote>
       </PropGroup>
 
       <PropGroup id="audio:timing" title="Timing">
@@ -325,12 +381,14 @@ export default function AudioProperties({
             }
           />
         </PropRow>
+        {curveRow("in")}
         <PropRow
           label="Fade out"
           title="How long it takes to go silent at the end"
           reset={() => set({ fade_out_ms: 0 })}
           changed={(track.fade_out_ms || 0) > 0}
           resetTo="a hard stop"
+          info="A fade out lands on the end of what this clip PLAYS — its trim, or the end of the video if that comes first — so trimming the clip carries the fade with it. To cut a gap out of the middle, take the razor (C) to the waveform on each side of it and delete the piece between."
         >
           <NumField
             unit="s"
@@ -344,12 +402,7 @@ export default function AudioProperties({
             }
           />
         </PropRow>
-        <PropNote>
-          A fade out lands on the end of what this clip PLAYS — its trim, or the
-          end of the video if that comes first — so trimming the clip carries the
-          fade with it. To cut a gap out of the middle, take the razor (C) to the
-          waveform on each side of it and delete the piece between.
-        </PropNote>
+        {curveRow("out")}
       </PropGroup>
 
       {/* ⚠ SPENDS QUOTA, and therefore never directly: it opens the priced
@@ -359,7 +412,12 @@ export default function AudioProperties({
           whole FILE, so cutting it up neither changes nor multiplies the job. */}
       {onCaptions && (
         <PropGroup id="audio:captions" title="Captions">
-          <PropRow full>
+          <PropRow
+            full
+            /* Beside the button that spends the money, which is where anyone
+               about to press it is looking. */
+            info="Costs a fraction of a cent, and you see the price before anything is spent. The captions arrive as ordinary text clips on their own Captions row at the top of the timeline — your own text is never touched — and they follow this track's CUTS: a caption is written where the words are actually heard, and nothing is written for audio you have cut out."
+          >
             <button
               type="button"
               className="btn small"
@@ -389,14 +447,6 @@ export default function AudioProperties({
               </span>
             </PropRow>
           )}
-          <PropNote>
-            Costs a fraction of a cent, and you see the price before anything is
-            spent. The captions arrive as ordinary text clips on their own
-            Captions row at the top of the timeline — your own text is never
-            touched — and they follow this track's CUTS: a caption is written
-            where the words are actually heard, and nothing is written for audio
-            you have cut out.
-          </PropNote>
         </PropGroup>
       )}
 

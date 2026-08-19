@@ -146,6 +146,15 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
           reset={() => set({ speed: 1 })}
           changed={Math.abs(speed - 1) > 1e-6}
           resetTo="1× (real time)"
+          /* Said out loud, because it is the one thing about this group that is
+             not what people expect from a speed control. */
+          info={
+            <>
+              Speed changes how much footage plays in this clip, not how long the
+              clip is. To make it longer on the timeline, change <b>Duration</b>{" "}
+              above — nothing after it will move either way.
+            </>
+          }
         >
           <NumField
             unit="×"
@@ -158,14 +167,6 @@ export default function VideoClipProperties({ clip, sourceMs, onChange }) {
             }
           />
         </PropRow>
-
-        {/* Said out loud, because it is the one thing about this group that is
-            not what people expect from a speed control. */}
-        <PropNote>
-          Speed changes how much footage plays in this clip, not how long the
-          clip is. To make it longer on the timeline, change <b>Duration</b>{" "}
-          above — nothing after it will move either way.
-        </PropNote>
 
         {/* The failure this group can actually cause: asking for more footage
             than the trim leaves. It is not an error — the clip holds its last

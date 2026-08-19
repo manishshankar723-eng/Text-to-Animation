@@ -37,6 +37,15 @@
 // those nodes, so it needs no copy of each lane's geometry. Dragging any clip in
 // a selection moves the WHOLE selection by that clip's snapped delta.
 //
+// ⚠ A MOVE DRAG HAS A VERTICAL HALF: drag a clip onto ANOTHER ROW of the same
+// kind and it goes there, at the time you dragged it to. Captions, shapes,
+// overlay pictures and audio clips all take it. The row under the pointer is
+// found by asking the DOM — every lane carries `data-lane` — for the same reason
+// the marquee does: the browser has already laid the rows out, and a second copy
+// of their vertical geometry here would be wrong for the whole of a vertical
+// zoom. What a row MEANS to a clip is the editor's business, so this file reports
+// the row (`onMoveToLane`) and writes no ids of its own.
+//
 // Everything is measured in milliseconds — the same unit the exporter uses — so
 // what you line up here is what gets encoded. Layer names live in a fixed gutter
 // on the left; only the tracks scroll, so the labels never leave the screen.
@@ -50,7 +59,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ZoomScrollbar from "./ZoomScrollbar.jsx";
 import Waveform from "./Waveform.jsx";
-import { fadeWindow, trackPlayMs } from "../animatic/audio_mix.js";
+import { fadeCurve, fadeWindow, trackPlayMs } from "../animatic/audio_mix.js";
 import { clipId, clipRoomMs, MIN_CLIP_MS } from "../animatic/audio_clips.js";
 import {
   boxesOverlap,
@@ -62,16 +71,29 @@ import {
 } from "../animatic/selection.js";
 import { keysOf } from "../animatic/keyframes.js";
 import { clamp } from "../animatic/util.js";
-import { ANIMATABLE, frameOrigin, frameSpans } from "../animatic/scene.js";
+import {
+  ANIMATABLE,
+  clipKind,
+  DEFAULT_SPEED,
+  frameOrigin,
+  frameSpans,
+} from "../animatic/scene.js";
 import {
   MAX_TRANSITION_MS,
   MIN_TRANSITION_MS,
   transitionWindow,
 } from "../animatic/transitions.js";
+import { trimKeyframesHead, trimTimedClipStart } from "../animatic/razor.js";
 import Icon from "./Icon.jsx";
 import { shapeCss } from "./Shapes.jsx";
 
 const MIN_MS = 100; // shortest hold / clip the backend accepts
+// Narrower than this and a clip has no room for a grip at each end: two 8px
+// strips plus something left in the middle to press for "select" and drag for
+// "move". Below it only the TAIL grip is drawn — which is exactly how every clip
+// behaved before the head one existed, so a bar too small to trim from both ends
+// is never a bar you can no longer grab at all.
+const BOTH_GRIPS_MIN_PX = 24;
 
 // How tall a lane is drawn, in rem — the VERTICAL bar's grips change it, which
 // is what "zoom" means on an axis whose content is a stack of tracks rather
@@ -124,18 +146,88 @@ function laneShows(lane, frame) {
   return (lane.only === "video") === (frameOrigin(frame) === "video");
 }
 
-// Ruler spacing: the first step that leaves at least ~70px between labels.
-const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300];
-
-function tickStep(pxPerSec) {
-  return TICK_STEPS.find((s) => s * pxPerSec >= 70) || TICK_STEPS[TICK_STEPS.length - 1];
-}
-
 export function formatTime(ms) {
   const total = Math.max(0, ms) / 1000;
   const m = Math.floor(total / 60);
   const s = Math.floor(total % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// The frame rate the ruler counts in when the project hasn't said. Only the
+// ruler reads it: every duration on this bar is still milliseconds, because that
+// is what the clips are stored in, and rounding them to frames here would be a
+// second opinion about where a cut is.
+const DEFAULT_FPS = 24;
+
+/**
+ * The ladder of tick spacings, in FRAMES, coarsest last.
+ *
+ * ⚠ THE SUB-SECOND STEPS ARE THE DIVISORS OF fps, and that is the whole reason
+ * this is computed rather than a constant list. A ruler stepping every 10 frames
+ * at 24fps would label 0, 10, 20, then 30 — which is 1:06, so the run of labels
+ * stops rolling over to `:00` at the next second and the bar reads as though the
+ * clock were wrong. Every divisor divides the second exactly, so it cannot.
+ *
+ * Above a second the steps are the familiar 1, 2, 5, 10, 15, 30, 60… seconds,
+ * expressed in frames so one comparison covers both halves of the ladder.
+ */
+function tickSteps(fps) {
+  const divisors = [];
+  for (let n = 1; n < fps; n += 1) if (fps % n === 0) divisors.push(n);
+  return [...divisors, ...[1, 2, 5, 10, 15, 30, 60, 120, 300, 600].map((s) => s * fps)];
+}
+
+// A labelled tick needs room for HH:MM:SS:FF without touching its neighbour; a
+// bare one only needs to be distinguishable from the next.
+const MAJOR_MIN_PX = 78;
+const MINOR_MIN_PX = 7;
+
+/**
+ * The ticks to draw, IN THE VISIBLE WINDOW ONLY.
+ *
+ * ⚠ CULLED, AND THAT IS NOT AN OPTIMISATION — it is what makes the ruler usable.
+ * The ruler is `position: sticky` and re-renders on every scrub, so at full zoom
+ * a 70-second cut asked the browser to lay out 1,681 nodes sixty times a second.
+ * `from` / `to` are PIXELS (the scroller's window, grown by one label's width so
+ * a tick never pops in at the edge), and only the ticks inside them are built.
+ *
+ * A MAJOR tick carries the timecode; the minors between it are bare. The minor
+ * step is the coarsest exact division of the major that still leaves room, so
+ * the two ladders can never drift out of phase with each other.
+ */
+function rulerTicks(pxPerSec, spanMs, fps, from, to) {
+  const perFrame = pxPerSec / fps;
+  const steps = tickSteps(fps);
+  const major = steps.find((s) => s * perFrame >= MAJOR_MIN_PX) ?? steps[steps.length - 1];
+  let minor = major;
+  for (const by of [10, 8, 6, 5, 4, 3, 2]) {
+    if (major % by === 0 && (major / by) * perFrame >= MINOR_MIN_PX) {
+      minor = major / by;
+      break;
+    }
+  }
+  const last = Math.ceil((spanMs / 1000) * fps);
+  const first = Math.max(0, Math.floor(from / perFrame / minor) * minor);
+  const out = [];
+  for (let n = first; n <= last && n * perFrame <= to; n += minor) {
+    out.push({ n, x: n * perFrame, major: n % major === 0 });
+  }
+  return out;
+}
+
+/** One frame number as HH:MM:SS:FF — what a labelled tick says. */
+function timecodeOfFrame(n, fps) {
+  const pad = (v) => String(v).padStart(2, "0");
+  const secs = Math.floor(n / fps);
+  return `${pad(Math.floor(secs / 3600))}:${pad(Math.floor(secs / 60) % 60)}:${pad(
+    secs % 60
+  )}:${pad(n % fps)}`;
+}
+
+/** The same, from milliseconds — for anything outside this file that wants it. */
+export function formatTimecode(ms, fps = DEFAULT_FPS) {
+  const rate = Math.max(1, Math.round(fps) || DEFAULT_FPS);
+  return timecodeOfFrame(Math.max(0, Math.round((Math.max(0, ms) / 1000) * rate)), rate);
 }
 
 export default function Timeline({
@@ -151,6 +243,10 @@ export default function Timeline({
   onSelectTransition,
   onAddTransition,
   onTransitionChange,
+  // (kind, id) — a click on a clip's ƒx badge. The editor selects that clip and
+  // opens the Effects section of the Properties pane, which is where a chain is
+  // MANAGED; the timeline only ever says "this one has effects on it".
+  onManageEffects,
   // Every row on the timeline, top to bottom, built by the editor. The gutter
   // and the tracks both render from this one list.
   lanes = [],
@@ -161,6 +257,11 @@ export default function Timeline({
   spanMs,
   timeMs,
   pxPerSec,
+  // The project's frame rate — what the ruler's timecode counts in. Only the
+  // ruler reads it; every duration on this bar is still milliseconds, because
+  // that is what the clips are stored in and rounding them to frames here would
+  // be a second opinion about where a cut is.
+  fps = DEFAULT_FPS,
   selectedId,
   selectedTextId,
   selectedShapeId,
@@ -207,9 +308,29 @@ export default function Timeline({
   selectionFloorMs = 0,
   onSeek,
   onResize,
+  // (id, patch) — a frame edit that is NOT just its length. The head trim of the
+  // FIRST picture is the one caller: it writes `duration_ms` AND `in_ms`
+  // together, because skipping the front of a video clip has to move the source
+  // window as well or the trim throws away timeline and keeps the same footage.
+  // Falls back to `onResize` when it isn't given, so the length still lands.
+  onFrameChange,
   onTextChange,
   onShapeChange,
   onOverlayChange,
+  /**
+   * A clip was dragged onto ANOTHER ROW: `(kind, id, lane, patch)`.
+   *
+   * ⚠ THE ROW, NOT A LAYER ID, and that is deliberate. For a caption, a shape
+   * or an overlay picture a row IS a `layer_id` and this file could have written
+   * one — but an audio row grouped by FILE has no id to write, so "put it on
+   * that row" can only be answered where the document is. Same division as
+   * `onDropAsset`: the timeline works out WHICH ROW and WHAT TIME, the editor
+   * works out what that means (see `moveClipToLane` in AnimaticEditor.jsx).
+   *
+   * Optional: without it a move stays on its own row and only the time is
+   * written, which is what every move did before this existed.
+   */
+  onMoveToLane,
   // Re-time one keyframe: (kind, clipId, fromT, toT), both times relative to
   // the clip. The editor owns `moveKey`; the timeline only reports the gesture.
   onKeyMove,
@@ -219,6 +340,21 @@ export default function Timeline({
   // Every layer carries the same ＋ in its gutter row, so "add to this layer"
   // is one gesture wherever you are on the timeline.
   onAddLayer,
+  // Something was dragged out of the Media pane (or off the desktop) and
+  // dropped ON A LANE: `({ lane, atMs, asset, files })`. The timeline works out
+  // WHERE — which row, and what time under the pointer — and the editor works
+  // out WHAT that means for the thing being dropped, because only it knows what
+  // an asset is. Optional: without it no lane accepts a drop and nothing about
+  // the timeline changes.
+  onDropAsset,
+  // The editor's OTHER "make something" buttons — Text, Colour card, Voiceover
+  // — handed in as a node and rendered beside ＋ Add layer.
+  // ⚠ THEY ARE THE EDITOR'S, NOT THE TIMELINE'S: what they make and what they
+  // cost is the editor's business (the voiceover one spends quota), so this
+  // file only gives them a place to stand. They used to sit at the far right of
+  // the pane head, a bar's width away from the only other control that adds
+  // anything — asked for as "one place where all the add buttons are".
+  addTools = null,
   onRemoveTrack,
   // ✕ on a DEFAULT row — the row itself is structural and stays, so this empties
   // it. Separate from `onRemoveLayer` because they are different promises: one
@@ -231,11 +367,21 @@ export default function Timeline({
   // The active tool (V/C/B/N/H/Z) changes what a click and an edge-drag DO.
   tool = "select",
   snapping = true,
-  onSplitAt,
-  // (clip id, ms) — the razor on an AUDIO clip. Separate from `onSplitAt`,
-  // which cuts the picture sequence: they are different lists and a cut in one
-  // must never touch the other.
-  onSplitAudioAt,
+  /**
+   * THE RAZOR, and there is exactly one of it: `(kind, id, ms)`.
+   *
+   * ⚠ IT NAMES THE CLIP IT LANDED ON. It used to be two callbacks and the
+   * picture one was answered by `toolPress` — which runs for the RULER and for
+   * the empty part of EVERY lane — so clicking the razor anywhere at all cut
+   * the picture sequence. Clicking in the time ruler cut the image clip
+   * (user-reported), and clicking an empty stretch of the shapes row did too.
+   * A cut is a thing you do TO A CLIP, so the clip is now identified at the
+   * press and the editor cuts that one and nothing else.
+   *
+   * `kind` is null where the razor landed on no clip at all; the editor says so
+   * rather than guessing which layer was meant.
+   */
+  onRazor,
   onZoomAt,
   // Continuous zoom, for the scrollbar's grips: they ask for an exact
   // pixels-per-second, not for the next step up. The ＋/− buttons still step.
@@ -425,9 +571,18 @@ export default function Timeline({
     const el = scrollRef.current;
     if (el) el.scrollTop = px;
   }
-  const step = tickStep(pxPerSec);
-  const ticks = [];
-  for (let s = 0; s <= span / 1000; s += step) ticks.push(s);
+  // The ruler's ticks. ⚠ ONLY THE ONES IN THE VISIBLE WINDOW: the bar is sticky
+  // and re-renders on every scrub, and at full zoom a 70-second cut is 1,681 of
+  // them. The window is grown by one label's width either way so a tick never
+  // pops into existence at the edge. See `rulerTicks`.
+  const rulerFps = Math.max(1, Math.round(fps) || DEFAULT_FPS);
+  const ticks = rulerTicks(
+    pxPerSec,
+    span,
+    rulerFps,
+    viewBox.vw ? viewBox.sl - MAJOR_MIN_PX : 0,
+    viewBox.vw ? viewBox.sl + viewBox.vw + MAJOR_MIN_PX : width
+  );
   // NB: no "video ends" marker is drawn. The timeline still SPANS the audio —
   // that's what lets the playhead reach the end of a long track — but the line
   // and the hatching over the waveform were visual noise on the surface you
@@ -541,6 +696,208 @@ export default function Timeline({
     return Math.min(span, Math.round((x / pxPerSec) * 1000));
   }
 
+  // --- Dropping an asset onto a lane ----------------------------------------
+  // Drag a picture out of the Media pane onto the Images row, an audio track
+  // onto its lane, a file off the desktop onto either — and it lands AT THE
+  // TIME UNDER THE POINTER, snapped like every other drag on this timeline.
+  //
+  // ⚠ THE KIND HAS TO BE READABLE DURING `dragover`, and `getData` is
+  // deliberately blank until the drop in every browser — only the TYPE LIST is
+  // exposed while the drag is in flight. So the drag source stamps an empty
+  // marker type per kind (`application/x-anim-image` and friends) beside the
+  // JSON payload, and this reads the marker. Without that trick a lane could
+  // not know whether to accept until it was too late to say so.
+  const [dropAt, setDropAt] = useState(null);
+  // ⚠ "fx" AND "afx" ARE TWO KINDS, because the rows that take one do not take
+  // the other: an effect or a video transition belongs to the picture, a
+  // crossfade to the audio. One shared marker would light every row up for every
+  // drag and refuse half of them after the drop — which is the "no entry" cursor
+  // arriving one gesture too late. See `fxMarkerType` in `fx_library.js`.
+  const DRAG_KINDS = ["image", "video", "audio", "shape", "fx", "afx"];
+
+  function dragKind(e) {
+    const types = Array.from(e.dataTransfer?.types || []);
+    const marked = DRAG_KINDS.find((k) => types.includes(`application/x-anim-${k}`));
+    if (marked) return marked;
+    // A drop from the desktop. The editor routes those by file type, so any
+    // lane that takes assets takes files too.
+    return types.includes("Files") ? "files" : null;
+  }
+
+  /**
+   * WHICH ROWS TAKE WHAT.
+   *
+   * ⚠ A CLIP CANNOT CHANGE WHAT IT IS by being dropped somewhere else. The
+   * picture track is drawn as two rows filtered by origin (`laneShows`), so a
+   * video clip belongs on Video and a still on Images — dropping one on the
+   * other row is refused, not silently converted. Text and shape rows are not
+   * drop targets at all: nothing in the Media pane is a caption or a rectangle.
+   */
+  function laneTakes(lane, kind) {
+    if (!kind) return false;
+    // ⚠ AN EFFECT AND A TRANSITION SHARE ONE MARKER, because a lane cannot tell
+    // them apart mid-drag — the payload is unreadable until the drop. So the
+    // rows that take EITHER say yes to both, and `dropAsset` is what refuses a
+    // transition dropped on an overlay row (a transition belongs to a cut in
+    // the sequence, and an image layer has no cuts).
+    //
+    // Only the rows that carry PICTURES take them at all: those are the two
+    // clip kinds with pixels to grade, which is the same `LOOK_KINDS` rule the
+    // scene model and both renderers already follow. A caption or a rectangle
+    // is drawn above the finished composite and has nothing to key out.
+    if (kind === "fx") return lane.kind === "frames" || lane.kind === "image";
+    // A CROSSFADE IS SHAPED ONTO AUDIO CLIPS, so only audio rows take one — and
+    // unlike "fx" there is nothing left for `dropAsset` to refuse afterwards,
+    // because every audio row means the same thing to one.
+    if (kind === "afx") return lane.kind === "audio";
+    if (lane.kind === "frames") {
+      if (kind === "files") return true;
+      return lane.only === "video" ? kind === "video" : kind === "image";
+    }
+    // An IMAGE LAYER is a picture composited over the video, not a place in the
+    // sequence — so it takes a still and makes a copy of it up there. ⚠ It
+    // refused stills at first and that read as a broken row (user-reported,
+    // with a screenshot of the red ring): two rows say "image", and the one
+    // named for the layer you made yourself is the obvious place to drop a
+    // picture on. Video is still refused — an overlay is a picture.
+    if (lane.kind === "image") return kind === "files" || kind === "image";
+    if (lane.kind === "audio") return kind === "files" || kind === "audio";
+    // A shape row takes a shape out of the picker, or one already on the
+    // timeline being moved. Files mean nothing here — a shape has no file.
+    if (lane.kind === "shape") return kind === "shape";
+    return false;
+  }
+
+  function allowedEffect(e) {
+    const allowed = e.dataTransfer?.effectAllowed;
+    if (allowed === "copy" || allowed === "copyLink") return "copy";
+    if (allowed === "move" || allowed === "linkMove") return "move";
+    // "all", "copyMove", "uninitialized" (an OS file drop) — copy is in all of
+    // them, so it is the one answer that is never refused.
+    return "copy";
+  }
+
+  /** The four handlers every droppable lane spreads. */
+  function dropProps(lane) {
+    if (!onDropAsset) return {};
+    const over = (e) => {
+      const kind = dragKind(e);
+      if (!kind) return;
+      const ok = laneTakes(lane, kind);
+      // ⚠ ONLY AN ACCEPTING LANE CALLS preventDefault. That is what tells the
+      // browser a drop may happen here — leaving it off is what gives a lane
+      // that refuses the "no entry" cursor, for free and in the reader's own
+      // platform style.
+      if (ok) e.preventDefault();
+      // ⚠ IT MUST BE AN EFFECT THE SOURCE ALLOWS. A drop whose `dropEffect` is
+      // not in the drag's `effectAllowed` is filtered out by the browser and
+      // never fires — silently. The picker's tiles are a COPY (the gallery
+      // keeps its shape), a clip being re-timed is a MOVE, and a file drop
+      // arrives as "all", so the answer is read off the drag rather than
+      // guessed per lane.
+      if (e.dataTransfer) e.dataTransfer.dropEffect = ok ? allowedEffect(e) : "none";
+      const ms = snapMs(msFromEvent(e));
+      // Both fx kinds land on a CLIP rather than at a moment, so both light the
+      // bar up instead of drawing the drop line — see `dropOnto`.
+      const fx = kind === "fx" || kind === "afx";
+      setDropAt((d) =>
+        d && d.key === lane.key && d.ms === ms && d.ok === ok && d.fx === fx
+          ? d
+          : { key: lane.key, ms, ok, fx }
+      );
+    };
+    return {
+      onDragEnter: over,
+      onDragOver: over,
+      onDragLeave: (e) => {
+        // Moving between two clips INSIDE the lane fires a leave for the lane;
+        // only a pointer that has actually left it should clear the marker.
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        setDropAt((d) => (d && d.key === lane.key ? null : d));
+      },
+      onDrop: (e) => {
+        const kind = dragKind(e);
+        setDropAt(null);
+        if (!laneTakes(lane, kind)) return;
+        e.preventDefault();
+        let asset = null;
+        try {
+          const raw = e.dataTransfer.getData("application/x-anim-asset");
+          asset = raw ? JSON.parse(raw) : null;
+        } catch {
+          asset = null;
+        }
+        onDropAsset({
+          lane,
+          atMs: snapMs(msFromEvent(e)),
+          asset,
+          files: Array.from(e.dataTransfer.files || []),
+        });
+      },
+    };
+  }
+
+  /** The lane's own class and the line showing where the drop would land. */
+  function dropClass(lane) {
+    if (!dropAt || dropAt.key !== lane.key) return "";
+    return dropAt.ok ? "drop-ok" : "drop-no";
+  }
+  function dropMark(lane) {
+    if (!dropAt || dropAt.key !== lane.key || !dropAt.ok) return null;
+    return (
+      <span className="tl-drop-line" style={{ left: (dropAt.ms / 1000) * pxPerSec }}>
+        <span className="tl-drop-time">{formatTime(dropAt.ms)}</span>
+      </span>
+    );
+  }
+  /**
+   * ⚠ IS THIS THE CLIP AN EFFECT WOULD LAND ON?
+   *
+   * A dropped ASSET lands at a MOMENT, which is what the drop line says. A
+   * dropped EFFECT lands on a CLIP, and a line between two pictures would be a
+   * straight lie about which one is about to be graded — the one question the
+   * drag has to answer before you let go. So the bar itself lights up instead.
+   *
+   * Which of the two the marker means cannot be read mid-drag, so `dropAt.fx`
+   * carries it over from `dragKind`.
+   */
+  function dropOnto(lane, start, duration) {
+    if (!dropAt || !dropAt.fx || !dropAt.ok || dropAt.key !== lane.key) return false;
+    return dropAt.ms >= start && dropAt.ms < start + duration;
+  }
+
+  /**
+   * The ƒx badge — "this picture is graded, and here is the way in".
+   *
+   * ⚠ IT IS A COUNT, NOT A LIST. Which effects, in which order, at what values
+   * is the Properties pane's job and needs a pane's worth of room; at eight
+   * pixels of bar the timeline can only usefully say THAT there are some. The
+   * click is the whole point of drawing it: an effect chain had no
+   * representation on the timeline at all, so a clip you had graded looked
+   * exactly like one you hadn't.
+   */
+  function fxBadge(kind, clip, w) {
+    const n = (clip?.effects || []).length;
+    if (!n || w < 34 || !onManageEffects) return null;
+    return (
+      <button
+        type="button"
+        className="tl-fx"
+        title={`${n} effect${n === 1 ? "" : "s"} on this clip — click to manage them in Properties`}
+        /* The bar underneath selects on pointerdown and can start a drag from
+           it. Both are right for the bar and wrong for a button sitting on it,
+           so the press stops here and the click does the work. */
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onManageEffects(kind, clip.id);
+        }}
+      >
+        fx{n > 1 ? n : ""}
+      </button>
+    );
+  }
+
   // --- The rubber band ------------------------------------------------------
   // ⚠ EVERY CLIP CARRIES `data-sel="kind:id"`, and the marquee hit-test is a
   // query over those rather than a second copy of the timeline's geometry. Each
@@ -623,15 +980,19 @@ export default function Timeline({
     return true;
   }
 
-  // What a press does depends on the tool, and the three that aren't about
-  // selecting mean the same thing wherever they land — so they are answered
-  // once, here, for both the ruler and the lanes.
+  /**
+   * What a press does depends on the tool. Hand and zoom mean the same thing
+   * wherever they land, so they are answered once, here, for both the ruler and
+   * the lanes.
+   *
+   * ⚠ THE RAZOR IS NOT IN HERE ANY MORE, and taking it out is the fix. This
+   * function runs for the RULER and for the empty part of EVERY lane, so a blade
+   * answered here cut the picture sequence wherever you clicked — including in
+   * the seconds row, where no clip is drawn at all (user-reported: "I click in the
+   * seconds row and my image clip got cut"). A cut is a thing you do TO A CLIP,
+   * so it is answered by the clips instead — see `razorPress`.
+   */
   function toolPress(e) {
-    if (tool === "razor") {
-      e.preventDefault();
-      onSplitAt?.(msFromEvent(e));
-      return true;
-    }
     if (tool === "zoom") {
       e.preventDefault();
       onZoomAt?.(e.altKey ? -1 : 1);
@@ -667,6 +1028,14 @@ export default function Timeline({
   function startSeek(e) {
     if (e.button !== 0) return;
     if (toolPress(e)) return;
+    // ⚠ THE ONE PRESS HANDLER ON THIS BAR THAT USED TO SKIP THIS, and it showed:
+    // a drag on the ruler or the playhead grip started a native TEXT SELECTION,
+    // so the track names, the clip labels and the empty-lane prompts were left
+    // highlighted blue behind the playhead (user-reported). `.tl-wrap` is
+    // `user-select: none` wholesale as well — every drag on this bar means
+    // something and there are no inputs on it — so this is the belt to that
+    // braces.
+    e.preventDefault();
     onSeek(msFromEvent(e));
     const move = (ev) => onSeek(msFromEvent(ev));
     const up = () => {
@@ -684,8 +1053,33 @@ export default function Timeline({
    * A press only reaches here when it landed on nothing: every clip stops the
    * event at itself, because a press on a clip is about that clip.
    */
+  /**
+   * The razor, on whatever is under the pointer. `true` if it consumed the
+   * press, which every caller uses as its first line.
+   *
+   * ⚠ ONE FUNCTION FOR EVERY LANE, because "the razor cuts what you clicked" has
+   * to be one sentence in the code as well as one sentence to the user. It is
+   * called from the clip bodies AND from the drag starters — a press on a trim
+   * handle or a fade grip is still a press on that clip, and under the blade it
+   * must cut rather than resize. (The CSS also takes those grips out of the
+   * pointer's way while the razor is up, so this is the belt to that braces:
+   * neither one alone should be trusted with "the razor never resizes".)
+   */
+  function razorPress(e, kind, id) {
+    if (tool !== "razor") return false;
+    e.preventDefault();
+    e.stopPropagation();
+    onRazor?.(kind, id, msFromEvent(e));
+    return true;
+  }
+
   function startLanePress(e) {
     if (e.button !== 0) return;
+    // ⚠ THE EMPTY PART OF A LANE IS NOT A CLIP. Answered here rather than in
+    // `toolPress` so that it can say "nothing there" instead of cutting
+    // something on another row — and so the ruler, which shares `toolPress`,
+    // goes on scrubbing while the razor is up, exactly as it does in Premiere.
+    if (razorPress(e, null, null)) return;
     if (toolPress(e)) return;
     // ⚠ Or the browser starts a TEXT SELECTION under the band: the lanes are full
     // of labels, and a drag across them would leave half the timeline
@@ -701,6 +1095,8 @@ export default function Timeline({
   // moves but the video stays EXACTLY as long. That's the whole distinction,
   // and it's why rolling refuses at the last frame: there is nothing to absorb it.
   function startResize(e, frame, index) {
+    // The edit point between two pictures, and the blade beats it too.
+    if (razorPress(e, "frame", frame.id)) return;
     e.stopPropagation();
     e.preventDefault();
     const next = frames[index + 1];
@@ -718,12 +1114,94 @@ export default function Timeline({
     setDraft({ id: frame.id, durationMs: frame.duration_ms });
   }
 
+  /**
+   * The head of the FIRST picture — the one edge on the whole sequence that is
+   * not a cut.
+   *
+   * ⚠ IT IS THE ONLY PICTURE EDGE THAT TRIMS THE CLIP ITSELF. Every other head
+   * grip on this row drags the cut in front of it (`startResize` on the frame
+   * before), because that is the edit at that edge. The first picture has no
+   * frame before it and no cut to move: its head is 0:00, and the only thing you
+   * can do there is start LATER INTO the clip — the ripple trim-in every NLE
+   * does — with everything after it moving up.
+   *
+   * ⚠ AND FOR A VIDEO CLIP THAT MEANS MOVING `in_ms`, NOT JUST SHORTENING IT.
+   * `sourceAt` reads `in_ms + t * speed`, so skipping `head` ms of TIMELINE has
+   * to skip `head * speed` of FILE or the picture at 0:00 does not change and
+   * all you did was throw away the end of the shot. `out_ms` is an absolute
+   * position in the source and stays exactly where it is.
+   *
+   * The travel is bounded up front, in timeline ms, so the edge stops at
+   * whichever wall comes first instead of quietly hitting one and going on:
+   *   · trimming IN  — the clip's own floor, and the last moment of source there
+   *     is to show (`out_ms`).
+   *   · trimming OUT — however much footage sits BEFORE `in_ms`. Nothing, for a
+   *     still: it has no source to give back, so its head only goes one way.
+   */
+  function startHeadTrim(e, frame) {
+    if (razorPress(e, "frame", frame.id)) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const video = clipKind(frame) === "video";
+    const inMs = Math.max(0, Number(frame.in_ms) || 0);
+    let speed = Number(frame.speed);
+    if (!Number.isFinite(speed) || speed <= 0) speed = DEFAULT_SPEED;
+    const outMs = frame.out_ms;
+    // `out_ms` is EXCLUSIVE, so the last moment actually shown is one ms inside
+    // it — the same reading `sourceAt` takes.
+    const sourceRoom =
+      video && outMs !== null && outMs !== undefined
+        ? Math.floor((Number(outMs) - 1 - inMs) / speed)
+        : Infinity;
+    dragRef.current = {
+      id: frame.id,
+      startX: e.clientX,
+      startMs: frame.duration_ms,
+      // The head of the film. Named for the snap, which excludes it so the edge
+      // cannot stick to where it already is.
+      edgeMs: 0,
+      head: true,
+      // ⚠ THE FRAME ITSELF, because its KEYFRAMES have to be re-timed with it —
+      // a Ken Burns push is stored relative to the frame's own start, so cutting
+      // the head off and leaving the keys where they are slides the move out of
+      // step with the footage it was matched to. Read as it was when the drag
+      // began, which is the only version that means anything here.
+      frame,
+      // No rolling at the head of the film: rolling gives to one side of a CUT
+      // what it takes from the other, and there is no other side here.
+      rolling: false,
+      nextId: null,
+      nextMs: 0,
+      video,
+      inMs,
+      speed,
+      // ⚠ BOTH BOUNDS STRADDLE 0, always, so "did not move" can never come back
+      // as an edit — `clamp` returns its low bound when they cross.
+      minHead: video ? -Math.floor(inMs / speed) : 0,
+      maxHead: Math.max(0, Math.min(frame.duration_ms - MIN_MS, sourceRoom)),
+    };
+    setDraft({ id: frame.id, durationMs: frame.duration_ms });
+  }
+
   useEffect(() => {
     if (!draft) return undefined;
     function move(e) {
       const d = dragRef.current;
       if (!d) return;
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
+      if (d.head) {
+        // ⚠ WHAT SNAPS IS THE CLIP'S FAR EDGE, not the one under the pointer.
+        // The head of the first picture is pinned to 0:00 and cannot move — it
+        // is the START OF THE FILM — so trimming into it moves the FIRST CUT
+        // instead, and that is the edge with something to line up against: the
+        // audio does NOT ripple, so the cut can be pulled onto a beat.
+        const cut = snapMs(d.startMs - deltaMs, [d.startMs]);
+        const head = clamp(d.startMs - cut, d.minHead, d.maxHead);
+        const next = Math.max(MIN_MS, Math.round(d.startMs - head));
+        d.latest = next;
+        setDraft({ id: d.id, durationMs: next });
+        return;
+      }
       // The cut is snapped (to another cut, the playhead, a clip edge), then
       // turned back into a duration — snapping a LENGTH would line the edge up
       // with nothing. Its own position is excluded or it would stick to itself.
@@ -742,6 +1220,23 @@ export default function Timeline({
       setDraft(null);
       // No `latest` = pressed and released without moving, so nothing changed.
       if (d && d.latest !== undefined && d.latest !== d.startMs) {
+        if (d.head) {
+          // The two fields travel TOGETHER in one patch. Written apart they
+          // would be two renders and two steps to undo through, and a project
+          // saved between them would have a clip that lost its head without
+          // losing the footage in it.
+          const head = d.startMs - d.latest;
+          const patch = { duration_ms: d.latest };
+          if (d.video) patch.in_ms = Math.max(0, Math.round(d.inMs + head * d.speed));
+          // Same surgery a caption's head trim gets, and for the same reason —
+          // see `trimKeyframesHead`. Null for a frame that animates nothing,
+          // which is most of them, and null means "write no field".
+          const keyframes = trimKeyframesHead(d.frame, head);
+          if (keyframes) patch.keyframes = keyframes;
+          if (onFrameChange) onFrameChange(d.id, patch);
+          else onResize(d.id, patch.duration_ms);
+          return;
+        }
         onResize(d.id, d.latest);
         if (d.rolling) {
           onResize(d.nextId, Math.max(MIN_MS, d.nextMs - (d.latest - d.startMs)));
@@ -754,18 +1249,122 @@ export default function Timeline({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [draft, pxPerSec, onResize, tool]);
+  }, [draft, pxPerSec, onResize, onFrameChange, tool]);
 
   // The lane kinds and the SELECTION kinds are spelled differently in one place
   // only — a lane of pictures over the video is `image`, the thing on it is an
   // `overlay` — so the translation lives here rather than at four call sites.
   const SEL_KIND = { frames: "frame", text: "text", shape: "shape", image: "overlay" };
 
-  // --- Free-floating clip move / resize (text AND shapes) -----------------
+  // --- Dragging a clip onto ANOTHER ROW ------------------------------------
+  // A clip's row used to be decided once, when it was made: the only way to
+  // change it was to drag the thing out of the Media pane again, which for a
+  // caption or an overlay picture was no way at all, and for a piece of audio
+  // was refused outright. So a MOVE drag has a vertical half now — let go over
+  // another row of the same kind and the clip goes there, at the time it was
+  // dragged to. Reported as "I can't move some audio part to the other audio
+  // layer's blank area", and the same was true of every other kind of row.
+  //
+  // ⚠ THE PICTURE ROWS ARE NOT IN THIS LIST, and it is the one rule here worth
+  // stating twice. `frames` is ONE sequence drawn as two rows filtered by ORIGIN
+  // (`laneShows`), so "which row" is not something a picture carries — it is read
+  // back off the clip. A still cannot become footage by being dropped somewhere
+  // else, which is exactly what `laneTakes` already says about a drop out of the
+  // Media pane.
+  const CROSS_LANE_KINDS = ["text", "shape", "image", "audio"];
+
+  /**
+   * The row under the pointer, or null.
+   *
+   * ⚠ ASKS THE DOM, exactly as the marquee does (`hitsIn`). Every lane carries
+   * `data-lane` and the browser has already laid the rows out; deriving the row
+   * from an index and `--tl-track-h` would be a second copy of the timeline's
+   * vertical geometry, and it would be wrong for the whole of a vertical zoom.
+   *
+   * The rows are separated by `--tl-row-gap`, so each box is grown a few pixels
+   * either way: a pointer in the crack between two rows means the nearer one,
+   * not "nowhere".
+   */
+  function laneAtPoint(clientY) {
+    const nodes = innerRef.current?.querySelectorAll("[data-lane]") || [];
+    for (const node of nodes) {
+      const r = node.getBoundingClientRect();
+      if (clientY >= r.top - 3 && clientY <= r.bottom + 3) {
+        return lanes.find((l) => l.key === node.dataset.lane) || null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Which row a clip dragged off `fromKey` would land on, as a lane KEY — null
+   * for "the one it is already on", which is what every ordinary move reports
+   * and the only answer that leaves the clip's row alone.
+   */
+  function laneMoveTarget(fromKey, clientY) {
+    const to = laneAtPoint(clientY);
+    if (!to || to.key === fromKey) return null;
+    if (!CROSS_LANE_KINDS.includes(to.kind)) return null;
+    const from = lanes.find((l) => l.key === fromKey);
+    // A caption cannot land on a shapes row: the two rows draw different things
+    // and a clip does not change what it is by being dropped somewhere else.
+    if (!from || from.kind !== to.kind) return null;
+    return to.key;
+  }
+
+  /** Is this the row a clip is about to be dropped onto? */
+  function laneIsTarget(lane) {
+    const key = clipDraft?.toKey || audioDraft?.toKey || null;
+    return Boolean(key) && key === lane.key;
+  }
+
+  /**
+   * The clip's outline on the row it is about to land on.
+   *
+   * ⚠ THE BAR ITSELF STAYS WHERE IT IS. A clip is a CHILD of its own lane, so
+   * moving it to the row under the pointer mid-drag would mean re-parenting a
+   * node the pointer is captured on — the drag would end. An outline on the
+   * destination and the original dimmed (`lifting`) says the same thing and
+   * survives the gesture.
+   */
+  function laneGhost(lane) {
+    if (!laneIsTarget(lane)) return null;
+    const d = clipDraft?.toKey === lane.key ? clipDraft : audioDraft;
+    const lengthMs = d.durationMs ?? d.lengthMs ?? 0;
+    return (
+      <span
+        className="tl-ghost"
+        style={{
+          left: (d.startMs / 1000) * pxPerSec,
+          width: Math.max(6, (lengthMs / 1000) * pxPerSec),
+        }}
+      >
+        <span className="tl-ghost-time">{formatTime(d.startMs)}</span>
+      </span>
+    );
+  }
+
+  // --- Free-floating clip move / trim (text AND shapes) -------------------
   // Both layers are the same thing on the timeline: a box with its own start
   // and length. One implementation, `kind` deciding where the result is written.
-  function startClipDrag(e, clip, mode, kind) {
+  //
+  // THREE MODES, and the third is the one the grips used to be missing:
+  //   "move"        — the whole clip slides; the selection comes with it.
+  //   "resize"      — the TAIL grip. The end moves, the start stays.
+  //   "trim-start"  — the HEAD grip. The start moves, THE END STAYS PUT. Not a
+  //                   move and not a resize: it changes both numbers, and it is
+  //                   the only one of the three that has to re-time the clip's
+  //                   keyframes (`trimTimedClipStart`).
+  //
+  // ⚠ IT TAKES THE LANE, NOT JUST `lane.kind`. A move can now change WHICH ROW
+  // the clip is on, so the drag has to know the row it started from — a kind
+  // alone cannot tell one text row from another.
+  function startClipDrag(e, clip, mode, lane) {
     if (e.button !== 0) return;
+    const kind = lane.kind;
+    // A caption, a shape or an overlay picture — and this is BOTH the body and
+    // the trim handle, since both come through here.
+    if (razorPress(e, SEL_KIND[kind], clip.id)) return;
     e.stopPropagation();
     e.preventDefault();
     const selKind = SEL_KIND[kind];
@@ -787,9 +1386,16 @@ export default function Timeline({
       kind,
       id: clip.id,
       mode,
+      // The row it started on, so the vertical half of the drag has something to
+      // compare against — see `laneMoveTarget`.
+      fromKey: lane.key,
       startX: e.clientX,
       startMs: clip.start_ms,
       durationMs: clip.duration_ms,
+      // ⚠ THE CLIP ITSELF, not just its two numbers, because a head trim has to
+      // read its KEYFRAMES to re-time them — and it reads them as they were when
+      // the drag began, which is the only version that means anything here.
+      clip,
       // Only a MOVE carries the rest of the selection. Dragging one clip's edge
       // is about that clip's length; stretching forty at once is not an edit
       // anybody means, and would need forty different clamps.
@@ -801,6 +1407,9 @@ export default function Timeline({
       startMs: clip.start_ms,
       durationMs: clip.duration_ms,
       deltaMs: 0,
+      // The row it would land on, once the pointer has left its own. Null until
+      // then, which is every drag that stays where it started.
+      toKey: null,
       group: mode === "move" && inSelection && selection.length > 1,
     });
   }
@@ -936,8 +1545,17 @@ export default function Timeline({
       // Both edges of the clip being dragged are excluded from the snap
       // targets, or it would stick to where it already is.
       const own = [d.startMs, d.startMs + d.durationMs];
+      const end = d.startMs + d.durationMs;
       const next =
-        d.mode === "move"
+        d.mode === "trim-start"
+          ? (() => {
+              // The clip's START is what snaps to a cut; its END is nailed down,
+              // so the length is whatever is left between them. Clamped at 0:00
+              // on one side and MIN_MS short of its own end on the other.
+              const startMs = clamp(snapMs(d.startMs + deltaMs, own), 0, end - MIN_MS);
+              return { kind: d.kind, id: d.id, startMs, durationMs: end - startMs };
+            })()
+          : d.mode === "move"
           ? {
               kind: d.kind,
               id: d.id,
@@ -968,6 +1586,12 @@ export default function Timeline({
       // a group move must never change.
       next.group = d.group;
       next.deltaMs = next.startMs - d.startMs;
+      // ⚠ THE VERTICAL HALF, AND ONLY A PLAIN MOVE HAS ONE. A trim is about this
+      // clip's own length, and a GROUP move can span kinds — "put these forty
+      // things on that one row" is not an edit with a single meaning, so a
+      // multi-clip drag stays on its rows and only travels in time.
+      next.toKey =
+        d.mode === "move" && !d.group ? laneMoveTarget(d.fromKey, e.clientY) : null;
       d.latest = next;
       setClipDraft(next);
     }
@@ -975,9 +1599,15 @@ export default function Timeline({
       const d = dragRef.current;
       dragRef.current = null;
       setClipDraft(null);
+      // ⚠ CHANGING ROW COUNTS AS HAVING MOVED even when the time did not. Drag a
+      // caption straight up onto the next text row and every number about it is
+      // the one it had; without this the gesture would be read as a click and
+      // narrow the selection instead of moving the clip.
+      const relaned = Boolean(d?.latest?.toKey);
       const moved =
-        d?.latest &&
-        (d.latest.startMs !== d.startMs || d.latest.durationMs !== d.durationMs);
+        relaned ||
+        (d?.latest &&
+          (d.latest.startMs !== d.startMs || d.latest.durationMs !== d.durationMs));
       // ⚠ A CLICK ON A CLIP IN A SELECTION NARROWS THE SELECTION TO IT. The
       // press deliberately did NOT re-select (that is what lets a selection be
       // dragged), so without this there would be no way back to one clip except
@@ -1005,6 +1635,25 @@ export default function Timeline({
             : d.kind === "image"
               ? onOverlayChange
               : onTextChange;
+        // ⚠ A HEAD TRIM IS NOT A `{ start_ms, duration_ms }` WRITE. It also
+        // re-times the clip's keyframes — see `trimTimedClipStart`, which is
+        // where the "a key is planted at the new head" rule lives, and which
+        // returns null when the drag came back to where it started.
+        if (d.mode === "trim-start") {
+          const patch = trimTimedClipStart(d.clip, d.latest.startMs);
+          if (patch) write(d.id, patch);
+          return;
+        }
+        // Landed on another row: the EDITOR is told which row, because what a
+        // row means to a clip is the document's business and not this file's.
+        const to = relaned ? lanes.find((l) => l.key === d.latest.toKey) : null;
+        if (to && onMoveToLane) {
+          onMoveToLane(SEL_KIND[d.kind], d.id, to, {
+            start_ms: d.latest.startMs,
+            duration_ms: d.latest.durationMs,
+          });
+          return;
+        }
         write(d.id, { start_ms: d.latest.startMs, duration_ms: d.latest.durationMs });
       }
     }
@@ -1015,7 +1664,16 @@ export default function Timeline({
       window.removeEventListener("pointerup", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipDraft, pxPerSec, onTextChange, onShapeChange, onOverlayChange, onMoveSelection]);
+  }, [
+    clipDraft,
+    pxPerSec,
+    onTextChange,
+    onShapeChange,
+    onOverlayChange,
+    onMoveSelection,
+    onMoveToLane,
+    lanes,
+  ]);
 
   // --- Transitions on the cuts --------------------------------------------
   // A transition is BOUNDARY-LOCAL: it straddles the edit point, taking half
@@ -1162,8 +1820,11 @@ export default function Timeline({
   //           same amount. Move any two of those three and the audio slides
   //           under the edge you are dragging, which looks like the whole file
   //           shifting rather than an edge being trimmed.
-  function startAudioDrag(e, track, mode) {
+  // ⚠ IT TAKES THE LANE TOO. A move can change WHICH ROW the clip sits on now,
+  // and the rows are named per file — a kind alone could not tell them apart.
+  function startAudioDrag(e, track, mode, lane) {
     if (e.button !== 0) return;
+    if (razorPress(e, "audio", clipId(track))) return;
     e.stopPropagation();
     e.preventDefault();
     const id = clipId(track);
@@ -1174,6 +1835,10 @@ export default function Timeline({
     const state = {
       id,
       mode,
+      // The row it started on, so a drag off it has something to compare
+      // against — see `laneMoveTarget`. Null on the draft until it leaves.
+      fromKey: lane?.key ?? null,
+      toKey: null,
       startMs: trackStart(track),
       lengthMs: trackLength(track),
       offsetMs: trackOffset(track),
@@ -1252,6 +1917,15 @@ export default function Timeline({
       // exactly what it was. A trim moves nothing but itself.
       next.group = d.group && d.mode === "move";
       next.deltaMs = next.startMs - d.startMs;
+      next.fromKey = d.fromKey;
+      // The vertical half — the same rule the picture clips follow: only a plain
+      // single-clip move can change row. THIS is the gesture that was missing:
+      // an audio clip could be slid along its own row and nowhere else, so a
+      // piece cut out of one take could not be put on another row.
+      next.toKey =
+        d.mode === "move" && !d.group && d.fromKey
+          ? laneMoveTarget(d.fromKey, e.clientY)
+          : null;
       d.latest = next;
       setAudioDraft(next);
     }
@@ -1260,11 +1934,16 @@ export default function Timeline({
       dragRef.current = null;
       setAudioDraft(null);
       if (!d?.audio) return;
+      // Changing row counts as having moved even when the time did not — drag a
+      // clip straight up onto the row above and every number about it is the one
+      // it had. Without this the gesture would be read as a press and scrub.
+      const relaned = Boolean(d.latest?.toKey);
       const moved =
-        d.latest !== undefined &&
-        (d.latest.startMs !== d.startMs ||
-          d.latest.lengthMs !== d.lengthMs ||
-          d.latest.offsetMs !== d.offsetMs);
+        relaned ||
+        (d.latest !== undefined &&
+          (d.latest.startMs !== d.startMs ||
+            d.latest.lengthMs !== d.lengthMs ||
+            d.latest.offsetMs !== d.offsetMs));
       if (!moved) {
         // Pressed and released without moving. On the clip body that means
         // "scrub here"; on an edge grip it means nothing at all.
@@ -1274,6 +1953,15 @@ export default function Timeline({
           // same rule the picture clips follow, and for the same reason.
           if (d.group) onSelectTrack(d.id);
         }
+        return;
+      }
+      // Landed on another row. The editor is told WHICH ROW rather than a layer
+      // id, because an audio row may be one grouped by FILE — which has no id to
+      // write — and turning that into a real destination is the document's job.
+      // See `moveClipToLane` in AnimaticEditor.jsx.
+      const to = relaned ? lanes.find((l) => l.key === d.latest.toKey) : null;
+      if (to && onMoveToLane) {
+        onMoveToLane("audio", d.id, to, { start_ms: d.latest.startMs });
         return;
       }
       // Only the fields the gesture actually meant. Writing all three on a
@@ -1295,7 +1983,8 @@ export default function Timeline({
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
-  }, [audioDraft, pxPerSec, onTrackChange]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioDraft, pxPerSec, onTrackChange, onMoveToLane, lanes]);
 
   // --- Fades ---------------------------------------------------------------
   // A grip at each top corner of an audio clip, dragged inward. The wedge it
@@ -1439,10 +2128,19 @@ export default function Timeline({
     return (
       <div
         key={lane.key}
-        className={`tl-lane ${className} ${lane.hidden ? "off" : ""}`}
+        className={[
+          "tl-lane",
+          className,
+          lane.hidden ? "off" : "",
+          dropClass(lane),
+          laneIsTarget(lane) ? "drop-lane" : "",
+        ].join(" ")}
         onPointerDown={startLanePress}
         data-lane={lane.key}
+        {...dropProps(lane)}
       >
+        {dropMark(lane)}
+        {laneGhost(lane)}
         {items.map((item) => {
           const kind = SEL_KIND[lane.kind];
           const { start, duration } = clipBox(item, kind);
@@ -1465,17 +2163,24 @@ export default function Timeline({
                 inBand(kind, item.id) ? "banded" : "",
                 grouped ? "grp" : "",
                 overruns ? "over-end" : "",
+                dropOnto(lane, start, duration) ? "drop-onto" : "",
+                // On its way to another row: dimmed here, outlined there.
+                clipDraft?.toKey && clipDraft.id === item.id ? "lifting" : "",
               ].join(" ")}
               style={{ left, width: w }}
-              onPointerDown={(e) => startClipDrag(e, item, "move", lane.kind)}
+              onPointerDown={(e) => startClipDrag(e, item, "move", lane)}
               title={
                 `${body.title(item)} — ${(start / 1000).toFixed(1)}s for ${(duration / 1000).toFixed(1)}s` +
                 (overruns ? " (runs past the end of the video)" : "") +
                 (grouped ? " · grouped — selecting it selects the others" : "") +
+                "\nDrag it up or down onto another " +
+                (lane.kind === "image" ? "picture" : lane.kind) +
+                " layer to move it there." +
                 "\nShift-click to add it to the selection; drag the empty part of a lane to select several."
               }
             >
               {body.render(item, w)}
+              {fxBadge(kind, item, w)}
               {/* Keys are drawn ON the clip, because that is where they live —
                   their times are relative to it, so dragging the clip carries
                   them along and the diamonds move with it for free.
@@ -1484,9 +2189,21 @@ export default function Timeline({
                   apart would be unclickable. Which property is which is the
                   Properties pane's job. */}
               {renderKeys(item, lane.kind, w, start)}
+              {/* A GRIP AT BOTH ENDS, which is what the audio clips have had all
+                  along. The head one moves the clip's start and leaves its end
+                  alone — the edit you want when a caption comes in too early,
+                  and one there was no gesture for: the tail grip changes the
+                  length, and a move changes neither. */}
+              {w >= BOTH_GRIPS_MIN_PX && (
+                <span
+                  className="tl-handle tl-handle-l"
+                  onPointerDown={(e) => startClipDrag(e, item, "trim-start", lane)}
+                  title="Drag to trim the head — it comes in later and still ends where it did"
+                />
+              )}
               <span
                 className="tl-handle"
-                onPointerDown={(e) => startClipDrag(e, item, "resize", lane.kind)}
+                onPointerDown={(e) => startClipDrag(e, item, "resize", lane)}
                 title="Drag to change how long this stays on screen"
               />
             </div>
@@ -1532,14 +2249,21 @@ export default function Timeline({
       const shows = (f) => laneShows(lane, f);
       return (
         <div
-          className={`tl-lane tl-bars ${lane.hidden ? "off" : ""}`}
+          className={`tl-lane tl-bars ${lane.hidden ? "off" : ""} ${dropClass(lane)}`}
           key={lane.key}
+          data-lane={lane.key}
           onPointerDown={startLanePress}
+          {...dropProps(lane)}
         >
+          {dropMark(lane)}
           {frames.map((f, i) => {
             const ms = durationOf(f);
             const w = (ms / 1000) * pxPerSec;
-            const left = (clock / 1000) * pxPerSec;
+            // Named, because the drop highlight needs the same number the bar is
+            // drawn at — re-deriving it from `starts` would be the one place
+            // that disagreed once a clip was mid-drag.
+            const start = clock;
+            const left = (start / 1000) * pxPerSec;
             clock += ms;
             if (!shows(f)) return null;
             return (
@@ -1550,24 +2274,15 @@ export default function Timeline({
                   "tl-bar",
                   isSel("frame", f.id) ? "sel" : "",
                   inBand("frame", f.id) ? "banded" : "",
+                  dropOnto(lane, start, ms) ? "drop-onto" : "",
                 ].join(" ")}
                 style={{ left, width: w }}
                 onPointerDown={(e) => {
                   // The razor cuts wherever it is clicked ON the picture —
                   // that is the tool's whole behaviour, and it must beat
-                  // "select this frame".
-                  if (tool === "razor") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const into = ((e.clientX - rect.left) / pxPerSec) * 1000;
-                    onSplitAt?.(
-                      frames
-                        .slice(0, i)
-                        .reduce((sum, x) => sum + (x.duration_ms || 0), 0) + into
-                    );
-                    return;
-                  }
+                  // "select this frame". ⚠ It NAMES the frame now: the time
+                  // alone was what let a press somewhere else cut this one.
+                  if (razorPress(e, "frame", f.id)) return;
                   // A press on a picture is about that picture — it must not
                   // also start a rubber band on the lane underneath.
                   e.stopPropagation();
@@ -1581,6 +2296,7 @@ export default function Timeline({
               >
                 <span className="tl-bar-label">{w > 34 ? f.label || i + 1 : ""}</span>
                 {w > 56 && <span className="tl-bar-secs">{(ms / 1000).toFixed(1)}s</span>}
+                {fxBadge("frame", f, w)}
                 {/* A frame's own keys — a Ken Burns push lives here, so this is
                     the lane where they matter most. Times are relative to the
                     frame, so they ride along when its hold is re-timed. */}
@@ -1589,6 +2305,41 @@ export default function Timeline({
                   "frames",
                   w,
                   frames.slice(0, i).reduce((sum, x) => sum + (x.duration_ms || 0), 0)
+                )}
+                {/* THE HEAD GRIP, and on a picture it is THE CUT BEFORE THIS
+                    ONE — so it drags the PREVIOUS frame's hold, which is the
+                    same edit point its own tail grip is.
+                    ⚠ A PICTURE HAS NO START OF ITS OWN. Its start is the sum of
+                    every hold before it, so "trim this one's head" cannot mean
+                    what it means on a caption: shortening the clip itself would
+                    ripple everything left and move its far edge, not this one,
+                    which is precisely what the tail grip already does. Moving
+                    the cut is the only edit that puts THIS edge under the
+                    pointer — and it obeys ripple / rolling (B / N) for free,
+                    because it is `startResize` on the frame before.
+                    ⚠ THE FIRST PICTURE IS THE EXCEPTION, and it took a second
+                    edit rather than no grip at all: there is no cut in front of
+                    it, so its head grip trims INTO the clip — `startHeadTrim`,
+                    which moves a video clip's `in_ms` with the length. The rule
+                    both halves obey is "the head grip edits whatever is at this
+                    clip's head": a cut where there is one, the start of the film
+                    where there isn't. */}
+                {w >= BOTH_GRIPS_MIN_PX && (
+                  <span
+                    className="tl-handle tl-handle-l"
+                    onPointerDown={(e) =>
+                      i > 0 ? startResize(e, frames[i - 1], i - 1) : startHeadTrim(e, f)
+                    }
+                    title={
+                      i === 0
+                        ? clipKind(f) === "video"
+                          ? "Drag to trim the head of this shot — it starts later into the footage and everything after it moves up"
+                          : "Drag to trim the head of this shot — everything after it moves up"
+                        : tool === "rolling"
+                          ? "Rolling edit — drag the cut at the head of this shot; the shot before absorbs it and the video stays the same length"
+                          : "Drag the cut at the head of this shot — the shot before it is held longer or shorter"
+                    }
+                  />
                 )}
                 <span
                   className="tl-handle"
@@ -1684,7 +2435,17 @@ export default function Timeline({
     const clips = lane.tracks || [];
     if (!clips.length) {
       return (
-        <div className="tl-lane tl-audio" key={lane.key} onPointerDown={startLanePress}>
+        <div
+          className={`tl-lane tl-audio ${dropClass(lane)} ${
+            laneIsTarget(lane) ? "drop-lane" : ""
+          }`}
+          key={lane.key}
+          data-lane={lane.key}
+          onPointerDown={startLanePress}
+          {...dropProps(lane)}
+        >
+          {dropMark(lane)}
+          {laneGhost(lane)}
           <button
             type="button"
             className="tl-track-empty tl-track-add"
@@ -1697,7 +2458,17 @@ export default function Timeline({
       );
     }
     return (
-      <div key={lane.key} className="tl-lane tl-audio" onPointerDown={startLanePress}>
+      <div
+        key={lane.key}
+        className={`tl-lane tl-audio ${dropClass(lane)} ${
+          laneIsTarget(lane) ? "drop-lane" : ""
+        }`}
+        data-lane={lane.key}
+        onPointerDown={startLanePress}
+        {...dropProps(lane)}
+      >
+        {dropMark(lane)}
+        {laneGhost(lane)}
         {clips.map((track) => {
           const id = clipId(track);
           if (!audioUrls[track.upload_id]) {
@@ -1728,19 +2499,22 @@ export default function Timeline({
                 inBand("audio", id) ? "banded" : "",
                 track.group_id ? "grp" : "",
                 audioDraft && audioDraft.id === id ? "dragging" : "",
+                // A crossfade being dragged over lands on THIS clip, so the bar
+                // lights up rather than a line being drawn between two of them —
+                // the same reasoning as an effect over a picture.
+                dropOnto(lane, trackStart(track), lengthMs) ? "drop-onto" : "",
+                // On its way to another row: dimmed here, outlined there.
+                audioDraft?.toKey && audioDraft.id === id ? "lifting" : "",
               ].join(" ")}
               style={{ left, width: clipW }}
-              title={`${track.filename} — ${(trackStart(track) / 1000).toFixed(1)}s for ${(lengthMs / 1000).toFixed(1)}s. Drag to move it; the razor (C) cuts it where you click. Shift-click to add it to the selection.`}
+              title={`${track.filename} — ${(trackStart(track) / 1000).toFixed(1)}s for ${(lengthMs / 1000).toFixed(1)}s. Drag to move it along the timeline, or up and down onto another audio layer to move it there. The razor (C) cuts it where you click; shift-click adds it to the selection.`}
               onPointerDown={(e) => {
                 // ⚠ THE RAZOR BEATS THE DRAG, and it has to: with the tool
                 // selected, a press on a clip means "cut here", and starting a
                 // move instead would nudge the clip a pixel and cut nothing.
-                if (tool === "razor") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onSplitAudioAt?.(id, msFromEvent(e));
-                  return;
-                }
+                // ⚠ It NAMES the clip now: the time alone was what let a press
+                // somewhere else cut this one.
+                if (razorPress(e, "audio", id)) return;
                 // Only the selection tool moves a clip. The others (hand, zoom)
                 // still mean what they mean everywhere else on the timeline.
                 if (tool !== "select" && tool !== "ripple" && tool !== "rolling") return;
@@ -1750,7 +2524,7 @@ export default function Timeline({
                   onToggleSelect?.("audio", id);
                   return;
                 }
-                startAudioDrag(e, track, "move");
+                startAudioDrag(e, track, "move", lane);
               }}
             >
               <Waveform
@@ -1771,9 +2545,22 @@ export default function Timeline({
               ))}
               {/* The two ramps, and the grips that set them. The wedge is
                   drawn even at zero so the grip has something to sit on —
-                  which is how you discover the handle is there at all. */}
-              <span className="tl-fade tl-fade-in" style={{ width: inW }} />
-              <span className="tl-fade tl-fade-out" style={{ width: outW }} />
+                  which is how you discover the handle is there at all.
+
+                  ⚠ AND EACH ONE CARRIES ITS CURVE. The veil's gradient is the
+                  shape of the GAIN, so leaving all three curves drawn as the
+                  straight line would make a constant-power crossfade look
+                  exactly like the constant-gain one it exists to replace —
+                  and the shape on the clip is the only place you can see which
+                  of the three you dropped without opening Properties. */}
+              <span
+                className={`tl-fade tl-fade-in tl-curve-${fadeCurve(track, "in")}`}
+                style={{ width: inW }}
+              />
+              <span
+                className={`tl-fade tl-fade-out tl-curve-${fadeCurve(track, "out")}`}
+                style={{ width: outW }}
+              />
               {/* Kept inside the clip, which has to clip its waveform: a grip
                   centred on a fade of zero would be half off the left edge
                   and entirely off the right one — so the handle you need in
@@ -1795,12 +2582,12 @@ export default function Timeline({
                   the whole clip and losing its place. */}
               <span
                 className="tl-handle tl-handle-l"
-                onPointerDown={(e) => startAudioDrag(e, track, "start")}
+                onPointerDown={(e) => startAudioDrag(e, track, "start", lane)}
                 title="Drag to trim the head of this clip — it stays where it is on the timeline"
               />
               <span
                 className="tl-handle"
-                onPointerDown={(e) => startAudioDrag(e, track, "end")}
+                onPointerDown={(e) => startAudioDrag(e, track, "end", lane)}
                 title="Drag to trim how much of this clip plays"
               />
             </div>
@@ -1827,15 +2614,24 @@ export default function Timeline({
           animatic-lanes.css warns about. Here it shifts both columns equally,
           so they cannot drift apart. Its width matches the gutter, which is
           what makes it read as the head of the layer column. */}
-      <div className="tl-head">
-        <button
-          type="button"
-          className="tl-add-layer"
-          onClick={onAddLayer}
-          title="Add an empty layer — pick what kind"
-        >
-          ＋ Add layer
-        </button>
+      {/* ⚠ THE HEAD IS A BAR OF TWO HALVES NOW: ＋ Add layer over the gutter, and
+          the editor's own make-something buttons beside it. They used to sit at
+          the far right of the pane head, a bar's width from the only other
+          control that adds anything — asked for as "one place where all the add
+          buttons are". What they MAKE is still the editor's business; this file
+          only gives them somewhere to stand (`addTools`). */}
+      <div className="tl-headbar">
+        <div className="tl-head">
+          <button
+            type="button"
+            className="tl-add-layer"
+            onClick={onAddLayer}
+            title="Add an empty layer — pick what kind"
+          >
+            ＋ Add layer
+          </button>
+        </div>
+        {addTools && <div className="tl-add-tools">{addTools}</div>}
       </div>
 
       <div className="tl-cols">
@@ -1982,11 +2778,19 @@ export default function Timeline({
 
         <div className="tl-scroll" ref={scrollRef} onScroll={readView}>
           <div className={`tl-inner tool-${tool}`} style={{ width }} ref={innerRef}>
-            {/* Ruler — click or drag anywhere on it to scrub. */}
+            {/* Ruler — click or drag anywhere on it to scrub. It reads in
+                HH:MM:SS:FF: a taller labelled tick with bare minor ones between,
+                and ONLY the ticks in the visible window (see `rulerTicks`). */}
             <div className="tl-ruler" ref={trackRef} onPointerDown={startSeek}>
-              {ticks.map((s) => (
-                <span key={s} className="tl-tick" style={{ left: s * pxPerSec }}>
-                  {formatTime(s * 1000)}
+              {ticks.map((t) => (
+                <span
+                  key={t.n}
+                  className={`tl-tick${t.major ? " tl-tick-major" : ""}`}
+                  style={{ left: t.x }}
+                >
+                  {t.major && (
+                    <i className="tl-tick-label">{timecodeOfFrame(t.n, rulerFps)}</i>
+                  )}
                 </span>
               ))}
               {/* The marked range (I / O). It bounds PLAYBACK — the export is

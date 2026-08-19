@@ -129,6 +129,22 @@ EFFECT_PARAMS: dict[str, dict] = {
         "smoothness": 0.08,
         "spill": 0.0,
     },
+    # ⚠ APPENDED, NEVER INSERTED. An effect reaches the shader as its INDEX in
+    # this table, so putting a new kind in the middle would silently re-number
+    # every kind after it and a saved project would come back graded by the
+    # wrong effect. New ones go on the end.
+    #
+    # All six are POINT-WISE — a function of a single pixel and nothing else.
+    # That is the admission price: the monitor grades in one fragment shader
+    # pass with no neighbourhood available, so blur, sharpen and grain cannot
+    # join this list without a second pass and an answer to "at which
+    # resolution", which the preview and the export do not share.
+    "exposure": {"stops": 0.0},
+    "gamma": {"gamma": 1.0},
+    "temperature": {"temperature": 0.0, "tint": 0.0},
+    "hue": {"degrees": 0.0},
+    "sepia": {"amount": 1.0},
+    "posterize": {"levels": 8.0},
 }
 EFFECT_KINDS = tuple(EFFECT_PARAMS)
 
@@ -257,10 +273,158 @@ def source_at(clip: dict, t_rel: float) -> float | None:
 # nothing away from either. The timeline is exactly as long with transitions as
 # without, so `frame_spans`, every cut position, ripple and rolling trims and
 # any caption timed against a cut all keep working untouched.
-TRANSITION_KINDS = ("dissolve", "dip", "wipe", "slide")
+TRANSITION_KINDS = (
+    "dissolve",
+    "dip",
+    "wipe",
+    "slide",
+    # The matte-driven reveals. Every one is the SAME code path as a wipe — a
+    # shape multiplied into the arriving picture's alpha — and they are separate
+    # kinds rather than one kind with a `shape` parameter because the Effects
+    # library files them as things you drag onto a cut.
+    "diagonal",
+    "split",
+    "radial",
+    "diamond",
+    "box",
+    "angular",
+    "blinds",
+    "checker",
+)
 DEFAULT_TRANSITION_MS = 600
 MIN_TRANSITION_MS = 100
 MAX_TRANSITION_MS = 10_000
+
+# Each transition's parameters and the value each falls back to. ⚠ TWIN of
+# `TRANSITION_PARAMS` in transitions.js — read that file's note for what the two
+# defaults MEAN; the short version is that both reproduce the behaviour that
+# already shipped, so no existing animatic changes.
+#
+# A parameter with a STRING default is read straight off the transition and
+# never interpolated, which is all of them so far — "half way between left and
+# up" is not a direction. A numeric one would be animatable in the same breath.
+TRANSITION_PARAMS: dict[str, dict] = {
+    "dissolve": {},
+    "dip": {"color": ""},
+    "wipe": {"direction": "right", "softness": 0.0},
+    "slide": {"direction": "left"},
+    "diagonal": {"direction": "right", "softness": 0.0},
+    "split": {"direction": "right", "softness": 0.0},
+    "radial": {"softness": 0.0},
+    "diamond": {"softness": 0.0},
+    "box": {"softness": 0.0},
+    "angular": {"softness": 0.0},
+    "blinds": {"direction": "right", "count": 6.0, "softness": 0.0},
+    "checker": {"count": 6.0, "softness": 0.0},
+}
+
+# Which way a wipe's edge sweeps, or a slide's pictures travel.
+TRANSITION_DIRECTIONS = ("left", "right", "up", "down")
+
+# The parameters whose value is an ENUM rather than free text. An unrecognised
+# value folds down to the default HERE, in the resolver, so the preview and the
+# export cannot fold differently — the rule `kind` and `ease` already follow.
+TRANSITION_PARAM_CHOICES: dict[str, tuple] = {"direction": TRANSITION_DIRECTIONS}
+
+# The same rule for the NUMERIC parameters: clamped HERE so a softness of -3 or
+# a count of 0 cannot mean one thing in the monitor and another in the export.
+# Keyed by parameter NAME, because `softness` means the same thing on every kind
+# that offers it. ⚠ TWIN of `TRANSITION_PARAM_RANGE` in transitions.js.
+TRANSITION_PARAM_RANGE: dict[str, tuple] = {
+    "softness": (0.0, 1.0),
+    "count": (2.0, 64.0),
+}
+
+# ---------------------------------------------------------------------------
+# MATTES — the shape a REVEAL transition uncovers the arriving shot through
+# ---------------------------------------------------------------------------
+# ⚠ A REVEAL IS A SECOND MASK ON THE INCOMING PICTURE, not a compositing stage.
+# The full reasoning is at the top of `client/src/animatic/gl/shaders/mattes.js`
+# and repeated in `animatic_transitions.py`; the short version is that a wipe at
+# 50% and a mask are the same operation, so a matte is multiplied into the
+# arriving picture's alpha right next to the existing mask multiply. Blend
+# modes, chroma keys and per-clip masks all keep working, and the exporter needs
+# no second compositing path.
+#
+# ⚠ "none" IS INDEX 0 and means no matte, matching `MASK_KINDS`. The shader
+# tests `kind == 0` as its early out, so the ORDER of this tuple is load-bearing
+# and is compared against the shader by `tests/effects_parity_check.py`.
+#
+# ⚠ TWIN of `MATTE_KINDS` in transitions.js.
+MATTE_KINDS = (
+    "none",
+    "linear",
+    "diagonal",
+    "split",
+    "radial",
+    "diamond",
+    "box",
+    "angular",
+    "blinds",
+    "checker",
+)
+
+# Which matte each kind reveals through. A kind NOT in here does not use one:
+# `dissolve` fades, `dip` veils and `slide` moves the geometry, and none of the
+# three is a reveal. `wipe` maps to `linear` rather than being renamed, because
+# "wipe" is the name it already has in every saved project.
+#
+# ⚠ TWIN of `TRANSITION_MATTE` in transitions.js.
+TRANSITION_MATTE: dict[str, str] = {
+    "wipe": "linear",
+    "diagonal": "diagonal",
+    "split": "split",
+    "radial": "radial",
+    "diamond": "diamond",
+    "box": "box",
+    "angular": "angular",
+    "blinds": "blinds",
+    "checker": "checker",
+}
+
+
+def transition_matte(kind: str) -> str:
+    """The matte a resolved kind draws through, or "none". Mirrors `transitionMatte`."""
+    return TRANSITION_MATTE.get(kind or "", "none")
+
+
+def transition_kind(transition: dict) -> str:
+    """An unrecognised kind is a dissolve. Mirrors `transitionKind`."""
+    kind = (transition or {}).get("kind")
+    return kind if kind in TRANSITION_KINDS else "dissolve"
+
+
+def transition_params(transition: dict) -> dict:
+    """One transition's parameters with every default filled in.
+
+    Mirrors `transitionParams`. Resolved against the FOLDED kind, not the stored
+    one, so a transition whose kind this build has never heard of gets a
+    dissolve's parameters rather than a newer kind's.
+    """
+    defaults = TRANSITION_PARAMS.get(transition_kind(transition), {})
+    stored = (transition or {}).get("params") or {}
+    out: dict = {}
+    for name, fallback in defaults.items():
+        value = stored.get(name)
+        choices = TRANSITION_PARAM_CHOICES.get(name)
+        if isinstance(fallback, str):
+            if choices is not None:
+                out[name] = value if value in choices else fallback
+            else:
+                out[name] = value if isinstance(value, str) else fallback
+        else:
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                num = float(fallback)
+            # Clamped but NOT rounded: `scene_signature` already formats every
+            # number to the shared precision, and rounding here as well would be
+            # a second place for the two languages to round differently.
+            low_high = TRANSITION_PARAM_RANGE.get(name)
+            if low_high is not None:
+                num = min(low_high[1], max(low_high[0], num))
+            out[name] = num
+    return out
 
 
 def _round(value: float) -> float:
@@ -453,24 +617,92 @@ def _resolve(clip: dict, kind: str, t_rel: float) -> dict:
     return out
 
 
-def frame_spans(frames: list[dict], end_ms: int | None = None) -> tuple[list[dict], int]:
-    """Where each frame sits, in play order. Mirrors `frameSpans` in scene.js.
+def frame_track(frame: dict) -> int:
+    """Which PICTURE TRACK a clip is on. Mirrors `frameTrack` in scene.js.
 
-    `end_ms` extends the LAST picture, which is what makes an export cover a
-    music bed that outlasts the pictures instead of stopping dead on the final
-    image. `plan_segments` has always done this; the rule lives here now so the
-    preview holds the last frame too.
+    0 is the base track — the bottom of the stack, and where every clip written
+    before tracks existed lives. A higher number is drawn OVER a lower one, so a
+    gap on an upper track shows whatever is on the track below it.
+    """
+    try:
+        n = int(float((frame or {}).get("track") or 0))
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
+def frame_spans(frames: list[dict], end_ms: int | None = None) -> tuple[list[dict], int]:
+    """Where each frame sits — ONE SPAN PER FRAME, IN LIST ORDER.
+
+    Mirrors `frameSpans` in scene.js; read that docstring, it carries the design.
+    The three rules that matter here:
+
+    ⚠ A PICTURE IS PLACED BY `start_ms` ON ITS OWN TRACK, not by adding up the
+    clips before it. That is the whole of the multi-track change — a clip moves
+    when you move it and at no other time.
+
+    ⚠ A MISSING `start_ms` MEANS "AFTER THE LAST CLIP ON MY TRACK". Every animatic
+    written before this carries no starts at all and sits on one track, so that
+    rule lays it out exactly as the old running total did.
+
+    ⚠ THE SPANS STAY PARALLEL TO `frames` — `spans[i]` is the i-th frame's — and
+    `server/animatics.py` indexes it that way.
+
+    `end_ms` holds the picture that ENDS LAST out to that moment (the topmost of
+    those if two tie), which is what makes an export cover a music bed that
+    outlasts the pictures instead of stopping dead on the final image.
     """
     spans: list[dict] = []
-    clock = 0
+    clock: dict[int, int] = {}
     for i, frame in enumerate(frames):
+        track = frame_track(frame)
         length = max(100, int(frame.get("duration_ms") or 2000))
-        spans.append({"start": clock, "end": clock + length, "index": i})
-        clock += length
-    if spans and end_ms and end_ms > clock:
-        spans[-1]["end"] = end_ms
-        clock = end_ms
-    return spans, clock
+        at = frame.get("start_ms")
+        if at is None:
+            start = clock.get(track, 0)
+        else:
+            try:
+                start = max(0, int(round(float(at))))
+            except (TypeError, ValueError):
+                start = clock.get(track, 0)
+        spans.append({"start": start, "end": start + length, "index": i, "track": track})
+        clock[track] = max(clock.get(track, 0), start + length)
+    total = max((s["end"] for s in spans), default=0)
+    if spans and end_ms and end_ms > total:
+        last = max(spans, key=lambda s: (s["end"], s["track"]))
+        last["end"] = end_ms
+        total = end_ms
+    return spans, total
+
+
+def _stack_at(spans: list[dict], t: float) -> list[dict]:
+    """The span showing on each track at `t`, BOTTOM TRACK FIRST.
+
+    Mirrors `stackAt` in scene.js. ⚠ ONE CLIP PER TRACK, AND THE LATER ONE WINS
+    where two overlap — free placement makes an overlap possible where a
+    butt-jointed sequence could not, and "whichever starts later is the one you
+    just put there" is the only tie-break a person can predict.
+    """
+    by_track: dict[int, dict] = {}
+    for span in spans:
+        if not (span["start"] <= t < span["end"]):
+            continue
+        held = by_track.get(span["track"])
+        if (
+            held is None
+            or span["start"] > held["start"]
+            or (span["start"] == held["start"] and span["index"] > held["index"])
+        ):
+            by_track[span["track"]] = span
+    return [by_track[k] for k in sorted(by_track)]
+
+
+def picture_tracks(frames: list[dict]) -> list[int]:
+    """Every picture track the project uses, lowest first. Always includes 0."""
+    seen = {0}
+    for frame in frames or []:
+        seen.add(frame_track(frame))
+    return sorted(seen)
 
 
 def transition_window(frames: list[dict], spans: list[dict], transition: dict) -> dict | None:
@@ -493,10 +725,27 @@ def transition_window(frames: list[dict], spans: list[dict], transition: dict) -
     from_index = next(
         (i for i, f in enumerate(frames) if f.get("id") == after_id), None
     )
-    if from_index is None or from_index + 1 >= len(spans):
+    if from_index is None or from_index >= len(spans):
         return None
 
-    a, b = spans[from_index], spans[from_index + 1]
+    a = spans[from_index]
+    # ⚠ THE NEXT CLIP ON THE SAME TRACK, AND IT HAS TO BUTT UP AGAINST THIS ONE.
+    # It used to be `spans[from_index + 1]`, which was exact while the picture
+    # track was one sequence laid end to end and is wrong twice over now that
+    # clips are placed freely on tracks: the next clip in the LIST may be on
+    # another track, and two clips can be neighbours without touching. A
+    # TRANSITION HAPPENS ON A CUT and there is no edit point in a gap — so no cut,
+    # no transition. Inert rather than wrong, exactly like one on the last clip.
+    b = None
+    for span in spans:
+        if span["index"] == a["index"] or span["track"] != a["track"]:
+            continue
+        if span["start"] != a["end"]:
+            continue
+        if b is None or span["index"] < b["index"]:
+            b = span
+    if b is None:
+        return None
     shorter = min(a["end"] - a["start"], b["end"] - b["start"])
     duration_ms = max(
         MIN_TRANSITION_MS,
@@ -506,15 +755,20 @@ def transition_window(frames: list[dict], spans: list[dict], transition: dict) -
             shorter,
         ),
     )
-    kind = transition.get("kind")
     cut = a["end"]
     return {
         "id": transition.get("id"),
+        # Which track this cut is on — `scene_at` resolves one track at a time and
+        # must not put this track's dissolve over another track's picture.
+        "track": a["track"],
         # An unknown kind falls back HERE rather than in each renderer, so the
         # preview and the export can't fall back differently. Same rule as ease.
-        "kind": kind if kind in TRANSITION_KINDS else "dissolve",
-        "from_index": from_index,
-        "to_index": from_index + 1,
+        "kind": transition_kind(transition),
+        # Resolved here too, and for the same reason: ONE place decides what a
+        # half-written transition means, and both renderers read the answer.
+        "params": transition_params(transition),
+        "from_index": a["index"],
+        "to_index": b["index"],
         "cut_ms": cut,
         "duration_ms": duration_ms,
         "start_ms": cut - duration_ms / 2,
@@ -533,19 +787,27 @@ def transition_windows(project: dict, spans: list[dict]) -> list[dict]:
     return out
 
 
-def transition_at(project: dict, t_ms: float, spans: list[dict]) -> dict | None:
+def transition_at(
+    project: dict, t_ms: float, spans: list[dict], track: int | None = None
+) -> dict | None:
     """The transition covering `t_ms`, and how far through it we are.
 
     `mix` runs 0 → 1 across the whole window: 0 is "all outgoing picture", 1 is
     "all incoming". Half-open at both ends like every other visibility test
     here. Two transitions written onto the same cut is a project that shouldn't
     exist (the editor replaces rather than appends); the first one wins.
+
+    `track` narrows it to the cuts on one picture track, which is what `scene_at`
+    asks: a transition belongs to an edit point, an edit point belongs to a track,
+    and a dissolve on the track above must not be drawn over the one below.
     """
     frames = project.get("frames") or []
     t = float(t_ms or 0)
     for transition in project.get("transitions") or []:
         window = transition_window(frames, spans, transition)
         if window is None:
+            continue
+        if track is not None and window["track"] != track:
             continue
         if t < window["start_ms"] or t >= window["end_ms"]:
             continue
@@ -601,35 +863,64 @@ def scene_at(project: dict, t_ms: float, end_ms: int | None = None) -> dict:
 
         picture (× 2 during a transition) → shapes → overlay pictures → text
 
-    ON A TRANSITION there are two pictures: `frame` is the OUTGOING one for the
+    ⚠ `pictures` IS THE PICTURE, AND IT IS A STACK — one entry per picture track
+    that has something on it at `t`, BOTTOM TRACK FIRST. Every renderer must walk
+    it; nothing may read `frame` and think it has drawn the film. An EMPTY stack
+    is legal and means the letterbox colour: clips are placed freely now, so a
+    track can have a gap in it, and a gap on the bottom track with nothing above
+    it is a moment where the picture IS the backdrop.
+
+    ⚠ `frame` / `frame_b` / `mix` / `transition` / `transition_params` ARE THE
+    TOPMOST ENTRY, DERIVED — never computed a second way. They answer "which clip
+    is at the playhead", which is a different question from "what is on screen".
+    On a project with one picture track — every animatic written before tracks —
+    the stack has exactly one entry and these are it.
+
+    ON A TRANSITION a track has two pictures: `frame` is the OUTGOING one for the
     WHOLE window — including the half past the cut, where `frame_spans` would
     say the incoming picture is up — `frame_b` is the picture arriving, and
     `mix` says how far through we are. See the note in transitions.js for why
     that way round: it is what makes `mix` run 0 → 1 without doubling back, and
     the only reading under which a wipe or a slide has a direction.
-
-    Off a transition `frame_b` is None, `mix` is 0.0 and `transition` is None —
-    which is every animatic that existed before this, resolving exactly as it
-    always did.
     """
     frames = project.get("frames") or []
     spans, total_ms = frame_spans(frames, end_ms)
     t = max(0.0, float(t_ms or 0))
 
-    span = next((s for s in spans if s["start"] <= t < s["end"]), None)
-    frame = None
-    if span is not None:
+    # ⚠ ONE PASS PER TRACK, bottom to top, and each track resolves its OWN
+    # transition. A transition is track-local (`transition_window`), so asking the
+    # project once and applying the answer to every track would put one track's
+    # dissolve on another's picture.
+    pictures: list[dict] = []
+    for span in _stack_at(spans, t):
         frame = _picture_at(frames, spans, span["index"], t)
-
-    # A transition overrides which picture is "the frame", because for the half
-    # of the window past the cut the answer is the one on its way OUT. Both
-    # pictures are resolved outside their own span here — keys hold at the ends
-    # rather than extrapolating, so neither flies off screen.
-    active = transition_at(project, t, spans) if frame is not None else None
-    frame_b = None
-    if active is not None:
-        frame = _picture_at(frames, spans, active["from_index"], t)
-        frame_b = _picture_at(frames, spans, active["to_index"], t)
+        # The transition overrides which picture is "the frame", because for the
+        # half of the window past the cut the answer is the one on its way OUT.
+        # Both pictures are resolved outside their own span here — keys hold at
+        # the ends rather than extrapolating, so neither flies off screen.
+        active = transition_at(project, t, spans, span["track"])
+        frame_b = None
+        if active is not None:
+            frame = _picture_at(frames, spans, active["from_index"], t)
+            frame_b = _picture_at(frames, spans, active["to_index"], t)
+        pictures.append(
+            {
+                "track": span["track"],
+                "frame": frame,
+                "frame_b": frame_b,
+                "mix": active["mix"] if active is not None else 0.0,
+                "transition": active["kind"] if active is not None else None,
+                # ⚠ ALWAYS A DICT, empty off a transition rather than absent — see
+                # the note on the scene's own copy of this field below.
+                "transition_params": active["params"] if active is not None else {},
+            }
+        )
+    # The topmost track's, derived. See the docstring: this is "the clip at the
+    # playhead", not "the picture", and it is never worked out a second way.
+    top = pictures[-1] if pictures else None
+    frame = top["frame"] if top is not None else None
+    frame_b = top["frame_b"] if top is not None else None
+    active = top if (top is not None and top["transition"]) else None
 
     # An empty caption is skipped HERE, so the preview and the exporter skip it
     # for the same reason in the same place.
@@ -669,12 +960,23 @@ def scene_at(project: dict, t_ms: float, end_ms: int | None = None) -> dict:
     return {
         "t_ms": t,
         "total_ms": total_ms,
+        # ⚠ THE PICTURE, bottom track first. Renderers walk this; `frame` below is
+        # the topmost entry and answers a different question. See the docstring.
+        "pictures": pictures,
         "frame": frame,
         # The transition, flattened onto the scene: the second picture, how far
         # through the blend we are, and which blend. None / 0.0 / None off a cut.
         "frame_b": frame_b,
         "mix": active["mix"] if active is not None else 0.0,
-        "transition": active["kind"] if active is not None else None,
+        "transition": active["transition"] if active is not None else None,
+        # ⚠ ALWAYS A DICT, empty off a transition rather than absent. A missing
+        # key here is `undefined` in JS, which JSON drops, and the resolved scene
+        # would then be a different SHAPE on the two sides — which is exactly how
+        # `tests/render_parity.py` ends up comparing two things it thinks are
+        # equal for the wrong reason. Same rule `place` and `blend` follow.
+        "transition_params": (
+            active["transition_params"] if active is not None else {}
+        ),
         "shapes": shapes,
         "overlays": overlays,
         "texts": texts,
@@ -791,26 +1093,59 @@ def scene_signature(scene: dict) -> str:
         return (":L" + "+".join(bits)) if bits else ""
 
     parts: list[str] = []
-    f = scene.get("frame")
-    if f:
-        parts.append(
-            f"f{f['index']}:{n(f['scale'])}:{n(f['x'])}:{n(f['y'])}:{n(f['opacity'])}"
-            + clip_extra(f)
-            + look_extra(f)
-        )
-    else:
-        parts.append("f-")
     # ⚠ `mix` MUST be in the key. Without it every video frame of a dissolve
     # resolves to one signature, the exporter renders a single still and reuses
     # it for the whole blend, and the transition SNAPS instead of blending —
     # exactly the reuse bug this key already guards against for keyframes.
     # Added only when there IS a second picture, so a project with no
     # transitions produces the signature it produced before they existed.
-    b = scene.get("frame_b")
-    if b:
+    #
+    # ⚠ AND SO MUST ITS PARAMETERS, for the same reason once more: a wipe
+    # travelling left and one travelling right resolve to the same two pictures
+    # at the same `mix` and differ ONLY here. Leaving them out would render one
+    # still per `mix` value and reuse it across directions — and worse, a project
+    # whose only edit was the direction would hit the cache from the previous
+    # export and come back unchanged.
+    #
+    # Only NON-DEFAULT parameters are written, so a plain wipe or dissolve signs
+    # byte-for-byte what it signed before parameters existed.
+    def param_extra(kind: str, params: dict) -> str:
+        defaults = TRANSITION_PARAMS.get(kind or "", {})
+        bits = [
+            f"{name}={value if isinstance(value, str) else n(value)}"
+            for name in sorted(defaults)
+            for value in (params.get(name, defaults[name]),)
+            if value != defaults[name]
+        ]
+        return (":p" + ",".join(bits)) if bits else ""
+
+    # ⚠ EVERY TRACK, bottom first — not just the topmost. Two moments that differ
+    # only in what an upper track is showing are two different frames, and signing
+    # one of them would make the exporter reuse the other's still.
+    #
+    # With ONE track this writes byte-for-byte the string it always wrote (an `f…`
+    # part, then an `x…` part on a transition), so a project that predates tracks
+    # hits the render cache from its previous export exactly as before.
+    if not (scene.get("pictures") or []):
+        parts.append("f-")
+    for picture in scene.get("pictures") or []:
+        f = picture.get("frame")
+        if not f:
+            continue
         parts.append(
-            f"x{scene.get('transition')}:{n(scene.get('mix'))}"
-            f":b{b['index']}:{n(b['scale'])}:{n(b['x'])}:{n(b['y'])}:{n(b['opacity'])}"
+            f"f{f['index']}:{n(f['scale'])}:{n(f['x'])}:{n(f['y'])}:{n(f['opacity'])}"
+            + clip_extra(f)
+            + look_extra(f)
+        )
+        b = picture.get("frame_b")
+        if not b:
+            continue
+        parts.append(
+            f"x{picture.get('transition')}:{n(picture.get('mix'))}"
+            + param_extra(
+                picture.get("transition"), picture.get("transition_params") or {}
+            )
+            + f":b{b['index']}:{n(b['scale'])}:{n(b['x'])}:{n(b['y'])}:{n(b['opacity'])}"
             + clip_extra(b)
             + look_extra(b)
         )

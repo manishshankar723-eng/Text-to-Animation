@@ -61,11 +61,16 @@ import {
   audioEndMs,
   clipAt,
   clipId,
+  crossfadePatch,
+  crossfadeTarget,
+  DEFAULT_CROSSFADE_MS,
+  fadeEndPatch,
   laneClips,
   MIN_CLIP_MS,
   splitClip,
 } from "../animatic/audio_clips.js";
 import { CAPTION_LAYER_ID, CAPTION_LAYER_NAME } from "../animatic/captions.js";
+import { MIN_SPLIT_MS, splitTimedClip } from "../animatic/razor.js";
 import {
   PRESETS as EXPORT_PRESETS,
   applyPreset,
@@ -123,6 +128,9 @@ import ShapeGallery, {
   ShapeSwatch,
 } from "./Shapes.jsx";
 import EffectsPanel from "./EffectsPanel.jsx";
+import EffectsLibrary from "./EffectsLibrary.jsx";
+import { FX_ITEM_COUNT, fxEntry } from "../animatic/fx_library.js";
+import { MAX_EFFECTS } from "../animatic/gl/shaders/layer.js";
 import RegeneratePanelInline, { RelengthShotInline } from "./RegeneratePanelInline.jsx";
 import {
   AudioProperties,
@@ -937,6 +945,9 @@ export default function AnimaticEditor({
   // looks like a broken project, and say that the EXPORT is unaffected: the MP4
   // is rendered by Pillow on the server and never touches this.
   const [glFailed, setGlFailed] = useState(false);
+  // Stable, because `ProgramCanvas` builds its WebGL context once and a prop that
+  // changed identity every render used to take the context down with it.
+  const onGlUnavailable = useCallback(() => setGlFailed(true), []);
   const activeTexts = scene.texts;
   const activeShapes = scene.shapes;
   const activeOverlays = scene.overlays;
@@ -984,10 +995,10 @@ export default function AnimaticEditor({
 
   useMonitorVideo({ scene, frames, videoElsRef, playing, rate });
 
-  // Steps by PICTURE, which is what the transport arrows mean — they sit next
-  // to a "Frame 3 of 12" readout. It stays here rather than in the transport
-  // hook because it needs `currentIndex`, and that comes from the scene, which
-  // is derived from the clock the hook owns.
+  // Steps by PICTURE, not by video frame — that is what the transport arrows
+  // mean. It stays here rather than in the transport hook because it needs
+  // `currentIndex`, and that comes from the scene, which is derived from the
+  // clock the hook owns.
   const stepFrame = useCallback(
     (delta) => {
       if (!frames.length) return;
@@ -1391,10 +1402,16 @@ export default function AnimaticEditor({
     }
     for (const l of of("audio")) {
       const clips = laneClips(audioTracks, l.id);
+      // ⚠ NAMED FOR THE FILE ONLY WHILE IT HOLDS ONE. A row can hold clips from
+      // several files now (a clip dragged down from another row — see
+      // `moveClipToLane`), and calling that row by whichever file happens to
+      // start earliest would rename it under you as you dragged. The LAYER's own
+      // name is the honest label for a row with a mix on it.
+      const files = new Set(clips.map((c) => c.upload_id));
       out.push({
         key: l.id,
         kind: "audio",
-        name: clips.length ? clips[0].filename : l.name,
+        name: files.size === 1 ? clips[0].filename : l.name,
         layerId: l.id,
         tracks: clips,
         removable: true,
@@ -1482,6 +1499,60 @@ export default function AnimaticEditor({
     },
     [frames, starts]
   );
+
+  /**
+   * Cut one caption, shape or overlay picture where the razor landed.
+   *
+   * The arithmetic — including planting a keyframe at the blade so the animation
+   * does not jump at the edit — is all in `splitTimedClip`; this is the part
+   * that has to know about React state and about what to say when a cut is
+   * refused.
+   */
+  function splitTimedAt(kind, id, ms) {
+    const pool = { text: texts, shape: shapes, overlay: overlays }[kind];
+    const setPool = { text: setTexts, shape: setShapes, overlay: setOverlays }[kind];
+    const clip = (pool || []).find((c) => c.id === id);
+    if (!clip || !setPool) return false;
+    const halves = splitTimedClip(clip, ms, newId());
+    if (!halves) {
+      setNotice(
+        `Too close to the edge of that clip — each side of a cut needs at least ${MIN_SPLIT_MS}ms.`
+      );
+      return false;
+    }
+    // ⚠ IN PLACE, not appended. These lanes draw their clips in list order, so
+    // pushing the tail onto the end would put the second half of a cut behind
+    // every other clip on the row — invisible wherever two of them overlap.
+    setPool((list) => list.flatMap((c) => (c.id === id ? halves : [c])));
+    setNotice("Cut — that's two clips now, and each can be timed on its own.");
+    return true;
+  }
+
+  /**
+   * THE RAZOR, and there is one of it.
+   *
+   * ⚠ IT CUTS THE CLIP THE TIMELINE NAMED, AND NOTHING ELSE. It used to be
+   * given a time and left to work out what that meant, which is how a press in
+   * the time ruler ended up cutting the picture sequence (user-reported: "I
+   * click in the seconds row and my image clip got cut"). Every lane now
+   * identifies its own clip at the press, so the razor cuts the layer you are
+   * looking at — and a press that hit no clip says so instead of guessing.
+   */
+  function razorAt(kind, id, ms) {
+    if (!kind) {
+      setNotice("The razor cuts a CLIP — click the bar itself, on the layer you want to cut.");
+      return;
+    }
+    if (kind === "frame") {
+      splitFrameAt(ms);
+      return;
+    }
+    if (kind === "audio") {
+      splitAudioAt(id, ms);
+      return;
+    }
+    splitTimedAt(kind, id, ms);
+  }
 
   // ⚠ THE SELECTION, MINUS ANYTHING THAT NO LONGER EXISTS. A clip can leave the
   // project while it is selected — an undo, a delete from a pane, a captions
@@ -1602,6 +1673,102 @@ export default function AnimaticEditor({
     if (audioIds.size) {
       setAudioTracks((list) => list.map((a) => (audioIds.has(clipId(a)) ? slide(a) : a)));
     }
+  }
+
+  /**
+   * A CLIP WAS DRAGGED ONTO ANOTHER ROW — the vertical half of a move drag.
+   *
+   * ⚠ THE TIMELINE HANDS OVER THE ROW, NOT A LAYER ID, and this is where "that
+   * row" is turned into something a clip can carry. For a caption, a shape or an
+   * overlay picture a row IS a `layer_id` and the write is one field. For AUDIO
+   * it is not: a track saved before layers existed owns a row of its own, and
+   * those rows are grouped by FILE (see `lanes`) precisely so that razoring one
+   * take into six pieces looks like six cuts rather than six new tracks. A row
+   * with no id is not a row a clip can be told to sit on — which is why "drop it
+   * on the other audio row" used to be refused outright, reported as the main
+   * complaint here: "I can't move some audio part to the other audio layer".
+   *
+   * So a file-grouped row is PROMOTED to a real layer the first time something is
+   * dropped on it, taking its own clips with it. After that it is an ordinary
+   * layer row that happens to have started life as one file, and it can hold as
+   * many as you like.
+   *
+   * ⚠ ONE UNDO. The promotion is `setLayers` + `setAudioTracks` in the same event
+   * handler, so React batches them into a single render and the stack records a
+   * single signature change (see `useUndoStack`). Ctrl+Z puts the clip back AND
+   * takes the layer away, which is the one thing the user did.
+   */
+  function moveClipToLane(kind, id, lane, patch = {}) {
+    if (!lane) return;
+    if (kind === "audio") {
+      moveTrackToLane(id, lane, patch);
+      return;
+    }
+    const layer_id = laneId(lane.layerId || "");
+    const write = { ...patch, layer_id };
+    if (kind === "text") {
+      patchText(id, write);
+      selectOnly({ text: id });
+    } else if (kind === "shape") {
+      patchShape(id, write);
+      selectOnly({ shape: id });
+    } else if (kind === "overlay") {
+      patchOverlay(id, write);
+      selectOnly({ overlay: id });
+    } else return;
+    setNotice(`Moved to ${lane.name} at ${formatTime(patch.start_ms || 0)}.${hiddenWarning(lane)}`);
+  }
+
+  /**
+   * ⚠ A ROW WITH ITS EYE OFF IS STILL A DESTINATION, and it says so.
+   *
+   * Refusing the drop would be the wrong answer — hiding a row is a VIEW state,
+   * not a lock, and a gesture that silently does nothing is the worst of the
+   * three outcomes. But landing a clip somewhere it stops drawing, without a
+   * word, looks exactly like the clip being deleted. So it moves, and the notice
+   * says why the monitor did not change.
+   */
+  const hiddenWarning = (lane) =>
+    lane.hidden
+      ? " That row is hidden, so it is left out of the monitor and the export until you turn its eye back on."
+      : "";
+
+  /** The audio half of `moveClipToLane` — see the promotion rule above. */
+  function moveTrackToLane(id, lane, patch) {
+    const track = audioTracks.find((a) => clipId(a) === id);
+    if (!track) return;
+    // A row that already IS a layer is a destination as it stands.
+    if (lane.layerId) {
+      patchTrack(id, { ...patch, layer_id: lane.layerId });
+      selectOnly({ track: id });
+      setNotice(
+        `“${track.filename}” moved to ${lane.name} at ${formatTime(patch.start_ms || 0)}.` +
+          hiddenWarning(lane)
+      );
+      return;
+    }
+    const sitting = lane.tracks || [];
+    // The placeholder "Audio" band, which only exists on a project with NO
+    // tracks at all — so there is nothing to have dragged onto it. Belt and
+    // braces: promoting an empty row would leave a layer nothing lives on.
+    if (!sitting.length) return;
+    const layer = addLayer("audio", { name: lane.name, notice: false });
+    const moving = new Set(sitting.map((t) => clipId(t)));
+    setAudioTracks((list) =>
+      list.map((a) => {
+        const cid = clipId(a);
+        // The dragged clip lands where it was dropped; the row's own clips only
+        // change which row they belong to, never when they play.
+        if (cid === id) return { ...a, ...patch, layer_id: layer.id };
+        return moving.has(cid) ? { ...a, layer_id: layer.id } : a;
+      })
+    );
+    selectOnly({ track: id });
+    setNotice(
+      `“${track.filename}” moved onto ${lane.name} at ${formatTime(patch.start_ms || 0)} — ` +
+        "that row is a layer now, so it can hold both files." +
+        hiddenWarning(lane)
+    );
   }
 
   /**
@@ -1726,12 +1893,18 @@ export default function AnimaticEditor({
             return;
           case "KeyK":
             e.preventDefault();
-            // ⚠ Cuts what is SELECTED. With an audio clip selected, Ctrl+K is
-            // about that clip — anything else would make the shortcut useless
-            // for the edit it was just asked for, since the picture sequence is
-            // never what you were looking at when you selected a waveform.
-            if (selectedTrack) splitAudioAt(selectedTrackId, timeRef.current);
-            else splitFrameAt(timeRef.current);
+            // ⚠ Cuts what is SELECTED, and now that means every kind of clip
+            // rather than only the two that had a razor. With something
+            // selected, Ctrl+K is about that clip — anything else would make
+            // the shortcut useless for the edit it was just asked for, since
+            // the picture sequence is never what you were looking at when you
+            // selected a waveform, a caption or a shape. The picture is the
+            // fallback because it is the only layer that is always there.
+            if (selectedTrack) razorAt("audio", selectedTrackId, timeRef.current);
+            else if (selectedText) razorAt("text", selectedTextId, timeRef.current);
+            else if (selectedShape) razorAt("shape", selectedShapeId, timeRef.current);
+            else if (selectedOverlay) razorAt("overlay", selectedOverlayId, timeRef.current);
+            else razorAt("frame", null, timeRef.current);
             return;
           case "KeyX":
             if (e.shiftKey) {
@@ -1908,6 +2081,28 @@ export default function AnimaticEditor({
   const patchTransition = (id, patch) =>
     setTransitions((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 
+  /**
+   * One transition record.
+   *
+   * ⚠ ONE LITERAL, TWO CALLERS — the ＋ on a cut and a preset dropped out of
+   * the library. A field added to a transition has exactly one place to be
+   * added, so it cannot arrive on the ones made one way and not the other.
+   */
+  function newTransition(afterFrameId, kind = "dissolve", params = {}) {
+    return {
+      id: newId(),
+      after_frame_id: afterFrameId,
+      kind,
+      // ⚠ WHAT THE PRESET SAYS, AND NOTHING MORE. `transitionParams` supplies
+      // every default on the way out, so filling them in here would pin today's
+      // defaults into a project that then ignores tomorrow's — the same reason
+      // a new clip carries no `keyframes` until one is set. The ＋ button
+      // passes none at all, which is the plain dissolve it has always made.
+      params: { ...params },
+      duration_ms: DEFAULT_TRANSITION_MS,
+    };
+  }
+
   function addTransition(afterFrameId) {
     // One per cut. Pressing ＋ on a cut that already has one selects it rather
     // than stacking a second, which would make the render depend on list order.
@@ -1916,17 +2111,147 @@ export default function AnimaticEditor({
       selectOnly({ transition: existing.id });
       return;
     }
-    const transition = {
-      id: newId(),
-      after_frame_id: afterFrameId,
-      kind: "dissolve",
-      duration_ms: DEFAULT_TRANSITION_MS,
-    };
+    const transition = newTransition(afterFrameId);
     setTransitions((list) => [...list, transition]);
     selectOnly({ transition: transition.id });
     setNotice(
       "Dissolve added on that cut — it blends across the edit without making the video any longer."
     );
+  }
+
+  // ------------------------------------------------- the effects library
+  // The Effects tab in the Media pane is a browser you take from, and this is
+  // the one door everything it offers comes through — a tile DRAGGED onto a row
+  // and a tile CLICKED in the list end up in the same two functions. Two ways in
+  // that meant different things is a UI you cannot predict, and it is the thing
+  // that goes wrong first when a drop path is bolted on beside a click path.
+
+  /**
+   * Open the chain of the clip that carries it.
+   *
+   * ⚠ SELECTING THE CLIP IS ONLY HALF THE ANSWER. With Effects folded shut the
+   * Properties pane looks exactly as it did and the effect that just landed is
+   * invisible — the same "I added it and nothing happened" that `openGroup`
+   * exists for. This is also what the ƒx badge on a timeline clip calls.
+   */
+  function manageEffects(what, id) {
+    selectOnly(what === "overlay" ? { overlay: id } : { frame: id });
+    openGroup("look:effects");
+  }
+
+  function addEffectToClip(entry, what, clip) {
+    const chain = clip.effects || [];
+    if (chain.length >= MAX_EFFECTS) {
+      setNotice(
+        `That clip already carries ${MAX_EFFECTS} effects, which is the most one clip can hold.`
+      );
+      return;
+    }
+    // ⚠ THE SAME ID SCHEME THE PROPERTIES PANE USES, and it matters: the id is
+    // what a keyframe track names (`fx:<id>:<param>`), so it has to be unique
+    // within the clip and has to survive the chain being re-ordered.
+    const effect = {
+      id: `fx${Date.now().toString(36)}${chain.length}`,
+      kind: entry.kind,
+      // What the PRESET says, and nothing more — `effectParams` fills in every
+      // default when it is read. No effect has presets yet; carrying them here
+      // is what stops the first one that does needing this line changed.
+      params: { ...entry.params },
+    };
+    (what === "overlay" ? patchOverlay : patchFrame)(clip.id, {
+      effects: [...chain, effect],
+    });
+    manageEffects(what, clip.id);
+    setNotice(`${entry.label} added — its controls are in Properties, under Effects.`);
+  }
+
+  /**
+   * Put a transition on one cut. `cut` indexes the EDGES of the sequence, the
+   * way `frameIndexAt` counts them: 0 is before the first picture and
+   * `frames.length` is past the last, and neither of those is an edit point.
+   */
+  function addTransitionAtCut(entry, cut) {
+    if (cut <= 0 || cut >= frames.length) {
+      setNotice("A transition goes on a cut BETWEEN two shots — there isn't one there.");
+      return;
+    }
+    const after = frames[cut - 1];
+    const existing = transitions.find((t) => t.after_frame_id === after.id);
+    if (existing) {
+      // ⚠ REPLACE, DON'T STACK. One transition per cut is what keeps
+      // `transitionAt` single-valued — two on a cut would make the render
+      // depend on list order. Dropping a wipe on a cut that already dissolves
+      // means "make it a wipe", which is the only reading that is neither a
+      // no-op nor a project that shouldn't exist.
+      //
+      // ⚠ AND THE PARAMETERS ARE REPLACED WHOLESALE, not merged: a preset IS
+      // its parameters, so dropping "Wipe up" on a cut that wipes right has to
+      // leave a wipe travelling up with nothing of the old one behind it.
+      patchTransition(existing.id, { kind: entry.kind, params: { ...entry.params } });
+      selectOnly({ transition: existing.id });
+      setNotice(`That cut is a ${entry.label.toLowerCase()} now.`);
+      return;
+    }
+    const made = newTransition(after.id, entry.kind, entry.params);
+    setTransitions((list) => [...list, made]);
+    selectOnly({ transition: made.id });
+    setNotice(
+      `${entry.label} added on that cut — it blends across the edit without making the video any longer.`
+    );
+  }
+
+  /** Which picture is on screen at `ms` — the clip an effect dropped there grades. */
+  function frameIndexContaining(ms) {
+    if (!frames.length) return -1;
+    let best = 0;
+    starts.forEach((s, i) => {
+      if (s <= ms) best = i;
+    });
+    return best;
+  }
+
+  /**
+   * A tile CLICKED rather than dragged. It lands where the playhead is, which
+   * is the same rule the shape gallery beside it follows — and the only path
+   * to the library that works without a mouse.
+   */
+  function addFxFromLibrary(entry) {
+    if (entry.type === "transition") {
+      addTransitionAtCut(entry, frameIndexAt(timeMs));
+      return;
+    }
+    // ⚠ A CROSSFADE NEEDS A ROW AS WELL AS A MOMENT, which is the one thing the
+    // playhead cannot supply on its own: several lanes can be sounding at once,
+    // and crossfading "whichever one `clipAt` happened to find last" is a
+    // lottery. Resolved by the SAME three lines as the razor's keyboard shortcut
+    // — prefer the selected clip when the playhead is standing on it, otherwise
+    // take whatever is there — because "cut what I'm looking at" and "crossfade
+    // what I'm looking at" are the same question and must not have two answers.
+    if (entry.type === "audioTransition") {
+      const selected = audioTracks.find((a) => clipId(a) === selectedTrackId);
+      const clip =
+        (selected && clipAt([selected], timeMs) ? selected : null) ||
+        clipAt(audioTracks, timeMs);
+      if (!clip) {
+        setNotice(
+          "Park the playhead on an audio clip first — a crossfade shapes a sound, so it needs one under the playhead."
+        );
+        return;
+      }
+      addCrossfade(entry, laneSiblings(clip), timeMs);
+      return;
+    }
+    // An overlay you have selected beats the picture underneath it: you picked
+    // it, so it is what "this clip" means.
+    if (selectedOverlay) {
+      addEffectToClip(entry, "overlay", selectedOverlay);
+      return;
+    }
+    if (currentIndex < 0) {
+      setNotice("Add a picture first — an effect grades a shot, so it needs one to sit on.");
+      return;
+    }
+    addEffectToClip(entry, "frame", frames[currentIndex]);
   }
 
   function deleteTransition(id) {
@@ -1987,19 +2312,25 @@ export default function AnimaticEditor({
   // a layer means: you add the row, then you put things on it.
   const LAYER_NAMES = { image: "Images", text: "Text", shape: "Shapes", audio: "Audio" };
 
-  function addLayer(kind) {
+  // `name` and `notice` are for ONE caller: promoting a file-grouped audio row
+  // into a real layer so a clip can be dropped on it (`moveClipToLane`). That is
+  // not "a layer was added" from where the user is standing — the row was already
+  // on screen — so it keeps the row's name and says nothing of its own.
+  function addLayer(kind, { name = "", notice = true } = {}) {
     const taken = layers.filter((l) => l.kind === kind).length;
     const layer = {
       id: newId(),
       kind,
       // Numbered from 2 because the default lane of that kind is already "Text",
       // "Shapes", … on screen — so the first ADDED one reads as the second row.
-      name: `${LAYER_NAMES[kind] || "Layer"} ${taken + 2}`,
+      name: name || `${LAYER_NAMES[kind] || "Layer"} ${taken + 2}`,
     };
     setLayers((list) => [...list, layer]);
-    setNotice(
-      `Empty ${LAYER_NAMES[kind]?.toLowerCase() || ""} layer added — use its ＋ to put something on it.`
-    );
+    if (notice) {
+      setNotice(
+        `Empty ${LAYER_NAMES[kind]?.toLowerCase() || ""} layer added — use its ＋ to put something on it.`
+      );
+    }
     return layer;
   }
 
@@ -2109,6 +2440,297 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * SOMETHING WAS DROPPED ON A LANE — from the Media pane, or off the desktop.
+   *
+   * The timeline decides WHERE (which row, and the snapped time under the
+   * pointer); this decides what that means, because only the editor knows what
+   * an asset is. `atMs` is a TIME, and every branch below turns it into whatever
+   * that row measures in:
+   *
+   *   · the picture rows are a SEQUENCE with no gaps, so a time is the nearest
+   *     CUT — the clip is moved to that place in the order, not left floating at
+   *     0:07 with a hole in front of it. That is what the picture track has
+   *     always done; a gap on it is not a thing that can exist.
+   *   · an audio row is free-floating, so a time is exactly the time: the clip's
+   *     `start_ms`.
+   *
+   * ⚠ A CLIP IS NEVER CONVERTED BY BEING MOVED. Video lives on the Video row and
+   * stills on Images because that is what they ARE (`frameOrigin`), so a drop
+   * that would change that is refused with a reason rather than quietly doing
+   * something else. The timeline already refuses those mid-drag (`laneTakes`);
+   * this is the second half of the same rule, for the cases only the editor can
+   * see — which file an audio clip belongs to, what kind a dropped file is.
+   */
+  function frameIndexAt(ms) {
+    // The nearest CUT, including both ends: dropping past the last picture is
+    // an append, and dropping before the first is an insert at the head.
+    const edges = [...starts, totalMs];
+    let best = 0;
+    let bestGap = Infinity;
+    edges.forEach((t, i) => {
+      const gap = Math.abs(t - ms);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+
+  /**
+   * A PICTURE FROM THE SEQUENCE, COPIED ONTO AN IMAGE LAYER.
+   *
+   * Dropping a frame card on an image layer means "put this picture over the
+   * video from here", so it is a COPY: the still stays where it is in the
+   * sequence. Moving it would empty a cut out of the video to make an overlay,
+   * which is never what dragging a picture onto a layer above meant.
+   *
+   * ⚠ A BOARD PANEL HAS NO UPLOAD OF ITS OWN — its picture belongs to the
+   * storyboard (`src.storyboard_id`), while an overlay is only ever an
+   * `upload_id` served from this animatic's media route. So its bytes, which
+   * the editor is already holding as a blob for the thumbnail, are uploaded
+   * into this animatic once. An uploaded still is reused as-is: same picture,
+   * same upload, nothing sent twice.
+   */
+  async function overlayFromFrame(frame, lane, at) {
+    if ((frame.kind || "image") === "color") {
+      setNotice("A colour card has no picture to put on a layer.");
+      return;
+    }
+    if (frameOrigin(frame) === "video") {
+      setNotice("That is footage — an image layer holds a picture.");
+      return;
+    }
+    let uploadId = frame.src?.upload_id || "";
+    try {
+      if (!uploadId) {
+        const blobUrl = urls[frame.id];
+        if (!blobUrl) {
+          setNotice("That picture is still loading — try again in a moment.");
+          return;
+        }
+        setUploading(true);
+        const blob = await (await fetch(blobUrl)).blob();
+        const type = blob.type || "image/png";
+        const file = new File([blob], `${frame.label || "frame"}.${type.split("/")[1] || "png"}`, {
+          type,
+        });
+        const res = await api.uploadAnimaticImages(animaticId, [file]);
+        uploadId = res.items?.[0]?.upload_id || "";
+        if (!uploadId) {
+          setNotice("That picture could not be copied onto the layer.");
+          return;
+        }
+      }
+      const overlay = {
+        id: newId(),
+        layer_id: laneId(lane.layerId || ""),
+        upload_id: uploadId,
+        start_ms: at,
+        // As long as the still is held in the sequence — the length you can
+        // already see on its card, so the overlay arrives the size of the thing
+        // you dragged rather than an arbitrary two seconds.
+        duration_ms: frame.duration_ms || 2000,
+        x: 0.5,
+        y: 0.5,
+        w: 0.3,
+        h: 0.3,
+        opacity: 1,
+        rotation: 0,
+        url: `/animatics/${animaticId}/media/${uploadId}`,
+      };
+      setOverlays((list) => [...list, overlay]);
+      selectOnly({ overlay: overlay.id });
+      setNotice(`Picture added to ${lane.name} at ${formatTime(at)} — drag it on the frame to place it.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function dropAsset({ lane, atMs, asset, files }) {
+    const at = Math.max(0, Math.round(atMs || 0));
+
+    // ---- from the desktop -------------------------------------------------
+    if (files?.length) {
+      if (lane.kind === "frames") {
+        // ⚠ `addAssets`, NOT a picker of its own: it is the one door every
+        // upload goes through, and it routes by file type. A video dropped on
+        // the Images row still becomes a video clip — it simply appears on the
+        // Video row, which is the truth about what it is.
+        const usable = files.filter((f) => kindOf(f) === "image" || kindOf(f) === "video");
+        if (!usable.length) {
+          setNotice("That is not a picture or a video — the picture rows take images and footage.");
+          return;
+        }
+        await addAssets(usable, frameIndexAt(at));
+        return;
+      }
+      if (lane.kind === "image") {
+        await addOverlayFiles(files, lane.layerId || "", at);
+        return;
+      }
+      const audio = files.filter((f) => kindOf(f) === "audio");
+      if (!audio.length) {
+        setNotice("The audio rows take sound files — a picture belongs on the picture track.");
+        return;
+      }
+      if (audioFileCount() >= MAX_AUDIO_TRACKS) {
+        setNotice(`That's the limit — an animatic can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
+        return;
+      }
+      pendingAudioLane.current = lane.layerId || "";
+      await addAudioTrack(audio[0], at);
+      setNotice(`“${audio[0].name}” added at ${formatTime(at)}.`);
+      return;
+    }
+
+    if (!asset?.id) return;
+
+    // ---- a picture already in the sequence --------------------------------
+    if (asset.kind === "frame") {
+      const from = frames.findIndex((f) => f.id === asset.id);
+      if (from < 0) return;
+      // Onto an image LAYER: a copy over the video, not a place in the
+      // sequence. The two rows both say "image" and mean different things —
+      // see `overlayFromFrame`.
+      if (lane.kind === "image") {
+        await overlayFromFrame(frames[from], lane, at);
+        return;
+      }
+      const isVideo = frameOrigin(frames[from]) === "video";
+      if (isVideo !== (lane.only === "video")) {
+        setNotice(
+          isVideo
+            ? "That is a video clip — it lives on the Video row."
+            : "That is a still — it lives on the Images row."
+        );
+        return;
+      }
+      const to = frameIndexAt(at);
+      // Dropping a clip either side of itself is where it already is.
+      if (to === from || to === from + 1) return;
+      reorder(from, to);
+      // ⚠ ITS NEW PLACE, NOT THE TIME IT WAS DROPPED AT. `starts` is the
+      // sequence BEFORE the move, so quoting a time off it would name where the
+      // clip that used to be there began. A position is exact, and it is the
+      // number already printed on the card in the Media pane.
+      setNotice(`Moved to #${(to > from ? to - 1 : to) + 1} in the sequence.`);
+      return;
+    }
+
+    // ---- an effect or a transition, out of the Effects library ------------
+    // ⚠ THE PAYLOAD NAMES A PRESET AND IS LOOKED UP, NOT TRUSTED. It carries an
+    // ENTRY id ("wipe:up"), never a kind — four wipes share one kind, so a kind
+    // could not say which. And it carries no parameters: those are read out of
+    // the library HERE, at drop time, so a tab left open since before a preset
+    // was last edited still drops the current one. `fxEntry` returning null is
+    // how an id this build doesn't have stops here rather than becoming an
+    // effect both renderers silently skip.
+    if (asset.kind === "fxAudioTransition") {
+      const entry = fxEntry("audioTransition", asset.id);
+      // ⚠ `laneTakes` HAS ALREADY REFUSED EVERY OTHER ROW, so unlike a video
+      // transition there is nothing left to turn away here — the marker on the
+      // drag said "audio only" and the picture rows never lit up.
+      if (entry) addCrossfade(entry, lane.tracks || [], at);
+      return;
+    }
+
+    if (asset.kind === "fxEffect" || asset.kind === "fxTransition") {
+      const entry = fxEntry(
+        asset.kind === "fxTransition" ? "transition" : "effect",
+        asset.id
+      );
+      if (!entry) return;
+
+      if (entry.type === "transition") {
+        // The two picture rows are one sequence, so a cut is a cut on either —
+        // but an image LAYER is a picture composited over the film and has no
+        // edit points at all. `laneTakes` cannot tell the two payloads apart
+        // mid-drag, so this is where a transition on an overlay row is refused.
+        if (lane.kind !== "frames") {
+          setNotice(
+            "A transition goes on a cut in the picture sequence — an image layer has no cuts."
+          );
+          return;
+        }
+        addTransitionAtCut(entry, frameIndexAt(at));
+        return;
+      }
+
+      if (lane.kind === "image") {
+        const onto = overlays.find(
+          (o) =>
+            (o.layer_id || "") === (lane.layerId || "") &&
+            at >= (o.start_ms || 0) &&
+            at < (o.start_ms || 0) + (o.duration_ms || 0)
+        );
+        if (!onto) {
+          setNotice("Drop it ON a picture — an effect grades a clip, not an empty stretch of row.");
+          return;
+        }
+        addEffectToClip(entry, "overlay", onto);
+        return;
+      }
+
+      const i = frameIndexContaining(at);
+      if (i < 0) {
+        setNotice("There is no picture there to grade.");
+        return;
+      }
+      // ⚠ AND IT HAS TO BE ON THIS ROW. Images and Video are the same track
+      // drawn twice, filtered by origin — so at a moment where a still is
+      // playing the Video row shows a GAP, and dropping into that gap must not
+      // quietly grade the still on the row above. Same rule as "a clip cannot
+      // change what it is by being dropped somewhere else".
+      if (lane.only && (frameOrigin(frames[i]) === "video") !== (lane.only === "video")) {
+        setNotice("Nothing is on that row at that moment — drop it on the bar itself.");
+        return;
+      }
+      addEffectToClip(entry, "frame", frames[i]);
+      return;
+    }
+
+    // ---- a shape, out of the picker or off the timeline -------------------
+    if (asset.kind === "shape") {
+      addShape(asset.id, lane.layerId || "", at);
+      return;
+    }
+    if (asset.kind === "shapeClip") {
+      const shape = shapes.find((x) => x.id === asset.id);
+      if (!shape) return;
+      patchShape(asset.id, { start_ms: at, layer_id: laneId(lane.layerId || "") });
+      selectOnly({ shape: asset.id });
+      setNotice(`Shape moved to ${formatTime(at)}.`);
+      return;
+    }
+
+    // ---- an audio clip ----------------------------------------------------
+    if (asset.kind === "audio") {
+      const track = audioTracks.find((a) => clipId(a) === asset.id);
+      if (!track) return;
+      // ⚠ A LOOSE TRACK KEEPS ITS OWN ROW. Those rows are grouped by FILE (see
+      // `lanes`), not chosen — so "drop it on that other file's row" is a
+      // promise the timeline cannot keep, and moving it in time while it jumped
+      // back to its own row would look like a bug. A layer row is a real
+      // destination, so that one moves it.
+      const ownRow = lane.layerId ? lane.layerId === (track.layer_id || "") : lane.key === track.upload_id;
+      if (!lane.layerId && !ownRow) {
+        setNotice(`“${track.filename}” has its own row — drop it there to move it in time, or on a layer row to move it across.`);
+        return;
+      }
+      patchTrack(asset.id, {
+        start_ms: at,
+        ...(lane.layerId && lane.layerId !== (track.layer_id || "") ? { layer_id: lane.layerId } : {}),
+      });
+      selectOnly({ track: asset.id });
+      setNotice(`“${track.filename}” moved to ${formatTime(at)}.`);
+    }
+  }
+
   // -------------------------------------------------------- image overlays
   // A picture composited over the sequence. Same geometry as a shape, because
   // it is placed with the same handles — only the fill differs.
@@ -2141,7 +2763,7 @@ export default function AnimaticEditor({
   // Upload pictures INTO an image layer. They land at the playhead, a third of
   // the frame wide, and are dragged from there — unlike a frame, an overlay has
   // no place in the sequence to be added to.
-  async function addOverlayFiles(files, layerId) {
+  async function addOverlayFiles(files, layerId, startMs) {
     const images = [...files].filter((f) => kindOf(f) === "image");
     if (!images.length) {
       setNotice("An image layer takes pictures — that file isn't one.");
@@ -2151,7 +2773,9 @@ export default function AnimaticEditor({
     setError("");
     try {
       const res = await api.uploadAnimaticImages(animaticId, images);
-      const start = Math.round(timeRef.current);
+      // The playhead for the ＋ and the picker; the drop point for a file
+      // dragged straight onto the row (`dropAsset`).
+      const start = Math.round(startMs === undefined ? timeRef.current : startMs);
       const added = (res.items || []).map((item, i) => ({
         id: newId(),
         layer_id: laneId(layerId),
@@ -2181,9 +2805,20 @@ export default function AnimaticEditor({
   // ---------------------------------------------------------- shape layer
   // Like a caption, a new shape covers the frame the playhead is on, and is a
   // free-floating clip from that moment on.
-  function addShape(kind, layerId = "") {
-    const i = currentIndex >= 0 ? currentIndex : 0;
-    const start = frames.length ? starts[i] : 0;
+  function addShape(kind, layerId = "", startMs) {
+    // The shot it belongs to: the one at the playhead for the picker, the one
+    // UNDER THE DROP for a shape dragged onto a row. Its length is that shot's,
+    // which is what makes a shape arrive covering the picture it was aimed at
+    // rather than an arbitrary two seconds of whatever is there.
+    const at = startMs === undefined ? null : Math.max(0, Math.round(startMs));
+    let i = currentIndex >= 0 ? currentIndex : 0;
+    if (at !== null && frames.length) {
+      const under = starts.findIndex(
+        (s, k) => at >= s && at < s + (frames[k].duration_ms || 0)
+      );
+      if (under >= 0) i = under;
+    }
+    const start = at === null ? (frames.length ? starts[i] : 0) : at;
     const length = frames.length ? frames[i].duration_ms : 2000;
     const shape = { ...newShape(kind, start, length), layer_id: laneId(layerId) };
     setShapes((list) => [...list, shape]);
@@ -2698,7 +3333,9 @@ export default function AnimaticEditor({
 
   // Adds a NEW track — it never replaces an existing one. The cap is checked by
   // the caller so a multi-file drop can report what it had to leave out.
-  async function addAudioTrack(file) {
+  // `startMs` is where on the timeline it lands: 0 for every picker and card,
+  // and the drop time for a file dragged straight onto an audio lane.
+  async function addAudioTrack(file, startMs = 0) {
     if (!file) return;
     setError("");
     try {
@@ -2725,7 +3362,7 @@ export default function AnimaticEditor({
           layer_id: layerId,
           filename: res.filename || file.name,
           duration_ms: durationMs,
-          start_ms: 0,
+          start_ms: Math.max(0, Math.round(startMs || 0)),
           offset_ms: 0,
           volume: 1,
           muted: false,
@@ -2758,6 +3395,87 @@ export default function AnimaticEditor({
   // when you meant to change one.
   const patchTrack = (id, patch) =>
     setAudioTracks((list) => list.map((a) => (clipId(a) === id ? { ...a, ...patch } : a)));
+
+  /**
+   * Every clip drawn on the SAME ROW as this one — the neighbours a crossfade
+   * can reach.
+   *
+   * ⚠ GROUPED THE WAY `lanes` GROUPS THEM, and it has to be: "the clip next to
+   * this one" can only mean the one you can SEE next to it. A loose clip's row
+   * is its FILE (that is what makes a razored track look cut rather than
+   * doubled), and a clip on a layer shares that layer's row with everything on
+   * it — so the two cases are grouped by different keys, exactly as they are
+   * where the rows are built.
+   */
+  function laneSiblings(track) {
+    if (!track) return [];
+    if (track.layer_id) return laneClips(audioTracks, track.layer_id);
+    return audioTracks
+      .filter((a) => !a.layer_id && a.upload_id === track.upload_id)
+      .sort((a, b) => (a.start_ms || 0) - (b.start_ms || 0));
+  }
+
+  /**
+   * Lay a crossfade from the library onto the audio at `at`.
+   *
+   * ⚠ ONE `setAudioTracks`, WRITING BOTH CLIPS, and that is the whole reason
+   * this exists rather than two `patchTrack` calls: the undo stack takes one
+   * entry per state update, so two calls would mean Ctrl+Z undid half a
+   * crossfade and left the other half's fade behind. A crossfade is one thing
+   * you did.
+   *
+   * The three outcomes, and none of them is an error:
+   *   • ON A CUT — the crossfade, eating handles (`crossfadePatch`).
+   *   • ON A FREE END — a plain fade of that curve. Which is what a crossfade
+   *     dragged to the head of the first clip or the tail of the last one means
+   *     in Premiere too, and is genuinely useful rather than a mistake to
+   *     report: the three curves are three fade shapes before they are anything
+   *     to do with cuts.
+   *   • ACROSS A GAP — the same plain fade. Reaching over silence for the clip
+   *     on the far side would be a crossfade you cannot hear.
+   */
+  function addCrossfade(entry, clips, at) {
+    const target = crossfadeTarget(clips, at);
+    if (!target) {
+      setNotice("Drop it ON a sound — a crossfade shapes a clip, not an empty stretch of row.");
+      return;
+    }
+    const { clip, side, neighbour } = target;
+    const curve = entry.kind;
+    const cut = neighbour
+      ? crossfadePatch(
+          ...(side === "in" ? [neighbour, clip] : [clip, neighbour]),
+          DEFAULT_CROSSFADE_MS,
+          curve
+        )
+      : { ok: false, reason: "alone" };
+
+    const patches = cut.ok
+      ? cut.patches
+      : { [clipId(clip)]: fadeEndPatch(clip, side, DEFAULT_CROSSFADE_MS, curve) };
+    setAudioTracks((list) =>
+      list.map((a) => (patches[clipId(a)] ? { ...a, ...patches[clipId(a)] } : a))
+    );
+    selectOnly({ track: clipId(clip) });
+
+    const where = side === "in" ? "start" : "end";
+    if (!cut.ok) {
+      setNotice(
+        `${entry.label} on the ${where} of “${clip.filename}” — ` +
+          (cut.reason === "gap"
+            ? "there is silence on the other side of it, so it fades rather than crosses."
+            : "nothing is butted against that end, so it fades rather than crosses.")
+      );
+      return;
+    }
+    const secs = (cut.appliedMs / 1000).toFixed(1);
+    setNotice(
+      cut.overlapped
+        ? `${entry.label} across that cut — ${secs}s, with both sounds playing through it.`
+        : `${entry.label} across that cut — ${secs}s each side. Neither clip has spare audio ` +
+          `to overlap with, so it dips through the cut instead of crossing.`
+    );
+  }
 
   // Takes a LIST, because the gutter's speaker speaks for the whole lane: after
   // a cut, "mute this track" has to mean all of its pieces.
@@ -3685,8 +4403,14 @@ export default function AnimaticEditor({
       <div className="workflow-head-wrap">
         <div className="card">
           <p className="error">{error}</p>
-          <button type="button" className="btn" onClick={onBack}>
-            ← Your Animatics
+          <button
+            type="button"
+            className="btn back-btn"
+            onClick={onBack}
+            title="Your Animatics"
+            aria-label="Your Animatics"
+          >
+            ←
           </button>
         </div>
       </div>
@@ -3746,7 +4470,6 @@ export default function AnimaticEditor({
     setPxPerSec((p) =>
       Math.min(MAX_PPS, Math.max(MIN_PPS, p * Math.pow(ZOOM_STEP, dir)))
     );
-  const lengthMatches = audioMs > 0 && Math.abs(audioMs - totalMs) <= 250;
   const progress = exportJob?.progress || {};
 
   // The workspace is a fixed-height grid — three panes over a full-width
@@ -3831,8 +4554,14 @@ export default function AnimaticEditor({
     >
       {/* ------------------------------------------------------- top bar */}
       <header className="an-topbar">
-        <button type="button" className="btn small" onClick={handleBack}>
-          ← Your Animatics
+        <button
+          type="button"
+          className="btn small back-btn"
+          onClick={handleBack}
+          title="Your Animatics"
+          aria-label="Your Animatics"
+        >
+          ←
         </button>
 
         <input
@@ -4007,77 +4736,6 @@ export default function AnimaticEditor({
         )}
       </header>
 
-      {(error || notice || exporting || animating || speechRunning ||
-        reframeRunning || reblockJob) && (
-        <div className="an-statusbar">
-          {error && <span className="an-status-error">{error}</span>}
-          {!error && notice && <span className="an-status-note">{notice}</span>}
-          {exporting && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {progress.message || "Preparing…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${progress.percent ?? 0}%` }} />
-              </span>
-              {progress.percent ?? 0}%
-            </span>
-          )}
-          {/* A Veo render takes minutes and costs money, so it says so the whole
-              time rather than leaving a button reading "Animating…" as the only
-              sign anything is happening. */}
-          {animating && !exporting && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {animateProgress?.message || "Animating with Veo…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${animateProgress?.percent ?? 0}%` }} />
-              </span>
-              {animateProgress?.percent ?? 0}%
-            </span>
-          )}
-          {/* A captions or voiceover pass is quick but it is still the SERVER
-              writing this project, so it says so for the same reason: the
-              editor is read-only until it finishes. */}
-          {speechRunning && !exporting && !animating && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {speechProgress?.message || "Working…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${speechProgress?.percent ?? 0}%` }} />
-              </span>
-              {speechProgress?.percent ?? 0}%
-            </span>
-          )}
-          {/* A reframe pass is the server writing this project's frames, so it
-              says so for exactly the reason the captions pass does. */}
-          {reframeRunning && !exporting && !animating && !speechRunning && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {reframeProgress?.message || "Framing each shot…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
-              </span>
-              {reframeProgress?.percent ?? 0}%
-            </span>
-          )}
-          {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
-              made on the STORYBOARD, so this animatic stays fully editable
-              while it runs — which is exactly why it needs to say something,
-              or minutes pass with nothing on screen but a pane that has gone
-              quiet. */}
-          {reblockJob && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {reblockProgress?.message || "Drawing more key poses on the storyboard…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
-              </span>
-              {reblockProgress?.percent ?? 0}%
-            </span>
-          )}
-        </div>
-      )}
-
       {/* ------------------------------------------------- the three panes */}
       <div className="an-panes">
         {/* ---- Media: the frames in this animatic, plus the audio ---- */}
@@ -4100,6 +4758,18 @@ export default function AnimaticEditor({
                 onClick={() => setMediaTab("shapes")}
               >
                 Shapes
+              </button>
+              {/* ⚠ A LIBRARY, LIKE SHAPES — NOT A PANEL OF WHAT IS APPLIED.
+                  The chain a clip carries is MANAGED in Properties, where there
+                  is room for its parameters and its keyframes; this tab is the
+                  shelf you take from. Two places, two questions: "what can I
+                  add" and "what is on this clip". */}
+              <button
+                type="button"
+                className={`an-tab ${mediaTab === "effects" ? "on" : ""}`}
+                onClick={() => setMediaTab("effects")}
+              >
+                Effects
               </button>
             </span>
             <span className="an-spacer" />
@@ -4128,23 +4798,46 @@ export default function AnimaticEditor({
             <span className="tiny muted">
               {mediaTab === "media"
                 ? `${frames.length} frames`
-                : `${shapes.length} on the timeline`}
+                : mediaTab === "effects"
+                  ? `${FX_ITEM_COUNT} to drag`
+                  : `${shapes.length} on the timeline`}
             </span>
           </div>
 
-          {mediaTab === "shapes" ? (
+          {mediaTab === "effects" ? (
             <div className="an-pane-body an-media-body">
-              <PropGroup id="media:shape-library" title="Add a shape">
+              {/* The hint lives behind the section's ⓘ for the same reason the
+                  shape picker's does: it is true forever and read once, so as
+                  standing prose it costs three lines of a narrow pane on every
+                  visit. */}
+              <PropGroup
+                id="media:fx-library"
+                title="Add an effect"
+                info="Drag one onto a picture on the timeline to grade that shot, or onto a cut to put a transition on it — the bar you are over lights up. Clicking adds it at the playhead instead. Its controls then live in Properties, under Effects."
+              >
+                <EffectsLibrary onAdd={addFxFromLibrary} />
+              </PropGroup>
+            </div>
+          ) : mediaTab === "shapes" ? (
+            <div className="an-pane-body an-media-body">
+              {/* ⚠ THE HINT IS THE SECTION'S ⓘ, NOT A PARAGRAPH UNDER THE
+                  TILES. It is true forever and read once, so as standing prose
+                  it cost three lines of a narrow pane on every visit for
+                  something you stop seeing after the first (asked for as "put
+                  it behind an i button"). `info` on `PropGroup` is where a note
+                  about a WHOLE section goes — same ⓘ, same right-hand column,
+                  as every row in the Properties pane. */}
+              <PropGroup
+                id="media:shape-library"
+                title="Add a shape"
+                info="A shape lands on the frame at the playhead, then moves and re-times like any other clip. Drag it on the picture to place it — or drag a tile straight onto a shape row on the timeline to drop it there instead."
+              >
                 <ShapeGallery
                   onAdd={(kind) => {
                     addShape(kind, pendingShapeLane);
                     setPendingShapeLane("");
                   }}
                 />
-                <p className="an-shape-hint tiny muted">
-                  A shape lands on the frame at the playhead, then moves and
-                  re-times like any other clip. Drag it on the picture to place it.
-                </p>
               </PropGroup>
 
               {shapes.length > 0 && (
@@ -4157,6 +4850,18 @@ export default function AnimaticEditor({
                       onClick={() => {
                         selectOnly({ shape: s.id });
                         seek(s.start_ms);
+                      }}
+                      /* Drag it onto a shape row to re-time it, or onto a
+                         different one to move it there — same marker trick as
+                         every other draggable asset in this pane. */
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData(
+                          "application/x-anim-asset",
+                          JSON.stringify({ kind: "shapeClip", id: s.id })
+                        );
+                        e.dataTransfer.setData("application/x-anim-shape", "");
                       }}
                     >
                       <ShapeSwatch kind={s.kind} color={s.color} className="an-media-ico" />
@@ -4276,6 +4981,20 @@ export default function AnimaticEditor({
                     }`}
                     key={clipId(track)}
                     onClick={() => selectOnly({ track: clipId(track) })}
+                    /* Drag it onto an audio lane to move it there — see
+                       `dropAsset`. The empty `…-audio` marker beside the
+                       payload is what lets a lane refuse it mid-drag, when
+                       `getData` still reads blank (`dragKind` in
+                       Timeline.jsx). */
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData(
+                        "application/x-anim-asset",
+                        JSON.stringify({ kind: "audio", id: clipId(track) })
+                      );
+                      e.dataTransfer.setData("application/x-anim-audio", "");
+                    }}
                   >
                     <span className="an-media-ico">♪</span>
                     <span className="an-media-name" title={track.filename}>
@@ -4399,7 +5118,7 @@ export default function AnimaticEditor({
                 overlayUrls={overlayUrls}
                 settings={settings}
                 videoElsRef={videoElsRef}
-                onUnavailable={() => setGlFailed(true)}
+                onUnavailable={onGlUnavailable}
               />
               {(!shownFrame || glFailed) && (
                 <div className="an-screen-empty">
@@ -4580,9 +5299,12 @@ export default function AnimaticEditor({
                   past the end of the video
                 </span>
               )}
-              <span className="an-shotnum">
-                {currentIndex >= 0 ? `Frame ${currentIndex + 1} of ${frames.length}` : ""}
-              </span>
+              {/* ⚠ NO "Frame 7 of 34" READOUT HERE ANY MORE — asked for and
+                  removed. The monitor's job is the picture; which frame is up
+                  is already told by the playhead and by the selected bar on
+                  the timeline, so a third copy under the clock was furniture in
+                  a bar that had to get smaller, not wider. `currentIndex` is
+                  still what the arrows step (`stepFrame`). */}
             </div>
           </div>
         </section>
@@ -4668,6 +5390,7 @@ export default function AnimaticEditor({
               <TransitionProperties
                 transition={selectedTransition}
                 frames={frames}
+                background={settings.background}
                 onChange={patchTransition}
                 onDelete={deleteTransition}
                 onClose={() => selectOnly({})}
@@ -4823,17 +5546,15 @@ export default function AnimaticEditor({
       <section {...paneProps("timeline")}>
         <div className="an-pane-head">
           <span className="an-pane-title">Timeline</span>
+          {/* THE LENGTH, AND NOTHING ELSE. The "audio 2:40 — video ends early"
+              badge that used to sit beside it is gone at the user's request: it
+              was a sentence of running commentary on the busiest bar in the
+              editor, and it was never news — the ruler already runs to the end
+              of the audio and the transport clock counts past the last picture,
+              so the timeline SHOWS what the badge was describing. ⇔ Fit to audio,
+              a step to the right, is still the fix it was pointing at. */}
           <span className="an-tl-total tiny">
             <strong>{formatTime(totalMs)}</strong>
-            {audioMs > 0 && (
-              <span className={`an-match ${lengthMatches ? "ok" : "off"}`}>
-                {lengthMatches
-                  ? "✓ matches the audio"
-                  : `audio ${formatTime(audioMs)} — ${
-                      totalMs > audioMs ? "video runs longer" : "video ends early"
-                    }`}
-              </span>
-            )}
           </span>
 
           {/* The tool palette. Each one is a real behaviour on this timeline —
@@ -4901,54 +5622,13 @@ export default function AnimaticEditor({
             🥁
           </button>
 
-          <button
-            type="button"
-            className="btn small an-add-text"
-            onClick={
-              // NOT `onClick={addText}` — React would pass the click event as
-              // the layer id and the caption would land on a lane that doesn't
-              // exist. The header button always means the default text lane.
-              () => addText("")
-            }
-            title="Add a text clip over the frame at the playhead"
-          >
-            <Icon name="text" /> Text
-          </button>
-          {/* The other clip you can make without a file. Sits beside Text on
-              purpose: those two are the whole set, and a colour card had no way
-              in at all until now even though the `kind: "color"` clip underneath
-              it was built and tested. Not disabled on an empty animatic — a
-              black slug is a perfectly ordinary first clip. */}
-          <button
-            type="button"
-            className="btn small an-add-card"
-            onClick={() => addColorCard()}
-            title="Add a colour card after the frame at the playhead — a slug, a blackout or a flash. Pick its colour in Properties."
-          >
-            <Icon name="card" /> Colour card
-          </button>
-          {/* ⚠ SPENDS QUOTA — but only through the priced panel it opens, like
-              ✨ Animate. The lines come from the board this animatic was made
-              from, timed to the shots that reference them, so there is nothing
-              to type: that is the whole reason it lives in here.
-
-              Plain `btn small`, like "Fit to audio" beside it, and deliberately
-              NOT the `.an-add-text` / `.an-add-card` weight: those two are a
-              pair that makes a clip out of nothing and costs nothing. This one
-              spends, and reading as one of them would be a lie about it. */}
-          <button
-            type="button"
-            className="btn small"
-            disabled={!hasBoardFrames || serverBusy}
-            onClick={openVoiceover}
-            title={
-              hasBoardFrames
-                ? "Read the storyboard's dialogue aloud onto the audio layer — costs a little; you see the price first"
-                : "Nothing here to read: a voiceover comes from the storyboard's dialogue, and none of these clips are board panels"
-            }
-          >
-            🎙 Voiceover
-          </button>
+          {/* ⚠ TEXT / COLOUR CARD / VOICEOVER ARE NOT HERE ANY MORE — they are
+              passed to `<Timeline addTools>` below and drawn beside ＋ Add
+              layer. They were at the far right of this bar, a bar's width from
+              the only other control that adds anything; asked for as "one place
+              where all the add buttons are". They are still THIS component's
+              buttons — what they make, and that the voiceover one spends quota,
+              is the editor's business, not the timeline's. */}
           <button
             type="button"
             className="btn small"
@@ -4996,6 +5676,63 @@ export default function AnimaticEditor({
 
         <div className="an-pane-body an-timeline-body">
           <Timeline
+            onDropAsset={dropAsset}
+            onManageEffects={manageEffects}
+            addTools={
+              <>
+                <button
+                  type="button"
+                  className="btn small an-add-text"
+                  onClick={
+                    // NOT `onClick={addText}` — React would pass the click event
+                    // as the layer id and the caption would land on a lane that
+                    // doesn't exist. This button always means the default text
+                    // lane.
+                    () => addText("")
+                  }
+                  title="Add a text clip over the frame at the playhead"
+                >
+                  <Icon name="text" /> Text
+                </button>
+                {/* The other clip you can make without a file. Sits beside Text
+                    on purpose: those two are the whole set, and a colour card
+                    had no way in at all until now even though the
+                    `kind: "color"` clip underneath it was built and tested. Not
+                    disabled on an empty animatic — a black slug is a perfectly
+                    ordinary first clip. */}
+                <button
+                  type="button"
+                  className="btn small an-add-card"
+                  onClick={() => addColorCard()}
+                  title="Add a colour card after the frame at the playhead — a slug, a blackout or a flash. Pick its colour in Properties."
+                >
+                  <Icon name="card" /> Colour card
+                </button>
+                {/* ⚠ SPENDS QUOTA — but only through the priced panel it opens,
+                    like ✨ Animate. The lines come from the board this animatic
+                    was made from, timed to the shots that reference them, so
+                    there is nothing to type: that is the whole reason it lives
+                    in here.
+
+                    Plain `btn small`, and deliberately NOT the `.an-add-text` /
+                    `.an-add-card` weight: those two are a pair that makes a clip
+                    out of nothing and costs nothing. This one spends, and
+                    reading as one of them would be a lie about it. */}
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={!hasBoardFrames || serverBusy}
+                  onClick={openVoiceover}
+                  title={
+                    hasBoardFrames
+                      ? "Read the storyboard's dialogue aloud onto the audio layer — costs a little; you see the price first"
+                      : "Nothing here to read: a voiceover comes from the storyboard's dialogue, and none of these clips are board panels"
+                  }
+                >
+                  🎙 Voiceover
+                </button>
+              </>
+            }
             frames={frames}
             texts={texts}
             shapes={shapes}
@@ -5003,6 +5740,9 @@ export default function AnimaticEditor({
             spanMs={spanMs || 1000}
             timeMs={timeMs}
             pxPerSec={pxPerSec}
+            // The ruler reads its timecode in the rate the film is EXPORTED at,
+            // so the frame you cut on is the frame that gets rendered.
+            fps={settings.fps}
             selectedId={selectedId}
             selectedTextId={selectedTextId}
             selectedShapeId={selectedShapeId}
@@ -5031,9 +5771,13 @@ export default function AnimaticEditor({
             onSelectMany={selectMany}
             onToggleSelect={toggleSelect}
             onMoveSelection={moveSelection}
+            onMoveToLane={moveClipToLane}
             selectionFloorMs={selectionFloorMs}
             onSeek={seek}
             onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
+            // The head trim of the first picture writes `duration_ms` and
+            // `in_ms` in ONE patch — see `startHeadTrim` in `Timeline.jsx`.
+            onFrameChange={patchFrame}
             onTextChange={patchText}
             onShapeChange={patchShape}
             onOverlayChange={patchOverlay}
@@ -5046,8 +5790,7 @@ export default function AnimaticEditor({
             onToggleHidden={toggleLaneHidden}
             tool={tool}
             snapping={snapping}
-            onSplitAt={splitFrameAt}
-            onSplitAudioAt={splitAudioAt}
+            onRazor={razorAt}
             onZoomAt={zoomBy}
             /* The scroll bar's grips set the scale outright — see
                ZoomScrollbar.jsx — so they get the setter, not the stepper. */
@@ -5061,6 +5804,87 @@ export default function AnimaticEditor({
           />
         </div>
       </section>
+
+      {/* ⚠ THE STATUS STRIP IS AT THE FOOT OF THE EDITOR, not under the top
+          bar. It is a running commentary — a notice, an export percentage — and
+          up there it sat between the title and the workspace, pushing the
+          monitor and every pane down the moment it had anything to say. Down
+          here it is the status bar every editor in the world has, it appears
+          and disappears without moving the picture, and it is still ONE line
+          for all of them so two events can never stack.
+          ⚠ It is also LAST IN THE DOM now, which is what puts it at the foot of
+          the Long workspace's flex column; the Reel workspace places it by name
+          (`stat`), so its grid template moved it too. */}
+      {(error || notice || exporting || animating || speechRunning ||
+        reframeRunning || reblockJob) && (
+        <div className="an-statusbar">
+          {error && <span className="an-status-error">{error}</span>}
+          {!error && notice && <span className="an-status-note">{notice}</span>}
+          {exporting && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {progress.message || "Preparing…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${progress.percent ?? 0}%` }} />
+              </span>
+              {progress.percent ?? 0}%
+            </span>
+          )}
+          {/* A Veo render takes minutes and costs money, so it says so the whole
+              time rather than leaving a button reading "Animating…" as the only
+              sign anything is happening. */}
+          {animating && !exporting && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {animateProgress?.message || "Animating with Veo…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${animateProgress?.percent ?? 0}%` }} />
+              </span>
+              {animateProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* A captions or voiceover pass is quick but it is still the SERVER
+              writing this project, so it says so for the same reason: the
+              editor is read-only until it finishes. */}
+          {speechRunning && !exporting && !animating && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {speechProgress?.message || "Working…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${speechProgress?.percent ?? 0}%` }} />
+              </span>
+              {speechProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* A reframe pass is the server writing this project's frames, so it
+              says so for exactly the reason the captions pass does. */}
+          {reframeRunning && !exporting && !animating && !speechRunning && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {reframeProgress?.message || "Framing each shot…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
+              </span>
+              {reframeProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
+              made on the STORYBOARD, so this animatic stays fully editable
+              while it runs — which is exactly why it needs to say something,
+              or minutes pass with nothing on screen but a pane that has gone
+              quiet. */}
+          {reblockJob && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              {reblockProgress?.message || "Drawing more key poses on the storyboard…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
+              </span>
+              {reblockProgress?.percent ?? 0}%
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Export settings, confirmed before anything is encoded. */}
       {exportOpen && (

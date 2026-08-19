@@ -335,6 +335,23 @@
 .an-row-ctl .an-set-chips {
   gap: 0.25rem;
 }
+/* The heading over one family of treatment chips. Same size and colour as
+   `.an-row-label`, because it IS a row label — it just sits above its control
+   instead of beside it, which is what `.an-row.full` already does to labels.
+   Deliberately NOT a `PropGroup`: five collapsible sections to open before you
+   can see twelve chips is worse than the flat row this replaced. */
+.an-set-family {
+  display: block;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+/* Every family after the first gets air above it, so the five strips read as
+   five groups rather than as one long wrap. */
+.an-row.full + .an-row.full > .an-set-family {
+  margin-top: 0.35rem;
+}
 /* A caption's text box is the one control that owns a whole section. */
 .an-grp-body > .an-tp-text {
   width: 100%;
@@ -388,6 +405,93 @@
   line-height: 1.5;
   color: var(--muted);
 }
+
+/* ⓘ — THE EXPLANATION, ON ASK. See the `InfoDot` doc comment in
+   `components/properties/PropGroup.jsx` for why teaching prose folds away and a
+   warning does not.
+
+   ⚠ IT IS PART OF THE ROW'S RIGHT-HAND CLUSTER — ⏱  ,  ⓘ , ↺ , in that order,
+   on the same edge every row's ↺ sits on. It had a line of its own for one
+   revision and that was the same fault the prose had, in miniature: every note
+   pushed the next property down the pane, and the column of ↺'s that tells you
+   what you have changed on this clip stopped being a column. */
+.an-note-i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--muted);
+  /* A lower-case i in a circle reads as ⓘ at any size, where the character
+     itself goes to a smudge below about 14px. Serif so the stem has a foot and
+     cannot be mistaken for an l or a 1. */
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.72rem;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  /* `pointer`, not `help`: hovering shows the note but CLICKING pins it, and a
+     button that does something on click must say so. */
+  cursor: pointer;
+}
+.an-note-i:hover,
+.an-row.note-on .an-note-i,
+.an-grp.note-on > .an-grp-head .an-note-i {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+/* ↺ already claims the right edge with `margin-left: auto`; if the ⓘ sitting
+   in front of it did not claim it FIRST, the auto margin would open between the
+   two and leave the ⓘ stranded against the value. The ↺ then simply follows
+   it, which is the same trick `.an-kf + .an-reset` already plays. */
+.an-row-ctl > .an-note-i {
+  margin-left: auto;
+}
+.an-row-ctl > .an-kf ~ .an-note-i {
+  margin-left: 0;
+}
+.an-row-ctl > .an-note-i + .an-reset {
+  margin-left: 0;
+}
+/* Closed by default — `display: none` and not opacity, so a folded note costs
+   the pane no height at all. It spans BOTH columns of the row, like
+   `.an-row-hint`, so the prose gets the full width rather than the value
+   column's. */
+.an-note-pop {
+  display: none;
+  grid-column: 1 / -1;
+  border-left: 2px solid var(--border-gold);
+  padding-left: 0.5rem;
+}
+/* ⚠ THE POINTER MUST BE ON THE ⓘ ITSELF — not merely somewhere on the row.
+   Hovering a row to reach its slider would otherwise open a paragraph under it
+   and shove the rest of the pane down mid-drag. `:has()` is what lets the row
+   answer a question about its own icon; it is already used this way in
+   `animatic-editor.css`. Click PINS it (`.note-on`), which is the touch-screen
+   answer and the way to read a long note without holding the pointer still. */
+.an-row:has(> .an-row-ctl > .an-note-i:hover) > .an-note-pop,
+.an-row:has(> .an-row-ctl > .an-note-i:focus-visible) > .an-note-pop,
+.an-row.note-on > .an-note-pop {
+  display: block;
+}
+/* The section-level ⓘ sits in the header's action cluster and opens its note
+   between the header and the body — outside `.an-grp-body`, so a SHUT section
+   can still be asked what it is for. */
+.an-grp-note {
+  padding: 0.4rem 0.5rem 0.45rem;
+  border-left: none;
+}
+.an-grp:has(> .an-grp-head .an-note-i:hover) > .an-grp-note,
+.an-grp:has(> .an-grp-head .an-note-i:focus-visible) > .an-grp-note,
+.an-grp.note-on > .an-grp-note {
+  display: block;
+}
+
 /* "This is probably not what you meant." Takes --warn, never --fail: a clip
    that runs past the end of the video, or wants more footage than its trim
    leaves, still renders — it just renders something nobody asked for. Same

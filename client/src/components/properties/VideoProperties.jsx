@@ -4,7 +4,7 @@
 // Laid out with the primitives in `PropGroup.jsx`, like every other pane.
 
 import { ASPECTS } from "../../animatic/aspects.js";
-import { PropGroup, PropRow, PropNote } from "./PropGroup.jsx";
+import { PropGroup, PropRow } from "./PropGroup.jsx";
 
 // What a new animatic is set up as, and therefore what every ↺ here goes back
 // to. ⚠ Mirrors the field defaults on `AnimaticSettings`; a reset landing
@@ -33,7 +33,17 @@ export default function VideoProperties({ settings, onChange, sourceBoard, refra
         </div>
       </div>
 
-      <PropGroup id="video:frame" title="Frame">
+      <PropGroup
+        id="video:frame"
+        title="Frame"
+        /* On the section: it is about where every frame in this animatic comes
+           from, not about any one control in here. Only said when it is true. */
+        info={
+          sourceBoard
+            ? "Frames come from a storyboard — re-draw a panel there and it updates here. Or select a shot and re-draw it from its own pane."
+            : undefined
+        }
+      >
         {/* The SAME field the Program pane's picker writes — that one is the
             one you can reach with a clip selected, this one is here because
             everything else about the frame is. Neither is a copy of the other:
@@ -142,12 +152,6 @@ export default function VideoProperties({ settings, onChange, sourceBoard, refra
           </label>
         </PropRow>
 
-        {sourceBoard && (
-          <PropNote>
-            Frames come from a storyboard — re-draw a panel there and it updates
-            here. Or select a shot and re-draw it from its own pane.
-          </PropNote>
-        )}
       </PropGroup>
     </div>
   );

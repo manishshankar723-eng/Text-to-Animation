@@ -33,7 +33,7 @@
  * into the shot" means anything.
  */
 
-import { DEFAULT_MASK, MASK_KINDS } from "../scene.js";
+import { DEFAULT_MASK, EFFECT_PARAMS, MASK_KINDS } from "../scene.js";
 import { buildLutPixels } from "./cube.js";
 import {
   COPY_FRAGMENT,
@@ -42,7 +42,9 @@ import {
   MAX_LUTS,
   VERTEX,
   blendIndex,
+  dirIndex,
   fxIndex,
+  matteIndex,
 } from "./shaders/layer.js";
 
 // ⚠ THE SAME POLYGONS AS `POINTS` in Shapes.jsx and `_SHAPE_POINTS` in
@@ -88,6 +90,16 @@ function parseColour(value, fallback = [0, 0, 0]) {
   const n = Number.parseInt(s, 16);
   if (!Number.isFinite(n)) return fallback;
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+}
+
+// Said once per reason, not once per frame. The monitor redraws on every playhead
+// tick, so an unguarded console.warn in the draw path is a thousand identical
+// lines a second and the console stops being readable at all.
+const warned = new Set();
+function warnOnce(key, message) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(message);
 }
 
 function compile(gl, type, source) {
@@ -175,10 +187,21 @@ export class Compositor {
   dispose() {
     const gl = this.gl;
     for (const entry of this.textures.values()) gl.deleteTexture(entry.texture);
-    for (const texture of this.luts.values()) gl.deleteTexture(texture);
+    // ⚠ A LUT ENTRY IS `{ texture, size }`, NOT A TEXTURE. Handing the whole
+    // entry to `deleteTexture` THREW, and the throw came out of a React effect's
+    // cleanup — which unmounted the monitor and left the editor showing a black
+    // rectangle. It only ever fired once a LUT had been uploaded, which is why
+    // "the screen goes black when I pick a colour look" was the symptom.
+    for (const entry of this.luts.values()) {
+      if (entry?.texture) gl.deleteTexture(entry.texture);
+    }
     for (const target of this.targets) {
       gl.deleteFramebuffer(target.fbo);
       gl.deleteTexture(target.texture);
+    }
+    if (this._blank) {
+      gl.deleteTexture(this._blank);
+      this._blank = null;
     }
     this.textures.clear();
     this.luts.clear();
@@ -402,15 +425,33 @@ export class Compositor {
           gl.bindTexture(gl.TEXTURE_2D, lut.texture);
           gl.uniform1i(u(`uLut${slot}`), 2 + slot);
           lutSlot += 1;
+        } else if (lut && params.name) {
+          // `layer.js` says a third LUT in one chain is "dropped, loudly", so be
+          // loud: the monitor is about to disagree with the export, and silence
+          // would leave that looking like a grade that simply does nothing.
+          warnOnce(
+            `lut-cap:${params.name}`,
+            `[effects] only ${MAX_LUTS} LUTs can be previewed in one chain — ` +
+              `'${params.name}' is skipped in the monitor but WILL be exported.`
+          );
         }
       }
       gl.uniform1i(u(`uFxLutSlot[${i}]`), Math.max(0, slot));
+      // ⚠ PACKED STRAIGHT OFF THE DESCRIPTOR, in the order EFFECT_PARAMS
+      // declares the kind's numeric parameters — x, then y, then z. That is
+      // what the shader's `args.x` / `args.y` read, and it is why a new
+      // point-wise effect needs a table entry and a GLSL branch but NOTHING
+      // here. It also reproduces the hand-written packing this replaced
+      // exactly: chroma declares similarity, smoothness, spill in that order,
+      // and every other kind of the time declared `amount` alone.
+      const numeric = Object.entries(EFFECT_PARAMS[effect.kind] || {})
+        .filter(([, fallback]) => typeof fallback !== "string")
+        .map(([name]) => Number(params[name]) || 0);
       gl.uniform4f(
         u(`uFxArgs[${i}]`),
-        // `similarity` and `amount` share the slot: no effect has both.
-        Number(effect.kind === "chroma" ? params.similarity : params.amount) || 0,
-        Number(params.smoothness) || 0,
-        Number(params.spill) || 0,
+        numeric[0] || 0,
+        numeric[1] || 0,
+        numeric[2] || 0,
         // A LUT that hasn't loaded grades with `amount` forced to 0 below, so
         // the size here only has to be legal, never right.
         size
@@ -444,12 +485,38 @@ export class Compositor {
   }
 
   /**
+   * The transition matte, or none.
+   *
+   * ⚠ WRITTEN ON EVERY LAYER, unconditionally, exactly as `_setLook` rewrites
+   * every mask uniform on every layer. Uniforms live on the PROGRAM, not on the
+   * draw call, so setting them only when a matte is passed would leave the last
+   * one in place — and the transition's matte would go on to cut holes in the
+   * shapes, overlays and dip veil drawn after it in the same frame.
+   */
+  _setMatte(matte) {
+    const gl = this.gl;
+    const u = (name) => gl.getUniformLocation(this.program, name);
+    const params = matte?.params || {};
+    gl.uniform1i(u("uMatteKind"), matte ? matteIndex(matte.kind) : 0);
+    gl.uniform1f(u("uMatteProgress"), Math.max(0, Math.min(1, Number(matte?.progress) || 0)));
+    gl.uniform1f(u("uMatteSoftness"), Math.max(0, Number(params.softness) || 0));
+    gl.uniform1f(u("uMatteCount"), Number(params.count) || 0);
+    gl.uniform1i(u("uMatteDir"), dirIndex(params.direction));
+  }
+
+  /**
    * One layer, onto whatever is composited so far.
    *
    * `vertices` are already in frame space. `source` is either a texture entry
    * from `texture()` or `{ color }` for a flat fill.
+   *
+   * `matte` is `{ kind, params, progress }` and is the ONLY thing a transition
+   * adds to this call — a reveal is a mask on the arriving picture, not a
+   * second compositing stage, so there is no from/to pair and no extra target.
+   * Null on every layer that is not the incoming half of a reveal, which is all
+   * of them on an ordinary frame.
    */
-  layer({ vertices, count, mode, source, opacity = 1, useAlpha = true, look, luts }) {
+  layer({ vertices, count, mode, source, opacity = 1, useAlpha = true, look, luts, matte = null }) {
     const gl = this.gl;
     const back = this.targets[this.front];
     const front = this.targets[1 - this.front];
@@ -476,6 +543,7 @@ export class Compositor {
     gl.uniform2f(u("uResolution"), this.size[0], this.size[1]);
 
     this._setLook(look, luts);
+    this._setMatte(matte);
     this._draw(this.program, vertices, count, mode);
     this.front = 1 - this.front;
   }

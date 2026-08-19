@@ -528,7 +528,15 @@ export default function useTimelineTransport({
 export function useMonitorVideo({ scene, frames, videoElsRef, playing, rate }) {
   const videoCues = useMemo(() => {
     const cues = [];
-    for (const picture of [scene.frame, scene.frame_b]) {
+    // ⚠ EVERY PICTURE TRACK, and both sides of each track's transition. Reading
+    // `scene.frame` / `scene.frame_b` alone would cue only the TOPMOST track, so a
+    // video clip on a track underneath another would never be told to play — it
+    // would sit on one frozen frame while the monitor claimed to be playing it.
+    const showing = [];
+    for (const layer of scene.pictures || []) {
+      showing.push(layer.frame, layer.frame_b);
+    }
+    for (const picture of showing) {
       if (!picture || picture.kind !== "video") continue;
       const clip = frames[picture.index];
       const uploadId = clip?.src?.upload_id;

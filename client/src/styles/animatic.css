@@ -14,11 +14,17 @@
   flex-wrap: wrap;
   margin-bottom: 0.9rem;
 }
+/* ⚠ IT IS A FIELD, SO IT IS DRAWN AS ONE. This was transparent until you
+   hovered it, which made the project's name read as a heading painted straight
+   onto the workspace — it "merged into the background" and nobody could tell it
+   could be typed in. It now carries the same panel fill and border every other
+   input here has; hover and focus still lift it, they are just no longer the
+   only states in which it exists. */
 .an-title {
   flex: 1 1 14rem;
   min-width: 10rem;
-  background: transparent;
-  border: 1px solid transparent;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 9px;
   color: var(--text);
   font-size: 1.15rem;
@@ -26,7 +32,7 @@
   padding: 0.45rem 0.6rem;
 }
 .an-title:hover {
-  border-color: var(--border);
+  border-color: var(--border-gold);
 }
 .an-title:focus {
   outline: none;
@@ -61,8 +67,11 @@
 /* Icon-only, so it's a square of that same height rather than a wide slab.
    Same font size as the rest — the other buttons carry emoji too, so bumping
    this one made it the odd one out. */
-.an-topbar .an-del-btn {
+.an-topbar .an-del-btn,
+.an-topbar .back-btn {
   width: 2.3rem;
+  min-width: 2.3rem;
+  height: 2.3rem;
   padding: 0;
 }
 .an-del-btn {
@@ -154,9 +163,26 @@
 .an-transport {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
   flex-wrap: wrap;
   justify-content: center;
+}
+/* ⚠ THE MONITOR'S TRANSPORT IS SIZED HERE, NOT ON `.an-tbtn` ITSELF. The bar
+   under the picture was taking height the picture wanted (user-reported), but
+   `.an-tbtn` is also the timeline header's zoom pair — shrinking the base rule
+   would have dragged those down with it, and `.an-tbtn.small` (1.8rem, those
+   very buttons) would then have been LARGER than the thing it modifies. Scoped
+   to the transport, both bars keep their own scale. */
+.an-transport .an-tbtn {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.72rem;
+  border-radius: 7px;
+}
+.an-transport .an-play {
+  width: 2.1rem;
+  height: 2.1rem;
+  font-size: 0.85rem;
 }
 .an-tbtn {
   background: var(--btn-bg);
@@ -194,14 +220,12 @@
 }
 .an-clock {
   font-variant-numeric: tabular-nums;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  margin-left: 0.6rem;
+  margin-left: 0.45rem;
 }
-.an-shotnum {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
+/* `.an-shotnum` is gone with the "Frame 7 of 34" readout it styled — see the
+   transport in AnimaticEditor.jsx. */
 
 /* --- Frame strip -------------------------------------------------------- */
 .fs-wrap {
@@ -413,17 +437,6 @@
   font-variant-numeric: tabular-nums;
   margin-left: 0.2rem;
 }
-.an-match {
-  margin-left: 0.6rem;
-  font-size: 0.78rem;
-}
-.an-match.ok {
-  color: var(--ok);
-}
-.an-match.off {
-  color: var(--warn);
-}
-
 /* Scrolls on BOTH axes now — the lanes are a stack that can outgrow the pane,
    and the ruler stays pinned to the top of it (`position: sticky` below) so you
    never lose the clock while looking at the bottom track.
@@ -459,21 +472,48 @@
   position: sticky;
   top: 0;
   z-index: 8;
-  height: 1.15rem;
+  /* ⚠ THE VARIABLE, not the 1.15rem this used to repeat. `.tl-gutter-ruler` is
+     the spacer that holds the labels level with the tracks and it is sized from
+     the same one, so a ruler written out by hand here is a gutter one row out. */
+  height: var(--tl-ruler-h);
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  cursor: text;
+  /* Scrubbing, not selecting. With `cursor: text` this bar ANNOUNCED itself as
+     a selection surface, and a drag along it did become one — see the
+     `preventDefault` in `startSeek`. */
+  cursor: ew-resize;
 }
+/* --- Ticks ---------------------------------------------------------------- */
+/* A tick is the LINE; the timecode hangs off the major ones. Both are anchored
+   to the BOTTOM of the ruler, so the two lengths differ at the top and the
+   majors read as the taller ones — which is the whole point of having two.
+   ⚠ NO x-offset. The line marks a TIME, and the 2px nudge this used to carry put
+   every mark a fifth of a frame to the right of the one it names at full zoom. */
 .tl-tick {
   position: absolute;
-  top: 0;
-  font-size: 0.66rem;
-  color: var(--muted);
-  transform: translateX(2px);
+  bottom: 0;
+  height: 0.28rem;
   border-left: 1px solid var(--border);
-  padding-left: 3px;
-  font-variant-numeric: tabular-nums;
   user-select: none;
+  /* The ruler scrubs, and a tick is a picture drawn on it — never the thing the
+     press lands on. */
+  pointer-events: none;
+}
+.tl-tick-major {
+  height: 0.5rem;
+  border-left-color: var(--muted);
+}
+.tl-tick-label {
+  position: absolute;
+  left: 3px;
+  /* Clears the major tick it belongs to. */
+  bottom: 0.46rem;
+  font-size: 0.6rem;
+  font-style: normal;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 /* ⚠ NOT A FLEX ROW. Every bar is placed at its own `left`, taken from the same
    running total the ruler is drawn from — see the comment above `renderLane` in
@@ -566,7 +606,18 @@
   cursor: col-resize;
   background: linear-gradient(90deg, transparent, var(--border));
 }
-.tl-handle:hover {
+/* THE HEAD GRIP, on every kind of clip — pictures, captions, shapes, overlays
+   and audio. ⚠ IT USED TO BE SCOPED TO `.tl-audio-clip`, which is why sound was
+   the only thing on the timeline you could trim from both ends; the rule is
+   general because the gesture is. Same strip, moved to the left edge with its
+   gradient turned round so both edges read as grabbable. */
+.tl-handle-l {
+  right: auto;
+  left: 0;
+  background: linear-gradient(270deg, transparent, var(--border));
+}
+.tl-handle:hover,
+.tl-handle-l:hover {
   background: var(--primary);
 }
 

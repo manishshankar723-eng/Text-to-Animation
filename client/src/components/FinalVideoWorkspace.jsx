@@ -363,8 +363,14 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
     return (
       <div className="workflow-head-wrap">
         <div className="error">{error}</div>
-        <button type="button" className="btn" onClick={onBack}>
-          ← Back to your final videos
+        <button
+          type="button"
+          className="btn back-btn"
+          onClick={onBack}
+          title="Back to your final videos"
+          aria-label="Back to your final videos"
+        >
+          ←
         </button>
       </div>
     );

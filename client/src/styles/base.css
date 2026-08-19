@@ -62,6 +62,29 @@
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
 }
+/* A BACK BUTTON IS AN ARROW, NOT A SENTENCE.
+   Every workflow's back control used to spell out where it went ("← Your
+   Animatics", "← Your Storyboards", "← Back to shots"), so the widest slab in
+   the row was the one action nobody came to the page to press — and in the
+   animatic editor's top bar it was eating the room the title and the export
+   buttons needed. It is a square of the row's own height now, with the
+   destination moved into the tooltip, which is where `.fv-top`'s back arrow has
+   always kept it. Rows that state their own button padding (`.an-topbar`,
+   `.fv-top`) re-state `padding: 0` beside their own rule; everything else is
+   covered here. */
+.btn.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  margin-top: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
 
 /* Cards / layout */
 .card {

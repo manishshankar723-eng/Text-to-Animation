@@ -9,6 +9,7 @@
 // poster is just a picture, and a colour card has no picture at all.
 import { useEffect, useRef, useState } from "react";
 import Icon from "./Icon.jsx";
+import { frameOrigin } from "../animatic/scene.js";
 
 const MIN_MS = 100;
 const MAX_MS = 600000;
@@ -215,7 +216,26 @@ export default function FrameStrip({
               overIndex === i ? "over" : "",
             ].join(" ")}
             draggable
-            onDragStart={() => setDragIndex(i)}
+            /* ⚠ TWO THINGS ARE ON THE CLIPBOARD, and the second one is not
+               data. `application/x-anim-asset` is the payload; the empty
+               `…-image` / `…-video` marker beside it is there so a timeline
+               lane can tell WHAT is being dragged during `dragover`, where
+               `getData` is blank by design in every browser and only the type
+               list can be read (see `dragKind` in Timeline.jsx). Without the
+               marker a lane could not refuse a drop until after it happened.
+               `dragIndex` still drives reordering INSIDE the strip — this adds
+               a second place the same card can be dropped, it does not replace
+               the first. */
+            onDragStart={(e) => {
+              setDragIndex(i);
+              const kind = frameOrigin(f) === "video" ? "video" : "image";
+              e.dataTransfer.effectAllowed = "move";
+              e.dataTransfer.setData(
+                "application/x-anim-asset",
+                JSON.stringify({ kind: "frame", id: f.id })
+              );
+              e.dataTransfer.setData(`application/x-anim-${kind}`, "");
+            }}
             onDragEnd={() => {
               setDragIndex(null);
               setOverIndex(null);

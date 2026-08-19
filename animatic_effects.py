@@ -313,11 +313,104 @@ def _chroma(rgb: np.ndarray, alpha: np.ndarray, params: dict):
     return rgb, alpha * keep
 
 
+# ---------------------------------------------------------------------------
+# Point-wise grades — every one a function of a single pixel and nothing else
+# ---------------------------------------------------------------------------
+# ⚠ EACH HAS A GLSL TWIN of the same name in `gl/shaders/effects.js`. The
+# constraint is the admission price: the monitor grades in ONE fragment shader
+# pass with no neighbourhood available, so blur, sharpen and grain cannot join
+# this list — they would need a second pass and an answer to "at which
+# resolution", which the preview and the export do not share.
+def _exposure(rgb: np.ndarray, params: dict) -> np.ndarray:
+    # STOPS, not a multiplier: +1 is twice the light, -1 is half.
+    return rgb * np.exp2(np.float32(params["stops"]))
+
+
+def _gamma(rgb: np.ndarray, params: dict) -> np.ndarray:
+    # Clamped away from zero at BOTH ends: a negative base makes numpy return
+    # NaN and GLSL undefined, and 1/0 is a different kind of black frame.
+    gamma = max(float(params["gamma"]), 0.01)
+    return np.power(np.maximum(rgb, 0.0), 1.0 / gamma)
+
+
+def _temperature(rgb: np.ndarray, params: dict) -> np.ndarray:
+    # ⚠ Deliberately naive — see the GLSL twin. A real white balance is a matrix
+    # in a LINEAR working space and neither renderer has one.
+    t = float(params["temperature"])
+    tint = float(params["tint"])
+    return rgb + np.array([t, tint, -t], dtype=np.float32) * 0.2
+
+
+def _hue(rgb: np.ndarray, params: dict) -> np.ndarray:
+    """Rotate the chroma plane about the luma axis.
+
+    ⚠ THROUGH YIQ, not the SVG `feColorMatrix hueRotate` matrix, which is built
+    on the 709 weights. This module's luma is 601 (`LUMA`), and mixing the two
+    would mean a rotation of 0 degrees did not quite agree with saturation 1 or
+    with `Image.convert("L")`. YIQ's Y *is* `LUMA`, so rotating (I, Q) leaves
+    brightness alone by construction rather than by approximation.
+    """
+    a = np.radians(np.float32(params["degrees"]))
+    co, si = np.cos(a), np.sin(a)
+    y = _luma(rgb)
+    i = (rgb * np.array([0.595716, -0.274453, -0.321263], np.float32)).sum(-1, keepdims=True)
+    q = (rgb * np.array([0.211456, -0.522591, 0.311135], np.float32)).sum(-1, keepdims=True)
+    i2 = i * co - q * si
+    q2 = i * si + q * co
+    return np.concatenate(
+        [
+            y + 0.9563 * i2 + 0.6210 * q2,
+            y - 0.2721 * i2 - 0.6474 * q2,
+            y - 1.1070 * i2 + 1.7046 * q2,
+        ],
+        axis=-1,
+    ).astype(np.float32)
+
+
+_SEPIA = np.array(
+    [
+        [0.393, 0.769, 0.189],
+        [0.349, 0.686, 0.168],
+        [0.272, 0.534, 0.131],
+    ],
+    dtype=np.float32,
+)
+
+
+def _sepia(rgb: np.ndarray, params: dict) -> np.ndarray:
+    # NOT a tint over a greyscale picture: the matrix is warmer in the
+    # highlights than a flat tone is, and that difference is the whole look.
+    amount = min(1.0, max(0.0, float(params["amount"])))
+    return rgb + (rgb @ _SEPIA.T - rgb) * amount
+
+
+def _posterize(rgb: np.ndarray, params: dict) -> np.ndarray:
+    """Quantise each channel to `levels` values, BOTH ENDS INCLUDED.
+
+    So 2 levels is pure black and pure white rather than black and mid grey,
+    which is what makes the control read as "how many bands". Hence the
+    (levels - 1) divisor.
+
+    ⚠ `np.floor(x + 0.5)`, NEVER `np.round`. numpy rounds halves to EVEN and
+    GLSL rounds them away from zero, and a band edge is exactly where the halves
+    land — so `round` would put whole regions of a posterised frame one band
+    apart between the monitor and the export.
+    """
+    n = max(float(params["levels"]), 2.0) - 1.0
+    return np.floor(np.clip(rgb, 0.0, 1.0) * n + 0.5) / n
+
+
 _EFFECTS = {
     "brightness": _brightness,
     "contrast": _contrast,
     "saturation": _saturation,
     "lut": _lut,
+    "exposure": _exposure,
+    "gamma": _gamma,
+    "temperature": _temperature,
+    "hue": _hue,
+    "sepia": _sepia,
+    "posterize": _posterize,
 }
 
 

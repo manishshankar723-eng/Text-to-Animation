@@ -59,6 +59,7 @@ from PIL import Image, ImageDraw, ImageFont
 import animatic_fonts
 import export_presets
 from animatic_effects import apply_effects, apply_mask, blend_onto
+from animatic_transitions import apply_matte
 from animatic_render import (
     DEFAULT_BLEND,
     DEFAULT_MASK,
@@ -70,6 +71,7 @@ from animatic_render import (
     scene_at,
     scene_signature,
     text_place,
+    transition_matte,
     value_at,
 )
 
@@ -762,10 +764,17 @@ def _static_transform(clip: dict | None) -> dict:
     }
 
 
-def _flatten(layer: Image.Image, size: tuple[int, int], background: str, blend: str) -> Image.Image:
-    """One finished RGBA layer, composited onto the bar colour. Always RGB out."""
-    canvas = Image.new("RGB", size, _parse_colour(background))
-    return blend_onto(canvas, layer, blend)
+def _ground(size: tuple[int, int], background: str) -> Image.Image:
+    """The empty frame every picture track is stacked onto — the bar colour.
+
+    ⚠ THIS IS ALSO WHAT A MOMENT WITH NO PICTURE LOOKS LIKE, and that moment can
+    now happen: clips are placed freely on their tracks (`frame_spans`), so a
+    track can have a gap in it and a gap on the bottom track with nothing above it
+    is a frame of pure backdrop. Before tracks the sequence had no holes, so the
+    planners were free to SKIP such a moment — and skipping one now would make the
+    encoded video shorter than the timeline and pull the audio out of sync.
+    """
+    return Image.new("RGB", size, _parse_colour(background))
 
 
 def _picture_layer(
@@ -891,33 +900,80 @@ def _finish_layer(
 
 
 def _picture_canvas(
+    base: Image.Image,
     source: dict | str,
     size: tuple[int, int],
     fit: str,
-    background: str,
     transform: dict | None,
     look: dict | None = None,
 ) -> Image.Image:
-    """One clip's picture as a finished RGB frame — layer, then blend mode.
+    """One clip's picture composited ONTO `base` — layer, then blend mode.
 
     The blend happens HERE rather than in `_picture_layer` because it is a
-    question about two things: this picture and whatever is under it. Under the
-    base picture there is only the bar colour, so "multiply" on a frame darkens
-    it toward the backdrop — which is exactly what the monitor shows, since the
-    canvas is cleared to the same colour before anything is drawn.
+    question about two things: this picture and whatever is under it.
+
+    ⚠ IT TAKES THE CANVAS UNDERNEATH IT NOW, rather than making one out of the bar
+    colour. That is what makes a stack of picture TRACKS work: under the bottom
+    track there is only the backdrop (so "multiply" on a base clip darkens it
+    toward the bars, byte for byte what this always produced), and under an upper
+    track there is the picture below — so a clip on track 1 with a chroma key or a
+    faded edge reveals track 0 through it, which is what a track above another one
+    means everywhere else.
     """
     layer = _picture_layer(source, size, fit, transform, look)
-    return _flatten(layer, size, background, (look or {}).get("blend") or DEFAULT_BLEND)
+    return blend_onto(base, layer, (look or {}).get("blend") or DEFAULT_BLEND)
 
 
-def _faded(transform: dict | None, factor: float) -> dict:
-    """A copy of a transform with its opacity scaled — how a dip fades a shot."""
-    tf = dict(transform or {})
-    tf["opacity"] = float(tf.get("opacity", 1.0)) * max(0.0, min(1.0, factor))
-    return tf
+def _veiled(canvas: Image.Image, colour: str, factor: float) -> Image.Image:
+    """A finished RGB frame laid over with a flat colour — how a dip goes out.
+
+    ⚠ A VEIL, NOT A FADE OF THE PICTURE'S OWN OPACITY, which is what a dip used
+    to be. Over real numbers the two are the same arithmetic *while the colour
+    is the backdrop* — fading a picture toward the bar colour and laying the bar
+    colour over it land on the same pixel — so a dip that names no colour is the
+    dip that always shipped. They part company the moment the colour is
+    something else: only the veil also covers the LETTERBOX BARS, and without
+    that a dip to red would snap the bars to red at both edges of the window,
+    which are exactly the two moments a transition has to be invisible at.
+
+    (The one thing that is not bit-exact: the veil rounds to 8 bits a second
+    time, so a keyed or feathered edge can land a single level away from what
+    the fade produced. Nothing sees that; `tests/transition_check.py` measures a
+    dip by whether the middle of the window goes dark and comes back.)
+    """
+    factor = max(0.0, min(1.0, float(factor)))
+    if factor <= 0.0:
+        return canvas
+    veil = Image.new("RGB", canvas.size, _parse_colour(colour))
+    return Image.blend(canvas, veil, factor)
+
+
+def _slide_offsets(
+    size: tuple[int, int], direction: str | None, m: float
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    """How far each of a slide's two pictures has travelled, in pixels.
+
+    ⚠ TWIN of `slideOffsets` in `ProgramCanvas.jsx`. BOTH pictures move — that
+    is what separates a push from a cover — and they are always exactly one
+    frame apart, so the background shows through neither. "left" is the default
+    and the behaviour that already shipped.
+    """
+    width, height = size
+    if direction == "right":
+        offset = int(round(width * m))
+        return (offset, 0), (offset - width, 0)
+    if direction == "up":
+        offset = int(round(height * m))
+        return (0, -offset), (0, height - offset)
+    if direction == "down":
+        offset = int(round(height * m))
+        return (0, offset), (0, offset - height)
+    offset = int(round(width * m))
+    return (-offset, 0), (width - offset, 0)
 
 
 def _transition_canvas(
+    base: Image.Image,
     source: dict | str,
     source_b: dict | str,
     size: tuple[int, int],
@@ -929,6 +985,7 @@ def _transition_canvas(
     mix: float,
     look: dict | None = None,
     look_b: dict | None = None,
+    params: dict | None = None,
 ) -> Image.Image:
     """The two pictures of a transition, composited at `mix` (0 → 1).
 
@@ -954,20 +1011,36 @@ def _transition_canvas(
     For two opaque pictures — which is every clip that doesn't say otherwise —
     it is byte-for-byte what this produced before.
     """
-    width, height = size
     m = max(0.0, min(1.0, float(mix)))
     blend_b = (look_b or {}).get("blend") or DEFAULT_BLEND
+    # Already filled in by `transition_params`, so nothing below has to ask
+    # whether a key exists. Empty is legal and means every default — which is
+    # what a caller written before transitions took parameters passes.
+    p = params or {}
 
     if kind == "dip":
-        # NOT a two-picture blend: the shot goes out through the bar colour and
-        # the next one comes up from it, so only ever ONE picture is on screen.
-        # That is what makes a dip read as a beat rather than a cross-fade.
-        if m < 0.5:
-            return _picture_canvas(
-                source, size, fit, background, _faded(transform, 1 - 2 * m), look
-            )
-        return _picture_canvas(
-            source_b, size, fit, background, _faded(transform_b, 2 * m - 1), look_b
+        # NOT a two-picture blend: the shot goes out through a colour and the
+        # next one comes up from it, so only ever ONE picture is on screen. That
+        # is what makes a dip read as a beat rather than a cross-fade.
+        near = m < 0.5
+        # ⚠ THE VEIL COVERS EVERYTHING UNDERNEATH, tracks below included. It has
+        # to: a dip is a full-frame beat, it already covers the letterbox bars for
+        # the same reason, and the monitor draws it as a full-frame quad over the
+        # composite so far (`ProgramCanvas`). Anything narrower would be a dip that
+        # blacked out one track while another stayed lit.
+        return _veiled(
+            _picture_canvas(
+                base,
+                source if near else source_b,
+                size,
+                fit,
+                transform if near else transform_b,
+                look if near else look_b,
+            ),
+            # "" means the bar colour, the same empty-is-inherit rule `lut.name`
+            # follows — and the colour a dip has always gone out through.
+            p.get("color") or background,
+            1.0 - abs(2 * m - 1),
         )
 
     # Each picture is graded and masked ON ITS OWN before the two meet. A
@@ -977,29 +1050,38 @@ def _transition_canvas(
     b_layer = _picture_layer(source_b, size, fit, transform_b, look_b)
 
     if kind == "slide":
-        # A push: the outgoing picture is driven off to the left while the
-        # incoming one comes in behind it. Both move, which is what separates a
-        # push from a cover — and the background shows through neither, because
-        # together they are always exactly one frame wide.
-        offset = int(round(width * m))
+        # A push: the outgoing picture is driven off the frame while the incoming
+        # one comes in behind it. Both move, which is what separates a push from
+        # a cover — and the background shows through neither, because together
+        # they are always exactly one frame across.
+        a_shift, b_shift = _slide_offsets(size, p.get("direction"), m)
         a_layer = _picture_layer(source, size, fit, transform, look)
-        out = Image.new("RGB", size, _parse_colour(background))
-        out = blend_onto(out, _shifted(a_layer, -offset), (look or {}).get("blend") or DEFAULT_BLEND)
-        return blend_onto(out, _shifted(b_layer, width - offset), blend_b)
+        out = blend_onto(base, _shifted(a_layer, *a_shift), (look or {}).get("blend") or DEFAULT_BLEND)
+        return blend_onto(out, _shifted(b_layer, *b_shift), blend_b)
 
-    base = _picture_canvas(source, size, fit, background, transform, look)
+    base = _picture_canvas(base, source, size, fit, transform, look)
 
-    if kind == "wipe":
-        # A hard edge travelling left → right, revealing the incoming picture.
-        edge = int(round(width * m))
-        if edge <= 0:
-            return base
-        revealed = Image.new("RGBA", size, (0, 0, 0, 0))
-        revealed.paste(b_layer.crop((0, 0, edge, height)), (0, 0))
-        return blend_onto(base, revealed, blend_b)
+    # ⚠ EVERY REVEAL IS ONE LINE: a shape multiplied into the ARRIVING
+    # picture's alpha, exactly as `apply_mask` above multiplied the clip's own
+    # mask into it. A wipe, an iris, a clock and a chequerboard differ only in
+    # the field `matte_coverage` evaluates — see `animatic_transitions.py`.
+    #
+    # ⚠ AND IT IS STILL A COMPOSITE, not a blend, so everything the docstring
+    # above promises still holds: the arriving picture keeps its blend mode, its
+    # chroma key and its own mask THROUGH the transition, because none of the
+    # three ever learns that a matte was applied after it.
+    matte = transition_matte(kind)
+    if matte != "none":
+        return blend_onto(base, apply_matte(b_layer, matte, p, m), blend_b)
 
     # dissolve, and anything unrecognised — but `transition_window` has already
     # folded unknown kinds down to this one, so both sides fall back together.
+    #
+    # ⚠ NOT re-expressed as "the constant matte", though it is one. `apply_matte`
+    # rounds on the way back to 8 bits and `_faded_layer` TRUNCATES, so routing a
+    # dissolve through it would move every blended pixel by up to one level for
+    # no gain — and a dissolve is the one transition that has shipped since the
+    # beginning.
     return blend_onto(base, _faded_layer(b_layer, m), blend_b)
 
 
@@ -1013,18 +1095,65 @@ def _faded_layer(layer: Image.Image, factor: float) -> Image.Image:
     return out
 
 
-def _shifted(layer: Image.Image, dx: int) -> Image.Image:
-    """An RGBA layer moved sideways on its own full-frame canvas — for a slide."""
-    if dx == 0:
+def _shifted(layer: Image.Image, dx: int, dy: int = 0) -> Image.Image:
+    """An RGBA layer moved on its own full-frame canvas — for a slide.
+
+    `dy` defaults to 0, which is every caller written while a slide could only
+    go sideways.
+    """
+    if dx == 0 and dy == 0:
         return layer
     out = Image.new("RGBA", layer.size, (0, 0, 0, 0))
-    out.paste(layer, (dx, 0))
+    out.paste(layer, (dx, dy))
     return out
 
 
-def render_frame(
-    source: dict | str,
+def _draw_track(
+    canvas: Image.Image,
+    picture: dict,
     size: tuple[int, int],
+    fit: str,
+    background: str,
+) -> Image.Image:
+    """ONE picture track, composited onto everything already drawn.
+
+    `picture` is one entry of the stack `render_frame` is given — the same shape
+    `scene_at` puts in `scene["pictures"]`, with the sources resolved to files by
+    `build_animatic`:
+
+        {"source", "transform", "look",                     the clip
+         "picture_b", "transform_b", "look_b",              the one arriving
+         "transition", "mix", "transition_params"}           and how
+
+    With no second picture it is a plain composite; with one it is the transition,
+    which is track-local (`transition_window`) and therefore drawn here, inside
+    one track, rather than once for the whole frame.
+    """
+    if picture.get("picture_b") and picture.get("transition"):
+        return _transition_canvas(
+            canvas,
+            picture.get("source"),
+            picture.get("picture_b"),
+            size,
+            fit,
+            background,
+            picture.get("transform"),
+            picture.get("transform_b"),
+            picture.get("transition"),
+            float(picture.get("mix") or 0.0),
+            picture.get("look"),
+            picture.get("look_b"),
+            picture.get("transition_params"),
+        )
+    return _picture_canvas(
+        canvas, picture.get("source"), size, fit,
+        picture.get("transform"), picture.get("look"),
+    )
+
+
+def render_frame(
+    source: dict | str | None = None,
+    size: tuple[int, int] = (1920, 1080),
     fit: str = "contain",
     background: str = "#000000",
     label: str = "",
@@ -1038,33 +1167,51 @@ def render_frame(
     mix: float = 0.0,
     look: dict | None = None,
     look_b: dict | None = None,
+    transition_params: dict | None = None,
+    pictures: list[dict] | None = None,
 ) -> Image.Image:
-    """One video frame: the picture (or two, mid-transition) plus every layer.
+    """One video frame: THE STACK OF PICTURE TRACKS plus every layer over it.
 
-    `source` (and `picture_b`) is what to draw — see `_picture_layer` for the
-    shape. A bare path string still works and means a still, which is what every
-    caller written before video clips existed passes.
+    ⚠ `pictures` IS THE PICTURE, AND IT IS A LIST — one entry per picture track
+    with something on it, BOTTOM TRACK FIRST, each in the shape `_draw_track`
+    documents. That is what `scene_at` resolves and what both planners carry. An
+    EMPTY list is legal and draws the letterbox colour: a track can have a gap in
+    it now, and a moment with nothing on any track IS the backdrop.
 
-    `picture_b` / `transition` / `mix` are the transition, resolved by
-    `scene_at`. With no second picture this is exactly what it always was, which
-    is the whole of every animatic written before transitions existed.
+    ⚠ The single-picture keyword form (`source`, `transform`, `picture_b`, …) is
+    kept and means a one-entry stack. Every caller written before tracks passes
+    it, `tests/effects_check.py` pins its bytes, and one picture on the bottom
+    track composited onto the bar colour is exactly what it always produced —
+    which is why the goldens still hold.
 
-    `look` / `look_b` are the resolved effects, mask and blend mode of the two
-    pictures. Absent — which is every animatic written before this — nothing is
-    graded and the result is byte-for-byte what it was.
+    `look` / `look_b` are the resolved effects, mask and blend mode. Absent —
+    which is every animatic written before them — nothing is graded.
 
-    Shapes, overlays and text are drawn ON TOP of the finished transition, not
-    into it — a caption spanning a cut stays legible all the way through rather
-    than dissolving with the picture underneath it.
+    Shapes, overlays and text are drawn ON TOP of the finished stack, not into it
+    — a caption spanning a cut stays legible all the way through rather than
+    dissolving with the picture underneath it.
     """
-    if picture_b and transition:
-        canvas = _transition_canvas(
-            source, picture_b, size, fit, background,
-            transform, transform_b, transition, mix,
-            look, look_b,
+    if pictures is None:
+        pictures = (
+            []
+            if source is None
+            else [
+                {
+                    "source": source,
+                    "transform": transform,
+                    "look": look,
+                    "picture_b": picture_b,
+                    "transform_b": transform_b,
+                    "transition": transition,
+                    "mix": mix,
+                    "look_b": look_b,
+                    "transition_params": transition_params,
+                }
+            ]
         )
-    else:
-        canvas = _picture_canvas(source, size, fit, background, transform, look)
+    canvas = _ground(size, background)
+    for picture in pictures:
+        canvas = _draw_track(canvas, picture, size, fit, background)
     # Stacking order, bottom to top: picture → shapes → overlay images → text.
     # Shapes sit under the overlays because a shape is usually a highlight or a
     # mask ON the art, while an overlay is a picture element (a logo, an inset)
@@ -1110,24 +1257,27 @@ def plan_segments(
     outlasts the pictures instead of stopping dead at the final image. Passing
     None (or anything shorter than the frames) keeps the old behaviour exactly.
 
+    ⚠ WHERE EACH PICTURE SITS COMES FROM `frame_spans`, NOT FROM A SUM WRITTEN
+    HERE. It used to be its own running total, which was a second opinion about
+    the timeline and is now flatly wrong: clips are placed by `start_ms` on
+    numbered TRACKS, so "add up the clips before it" answers a question nobody is
+    asking. One evaluator, three callers (this, the sampling planner, the monitor).
+
+    ⚠ AND A SEGMENT CARRIES A STACK, NOT ONE PICTURE — `pictures`, bottom track
+    first. An EMPTY stack is a real segment and must be emitted: a track can have
+    a gap in it, and skipping that moment (which is what the old
+    `frame_index is None: continue` did) would make the encoded video shorter than
+    the timeline and pull the audio out of sync from the first gap onward.
+
     Returns (segments, total_ms) where each segment is
-    {"frame": index into `frames`, "start_ms", "duration_ms", "texts": [clip…],
-    "shapes": [shape…]}.
+    {"pictures": [{"frame": index into `frames`}…], "start_ms", "duration_ms",
+    "texts": [clip…], "shapes": [shape…], "overlays": [picture…]}.
     """
-    spans: list[tuple[int, int, int]] = []  # (start, end, frame index)
-    clock = 0
-    for i, frame in enumerate(frames):
-        length = max(100, int(frame.get("duration_ms") or 2000))
-        spans.append((clock, clock + length, i))
-        clock += length
+    from animatic_render import _stack_at
+
+    spans, total_ms = frame_spans(frames, end_ms)
     if not spans:
         return [], 0
-    # Hold the last picture out to `end_ms` when something else runs longer.
-    if end_ms and end_ms > clock:
-        start, _end, index = spans[-1]
-        spans[-1] = (start, end_ms, index)
-        clock = end_ms
-    total_ms = clock
 
     # Normalise the clips once, and drop any that fall entirely off the end.
     clips: list[tuple[int, int, dict]] = []
@@ -1163,9 +1313,9 @@ def plan_segments(
     pictures = _timed(overlays, look=True)
 
     cuts = {0, total_ms}
-    for start, end, _ in spans:
-        cuts.add(start)
-        cuts.add(end)
+    for span in spans:
+        cuts.add(span["start"])
+        cuts.add(span["end"])
     for start, end, _ in clips + figures + pictures:
         cuts.add(start)
         cuts.add(end)
@@ -1175,12 +1325,12 @@ def plan_segments(
     for a, b in zip(ordered, ordered[1:]):
         if b - a <= 0:
             continue
-        frame_index = next((i for (s, e, i) in spans if s <= a < e), None)
-        if frame_index is None:
-            continue
         segments.append(
             {
-                "frame": frame_index,
+                # The stack at this instant, bottom track first — the same
+                # evaluator `scene_at` uses, so the fast path and the sampling
+                # path cannot disagree about which pictures are up.
+                "pictures": [{"frame": s["index"]} for s in _stack_at(spans, a)],
                 "start_ms": a,
                 "duration_ms": b - a,
                 "texts": [clip for (s, e, clip) in clips if s <= a < e],
@@ -1190,10 +1340,18 @@ def plan_segments(
         )
 
     # A boundary landing exactly on a frame edge can leave a sliver too short for
-    # ffmpeg to show; fold anything under 40ms into its neighbour.
+    # ffmpeg to show; fold anything under 40ms into its neighbour — but only into
+    # one showing the same pictures, or the fold would show the wrong shot.
+    def _stack_of(segment: dict) -> tuple:
+        return tuple(item["frame"] for item in segment["pictures"])
+
     merged: list[dict] = []
     for segment in segments:
-        if merged and segment["duration_ms"] < 40 and merged[-1]["frame"] == segment["frame"]:
+        if (
+            merged
+            and segment["duration_ms"] < 40
+            and _stack_of(merged[-1]) == _stack_of(segment)
+        ):
             merged[-1]["duration_ms"] += segment["duration_ms"]
             continue
         merged.append(segment)
@@ -1222,11 +1380,11 @@ def plan_animated_segments(
     animatic costs three seconds' worth of stills, not two minutes'.
 
     Returns the same (segments, total_ms) shape `plan_segments` does, so the
-    renderer downstream cannot tell which planner ran — with two additions per
-    segment: `signature` (the render cache key) and `transform` (the picture's
-    resolved pan/zoom/fade). A segment inside a TRANSITION carries three more:
-    `frame_b` (the picture arriving, as an index into `frames`), `transform_b`
-    and `mix`.
+    renderer downstream cannot tell which planner ran — with one addition per
+    segment, `signature` (the render cache key), and several per PICTURE in the
+    stack: `transform` (the resolved pan/zoom/fade), `source_ms` and `look`, plus
+    `frame_b` / `transform_b` / `look_b` / `transition` / `transition_params` /
+    `mix` / `source_ms_b` on a picture that is mid-transition.
 
     Note that transitions cannot change `total_ms`: they are boundary-local, so
     the sampling grid below is the same one an untransitioned project gets.
@@ -1253,39 +1411,56 @@ def plan_animated_segments(
         start = n * total_ms / count
         end = (n + 1) * total_ms / count
         scene = scene_at(project, start, end_ms)
-        if scene["frame"] is None:
-            continue
-        segment = {
-            "frame": scene["frame"]["index"],
-            "start_ms": start,
-            "duration_ms": end - start,
-            "texts": scene["texts"],
-            "shapes": scene["shapes"],
-            "overlays": scene["overlays"],
-            "signature": scene_signature(scene),
-            "transform": _transform_of(scene["frame"]),
-            # WHICH MOMENT OF THE SOURCE FILE this sample shows, for a video
-            # clip; None for a still or a colour card. Carried on the segment
-            # rather than recomputed downstream so there is exactly one place
-            # that answers it — `source_at` — and the still the export draws is
-            # provably the one the preview drew.
-            "source_ms": scene["frame"].get("source_ms"),
-            # The grade, resolved at this instant. Carried rather than looked up
-            # downstream for the same reason `source_ms` is: one place answers
-            # "what does this clip look like now", and it is the place the
-            # monitor asked too.
-            "look": _look_of(scene["frame"]),
-        }
-        # Mid-transition: the second picture rides along on the segment, so the
-        # renderer downstream still only ever looks at one dict.
-        if scene["frame_b"] is not None:
-            segment["frame_b"] = scene["frame_b"]["index"]
-            segment["transform_b"] = _transform_of(scene["frame_b"])
-            segment["transition"] = scene["transition"]
-            segment["mix"] = scene["mix"]
-            segment["source_ms_b"] = scene["frame_b"].get("source_ms")
-            segment["look_b"] = _look_of(scene["frame_b"])
-        segments.append(segment)
+        # ⚠ NO `continue` ON AN EMPTY STACK. A moment with nothing on any track is
+        # a frame of backdrop and has to be encoded, or the video comes out
+        # shorter than the timeline and the audio drifts from the first gap on.
+        # It used to be impossible; free placement makes it ordinary.
+        stack: list[dict] = []
+        for item in scene["pictures"]:
+            picture = item["frame"]
+            entry = {
+                "frame": picture["index"],
+                "transform": _transform_of(picture),
+                # WHICH MOMENT OF THE SOURCE FILE this sample shows, for a video
+                # clip; None for a still or a colour card. Carried rather than
+                # recomputed downstream so there is exactly one place that answers
+                # it — `source_at` — and the still the export draws is provably
+                # the one the preview drew.
+                "source_ms": picture.get("source_ms"),
+                # The grade, resolved at this instant. Carried for the same reason
+                # `source_ms` is: one place answers "what does this clip look like
+                # now", and it is the place the monitor asked too.
+                "look": _look_of(picture),
+            }
+            # Mid-transition: the second picture rides along on this TRACK's
+            # entry, because a transition is track-local — see `transition_window`.
+            arriving = item["frame_b"]
+            if arriving is not None:
+                entry["frame_b"] = arriving["index"]
+                entry["transform_b"] = _transform_of(arriving)
+                entry["transition"] = item["transition"]
+                # ⚠ AND ITS PARAMETERS. They are already inside `signature`, so
+                # leaving them off here would not reuse the wrong still — it would
+                # render the RIGHT number of stills and draw every one of them in
+                # the default direction, so the monitor wiped upwards and the MP4
+                # wiped right. Two places carry a transition to the renderer and
+                # this is the first; the other is `build_animatic`'s task args.
+                entry["transition_params"] = item["transition_params"]
+                entry["mix"] = item["mix"]
+                entry["source_ms_b"] = arriving.get("source_ms")
+                entry["look_b"] = _look_of(arriving)
+            stack.append(entry)
+        segments.append(
+            {
+                "pictures": stack,
+                "start_ms": start,
+                "duration_ms": end - start,
+                "texts": scene["texts"],
+                "shapes": scene["shapes"],
+                "overlays": scene["overlays"],
+                "signature": scene_signature(scene),
+            }
+        )
     return segments, total_ms
 
 
@@ -1307,6 +1482,44 @@ def _segment_at(segments: list[dict], at_ms: float, total_ms: int) -> list[dict]
         if segment["start_ms"] <= at < segment["start_ms"] + segment["duration_ms"]:
             return [segment]
     return [segments[-1]]
+
+
+def _still_layer(usable: list[dict], item: dict, fit: str) -> dict:
+    """One entry of a segment's stack, with its sources resolved to files.
+
+    The bridge between the planners (which name pictures by INDEX) and
+    `render_frame` (which wants something it can open). Both planners come through
+    here so the fast path and the sampling path hand the renderer the same shape.
+
+    ⚠ `or _static_transform(clip)`, and the same for the look. `plan_segments` —
+    the planner a project with no animation gets — resolves neither, so a STORED
+    zoom or a STORED grade would be dropped from the MP4 while the monitor showed
+    it. Falling back to the clip's own values is what makes the two agree
+    whichever planner ran.
+    """
+    clip = usable[item["frame"]]
+    out = {
+        "source": _source_for(clip, item.get("source_ms")),
+        "transform": item.get("transform") or _static_transform(clip),
+        "look": item.get("look") or _resolved_look(clip),
+    }
+    # Mid-transition this track names a SECOND picture to blend with. It indexes
+    # `usable` like `frame` does, so a clip dropped for a missing image can't be
+    # picked up here either.
+    index_b = item.get("frame_b")
+    if index_b is not None:
+        out.update(
+            {
+                "picture_b": _source_for(usable[index_b], item.get("source_ms_b")),
+                "transform_b": item.get("transform_b"),
+                "transition": item.get("transition"),
+                "mix": item.get("mix") or 0.0,
+                "look_b": item.get("look_b"),
+                # The second of the two places — see `plan_animated_segments`.
+                "transition_params": item.get("transition_params") or {},
+            }
+        )
+    return out
 
 
 def _transform_of(picture: dict) -> dict:
@@ -1369,8 +1582,8 @@ def _source_for(clip: dict, source_ms: float | None) -> dict:
 # ---------------------------------------------------------------------------
 # The mix: levels, fades, tone, ducking
 # ---------------------------------------------------------------------------
-# ⚠ TWIN FILE: `client/src/animatic/audio_mix.js`. `track_play_ms`, `fade_window`
-# and `EQ_BANDS` are written twice, in the same shape and with the same clamps,
+# ⚠ TWIN FILE: `client/src/animatic/audio_mix.js`. `track_play_ms`, `fade_window`,
+# `curve_gain` and `EQ_BANDS` are written twice, in the same shape and clamps,
 # because the editor has to fade the preview exactly where the encoder fades the
 # export — a track that ramps out over the last two seconds in the monitor and
 # over the last four in the MP4 is the audio version of a preview that lies.
@@ -1503,6 +1716,83 @@ def fade_window(track: dict, total_ms: int = 0) -> tuple[int, int, int]:
     return fade_in, max(0, play - fade_out), fade_out
 
 
+# --- The shape of a fade ----------------------------------------------------
+# THREE CURVES, and they are Premiere's three Audio Transitions → Crossfade
+# entries: Constant Gain is a straight line, Constant Power a quarter sine,
+# Exponential Fade a decade curve. A crossfade between two clips is the outgoing
+# one's fade OUT overlapping the incoming one's fade IN, and this graph already
+# mixes whatever overlaps — so the feature is a curve per END of a clip and
+# nothing else. `acrossfade` is deliberately NOT used: it concatenates two
+# streams and would shorten the timeline, which is the same objection that made
+# picture transitions boundary-local.
+#
+# ⚠ `afade` IS THE IMPLEMENTATION, not one of two. The editor's `curve_gain`
+# twin exists to PREDICT what these curves do so the preview matches; the export
+# runs the real filter. That is why the mapping below is the only place a curve
+# name is turned into anything, and why `tests/audio_mix_check.py` measures the
+# encoded audio rather than trusting either formula.
+#
+# ⚠ TWIN of `FADE_CURVES` / `FADE_CURVE_INFO` in `client/src/animatic/audio_mix.js`.
+FADE_CURVES = ("linear", "power", "exponential")
+# ⚠ "linear" → "tri" IS `afade`'S OWN DEFAULT, so every project that predates
+# this field encodes byte-for-byte the graph it always did.
+FADE_FF_CURVE = {"linear": "tri", "power": "qsin", "exponential": "exp"}
+
+
+def fade_curve(track: dict, side: str) -> str:
+    """The curve on one END of one clip, folded to "linear" if it is not one.
+
+    Folded rather than rejected — the same rule `transition_kind` follows. A
+    project written by a newer client naming a curve this build has never heard
+    of still renders, at the shape every project used to have.
+    """
+    raw = str(track.get("fade_in_curve" if side == "in" else "fade_out_curve") or "")
+    return raw if raw in FADE_CURVES else "linear"
+
+
+def curve_gain(curve: str, x: float) -> float:
+    """The gain a curve gives at `x`: 0 is silence, 1 is full level.
+
+    ⚠ TRANSCRIBED FROM `fade_gain()` in libavfilter/af_afade.c, at afade's
+    default silence=0 / unity=1. Nothing here is a fit or an approximation of the
+    filter — it IS the filter's arithmetic, which is the only way the editor's
+    preview can be checked against the encode instead of merely resembling it.
+
+    ⚠ BOTH ENDS READ THE SAME CURVE, x running towards 1 at full level: a fade
+    out is this read backwards. Which is also why constant power holds a
+    crossfade up — sin(x·π/2) against sin((1−x)·π/2) sums to unity in POWER,
+    where constant gain sums to unity in AMPLITUDE and leaves a −3 dB scoop.
+
+    ⚠ TWIN of `curveGain` in `client/src/animatic/audio_mix.js`.
+    """
+    t = max(0.0, min(1.0, float(x)))
+    if curve == "power":
+        return math.sin(t * math.pi / 2.0)
+    if curve == "exponential":
+        # −11.5129… is 5·ln(0.1): a decade curve bottoming out at −100 dB.
+        return math.exp(-11.512925464970227 * (1.0 - t))
+    return t
+
+
+def fade_gain_at(track: dict, ms: float, total_ms: int = 0) -> float:
+    """What the whole fade envelope is worth at `ms` in TRACK time.
+
+    Nothing in the export calls this — ffmpeg does the fading. It exists so the
+    twin can be checked at the level that matters (the GAIN, not just where the
+    ramp starts), because two implementations of `fade_window` that agree to the
+    millisecond can still be ramping along different curves.
+
+    ⚠ TWIN of `fadeGainAt` in `client/src/animatic/audio_mix.js`.
+    """
+    fade_in, out_at, fade_out = fade_window(track, total_ms)
+    gain = 1.0
+    if fade_in > 0 and ms < fade_in:
+        gain = curve_gain(fade_curve(track, "in"), max(0.0, ms) / fade_in)
+    if fade_out > 0 and ms > out_at:
+        gain = min(gain, curve_gain(fade_curve(track, "out"), 1.0 - (ms - out_at) / fade_out))
+    return max(0.0, min(1.0, gain))
+
+
 def duck_ratio(duck_to: float) -> float:
     """The compressor ratio that pulls a track down to roughly `duck_to`.
 
@@ -1609,10 +1899,20 @@ def audio_graph(tracks: list[dict], total_ms: int = 0) -> tuple[list[str], str] 
         # reach silence. It is also the order the preview's graph is wired in.
         chain = [*tones[i], f"volume={volumes[i]:.3f}"]
         fade_in, out_at, fade_out = windows[i]
+        # ⚠ THE CURVE IS STATED, NEVER DEFAULTED — the same rule as the EQ's
+        # widths above, and for the same reason: `tri` happens to be `afade`'s
+        # default today, and a graph that only says what it wants when it wants
+        # something unusual is a graph you cannot read to find out what it does.
         if fade_in:
-            chain.append(f"afade=t=in:st=0:d={fade_in / 1000:.3f}")
+            chain.append(
+                f"afade=t=in:st=0:d={fade_in / 1000:.3f}"
+                f":curve={FADE_FF_CURVE[fade_curve(track, 'in')]}"
+            )
         if fade_out:
-            chain.append(f"afade=t=out:st={out_at / 1000:.3f}:d={fade_out / 1000:.3f}")
+            chain.append(
+                f"afade=t=out:st={out_at / 1000:.3f}:d={fade_out / 1000:.3f}"
+                f":curve={FADE_FF_CURVE[fade_curve(track, 'out')]}"
+            )
         # ⚠ AFTER THE FADES, NEVER BEFORE. Both `afade` windows are measured from
         # the start of the CLIP — that is what makes a fade travel with a trim —
         # so delaying first would push the clip along the timeline and leave its
@@ -2113,8 +2413,13 @@ def build_animatic(
     # some point). For a STILL they are not — one segment names one or two
     # pictures — and extracting a two-minute clip to write a single poster frame
     # would be the whole export's cost for one PNG.
-    wanted_clips = {s["frame"] for s in segments}
-    wanted_clips |= {s["frame_b"] for s in segments if s.get("frame_b") is not None}
+    wanted_clips = {p["frame"] for s in segments for p in s["pictures"]}
+    wanted_clips |= {
+        p["frame_b"]
+        for s in segments
+        for p in s["pictures"]
+        if p.get("frame_b") is not None
+    }
     videos = [
         usable[i] for i in sorted(wanted_clips) if clip_kind(usable[i]) == "video"
     ]
@@ -2171,10 +2476,18 @@ def build_animatic(
             shutil.rmtree(build_dir, ignore_errors=True)
             return {"stopped": True, "video": None, "frame_count": 0, "duration_ms": 0}
 
-        frame = usable[segment["frame"]]
+        # The TOPMOST picture is the one whose shot label is drawn: a label names
+        # the shot you can see, and on a stack of tracks that is the one on top.
+        # No pictures at all — a gap on every track — means no label, which is
+        # right: there is no shot there to name.
+        top = usable[segment["pictures"][-1]["frame"]] if segment["pictures"] else None
         # The shape ids are part of the key: without them two segments differing
         # ONLY in which shapes are up would share one rendered still, and a
         # shape would appear or vanish at the wrong moment.
+        #
+        # ⚠ AND SO IS EVERY PICTURE IN THE STACK, not just the top one. Two
+        # moments showing the same top picture over DIFFERENT lower tracks are two
+        # different frames; keying on one of them would reuse the other's still.
         #
         # An animated segment brings its own key instead. Ids alone would be
         # wrong there — two samples one video frame apart hold exactly the same
@@ -2182,17 +2495,13 @@ def build_animatic(
         # id-based key would reuse the first still for the whole animation and
         # nothing would move.
         key = segment.get("signature") or (
-            segment["frame"],
+            tuple(item["frame"] for item in segment["pictures"]),
             tuple(t.get("id") for t in segment["texts"]),
             tuple(s.get("id") for s in segment.get("shapes") or ()),
             tuple(o.get("id") for o in segment.get("overlays") or ()),
         )
         if key not in names:
             names[key] = f"f{len(names):04d}.png"
-            # Mid-transition the segment names a SECOND picture to blend with.
-            # It indexes `usable` like `frame` does, so a frame dropped for a
-            # missing image can't be picked up here either.
-            index_b = segment.get("frame_b")
             tasks.append(
                 {
                     "index": len(tasks),
@@ -2202,35 +2511,24 @@ def build_animatic(
                     # ⚠ PLAIN DATA ONLY — this dict is pickled to a worker
                     # process. See `_render_still`.
                     "args": {
-                        # WHAT this clip is a picture of at this instant: its own
-                        # still, its colour, or the extracted frame of its source
-                        # video covering `source_ms`. Resolved HERE, in the
-                        # parent, because it is the only side that knows about
-                        # `_stills`. See `_source_for`.
-                        "source": _source_for(frame, segment.get("source_ms")),
+                        # ⚠ THE STACK, bottom track first, with every source
+                        # resolved to a FILE. What a clip is a picture of at this
+                        # instant — its own still, its colour, or the extracted
+                        # frame of its source video covering `source_ms` — is
+                        # worked out HERE, in the parent, because this is the only
+                        # side that knows about `_stills`. See `_source_for`.
+                        "pictures": [
+                            _still_layer(
+                                usable, item, fit=fit,
+                            )
+                            for item in segment["pictures"]
+                        ],
                         "fit": fit,
                         "background": background,
-                        "label": frame.get("label", "") if show_labels else "",
+                        "label": (top.get("label", "") if (top and show_labels) else ""),
                         "texts": segment["texts"],
                         "shapes": segment.get("shapes") or [],
                         "overlays": segment.get("overlays") or [],
-                        # ⚠ `or _static_transform(frame)`, and the same for the
-                        # look. `plan_segments` — the planner a project with no
-                        # animation gets — produces neither, so a STORED zoom or
-                        # a STORED grade would be dropped from the MP4 while the
-                        # monitor showed it. Falling back to the clip's own
-                        # values makes the two agree whichever planner ran.
-                        "transform": segment.get("transform") or _static_transform(frame),
-                        "look": segment.get("look") or _resolved_look(frame),
-                        "picture_b": (
-                            _source_for(usable[index_b], segment.get("source_ms_b"))
-                            if index_b is not None
-                            else None
-                        ),
-                        "transform_b": segment.get("transform_b"),
-                        "transition": segment.get("transition"),
-                        "mix": segment.get("mix") or 0.0,
-                        "look_b": segment.get("look_b"),
                     },
                 }
             )

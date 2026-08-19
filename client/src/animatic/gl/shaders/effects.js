@@ -103,6 +103,95 @@ vec4 fxChroma(vec3 c, float alpha, vec3 key, float similarity, float smoothness,
 `;
 
 // ---------------------------------------------------------------------------
+// Point-wise grades — every one a function of a single pixel and nothing else
+// ---------------------------------------------------------------------------
+// That constraint is the admission price for this file: the monitor grades in
+// ONE fragment shader pass with no neighbourhood available, so blur, sharpen
+// and grain cannot live here. See the note on EFFECT_PARAMS in scene.js.
+export const EXPOSURE = /* glsl */ `
+// STOPS, not a multiplier: +1 is twice the light, -1 is half. exp2 rather than
+// pow(2.0, s) because that is the instruction the hardware actually has, and
+// because "how many stops" is the unit a colourist already thinks in.
+vec3 fxExposure(vec3 c, float stops) { return c * exp2(stops); }
+`;
+
+export const GAMMA = /* glsl */ `
+// A power curve per channel. 1.0 is unchanged; BELOW 1 lifts the shadows,
+// which is the direction people expect from a control called gamma.
+// Clamped away from zero at both ends: pow() of a negative base is undefined
+// in GLSL and NaN in numpy, and 1.0/0.0 is a different kind of black frame.
+vec3 fxGamma(vec3 c, float gamma) {
+  return pow(max(c, vec3(0.0)), vec3(1.0 / max(gamma, 0.01)));
+}
+`;
+
+export const TEMPERATURE = /* glsl */ `
+// Warm/cool on the red-blue axis, green/magenta on the other, as a plain shift.
+// ⚠ DELIBERATELY NAIVE, and it is worth saying so: a real white balance is a
+// matrix applied in a LINEAR working space, and neither renderer has one — both
+// grade straight on the 0-1 sRGB values. This is the honest version of what a
+// slider called Temperature can do here, not an approximation of a better one.
+vec3 fxTemperature(vec3 c, float temperature, float tint) {
+  return c + vec3(temperature, tint, -temperature) * 0.2;
+}
+`;
+
+export const HUE = /* glsl */ `
+// Rotate the hue, as a rotation of the CHROMA PLANE about the luma axis.
+//
+// ⚠ THROUGH YIQ, NOT THE SVG feColorMatrix hueRotate MATRIX. That matrix is
+// built on the 709 weights (0.213/0.715/0.072); this file's luma is 601, and
+// mixing the two would mean a hue rotation of 0 degrees did not quite agree
+// with saturation 1 or with Image.convert("L"). YIQ's Y is exactly LUMA, so
+// rotating (I, Q) leaves brightness alone by construction.
+vec3 fxHue(vec3 c, float degrees) {
+  float a = radians(degrees);
+  float co = cos(a);
+  float si = sin(a);
+  float y = dot(c, LUMA);
+  float i = dot(c, vec3(0.595716, -0.274453, -0.321263));
+  float q = dot(c, vec3(0.211456, -0.522591, 0.311135));
+  float i2 = i * co - q * si;
+  float q2 = i * si + q * co;
+  return vec3(
+    y + 0.9563 * i2 + 0.6210 * q2,
+    y - 0.2721 * i2 - 0.6474 * q2,
+    y - 1.1070 * i2 + 1.7046 * q2
+  );
+}
+`;
+
+export const SEPIA = /* glsl */ `
+// The classic sepia matrix, dialled back by amount. NOT a tint over a greyscale
+// picture: the matrix is warmer in the highlights than a flat tone is, and that
+// difference is the whole look.
+vec3 fxSepia(vec3 c, float amount) {
+  vec3 s = vec3(
+    dot(c, vec3(0.393, 0.769, 0.189)),
+    dot(c, vec3(0.349, 0.686, 0.168)),
+    dot(c, vec3(0.272, 0.534, 0.131))
+  );
+  return mix(c, s, clamp(amount, 0.0, 1.0));
+}
+`;
+
+export const POSTERIZE = /* glsl */ `
+// Quantise each channel to 'levels' evenly spaced values, BOTH ENDS INCLUDED —
+// so 2 levels is pure black and pure white rather than black and mid grey,
+// which is what makes the control read as "how many bands" rather than "how
+// dark". Hence (levels - 1) as the divisor.
+//
+// ⚠ floor(x + 0.5), NEVER a round(). numpy rounds halves to EVEN and GLSL
+// rounds them away from zero, and a band edge is exactly where the halves land
+// — so round() would put whole regions of a posterised frame one band apart
+// between the monitor and the export.
+vec3 fxPosterize(vec3 c, float levels) {
+  float n = max(levels, 2.0) - 1.0;
+  return floor(clamp(c, 0.0, 1.0) * n + 0.5) / n;
+}
+`;
+
+// ---------------------------------------------------------------------------
 // Mask
 // ---------------------------------------------------------------------------
 export const MASK = /* glsl */ `

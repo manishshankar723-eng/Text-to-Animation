@@ -44,12 +44,22 @@ import {
 } from "./properties/PropGroup.jsx";
 import { clamp } from "../animatic/util.js";
 
+// ⚠ THE SAME LABELS AS `EFFECT_INFO` in `fx_library.js`, on purpose: the
+// browser you drag from and the pane you land in have to name the same thing
+// the same way, or dropping "Sepia" and getting a section called something else
+// reads as having added the wrong effect.
 const EFFECT_LABEL = {
   brightness: "Brightness",
   contrast: "Contrast",
   saturation: "Saturation",
   lut: "Colour look (LUT)",
   chroma: "Chroma key",
+  exposure: "Exposure",
+  gamma: "Gamma",
+  temperature: "Temperature & tint",
+  hue: "Hue rotate",
+  sepia: "Sepia",
+  posterize: "Posterize",
 };
 
 const BLEND_LABEL = {
@@ -68,12 +78,32 @@ const MASK_LABEL = { none: "No mask", rect: "Rectangle", ellipse: "Ellipse" };
 // value is worth on screen: an amount of 1.0 reads as 100%, a feather of 0.1 as
 // 10%. Kept here rather than in the scene model because it is a question about
 // the CONTROL, not about the picture.
+// `places` is how many decimals the field shows. It exists for `stops`, which is
+// the one parameter whose natural unit is neither a percentage nor a whole
+// number — a third of a stop is an ordinary exposure adjustment, and rounding it
+// to an integer would make the control useless while looking like it worked.
 const FIELD = {
   amount: { label: "Amount", scale: 100, unit: "%", min: 0, max: 300, step: 5 },
   similarity: { label: "Tolerance", scale: 100, unit: "%", min: 0, max: 100, step: 1 },
   smoothness: { label: "Softness", scale: 100, unit: "%", min: 0, max: 50, step: 1 },
   spill: { label: "Spill removal", scale: 100, unit: "%", min: 0, max: 100, step: 5 },
+  // Stops are stops — scale 1, so the number in the box is the number a
+  // colourist would say out loud.
+  stops: { label: "Exposure", scale: 1, unit: " EV", min: -5, max: 5, step: 0.1, places: 1 },
+  gamma: { label: "Gamma", scale: 100, unit: "%", min: 10, max: 400, step: 5 },
+  temperature: { label: "Temperature", scale: 100, unit: "%", min: -100, max: 100, step: 5 },
+  tint: { label: "Tint", scale: 100, unit: "%", min: -100, max: 100, step: 5 },
+  degrees: { label: "Rotate", scale: 1, unit: "°", min: -180, max: 180, step: 5 },
+  // Whole bands, and at least two of them — one band is a flat grey frame.
+  levels: { label: "Bands", scale: 1, unit: "", min: 2, max: 32, step: 1 },
 };
+
+/** A stored value as the field shows it — see `places` above. */
+function shown(value, field) {
+  const n = (value ?? 0) * field.scale;
+  const p = field.places || 0;
+  return p ? Number(n.toFixed(p)) : Math.round(n);
+}
 
 // The names the LUT dropdown offers. Fetched once for the tab: the list is the
 // contents of the server's `luts/` folder and does not change while you edit.
@@ -114,7 +144,14 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
   const blend = clip.blend || "normal";
   // Resolved parameters, by effect id, so a keyframed value reads as what is on
   // screen rather than as what is saved.
-  const shown = new Map((clip.effects || []).map((e) => [e.id, e.params]));
+  //
+  // ⚠ NOT CALLED `shown`. It was, and it SHADOWED the module-level `shown()`
+  // helper for the whole of this component — so every `shown(value, field)`
+  // below was calling a Map. It threw while RENDERING, which unmounts the tree
+  // React was rendering: the editor went black the instant an effect was
+  // dropped, because dropping one is what opens this group. Nothing else in the
+  // file changed, and no other test could see it — the maths was never wrong.
+  const atPlayhead = new Map((clip.effects || []).map((e) => [e.id, e.params]));
 
   const writeEffects = (next) => onChange(stored.id, { effects: next });
 
@@ -356,7 +393,7 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
           const kind = effect.kind;
           const id = effectKey(effect, index);
           const known = EFFECT_KINDS.includes(kind);
-          const params = shown.get(id) || effectParams(effect);
+          const params = atPlayhead.get(id) || effectParams(effect);
           return (
             <PropGroup
               key={id}
@@ -459,14 +496,14 @@ export default function EffectsPanel({ clip, stored, kf, gesture, onChange }) {
                             (params[param] ?? fallback) !== fallback ||
                             keyedTrack(`fx:${id}:${param}`)
                           }
-                          resetTo={`${Math.round(fallback * field.scale)}${field.unit}`}
+                          resetTo={`${shown(fallback, field)}${field.unit}`}
                         >
                           <NumField
                             unit={field.unit}
                             step={field.step}
                             min={field.min}
                             max={field.max}
-                            value={Math.round((params[param] ?? 0) * field.scale)}
+                            value={shown(params[param] ?? fallback, field)}
                             onChange={(e) =>
                               setNumber(
                                 id,

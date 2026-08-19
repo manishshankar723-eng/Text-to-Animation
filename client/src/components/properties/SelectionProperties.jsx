@@ -17,7 +17,7 @@
 // this the list plus the handlers.
 
 import Icon from "../Icon.jsx";
-import { PropGroup, PropRow, PropNote } from "./PropGroup.jsx";
+import { PropGroup, PropRow } from "./PropGroup.jsx";
 import {
   countByKind,
   GROUPABLE,
@@ -69,7 +69,13 @@ export default function SelectionProperties({
         </div>
       </div>
 
-      <PropGroup id="selection:what" title="What's selected">
+      <PropGroup
+        id="selection:what"
+        title="What's selected"
+        /* The rows here are a generated tally, so there is no one property this
+           belongs to — it is about the selection itself. */
+        info="Drag any one of them to move them all. Shift-click a clip to add it or take it out; drag a box over the empty part of a lane to select more."
+      >
         {KINDS.filter((kind) => counts[kind]).map((kind) => (
           <PropRow key={kind} label={ROWS[kind].icon}>
             <span className="an-sel-count">
@@ -78,15 +84,14 @@ export default function SelectionProperties({
             </span>
           </PropRow>
         ))}
-        <PropNote>
-          Drag any one of them to move them all. Shift-click a clip to add it or
-          take it out; drag a box over the empty part of a lane to select more.
-        </PropNote>
       </PropGroup>
 
       {movable && (
         <PropGroup id="selection:move" title="Nudge">
-          <PropRow full>
+          <PropRow
+            full
+            info="Moves everything by the same amount, so the spacing between them never changes. Pictures stay where they are — a shot starts where the one before it ended, so it has nowhere else to be."
+          >
             <span className="an-set-chips">
               <button type="button" className="opt-chip" onClick={() => onMove(-NUDGE_BIG_MS)}>
                 ⟵ 1s
@@ -102,16 +107,18 @@ export default function SelectionProperties({
               </button>
             </span>
           </PropRow>
-          <PropNote>
-            Moves everything by the same amount, so the spacing between them
-            never changes. Pictures stay where they are — a shot starts where the
-            one before it ended, so it has nowhere else to be.
-          </PropNote>
         </PropGroup>
       )}
 
       <PropGroup id="selection:group" title="Group">
-        <PropRow full>
+        <PropRow
+          full
+          info={
+            groupedCount
+              ? `${groupedCount} of these are already in a group — grouping again ties the whole selection together as one.`
+              : "Grouped clips are selected, moved and deleted together: click one and you have them all."
+          }
+        >
           <span className="an-set-chips">
             <button type="button" className="opt-chip" onClick={onGroup}>
               <Icon name="link" /> Group
@@ -123,11 +130,6 @@ export default function SelectionProperties({
             </button>
           </span>
         </PropRow>
-        <PropNote>
-          {groupedCount
-            ? `${groupedCount} of these are already in a group — grouping again ties the whole selection together as one.`
-            : "Grouped clips are selected, moved and deleted together: click one and you have them all."}
-        </PropNote>
       </PropGroup>
 
       <div className="an-prop-actions">

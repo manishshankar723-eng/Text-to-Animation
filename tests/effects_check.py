@@ -110,6 +110,90 @@ check("saturation above 1 pushes colour apart, it does not clip to primaries",
       f"(got {graded((160, 120, 120, 255), 'saturation', amount=2.0)[:3]})")
 
 # ---------------------------------------------------------------------------
+print("\nPoint-wise grades\n")
+# ---------------------------------------------------------------------------
+# ⚠ EVERY ONE OF THESE HAS A NO-OP VALUE, and it is checked first each time.
+# Six effects landed at once; an effect whose "off" is not exactly off is the
+# failure that hides, because a picture that is 1% warm still looks like a
+# picture — it just quietly disagrees with the export.
+P = (80, 140, 200, 255)
+
+
+def _grey(c):
+    return round(0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2])
+
+
+# Stops, so +1 doubles and -1 halves. 80×2 = 160; 140 and 200 clip at white.
+check("exposure 0 stops changes nothing", graded(P, "exposure", stops=0.0) == P)
+check("exposure +1 stop doubles the light",
+      graded(P, "exposure", stops=1.0)[:3] == (160, 255, 255),
+      f"(got {graded(P, 'exposure', stops=1.0)[:3]})")
+check("exposure -1 stop halves it",
+      graded(P, "exposure", stops=-1.0)[:3] == (40, 70, 100),
+      f"(got {graded(P, 'exposure', stops=-1.0)[:3]})")
+
+# A power curve of 1/gamma, so ABOVE 1 lifts. 80/255 = 0.3137, ^(1/2.2) = 0.594,
+# ×255 = 151.
+check("gamma 1.0 changes nothing", graded(P, "gamma", gamma=1.0) == P)
+check("gamma above 1 lifts the shadows",
+      graded(P, "gamma", gamma=2.2)[:3] == (151, 194, 228),
+      f"(got {graded(P, 'gamma', gamma=2.2)[:3]})")
+check("gamma below 1 crushes them",
+      graded(P, "gamma", gamma=0.5)[:3] == (25, 77, 157),
+      f"(got {graded(P, 'gamma', gamma=0.5)[:3]})")
+# The clamp, not the curve. Gamma 0 is a divide by zero on one side and a NaN on
+# the other, and both reach the file as a frame nobody asked for.
+check("gamma 0 is clamped rather than dividing by zero",
+      graded(P, "gamma", gamma=0.0)[:3] == graded(P, "gamma", gamma=0.01)[:3])
+
+# +0.2 on red and -0.2 on blue per unit; tint moves green on its own.
+check("temperature and tint at 0 change nothing",
+      graded(P, "temperature", temperature=0.0, tint=0.0) == P)
+check("warming pushes red up and blue down by the same amount",
+      graded(P, "temperature", temperature=0.5, tint=0.0)[:3] == (106, 140, 174),
+      f"(got {graded(P, 'temperature', temperature=0.5, tint=0.0)[:3]})")
+check("tint moves GREEN and leaves the red-blue axis alone",
+      graded(P, "temperature", temperature=0.0, tint=-0.25)[:3] == (80, 127, 200),
+      f"(got {graded(P, 'temperature', temperature=0.0, tint=-0.25)[:3]})")
+
+# Rotating the chroma plane about the luma axis.
+check("hue 0 changes nothing", graded(P, "hue", degrees=0.0) == P)
+check("hue 360 is also nothing", graded(P, "hue", degrees=360.0) == P)
+check("hue 120 is a real rotation",
+      graded(P, "hue", degrees=120.0)[:3] == (119, 156, 18),
+      f"(got {graded(P, 'hue', degrees=120.0)[:3]})")
+# ⚠ THE WHOLE POINT OF GOING THROUGH YIQ rather than the 709 SVG hueRotate
+# matrix: Y is exactly LUMA here, so a rotation cannot change how bright the
+# pixel is. Within a level, which is all eight bits can promise.
+check("a hue rotation leaves the luma where it was",
+      all(abs(_grey(graded(P, "hue", degrees=d)[:3]) - _grey(P[:3])) <= 1
+          for d in (30.0, 90.0, 120.0, 200.0, -75.0)),
+      f"({[_grey(graded(P, 'hue', degrees=d)[:3]) for d in (30.0, 90.0, 120.0, 200.0, -75.0)]}"
+      f" vs {_grey(P[:3])})")
+
+check("sepia at 0 changes nothing", graded(P, "sepia", amount=0.0) == P)
+check("sepia at 1 is the matrix, not a grey with a tint laid over it",
+      graded(P, "sepia", amount=1.0)[:3] == (177, 158, 123),
+      f"(got {graded(P, 'sepia', amount=1.0)[:3]})")
+check("and it is warm — red above green above blue, always",
+      (lambda c: c[0] > c[1] > c[2])(graded(P, "sepia", amount=1.0)[:3]))
+
+# BOTH ENDS INCLUDED, which is what makes the control read as "how many bands"
+# rather than "how dark": 2 bands is black and white, not black and mid grey.
+check("posterize to 2 bands gives pure black and pure white only",
+      graded(P, "posterize", levels=2.0)[:3] == (0, 255, 255),
+      f"(got {graded(P, 'posterize', levels=2.0)[:3]})")
+check("4 bands are evenly spaced, 255/3 apart",
+      graded(P, "posterize", levels=4.0)[:3] == (85, 170, 170),
+      f"(got {graded(P, 'posterize', levels=4.0)[:3]})")
+check("black and white survive any number of bands",
+      all(graded((0, 0, 0, 255), "posterize", levels=n)[:3] == (0, 0, 0)
+          and graded((255, 255, 255, 255), "posterize", levels=n)[:3] == (255, 255, 255)
+          for n in (2.0, 3.0, 8.0, 32.0)))
+check("one band is clamped to two rather than dividing by zero",
+      graded(P, "posterize", levels=1.0)[:3] == graded(P, "posterize", levels=2.0)[:3])
+
+# ---------------------------------------------------------------------------
 print("\nLUTs\n")
 # ---------------------------------------------------------------------------
 check("the built-in LUTs are on disk", "identity" in list_luts(),

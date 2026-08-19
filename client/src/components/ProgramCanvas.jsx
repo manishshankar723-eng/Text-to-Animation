@@ -28,11 +28,28 @@ import {
   shapeFan,
 } from "../animatic/gl/compositor.js";
 import { loadLut, lutNamesIn } from "../animatic/gl/lut.js";
+import { transitionMatte } from "../animatic/transitions.js";
 
 // The canvas is drawn at the device's real pixel density, up to a point. Past
 // this a 4K monitor would have us compositing 16 megapixels per playhead move
 // for a preview a few hundred pixels wide.
 const MAX_BACKING_PX = 1920;
+
+/**
+ * How far each of a slide's two pictures has travelled, in frame widths and
+ * heights. ⚠ TWIN of `_slide_offsets` in animatic.py.
+ *
+ * BOTH pictures move — that is what separates a push from a cover — and they
+ * are always exactly one frame apart, so the backdrop never shows between them.
+ * "left" is the default and the behaviour that already shipped: the outgoing
+ * picture is driven off to the left while the incoming one follows it in.
+ */
+export function slideOffsets(direction, m) {
+  if (direction === "right") return { a: { x: m, y: 0 }, b: { x: m - 1, y: 0 } };
+  if (direction === "up") return { a: { x: 0, y: -m }, b: { x: 0, y: 1 - m } };
+  if (direction === "down") return { a: { x: 0, y: m }, b: { x: 0, y: m - 1 } };
+  return { a: { x: -m, y: 0 }, b: { x: 1 - m, y: 0 } };
+}
 
 export default function ProgramCanvas({
   scene,
@@ -61,10 +78,18 @@ export default function ProgramCanvas({
   // Dragging a pane seam or resizing the window had the same fault.
   const [canvasBox, setCanvasBox] = useState({ w: 0, h: 0 });
 
-  const pictures = useMemo(
-    () => [scene.frame, scene.frame_b].filter(Boolean),
-    [scene.frame, scene.frame_b]
-  );
+  // Every picture on screen at this instant, across every picture TRACK and
+  // including the one arriving mid-transition on each. Used to decide what has to
+  // be in the document and which LUTs have to be fetched — not for drawing, which
+  // walks `scene.pictures` itself so the stacking order is kept.
+  const pictures = useMemo(() => {
+    const out = [];
+    for (const layer of scene.pictures || []) {
+      if (layer.frame) out.push(layer.frame);
+      if (layer.frame_b) out.push(layer.frame_b);
+    }
+    return out;
+  }, [scene.pictures]);
 
   // --- What has to be in the document for this moment ----------------------
   // Only what is ON SCREEN NOW, never the whole project: an animatic is often
@@ -129,6 +154,15 @@ export default function ProgramCanvas({
   }, [lutNames]);
 
   // --- The context ---------------------------------------------------------
+  // ⚠ THE CONTEXT IS BUILT ONCE, AND `onUnavailable` IS HELD IN A REF TO KEEP IT
+  // THAT WAY. With the callback in the dependency list this effect tore the whole
+  // context down and rebuilt it on EVERY RENDER of the editor — the caller passes
+  // an inline arrow, so its identity changes each time — which recompiled two
+  // programs and threw away every uploaded texture per playhead tick, and ran
+  // `dispose()` constantly. That is how one bad line in `dispose()` turned into a
+  // black monitor rather than a leak nobody would have noticed.
+  const unavailableRef = useRef(onUnavailable);
+  unavailableRef.current = onUnavailable;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
@@ -136,7 +170,7 @@ export default function ProgramCanvas({
       compositorRef.current = new Compositor(canvas);
     } catch (e) {
       console.error("[monitor] WebGL is unavailable — the preview cannot draw.", e);
-      onUnavailable?.(e);
+      unavailableRef.current?.(e);
       return undefined;
     }
     const compositor = compositorRef.current;
@@ -144,7 +178,7 @@ export default function ProgramCanvas({
       compositor.dispose();
       compositorRef.current = null;
     };
-  }, [onUnavailable]);
+  }, []);
 
   // --- The box -------------------------------------------------------------
   // Watches the canvas itself rather than listening for the things that resize
@@ -215,7 +249,10 @@ export default function ProgramCanvas({
     const fit = settings.fit === "cover" ? "cover" : "contain";
 
     /** One picture: still, video frame or colour card, placed and graded. */
-    const drawPicture = (picture, { opacity = 1, clipRight = null, shiftX = 0 } = {}) => {
+    const drawPicture = (
+      picture,
+      { opacity = 1, matte = null, shiftX = 0, shiftY = 0 } = {}
+    ) => {
       if (!picture) return;
       const clip = frames[picture.index];
       if (!clip) return;
@@ -227,14 +264,8 @@ export default function ProgramCanvas({
         // A card fills the frame edge to edge. `fit`, `scale` and the pan are
         // deliberately ignored — there is no picture to letterbox, and a
         // "zoomed" flat colour is the same flat colour.
-        let rect = { x: shiftX, y: 0, w: 1, h: 1 };
-        let uv = { x: 0, y: 0, w: 1, h: 1 };
-        if (clipRight !== null) {
-          rect = { ...rect, w: clipRight };
-          uv = { ...uv, w: clipRight };
-        }
         compositor.layer({
-          vertices: quad(rect, uv),
+          vertices: quad({ x: shiftX, y: shiftY, w: 1, h: 1 }),
           count: 6,
           mode: compositor.gl.TRIANGLES,
           source: { color: hexToRgb(picture.color) },
@@ -242,6 +273,7 @@ export default function ProgramCanvas({
           useAlpha: false,
           look,
           luts: lutTextures,
+          matte,
         });
         return;
       }
@@ -256,18 +288,14 @@ export default function ProgramCanvas({
 
       let rect = placePicture(sourceW, sourceH, width, height, fit,
                              picture.scale, picture.x, picture.y);
-      rect = { ...rect, x: rect.x + shiftX };
-      let uv = { x: 0, y: 0, w: 1, h: 1 };
-      if (clipRight !== null) {
-        // A wipe: keep only the part of this picture left of the edge, and cut
-        // the UVs by the same fraction so the picture doesn't squash into it.
-        const right = Math.min(rect.x + rect.w, clipRight);
-        if (right <= rect.x) return;
-        uv = { ...uv, w: (right - rect.x) / rect.w };
-        rect = { ...rect, w: right - rect.x };
-      }
+      rect = { ...rect, x: rect.x + shiftX, y: rect.y + shiftY };
+      // ⚠ THE QUAD IS WHOLE EVEN MID-WIPE. A reveal used to cut this rect down
+      // to the uncovered region and trim its UVs to match; it is now a matte
+      // multiplied into the alpha instead, so the geometry stays exactly what
+      // it is off a transition and a picture at "cover" fit no longer needs its
+      // UVs re-derived to avoid squashing into the clipped rect.
       compositor.layer({
-        vertices: quad(rect, uv),
+        vertices: quad(rect),
         count: 6,
         mode: compositor.gl.TRIANGLES,
         source: entry,
@@ -280,35 +308,86 @@ export default function ProgramCanvas({
         useAlpha: false,
         look,
         luts: lutTextures,
+        matte,
       });
     };
 
     compositor.begin(settings.background || "#000000");
 
-    const mix = scene.mix || 0;
-    const kind = scene.transition;
-    if (scene.frame_b && kind) {
+    /**
+     * ONE PICTURE TRACK, drawn over everything already on the canvas.
+     *
+     * ⚠ WALKED PER TRACK, BOTTOM FIRST, because a transition is TRACK-LOCAL: the
+     * clip arriving belongs to one track's cut, so the branch below has to run
+     * inside a track rather than once for the whole frame. `_draw_track` in
+     * animatic.py is the counterpart, layer for layer.
+     *
+     * ⚠ AND THE STACK MAY BE EMPTY, which draws nothing — the canvas has already
+     * been cleared to the letterbox colour, and a moment with a gap on every
+     * track IS the backdrop. `begin` above is what makes that free.
+     */
+    const drawTrack = (layer) => {
+    const mix = layer.mix || 0;
+    const kind = layer.transition;
+    // Every parameter is already filled in by `transitionParams`, so nothing
+    // here has to ask whether a key exists or what it falls back to.
+    const params = layer.transition_params || {};
+    if (layer.frame_b && kind) {
       // ⚠ Each branch is the counterpart of one in `_transition_canvas`
       // (animatic.py): the same fractions travelling the same way. The incoming
       // picture is composited OVER the outgoing one on both sides now, which is
       // what closed the old preview/export gap on a faded or keyed clip.
       if (kind === "dip") {
-        // Out through the bar colour and back up: only ever ONE picture is up.
-        if (mix < 0.5) drawPicture(scene.frame, { opacity: 1 - 2 * mix });
-        else drawPicture(scene.frame_b, { opacity: 2 * mix - 1 });
-      } else if (kind === "wipe") {
-        drawPicture(scene.frame);
-        drawPicture(scene.frame_b, { clipRight: mix });
+        // Out through a colour and back up: only ever ONE picture is up, which
+        // is what makes a dip read as a beat rather than a cross-fade.
+        //
+        // ⚠ THE COLOUR IS A VEIL LAID OVER THE PICTURE, not a fade of the
+        // picture's own opacity, which is what this used to be. The two are the
+        // same arithmetic while the colour IS the backdrop — and only the veil
+        // also covers the LETTERBOX BARS, without which a dip to anything but
+        // the bar colour would flash the bars at both edges of the window,
+        // which are exactly the moments a transition has to be invisible at.
+        drawPicture(mix < 0.5 ? layer.frame : layer.frame_b);
+        const veil = 1 - Math.abs(2 * mix - 1);
+        if (veil > 0) {
+          compositor.layer({
+            vertices: quad({ x: 0, y: 0, w: 1, h: 1 }),
+            count: 6,
+            mode: compositor.gl.TRIANGLES,
+            source: {
+              color: hexToRgb(params.color || settings.background || "#000000"),
+            },
+            opacity: veil,
+            useAlpha: false,
+            look: null,
+            luts: lutTextures,
+          });
+        }
       } else if (kind === "slide") {
-        drawPicture(scene.frame, { shiftX: -mix });
-        drawPicture(scene.frame_b, { shiftX: 1 - mix });
+        const shift = slideOffsets(params.direction, mix);
+        drawPicture(layer.frame, { shiftX: shift.a.x, shiftY: shift.a.y });
+        drawPicture(layer.frame_b, { shiftX: shift.b.x, shiftY: shift.b.y });
+      } else if (transitionMatte(kind) !== "none") {
+        // EVERY REVEAL, in one branch: a wipe, an iris, a clock and a
+        // chequerboard differ only in the field the shader evaluates. The
+        // outgoing picture is drawn whole and the arriving one is drawn whole
+        // on top of it with a matte cutting its alpha — which is why the blend
+        // mode, chroma key and mask on the arriving clip all survive the
+        // transition, and why this needs no second render target.
+        drawPicture(layer.frame);
+        drawPicture(layer.frame_b, {
+          matte: { kind: transitionMatte(kind), params, progress: mix },
+        });
       } else {
-        drawPicture(scene.frame);
-        drawPicture(scene.frame_b, { opacity: mix });
+        drawPicture(layer.frame);
+        drawPicture(layer.frame_b, { opacity: mix });
       }
     } else {
-      drawPicture(scene.frame);
+      drawPicture(layer.frame);
     }
+    };
+
+    for (const layer of scene.pictures || []) drawTrack(layer);
 
     // Bottom to top: picture → shapes → overlay pictures. Text is DOM, above
     // all of it. `render_frame` stacks them the same way, which is the whole

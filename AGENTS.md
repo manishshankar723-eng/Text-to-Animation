@@ -9,6 +9,175 @@
 
 ---
 
+## 🧱 Tech stack — READ BEFORE YOU ADD A DEPENDENCY
+
+> **The whole stack, in one place.** Verified against the repo on 2026-08-19, not
+> from memory. The file map further down says *which file does what*; this says
+> *what the thing is built out of*. ⚠ **The headline is what is NOT here** — see
+> "Deliberately absent" at the end before you reach for a library.
+
+| Layer | What it is | Where |
+|-------|------------|-------|
+| Frontend | **React 18.3 + Vite 5**, plain JSX, hand-written CSS | `client/` |
+| Preview renderer | **Raw WebGL** (no engine) + **Web Audio API** | `client/src/animatic/gl/`, `client/src/animatic/audio_engine.js` |
+| Backend | **Python 3.14 + FastAPI + uvicorn**, Pydantic models | `server/` |
+| Job execution | `ThreadPoolExecutor` — two pools (general + video) | `server/worker.py` |
+| Export renderer | **Pillow + NumPy**, encoded by **ffmpeg** (`imageio-ffmpeg`) | `animatic.py`, `animatic_effects.py`, `video_assemble.py` |
+| Auth | **PyJWT + bcrypt**, users in MongoDB, token in `localStorage` | `server/auth.py`, `server/security.py`, `client/src/api.js` |
+| Data | **MongoDB** (default) · Firestore · in-memory JSON fallback | `server/jobs.py`, `server/mongo.py` |
+| Files | **Google Cloud Storage** + local disk (`uploads/`, `output/`) | `storage.py` |
+| AI | **Google Gemini / Vertex AI** via `google-genai` — images, text, **Veo** video, TTS | `gemini_client.py`, `script_breakdown.py`, `video_client.py`, `tts.py` |
+| 3D | **Meshy.ai** (tested) · **Tripo.ai** (unverified) | `meshy.py`, `tripo.py` |
+| Tests | Standalone Python check scripts + **Playwright** for the one browser suite | `tests/` |
+
+---
+
+### Frontend — `client/` (React 18.3 + Vite 5)
+
+⚠ **`client/package.json` has exactly TWO runtime dependencies: `react` and
+`react-dom`.** Dev deps are `vite` and `@vitejs/plugin-react`, nothing else. That
+is a decision, not an oversight — every widget in the editor (timeline, monitor,
+inspector, panes, drag/drop, resize handles) is written here by hand.
+
+- **JavaScript, not TypeScript.** `.jsx` / `.js` only; there is no `tsconfig.json`
+  and no build-time type check. What a module's shapes are lives in its docstring.
+- **State is custom hooks**, not Redux / Zustand / Context-as-store:
+  `useAnimaticProject.js` (the document), `useTimelineTransport.js` (the clock),
+  `useUndoStack.js` (ONE undo stack for the whole document). Those three are the
+  editor's entire state layer — read them before adding a fourth.
+- **Routing is nav state in `App.jsx`.** No react-router; a "page" is a branch.
+- **Styling is hand-written CSS with custom properties** in `client/src/styles/`
+  (`theme.css` owns the tokens for both themes, `base.css` the shared chrome,
+  `animatic*.css` the editor). No Tailwind, no CSS-in-JS, no component library.
+  ⚠ `theme.css` sets a global `select { width: 100% }` — that one line has caused
+  more than one "why is this control full width" bug in the Work Log.
+- **The monitor is a hand-rolled WebGL canvas**: `client/src/animatic/gl/` —
+  `compositor.js` (context, programs, textures), `lut.js` / `cube.js` (3D LUT
+  upload), `shaders/` (the grade). No three.js, no pixi, no regl.
+- **Audio is a Web Audio graph** — `audio_engine.js` (playback, EQ, ducking),
+  `audio_mix.js` (the levels/fades maths), `useAudioAnalysis.js` (waveforms, beats).
+- **Fonts are bundled files** in `client/public/fonts/*.ttf`, served to the browser
+  AND opened off disk by the exporter — one copy for both sides, on purpose.
+- Dev server on **:5173** (`client/vite.config.js`); API base from `VITE_API_BASE`,
+  defaulting to `http://127.0.0.1:8000` in `src/api.js`. The backend sends
+  permissive CORS headers, so **there is no dev proxy**.
+- ⚠ **`frontend/` at the repo root is EMPTY** — a dead directory from an earlier
+  phase. The app is `client/`. Never put anything in `frontend/`.
+
+### Backend — `server/` + the root modules (Python 3.14 + FastAPI)
+
+- **FastAPI** app in `server/main.py`, run with `uvicorn server.main:app --reload`;
+  Swagger at `/docs`. Routers split by workflow — `animatics.py`, `videos.py`,
+  `plans.py`, `drafts.py`, `auth.py` — with shared route helpers in `common.py` so
+  that two routers never import each other.
+- **Pydantic** for every request/response shape (`server/schemas.py`).
+- **Job-based async, not a queue broker.** HTTP returns a `job_id` immediately and
+  a `ThreadPoolExecutor` in `server/worker.py` does the work. ⚠ **Two pools** — a
+  general one and a separate `_video_executor` — so a slow Veo render cannot starve
+  the board. No Celery, no Redis, no RQ.
+- **Auth**: bcrypt hashing + JWT in `server/security.py`, users in MongoDB
+  (`server/users.py`), `get_current_user` as an ordinary FastAPI dependency.
+- **The job store is pluggable** (`API_JOB_STORE`): ⚠ **`mongo` is the DEFAULT**
+  (`server/config.py:35`) and `MongoJobStore` is the system of record.
+  `FirestoreJobStore` and `MemoryJobStore` (mirrored to `.local_jobs.json`) remain
+  as fallbacks. ⚠ Older prose further down still says "Firestore (default)" —
+  **Mongo is correct**; believe this section.
+- **Media processing is Pillow + NumPy**, and **ffmpeg ships with the install** via
+  `imageio-ffmpeg` (override with `FFMPEG_BINARY`). ⚠ **There is no `ffprobe`** on
+  an `imageio-ffmpeg` install — durations must be passed in by the caller, never
+  probed (see `video_assemble.py`).
+- **Document exports**: `openpyxl` (.xlsx) and `python-docx` (.docx), for Plan & Script.
+- **Config is env-driven only** (`server/config.py` + `.env`, documented in
+  `.env.example`). `prompts.yaml` is prompt templates, not configuration.
+
+### AI providers — Google only, switchable per capability
+
+Every capability has its **own independent** `vertex` | `gemini` switch, so images
+can run on Vertex while video runs on the Gemini API. One client library
+throughout: `google-genai`.
+
+| Capability | Env switch | Default model | Module |
+|------------|-----------|---------------|--------|
+| Images (references, panels) | `IMAGE_PROVIDER` | `gemini-3.1-flash-image` | `gemini_client.py` |
+| Text (script → shot list, beat plans) | `TEXT_PROVIDER` | `gemini-2.5-flash` ⚠ rolling alias | `script_breakdown.py`, `plan_agent.py`, `panel_sequence.py` |
+| Video (Animatic → Final Video) | `VIDEO_PROVIDER` | `veo-3.1-*` (standard / fast / lite) | `video_client.py` |
+| Speech (voiceover) | — | `gemini-2.5-flash-preview-tts` | `tts.py` |
+| Transcription (captions) | — | Gemini text model | `captions.py` |
+
+⚠ **Veo is the only thing billed per second of output** — roughly $0.24 (lite/720p)
+to $3+ (standard/1080p) per 8s clip, and a 20-shot project is 20 clips.
+`video_client.estimate_cost_usd()` runs before anything spends, and
+`server/videos.py` is the only router that can spend money.
+⚠ **There is no Google Flow API.** Flow is a Labs web app on a separate credit
+ledger, and an AI Pro/Ultra subscription grants no API access at all. Read
+`video_client.py`'s docstring before "adding Flow support".
+⚠ **Vertex needs a real region for Veo** (`us-central1` is the safe default);
+`global`, which the image models require, does not serve it.
+Retry/backoff for every Google call is one shared policy: `retry_policy.py`.
+
+### The twins rule — why this stack has two of some things
+
+⚠ **The preview renders in JavaScript and the export renders in Python, so several
+modules exist TWICE and must stay in step.** This is the single most important
+structural fact about the codebase:
+
+| Python (export) | JavaScript (preview) | Pinned by |
+|---|---|---|
+| `animatic_render.py` | `animatic/scene.js` (+ `transitions.js`) | `tests/render_parity.py` |
+| `animatic_effects.py` | `animatic/gl/shaders/` | `tests/effects_parity_check.py` ⚠ tolerance, not exact — WebGL ≠ Pillow |
+| `animatic_fonts.py` | `animatic/fonts.js` | `tests/captions_check.py` |
+| `export_presets.py` | `animatic/export_presets.js` | `tests/export_perf_check.py` |
+| `animatic.py` (the mix) | `animatic/audio_mix.js` | `tests/audio_mix_check.py` |
+| `animatic.py` (fade curves) | `animatic/audio_mix.js` | `tests/audio_crossfade_check.py` |
+| `captions.py` | `animatic/captions.js` | `tests/captions_check.py` |
+
+**Change one side, change the other in the same turn, and run its parity test.**
+
+### Tests & tooling
+
+- ⚠ **There is no pytest suite.** Tests are **standalone scripts** — `tests/*_check.py`,
+  run as `python tests/<name>_check.py`; they print and exit non-zero on failure.
+  Add a new script per behaviour rather than growing a runner.
+- **Playwright** (`requirements-dev.txt`) drives the only browser test,
+  `tests/e2e_animatic.py`. ⚠ Standing user preference: **do not run the browser
+  suite unless asked** — see "Browser tests (Playwright)" below.
+- ⚠ **Three tests run a BROWSER on purpose, and they are not the e2e suite.**
+  `tests/monitor_effects_check.py` mounts the MONITOR (the maths tests never
+  unmount anything, which is how a `dispose()` crash shipped),
+  `tests/editor_effects_drop_check.py` mounts the whole EDITOR and performs a
+  drag (the maths tests never render a pane, which is how a `TypeError` in
+  Properties shipped), and `tests/editor_razor_check.py` drives the TOOLS
+  (`splitFrameAt` and `splitClip` were both correct while the razor cut the wrong
+  layer from the wrong row — no arithmetic test can see that). All three start
+  Vite themselves, answer every API call with Playwright's router, and run on
+  **SwiftShader** — so they need no backend, no GPU and no native module. ⚠ **They
+  are also where the SHADERS actually execute**, since `headless-gl` will not
+  build on this machine.
+- ⚠ **A UI TEST THAT HAS NEVER BEEN WATCHED TO FAIL IS NOT A TEST.** Both of the
+  editor ones were written against a live bug and run against the un-fixed code
+  first; the razor one passed against its own bug on the first attempt, because
+  the press it made would have been refused anyway (the geometry note at the top
+  of that file). Put the bug back, watch red, take it out again.
+- ⚠ **A drag CAN be tested.** Playwright's mouse does not start an HTML5 drag in
+  a headless Chromium, which was read for a while as "a drag is the one thing no
+  test can drive". Dispatching `dragstart`/`dragenter`/`dragover`/`drop` over one
+  shared `DataTransfer` drives it exactly — see `DRAG` in
+  `tests/editor_effects_drop_check.py`.
+- No linter, formatter, pre-commit hook or CI workflow is configured. Match the
+  surrounding file's style by reading it first.
+
+### Deliberately absent — do NOT add these without asking
+
+TypeScript · react-router · Redux/Zustand/MobX · Tailwind/styled-components/MUI ·
+three.js/pixi · d3 or any chart library · Celery/Redis/RabbitMQ · SQLAlchemy or any
+SQL database · Docker/compose · pytest · ESLint/Prettier · a Node backend · OpenAI /
+Anthropic / any non-Google model provider · `ffprobe` · Google Flow.
+
+If a task looks like it needs one of these, say so and ask first — several were
+considered and rejected, and the reasons are in the Work Log.
+
+---
+
 ## ⚙️ Protocol for agents (read this every time)
 
 1. **On start** — read this whole file. The **Work Log** tells you what's already
@@ -23,7 +192,274 @@
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-18 — **THE PICTURE TRACK IS TWO ROWS, AND EVERY ROW HAS
+**Last updated:** 2026-08-19 — **A CLIP'S ROW WAS DECIDED ONCE AND FOR ALL, AND
+THE EMPTY-ROW PROMPT FELL OFF THE BOTTOM OF ITS ROW** (both user-reported). A move
+drag on the timeline was purely HORIZONTAL, so the only way to change which layer
+a clip sat on was to drag it out of the Media pane again — which existed for
+shapes and for audio and for nothing else, and which for audio was refused
+outright whenever the destination was one of the rows grouped by FILE ("mai big
+thing i not move some audio part in other audio layer"). ⚠ **A MOVE HAS A VERTICAL
+HALF NOW**: let go over another row of the same kind and the clip goes there, at
+the time you dragged it to — captions, text, shapes, overlay pictures and audio,
+with the original dimmed and an outline drawn where it will land. ⚠ **THE ROW
+UNDER THE POINTER IS FOUND BY ASKING THE DOM** (`data-lane`, `laneAtPoint`), for
+the same reason the marquee does it: the browser has already laid the rows out and
+a second copy of their vertical geometry would be wrong for the whole of a
+vertical zoom. ⚠ **THE TIMELINE REPORTS THE ROW, NOT A LAYER ID** (`onMoveToLane`)
+— because an audio row grouped by upload has no id to write, and turning that into
+a real destination means **PROMOTING THAT ROW TO A LAYER**, taking its own clips
+with it, which is the document's business and not the timeline's. That promotion
+is one undo: `setLayers` + `setAudioTracks` in one handler. ⚠ **THE PICTURE ROWS
+ARE DELIBERATELY NOT A DESTINATION** — `frames` is ONE sequence drawn as two rows
+filtered by origin, so which row a picture is on is READ OFF the clip; see Next
+Steps for the user's related report that trimming footage shifts the stills, which
+is that same fact and is NOT fixed here. Separately, `.tl-track-empty` was padded
+down from the top of a row whose height the vertical zoom writes, so at the short
+end the prompt landed on the row's bottom edge and `overflow: hidden` sliced it
+("i see it gos in down") — it is centred by `line-height` now, which cannot clip
+at any height, and `line-height` rather than flex because flex would make the text
+an anonymous item and stop `text-overflow: ellipsis` applying to it. New
+`tests/editor_lane_move_check.py` (19 checks, Chromium) drives every drag with the
+mouse and measures the prompt at both ends of the zoom; **both bugs were put back
+and watched to fail on it**, and `editor_razor_check.py` plus the five audio /
+selection / hidden-lane checks still pass. Not otherwise opened in a browser.
+
+**Previously:** **THE FIRST PICTURE HAD NO HEAD GRIP, AND THAT WAS
+WRONG RATHER THAN PRINCIPLED** (user-reported, follow-up to the entry below). The
+head grip on every other picture drags the CUT in front of it, and the first
+picture has none — so it was skipped. But an edit does exist there: **start later
+INTO the clip**, the ripple trim-in every NLE does. ⚠ **AND ON A VIDEO CLIP THAT
+MEANS MOVING `in_ms`, NOT JUST SHORTENING IT** — `sourceAt` reads
+`in_ms + t * speed`, so skipping `head` ms of TIMELINE must skip `head * speed` of
+FILE or the picture at 0:00 never changes and all you did was throw the end of the
+shot away. `out_ms` is absolute in the source and stays. The travel is bounded up
+front in timeline ms (the clip's own floor, the last moment of source there is to
+show, and however much footage sits before `in_ms` — nothing, for a still), so the
+edge stops at the tighter wall instead of quietly passing it. ⚠ **KEYFRAMES ARE
+RE-TIMED HERE TOO**: `trimKeyframesHead` came out of `trimTimedClipStart` and is
+now shared, because a Ken Burns push is stored relative to the frame's own start
+exactly as a caption's opacity is. The rule both halves of the grip obey is **"it
+edits whatever is at this clip's head"** — a cut where there is one, the start of
+the film where there isn't. New `onFrameChange` prop, since `onResize` only ever
+carried a length. Verified against `sourceAt` in both directions at speed 1 and 2,
+with the walls exercised; **not opened in a browser**.
+
+**Previously:** **EVERY CLIP HAS A GRIP AT BOTH ENDS NOW; SOUND
+WAS THE ONLY THING YOU COULD TRIM FROM THE HEAD.** ⚠ **A HEAD TRIM IS A THIRD
+MODE, NOT A RESIZE** (`"trim-start"` in `startClipDrag`): the START moves and
+**THE END STAYS PUT**, so it writes both numbers — and on a caption / shape /
+overlay it must also re-time the clip's KEYFRAMES, which are stored relative to
+the clip's own start. `trimTimedClipStart` in `animatic/razor.js` is new and does
+that by reusing `splitKeyframes` — a trim-in is the TAIL HALF of a split at the
+new head, planting a key there with the value and ease that were running, or the
+animation silently slides by however far you trimmed. ⚠ **ON A PICTURE THE HEAD
+GRIP IS THE CUT BEFORE IT**, i.e. `startResize` on the previous frame: a frame has
+no start of its own, so shortening the clip itself would move its FAR edge (which
+is what the tail grip already does) — moving the cut is the only edit that puts
+the edge you grabbed under the pointer, and it inherits ripple / rolling (B / N)
+for free. No grip on the first picture, and none on any clip under 24px, or two
+8px strips would leave nothing in the middle to press. `.tl-handle-l` moved out of
+`.tl-audio-clip` scope, which is what had made sound the exception. Also removed:
+the **"audio 2:40 — video ends early"** badge in the timeline head, at the user's
+request — the ruler and the transport clock already show it. Verified by unit-
+testing the keyframe re-timing in both directions (no drift at any absolute time,
+clamps at 0:00 and at the 100ms floor) and by bundling; **not opened in a
+browser**.
+
+**Previously:** **SCRUBBING THE RULER SELECTED THE WHOLE TIMELINE,
+AND THE RULER NOW READS IN TIMECODE.** `startSeek` was the one press handler on
+this bar that never called `preventDefault`, so a drag on the ruler or the
+playhead grip started a native TEXT SELECTION and left the track names, clip
+labels and empty-lane prompts highlighted blue behind the playhead
+(user-reported). ⚠ **`.tl-wrap` IS NOW `user-select: none` WHOLESALE** — every
+drag on the timeline means something and there are no inputs on it, so the
+belt-and-braces is the right shape here; `cursor: text` on `.tl-ruler` became
+`ew-resize`, because the bar was *announcing* itself as a selection surface. The
+ruler's labels went from `0:05` to **HH:MM:SS:FF**, with a taller labelled tick
+and bare minor ticks between: ⚠ **the sub-second steps are the DIVISORS of fps**,
+or a run of labels stops rolling over to `:00` at the next second, and ⚠ **the
+ticks are CULLED to the visible window** (1,681 → 49 nodes at full zoom on a 70s
+cut, and the sticky ruler re-renders on every scrub). `--tl-ruler-h` is 1.5rem and
+`.tl-ruler` reads it instead of repeating 1.15rem — the gutter spacer is sized
+from the same variable. **Verified by bundling both files with esbuild and by
+checking the step ladder at 2/10/40/120/300/600 px-per-sec × 12/24/25/30 fps; not
+opened in a browser.**
+
+**Previously:** **THE RAZOR CUT WHATEVER IT LIKED.** `toolPress`
+answered the razor for the time ruler and for the empty part of every lane, and
+what it called was the PICTURE razor — so a press in the seconds row cut an image
+clip (user-reported), and there was no way to say "cut this layer" because the
+callback got a time, not a target. ⚠ **ONE `onRazor(kind, id, ms)` now replaces
+`onSplitAt` and `onSplitAudioAt`**: two callbacks was the shape of the bug. Every
+lane names its own clip at the press, the ruler scrubs instead of cutting, and
+captions / shapes / overlays gained a razor at all (`animatic/razor.js` — ⚠ it
+plants a keyframe at the blade, or the animation jumps at the edit while the
+document still validates). The cut cursor is on the clips and nowhere else, with
+the grips inside them taken out of the pointer's way, which is what makes it ONE
+icon instead of a different one per row. Also: the Effects library's descriptions
+moved behind an ⓘ per entry — the exported `InfoDot`, not a second circle.
+**Both regressions were put back and the new `tests/editor_razor_check.py` (21
+checks, Chromium) was watched to fail on each**; `tests/razor_check.py` (15) pins
+the keyframe surgery.
+
+**Previously:** **STEP 3: THE TREATMENT ROW IS GROUPED BY FAMILY,
+AND SIX POINT-WISE GRADES LANDED.** Twelve chips became five families (Fade ·
+Wipe · Shape · Slide · Dip) from a `family` field on the `TRANSITIONS`
+descriptor — ⚠ **PRESENTATION, SO NOT TWINNED IN PYTHON**, and ⚠ **deliberately
+a DIFFERENT grouping from `fx_library.js`**, which answers "what can I add"
+rather than "what is this cut doing". Effects gained Exposure, Gamma,
+Temperature & tint, Hue rotate, Sepia and Posterize. ⚠ **`EFFECT_PARAMS` IS
+APPEND-ONLY** — an effect reaches the shader as its INDEX, so inserting one
+re-numbers every kind after it. ⚠ **`uFxArgs` IS NOW PACKED POSITIONALLY off the
+descriptor**, which is why six effects needed no change in `compositor.js`. ⚠
+**HUE GOES THROUGH YIQ, NOT THE 709 SVG MATRIX**, so a rotation cannot change
+luma. ⚠ **POSTERIZE USES `floor(x+0.5)`, NEVER `round()`** — numpy and GLSL round
+halves in opposite directions. Blur/sharpen/grain stay out until the
+source-resolution question is settled. ~~No shader in this or the previous step
+has ever executed, and nothing has been opened in a browser~~ — **both were
+closed on 2026-08-19, see the entry above: the shaders run under Chromium on
+SwiftShader and the editor has been driven in a browser.**
+
+**Previously:** **EIGHT NEW TRANSITIONS, AND A REVEAL IS A MASK
+RATHER THAN A COMPOSITING STAGE.** Diagonal, Split, Iris, Diamond, Box, Clock,
+Blinds, Checker, plus a soft edge on all of them and on the wipe. ⚠ **NO NEW
+SHADER PROGRAM AND NO EXTRA FRAMEBUFFERS** — a wipe at 50% and a mask are the
+same operation ("show this picture where ‹condition›"), so a transition matte is
+a SECOND MASK on the arriving picture, multiplied into its alpha one line
+further out than the clip's own mask. That is what keeps composite-over, blend
+modes, chroma keys and per-clip masks all working through a transition; a
+gl-transitions `mix(from, to)` stage would have thrown all four away. ⚠
+**`_setMatte` RUNS ON EVERY LAYER** — uniforms live on the program, so setting
+it only when a matte is passed cuts holes in the shapes and overlays drawn after
+it. ⚠ **A DISSOLVE IS THE CONSTANT MATTE AND IS DELIBERATELY NOT ONE**:
+`apply_matte` rounds, `_faded_layer` truncates. ⚠ **THE WIPE'S EDGE MOVED BY UP
+TO ONE COLUMN**, from an integer crop box to a pixel-centre threshold — which is
+what makes the two renderers agree by construction. Parity, transition and
+effects checks pass; **the shader has never run on a GPU here and nothing has
+been opened in a browser** — top of Next Steps.
+
+**Previously:** **EFFECTS ARE A LIBRARY YOU DRAG FROM, IN THE
+MEDIA PANE.** A third tab beside Media and Shapes, as a folder tree
+(`▸ Video Effects` / `▸ Video Transitions`), dragged onto the timeline.
+⚠ **THE MEDIA PANE IS THE SHELF AND PROPERTIES IS STILL THE WORKBENCH** — "what
+can I add" and "what is on this clip" are two questions and they get two panes;
+the `+ Add an effect…` dropdown stays, because it is the only path without a
+mouse. ⚠ **`fx_library.js` FILES KINDS, IT DOES NOT DEFINE THEM**: every entry is
+looked up in `EFFECT_PARAMS` / `TRANSITIONS`, and a kind nobody filed lands in
+"Uncategorised" rather than being unreachable. ⚠ **ONE DRAG MARKER SERVES BOTH
+PAYLOADS**, because `getData` is blank during `dragover` — so the picture rows
+accept both and `dropAsset` is where a transition on an overlay row is refused.
+⚠ **AN EFFECT LANDS ON A CLIP, SO THE BAR LIGHTS UP** rather than the drop line,
+which would not say which of two pictures was about to be graded. ⚠ **A GRADED
+CLIP USED TO LOOK IDENTICAL TO AN UNGRADED ONE** — clips carry a ƒx badge now,
+and clicking it selects the clip AND opens the Effects section. **Nothing here
+has been dragged by hand** — top of Next Steps.
+
+Before that: **A TRANSITION TAKES PARAMETERS: WHICH WAY IT
+TRAVELS, WHICH COLOUR IT DIPS THROUGH.** Ten combinations where there were four,
+and no new architecture. ⚠ **A REVEAL IS A REGION CUT OUT OF THE ARRIVING
+PICTURE, NOT A COMPOSITING STAGE.** A gl-transitions-style
+`mix(getFromColor, getToColor)` pass would have needed a new GL program, extra
+framebuffers, and would have thrown away the rule `_transition_canvas` documents
+— the incoming picture is composited OVER the outgoing one, so a keyed clip
+reveals the shot it is arriving over rather than black. A wipe at 50% is "show
+the incoming picture where uv.x < 0.5", which both sides already do, so the
+direction is a reveal rect and a slide is still pure geometry. ⚠ **`direction`
+means the direction of TRAVEL on both kinds, but the DEFAULTS differ** — `right`
+for a wipe, `left` for a slide — because those are the behaviours that already
+shipped; reproducing them exactly is what let this land without changing a single
+existing animatic. ⚠ **A DIP IS A VEIL NOW, NOT A FADE OF THE PICTURE'S OPACITY**,
+because only a veil also covers the LETTERBOX BARS — without it a dip to any
+colour but the bar colour flashes the bars at both edges of the window, the two
+moments a transition has to be invisible at. ⚠ **THREE PLACES HAD TO CHANGE IN
+BOTH LANGUAGES OR THE MP4 SILENTLY DIVERGES:** `scene_signature` (two wipes at
+one `mix` differ only in the parameter, so without it a re-export reuses the old
+stills), the segment in `plan_animated_segments`, and the worker's task args in
+`build_animatic`. Proved by sabotaging the last one and watching five checks
+fail. **Not opened in the real editor by hand** — see Next Steps.
+
+Before that: **PICKING A COLOUR LOOK BLACKED THE MONITOR OUT.**
+User-reported, and it was not the grading maths — `Compositor.dispose()` handed
+`deleteTexture` a `{ texture, size }` LUT ENTRY instead of the texture inside it.
+That THROWS, out of a React effect's CLEANUP, so React unmounted `<ProgramCanvas>`
+and the editor showed a black rectangle. ⚠ **It could only fire once a LUT had
+been uploaded**, which is why the symptom was "the screen goes black when I choose
+Identity" and every other effect looked fine. ⚠ **The reason `dispose()` ran at all
+is the second bug: the context effect listed `onUnavailable` in its dependencies**
+and the editor passes an inline arrow, so the whole WebGL context was torn down and
+rebuilt — two programs recompiled, every texture dropped — ON EVERY RENDER. The
+callback is held in a ref now and the effect's deps are `[]`. **`tests/monitor_effects_check.py`
+is new and is the only test that MOUNTS the monitor** — the maths tests never
+unmount anything, so both of them passed throughout. Verified by reverting each fix
+and watching it fail.
+
+Before that: **TRACK HEADS LINE UP, THE ADD BUTTONS ARE IN
+ONE PLACE, AND ASSETS DRAG FROM MEDIA ONTO A TIMELINE ROW.** ⚠ **EVERY LAYER ROW CARRIES THE SAME THREE
+CONTROLS — hide · add · remove — in one `.tl-layer-acts` grid of three fixed
+columns**, and `Timeline.jsx` ALWAYS RENDERS ALL THREE: a control with nothing to
+do is drawn disabled (`opacity: 0.25`), because leaving one out is what let the
+next one slide into its place and made the icons zig-zag down the gutter. ⚠
+**`.tl-add-layer` now takes its box from the rows it makes** — same radius,
+border and type as `.tl-gutter-row`, `height: var(--tl-track-h)`, highlighted
+with the clips' own `--tl-clip-bg` gold. ⚠ **All four pane heads share ONE soft blue**
+(`--pane-ink/tint/edge` in theme.css, both themes) on the head fill, its
+hairline and the pane border only. **A pastel per pane — blue / lilac / mint /
+apricot — was built first and rejected on sight: four hues plus gold is five
+accents on one screen, so don't re-derive it.** The dot is on `.an-pane-head`,
+not `.an-pane-title`, because the Media pane has no title element. ⚠ **The
+monitor's transport is smaller and has lost its "Frame 7 of 34" readout** —
+sized as `.an-transport .an-tbtn`, NOT on `.an-tbtn`, which is also the timeline
+header's zoom pair. ⚠ **Text / Colour card / Voiceover moved to the timeline's
+own head row beside ＋ Add layer** (`.tl-headbar`, with `.tl-head` and ＋ Add
+layer itself UNMOVED) — handed in as `<Timeline addTools>`, still the editor's
+buttons. ⚠ **ASSETS NOW DRAG FROM THE MEDIA PANE ONTO A LANE** and land at the
+snapped time under the pointer: `Timeline` decides where (`dropProps`,
+`laneTakes`), the editor decides what it means (`dropAsset`). **The dragged
+kind is read from `dataTransfer.types` via an empty marker type, because
+`getData` is blank during `dragover` in every browser** — that is why there are
+two entries on the clipboard. On the picture rows a drop time is the nearest
+CUT (the sequence has no gaps); on audio it is `start_ms`. Built clean; not
+driven in a browser.
+
+Before that: **THE MEDIA PANE HAS STICKY HEADINGS, AND ⓘ MOVED
+ONTO THE ROW.** Follow-up to the chrome pass below, same three complaints again.
+⚠ **A SECTION HEADING NOW PINS UNDER THE ＋ CARD** (Storyboard Frames / Video /
+Images / Audio) so the pane always says which list you are scrolling — which
+needed `overflow: hidden` DROPPED from `.an-grp` **in the media pane only**, since
+an `overflow: hidden` ancestor is a scrollport of its own and a sticky child of
+one does nothing; the heading takes over the section's top corners. ⚠ **The ＋
+card is a FIXED `--an-drop-h` (7rem)** because the card's sticky `top` and every
+heading's sticky `top` must be the same number or frames scroll through the band
+between them. ⚠ **The sliver above the card was `.an-pane-body`'s own 0.6rem of
+top padding** — the pane that has the card now sets `padding-top: 0`, so the card
+is flush with the pane head and the padding-box/content-box question never
+arises; the belt-and-braces cover over that strip is a **box-shadow, not a
+`::before`**, because the card's `overflow: hidden` clipped the pseudo-element
+away and the cover never painted. ⚠ **ⓘ IS NOW A PROP, NOT A BLOCK**:
+`info` on `PropRow` / `PropSlider` / `PropGroup` puts it in the row's right-hand
+cluster (⏱ , ⓘ , ↺) instead of on a line of its own; `PropNote` is warnings ONLY
+now. It opens on hovering the ICON (`:has()`), never the row, and a click pins it.
+**Built clean; not driven in a browser.**
+
+Before that: **THE EDITOR'S CHROME GAVE ITS HEIGHT BACK TO THE
+PICTURE.** Six user-reported layout faults, all the same complaint: furniture was
+taking room the monitor wanted. A **back button is an arrow now** (`.btn.back-btn`
+in `base.css`) with the destination in its tooltip — in the editor's top bar and
+in every workflow that had a "← Your Storyboards"-sized slab. The **project title
+is drawn as a field** (it was transparent until hovered, so it merged into the
+page). The **status strip moved to the FOOT of the editor** and got shorter —
+⚠ it is LAST IN THE DOM now, which is what puts it at the bottom of the Long
+workspace's flex column, and the Reel workspace's `grid-template-areas` moved
+`stat` to its last row to match. The **＋ Add assets card is `position: sticky`**
+at the head of the Media pane, because a 31-frame board scrolled the pane's only
+drop target off screen. ⚠ **The Program head's `<select>` was full width because
+`theme.css` sets `select { width: 100% }` for the app's forms** — `width: auto`
+on `.an-ar-select` is what puts the title, the shape and "1920×1080 · 24 fps" on
+ONE line instead of three. And **`PropNote` is an ⓘ** — hover or click to open
+— ⚠ for the "" tone only: a `tone="warn"` note is conditional and stays in plain
+sight. **Built clean; not driven in a browser.**
+
+Before that: **THE PICTURE TRACK IS TWO ROWS, AND EVERY ROW HAS
 AN EYE AND AN ✕.** Video dropped into a board now lands on its own timeline row
 and in its own Media-pane section (Storyboard Frames / Video / Images). ⚠ **The
 split is by ORIGIN (`frameOrigin`), never by kind** — animating a board shot makes
@@ -456,7 +892,7 @@ Pipeline stages (see `pipeline.py`):
 | `server/common.py` | Helpers shared by `main.py` and `animatics.py` (`get_owned_job`, `board_dir`, `variants_of`, `panel_path`). They live here so the two route modules don't import each other. |
 | `server/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
 | `server/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
-| `server/jobs.py` | Job store: Firestore (default) + in-memory fallback. |
+| `server/jobs.py` | Job store: **MongoDB (default, `API_JOB_STORE=mongo`)** + Firestore and in-memory/JSON fallbacks. |
 | `server/worker.py` | ThreadPoolExecutor running the pipeline off-request. |
 | `server/security.py` | bcrypt password hashing + JWT create/verify. |
 | `server/users.py` | MongoDB-backed user store (`users` collection). |
@@ -498,10 +934,10 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/components/Timeline.jsx` | **As many lanes as the project has** — the editor passes ONE `lanes` list and both the gutter labels and the tracks render from it. Kinds: 🖼 sequence · 🖼 image overlay · T text · ◆ shapes · ♪ audio. Fixed label gutter, ruler pinned to the top of the scroller, playhead, and the two `ZoomScrollbar`s. Drag a frame's right edge to change its hold; drag a text clip to move it, its edge to stretch it. ⚠ The gutter is OUTSIDE the scroller, so `readView` translates it by hand — that is the only thing keeping a label beside its own track when the lanes are scrolled down. ⚠ **MORE THAN ONE THING CAN BE SELECTED**: drag a lane's empty space for a rubber band (a press that does NOT travel still scrubs), shift-click to toggle one, double-click a lane's label for the whole row — the timeline only REPORTS these, the editor owns the list. Every selectable node carries `data-sel="kind:id"`, which is what the band hit-tests. ⚠ The picture bars are placed at an absolute `left` from the running total, NOT by flow — a bar drawn wider than its time used to shove the rest of the sequence off the end. Exports `formatTime`. |
 | `client/src/components/ZoomScrollbar.jsx` | The timeline's scroll bars — one component, both axes. **The ends ZOOM**: the thumb's length is the zoom and its position is the scroll, so a grip drag frames a stretch of the edit in one gesture (Premiere's bars, not the browser's). Reports a WINDOW as fractions of the whole timeline; `Timeline.jsx` turns that into pixels-per-second (horizontal) or track height (vertical). |
 | `client/src/components/Waveform.jsx` | Draws the peaks on a canvas. The DECODE moved to `animatic/beats.js` and is cached there by url — the waveform, the beat markers and the duck preview all want the same samples, and three decodes of one MP3 was three chances to disagree about how long it is. |
-| `client/src/animatic/audio_mix.js` | **What a track sounds like at a moment** — its tone, its fader, its fades, the duck it sits under. **⚠ TWIN of the mix half of `animatic.py`** (`trackPlayMs`/`fadeWindow`/`EQ_BANDS` ⇄ `track_play_ms`/`fade_window`/`EQ_BANDS`), compared case by case and band by band in `tests/audio_mix_check.py` by running this file under node. A fade is placed against what the track PLAYS — its trim, or the end of the video — never against the file. The EQ is three FIXED bands because each is one cookbook biquad, i.e. one `BiquadFilterNode` here and one ffmpeg filter there. |
+| `client/src/animatic/audio_mix.js` | **What a track sounds like at a moment** — its tone, its fader, its fades, the duck it sits under. **⚠ TWIN of the mix half of `animatic.py`** (`trackPlayMs`/`fadeWindow`/`EQ_BANDS` ⇄ `track_play_ms`/`fade_window`/`EQ_BANDS`), compared case by case and band by band in `tests/audio_mix_check.py` by running this file under node. A fade is placed against what the track PLAYS — its trim, or the end of the video — never against the file. The EQ is three FIXED bands because each is one cookbook biquad, i.e. one `BiquadFilterNode` here and one ffmpeg filter there. Also owns **the three crossfade curves** (`FADE_CURVES` / `curveGain` ⇄ `FADE_FF_CURVE` / `curve_gain`): a fade carries a curve per END, ⚠ the formulae are ffmpeg's `fade_gain()` transcribed rather than invented, and `linear` is the default because it is `afade`'s own (`curve=tri`). Pinned by `tests/audio_crossfade_check.py`. |
 | `client/src/animatic/audio_engine.js` | **The preview's mixer.** Each `<audio>` is routed `→ 3 biquads → gain → destination`, because an element gives you `volume` (capped at 1) and `muted` and nothing else — a track at 150% used to preview at 100%, and an EQ was impossible. ⚠ **The element is still the master clock**: a `MediaElementSource` plays its element, it does not replace it. The context starts suspended (resumed from the gesture that starts playback) and `createMediaElementSource` may be called once per element — **every failure falls back to `el.volume`**, the behaviour that predates this file. |
 | `autoframe.py` | **Where the subject is, and therefore where to put the camera.** ⚠ THE MODEL IS ASKED FOR THE SUBJECT, NEVER FOR THE CROP: a model asked for "a 9:16 crop" returns roughly 9:16, and roughly is a reframe subtly wrong on every shot. `crop_box` then builds a box of EXACTLY the target aspect around it — provably containing it, because the clamp can only move the crop toward the subject's own side — and `frame_transform` is the INVERSE of `animatic_render.place_picture`, so change one and this moves with it. ⚠ Writes ordinary `scale`/`x`/`y`; there is no crop concept in this codebase and this is not the place to add one. `apply_to_frame` carries an existing Ken Burns push through the reframe. |
-| `client/src/animatic/audio_clips.js` | **An audio track is a CLIP, and this is what you can do to one** — find the one under a click, cut it in two, trim its head, group a lane. ⚠ **EDITOR-SIDE ONLY, no Python twin and none needed**: the server renders a mix, it never edits one (the same split as `keyframes.js`). ⚠ **`clipId(track)` is the identity, NOT `upload_id`** — after a cut several clips share one upload, so the upload answers "which sound" and never "which clip"; a clip saved before the razor has no `id` and `_audio_tracks_of` backfills it with the upload. `splitClip` sets **`start_ms` AND `offset_ms`** on the second half by the same amount — one without the other and the audio jumps at the cut. Checked by `tests/audio_razor_check.py` under node. |
+| `client/src/animatic/audio_clips.js` | **An audio track is a CLIP, and this is what you can do to one** — find the one under a click, cut it in two, trim its head, group a lane. ⚠ **EDITOR-SIDE ONLY, no Python twin and none needed**: the server renders a mix, it never edits one (the same split as `keyframes.js`). ⚠ **`clipId(track)` is the identity, NOT `upload_id`** — after a cut several clips share one upload, so the upload answers "which sound" and never "which clip"; a clip saved before the razor has no `id` and `_audio_tracks_of` backfills it with the upload. `splitClip` sets **`start_ms` AND `offset_ms`** on the second half by the same amount — one without the other and the audio jumps at the cut. Checked by `tests/audio_razor_check.py` under node. Also owns **the crossfade** (`crossfadePatch` / `crossfadeTarget`), which unlike a picture transition really does overlap its two clips — it eats the media handles either side of the cut, **spending the outgoing clip's TAIL before the incoming clip's HEAD** so that laying one moves nothing. ⚠ Everything there works in FILE time and takes no `totalMs`: `trim_ms` is written from a play length, so the video's clamp would get baked into any clip hanging past the last frame. Checked by `tests/audio_crossfade_check.py`. |
 | `client/src/animatic/selection.js` | **What "the selection" is, now that more than one thing can be in it** — a LIST of `{kind, id}`, the shift-click toggle, group expansion, and the rubber band's box maths. ⚠ **EDITOR-SIDE ONLY** (a selection is not part of the project) except `group_id`, which is saved on the clips. ⚠ **A group is a shared string on its members, not a container**: nothing has to be kept in step, so it cannot go stale — delete a member and the group is what is left. `MOVABLE`/`GROUPABLE` exclude `frame` because the picture sequence is a flow, not free-floating clips. Checked by `tests/selection_check.py` under node. |
 | `client/src/animatic/captions.js` | **Which clips this app WROTE, and which lane they live on** — three strings and two predicates. **⚠ TWIN of `captions.py`** (`CAPTION_LAYER_ID` / `CAPTION_LAYER_NAME` / `CAPTION_ID_PREFIX`), compared by running this file under node in `tests/captions_check.py`. The SERVER writes generated captions, so this is the whole contract that lets the browser find the lane, name it, and keep it at the top of the timeline. Get it wrong and the captions are invisible on the timeline while still burning into the export. |
 | `client/src/animatic/beat_cut.js` | **Pulling every cut onto the nearest beat.** ⚠ EDITOR-SIDE ONLY, no Python twin (the same split as `selection.js`). Three rules, each a check in `tests/autoframe_check.py` under node: **a cut is not a thing you can move** — the sequence is a FLOW, so moving one rewrites the durations either side; **beats cluster and cuts must not** — the nearest beat to two consecutive cuts is often the same one, and without the running floor that is a zero-length clip, a picture that never appears; and a cut further than `REACH_MS` from a beat is LEFT ALONE, or this tightens nothing and rewrites the edit. The last cut is never moved — it is the end of the video, not an edit point. |
@@ -655,6 +1091,18 @@ in `.env` — no code change needed.
 ---
 
 ## 🧪 Browser tests (Playwright)
+
+There are TWO, and they answer different questions. `tests/e2e_animatic.py` is the
+whole editor against a live API and needs three terminals; **`tests/monitor_effects_check.py`
+is the Program monitor only, starts Vite itself, needs no backend, and takes about
+a minute** — so it is the one to run after touching anything under
+`client/src/animatic/gl/` or `ProgramCanvas.jsx`. It exists because a black
+monitor is a CRASH before it is a rendering bug: it mounts `<ProgramCanvas>`,
+turns each effect on the way the Effects pane does, and asserts the canvas is
+still in the document, that nothing reached `window.onerror`, and that **the GL
+context was built once rather than rebuilt per render**. The maths tests
+(`effects_check.py`, `effects_parity_check.py`) never unmount anything and passed
+right through the bug it was written for — see the top Work Log entry.
 
 `tests/e2e_animatic.py` drives a real Chromium against a live API + Vite on
 isolated ports. It has caught bugs a clean `npm run build` happily shipped
@@ -833,7 +1281,1365 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-18 (latest) — THE PICTURE TRACK GROWS A VIDEO ROW, AND EVERY ROW GETS AN EYE AND AN ✕
+### 2026-08-19 (latest) — A CLIP COULD NOT BE MOVED TO ANOTHER LAYER, AND THE EMPTY-ROW PROMPT FELL OUT OF ITS ROW (both user-reported)
+
+The report, in the user's words:
+
+> "first you bsee layer empty text not view full i see it gos in down"
+> "mai big thing i not move some audio part in other audio layer on blank area i
+>  want i do move audio content to other audio layer"
+> "and i see same problem with other like shape not move other shapes layer sam
+>  with image, text, amd caption"
+
+**1. A MOVE DRAG HAD NO VERTICAL HALF.** A clip's row was decided when it was
+made. Dragging its bar slid it along the timeline and nothing else, so changing
+layer meant dragging the thing out of the Media pane again — a path that existed
+for shapes (`shapeClip`) and audio and for nothing else, and which for audio was
+refused outright whenever the destination was a row grouped by FILE. Captions and
+overlay pictures had no path at all.
+
+- `Timeline.jsx`: `CROSS_LANE_KINDS`, `laneAtPoint`, `laneMoveTarget`,
+  `laneIsTarget`, `laneGhost`. `startClipDrag` and `startAudioDrag` take the LANE
+  instead of just `lane.kind` and remember `fromKey`; both move handlers set
+  `toKey` from the pointer's Y; both pointerups route through the new
+  `onMoveToLane` when it is set.
+- `AnimaticEditor.jsx`: `moveClipToLane` / `moveTrackToLane`, wired as
+  `onMoveToLane`. `addLayer` gained `{ name, notice }` for one caller.
+- `animatic-lanes.css`: `.tl-lane.drop-lane`, `.tl-ghost`, `.lifting`.
+
+⚠ **THE ROW UNDER THE POINTER IS ASKED OF THE DOM**, not computed. Every lane
+carries `data-lane` (the frames and audio rows gained it here) and `laneAtPoint`
+hit-tests those boxes — the same decision `hitsIn` makes for the marquee, and for
+the same reason: the browser has laid the rows out already, and a copy of their
+vertical geometry here would be wrong for the whole of a vertical zoom, which
+rewrites every row's height.
+
+⚠ **THE BAR DOES NOT TRAVEL BETWEEN THE ROWS.** A clip is a CHILD of its own
+lane, so re-parenting it mid-drag would move the node the pointer is captured on
+and the gesture would simply end. The original dims (`lifting`), an outline is
+drawn on the destination (`tl-ghost`) and the row lights up — which says the same
+thing and survives the drag.
+
+⚠ **THE TIMELINE REPORTS THE ROW; IT WRITES NO IDS.** `onMoveToLane(kind, id,
+lane, patch)`. For a caption, a shape or an overlay a row IS a `layer_id` and this
+file could have written one — but an audio row grouped by upload has no id, so
+"put it on that row" can only be answered where the document is. Same division of
+labour as `onDropAsset`.
+
+⚠ **A FILE-GROUPED AUDIO ROW IS PROMOTED TO A REAL LAYER when something is
+dropped on it**, taking its own clips with it. Those rows are grouped by upload on
+purpose — that is what makes a razored take look cut rather than doubled — and
+that grouping is precisely why the old `dropAsset` had to refuse the move. After
+the promotion it is an ordinary layer row that happens to have started life as one
+file. It is ONE undo: `setLayers` + `setAudioTracks` in the same handler, so React
+batches them into a single render and the stack sees a single signature change.
+A layer row holding more than one file is now named after the LAYER rather than
+after whichever clip starts earliest, or the row would rename itself under you.
+
+⚠ **ONLY A PLAIN, SINGLE-CLIP MOVE CAN CHANGE ROW.** A trim is about the clip's
+own length; a GROUP move can span kinds, and "put these forty things on that one
+row" is not an edit with a single meaning. Both are excluded up front.
+
+⚠ **THE PICTURE ROWS ARE NOT A DESTINATION, AND THAT IS NOT AN OMISSION.**
+`frames` is ONE sequence drawn as two rows filtered by ORIGIN (`laneShows`), so
+which row a picture is on is READ OFF the clip rather than chosen — the same rule
+`laneTakes` already states for a drop out of the Media pane. This is also the
+answer to the third thing in the report ("when i do video trim so i see my image
+layer conetnt move"): the two rows share one clock by construction, so a ripple
+trim on either moves the other. **NOT FIXED, and it cannot be fixed here** — see
+Next Steps.
+
+**2. THE EMPTY-ROW PROMPT WAS SLICED IN HALF AT SHORT TRACK HEIGHTS.**
+`.tl-track-empty` was `padding: 0.45rem 0.6rem` — a FIXED offset from the top of a
+box whose height is a variable the vertical zoom writes (`--tl-track-h`, floor
+`1.5rem`). Zoom the rows down and the text landed on the lane's bottom edge, where
+the lane's own `overflow: hidden` took its descenders off. The audio row's
+`padding: 0.9rem` override was worse: 14px of it in a 24px row.
+
+⚠ **CENTRED BY `line-height`, NOT BY FLEX.** `.tl-track-add` is one line at the
+lane's inner height, so it sits on the middle of the row whatever the zoom has
+made that. Flex centring would have made the text an ANONYMOUS flex item and
+`text-overflow: ellipsis` would have stopped applying to it — a long prompt would
+then overflow instead of truncating, which is the bug the `nowrap`/`ellipsis` pair
+exists to prevent.
+
+**Verified:** `tests/editor_lane_move_check.py` is new — 19 checks, Chromium,
+driving the real `<AnimaticEditor>` with the mouse. It drags a caption, a shape, an
+overlay picture and an audio clip each onto another row and asserts in BOTH
+directions (the destination gained it, the source lost it — which is what tells a
+move from a copy); drags an audio clip onto a file-grouped row and asserts both
+clips end up on ONE new row; asserts a HEAD GRIP dragged across rows trims and does
+not move; asserts a shape dragged onto the picture row stays put; and measures
+every empty-row prompt against its row at 1.5rem, the default and 6rem. ⚠ **BOTH
+BUGS WERE PUT BACK AND WATCHED TO FAIL ON IT** — emptying `CROSS_LANE_KINDS` fails
+all eleven move checks, and restoring the old padding fails the prompt check at
+the short end by 5px (12px on the audio rows), which is the reported symptom to
+the pixel. `editor_razor_check.py`, `selection_check.py`, `hidden_lane_check.py`,
+`audio_razor_check.py`, `razor_check.py` and `audio_crossfade_check.py` all still
+pass, and `npm run build` is clean. **Not otherwise opened in a browser.**
+
+### 2026-08-19 — THE FIRST PICTURE STILL HAD NO HEAD GRIP (user-reported)
+
+> "i see all place Ripple edit work but i see in video clip not cut in start but i
+> see in last video clip i see Ripple edit fuction / why is happen / i not able in
+> video layer only first video not abkle to Ripple edit"
+
+Follow-up to the entry below, which gave every clip a grip at both ends **except**
+the first picture in the sequence. That was deliberate and it was wrong. The
+reasoning was sound as far as it went — a picture's head grip drags the CUT in
+front of it, and the first picture has no cut in front of it — but "there is no cut
+here" is not the same as "there is no edit here". The edit is **start later into
+the clip**: the ripple trim-in, with everything after it moving up.
+
+**⚠ IT IS THE ONLY PICTURE EDGE THAT TRIMS THE CLIP ITSELF.** `startHeadTrim` is
+new, and the rule the two halves of the grip now share is *"it edits whatever is at
+this clip's head"* — a cut where there is one, the start of the film where there
+isn't. That is why the same-looking grip does two different things on the same row,
+and it is not arbitrary.
+
+**⚠ ON A VIDEO CLIP A HEAD TRIM MOVES `in_ms`, NOT JUST `duration_ms`.** `sourceAt`
+reads `in_ms + t * speed`, so skipping `head` ms of TIMELINE has to skip
+`head * speed` of FILE — otherwise the picture at 0:00 is unchanged and all the
+trim did was throw away the end of the shot. `out_ms` is an absolute position in
+the source and stays exactly where it is. Both fields go in **one** patch (hence
+the new `onFrameChange` prop: `onResize` only ever carried a length), because
+written apart they are two renders, two steps to undo through, and a project saved
+between them has a clip that lost its head without losing the footage in it.
+
+**⚠ THE TRAVEL IS BOUNDED UP FRONT, IN TIMELINE MS**, so the edge stops at
+whichever wall comes first rather than hitting one and going on:
+- trimming IN — the clip's own `MIN_MS` floor, **and** the last moment of source
+  there is to show (`out_ms`, exclusive, so one ms inside it);
+- trimming OUT — however much footage sits BEFORE `in_ms`. **Nothing, for a
+  still**: it has no source to give back, so its head only goes one way.
+
+Both bounds straddle 0 by construction, so "did not move" can never come back as
+an edit — `clamp` returns its low bound when they cross, which is what makes a
+hand-edited project already past its own `out_ms` refuse the trim instead of
+inventing one.
+
+**⚠ AND THE KEYFRAMES, AGAIN.** A Ken Burns push is stored relative to the frame's
+own start, exactly as a caption's opacity is, so the same silent slide applies.
+`trimKeyframesHead` was lifted out of `trimTimedClipStart` and is now shared —
+⚠ **the one thing in `razor.js` that serves the picture sequence**, and the header
+says so: the keyframe surgery is common because keys are stored the same way on
+every kind of clip; the clip models are not, and those stay apart.
+
+**⚠ WHAT SNAPS IS THE FAR EDGE, NOT THE ONE UNDER THE POINTER.** The head of the
+first picture is pinned to 0:00 — it is the start of the film and cannot move — so
+trimming into it moves the FIRST CUT, and that is the edge with something to line
+up against: the **audio does not ripple**, so the cut can be pulled onto a beat.
+Snapping the pinned edge would have snapped to nothing.
+
+**Files:** `client/src/components/Timeline.jsx` (`startHeadTrim`, its branch in the
+frame-drag effect, the grip's two-way handler), `client/src/animatic/razor.js`
+(`trimKeyframesHead` extracted and documented as shared),
+`client/src/components/AnimaticEditor.jsx` (`onFrameChange={patchFrame}`).
+
+**Verified:** the trim was checked against the real `sourceAt` in both directions
+at speed 1 and speed 2 — after trimming `head` ms the clip opens on exactly the
+frame that used to be `head` in, and after extending it the old head reappears
+`head` ms in. The `out_ms` wall, the `MIN_MS` floor, the `in_ms >= 0` wall and the
+already-past-`out_ms` case were each exercised. Keyframe re-timing keeps the push
+in step with the footage; ⚠ **an EASED segment re-normalises its curve over the
+shorter span** — endpoints exact, interior differs — which was measured to be
+**bit-identical to what `splitTimedClip` already does when the razor cuts an eased
+track**, so it is the accepted property of `splitTrack`, not a new defect. Linear
+tracks drift by zero. Both JSX files bundle clean. **Not opened in a browser and no
+Playwright suite was run.**
+
+### 2026-08-19 — ONLY AUDIO COULD BE TRIMMED FROM THE HEAD (user-reported)
+
+> "see one thing i not able to edit start of asstes like image, video, shapes,
+> text and caption. i want add fuction i able to Ripple edit in start in layer of
+> asstes. only i do able in last of assets but you see in audio i Ripple edit both
+> side"
+>
+> "and name remove this text in Timeline panel (audio 2:40 — video ends early) not
+> need to view of user"
+
+**EVERY CLIP ON THE TIMELINE HAD ONE GRIP, ON THE RIGHT. Audio had two.** The
+asymmetry was in the CSS as much as the JSX: `.tl-handle-l` existed but was
+scoped `.tl-audio-clip .tl-handle-l`, so sound was structurally the exception.
+It is now a general rule in `animatic.css`, and every lane renders both grips.
+
+**⚠ A HEAD TRIM IS A THIRD MODE, NOT A RESIZE.** `startClipDrag` had `"move"` and
+`"resize"`; `"trim-start"` is the new one and the distinction is the point — the
+tail grip moves the END and leaves the start, a move changes neither length nor
+far edge, and a head trim **moves the start and nails the end down**, so it is the
+only one of the three that writes both numbers. It is also the only one that has
+to re-time keyframes.
+
+**⚠ THE KEYFRAMES ARE THE WHOLE RISK, AND THE FAILURE IS SILENT — AGAIN.** Key
+times are relative to a clip's own start, so moving that start and leaving the
+keys alone slides the entire animation by however far you trimmed, while the clip
+still validates and still plays. `trimTimedClipStart` is new in
+`client/src/animatic/razor.js` and solves it by reusing what the razor already
+had: **a trim-in IS the tail half of a split at the new head**, so
+`splitKeyframes` plants a key there carrying the value AND the ease that were
+running. Trimming OUT (making the clip longer at the head) only shifts the keys
+forward and plants nothing — `valueAt` holds at the first key rather than
+extrapolating, so the new head holds the value the clip used to open on, which is
+what it looked like before. Returns a PATCH, or null when the drag came back to
+where it started.
+
+**⚠ ON A PICTURE THE HEAD GRIP IS THE CUT BEFORE IT, NOT A TRIM OF THAT CLIP.** A
+frame has no `start_ms` — its start is the sum of every hold before it — so
+"shorten this one's head" can only ripple everything left and move its FAR edge,
+which is precisely what its tail grip already does; as an edit it would have been
+a duplicate. Moving the cut is the only thing that puts the edge you grabbed under
+the pointer, so the picture lane's left grip is `startResize(e, frames[i - 1],
+i - 1)` — one call, and it inherits **ripple / rolling (B / N)** and the snapping
+from the existing implementation for nothing. Two clips get no head grip: the
+first picture (its start is 0:00 and there is no cut there) and anything narrower
+than `BOTH_GRIPS_MIN_PX` (24px), since two 8px strips would leave no middle to
+press for "select" or drag for "move" — below that a clip behaves exactly as every
+clip did before, tail grip only.
+
+**AND THE LENGTH BADGE IS GONE.** `audio 2:40 — video ends early` / `✓ matches the
+audio` was a sentence of running commentary on the busiest bar in the editor, and
+it was never news: the ruler already runs to the end of the audio and the
+transport clock counts past the last picture, so the timeline SHOWS what the badge
+described. ⇔ Fit to audio, a step to the right, is still the fix it pointed at.
+`lengthMatches` had exactly one reader and went with it, as did the `.an-match`
+rules.
+
+**Files:** `client/src/animatic/razor.js` (`trimTimedClipStart`),
+`client/src/components/Timeline.jsx` (the `"trim-start"` mode, both new grips,
+`BOTH_GRIPS_MIN_PX`), `client/src/components/AnimaticEditor.jsx` (badge removed),
+`client/src/styles/animatic.css` (`.tl-handle-l` generalised, `.an-match` deleted),
+`client/src/styles/animatic-tools.css` (audio keeps only the `z-index`).
+
+**Verified:** the keyframe re-timing was unit-tested in both directions on a
+three-key `opacity` track — the interpolated value at every absolute time is
+identical before and after the trim, in and out, and the clamps hold at 0:00 and
+at the 100ms floor. Both JSX files bundle clean under esbuild. **Not opened in a
+browser and no Playwright suite was run** (the user asks for browser runs
+explicitly). ⚠ `tests/editor_razor_check.py` asserts the grips go
+`pointer-events: none` under the blade — the new ones carry `.tl-handle` so they
+are covered, but that suite has not been re-run.
+
+### 2026-08-19 — A SCRUB SELECTED THE TIMELINE AS TEXT, AND THE RULER COULD NOT NAME A FRAME (both user-reported)
+
+> "see when i slide timeline stick so text selectd appeir in timeline fix it please"
+>
+> "and second i wnat in timeline so time like this see image 3 / with small samll
+> line with time sec like this"
+
+**EVERY PRESS ON THIS BAR CALLED `preventDefault` EXCEPT THE ONE THAT SCRUBS.**
+`startLanePress` already had it, with a comment saying exactly why ("or the
+browser starts a TEXT SELECTION under the band: the lanes are full of labels").
+`startSeek` did not — and it is bound to the *two* surfaces drawn ABOVE every
+lane, the ruler and the playhead grip, so a scrub across the bar highlighted the
+track names, the clip titles and the empty-lane prompts blue behind the playhead.
+Fixed in `Timeline.jsx:startSeek`. ⚠ **`.tl-wrap` also became `user-select: none`
+wholesale** (`animatic-text.css`): every drag on the timeline means something —
+scrub, marquee, move, trim — and there are no inputs on it, so a handler-by-handler
+guard is one missed handler away from the same bug. `.tl-ruler`'s `cursor: text`
+became `ew-resize`; a scrub surface should not advertise itself as a selection one.
+
+**AND THE RULER WAS READ IN PROSE.** `0:05` cannot name a frame, which is what a
+ruler you cut against is for. `tickStep`/`TICK_STEPS` are gone, replaced by
+`tickSteps` + `rulerTicks` + `formatTimecode` (exported) in `Timeline.jsx`, and a
+labelled major tick with bare minors between it — `.tl-tick` is now the LINE and
+`.tl-tick-label` the timecode hanging off the majors. Three things to know:
+
+- ⚠ **SUB-SECOND STEPS ARE THE DIVISORS OF FPS**, not a fixed ladder. At 24fps a
+  3-frame step reads `00, 03 … 21, 01:00`; a 5-frame one reads `20, 01:01` and
+  stops meaning anything. Above a second they are whole seconds for the same
+  reason. That is why the ladder is built per-fps: half a second is 12 frames at
+  24 and 15 at 30.
+- ⚠ **THE TICKS ARE CULLED TO THE VISIBLE WINDOW** (`viewBox.sl`/`vw`, already
+  read for the scrollbars). The minor step is only bounded below by 7px, so at
+  600px/s a 70s cut is 1,681 ticks; the ruler is `position: sticky` and
+  re-rendered on every scrub, and 49 nodes is what a screenful actually needs.
+- ⚠ **NO x-OFFSET ON A TICK.** The old `.tl-tick` carried `transform:
+  translateX(2px)`, harmless under a text label and a fifth of a frame of lie
+  under a line that marks a time.
+
+`fps` is a new `<Timeline>` prop, fed from `settings.fps` so the ruler counts in
+the rate the film is EXPORTED at. Only the ruler reads it — every duration on the
+bar is still milliseconds, because that is what the clips are stored in.
+`--tl-ruler-h` went 1.15rem → 1.5rem for the second row, and `.tl-ruler` now reads
+the variable rather than repeating the number (`.tl-gutter-ruler`, which keeps the
+labels level with the tracks, is sized from the same one).
+
+**Files:** `client/src/components/Timeline.jsx`,
+`client/src/components/AnimaticEditor.jsx` (the `fps` prop),
+`client/src/styles/animatic.css` (ruler + ticks),
+`client/src/styles/animatic-text.css` (`--tl-ruler-h`, `user-select`).
+
+**Verified:** both JSX files bundle clean under esbuild (only the pre-existing
+`import.meta`/iife warning), and the step ladder was checked at 2 / 10 / 40 / 120
+/ 300 / 600 px-per-sec against 12 / 24 / 25 / 30 fps — every label lands on a
+divisor of the second and rolls to `:00`, and culling drops 1,681 ticks to 49.
+**Not opened in a browser and no Playwright suite was run for this** (the user
+asks for browser runs explicitly).
+
+### 2026-08-19 — THE RAZOR CUT WHATEVER IT LIKED, AND THE ⓘ RULE WAS BEING IGNORED (both user-reported)
+
+> "when i cut so my cut icon in top of timeline in time sec show row and i click
+> so i notice my image clip cut but this not happen again when i go image layer
+> then i cut only image layer and same do in all layer not cut from any where"
+>
+> "when i cut audio so i not see cut icon like when i cut video"
+>
+> "i told you earlier not show too much text of information always make I icon
+> buttun and show text information … i see in midea effects panel too"
+
+**THE RAZOR CUT THE PICTURE FROM ANYWHERE ON SCREEN, and it was one function.**
+`toolPress` existed because "hand and zoom and razor mean the same thing wherever
+they land" — and that is true of two of the three. It ran for the RULER and for
+the empty part of EVERY lane, and what it called was `onSplitAt`, the PICTURE
+razor. So a press in the seconds row cut an image clip; so did a press on an
+empty stretch of the shapes row. There was never a way to say "cut *this* layer",
+because the callback was given a TIME and left to work out what it meant.
+
+Fixed by making the razor name its target. ⚠ **ONE `onRazor(kind, id, ms)`
+REPLACES `onSplitAt` AND `onSplitAudioAt`** — two callbacks was the shape of the
+bug, since "which list does this cut belong to" was answered by which one the
+call site happened to reach. Every lane now identifies its own clip at the press
+(`razorPress` in `Timeline.jsx`, called from the clip bodies **and** from the drag
+starters, so a press on a trim handle or a fade grip cuts instead of resizing),
+and `startLanePress` reports `kind: null` — the editor then says "the razor cuts
+a CLIP" rather than cutting something on another row. The ruler goes on scrubbing
+while the razor is up, which is what Premiere does and what the reporter wanted.
+
+**AND THREE LAYERS HAD NO RAZOR AT ALL.** Captions, shapes and overlay pictures
+could not be cut by any gesture; "cut each particular layer" needed them to work,
+so `client/src/animatic/razor.js` is new. ⚠ **THE KEYFRAMES ARE THE WHOLE RISK
+THERE, and the failure is silent**: key times are relative to a clip's own start
+and `valueAt` HOLDS at the first and last key rather than extrapolating, so the
+obvious split ("keep the keys before the cut, shift the rest back") loses the
+value AT the blade on both halves — the head freezes early, the tail starts late,
+and the animation JUMPS at the edit while the document still validates. So
+`splitTrack` plants a key at the cut on both sides, carrying the ease that was
+running. ⚠ It is a THIRD razor rather than a generalisation of the other two, and
+the file says why: a picture has no start of its own, an audio clip has a file to
+seek into, and a free clip has neither and has keyframes. One function taking the
+union of three clip models is how a half gets a field that meant something on a
+different kind of clip.
+
+**⚠ THE CUT CURSOR IS NOW ON THE CLIPS AND NOWHERE ELSE**, which is both halves
+of the second report. It was on `.tl-inner`, `.tl-bar` and `.tl-ruler` — so the
+RULER (which must not cut) wore the blade, and an AUDIO clip did not, because
+`.tl-audio-clip` sets its own `cursor: grab` and beat the container's rule. Every
+kind of clip is now named, `*` included so the pointer does not change as it
+crosses a caption's own text, and the grips inside a clip get
+`pointer-events: none` while the razor is up — which is what makes it ONE icon
+per the request, rather than `ew-resize` over a fade grip and `col-resize` over a
+trim handle. Ctrl+K also cuts the selected clip whatever kind it is now, instead
+of only audio-or-picture.
+
+**THE ⓘ RULE.** The Effects library printed every entry's whole description
+beside its name, and it was the WIDER half of each row: the one word you were
+scanning for ("Blinds up") was the part getting the ellipsis, and it
+`display: none`d itself under 1100px so the answer to "what does this do"
+vanished on a narrow pane. Now each entry carries an ⓘ. ⚠ **`InfoDot` IS EXPORTED
+FROM `PropGroup.jsx` AND IMPORTED, not redrawn** — a second circle that is nearly
+the same size stops reading as a convention and starts reading as decoration. The
+row became a wrapper (`div` → draggable button + ⓘ + the note as a wrapped row),
+because a button cannot hold another button and because a note that opened on
+clicking the ROW would fire on every attempt to add an effect. The new crossfade
+chips lost their `opt-chip-note` too: three chips carrying a sentence each made
+one control taller than most of the pane, and the row's existing ⓘ can explain
+all three together, which is where the difference between them actually lives.
+
+Files: `client/src/animatic/razor.js` (**new** — `splitTimedClip`, `splitTrack`,
+`splitKeyframes`, `timedClipAt`, `RAZOR_KINDS`, `MIN_SPLIT_MS`);
+`Timeline.jsx` (`onRazor` replacing the two split props, `razorPress`, the razor
+out of `toolPress`, guards on `startResize` / `startClipDrag` / `startAudioDrag` /
+`startFadeDrag`); `AnimaticEditor.jsx` (`razorAt`, `splitTimedAt`, `onRazor`,
+Ctrl+K across every kind); `EffectsLibrary.jsx` (the ⓘ per entry);
+`properties/PropGroup.jsx` (`InfoDot` exported); `properties/AudioProperties.jsx`
+(chip notes dropped); `animatic-tools.css` (the razor cursor block and the
+`.fx-entry-wrap` / `.fx-entry-note` rules).
+
+**Verified — and ⚠ BOTH REGRESSIONS WERE PUT BACK AND THE TEST WAS WATCHED TO
+FAIL**, which is the only way to know a UI test is not vacuous:
+- `tests/editor_razor_check.py` is **new, 21 checks, all green** — the real
+  `<AnimaticEditor>` in Chromium with a clip on all five kinds of lane, asserting
+  after every press that *this* lane gained a clip **and no other lane changed*.
+  With the old `toolPress` restored it fails with `frame: 2 → 3` on the ruler
+  press; with the old CSS restored it fails with `grab` on audio, text, shape and
+  overlay.
+  ⚠ **AND ITS GEOMETRY IS LOAD-BEARING.** The first draft aimed at the middle of
+  the ruler, which on two 4s shots is exactly the cut between them — the OLD code
+  refused that for being 0ms from an edit point, so the test passed against the
+  bug it was written for. Every "nothing to cut" press now lands at 2.0s, which
+  is 2.0s clear of both edges of the first shot, and the picture is then cut at
+  the SAME x. Two more misleading failures came from `page.mouse` clicking a
+  POINT while the lane was scrolled out of the pane (the zoom scrollbar ate the
+  picture press, the status bar ate the audio one, both reported as "the razor
+  did not cut") — `press()` scrolls into view and verifies `elementFromPoint`
+  before clicking, and returns a miss as a miss.
+- `tests/razor_check.py` is **new, 15 checks, all green** — the keyframe surgery
+  under node, including that the value either side of the blade matches through
+  `valueAt` and that a caption with no `keyframes` field does not gain one.
+- `audio_crossfade_check.py` (27), `audio_razor_check.py`,
+  `editor_effects_drop_check.py`, `selection_check.py`, `keyframe_ops_check.py`,
+  `hidden_lane_check.py`, `video_clip_check.py` all still pass; `npm run build`
+  clean. **The ⓘ and the cursor have not been looked at by a human** — see Next
+  Steps.
+
+### 2026-08-19 — AUDIO TRANSITIONS: THE THREE CROSSFADES, AND THEY ARE THREE CURVES
+
+Asked for Premiere's **Audio Transitions → Crossfade** folder — Constant Gain,
+Constant Power, Exponential Fade — in the Effects library.
+
+**⚠ THERE IS NO NEW OBJECT, AND THAT IS THE DESIGN.** The picture has an
+`AnimaticTransition` record because the picture sequence is a CHAIN: a cut there
+is a position between two links, so it needs something to be anchored to. Audio
+clips are placed absolutely (`start_ms`) and `audio_graph` already mixes whatever
+overlaps — so **two clips that overlap, one fading out while the other fades in,
+already ARE a crossfade**, at both ends of the app. What was missing was the
+CURVE. So the whole feature is two new fields (`fade_in_curve`, `fade_out_curve`)
+plus the gesture that sets both ends of one cut at once. No new render path, no
+new wire object, no migration.
+
+**⚠ `acrossfade` IS NOT USED AND CANNOT BE** — it concatenates two streams, which
+would shorten the timeline. Same objection that made picture transitions
+boundary-local.
+
+**⚠ THE CURVES ARE FFMPEG'S, TRANSCRIBED FROM `fade_gain()` IN `af_afade.c`.**
+`afade` is what actually shapes the exported audio and the editor only PREDICTS
+it, so a nicer-looking curve in the browser would be a preview that lies about
+the MP4:
+
+| Library entry | curve id | `afade` | gain |
+|---|---|---|---|
+| Constant Gain | `linear` | `tri` | `x` |
+| Constant Power | `power` | `qsin` | `sin(x·π/2)` |
+| Exponential Fade | `exponential` | `exp` | `10^(−5(1−x))` |
+
+`linear` is the default everywhere **because it is what already shipped** —
+`afade`'s own default is `tri`, so every fade in every saved animatic keeps its
+shape and nothing needed migrating. Both sides FOLD an unknown curve to `linear`
+(the `AnimaticTransition.kind` rule), so a project from a newer client opens.
+⚠ Premiere's Exponential is gentler than ffmpeg's `exp`; matching the encoder we
+can measure beats matching an editor we cannot, and only one of the two ends up
+in the file. **This was the user's explicit call.**
+
+**⚠ AND HERE AUDIO DIVERGES FROM THE PICTURE ON PURPOSE — IT EATS MEDIA HANDLES.**
+A picture transition refuses to overlap its shots because the timeline would get
+SHORTER and every cut position would move. None of that is true for audio, so
+`crossfadePatch` does the real Premiere thing: it grows the clips into the file
+either side of the cut (head handle = `offset_ms`, tail handle = `clipRoomMs`).
+Three rules, each of which was arrived at by getting it wrong first:
+1. **The outgoing clip's TAIL is spent before the incoming clip's HEAD.** Letting
+   clip A play on over clip B moves nothing; pulling clip B earlier shifts when
+   its content is heard, and a voice cue landing on a picture cut does not want
+   moving half a second because you dropped a preset. So "centre it on the cut",
+   Premiere's default alignment, is deliberately **not** copied — there is no
+   transition rectangle here whose position could look wrong, only clips that did
+   or did not move.
+2. **How far it grows is SETTLED, not solved.** The overlap can be no longer than
+   either clip covering it, and how long each clip IS depends on how far it grew.
+   A one-pass answer stretched the outgoing clip a full second against a 400ms
+   neighbour and left 600ms where BOTH played at full level — a doubled mix,
+   which is the one thing a crossfade must never produce.
+3. **No handles anywhere → it dips through the cut and SAYS SO** (`overlapped:
+   false`). Two whole files butted together is the everyday way to get here.
+   Premiere refuses this as "insufficient media"; this still leaves you the fades.
+
+**Both fades span the WHOLE overlap**, never part of it: anywhere inside the
+overlap where only one is ramping, both clips are at full level.
+
+**⚠ A SECOND DRAG MARKER WAS REQUIRED, `application/x-anim-afx`.** `getData` is
+blank during `dragover`, so the marker type is the only thing a row can decide
+on mid-drag — and the rows that take a crossfade (audio) are not the rows that
+take an effect or a video transition (picture). One shared marker would light
+every row up for every drag and refuse half of them after the drop, which is the
+"no entry" cursor arriving one gesture too late.
+
+**Also fixed on the way past:** `startFadeDrag` set `fadeDraft.id` to
+`track.upload_id` while `fadeOf` looks it up by `clipId`, so on a file the razor
+had cut in two, dragging either piece's fade grip drew **no live wedge at all** —
+it only appeared on release, which reads as a broken handle rather than a slow
+one. Identical in pre-razor projects (where a clip's id IS its upload), which is
+why it went unnoticed.
+
+Files: `client/src/animatic/audio_mix.js` (`FADE_CURVES`, `FADE_CURVE_INFO`,
+`fadeCurve`, `curveGain`, and `fadeGainAt` now reads a curve per END);
+`animatic.py` (the twin: `FADE_CURVES`, `FADE_FF_CURVE`, `fade_curve`,
+`curve_gain`, `fade_gain_at`, and `:curve=` stated on every `afade`);
+`server/schemas.py` (`AnimaticAudio.fade_in_curve` / `fade_out_curve`);
+`client/src/animatic/audio_clips.js` (`DEFAULT_CROSSFADE_MS`, `fadeEndPatch`,
+`crossfadePatch`, `crossfadeTarget` — ⚠ all in FILE time, taking no `totalMs`,
+because `trim_ms` is written from a play length and the video's clamp would get
+baked into a clip hanging past the last frame); `fx_library.js` (a third family
+`audioTransition`, the `KNOWN` table, `AFX_DRAG_TYPE`, `fxMarkerType`);
+`EffectsLibrary.jsx` (which marker); `Timeline.jsx` (`afx` in `DRAG_KINDS`,
+`laneTakes`, the `drop-onto` ring on an audio clip, curve classes on the two
+wedges, the `fadeDraft` id fix); `AnimaticEditor.jsx` (`laneSiblings`,
+`addCrossfade` — **one `setAudioTracks` writing both clips, so it is ONE undo
+step**, the `fxAudioTransition` branch in `dropAsset`, and the click path in
+`addFxFromLibrary` resolved by the razor's own three lines);
+`AudioProperties.jsx` (an "In shape" / "Out shape" chip row, drawn only where
+there is a ramp to shape); `animatic-tools.css` (the wedge gradients — one
+colour-interpolation hint per curve, solved from `1 − gain(x) = 0.5`, so it stays
+theme-aware) and `animatic-lanes.css`.
+
+**Verified:** `tests/audio_crossfade_check.py` is **new, 27 checks, all green** —
+old projects still open, the curve reaches the graph, the JS and Python curves
+agree to 1e-12 over a 41-point grid (plus the whole `fadeGainAt`/`fade_gain_at`
+envelope, so the window and the curve are checked together), the browser's
+advertised `afade` name matches the exporter's mapping, every crossfade case as
+the patch it must produce, and — the point of the whole thing — **two exports
+decoded back out of the MP4 and measured**: through two uncorrelated tones a
+constant-gain crossfade scoops to **0.707×** through the middle and a
+constant-power one holds at **1.000×**, a measured 3.0 dB apart. ⚠ The two tones
+are the fixture, not a detail: cross one sine with a copy of itself and the
+amplitudes add, constant gain holds perfectly and constant power comes out 3 dB
+LOUD — the opposite result from a test that looks the same.
+`audio_mix_check.py` (70), `audio_razor_check.py`, `transition_check.py` and
+`editor_effects_drop_check.py` all still pass unchanged; `npm run build` clean.
+`effects_parity_check.py` still exits 2 for the pre-existing reason (headless-gl
+will not build here). **NOT DRAGGED BY HAND IN A BROWSER** — see Next Steps.
+
+### 2026-08-19 — THE EDITOR WENT BLACK THE INSTANT AN EFFECT WAS DROPPED (user-reported)
+
+> "when i drag and drop gamma and exposure effects in timline so my screen is
+> black right now"
+
+**One shadowed name.** `EffectsPanel.jsx` had a module-level helper
+`shown(value, field)` — the thing that turns a stored 1.0 into the "100" a
+percentage field shows — and, inside the component, a local
+`const shown = new Map(...)` holding each effect's resolved parameters. The
+local one shadows the module one for the whole component body, so both calls to
+`shown(...)` in the parameter rows were **calling a Map**:
+
+    Uncaught TypeError: shown2 is not a function
+      at EffectsPanel (EffectsPanel.jsx)
+
+It threw while RENDERING, and React unmounts the tree it was rendering — the
+monitor, the timeline and the library all went with it. **That is the black
+screen.** The Map is now `atPlayhead`; nothing else in the file changed.
+
+⚠ **THE MATHS WAS NEVER WRONG, WHICH IS WHY EVERY TEST PASSED.** The bug was in
+the pane the drop OPENS: `addEffectToClip` calls `openGroup("look:effects")`, so
+dropping an effect is exactly the gesture that renders the row that threw. Every
+kind was affected, not just the two in the report — gamma and exposure were
+simply the two the user reached for.
+
+**Why nothing caught it, and what does now.** Three effects tests existed and
+all three were green throughout:
+
+| | what it proves |
+|---|---|
+| `tests/effects_check.py` | the PYTHON numbers, pinned to golden values |
+| `tests/effects_parity_check.py` | the GLSL agrees with them (needs headless-gl) |
+| `tests/monitor_effects_check.py` | the MONITOR draws a chain handed to it |
+
+None of them ever ran the EDITOR, so none could see a Properties pane crash.
+**`tests/editor_effects_drop_check.py` is new and does**: it mounts the real
+`<AnimaticEditor>` in Chromium with every API call answered by Playwright's
+router, opens the Effects tab, and performs the drag — dispatching
+`dragstart`/`dragenter`/`dragover`/`drop` over one shared `DataTransfer`,
+because Playwright's mouse does not start an HTML5 drag in a headless browser.
+It asserts the monitor still exists, is still drawing a picture rather than
+black, reports no GL error, and that nothing reached `window.onerror` or
+`console.error` — then reads the value out of each control the drop added, so a
+pane that renders while every field is blank cannot pass either. It **fails
+loudly on the un-fixed code** and prints the TypeError.
+
+**Two coverage gaps closed at the same time, both of the same kind — a claim in
+a comment that the list below it did not keep.**
+
+- `tests/monitor_effects_check.py` said "⚠ EVERY KIND IS HERE" while covering
+  four of eleven. Exposure, gamma, temperature, hue, sepia, posterize and the
+  chroma key now have cases, **each twice**: once at a value that moves the
+  picture, and once FRESHLY DROPPED with `params: {}`. Those two prove different
+  things and neither is enough — a value case passes its own numbers in, so it
+  says nothing about whether a DEFAULT reaches the shader, which is the state a
+  dropped effect is actually in. All 96 checks pass in Chromium on SwiftShader.
+- `tests/effects_parity_check.py` had **no case for any of the six** — the GLSL
+  and its NumPy twin had never been compared for them. Thirteen cases plus a
+  stacked chain are in now.
+
+⚠ **`headless-gl` STILL WILL NOT BUILD ON THIS MACHINE** — `npm install
+--no-save gl` fails in node-gyp with "could not find a version of Visual Studio
+2017 or newer", so `effects_parity_check.py` still exits 2 rather than passing.
+Its new cases are for a machine with the C++ workload. **The shaders HAVE now
+executed**, though, and that is no longer an open question: `monitor_effects_check.py`
+and the new editor check both run them in Chromium on **SwiftShader**, which is
+a real GL driver rather than a stub, and both compare the result to the Python
+exporter. The file header now says so, so nobody reads its exit 2 as "the
+shaders have never run".
+
+**Files:** `client/src/components/EffectsPanel.jsx` (the fix — one rename),
+`tests/editor_effects_drop_check.py` (new), `tests/monitor_effects_check.py`,
+`tests/effects_parity_check.py`.
+
+**Verified:** the new editor check (38 checks) — red before the fix with the
+TypeError printed, green after; `monitor_effects_check.py` (96); plus
+`effects_check.py`, `render_parity.py`, `transition_check.py`,
+`keyframe_ops_check.py`, `selection_check.py`. `effects_parity_check.py` exits 2
+for the missing native module, as it is designed to.
+
+---
+
+### 2026-08-19 (latest) — STEP 3: FAMILIES ON THE TREATMENT ROW, AND SIX POINT-WISE GRADES
+
+Two halves, both descriptor-driven, neither one a new widget.
+
+**(a) The Treatment row is grouped.** Step 2 took it from 4 chips to 12, which is
+a row you scan rather than read. It is now five families — **Fade · Wipe · Shape ·
+Slide · Dip** — from a `family` field on the `TRANSITIONS` descriptor plus
+`transitionsByFamily()`, drawn with the `PropRow full` / `opt-chip` primitives
+the pane already had. ⚠ **PRESENTATION, SO DELIBERATELY NOT TWINNED IN PYTHON** —
+`animatic_render.py` carries no `label` or `note` either, for the same reason:
+which chips sit under which heading cannot change a pixel. ⚠ **A kind whose
+family names no heading lands in "Other" rather than vanishing**, the same
+catch-all rule `fx_library.js` uses. ⚠ **NOT `PropGroup` PER FAMILY**: five
+collapsible sections to open before you can see twelve chips is worse than the
+flat row it replaced.
+
+⚠ **THIS IS A SECOND, DIFFERENT GROUPING OF THE SAME TWELVE KINDS** from the one
+in `fx_library.js`, and it is on purpose. The library answers "what can I add",
+where a dip belongs under Dissolve because *Dip to Black* is what an editor goes
+looking for. The pane answers "what is this cut doing", where a dip is its own
+family — the only treatment that puts NO second picture on screen. Filing them
+identically would make one of the two wrong.
+
+**(b) Six point-wise effects** — Exposure (stops), Gamma, Temperature & tint,
+Hue rotate, Sepia, Posterize. Each is an `EFFECT_PARAMS` entry in both languages,
+a GLSL chunk in `effects.js`, a NumPy function in `animatic_effects.py`, and a
+label. **Blur, sharpen and grain stay out**: the monitor grades in ONE fragment
+pass with no neighbourhood, so they need a second pass and an answer to "at which
+resolution", which the preview and the export do not share.
+
+**⚠ FOUR THINGS THAT WOULD HAVE BEEN BUGS.**
+
+1. **`EFFECT_PARAMS` IS APPEND-ONLY.** An effect reaches the shader as its INDEX
+   in that table (`fxIndex`). Insert a kind in the middle and every kind after it
+   silently re-numbers — a saved project comes back graded by the wrong effect,
+   on every machine, with nothing reporting it.
+2. **`uFxArgs` is now packed POSITIONALLY off the descriptor** — the kind's
+   numeric params in declaration order fill x/y/z. That replaced a hand-written
+   `chroma ? similarity : amount` special case and reproduces it exactly (chroma
+   declares similarity, smoothness, spill in that order). It is why six effects
+   needed no change in `compositor.js` at all.
+3. **Hue goes through YIQ, not the SVG `feColorMatrix hueRotate` matrix.** That
+   matrix is built on the 709 weights; this project's luma is 601. Mixing them
+   would mean a rotation of 0° did not quite agree with saturation 1 or with
+   `Image.convert("L")`. YIQ's Y *is* `LUMA`, so a rotation cannot change
+   brightness — asserted, not assumed (`a hue rotation leaves the luma where it
+   was`).
+4. **Posterize uses `floor(x + 0.5)`, never a `round()`.** numpy rounds halves to
+   EVEN and GLSL rounds them away from zero, and a band edge is exactly where the
+   halves land — `round` would put whole regions of a posterised frame one band
+   apart between monitor and export.
+
+Also: `EffectsPanel`'s `FIELD` gained `places`, because stops is the one
+parameter whose natural unit is neither a percentage nor a whole number and
+rounding it to an integer would look like it worked.
+
+**Verified.** `tests/effects_check.py` — 21 new goldens, every effect pinned at
+its no-op value first, all pass. `tests/effects_parity_check.py` source half —
+34 checks, 0 failures, including a shader branch per new effect. `render_parity.py`
+and `transition_check.py` still pass. `npm run build` clean. The Treatment row
+groups all 12 kinds with none unreachable; the library is 38 entries with nothing
+in "Uncategorised".
+
+**⚠ NOT verified.** Same gap as Step 2 and it has now grown: **no shader in this
+work has ever executed.** headless-gl is not installed, so the pixel half of
+`effects_parity_check.py` — the only thing that would prove the six new GLSL
+chunks match their NumPy twins — does not run. **Nothing has been opened in a
+browser.** `tests/monitor_effects_check.py`'s one failure ("LUT then brightness")
+is pre-existing, in the uncommitted `dispose()`/LUT work already in the tree.
+
+**⚠ A GOTCHA THAT BIT TWICE.** A backtick inside a `/* glsl */` template literal
+ends the JS string, and the parse error surfaces dozens of lines away. Do not
+write `` `uFxArgs` `` in a shader comment. There is now a guard for it in the
+scratch tooling; a real one belongs in `effects_parity_check.py`.
+
+### 2026-08-19 (latest) — A REVEAL TRANSITION IS A MASK, NOT A COMPOSITING STAGE
+
+Eight new transitions — **Diagonal, Split, Iris, Diamond, Box, Clock, Blinds,
+Checker** — plus a **soft edge** on all of them and on the wipe. The interesting
+part is not the list, it is that adding them needed **no new shader program and
+no extra framebuffers**.
+
+**THE CORRECTION THAT MADE THIS SMALL.** The plan of record said Phase 0 needed a
+transition program with `mix(getFromColor, getToColor)`, gl-transitions style,
+and a second render target to hold the outgoing picture. That would have thrown
+away the rule `_transition_canvas` documents at `animatic.py`: *the incoming
+picture is composited OVER the outgoing one, not blended with it*, so that "a
+caption keyed out of the arriving shot reveals the shot it is arriving over, not
+black". Under a two-texture mix, clip B's blend mode, chroma key and per-clip
+mask have nothing left to blend against. But look at what a reveal actually is:
+
+```
+wipe at 50%  =  show the incoming picture where uv.x < 0.5
+mask         =  show this picture where it is inside the region
+```
+
+Identical operation — and both renderers already had it (`maskCoverage` in
+`effects.js`, `mask_coverage` in `animatic_effects.py`, each applied as one
+`a *= …`). **So a transition matte is a second mask on the incoming picture,
+driven by progress instead of by keyframes**, multiplied in one line further out
+than the clip's own mask. Composite-over, blend modes, chroma keys and masks all
+keep working for free; `MAX_EFFECTS` and the `uFxArgs` budget are untouched.
+
+**What landed**
+
+| | |
+|---|---|
+| NEW `client/src/animatic/gl/shaders/mattes.js` | One GLSL chunk per shape — linear, diagonal, split, radial, diamond, box, angular, blinds, checker. Exported strings, exactly as `effects.js` is, so the bare-`node` parity harness imports the source the browser compiles |
+| NEW `animatic_transitions.py` | The NumPy twin, beside `animatic_effects.py` and reusing its `smoothstep` |
+| `layer.js` | `uMatte*` uniform block + `MATTE_*`/`DIR_*` defines generated from the model; **one line**: `a *= matteCoverage(…)` right after the mask multiply |
+| `compositor.js` | `_setMatte()`, called **unconditionally** on every `layer()` |
+| `ProgramCanvas.jsx` | Every reveal is now one branch; `revealRegion`/`clipTo` deleted |
+| `animatic.py` | `_transition_canvas` multiplies the matte into B's alpha; `_wipe_box` deleted |
+| `transitions.js` + `animatic_render.py` | `MATTE_KINDS`, `TRANSITION_MATTE`, `TRANSITION_PARAM_RANGE`, the eight kinds, `softness` + `count` |
+| `fx_library.js` | Filed as `Iris` and `Wipe Patterns` — the library went 13 → 32 entries |
+| `TransitionProperties.jsx` | An `Edge` slider and a `Bands`/`Squares` field, built from `TRANSITION_PARAMS` like every other row |
+
+**⚠ FOUR THINGS THAT WOULD HAVE BEEN BUGS, and are worth not re-discovering.**
+
+1. **`_setMatte` runs on EVERY layer, never only when a matte is passed.**
+   Uniforms live on the program, not the draw call. Set it conditionally and the
+   transition's matte goes on to cut holes in the shapes, overlays and dip veil
+   drawn after it in the same frame.
+2. **A dissolve is the constant matte and is deliberately NOT implemented as
+   one.** `apply_matte` rounds on the way back to 8 bits, `_faded_layer`
+   truncates — routing a dissolve through the matte would move every blended
+   pixel by up to one level, on the one transition that has shipped since the
+   beginning. It stays on `_faded_layer`.
+3. **The threshold travels FURTHER than 0–1**, by the feather either side, so
+   the matte is *exactly* empty at progress 0 and *exactly* full at progress 1 at
+   every softness. Ramping 0→1 instead leaves half a feather showing at both
+   ends and the shot jumps on the frame either side of every soft transition.
+4. **The wipe's edge moved by up to one pixel column.** It used to be an integer
+   box (`int(round(width * m))`) cropped and pasted; it is now wherever a pixel
+   CENTRE crosses the threshold — the same rule `mask_coverage` already uses. The
+   old preview (a clipped quad, rasterised on centres) and the old export
+   disagreed by up to half a pixel anyway, so this makes them agree *by
+   construction*. No test pinned the old boundary; the change is deliberate.
+
+**Verified.** `tests/render_parity.py` passes — including the cross-language run,
+so JS and Python resolve the new parameters identically. `tests/transition_check.py`
+passes end to end through a real ffmpeg encode, wipe in all four directions.
+`tests/effects_parity_check.py`'s source-level half passes with new drift guards
+for `MATTE_KINDS` order, `TRANSITION_MATTE`, direction numbering, a field per
+shape, and the alpha multiply itself. `tests/effects_check.py` passes.
+
+**⚠ NOT verified, honestly.** The GLSL has been parsed, its defines checked and
+its structure asserted, but **it has never run on a GPU here** — headless-gl is
+not installed (`cd client && npm install --no-save gl`), so
+`effects_parity_check.py` exits before the pixel comparison. **Nothing has been
+looked at in a browser.** `tests/monitor_effects_check.py` has one failure,
+"LUT then brightness" — it is **pre-existing** and unrelated: it sits in the
+uncommitted `dispose()`/LUT work already in the working tree, and the matte diff
+to `gl/` is purely additive apart from the `layer()` signature.
+
+### 2026-08-19 (latest) — EFFECTS ARE A LIBRARY YOU DRAG FROM, IN THE MEDIA PANE
+
+User-reported, and the complaint was about WHERE they live: the only way to
+reach an effect was a `<select>` inside the Properties pane, on a clip you had
+already selected. So there was no answer to "what can this editor do" — you had
+to already have the right clip picked to find out. **Effects is a third tab in
+the Media pane now, beside Media and Shapes**, as a folder tree you drag onto
+the timeline. The reference was Premiere's Effects panel and the shape is the
+same: `▸ Video Effects` / `▸ Video Transitions`, sections inside them, entries
+inside those.
+
+**⚠ THE MEDIA PANE IS THE SHELF; PROPERTIES IS STILL WHERE A CHAIN IS MANAGED.**
+Two panes, two questions — "what can I add" and "what is on this clip" — and the
+split is deliberate rather than a half-move. A chain needs its parameters, its
+order, its ⏱ keyframe rows and a mask editor, which is a pane's worth of room;
+the library needs to be readable at a glance and to grow to thirty entries. The
+`+ Add an effect…` dropdown in Properties STAYS: it is the only way to add one
+without a mouse, and deleting a working path because a nicer one now exists is
+how a feature ships broken for keyboard users.
+
+**⚠ AN ENTRY IS A PRESET, NOT A KIND — `kind` IS NOT UNIQUE IN THE LIBRARY.**
+There is one `wipe` in the renderer and it takes a direction, but the browser
+lists FOUR, one per direction, because "Wipe up" is the thing you actually want
+to drag and reaching it as "drag Wipe, then hunt for the direction chip in
+another pane" is two steps for one gesture. **17 entries: 5 effects, and 12
+transitions** — Dissolve, Dip to the bar colour / to black / to white, and Wipe
+and Slide in each of four directions, each carrying the `params` it applies.
+(The bare dip is named "Dip to the bar colour" rather than "Dip" on purpose: its
+colour defaults to the letterbox, which is black in a default project, so
+without the longer name it and "Dip to black" read as a duplicated row rather
+than as a choice about which one follows the bars.) The directional presets are
+DERIVED from `TRANSITION_DIRECTIONS`, in that list's order — the same order the
+Properties pane draws its chips in, because two orderings of four arrows on one
+screen is a thing to double-take at every time.
+
+**⚠ SO THE PAYLOAD CARRIES AN ENTRY ID ("wipe:up"), NEVER A KIND**, and it
+carries no parameters either: `fxEntry` reads those out of the library at DROP
+time, so a tab open since before a preset was last edited still drops the
+current one. A kind as the key would silently collapse the four wipes into
+whichever was found first.
+
+**⚠ `fx_library.js` FILES KINDS, IT DOES NOT DEFINE THEM.** `EFFECT_PARAMS`
+(scene.js) and `TRANSITIONS` (transitions.js) remain the truth, both twinned in
+Python. The folder table names ids and every entry is looked UP: a folder naming
+a kind this build lacks is dropped on the way through, and — the important half
+— **a kind in either table that nobody filed lands in an "Uncategorised" folder**
+rather than being unreachable from the UI. Same reasoning as the family fill on
+the transition badge: an entry nobody filed should be visible and ugly, never
+invisible. Verified by removing `chroma` from its section and watching it appear
+under Uncategorised, still draggable, still counted.
+
+**⚠ ONE MARKER TYPE FOR BOTH PAYLOADS, and that is why `dropAsset` does the
+refusing.** `getData` is blank during `dragover` in every browser, so a lane can
+only read the TYPE LIST — it can tell an fx is coming but not whether it is an
+effect or a transition. `laneTakes` therefore says yes to both on the rows that
+carry PICTURES (`frames` and image layers — the `LOOK_KINDS` rule the scene model
+already follows), and the drop is where a transition on an overlay row is turned
+away. A caption or a shape row takes neither: they are drawn above the finished
+composite and have no pixels to grade.
+
+**⚠ AN EFFECT LANDS ON A CLIP, SO THE CLIP LIGHTS UP — not the drop line.** The
+existing feedback is a line at the snapped moment, which is right for an asset
+and a straight lie for an effect: a line between two pictures does not say which
+one is about to be graded, and that is the one thing the drag has to answer
+before you let go. `dropAt.fx` carries the distinction over from `dragKind`, and
+`dropOnto` picks the bar.
+
+Landing rules, all of them in `AnimaticEditor.jsx` so the timeline stays dumb:
+- An effect onto a picture row grades the picture playing at that moment —
+  **but only if it is on THAT row**. Images and Video are one sequence drawn
+  twice, filtered by origin, so at a moment where a still plays the Video row
+  shows a gap, and a drop into the gap must not quietly grade the still above it.
+- An effect onto an image layer grades the overlay under the pointer; dropping
+  on empty row is refused rather than guessing at the nearest one.
+- A transition goes on the nearest CUT, and **replaces** what is already there
+  rather than stacking — one per cut is what keeps `transitionAt` single-valued.
+  It carries the preset's kind AND parameters, and the parameters are replaced
+  **wholesale rather than merged**: a preset IS its parameters, so dropping
+  "Wipe up" on a cut that wipes right must leave nothing of the old one behind.
+  The record itself moved into `newTransition()` — one literal, two callers (the
+  ＋ on a cut and a dropped preset), so a field added to a transition cannot
+  arrive on the ones made one way and not the other. The notice names the preset
+  ("Wipe up added on that cut"): being told "transition added" leaves you
+  checking whether you got the right one.
+- **Clicking** an entry does the same thing at the playhead. Not a nicety — it
+  is the only path through the library without a mouse.
+
+**⚠ A GRADED CLIP LOOKED EXACTLY LIKE AN UNGRADED ONE.** An effect chain had no
+representation on the timeline at all, so the timeline now draws a small **ƒx
+badge** on any clip carrying effects, and clicking it selects that clip AND
+opens the Effects section (`openGroup("look:effects")`). Selecting alone is half
+an answer — with the section folded shut the pane looks unchanged and the thing
+you just dropped is invisible, which is the exact failure `openGroup` was written
+for. It is a COUNT, not a list: at eight pixels of bar there is no room for more,
+and "which ones at what values" is what the pane is for.
+
+Files: **new** `client/src/animatic/fx_library.js` (the catalogue) and
+`client/src/components/EffectsLibrary.jsx` (the tree); `AnimaticEditor.jsx` (the
+third tab, `addEffectToClip` / `addTransitionAtCut` / `addFxFromLibrary` /
+`manageEffects`, and the two fx branches in `dropAsset`); `Timeline.jsx`
+(`fx` in `DRAG_KINDS`, `laneTakes`, `dropOnto`, `fxBadge`, `onManageEffects`);
+`animatic-tools.css` (the tree) and `animatic-lanes.css` (the badge and the
+`drop-onto` ring).
+
+**Verified:** `npm run build`, and the library module driven under node — the
+full folder/preset dump (17 entries, every id and its params), `fxEntry`
+returning null for an id that isn't there, the payload shapes, and the
+Uncategorised catch-all with two kinds unfiled at once. **NOT DRIVEN IN A
+BROWSER: nothing here has been dragged by hand** — see Next Steps, where it is
+the top item. Nothing on the Python side was touched this round.
+
+### 2026-08-19 — A TRANSITION TAKES PARAMETERS: WHICH WAY IT TRAVELS, WHICH COLOUR IT DIPS THROUGH
+
+Step 1 of the transitions plan. The four kinds are unchanged; what is new is that
+each one can be told HOW to behave, through a `params` dict resolved exactly the
+way an effect's is. Ten combinations where there were four: dissolve, dip through
+any colour, and wipe and slide in each of four directions.
+
+**⚠ A REVEAL IS A REGION, NOT A COMPOSITING STAGE — and that is why this is
+small.** The first sketch of this called for a gl-transitions-style
+`mix(getFromColor, getToColor)` pass, a new GL program and a pair of extra
+framebuffers. That would have thrown away the rule `animatic.py` documents at
+`_transition_canvas`: **the incoming picture is composited OVER the outgoing one,
+not blended with it**, so a caption keyed out of the arriving shot reveals the
+shot it is arriving over rather than black. Blending two finished textures loses
+clip B's blend mode, chroma key and mask — they would have nothing left to blend
+against. A wipe at 50% is *"show the incoming picture where uv.x < 0.5"*, which
+is the operation both sides already have; so the direction is a REVEAL REGION cut
+out of the arriving picture's quad, and a slide is still pure geometry. No new
+program, no framebuffers, no change to `MAX_EFFECTS` or the `uFxArgs` budget.
+
+**The parameters, and why the defaults are what they are.** `TRANSITION_PARAMS`
+(transitions.js, twinned in `animatic_render.py`) is the whole table: dip has
+`color`, wipe and slide have `direction`, dissolve has none. `direction` means
+the direction of TRAVEL for both — the way a wipe's edge sweeps, the way a
+slide's two pictures move — but the defaults differ (`right` for a wipe, `left`
+for a slide) because those are the behaviours that already shipped, and
+reproducing them exactly is what let this land without touching a single existing
+animatic. `color` defaults to `""` meaning THE BAR COLOUR, the same
+empty-string-is-inherit rule `lut.name` follows.
+
+**⚠ A DIP IS A VEIL NOW, NOT A FADE.** It used to scale the picture's own
+opacity so it sank into `settings.background`. Over real numbers that is the same
+arithmetic as laying the backdrop colour over the top — but only the veil also
+covers the LETTERBOX BARS, and without that a dip to red would snap the bars to
+red at both edges of the window, which are the two moments a transition has to be
+invisible at. A dip that names no colour is bit-for-bit the dip that always
+shipped, save for one 8-bit rounding on keyed edges.
+
+Files, and the two that bite:
+- `client/src/animatic/transitions.js` + `animatic_render.py` — `TRANSITION_PARAMS`,
+  `TRANSITION_DIRECTIONS`, `TRANSITION_PARAM_CHOICES`, `transitionKind()` /
+  `transitionParams()` and their twins. Params land on the window object.
+- `scene.js` / `animatic_render.py` — `sceneAt`/`scene_at` flatten
+  `transition_params` onto the scene, ALWAYS a dict (empty off a transition), or
+  the resolved scene is a different shape on the two sides and the parity test
+  compares two things it thinks are equal for the wrong reason.
+- **⚠ `sceneSignature` / `scene_signature`, in both languages, byte-identically.**
+  Two wipes at the same `mix` differ ONLY in the parameter, so without it the
+  exporter renders one still per `mix` and reuses it across directions — the
+  transition would come back unchanged from a re-export. Only NON-DEFAULT
+  parameters go in, so an untouched transition signs what it always signed.
+- `ProgramCanvas.jsx` — `clipRight` generalised to `revealRegion()` (a rect with
+  the non-sweeping axis left at ±Infinity, which is what makes "right"
+  arithmetically identical to the code it replaced), `shiftX` gained `shiftY` via
+  `slideOffsets()`, and the dip draws a colour quad over the picture.
+- `animatic.py` — `_wipe_box()` and `_slide_offsets()` are the twins of those
+  two; `_shifted` gained `dy`; `_faded` became `_veiled`.
+- **⚠ TWO PLACES CARRY A TRANSITION TO THE RENDERER, and both had to change:**
+  `plan_animated_segments` puts `transition_params` on the segment, and
+  `build_animatic` puts it in the worker's task args. Miss either and the
+  monitor shows the direction while the MP4 draws the default — proved by
+  sabotaging the second one and watching five checks fail.
+- `server/schemas.py` — `params: dict[str, float | str]` on `AnimaticTransition`,
+  free like `AnimaticEffect.params`. No migration; `kind` was already
+  unconstrained and `_transitions_of` already drops what it can't read.
+- `TransitionProperties.jsx` — direction chips and the dip swatch, shown only for
+  kinds that declare them (**the pane reads `TRANSITION_PARAMS`, it does not keep
+  its own list**). `AnimaticEditor.jsx` passes the bar colour in so the swatch
+  tells the truth, and `addTransition` writes `params: {}`.
+- `animatic-lanes.css` — `.tl-transition` carries the family fill now, so a kind
+  added before its own rule draws as a transition instead of an invisible
+  outline. Badges are NOT varied by direction: sixteen patterns at eight pixels
+  wide is not a legend anyone can read.
+
+**Verified:** `tests/render_parity.py` (the fixture now carries a non-default
+direction, a parameter belonging to a different kind, and a parameter on a kind
+that offers none — so both languages are compared on all three) and
+`tests/transition_check.py`, which grew a section that encodes real MP4s and
+decodes them back: a wipe told to travel left uncovers the RIGHT half, one told
+to travel down uncovers the TOP, a slide told to travel right enters from the
+LEFT, one told to travel up enters from the BOTTOM, an unknown direction folds to
+the default, and a dip through white turns a BLACK shot bright in the middle.
+Every one of those is the opposite of the default assertion above it, so a build
+that dropped `params` anywhere passes the old checks and fails these. Also run:
+`effects_check`, `animatic_motion_check`, `video_clip_check`,
+`keyframe_ops_check`, and `npm run build`. **Not opened in the real editor by
+hand** — see Next Steps. `tests/effects_parity_check.py` still can't run here
+(no headless-gl), unchanged from before.
+
+### 2026-08-19 — THE STACK IS WRITTEN DOWN AT THE TOP OF THIS FILE, AND README.md TELLS A HUMAN HOW TO RUN IT
+
+Docs only; no code touched. The user asked what the tech stack is, so the answer
+is now the FIRST section of this file instead of something every agent re-derives
+by grepping `package.json` and `requirements.txt`.
+
+- **New `## 🧱 Tech stack — READ BEFORE YOU ADD A DEPENDENCY`, inserted directly
+  after the intro and before the Protocol** (line 12). Everything in it was read
+  off the repo, not recalled: `client/package.json`, `requirements.txt`,
+  `requirements-dev.txt`, `client/vite.config.js`, `server/config.py`,
+  `server/worker.py`, `server/jobs.py`, `.env.example`, and the model ids grepped
+  out of the Python modules.
+- **What it says, beyond the obvious list:** ⚠ the frontend has exactly TWO runtime
+  dependencies (`react`, `react-dom`) and every editor widget is hand-written; ⚠
+  `frontend/` at the root is EMPTY and the app is `client/`; ⚠ Mongo is the default
+  job store, not Firestore; ⚠ there is no `ffprobe`, no pytest, no CI; ⚠ Veo is the
+  only per-second cost; and the **twins table** — the six modules that exist once in
+  Python and once in JavaScript, each with the parity test that fails when they
+  drift. It closes with a **"Deliberately absent"** list (TypeScript, react-router,
+  Redux, Tailwind, three.js, Celery, SQL, Docker, pytest, non-Google providers)
+  so the next agent asks before reaching for one.
+- **Also corrected one stale row in the file map**: `server/jobs.py` still read
+  "Firestore (default)"; `server/config.py:35` defaults `API_JOB_STORE` to `mongo`.
+  The new section and the file map now agree.
+
+Nothing was run or tested — there is nothing here to run.
+
+**`README.md` was one line — the repo title — and is now the local-run guide.** It is
+written for a HUMAN cloning this repo, and it says so at the top that agents read
+`AGENTS.md` instead, so the two don't drift into two sources of truth.
+
+- **Six numbered steps** (venv → `pip install -r requirements.txt` → `.env` → uvicorn
+  → `npm run dev` → create an account), PowerShell first because that is the dev
+  platform, with the macOS/Linux difference noted once rather than duplicated.
+- ⚠ **The Gemini API key path is presented as the default**, with Vertex + ADC in a
+  collapsed `<details>` — one key gets someone running; ADC plus a billing-enabled
+  project does not.
+- ⚠ **A "Run without MongoDB (fully local)" section**: `API_USER_STORE=local` +
+  `API_JOB_STORE=memory`. Both exist in `server/config.py` and neither was written
+  down anywhere a newcomer would look. It also warns that the Mongo→file fallback is
+  a LOUD error, not a feature, and that an empty `API_LOCAL_JOBS_PATH` is what makes
+  `--reload` lose boards.
+- ⚠ **A "What costs money" section** — Veo per-second pricing, the spend guards, and
+  "there is no Google Flow API" — plus the cheap smoke-test commands, so the first
+  thing someone runs isn't a 20-clip render.
+- **Troubleshooting is the failures this project actually has**: wrong-backend model
+  names 404ing (Vertex `-001` vs Gemini `-preview`), Veo on `global`, the insecure
+  dev JWT warning, `ffmpeg: false` on `/health`, `pkill` not killing a Windows
+  python process, cp1252 killing a script that prints arrows, and an empty gallery
+  meaning `local_only` was ticked.
+- Everything was verified against the repo: the six sidebar workflows and their
+  current labels, `run_character.py`'s actual flags, `client/.env.example`,
+  `seed_admin.py`'s 8-char rule, the `/health` body, and the store defaults in
+  `server/config.py`.
+
+⚠ **`storage.py` hardcodes the GCS bucket** (`BUCKET_NAME`, no env var), so the README
+tells local users to tick **"Local only"** rather than pretending the bucket is
+configurable. If GCS ever needs to be per-install, that is the line to change.
+
+### 2026-08-19 — THE MONITOR WENT BLACK WHEN YOU PICKED A COLOUR LOOK
+
+One user-reported fault — "choose Colour look (LUT) → Identity and the screen
+turns black" — and the interesting part is where it was NOT. Identity is the LUT
+that changes nothing, so "the picture went black" could not be the table, the
+shader or the interpolation, and `tests/effects_check.py` and
+`tests/effects_parity_check.py` both agreed: every effect computes the right
+numbers. **The grading was never wrong. The monitor was being destroyed.**
+
+- **1. ⚠ `Compositor.dispose()` DELETED THE WRONG THING, AND THE THROW ESCAPED
+  INTO REACT.** `this.luts` maps a name to `{ texture, size }`, not to a texture;
+  `dispose()` looped `for (const texture of this.luts.values())` and handed the
+  whole entry to `gl.deleteTexture`, which raises
+  `parameter 1 is not of type 'WebGLTexture'`. It ran inside the context effect's
+  **cleanup**, so React tore `<ProgramCanvas>` out of the tree and the editor was
+  left showing `an-screen`'s background — a black rectangle with no error visible
+  on screen. **It was unreachable until a LUT existed**, because until then the
+  map is empty and the bad line never executes: that is the whole reason the
+  symptom named the colour look. `client/src/animatic/gl/compositor.js`.
+  `_blank` is deleted there now too, which was a straightforward leak.
+- **2. ⚠ THE WEBGL CONTEXT WAS REBUILT ON EVERY RENDER, and that is what kept
+  firing (1).** The context effect had `}, [onUnavailable])` and
+  `AnimaticEditor` passed `onUnavailable={() => setGlFailed(true)}` — a new
+  function identity every render — so every playhead tick and every keystroke in
+  a property field destroyed the context and built another: two programs
+  recompiled, `this.textures` thrown away, every picture re-uploaded. The
+  callback now lives in a ref (`unavailableRef`) with `}, [])` deps, so a caller
+  **cannot** thrash the context by passing an unstable prop; the call site was
+  given a `useCallback` as well. `ProgramCanvas.jsx`, `AnimaticEditor.jsx`.
+- **3. A third LUT in one chain is now dropped LOUDLY, as `layer.js` always said
+  it was.** `MAX_LUTS` is 2 (samplers cannot be indexed by a loop variable) but
+  the Effects pane allows six effects, so a chain with three LUTs previews
+  differently from what it exports — in silence, which reads as "this effect
+  does nothing". `warnOnce` in `compositor.js` says it once per name rather than
+  once per frame; the draw path runs on every tick and an unguarded `console.warn`
+  there is a thousand identical lines a second.
+- **4. `tests/monitor_effects_check.py` — NEW, and it is the only test that
+  MOUNTS THE MONITOR.** Vite + Chromium (SwiftShader, so it needs no GPU), no
+  backend: it renders the real `<ProgramCanvas>` over a real `sceneAt`, answers
+  the LUT endpoints off `luts/` with Playwright's router, and walks 22 chains —
+  every effect kind at a value that MOVES the picture, both LUT orderings, a
+  missing LUT, a freshly-added effect whose `params` are `{}`, two LUTs at once
+  — comparing each against `apply_effects` on the same flat colour. **The
+  assertions that matter are about SURVIVAL**: is the canvas still in the
+  document, did anything reach `window.onerror`, and **is the dispose count
+  zero**. Reverting either fix makes it fail 16 checks, which is how both were
+  confirmed rather than assumed.
+
+**Where the numbers landed** (monitor vs `apply_effects`, on `#4a86c8`, all within
+1/255 of each other): identity `(74,134,200)` unchanged, noir `(123,123,123)`,
+brightness 1.4 `(104,188,255)`, saturation 0 `(124,124,124)`, and — the case that
+proves the chain is not silently sorted — LUT-then-brightness `(172,172,172)`
+against brightness-then-LUT `(181,181,181)`.
+
+**⚠ THE LESSON, because it will happen again in a different place:** a WebGL
+monitor that goes black is a CRASH before it is a rendering bug, and a crash in an
+effect's cleanup leaves nothing on screen to say so. Look at `window.onerror` and
+at how many times the context is built before touching a shader. `npm run build`
+is clean; `tests/effects_check.py` still passes; the new browser check passes all
+46 assertions. **Not opened in the real editor by hand** — see Next Steps.
+
+### 2026-08-19 — TRACK HEADS LINE UP, THE ADD BUTTONS MOVED TOGETHER, AND ASSETS DRAG ONTO A LANE
+
+Five user-reported UI faults, mostly off one screenshot of the timeline — a
+wayfinding pass on the editor's four panes (which took two rounds — see 3), a
+trim of the monitor's transport bar, the add-buttons gathered into one place —
+and then drag-and-drop from the Media pane onto the timeline's rows.
+
+- **1. ⚠ EVERY LAYER ROW NOW HAS THE SAME THREE CONTROLS IN THE SAME THREE
+  PLACES — hide · add · remove.** They used to be rendered only when they had
+  something to do (no ✕ on an empty default row, no eye on audio's speaker row),
+  and each one carried its own `margin-left: auto`, so whichever happened to be
+  first took the right-hand edge: a row with no eye put its ＋ in the eye's
+  column and the icons zig-zagged down the gutter. The three now live in one
+  `.tl-layer-acts` cluster — `display: grid`, three columns of `--tl-act-w`
+  (1.15rem, 1rem under 720px) — and `Timeline.jsx` **always renders all three**.
+- **⚠ A CONTROL WITH NOTHING TO DO IS DRAWN AND DISABLED, NOT LEFT OUT.** This is
+  the whole reason the columns hold: an omitted button lets the ones after it
+  slide left. `.tl-layer-btn:disabled` is `opacity: 0.25`, `cursor: default` —
+  the ghost ✕ on an empty row also says "this row can be emptied, once there is
+  something on it", which a gap said nothing about. What each control does is
+  unchanged (`onRemoveLayer` / `onRemoveTrack` / `onClearLane`, `hidden_lanes`
+  for the eye); only when it is *offered* changed. The ＋ and audio's speaker
+  now `stopPropagation` like the other two, so a click on them no longer also
+  selects the row.
+- **2. `.tl-add-layer` TAKES ITS BOX FROM THE ROWS IT MAKES.** As a small dashed
+  strip it read as a caption over the column, not the head of it — different
+  height, type and colour from the layer rows below. Now the same radius, border
+  width and 0.74rem type as `.tl-gutter-row`, `height: var(--tl-track-h)`
+  (clamped 1.6–2.1rem), and highlighted with the timeline's own gold —
+  `--tl-clip-bg` / `--tl-clip-bg-alt`, the tints the clips already use, so it is
+  lit by an existing token and not a new colour. Dashed edge stays: it is what
+  still says "nothing here yet".
+- **3. ALL FOUR PANE HEADS SHARE ONE SOFT BLUE.** Four identical grey heads made
+  the editor read as one slab. Three `--pane-ink/tint/edge` tokens in
+  `theme.css` (both themes; light mode goes fainter in tint and several shades
+  deeper in ink), read directly by `.an-pane`, `.an-pane-head` and
+  `.an-pane-title`. It lands in three quiet places only: the head fill, the
+  hairline under it and the pane border — gold is still the app's one accent.
+- **⚠ A PASTEL PER PANE WAS BUILT FIRST AND REJECTED ON SIGHT** (Media blue,
+  Program lilac, Properties mint, Timeline apricot). Four hues plus gold is five
+  accents on one screen and the editor read as unrelated tools; the user asked
+  for the blue on all four. **Don't re-derive it — lifting the heads off the
+  grey needs a colour, not four.** The per-pane `.an-pane-{name}` token mapping
+  is gone with it; there is nothing left for a pane to override.
+- **⚠ THE DOT IS ON `.an-pane-head`, NOT `.an-pane-title`.** The Media pane's
+  head opens with its Media / Shapes tabs and has no title element at all, so a
+  marker hung on the title would have appeared on three panes out of four. The
+  head tint is a `linear-gradient` layered OVER `--panel-2` rather than
+  replacing it: the pastel is an alpha, and a head that lost its own surface
+  would show the pane body through it.
+- **4. THE MONITOR'S TRANSPORT IS SMALLER, AND "Frame 7 of 34" IS GONE.** The bar
+  under the picture was taking height the picture wanted. Buttons 2.2 → 1.75rem,
+  play 2.8 → 2.1rem, clock 0.95 → 0.82rem, gap 0.5 → 0.35rem; the frame readout
+  and its `.an-shotnum` rule are deleted (which frame is up is already told by
+  the playhead and the selected bar on the timeline). `currentIndex` stays —
+  it is what `stepFrame` walks.
+- **⚠ SIZED AS `.an-transport .an-tbtn`, NOT ON `.an-tbtn` ITSELF.** That class
+  is also the timeline header's zoom pair, which is `.an-tbtn.small` at 1.8rem —
+  shrinking the base rule would have dragged those down too AND left the
+  "small" modifier LARGER than the thing it modifies.
+- **5. EVERY "MAKE SOMETHING" BUTTON IS IN ONE PLACE NOW.** Text, Colour card and
+  Voiceover moved out of the far right of the timeline pane head and into the
+  timeline's own head row, beside ＋ Add layer — they were a bar's width away
+  from the only other control that adds anything. ⚠ **＋ Add layer HAS NOT
+  MOVED**, which was the explicit requirement: `.tl-head` keeps the gutter's
+  width and stays a sibling of `.tl-cols`; a new `.tl-headbar` flex row wraps it
+  and the buttons sit in the space beside it, over the tracks they add to. The
+  row's gap is the SAME 0.5rem as `.tl-cols`, so the buttons start exactly where
+  the tracks do.
+- **⚠ THEY ARE STILL THE EDITOR'S BUTTONS** — passed in as `<Timeline addTools>`,
+  a node, not reimplemented in `Timeline.jsx`. What they make, and that
+  Voiceover SPENDS QUOTA, is the editor's business; the timeline only gives them
+  a place to stand. Undo / redo / snapping / 🥁 / Fit to audio / Set all / zoom
+  all stay in the pane head: they act on what is already there.
+- **6. ASSETS DRAG FROM THE MEDIA PANE ONTO A LANE.** Drag a frame card or an
+  audio row out of Media, or a file off the desktop, and drop it on a timeline
+  row: it lands AT THE TIME UNDER THE POINTER, snapped like every other drag
+  here. `Timeline` decides WHERE (`dropProps` / `laneTakes` / `onDropAsset`);
+  the editor decides what that MEANS (`dropAsset`), because only it knows what
+  an asset is.
+- **⚠ THE KIND IS READ FROM `dataTransfer.types`, NOT `getData`.** `getData` is
+  blank during `dragover` in every browser — by design — so a lane could not
+  know whether to accept until after the drop. The drag sources stamp an EMPTY
+  MARKER TYPE beside the JSON payload (`application/x-anim-image` / `-video` /
+  `-audio`) and `dragKind` reads the marker. Don't "simplify" this back to one
+  type.
+- **⚠ A TIME MEANS DIFFERENT THINGS ON DIFFERENT ROWS.** The picture rows are a
+  sequence with NO GAPS, so a drop time becomes the nearest CUT and the clip is
+  reordered to that place (`frameIndexAt` → `reorder`) — a picture left floating
+  at 0:07 with a hole in front of it is not a state the picture track has. An
+  audio row is free-floating, so the time is literally `start_ms`.
+- **⚠ A CLIP IS NEVER CONVERTED BY BEING DROPPED.** Video belongs on the Video
+  row and stills on Images because that is what they ARE (`frameOrigin`), so
+  those drops are refused — mid-drag by the browser's own no-entry cursor (an
+  unaccepting lane simply never calls `preventDefault`) plus a red inset ring on
+  the row that said no. A loose audio track keeps its own row too: those rows are
+  grouped by FILE, so "drop it on that other file's row" is a promise the
+  timeline cannot keep. Layer rows accept and re-parent.
+- **⚠ AN IMAGE LAYER TAKES A STILL TOO, AND IT IS A COPY.** It refused them at
+  first and that read as a broken row (user-reported, with a screenshot of the
+  red ring): two rows say "image" and they are different things — the picture
+  track's stills, and a layer of pictures composited OVER the video. Dropping a
+  frame on the layer now makes an overlay at that time (`overlayFromFrame`)
+  and LEAVES the still in the sequence; moving it would empty a cut out of the
+  video to make an overlay, which is not what the gesture means.
+- **⚠ A BOARD PANEL HAS NO UPLOAD OF ITS OWN.** Its picture belongs to the
+  storyboard (`src.storyboard_id`) while an overlay is only ever an `upload_id`
+  on this animatic's media route — so `overlayFromFrame` uploads the blob the
+  editor is ALREADY holding for the thumbnail. An uploaded still reuses its
+  `src.upload_id` and sends nothing. The overlay arrives as long as the still is
+  held, not an arbitrary 2s.
+- `addAudioTrack(file, startMs)` gained its second argument for the file-drop
+  case; every existing caller still gets 0. Undo needs nothing special — a drop
+  is one document change, so one Ctrl+Z.
+  `addOverlayFiles(files, layerId, startMs)` gained the same optional third
+  argument as `addAudioTrack`.
+- **SHAPES DRAG TOO** — a tile out of the picker onto a shape row lands there
+  (`addShape(kind, layerId, startMs)`), and a shape already on the timeline can
+  be dragged out of "In this animatic" to re-time it or move it to another shape
+  row. A dropped shape takes the length of the SHOT UNDER THE DROP, not of the
+  one at the playhead — the picker's own rule, aimed at where you dropped it.
+- **⚠ `dropEffect` IS READ OFF THE DRAG (`allowedEffect`), NOT PICKED PER LANE.**
+  A drop whose `dropEffect` is not in the source's `effectAllowed` is filtered
+  out by the browser and never fires — silently. The picker's tiles are a copy
+  (the gallery keeps its shape), a clip being re-timed is a move, a file drop
+  arrives as "all". Hard-coding "move" broke the picker before this landed.
+- **7. THE SHAPE PICKER'S STANDING PARAGRAPH IS AN ⓘ NOW.** "A shape lands on the
+  frame at the playhead…" is true forever and read once, so as prose under the
+  tiles it cost three lines of a narrow pane on every visit. It is `info` on
+  that section's `PropGroup` — the same ⓘ, in the same right-hand column, as
+  every row in Properties. `.an-shape-hint` is deleted from both stylesheets.
+
+Files: `client/src/components/Timeline.jsx`,
+`client/src/components/AnimaticEditor.jsx`, `client/src/components/FrameStrip.jsx`,
+`client/src/styles/animatic-editor.css`, `client/src/styles/animatic-lanes.css`,
+`client/src/styles/animatic-text.css`, `client/src/styles/animatic.css`,
+`client/src/styles/theme.css`. **`npm run build` clean; not driven in a
+browser.**
+
+### 2026-08-19 — STICKY HEADINGS IN THE MEDIA PANE, AND ⓘ MOVED ONTO THE ROW
+
+Three follow-ups to the entry below, all reported off the same screenshot.
+
+- **1. A SECTION HEADING STAYS PUT WHILE ITS OWN FRAMES SCROLL UNDER IT.**
+  Reported as "Storyboard Frames goes under Add assets" — with thirty-odd cards
+  in a section, the heading naming them is off the top for the entire time you
+  are looking at them, so the pane stops saying what you are scrolling. Every
+  `.an-grp-head` in `.an-media-body` is now `position: sticky` at
+  `top: var(--an-drop-h)`, pushed out by the next section. Covers Storyboard
+  Frames, Video, Images, Audio and the Shapes tab's sections — they are all the
+  same `PropGroup`.
+- **⚠ THIS NEEDED `overflow: hidden` OFF `.an-grp`, AND ONLY IN THIS PANE.** An
+  `overflow: hidden` ancestor is a scrollport in its own right, and a sticky child
+  of one is pinned to a box that never scrolls — i.e. it does nothing at all. The
+  clipping was there for the section's rounded corners, so **`.an-grp-head` takes
+  those corners over** (`8px 8px 0 0`, and all four when the section is shut).
+  ⚠ The Properties pane keeps its `overflow: hidden`: nothing there is sticky, and
+  the rule is scoped `.an-media-body .an-grp`.
+- **2. ⚠ THE ＋ CARD IS A FIXED HEIGHT NOW — `--an-drop-h: 7rem` on
+  `.an-media-body`.** Not styling: the card's sticky `top` is 0 and every
+  heading's sticky `top` is the card's HEIGHT, so if the two disagree by a pixel
+  a band of scrolling frames shows through between them. One custom property is
+  the only way to keep them in step, and `:not(:has(> .an-asset-drop))` zeroes it
+  for the Shapes tab, which has no card. `overflow: hidden` guards the fixed
+  height when the note inside wraps to two lines.
+- **⚠ THE SLIVER ABOVE THE CARD WAS `.an-pane-body`'S OWN `padding: 0.6rem`.**
+  Reported twice — "the panel doesn't cover the media panel up, so you see my
+  storyboard image a little". That band is the only thing between the pane head
+  and a card pinned at `top: 0`, and frames scrolled straight up through it. The
+  pane that has the card now takes `padding-top: 0`
+  (`.an-media-body:has(> .an-asset-drop)`), which makes the card genuinely flush
+  with the top AND retires the question of whether a sticky item pins to the
+  padding box or the content box — with no padding they are the same edge. The
+  card's own 0.9rem is the breathing room.
+- **⚠ THE COVER OVER THAT STRIP IS A BOX-SHADOW, NOT A `::before`** — and that is
+  why the first fix did nothing. A pseudo-element at `bottom: 100%` is inside the
+  card, so the `overflow: hidden` guarding its fixed height clipped the cover
+  away entirely. An outer box-shadow (`0 -1.2rem 0 0.8rem var(--panel)`) is
+  painted outside the border box, is untouched by the element's own overflow, and
+  is drawn behind the background so the card still covers it.
+- **3. ⓘ IS A PROP ON THE ROW, NOT A BLOCK BETWEEN ROWS.** Yesterday's version
+  gave every note its own line, which is the fault the prose had, in miniature:
+  each one pushed the next property down the pane, and the column of ↺'s that
+  tells you what you have changed on this clip stopped being a column.
+  **`info` is now a prop on `PropRow`, `PropSlider` and `PropGroup`**, rendered in
+  the row's right-hand cluster — **⏱ , ⓘ , ↺, in that order**, on the same edge
+  every ↺ sits on. `.an-row-ctl > .an-note-i` takes `margin-left: auto` and the
+  ↺ after it drops to 0, which is the same trick `.an-kf + .an-reset` already
+  played. The prose opens in flow under the row (`grid-column: 1 / -1`, like
+  `.an-row-hint`).
+- **⚠ THE POINTER MUST BE ON THE ICON, NOT THE ROW** —
+  `.an-row:has(> .an-row-ctl > .an-note-i:hover)`. Hovering the whole row would
+  open a paragraph under it and shove the pane down while you were reaching for a
+  slider. A click pins it (`.note-on`), which is the touch-screen answer and how
+  you read a long note without holding the pointer still.
+- **⚠ `PropNote` IS WARNINGS ONLY NOW.** Twelve explanation notes moved to `info`;
+  the four `tone="warn"` ones stayed exactly where they were, in plain sight. Two
+  of the twelve had no row to sit on and went on the SECTION instead (audio Tone,
+  which explains all three bands at once; Selection's "What's selected", whose
+  rows are a generated tally) — a group's ⓘ sits in its header and its note opens
+  OUTSIDE `.an-grp-body`, so a shut section can still be asked what it is for.
+  `PropNote` still renders plain prose for any call that is left, so nothing
+  breaks silently.
+- Files: `client/src/styles/{animatic-editor,properties}.css`,
+  `components/properties/PropGroup.jsx` (new `InfoDot`, `info` on `PropRow` /
+  `PropSlider` / `PropGroup`), and `Audio` / `Selection` / `Text` / `Transition` /
+  `VideoClip` / `VideoProperties`.
+- **Verified:** `npm run build` clean; no server code changed. ⚠ **Not driven in a
+  browser** — the sticky heading offsets and the `:has()` hover in particular are
+  reasoned about, not seen.
+
+### 2026-08-18 — THE CHROME GAVE ITS HEIGHT BACK TO THE PICTURE
+
+Six layout faults reported together off one screenshot of the animatic editor.
+Every one of them is furniture taking room the monitor wanted.
+
+- **1. A BACK BUTTON IS AN ARROW, NOT A SENTENCE.** "← Your Animatics" was the
+  widest slab in the editor's top bar and the one action nobody opens the editor
+  to press; the same button spelled itself out in five other workflows. One new
+  class — **`.btn.back-btn`** in `base.css`, a square of the row's own height with
+  `padding: 0` — and the destination moved into `title` + `aria-label`, which is
+  where `.fv-top`'s back arrow (Final Video) has kept it all along; that button
+  was the model. Changed in `AnimaticEditor` (top bar + error card),
+  `StoryboardBoard`, `ScriptToStoryboard` (×2), `PlanAndScript`,
+  `StoryboardAssets`, `StoryboardCast`, `FinalVideoWorkspace` (error card).
+  ⚠ `backLabel` is now **prose only** — no arrow in it — because it is read as a
+  tooltip; both callers (`CreateAnimaticImage`, `ScriptToStoryboard`) were
+  updated. ⚠ Rows that state their own button padding must re-state `padding: 0`:
+  `.an-topbar .back-btn` is now beside `.an-topbar .an-del-btn`, which does the
+  identical thing for the bin. **Deliberately NOT changed:** the wizard-footer
+  back in `PreflightModal`, `Login`'s "← Back to home", `FinalVideoArtStep`'s
+  "← Other runs" and the Properties pane's "← Video" tab — none of those are
+  workflow navigation, and an unlabelled arrow in a two-button modal footer is a
+  riddle.
+- **2. THE PROJECT TITLE IS A FIELD, SO IT IS DRAWN AS ONE.** `.an-title` was
+  `background: transparent; border-color: transparent` until hover — reported as
+  "I see look merge in bg". It now carries the panel fill and border every other
+  input in the app has; hover lifts it to `--border-gold` and focus to
+  `--primary`, so those states still mean something.
+- **3. THE STATUS STRIP IS AT THE FOOT OF THE EDITOR.** It is a running
+  commentary (a notice, an export percentage), and under the top bar it pushed
+  the monitor and all three panes down the moment it had anything to say.
+  ⚠ **IT IS LAST IN THE DOM NOW** — that is what puts it at the bottom of the Long
+  workspace, which is a flex column; the Reel workspace places by NAME, so its
+  `grid-template-areas` moved `stat` from the second row to the last and the rows
+  became `auto minmax(0,1fr) auto auto auto`. Also shorter (0.22rem padding,
+  0.72rem type) and **`flex-wrap: nowrap`**, with the message eliding instead of
+  the strip growing a second line — `.an-status-export` took `flex: none` so a
+  long notice can't squeeze the percentage away. Under 1180px, where the editor
+  is a scrolling page again, it is `position: sticky; bottom: 0` — otherwise an
+  export report sits minutes of scrolling from wherever you are.
+- **4. ＋ ADD ASSETS DOES NOT SCROLL AWAY.** It is the Media pane's ONLY add
+  control and its drop target, and one flick of the wheel on a 31-frame board put
+  it off the top — so the answer to "where do I put this file?" was "scroll back
+  up first". `position: sticky; top: 0`, which is the same reason it was kept
+  OUTSIDE the collapsible sections. ⚠ The `::before` on it is not decoration:
+  `.an-pane-body` has 0.6rem of padding and without something painted over that
+  band the frame cards are seen sliding through the gap above the pinned card.
+- **5. ⚠ THE PROGRAM HEAD'S MENU WAS FULL WIDTH BECAUSE `theme.css` SETS
+  `input, select, textarea { width: 100% }`.** That rule is for the app's forms;
+  `.an-ar-select` never opted out, so a menu whose longest option is "16:9 — Wide"
+  ate the whole head and pushed "1920×1080 · 24 fps" onto a THIRD line — two rows
+  of height off the monitor on every screen, which is what the report was really
+  about. `width: auto; flex: 0 0 auto` puts title, shape and size on one line.
+  The read-out elides rather than wrapping the head open.
+- **6. `PropNote` IS AN ⓘ.** Teaching prose ("100% is the file as recorded…") is
+  true forever and useful exactly once, and printed under every section it
+  out-shouted the controls — five sections meant five grey paragraphs, and the
+  properties people came to change were the shortest thing on screen. Hover the
+  ⓘ to open it, click to PIN it (touch screens, and long notes you want to read
+  without holding the pointer still). It opens IN FLOW, not floating, because
+  `.an-grp` is `overflow: hidden` for its corners and the pane scrolls — a popover
+  would be clipped by one or the other. ⚠ **ONLY THE "" TONE.** A `tone="warn"`
+  note ("this clip runs past the end of the video") is conditional, is about the
+  state you are in right now, and stays in plain sight — a notice you have to go
+  looking for is a notice nobody reads.
+- Files: `client/src/styles/{base,animatic,animatic-editor,properties}.css`,
+  `client/src/components/AnimaticEditor.jsx`,
+  `client/src/components/properties/PropGroup.jsx`, and the seven back-button
+  components listed in (1).
+- **Verified:** `npm run build` clean. No server code changed, so no Python test
+  was run. ⚠ **Not driven in a browser** — in particular the sticky ＋ card, the
+  strip's new home in both workspaces and the ⓘ hover have been reasoned about,
+  not seen.
+
+### 2026-08-18 — THE PICTURE TRACK GROWS A VIDEO ROW, AND EVERY ROW GETS AN EYE AND AN ✕
 
 Six things, reported together after a video was dropped into a 31-panel board.
 
@@ -8249,6 +10055,120 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **THE PICTURE TRACK IS ONE SEQUENCE, AND THE USER WANTS TWO — DECIDE
+      WHETHER TO BUILD THAT.** Reported 2026-08-19, alongside the cross-lane move
+      that shipped: *"when i do video trim so i see my image layer conetnt move
+      like snip and same with image when i trim image so my video layer content
+      move. i want user move independaly each asstes/conetnt in layer"*. The
+      report is accurate and the behaviour is by construction: `frames` is ONE
+      list of durations laid end to end (`frameSpans` / `frame_spans`), and the
+      Images and Video rows are that same track drawn twice, filtered by ORIGIN
+      (`lane.only`, `laneShows`). So a ripple trim on either row moves everything
+      after it on BOTH rows — there is no second clock for them to keep. Nothing
+      in the cross-lane work touches this, and it deliberately refuses the picture
+      rows as a drop destination for exactly this reason.
+      **What a fix costs, honestly:** giving a picture its own `start_ms` means
+      changing (a) `frameSpans` and its Python twin `frame_spans`, (b) `sceneAt` /
+      `scene_at` and the ordering they composite in, (c) the TRANSITION model,
+      which anchors to *adjacent frames in the sequence* and has no meaning
+      between two clips that merely overlap in time, (d) `plan_segments` and the
+      exporter's stretch-finding, (e) `AnimaticFrame` in `server/schemas.py`, and
+      (f) the ripple / rolling tools, which are defined in terms of a sequence.
+      It is a new architecture for the picture track, not a bug fix, and it must
+      not be started without deciding what a GAP on the picture track shows
+      (black? the row below?) — which is the question that decides whether this
+      is "two video tracks that composite" or "one track that can have holes".
+      **Until it is built, the honest answer to the user is the ROLLING tool (N):**
+      it moves a cut and lets the next picture absorb it, so nothing after the cut
+      shifts. Say that rather than implying the rows are independent.
+- [ ] **EYES ON THE CROSS-LANE DRAG.** `tests/editor_lane_move_check.py` proves
+      the clip lands on the right row and that only the row changed, and says
+      nothing about how the gesture FEELS. What needs looking at: does the ghost
+      outline read as "it will land here" against the dimmed original; is the
+      3px tolerance either side of a row (`laneAtPoint`) enough to make the gap
+      between two rows unnoticeable, or does a clip occasionally refuse to move
+      because the pointer was in the crack; and does the promotion of a
+      file-grouped audio row to a layer LOOK acceptable — the row keeps its name
+      but changes position in the stack, because layer rows are drawn after the
+      loose ones.
+- [ ] **DRAG SOMETHING OUT OF THE EFFECTS TAB, IN THE REAL EDITOR — the LOOK of
+      it, not the mechanics.** ⚠ **PARTLY DONE 2026-08-19.** "A drag is the one
+      thing no test here can drive" turned out to be wrong, and believing it is
+      what let a crash ship: `tests/editor_effects_drop_check.py` now drives the
+      drop in Chromium against the real editor and proves an effect lands, the
+      pane opens with its controls filled in, and the monitor survives. What
+      still needs EYES is everything about how it looks and feels, which that
+      test says nothing about: does the
+      right bar light up as you cross the picture rows (`drop-onto`), does the
+      Video row refuse a drop into its gaps, does a transition land on the cut
+      you meant or on a surprising one (it snaps to the NEAREST edit point, which
+      may be far away mid-clip), and does the Properties pane land open on
+      Effects. Also worth a look: the ƒx badge against the keyframe diamonds and
+      the transition badge — three things now share one bar, and the other two
+      each have a band they may not be grown into.
+- [ ] **Decide whether an effect should have a REPRESENTATION on the timeline
+      beyond the ƒx count.** The user asked to "click effects in the timeline" and
+      what shipped is a badge that opens the chain in Properties. The fuller
+      reading — an effect drawn as its own band on the clip, clickable per
+      effect — is a real design question (it costs vertical room the keyframe
+      rows and the transition badges are already sharing) and should be answered
+      by looking at the badge first.
+- [ ] **PUT A WIPE ON A REAL CUT AND POINT IT SOMEWHERE, IN THE REAL EDITOR.**
+      The maths is proved in both directions — `render_parity.py` compares the two
+      evaluators on a non-default direction and `transition_check.py` decodes real
+      MP4s and measures the opposite half of the frame — but nobody has clicked an
+      arrow chip. What needs eyes: do four chips fit on the Travels row at the
+      narrow viewports; does the dip swatch read as "the bar colour" when nothing
+      has been picked (it shows the bar colour and the hint says so); and does the
+      monitor agree with the exported file on an UP wipe, which is the direction
+      with no prior art in this codebase at all.
+- [ ] **LOOK AT THE EIGHT NEW TRANSITIONS ON A GPU, AND IN A BROWSER.** ⚠ The
+      matte GLSL has been parsed, its generated `#define`s checked and its
+      structure asserted — but it **has never been executed**. `headless-gl` is
+      not installed here, so `effects_parity_check.py` exits before the pixel
+      half; install it (`cd client && npm install --no-save gl`) and run it, and
+      that alone would prove the shader against the NumPy twin at nine shapes
+      × several softnesses. Then eyes on the editor: does the Treatment chip row
+      still read at 12 kinds (it was 4), does the `Edge` slider look like a
+      feather rather than a fade, and does the CLOCK agree between monitor and
+      export — it is the one shape whose field wraps, so a sign error there
+      shows as the hand sweeping the wrong way rather than as a broken picture.
+- [x] **Step 2 of the transitions plan — DONE 2026-08-19.** The reveal region is
+      a real matte multiplied into the arriving picture's alpha, beside the mask
+      multiply. Eight shaped reveals plus a soft edge; `revealRegion`, `clipTo`
+      and `_wipe_box` are gone. Dissolve is deliberately NOT routed through it —
+      see the Work Log for why (rounding vs truncation).
+- [x] **Step 3 of the transitions plan — DONE 2026-08-19.** (a) The Treatment
+      row is five families off a `family` field on the descriptor; (b) six
+      point-wise effects landed with 21 goldens. Blur/sharpen/grain still out.
+- [ ] **PUT A GUARD FOR THE BACKTICK TRAP IN `effects_parity_check.py`.** A
+      backtick inside a `/* glsl */` template literal ends the JS string and the
+      parse error surfaces dozens of lines from the cause — it cost two build
+      failures in one session. The static half already loads every shader module
+      under node; asserting that no `/* glsl */` body contains a backtick is
+      three lines there and would turn a confusing parse error into a named
+      failure.
+- [ ] **The FILTERED transitions (blur dissolve, pixelize) still need a genuine
+      two-texture stage** and were always the deferred tier. Nothing in the matte
+      work changes that — a matte can only choose BETWEEN two pictures, never
+      filter one of them — but note it now costs a new program rather than a
+      rewrite, because the matte path leaves the existing compositor untouched.
+- [ ] **PUT A COLOUR LOOK ON A REAL SHOT, IN THE REAL EDITOR.** The crash is fixed
+      and `tests/monitor_effects_check.py` drives the monitor in Chromium, but that
+      test uses a COLOUR CARD (no image to load, no fit, no resample) and the user
+      reported this against a storyboard panel. Open the animatic editor on the
+      project they reported against, add **Colour look (LUT)**, and step through
+      every name in the dropdown: **(a)** Identity must change nothing at all —
+      that is the case that looked broken, because the correct result is
+      indistinguishable from no effect; **(b)** Noir must go grey, Cool/Warm must
+      shift; **(c)** drag Amount from 0 to 100% and watch it dial in; **(d)** put
+      the LUT above and below a Brightness in the chain and confirm the two are
+      different pictures; **(e)** keyframe Amount and scrub — the grade must
+      animate without the picture flickering, which is the case the context
+      rebuild would have made ugly; **(f)** export and confirm the MP4 matches
+      the monitor. Also worth a look now the context is no longer rebuilt per
+      render: **scrubbing should be visibly smoother**, since every picture used
+      to be re-uploaded on every tick.
 - [ ] **DRAG THE SEAMS, AND LOOK AT BOTH WORKSPACES.** Landed 2026-08-17/18 and
       it is all layout, so a build passing proves very little. In order:
       **(a)** ⚙ → Reel / Shorts, and check the panes reorder (Program left and
@@ -8382,11 +10302,16 @@ language — do NOT copy the Drawstory reference's look/colours.
       then a LUT, a mask and a chroma key. If the canvas is black, the console
       will say why — a shader that failed to compile throws with its own log.
 - [ ] **Get `tests/effects_parity_check.py`'s pixel half to run, somewhere.**
-      `cd client && npm install --no-save gl`. It needs a C++ toolchain (Windows:
-      the Visual Studio "Desktop development with C++" workload; Linux:
-      libx11-dev, libxi-dev, mesa). It is the ONLY thing that will catch the
-      monitor and the export grading differently, and until it runs once that
-      guarantee is on paper only.
+      `cd client && npm install --no-save gl`. Tried again 2026-08-19 and it
+      **fails on this machine**: node-gyp reports "could not find a version of
+      Visual Studio 2017 or newer", so it needs the Visual Studio "Desktop
+      development with C++" workload (Linux: libx11-dev, libxi-dev, mesa).
+      ⚠ **NO LONGER THE ONLY EVIDENCE THE SHADERS RUN** — `monitor_effects_check.py`
+      executes every chunk in `shaders/` in Chromium on SwiftShader and compares
+      it to the Python exporter, and all eleven kinds are covered there now. This
+      file remains the STRONGER check (a whole frame with ramps, edges and a
+      green block, rather than a flat colour) and its thirteen new point-wise
+      cases have never been run, so it is still worth a machine that can build it.
 - [ ] **Render a SECOND shot, and watch it land on the timeline.** The first one
       proved Veo and the extraction; what has still never been seen working is
       the fixed attach path — clip finishes → frame becomes `kind: "video"` →
@@ -8430,6 +10355,34 @@ language — do NOT copy the Drawstory reference's look/colours.
       music track and a dragged frame edge snaps to one. Console: an
       `AudioContext was not allowed to start` warning on load is expected and
       harmless — it resumes on the first play.
+- [ ] **DRAG A CROSSFADE ONTO A CUT IN A BROWSER (2026-08-19).** The arithmetic
+      and the encode are both measured (`tests/audio_crossfade_check.py`, 27
+      checks), but nothing here has been dragged by hand. Check, in order: the
+      **Audio Transitions → Crossfade** folder is in the Effects tab with three
+      entries; dragging one lights up the AUDIO rows and leaves the picture rows
+      refusing (that is the whole point of the second `x-anim-afx` marker — if
+      the picture rows light up too, `laneTakes` is reading the wrong one);
+      dropping on the right half of a razored clip crossfades that cut and the
+      notice names the length it actually got; the outgoing clip visibly grows
+      and the incoming one does NOT move; **Ctrl+Z undoes the whole crossfade,
+      not half of it** (both clips are written in one `setAudioTracks` for
+      exactly that reason); the wedge for Constant Power is visibly a different
+      shape from Constant Gain; the "In shape" / "Out shape" chip rows appear in
+      Properties only once that end has a fade. And listen: on a cut between two
+      pieces of music, Constant Gain should audibly scoop and Constant Power
+      should not — that is the difference the whole feature exists to offer.
+- [ ] **LOOK AT THE ⓘ AND THE CUT CURSOR (2026-08-19).** Both are answers to a
+      user report and both are things only eyes can confirm. The ⓘ: every row in
+      the Effects tab should carry one, the descriptions should be GONE from the
+      rows, and clicking one should open its note under that row without folding
+      the tree or adding the effect. The razor: press C and check the pointer is
+      the same blade over a picture bar, a caption, a shape, an overlay and an
+      audio clip — and an ordinary pointer over the time ruler, which should
+      scrub, not cut. Then cut one clip on each of the five rows and confirm only
+      that row changed. `tests/editor_razor_check.py` asserts all of this in
+      Chromium, so this pass is about whether it FEELS right — chiefly whether
+      `crosshair` is the blade you want or whether it should be a drawn razor
+      cursor, which is a five-line change to one CSS rule if so.
 - [x] **Phase 4 — the LOOK: colour, LUT, masks, chroma key, blend modes** (done
       2026-08-17 — plus the WebGL monitor. Three pre-existing export bugs fell
       out of it; see the top Work Log entry. `tests/effects_check.py`,

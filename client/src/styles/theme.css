@@ -56,6 +56,19 @@
   --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
   /* Letterbox behind panel / preview images. */
   --frame-bg: #000;
+  /* --- The editor panes ---------------------------------------------------
+     ONE soft blue on all four heads — Media, Program, Properties, Timeline.
+     ⚠ THEY EACH HAD THEIR OWN PASTEL FIRST (blue / lilac / mint / apricot) and
+     it was rejected on sight: four hues plus gold is five accents on one
+     screen, and the editor read as a set of unrelated tools rather than one
+     app. The job was only ever to lift the heads off the grey — that needs a
+     colour, not four. Deliberately DESATURATED and used only on the head strip,
+     its hairline and the pane's border: gold stays the app's one accent.
+     `-ink` is the title and the dot, `-tint` the head fill, `-edge` the
+     border. */
+  --pane-ink: #8ab4f8; /* soft blue */
+  --pane-tint: rgba(138, 180, 248, 0.12);
+  --pane-edge: rgba(138, 180, 248, 0.32);
 }
 
 /* Light theme. The gold BUTTON gradients stay exactly as they are — that's the
@@ -110,6 +123,12 @@
   --shadow: 0 4px 16px rgba(20, 24, 36, 0.09);
   --shadow-lg: 0 20px 50px rgba(20, 24, 36, 0.18);
   --frame-bg: #e4e8f0;
+  /* The same blue, light mode. The pale dark-theme hue turns to nothing on
+     white — the tint goes fainter still and the ink several shades deeper, so a
+     pane title stays as readable as any other heading. */
+  --pane-ink: #2f62b3;
+  --pane-tint: rgba(47, 98, 179, 0.09);
+  --pane-edge: rgba(47, 98, 179, 0.28);
 }
 
 /* A handful of tints were written as translucent white or pale gold/blue, which
