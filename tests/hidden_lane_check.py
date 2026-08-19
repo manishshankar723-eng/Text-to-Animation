@@ -80,9 +80,13 @@ FRAMES = [
     {"id": "f2", "src": {"kind": "video", "storyboard_id": BOARD, "index": 1,
                          "upload_id": uuid.uuid4().hex[:12]},
      "kind": "video", "duration_ms": 3000, "label": "Shot 2 (animated)"},
-    # A video FILE the user dropped in — the footage row.
+    # A video FILE the user dropped in, ON A PICTURE TRACK OF ITS OWN — which is
+    # where "put the footage on its own track" puts it, and the case the
+    # `frames:<n>` tokens exist for. ⚠ It keeps the moment it plays at: the split
+    # only ever moves a clip between rows.
     {"id": "f3", "src": {"kind": "video", "upload_id": uuid.uuid4().hex[:12]},
-     "kind": "video", "duration_ms": 5000, "label": "clip"},
+     "kind": "video", "duration_ms": 5000, "label": "clip",
+     "track": 1, "start_ms": 5000},
     # An uploaded still, and a colour card: both stills.
     {"id": "f4", "src": {"kind": "upload", "upload_id": uuid.uuid4().hex[:12]},
      "duration_ms": 1000},
@@ -181,32 +185,40 @@ check("and the default row can be hidden on its own",
       [s["id"] for s in p["shapes"]], ["s2"])
 
 # ---------------------------------------------------------------------------
-print("\n[4] ⚠ a hidden PICTURE row is BLANKED, so the sequence is unchanged")
-p = export(["frames:video"])
+print("\n[4] ⚠ a hidden PICTURE TRACK: blanked on the base, DROPPED above it")
+# ⚠ THE ASYMMETRY IS THE POINT, and the two are the SAME PICTURE where each
+# applies. Track 0 is the bottom of the stack, so a dropped clip would reveal the
+# letterbox colour — which is exactly what a colour card of that colour draws;
+# blanking is chosen there because it also HOLDS THE TIME, and a base track hidden
+# in full would otherwise leave the export with no pictures at all. Above it a
+# dropped clip reveals the track UNDERNEATH, and an opaque card would hide it.
+p = export(["frames:1"])
+check("the clip on the hidden track is GONE, not blanked", len(p["frames"]), 4)
+check("…and it is the one that was on track 1", [f["id"] for f in p["frames"]],
+      ["f1", "f2", "f4", "f5"])
+check("the base track is untouched", [f["kind"] for f in p["frames"]],
+      ["image", "video", "image", "color"])
+check("the ANIMATED BOARD SHOT is still drawn — origin does not decide the row",
+      p["frames"][1]["kind"], "video")
+
+p = export(["frames:0"])
 kinds = [f["kind"] for f in p["frames"]]
-check("no clip was removed", len(p["frames"]), 5)
-check("only the footage clip became a blank", kinds,
-      ["image", "video", "color", "image", "color"])
-blank = p["frames"][2]
-check("it holds exactly the time it held", blank["duration_ms"], 5000)
+check("hiding the BASE track blanks its clips rather than removing them",
+      len(p["frames"]), 5)
+check("every base clip draws the letterbox colour", kinds,
+      ["color", "color", "video", "color", "color"])
+blank = p["frames"][0]
+check("a blank holds exactly the time it held", blank["duration_ms"], 2000)
 check("it draws the letterbox colour", blank["color"], "#101010")
 check("and has no file to draw", (blank["path"], blank["video_path"]), (None, None))
-check("the ANIMATED BOARD SHOT is still drawn", p["frames"][1]["kind"], "video")
-check("the video is the same length as before", sum(f["duration_ms"] for f in p["frames"]),
-      TOTAL_MS)
-
-p = export(["frames:stills"])
-kinds = [f["kind"] for f in p["frames"]]
-check("hiding the stills row blanks the board shots and the images",
-      kinds, ["color", "color", "video", "color", "color"])
-check("the dropped-in footage still plays", p["frames"][2]["kind"], "video")
-check("still nothing removed", sum(f["duration_ms"] for f in p["frames"]), TOTAL_MS)
+check("the clip on track 1 still plays", p["frames"][2]["kind"], "video")
 
 # ---------------------------------------------------------------------------
 print("\n[5] rows switch off independently, and an unknown token is inert")
-p = export(["frames:video", "text:L-TEXT", "shape:"])
+p = export(["frames:1", "text:L-TEXT", "shape:"])
 check("three rows off at once", (len(p["texts"]), len(p["shapes"])), (1, 1))
-check("the picture row is blanked", p["frames"][2]["kind"], "color")
+check("the picture track is dropped", [f["id"] for f in p["frames"]],
+      ["f1", "f2", "f4", "f5"])
 p = export(["audio:", "nonsense", "text:no-such-layer"])
 check("a token naming nothing changes nothing about the pictures",
       [f["kind"] for f in p["frames"]], ["image", "video", "video", "image", "color"])

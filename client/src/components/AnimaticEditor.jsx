@@ -36,10 +36,13 @@ import {
   TEXT_DEFAULTS,
   defaultFor,
   frameOrigin,
+  frameSpans,
+  frameTrack,
   lookProps,
   lookPropParts,
   lookValueOf,
   resolveLook,
+  pictureTracks,
   sceneAt,
   setLookValue,
   valueAt,
@@ -337,9 +340,14 @@ const TOOLS = [
       "Select and move clips · drag the empty part of a lane to select several · " +
       "shift-click to add one · double-click a lane's name for the whole row",
   },
-  { id: "razor", key: "C", label: "Razor", hint: "Click a frame — or an audio clip — to split it there" },
-  { id: "ripple", key: "B", label: "Ripple edit", hint: "Drag an edit point; everything after it shifts" },
-  { id: "rolling", key: "N", label: "Rolling edit", hint: "Drag an edit point; the next frame absorbs it, so the video stays the same length" },
+  { id: "razor", key: "C", label: "Razor", hint: "Click a clip — a picture, a caption, a shape or audio — to split it there" },
+  // ⚠ THESE TWO ARE NO LONGER "the only way a trim behaves" — they are the two
+  // ways it can behave OTHER than the plain one. With V a picture's edge moves and
+  // nothing else does (a gap is left, and a gap shows the track underneath), which
+  // is what "each layer independent" means and what the picture track could not do
+  // while it was one butt-jointed sequence. B is the old behaviour, kept as a tool.
+  { id: "ripple", key: "B", label: "Ripple edit", hint: "Trim an edge and close up behind it — everything after it on that track moves too" },
+  { id: "rolling", key: "N", label: "Rolling edit", hint: "Trim an edge and let the next clip absorb it — the cut moves, the track stays the same length" },
   { id: "hand", key: "H", label: "Hand", hint: "Drag to scroll the timeline" },
   { id: "zoom", key: "Z", label: "Zoom", hint: "Click to zoom in · Alt-click to zoom out" },
 ];
@@ -481,6 +489,13 @@ export default function AnimaticEditor({
   const [dropping, setDropping] = useState(false);
   // The "what kind of layer?" picker opened by ＋ Add layer.
   const [layerMenu, setLayerMenu] = useState(false);
+  // ⚠ HOW MANY EMPTY PICTURE TRACKS TO DRAW BEYOND THE ONES IN USE, and it is
+  // VIEW state on purpose — not saved. A picture track is a NUMBER on a clip
+  // (`frameTrack`), so the rows are derived from which numbers are in use; there
+  // is no record to create. This is only "the user asked for a row to drop onto",
+  // and an empty row that survived a reload would be a layer the document does not
+  // have. Anything actually put on it makes the row real.
+  const [extraPictureTracks, setExtraPictureTracks] = useState(0);
   // The export dialog, and the file name it will download as.
   const [exportOpen, setExportOpen] = useState(false);
   const [exportName, setExportName] = useState("");
@@ -625,18 +640,17 @@ export default function AnimaticEditor({
     onError: setError,
   });
 
-  const totalMs = useMemo(
-    () => frames.reduce((sum, f) => sum + (f.duration_ms || 0), 0),
-    [frames]
-  );
-  const starts = useMemo(() => {
-    let t = 0;
-    return frames.map((f) => {
-      const start = t;
-      t += f.duration_ms || 0;
-      return start;
-    });
-  }, [frames]);
+  // ⚠ BOTH COME OUT OF `frameSpans` NOW — the same evaluator the monitor and the
+  // exporter use. They used to be a running total written here, which was exact
+  // while the picture was ONE sequence laid end to end and is wrong now that clips
+  // are placed by `start_ms` on numbered TRACKS: "add up the clips before it"
+  // answers a question nobody is asking, and `totalMs` would have been the sum of
+  // every track's lengths rather than the moment the last one ends.
+  const pictureSpans = useMemo(() => frameSpans(frames), [frames]);
+  const totalMs = pictureSpans.totalMs;
+  // Where each picture starts, parallel to `frames` — what the caption tools, the
+  // strip's badges and the Properties pane all read.
+  const starts = useMemo(() => pictureSpans.spans.map((s) => s.start), [pictureSpans]);
 
   // Exactly one thing is selected at a time, and the Properties pane follows it:
   // a transition, else a text clip, else a shape, else a track, else a frame,
@@ -840,7 +854,7 @@ export default function AnimaticEditor({
   // ⚠ IT NAMES A ROW, NOT ITS CLIPS. Emptying a hidden row, or adding more to it,
   // must not turn anything back on: what you switched off is the row. The token
   // is `kind:layer_id` for a lane of clips (`text:`, `text:<id>`, `shape:<id>`,
-  // `image:<id>`) and `frames:stills` / `frames:video` for the two rows of the
+  // `image:<id>`) and `frames:<n>` for picture track n (the
   // picture track — an encoding the SERVER can rebuild from a clip's own fields,
   // which is what lets one list work in both places (`_lane_hidden` in
   // server/animatics.py). Audio is deliberately not in here: a track has `muted`,
@@ -854,7 +868,7 @@ export default function AnimaticEditor({
   // The token for one lane — the ONE place the encoding is written on the client.
   const laneToken = (lane) => {
     if (lane.kind === "audio") return "";
-    if (lane.kind === "frames") return `frames:${lane.only || "stills"}`;
+    if (lane.kind === "frames") return `frames:${lane.track || 0}`;
     return `${lane.kind}:${lane.layerId || ""}`;
   };
 
@@ -900,28 +914,35 @@ export default function AnimaticEditor({
   // thing here as it does in the MP4, and this is the one place the monitor's
   // answer comes from, so it is the one place that has to know.
   //
-  // ⚠ A HIDDEN PICTURE ROW IS BLANKED, NEVER DROPPED, and the two are completely
-  // different edits. `frames` is a sequence laid end to end: remove a clip and
-  // every cut after it moves, the video gets shorter and the audio no longer
-  // lines up — from pressing an eye. Turned into a colour card the clip holds
-  // exactly the time it always held and draws the letterbox colour, which is what
-  // an NLE shows for a track it is not outputting. Same conversion on the server,
-  // for the same reason.
+  // ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON TRACK 0 AND DROPPED ABOVE IT, and the
+  // asymmetry is not a compromise — the two are the SAME PICTURE where each one
+  // applies, and only one of them is safe in each case.
+  //
+  //   TRACK 0 is the bottom of the stack, so what a dropped clip would reveal is
+  //     the letterbox colour — which is exactly what a colour card of the
+  //     letterbox colour draws. Blanking is chosen because it also HOLDS THE
+  //     TIME: a base track hidden in full would otherwise leave the export with
+  //     no pictures at all, which `build_animatic` cannot encode.
+  //   ABOVE IT a dropped clip reveals the track UNDERNEATH, and an opaque card
+  //     would hide it. So those are dropped, which is what an NLE shows for a
+  //     track it is not outputting.
+  //
+  // ⚠ TWINNED IN `server/animatics.py`, clip for clip, or the monitor and the MP4
+  // would disagree about a row you had switched off.
   const shown = useMemo(() => {
     const doc = { frames, texts, shapes, overlays, transitions };
     if (!hiddenLanes.size) return doc;
     const kept = (kind) => (clip) => !hiddenLanes.has(`${kind}:${clip.layer_id || ""}`);
-    const blank = { stills: hiddenLanes.has("frames:stills"), video: hiddenLanes.has("frames:video") };
+    const hiddenTrack = (f) => hiddenLanes.has(`frames:${frameTrack(f)}`);
     return {
       ...doc,
-      frames:
-        blank.stills || blank.video
-          ? frames.map((f) =>
-              blank[frameOrigin(f) === "video" ? "video" : "stills"]
-                ? { ...f, kind: "color", color: settings.background || "#000000" }
-                : f
-            )
-          : frames,
+      frames: frames
+        .filter((f) => !(hiddenTrack(f) && frameTrack(f) > 0))
+        .map((f) =>
+          hiddenTrack(f)
+            ? { ...f, kind: "color", color: settings.background || "#000000" }
+            : f
+        ),
       texts: texts.filter(kept("text")),
       shapes: shapes.filter(kept("shape")),
       overlays: overlays.filter(kept("image")),
@@ -1303,12 +1324,15 @@ export default function AnimaticEditor({
   // generated captions look like they had landed on top of the user's own text.
   // Top of the stack is also where a subtitle track sits in every NLE.
   //
-  // ⚠ AND THE PICTURE TRACK IS TWO ROWS, NOT ONE. `frames` is a single sequence
-  // (see `pictureTrack`), but a video file dropped into a thirty-panel board was
-  // one bar among thirty on a row called "Images" — "I want the video in a video
-  // layer, not the image timeline". Both rows are the same track filtered by
-  // `only`, so every time on them is still the time it plays at; what changed is
-  // that footage now has a row you can find it on.
+  // ⚠ AND THERE IS A ROW PER PICTURE TRACK. It used to be two rows of ONE
+  // sequence, filtered by where each clip came from (`only` / `frameOrigin`) —
+  // which looked like two layers and was not: every clip's place was the sum of
+  // the clips before it, so trimming footage moved the stills, on the row above.
+  // Reported as "when i do video trim so i see my image layer conetnt move like
+  // snip … i want user move independaly each asstes/conetnt in layer", and true
+  // by construction rather than by accident. A row is a real track now: a clip
+  // carries which one it is on (`track`) and where it sits (`start_ms`), a higher
+  // track draws OVER a lower one, and a gap shows whatever is underneath.
   const lanes = useMemo(() => {
     // Everything except the captions lane, which is placed by hand below.
     const of = (kind) =>
@@ -1347,31 +1371,42 @@ export default function AnimaticEditor({
     for (const l of of("image")) {
       out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
     }
-    // The picture sequence, and then its footage. `only` is the filter each row
-    // draws through — see `renderLane` — and the clock behind both is the whole
-    // sequence, so a gap on one row is exactly where the other one is playing.
-    out.push({
-      key: "frames",
-      kind: "frames",
-      only: "stills",
-      name: "Images",
-      layerId: null,
-      removable: false,
-    });
-    // ⚠ ONLY ONCE THERE IS FOOTAGE. An empty "Video" row on a board that has
-    // none is furniture — and the ＋ that fills it is the same one the Images row
-    // already carries.
-    if (pictureTrack.video.length) {
+    // The picture tracks, HIGHEST FIRST — the same rule the rest of this list
+    // follows, since a higher track is drawn over a lower one. Track 0 always
+    // exists (`pictureTracks`), so a project with no pictures still has a row to
+    // put some on.
+    //
+    // ⚠ NAMED LIKE THE OTHER LAYERS: "Pictures", then "Pictures 2", … so the
+    // gutter reads consistently and the numbering matches what "+ Add layer"
+    // says it is adding. They are not removable: a picture track is structural,
+    // and its ✕ empties it (`onClearLane`) exactly as the default text and shape
+    // rows do.
+    // The tracks in use, plus any empty ones asked for — see `extraPictureTracks`.
+    const usedTracks = pictureTracks(frames);
+    const allTracks = [...usedTracks];
+    for (let n = Math.max(...usedTracks) + 1; n <= extraPictureTracks; n += 1) {
+      allTracks.push(n);
+    }
+    for (const track of allTracks.reverse()) {
       out.push({
-        key: "frames:video",
+        key: `frames:${track}`,
         kind: "frames",
-        only: "video",
-        name: "Video",
+        track,
+        name: track === 0 ? "Pictures" : `Pictures ${track + 1}`,
         layerId: null,
         removable: false,
-        icon: "▶",
-        hint: "Video clips in the picture sequence — the same track as Images, on a row of its own",
-        add: "Add a video file to the end of the sequence",
+        // Is this row carrying stills AND footage? If so it can be split into
+        // two — see `splitFootageOntoTrack`, and the ▶⇧ in the gutter.
+        mixed: (() => {
+          const on = frames.filter((f) => frameTrack(f) === track);
+          const video = on.filter((f) => frameOrigin(f) === "video").length;
+          return video > 0 && video < on.length;
+        })(),
+        hint:
+          track === 0
+            ? "The base picture track — stills and footage, each placed on its own"
+            : `Picture track ${track + 1} — drawn OVER the tracks below it; a gap shows what is under it`,
+        add: "Add pictures to the end of this track",
       });
     }
     // Audio: a track saved before layers owns its own lane (that is how it has
@@ -1432,10 +1467,11 @@ export default function AnimaticEditor({
       return { ...lane, vis, hidden: !!vis && hiddenLanes.has(vis) };
     });
     // ⚠ `hasCaptionClips`, not `texts`, for the reason above — this list only
-    // cares WHETHER any clip is on the captions lane. The picture track is in
-    // here for one boolean too: whether there is any footage, which decides if
-    // the Video row exists.
-  }, [layers, audioTracks, hasCaptionClips, pictureTrack, hiddenLanes]);
+    // cares WHETHER any clip is on the captions lane. `frames` is in here for one
+    // question too: WHICH TRACKS EXIST, which decides how many picture rows there
+    // are. That does mean the list rebuilds when a picture is added or moved
+    // across tracks, which is exactly when the rows change.
+  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, extraPictureTracks]);
 
   // ------------------------------------------------------------ undo / redo
   // One stack for the whole document — see `useUndoStack`. `gestureProps` is
@@ -1463,28 +1499,44 @@ export default function AnimaticEditor({
   // same hold. Both halves point at the SAME source image — that is what
   // cutting a still means, and nothing is uploaded twice.
   const splitFrameAt = useCallback(
-    (ms) => {
+    (ms, id = null) => {
       if (!frames.length) return;
-      let i = -1;
-      for (let k = frames.length - 1; k >= 0; k--) {
-        if (ms >= starts[k]) {
-          i = k;
-          break;
-        }
-      }
+      // ⚠ THE CLIP THE RAZOR NAMED, and only if the blade is inside it. It used
+      // to be "the last clip that had started by `ms`", which was exact while the
+      // picture was one gapless sequence and is now wrong twice: the blade may be
+      // in a GAP (nothing to cut) and the clip it lands on belongs to whichever
+      // TRACK was clicked, not to whichever started most recently.
+      const i = id
+        ? frames.findIndex((f) => f.id === id)
+        : frameIndexContaining(ms);
       if (i < 0) return;
+      const span = pictureSpans.spans[i];
+      if (!span || ms < span.start || ms >= span.end) {
+        setNotice("The razor cuts a CLIP — there is nothing on that row at that moment.");
+        return;
+      }
       const source = frames[i];
-      const offset = Math.round(ms - starts[i]);
+      const offset = Math.round(ms - span.start);
       if (offset < MIN_MS || source.duration_ms - offset < MIN_MS) {
         setNotice(
           `Too close to a cut — each side of an edit needs at least ${MIN_MS}ms.`
         );
         return;
       }
-      const tail = { ...source, id: newId(), duration_ms: source.duration_ms - offset };
+      // ⚠ BOTH HALVES CARRY EXPLICIT STARTS. The tail begins where the blade
+      // fell; the head keeps the clip's own start. A split used to be a list
+      // splice and nothing else, because a clip's place WAS its position in the
+      // list — with free placement the two halves have to be told where they are,
+      // or the tail would land wherever `frameSpans` last left that track's clock.
+      const tail = {
+        ...source,
+        id: newId(),
+        start_ms: span.start + offset,
+        duration_ms: source.duration_ms - offset,
+      };
       setFrames((list) => {
         const next = [...list];
-        next.splice(i, 1, { ...source, duration_ms: offset }, tail);
+        next.splice(i, 1, { ...source, start_ms: span.start, duration_ms: offset }, tail);
         return next;
       });
       // ⚠ The head keeps the source's id, so a transition anchored to it would
@@ -1495,9 +1547,10 @@ export default function AnimaticEditor({
           t.after_frame_id === source.id ? { ...t, after_frame_id: tail.id } : t
         )
       );
-      setNotice("Cut — that picture is now two frames you can time separately.");
+      setNotice("Cut — that picture is now two clips you can time separately.");
     },
-    [frames, starts]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [frames, pictureSpans]
   );
 
   /**
@@ -1544,7 +1597,9 @@ export default function AnimaticEditor({
       return;
     }
     if (kind === "frame") {
-      splitFrameAt(ms);
+      // ⚠ THE ID, not just the time. There can be a clip at `ms` on more than one
+      // picture track, and the razor cuts the one you clicked.
+      splitFrameAt(ms, id);
       return;
     }
     if (kind === "audio") {
@@ -1702,6 +1757,15 @@ export default function AnimaticEditor({
     if (!lane) return;
     if (kind === "audio") {
       moveTrackToLane(id, lane, patch);
+      return;
+    }
+    // A PICTURE's row is a numbered TRACK, not a layer id — see `frameTrack`.
+    if (kind === "frame") {
+      patchFrame(id, { ...patch, track: lane.track || 0 });
+      selectOnly({ frame: id });
+      setNotice(
+        `Moved to ${lane.name} at ${formatTime(patch.start_ms || 0)}.${hiddenWarning(lane)}`
+      );
       return;
     }
     const layer_id = laneId(lane.layerId || "");
@@ -2018,13 +2082,93 @@ export default function AnimaticEditor({
   const patchFrame = (id, patch) =>
     setFrames((list) => list.map((f) => (f.id === id ? { ...f, ...patch } : f)));
 
+  /**
+   * SEVERAL pictures in one write — what every timeline edit on a picture track
+   * comes through (`onFramesChange`).
+   *
+   * ⚠ ONE `setFrames`, ONE UNDO. A picture edit is rarely one clip now: a RIPPLE
+   * trim moves everything after it on that track, a ROLLING trim gives the
+   * neighbour what it takes, a group move carries the selection. Forty separate
+   * `patchFrame` calls would be forty renders and forty presses of Ctrl+Z.
+   */
+  const patchFrames = useCallback((patches) => {
+    const list = Array.isArray(patches) ? patches.filter((x) => x && x.id) : [];
+    if (!list.length) return;
+    const by = new Map(list.map((x) => [x.id, x]));
+    setFrames((frames) =>
+      frames.map((f) => (by.has(f.id) ? { ...f, ...by.get(f.id), id: f.id } : f))
+    );
+  }, []);
+
+  /**
+   * INSERT pictures into a track at `atIndex`, closing up behind them.
+   *
+   * ⚠ THE NEW CLIPS GET EXPLICIT STARTS AND EVERYTHING AFTER THEM RIPPLES. That
+   * is what "insert" has always meant here — it was free while the picture was one
+   * butt-jointed sequence, because a list splice WAS the edit. With clips placed
+   * freely it has to be done on purpose: splicing alone would leave the newcomers
+   * on top of whatever already occupied that stretch of track.
+   *
+   * `atIndex` is an index into `frames` (what `frameIndexAt` returns), so "at the
+   * end" is `frames.length` and lands the clips after the last one on their track.
+   */
+  function insertPictures(list, added, atIndex, track) {
+    const spans = frameSpans(list).spans;
+    const on = spans.filter((s) => s.track === track).sort((a, b) => a.start - b.start);
+    // Where the newcomers begin: the start of the clip they are going in front
+    // of, or the end of the track when they are going on the end.
+    const ahead = on.find((s) => s.index >= atIndex);
+    const at = ahead ? ahead.start : on.length ? on[on.length - 1].end : 0;
+    let clock = at;
+    const placed = added.map((clip) => {
+      const start = clock;
+      clock += Math.max(100, Number(clip.duration_ms) || 2000);
+      return { ...clip, track, start_ms: start };
+    });
+    const shift = clock - at;
+    const next = list.map((f) => {
+      const span = spans.find((s) => s.index === list.indexOf(f));
+      if (!span || span.track !== track || span.start < at) return f;
+      return { ...f, start_ms: span.start + shift };
+    });
+    next.splice(atIndex === undefined ? next.length : atIndex, 0, ...placed);
+    return next;
+  }
+
+  /**
+   * The Media pane's drag: put this picture at that place in ITS TRACK's order.
+   *
+   * ⚠ IT RE-LAYS THE TRACK END TO END, and that is a deliberate choice rather
+   * than a limitation. The Media pane lists the pictures as a SEQUENCE — that is
+   * what its numbers and its ‹ › mean — so a reorder there is a sequence
+   * operation, and the only reading of "put this one third" that leaves a
+   * predictable timeline is "close the row up in the new order". Dragging on the
+   * TIMELINE is the gesture that moves one clip and touches nothing else.
+   */
   function reorder(from, to) {
     setFrames((list) => {
+      const track = frameTrack(list[from]);
       const next = [...list];
       const [moved] = next.splice(from, 1);
       next.splice(to > from ? to - 1 : to, 0, moved);
-      return next;
+      // Re-lay this track from where it currently begins, in the new list order.
+      const on = next.filter((f) => frameTrack(f) === track);
+      const at = Math.min(
+        ...frameSpans(list)
+          .spans.filter((s) => s.track === track)
+          .map((s) => s.start)
+      );
+      let clock = Number.isFinite(at) ? at : 0;
+      const placed = new Map();
+      for (const f of on) {
+        placed.set(f.id, clock);
+        clock += Math.max(100, Number(f.duration_ms) || 2000);
+      }
+      return next.map((f) =>
+        placed.has(f.id) ? { ...f, start_ms: placed.get(f.id) } : f
+      );
     });
+    setNotice("Re-ordered — that picture row is closed up in the new order.");
   }
 
   function duplicateFrame(id) {
@@ -2200,13 +2344,24 @@ export default function AnimaticEditor({
     );
   }
 
-  /** Which picture is on screen at `ms` — the clip an effect dropped there grades. */
-  function frameIndexContaining(ms) {
-    if (!frames.length) return -1;
-    let best = 0;
-    starts.forEach((s, i) => {
-      if (s <= ms) best = i;
-    });
+  /**
+   * Which picture is on screen at `ms` — the clip an effect dropped there grades.
+   *
+   * ⚠ ON ONE TRACK, AND THE ANSWER MAY BE "NONE". A track can have a gap in it
+   * now, so an effect dropped into one has nothing to grade — which is a thing to
+   * say, not a clip to guess at. Reading the whole project and taking the last
+   * clip that had started (which is what this used to do) would grade whatever was
+   * on some other row.
+   */
+  function frameIndexContaining(ms, track = null) {
+    let best = -1;
+    for (const span of pictureSpans.spans) {
+      if (track !== null && span.track !== track) continue;
+      if (ms < span.start || ms >= span.end) continue;
+      // The later clip wins where two overlap — the same tie-break `stackAt`
+      // takes, so the effect lands on the picture you can actually see.
+      if (best < 0 || span.start >= pictureSpans.spans[best].start) best = span.index;
+    }
     return best;
   }
 
@@ -2334,6 +2489,82 @@ export default function AnimaticEditor({
     return layer;
   }
 
+  /**
+   * A new, EMPTY picture track above the ones that exist.
+   *
+   * ⚠ NOT AN `addLayer`, and the difference is what a picture track IS. The other
+   * rows are records in `layers` with an id that clips point at; a picture track
+   * is a NUMBER on the clip (`frameTrack`), and the rows are derived from which
+   * numbers are in use (`pictureTracks`). So there is nothing to create — the row
+   * appears when something is on it. What this does is remember that you asked for
+   * one, so an empty row is drawn to drop onto.
+   */
+  function addPictureTrack() {
+    const next = Math.max(...pictureTracks(frames)) + 1;
+    setExtraPictureTracks((n) => Math.max(n, next));
+    setNotice(
+      `Picture track ${next + 1} added — drag a clip up onto it, or use its ＋.`
+    );
+  }
+
+  /**
+   * PUT THE FOOTAGE ON ITS OWN TRACK — one press, for the layout people had
+   * before tracks existed.
+   *
+   * The picture rows used to be split by ORIGIN: "Images" and "Video" were one
+   * sequence drawn twice. That is gone (it is what made trimming footage move the
+   * stills), and everything opens on ONE track — which is right, because it
+   * reproduces the existing edit exactly. But the SPLIT was useful, so it is
+   * offered as an action instead of imposed as a model.
+   *
+   * ⚠ IT MOVES ONLY, NEVER RE-TIMES. Every clip keeps the moment it plays at, so
+   * the film is frame-for-frame what it was before the press; all that changes is
+   * which row each clip is drawn on. Any transition that spanned one of those
+   * boundaries becomes INERT (a transition needs two clips that touch, on one
+   * track — see `transitionWindow`), so it is counted and reported rather than
+   * silently doing nothing.
+   */
+  function splitFootageOntoTrack() {
+    const base = frames.filter((f) => frameTrack(f) === 0);
+    const footage = base.filter((f) => frameOrigin(f) === "video");
+    if (!footage.length || footage.length === base.length) {
+      setNotice(
+        "Nothing to split — the base track is all stills or all footage already."
+      );
+      return;
+    }
+    const to = Math.max(...pictureTracks(frames)) + 1;
+    const spans = new Map(pictureSpans.spans.map((s) => [frames[s.index].id, s.start]));
+    const moving = new Set(footage.map((f) => f.id));
+    // Which transitions stop meaning anything: their cut is between a clip that
+    // is moving and one that is not.
+    const stranded = transitions.filter((t) => {
+      const i = frames.findIndex((f) => f.id === t.after_frame_id);
+      if (i < 0) return false;
+      const own = pictureSpans.spans[i];
+      const next = pictureSpans.spans.find(
+        (s) => s.track === own.track && s.start === own.end
+      );
+      if (!next) return false;
+      return moving.has(frames[i].id) !== moving.has(frames[next.index].id);
+    });
+    setFrames((list) =>
+      list.map((f) =>
+        moving.has(f.id) ? { ...f, track: to, start_ms: spans.get(f.id) ?? 0 } : f
+      )
+    );
+    setExtraPictureTracks((n) => Math.max(n, to));
+    setNotice(
+      `${footage.length} video clip${footage.length === 1 ? "" : "s"} moved to Pictures ${to + 1} — ` +
+        "every one still plays at the same moment." +
+        (stranded.length
+          ? ` ${stranded.length} transition${stranded.length === 1 ? "" : "s"} now sit${
+              stranded.length === 1 ? "s" : ""
+            } across a gap and will not play until you close it.`
+          : "")
+    );
+  }
+
   // Removing a lane takes its contents with it: they have nowhere else to live,
   // and silently moving them to another row would be worse than saying so.
   function removeLayer(layerId) {
@@ -2378,27 +2609,20 @@ export default function AnimaticEditor({
     const off = (list) => list.filter((c) => (c.layer_id || "") !== (lane.layerId || ""));
     let count = 0;
     if (lane.kind === "frames") {
-      count =
-        lane.only === "video"
-          ? pictureTrack.video.length
-          : pictureTrack.board.length + pictureTrack.image.length;
+      count = frames.filter((f) => frameTrack(f) === (lane.track || 0)).length;
     } else if (lane.kind === "text") count = on(texts).length;
     else if (lane.kind === "shape") count = on(shapes).length;
     else if (lane.kind === "image") count = on(overlays).length;
     if (!count) return;
 
-    const what =
-      lane.kind === "frames"
-        ? `${count} clip${count === 1 ? "" : "s"} from the picture sequence`
-        : `${count} clip${count === 1 ? "" : "s"} on ${lane.name}`;
+    const what = `${count} clip${count === 1 ? "" : "s"} on ${lane.name}`;
     if (!window.confirm(`Delete ${what}? Ctrl+Z puts them back.`)) return;
 
     if (lane.kind === "frames") {
-      // ⚠ THE SEQUENCE GETS SHORTER. Unlike hiding a row, deleting from the
-      // picture track takes its time with it — that is what deleting a clip has
-      // always done here, and the alternative (a hole that holds nothing) is what
-      // the eye is for.
-      setFrames((list) => list.filter((f) => (frameOrigin(f) === "video") !== (lane.only === "video")));
+      // Just this track. ⚠ AND NOTHING ELSE MOVES: a picture holds its own start,
+      // so emptying a track leaves the rows around it exactly where they were.
+      // (It used to shorten the whole sequence, because there was only one.)
+      setFrames((list) => list.filter((f) => frameTrack(f) !== (lane.track || 0)));
     } else if (lane.kind === "text") setTexts(off);
     else if (lane.kind === "shape") setShapes(off);
     else if (lane.kind === "image") setOverlays(off);
@@ -2409,13 +2633,18 @@ export default function AnimaticEditor({
   // whether it is pressed in the gutter or on the empty band of the track.
   // Which lane it was pressed on decides what gets added, and where.
   const pendingOverlayLane = useRef("");
+  // Which picture track a ＋ / drop is filling. Set at the gesture and read when
+  // the files arrive, the same way `pendingAudioLane` works.
+  const pendingPictureTrack = useRef(0);
 
   function addToLane(lane) {
     if (lane.kind === "frames") {
-      // The row decides which picker: the two rows of the picture track hold
-      // different kinds of clip, and the ＋ has to fill the row it is on.
-      if (lane.only === "video") videoInputRef.current?.click();
-      else imageInputRef.current?.click();
+      // ⚠ WHICH TRACK the picked files land on, remembered for the change
+      // handler. A picture track takes stills AND footage now, so there is one
+      // picker rather than one per row — `addAssets` routes by file type, which
+      // it always did.
+      pendingPictureTrack.current = lane.track || 0;
+      imageInputRef.current?.click();
       return;
     }
     if (lane.kind === "text") {
@@ -2455,17 +2684,25 @@ export default function AnimaticEditor({
    *   · an audio row is free-floating, so a time is exactly the time: the clip's
    *     `start_ms`.
    *
-   * ⚠ A CLIP IS NEVER CONVERTED BY BEING MOVED. Video lives on the Video row and
-   * stills on Images because that is what they ARE (`frameOrigin`), so a drop
-   * that would change that is refused with a reason rather than quietly doing
-   * something else. The timeline already refuses those mid-drag (`laneTakes`);
-   * this is the second half of the same rule, for the cases only the editor can
-   * see — which file an audio clip belongs to, what kind a dropped file is.
+   * ⚠ A PICTURE IS NO LONGER CONVERTED OR REFUSED BY WHICH ROW IT LANDS ON. The
+   * picture rows were once one sequence filtered by ORIGIN, so a video dropped on
+   * the Images row had to be refused — the row could not have held it. A row is a
+   * real TRACK now and which one a clip is on is yours to choose, so both kinds
+   * are welcome anywhere. The rule survives for the cases only the editor can
+   * see: which file an audio clip belongs to, and what kind a dropped file is.
    */
-  function frameIndexAt(ms) {
-    // The nearest CUT, including both ends: dropping past the last picture is
-    // an append, and dropping before the first is an insert at the head.
-    const edges = [...starts, totalMs];
+  function frameIndexAt(ms, track = null) {
+    // The nearest edit point ON THAT TRACK, including both ends: dropping past
+    // the last picture is an append, dropping before the first is an insert at
+    // the head. ⚠ ONE TRACK AT A TIME — with several of them the nearest cut in
+    // the whole project is usually on a row you were not pointing at.
+    const on =
+      track === null
+        ? pictureSpans.spans
+        : pictureSpans.spans.filter((s) => s.track === track);
+    if (!on.length) return frames.length;
+    const ordered = [...on].sort((a, b) => a.start - b.start);
+    const edges = [...ordered.map((s) => s.start), ordered[ordered.length - 1].end];
     let best = 0;
     let bestGap = Infinity;
     edges.forEach((t, i) => {
@@ -2475,7 +2712,13 @@ export default function AnimaticEditor({
         best = i;
       }
     });
-    return best;
+    // Back into an index in `frames`, which is what every caller wants: the clip
+    // that edit point sits in FRONT of, or the end of the list for the last one.
+    if (best >= ordered.length) {
+      const last = ordered[ordered.length - 1];
+      return last.index + 1;
+    }
+    return ordered[best].index;
   }
 
 
@@ -2601,16 +2844,18 @@ export default function AnimaticEditor({
         await overlayFromFrame(frames[from], lane, at);
         return;
       }
-      const isVideo = frameOrigin(frames[from]) === "video";
-      if (isVideo !== (lane.only === "video")) {
-        setNotice(
-          isVideo
-            ? "That is a video clip — it lives on the Video row."
-            : "That is a still — it lives on the Images row."
-        );
+      // ⚠ NOTHING IS REFUSED FOR BEING THE WRONG KIND ANY MORE. The picture rows
+      // were one sequence filtered by ORIGIN, so a video dragged onto the Images
+      // row had to be turned away — the row could not have held it. A row is a
+      // real TRACK now: dropping a clip on one MOVES IT THERE, kind and all.
+      const track = lane.track || 0;
+      if (frameTrack(frames[from]) !== track) {
+        patchFrame(asset.id, { track, start_ms: Math.max(0, Math.round(at)) });
+        selectOnly({ frame: asset.id });
+        setNotice(`Moved to ${lane.name} at ${formatTime(at)}.`);
         return;
       }
-      const to = frameIndexAt(at);
+      const to = frameIndexAt(at, track);
       // Dropping a clip either side of itself is where it already is.
       if (to === from || to === from + 1) return;
       reorder(from, to);
@@ -2676,20 +2921,16 @@ export default function AnimaticEditor({
         return;
       }
 
-      const i = frameIndexContaining(at);
+      // ⚠ ON THIS TRACK. A track can have a gap in it, and a drop into one must
+      // not quietly grade whatever is on the row underneath — same rule as "an
+      // effect lands on a CLIP, not at a moment".
+      const i = frameIndexContaining(at, lane.track || 0);
       if (i < 0) {
-        setNotice("There is no picture there to grade.");
+        setNotice("There is no picture on that row at that moment — drop it on the bar itself.");
         return;
       }
-      // ⚠ AND IT HAS TO BE ON THIS ROW. Images and Video are the same track
-      // drawn twice, filtered by origin — so at a moment where a still is
-      // playing the Video row shows a GAP, and dropping into that gap must not
-      // quietly grade the still on the row above. Same rule as "a clip cannot
-      // change what it is by being dropped somewhere else".
-      if (lane.only && (frameOrigin(frames[i]) === "video") !== (lane.only === "video")) {
-        setNotice("Nothing is on that row at that moment — drop it on the bar itself.");
-        return;
-      }
+      // (`frameIndexContaining` was already asked for THIS TRACK, so a drop into
+      // a gap has come back as -1 above and been refused with a reason.)
       addEffectToClip(entry, "frame", frames[i]);
       return;
     }
@@ -3173,12 +3414,12 @@ export default function AnimaticEditor({
         // Uploads are servable immediately, before the project is saved.
         url: `/animatics/${animaticId}/media/${item.upload_id}`,
       }));
-      setFrames((list) => {
-        const at = insertAt === undefined ? list.length : insertAt;
-        const next = [...list];
-        next.splice(at, 0, ...added);
-        return next;
-      });
+      // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
+      // starts and ripples what follows them on that row — a list splice alone
+      // would drop them on top of whatever already occupied that stretch.
+      setFrames((list) =>
+        insertPictures(list, added, insertAt, pendingPictureTrack.current || 0)
+      );
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
@@ -3218,12 +3459,12 @@ export default function AnimaticEditor({
           animaticId
         )
       );
-      setFrames((list) => {
-        const at = insertAt === undefined ? list.length : insertAt;
-        const next = [...list];
-        next.splice(at, 0, ...added);
-        return next;
-      });
+      // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
+      // starts and ripples what follows them on that row — a list splice alone
+      // would drop them on top of whatever already occupied that stretch.
+      setFrames((list) =>
+        insertPictures(list, added, insertAt, pendingPictureTrack.current || 0)
+      );
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
@@ -3790,6 +4031,32 @@ export default function AnimaticEditor({
    */
   onLoadedRef.current = (p) => {
     setSelectedId(p.frames?.[0]?.id || null);
+    // ⚠ EVERY PICTURE GETS AN EXPLICIT `start_ms` THE FIRST TIME IT IS OPENED,
+    // and this is the one place that happens.
+    //
+    // `null` means "after the last clip on my track" (`frameSpans`), which is what
+    // makes every animatic written before tracks lay out exactly as it did — the
+    // old running total, reproduced. But it is a RELATIVE answer: it depends on
+    // list order, so as soon as one clip is given a start of its own the nulls
+    // around it can be pushed on top of it. Filling them in once, from the
+    // placement the project already had, turns the document into what it always
+    // meant and takes that whole class of surprise off the table.
+    //
+    // It is a real edit and the autosave will persist it, which is intended: it is
+    // exactly the same timeline, written down. Done BEFORE `resetHistory` below,
+    // so it is not something the first Ctrl+Z can undo into a mixed state.
+    const loaded = p.frames || [];
+    if (loaded.some((f) => f.start_ms === null || f.start_ms === undefined)) {
+      const spans = frameSpans(loaded).spans;
+      const placed = loaded.map((f, i) => ({
+        ...f,
+        track: frameTrack(f),
+        start_ms: spans[i].start,
+      }));
+      setFrames(placed);
+      framesRef.current = placed;
+      p = { ...p, frames: placed };
+    }
     if (p.status === "running") setExportJob({ status: "running", progress: null });
     // RECOVER ANY PAID CLIP THAT NEVER LANDED. A render that finished while
     // this editor was closed is still a charge on someone's card, and the
@@ -5775,6 +6042,7 @@ export default function AnimaticEditor({
             selectionFloorMs={selectionFloorMs}
             onSeek={seek}
             onResize={(id, ms) => patchFrame(id, { duration_ms: ms })}
+            onFramesChange={patchFrames}
             // The head trim of the first picture writes `duration_ms` and
             // `in_ms` in ONE patch — see `startHeadTrim` in `Timeline.jsx`.
             onFrameChange={patchFrame}
@@ -5788,6 +6056,7 @@ export default function AnimaticEditor({
             onRemoveTrack={removeTrack}
             onClearLane={clearLane}
             onToggleHidden={toggleLaneHidden}
+            onSplitFootage={splitFootageOntoTrack}
             tool={tool}
             snapping={snapping}
             onRazor={razorAt}
@@ -6175,6 +6444,12 @@ export default function AnimaticEditor({
             <div className="an-layer-list">
               {[
                 {
+                  kind: "picture",
+                  ico: "🎞",
+                  label: "Picture track",
+                  note: "Another row for stills and footage — drawn OVER the tracks below it",
+                },
+                {
                   kind: "image",
                   ico: "🖼",
                   label: "Images",
@@ -6208,7 +6483,8 @@ export default function AnimaticEditor({
                   disabled={opt.disabled}
                   onClick={() => {
                     setLayerMenu(false);
-                    addLayer(opt.kind);
+                    if (opt.kind === "picture") addPictureTrack();
+                    else addLayer(opt.kind);
                   }}
                 >
                   <span className="an-layer-opt-ico">{opt.ico}</span>
@@ -6221,17 +6497,10 @@ export default function AnimaticEditor({
                 </button>
               ))}
 
-              {/* Listed because it's the obvious fifth thing to look for —
-                  saying "not yet" is better than leaving people hunting. */}
-              <button type="button" className="an-layer-opt" disabled>
-                <span className="an-layer-opt-ico">🎞</span>
-                <span>
-                  <strong>Video</strong>
-                  <span className="tiny muted">
-                    Not supported yet — an animatic is stills plus audio
-                  </span>
-                </span>
-              </button>
+              {/* ⚠ THE "Video — not supported yet" ENTRY IS GONE, because it is
+                  supported: a picture track holds footage and stills alike, and
+                  it is the first entry in this list. Leaving a disabled row
+                  saying otherwise would be the worse kind of stale copy. */}
             </div>
           </div>
         </div>

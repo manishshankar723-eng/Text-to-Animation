@@ -192,7 +192,55 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-19 — **A CLIP'S ROW WAS DECIDED ONCE AND FOR ALL, AND
+**Last updated:** 2026-08-20 — **THE PICTURE IS A STACK OF INDEPENDENT TRACKS
+NOW, NOT ONE SEQUENCE DRAWN TWICE** (user-reported, and the request was "do best
+for me, i make production level editor"). *"when i do video trim so i see my image
+layer conetnt move like snip … i want user move independaly each asstes/conetnt in
+layer"* — accurate, and true BY CONSTRUCTION: `frames` was one list laid end to
+end, so a clip's place was the SUM of the clips before it and changing any length
+moved every clip after it. The two picture rows made that look like a bug because
+they were that same sequence FILTERED BY ORIGIN (`lane.only` / `frameOrigin`) —
+they looked like two layers and shared one clock. ⚠ **A PICTURE CARRIES `track`
+AND `start_ms`** (`AnimaticFrame`): `frameSpans` places each clip on its own track,
+a higher track draws OVER a lower one, and **a gap is legal** — it shows whatever
+is underneath, or the letterbox colour. ⚠ **`sceneAt` RETURNS `pictures`, A STACK,
+BOTTOM TRACK FIRST**; `frame`/`frame_b`/`mix`/`transition` remain as the TOPMOST
+entry, DERIVED, because "which clip is at the playhead" is a different question
+from "what is on screen" and every existing caller wanted the first one. ⚠ **A
+MISSING `start_ms` MEANS "AFTER THE LAST CLIP ON MY TRACK"** — the compatibility
+hinge: every animatic written before this lays out exactly as the old running total
+did, and the editor fills the nulls in once on load. ⚠ **A TRANSITION IS
+TRACK-LOCAL AND NEEDS A REAL BUTT-CUT** — there is no edit point in a gap, so one
+across a hole is inert rather than wrong. ⚠ **NEITHER PLANNER MAY SKIP A MOMENT
+WITH NO PICTURE** any more (both used to `continue`): skipping one now makes the
+encoded video SHORTER than the timeline and pulls the audio out of sync from the
+first gap on. `render_frame` composites a stack onto the bar colour, `_draw_track`
+is one layer of it, and the still-cache key names every track. On the bar: **a
+plain trim (V) moves one clip and leaves a gap**, B ripples what follows on that
+track, N rolls the cut — and **the picture rows joined the cross-track drag**, so a
+shot moves between tracks like any other clip. **▶⇧ in a picture row's gutter puts
+the footage on a track of its own** without re-timing anything, which is the
+one-press way back to the old two-row view. New `tests/picture_tracks_check.py`
+(27) and `tests/editor_picture_tracks_check.py` (22, Chromium); `render_parity.py`
+gained a whole multi-track fixture (16 more checks — gaps, overlaps, a transition
+per track). **All 14 non-browser suites and all 5 browser suites pass.**
+
+⚠ **AND ONE FILE WAS LOST AND REBUILT DURING THIS WORK. READ THIS BEFORE YOU PATCH
+BY SEARCH TEXT.** A patch script anchored on `if (lane.kind === "frames") {` —
+which occurs THREE times in Timeline.jsx (`laneTakes`, `selectLane`, `renderLane`)
+— matched the first one and deleted ~900 lines. The repair attempt was
+`git checkout HEAD -- client/src/components/Timeline.jsx`, and the working tree
+held ~635 lines of UNCOMMITTED work beyond HEAD, none of it staged: git had
+nothing to give back (no dangling blobs, index blob == HEAD blob), and OneDrive
+version history did not have the file either. It was rebuilt from HEAD plus the
+minified bundle in `client/dist/` (built mid-session, so it carried the complete
+logic), with `editor_razor_check.py` / `editor_effects_drop_check.py` /
+`editor_lane_move_check.py` as the executable spec — all three pass, and the
+bundle came back within 1KB of its pre-loss size. **Two rules out of it: anchor a
+text patch on something that occurs ONCE and assert the count, and `git add -A`
+before touching a file you cannot re-derive.**
+
+**Previously:** **A CLIP'S ROW WAS DECIDED ONCE AND FOR ALL, AND
 THE EMPTY-ROW PROMPT FELL OFF THE BOTTOM OF ITS ROW** (both user-reported). A move
 drag on the timeline was purely HORIZONTAL, so the only way to change which layer
 a clip sat on was to drag it out of the Media pane again — which existed for
@@ -1281,7 +1329,111 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-19 (latest) — A CLIP COULD NOT BE MOVED TO ANOTHER LAYER, AND THE EMPTY-ROW PROMPT FELL OUT OF ITS ROW (both user-reported)
+### 2026-08-20 (latest) — THE PICTURE TRACK BECAME A STACK OF INDEPENDENT TRACKS (user-reported)
+
+> "when i do video trim so i see my image layer conetnt move like snip and same
+>  with image when i trim image so my video layer content move. i want user move
+>  independaly each asstes/conetnt in layer"
+
+**IT WAS TRUE BY CONSTRUCTION, WHICH IS WHY NO SMALLER FIX EXISTED.** `frames` was
+ONE list laid end to end: a clip's place was the sum of the clips before it, so
+changing any clip's length moved every clip after it. And the two picture rows
+("Images" / "Video") were that SAME sequence filtered by ORIGIN (`lane.only`,
+`frameOrigin`) — they looked like two independent layers and shared one clock, so
+trimming footage moved the stills on the row above. A filtered VIEW could never
+have fixed that.
+
+**THE MODEL.** A picture carries two new fields (`AnimaticFrame`):
+
+- `track` — 0 is the base, and a HIGHER NUMBER IS DRAWN OVER A LOWER ONE. So a gap
+  on an upper track shows whatever is on the track below, and a moment with nothing
+  on any track shows `settings.background`.
+- `start_ms` — where the clip sits. ⚠ **`None` MEANS "AFTER THE LAST CLIP ON MY
+  TRACK"**, and that is the compatibility hinge: every animatic written before this
+  carries no starts at all and sits on one track, so `frameSpans` lays it out
+  exactly as the old running total did, at every cut. The editor fills the nulls in
+  ONCE on load (`onLoadedRef`) so the document stops being relative — a mixture of
+  explicit and implicit starts is the one state that can surprise you.
+
+⚠ **`sceneAt` RETURNS `pictures`: A STACK, BOTTOM TRACK FIRST.** Every renderer
+walks it. `frame` / `frame_b` / `mix` / `transition` / `transition_params` are kept
+as the TOPMOST entry, **derived, never computed a second way** — they answer "which
+clip is at the playhead", which is what the Properties pane and the transport
+wanted all along and a different question from "what is on screen". On a project
+with one picture track the stack has exactly one entry and those ARE it, which is
+why nothing about an existing animatic resolves differently.
+
+⚠ **A GAP IS LEGAL, AND NEITHER PLANNER MAY SKIP IT.** Both used to
+`continue` past a moment with no picture — unreachable while the sequence had no
+holes. Skipping one now makes the encoded video SHORTER than the timeline and pulls
+the audio out of sync from the first gap onward. `plan_segments` emits a segment
+with an empty stack; `_ground` draws it as the bar colour.
+
+⚠ **A TRANSITION IS TRACK-LOCAL AND NEEDS A REAL BUTT-CUT.** `after_frame_id` names
+the outgoing clip; the incoming one is the next clip ON THE SAME TRACK whose start
+is exactly this one's end. `spans[from + 1]` was exact while the picture was one
+gapless sequence and is wrong twice over now — the next clip in the LIST may be on
+another track, and two clips can be neighbours without touching. No cut, no
+transition: inert rather than wrong, the same treatment one on the last clip gets.
+
+⚠ **ONE CLIP PER TRACK AT A TIME, AND THE LATER ONE WINS** where two overlap
+(`stackAt`). Free placement makes an overlap possible where a butt-jointed sequence
+could not; it is MARKED (`.tl-bar.clash`) rather than prevented, because refusing
+the drop would fight the pointer and silently choosing which picture plays is worse
+than saying so.
+
+**THE RENDERERS.** `render_frame` takes `pictures` — a list — and composites it onto
+the bar colour, `_draw_track` being one layer of it; `_picture_canvas` and
+`_transition_canvas` take the canvas UNDERNEATH them instead of making one, which
+is what lets an upper clip's chroma key or faded edge reveal the track below. With
+one picture on track 0 that is byte-for-byte what they always produced, which is
+why `effects_check`'s goldens still hold. `ProgramCanvas` walks the same stack per
+track (`drawTrack`), and `useMonitorVideo` cues every track's video — reading
+`scene.frame` alone would have left a clip on a lower track frozen. The still-cache
+key names EVERY track, or two moments differing only in what an upper track shows
+would share one rendered still.
+
+**THE BAR.** The picture rows are tracks (`pictureTracks`), placed by `frameSpans`
+like every other clip, and they share the ONE clip drag:
+
+- **V — a plain trim moves one clip and leaves a gap.** This is the fix, and it is
+  the default because it is the only trim that never touches a clip you were not
+  pointing at.
+- **B — ripple:** the trim, then everything after it on that track slides by the
+  same amount. The old behaviour, kept as a tool rather than as the only offer.
+- **N — rolling:** the neighbour absorbs it, so the cut moves and the track's length
+  does not. Falls back to a plain trim when there is no cut to roll against.
+- **The head grip is a REAL head trim now** on a picture, not "the cut before it" —
+  it has a start of its own — and on a video clip it moves `in_ms` with it.
+- **Pictures joined the cross-track drag** (`CROSS_LANE_KINDS`), and `MOVABLE` in
+  `selection.js` gained `frame`. `GROUPABLE` deliberately did NOT: `group_id` is not
+  a field on `AnimaticFrame`, so tagging a picture would write something the server
+  drops — that is a schema change, not a list change.
+- **▶⇧ in a picture row's gutter** puts that row's footage on a track of its own
+  without re-timing anything. The origin split was worth keeping; imposing it as a
+  MODEL was the bug. It reports how many transitions it stranded across the new
+  boundaries rather than letting them go quiet.
+- Hidden picture tracks: **blanked on track 0, dropped above it.** The two are the
+  SAME PICTURE where each applies (under track 0 there is only the bar colour), and
+  only one is safe in each case — blanking holds the time, which the export needs;
+  dropping reveals the track below, which an opaque card would hide. Twinned in
+  `server/animatics.py`. The tokens are `frames:<n>` now, so a picture row hidden
+  before this comes back visible once.
+
+**Verified:** `tests/picture_tracks_check.py` is new (27 checks) — colour cards, so
+it needs no files: it proves the placement, that a trim moves nothing else, that
+both planners carry a stack and emit the gap, and that the composite draws the
+higher track over the lower one, the lower one through a gap, and the bar colour
+through a hole — then encodes it and measures the LENGTH, which is what a skipped
+gap would break. `tests/editor_picture_tracks_check.py` is new (22 checks,
+Chromium) and drives every gesture with the mouse, asserting on **what MOVED** — the
+bug was never about the clip you were dragging. `render_parity.py` gained a
+multi-track fixture (36 sampled moments + 16 rules: gaps, an overlap, a transition
+per track, one across a hole). `hidden_lane_check.py` and `editor_lane_move_check.py`
+were updated for the new rows. **All 14 non-browser suites and all 5 browser suites
+pass, and `npm run build` is clean.**
+
+### 2026-08-19 — A CLIP COULD NOT BE MOVED TO ANOTHER LAYER, AND THE EMPTY-ROW PROMPT FELL OUT OF ITS ROW (both user-reported)
 
 The report, in the user's words:
 
@@ -10055,32 +10207,36 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
-- [ ] **THE PICTURE TRACK IS ONE SEQUENCE, AND THE USER WANTS TWO — DECIDE
-      WHETHER TO BUILD THAT.** Reported 2026-08-19, alongside the cross-lane move
-      that shipped: *"when i do video trim so i see my image layer conetnt move
-      like snip and same with image when i trim image so my video layer content
-      move. i want user move independaly each asstes/conetnt in layer"*. The
-      report is accurate and the behaviour is by construction: `frames` is ONE
-      list of durations laid end to end (`frameSpans` / `frame_spans`), and the
-      Images and Video rows are that same track drawn twice, filtered by ORIGIN
-      (`lane.only`, `laneShows`). So a ripple trim on either row moves everything
-      after it on BOTH rows — there is no second clock for them to keep. Nothing
-      in the cross-lane work touches this, and it deliberately refuses the picture
-      rows as a drop destination for exactly this reason.
-      **What a fix costs, honestly:** giving a picture its own `start_ms` means
-      changing (a) `frameSpans` and its Python twin `frame_spans`, (b) `sceneAt` /
-      `scene_at` and the ordering they composite in, (c) the TRANSITION model,
-      which anchors to *adjacent frames in the sequence* and has no meaning
-      between two clips that merely overlap in time, (d) `plan_segments` and the
-      exporter's stretch-finding, (e) `AnimaticFrame` in `server/schemas.py`, and
-      (f) the ripple / rolling tools, which are defined in terms of a sequence.
-      It is a new architecture for the picture track, not a bug fix, and it must
-      not be started without deciding what a GAP on the picture track shows
-      (black? the row below?) — which is the question that decides whether this
-      is "two video tracks that composite" or "one track that can have holes".
-      **Until it is built, the honest answer to the user is the ROLLING tool (N):**
-      it moves a cut and lets the next picture absorb it, so nothing after the cut
-      shifts. Say that rather than implying the rows are independent.
+- [x] **THE PICTURE TRACK IS A STACK OF INDEPENDENT TRACKS — DONE 2026-08-20.**
+      A picture carries `track` and `start_ms`; a plain trim moves one clip; a gap
+      shows the track underneath; transitions are track-local. See the Work Log,
+      and `picture_tracks_check.py` / `editor_picture_tracks_check.py`. The question
+      this item asked ("what does a gap show?") was answered "the track below it,
+      and the letterbox colour when there is nothing below" — which is what made
+      the rest of it fall out.
+- [ ] **EYES ON THE PICTURE TRACKS, IN THE REAL EDITOR.** Two browser suites drive
+      every gesture and assert on what moved; neither can say whether the bar READS
+      as a stack. What needs looking at: does a GAP look like a deliberate hole
+      rather than a rendering fault (it is bare lane background — it may want a
+      hatch); is `.tl-bar.clash` noticeable enough when two clips overlap, given
+      only the later one plays; does the ▶⇧ button read as "split this row" without
+      its tooltip; and does the row NAMING ("Pictures", "Pictures 2") make sense
+      beside "Text"/"Text 2" once a project has three of them. Also: a project
+      opening for the first time gets its `start_ms` filled in, which marks it
+      dirty and triggers an autosave — worth watching once that the save lands and
+      the timeline does not flicker.
+- [ ] **DECIDE WHETHER A PICTURE CAN BE GROUPED.** `MOVABLE` gained `frame` and
+      `GROUPABLE` deliberately did not, because `group_id` is not a field on
+      `AnimaticFrame` — tagging a picture would write something the server drops.
+      Now that pictures move like every other clip, "tie this shot to the caption
+      over it" is a reasonable thing to want, and it is a one-field schema change
+      plus `groupSelection`. Not started; noted because the asymmetry will look
+      like an oversight to the next reader.
+- [ ] **RIPPLE-DELETE.** Deleting a picture now leaves a GAP, which is correct and
+      consistent with every other clip kind — but "delete this shot and close up"
+      was free when the track was a sequence and is now impossible without dragging.
+      The natural home is the RIPPLE tool (B): with it armed, Delete closes the gap.
+      Perhaps ten lines in `deleteSelection`, and it needs the tool's hint updating.
 - [ ] **EYES ON THE CROSS-LANE DRAG.** `tests/editor_lane_move_check.py` proves
       the clip lands on the right row and that only the row changed, and says
       nothing about how the gesture FEELS. What needs looking at: does the ghost

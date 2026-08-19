@@ -504,8 +504,11 @@ def main():
                 return 1
 
             keys = page.evaluate("() => window.__probe.laneKeys()")
+            # ⚠ `frames:0`, not `frames`. The picture rows are numbered TRACKS now
+            # — one row per track, keyed by its number — where they used to be one
+            # sequence drawn twice and filtered by origin. See `pictureTracks`.
             wanted = ["text:", "L_txt2", "shape:", "L_shp2", "L_img1", "L_img2",
-                      "frames", "u4", "L_aud1", "L_aud2"]
+                      "frames:0", "u4", "L_aud1", "L_aud2"]
             missing = [k for k in wanted if k not in keys]
             check("every row this test drags between is on the timeline",
                   not missing, f"missing {missing} - have {keys}")
@@ -618,10 +621,10 @@ def main():
             # shape dragged onto it must stay a shape, on its own row.
             print("\nA clip cannot change what it is by being dropped somewhere else")
             lane_before = page.evaluate("() => window.__probe.laneOf('shape:s1')")
-            missed = drag_to_lane(page, ".tl-shapes .tl-shape", "frames")
+            missed = drag_to_lane(page, ".tl-shapes .tl-shape", "frames:0")
             lane_after = page.evaluate("() => window.__probe.laneOf('shape:s1')")
             check(
-                "a shape dragged onto the picture row stays on its shapes row",
+                "a shape dragged onto a picture track stays on its shapes row",
                 not missed and lane_after == lane_before,
                 missed or f"{lane_before} -> {lane_after}",
             )

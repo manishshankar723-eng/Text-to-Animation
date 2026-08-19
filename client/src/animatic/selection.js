@@ -35,16 +35,27 @@ export const KINDS = ["frame", "text", "shape", "overlay", "audio"];
 /**
  * Which kinds can be MOVED along the timeline as a selection.
  *
- * ⚠ Not `frame`. The picture sequence is a flow — a frame has no `start_ms`, it
- * starts where the one before it ended — so "move this picture 2 seconds later"
- * is not an edit that exists here; you re-time the hold or reorder the strip. A
- * marquee may still select pictures (to delete them, or to see what is in
- * range); a drag simply leaves them where they are.
+ * ⚠ `frame` IS IN THIS LIST NOW, and it was the one exclusion. The picture used
+ * to be a FLOW — a frame had no `start_ms`, it started where the one before it
+ * ended — so "move this picture 2 seconds later" was not an edit that existed:
+ * you re-timed the hold or reordered the strip, and a marquee could select
+ * pictures only in order to delete them. Pictures are placed freely on numbered
+ * TRACKS now (`frameSpans` in scene.js), so a drag moves them like anything else
+ * and a mixed selection travels together.
  */
-export const MOVABLE = ["text", "shape", "overlay", "audio"];
+export const MOVABLE = ["frame", "text", "shape", "overlay", "audio"];
 
-/** The kinds that can carry a `group_id`. Same list, and for the same reason. */
-export const GROUPABLE = MOVABLE;
+/**
+ * The kinds that can carry a `group_id`.
+ *
+ * ⚠ STILL WITHOUT `frame`, and this is NOT the same list any more. A group is a
+ * thing you tie together so it moves and deletes as one, and the reason to leave
+ * pictures out has nothing to do with whether they can move: `group_id` is a
+ * field on the caption / shape / overlay / audio schemas and not on
+ * `AnimaticFrame`, so tagging a picture would write a field the server drops.
+ * Adding it is a schema change, not a list change.
+ */
+export const GROUPABLE = ["text", "shape", "overlay", "audio"];
 
 /** One item flattened to a string, for Sets and React keys. */
 export function selKey(kind, id) {

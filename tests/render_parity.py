@@ -37,6 +37,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from animatic_render import (
     MATTE_KINDS,
     TRANSITION_KINDS,
+    frame_spans,
     is_animated,
     scene_at,
     scene_signature,
@@ -349,16 +350,84 @@ END_MS = 8600
 
 
 # ---------------------------------------------------------------------------
+# The MULTI-TRACK fixture — the shape the picture track took on when it stopped
+# being one sequence
+# ---------------------------------------------------------------------------
+# ⚠ EVERY WAY THE NEW PLACEMENT CAN GO WRONG, in one project:
+#   · a GAP on the base track (1500–2000), which the old model could not express
+#     at all and which must resolve to NO PICTURE rather than to a stretched
+#     neighbour;
+#   · a clip on track 1 sitting OVER that gap and over a clip below it, so the
+#     stack has to come back bottom-first and the topmost has to be the one
+#     `frame` names;
+#   · a clip with `start_ms` LEFT OUT on each track, which means "after the last
+#     one on my track" and is the whole compatibility hinge;
+#   · an OVERLAP on one track (t2 starts inside t1), where the later clip wins;
+#   · a TRANSITION on each track, one of which does NOT have a cut under it (its
+#     neighbour is across a gap) and must therefore be inert.
+PICTURE_TRACKS = {
+    "frames": [
+        # --- track 0 -------------------------------------------------------
+        {"id": "b1", "duration_ms": 1500, "start_ms": 0, "track": 0},
+        # ⚠ A 500ms HOLE (1500–2000). Track 1 has run out by 1800, so 1800–2000 is
+        # a moment with NOTHING ON ANY TRACK — the case the old model could not
+        # express and the one both evaluators have to answer the same way.
+        {"id": "b2", "duration_ms": 1000, "start_ms": 2000, "track": 0},
+        # butts up against b2 → a real cut at 3000, so a transition can live there
+        {"id": "b3", "duration_ms": 1000, "start_ms": 3000, "track": 0,
+         "keyframes": {"opacity": [{"t": 0, "v": 0.25}, {"t": 1000, "v": 1.0}]}},
+        # no start: after the last clip on track 0 → 4000
+        {"id": "b4", "duration_ms": 800, "track": 0},
+        # --- track 1, drawn OVER track 0 -----------------------------------
+        {"id": "t1", "duration_ms": 1200, "start_ms": 0, "track": 1,
+         "keyframes": {"scale": [{"t": 0, "v": 1.0}, {"t": 1200, "v": 1.5}]}},
+        # ⚠ STARTS INSIDE t1 — an overlap on one track. The later clip wins.
+        {"id": "t2", "duration_ms": 400, "start_ms": 800, "track": 1},
+        # no start on this track either → after the last of them, at 1200
+        {"id": "t3", "duration_ms": 600, "track": 1},
+    ],
+    "texts": [],
+    "shapes": [],
+    "overlays": [],
+    "transitions": [
+        # ON A REAL CUT (b2 ends where b3 starts) — this one plays.
+        {"id": "x1", "after_frame_id": "b2", "kind": "dissolve", "duration_ms": 400},
+        # ACROSS A GAP (b1 ends at 1500, nothing on track 0 starts there) — inert.
+        {"id": "x2", "after_frame_id": "b1", "kind": "wipe", "duration_ms": 400},
+        # ON A CUT ON THE TRACK ABOVE (t2 ends at 1200, t3 starts there).
+        {"id": "x3", "after_frame_id": "t2", "kind": "dissolve", "duration_ms": 300},
+    ],
+}
+# Sampled around every boundary above: both edges of the hole, the overlap, all
+# three transition windows, and past the end of each track.
+TRACK_TIMES = [
+    0, 799, 800, 801, 1049, 1050, 1199, 1200, 1201, 1349, 1350, 1499,
+    1500, 1501, 1699, 1700, 1799, 1800, 1801, 1999, 2000, 2001, 2799, 2800,
+    2801, 2999, 3000, 3001, 3199, 3200, 3999, 4000, 4001, 4799, 4800, 5000,
+]
+
+
+# ---------------------------------------------------------------------------
 # Run both sides
 # ---------------------------------------------------------------------------
 HARNESS = """
-import { sceneAt, isAnimated, sceneSignature } from %(scene)s;
-const { project, times, endMs } = JSON.parse(process.argv[2]);
+import { sceneAt, isAnimated, sceneSignature, frameSpans } from %(scene)s;
+const { project, times, endMs, tracks, trackTimes } = JSON.parse(process.argv[2]);
 const out = times.map((t) => {
   const s = sceneAt(project, t, endMs);
   return { scene: s, signature: sceneSignature(s) };
 });
-process.stdout.write(JSON.stringify({ frames: out, animated: isAnimated(project) }));
+// The MULTI-TRACK fixture, through the same bridge — see PICTURE_TRACKS below.
+const stacked = trackTimes.map((t) => {
+  const s = sceneAt(tracks, t, null);
+  return { scene: s, signature: sceneSignature(s) };
+});
+process.stdout.write(JSON.stringify({
+  frames: out,
+  animated: isAnimated(project),
+  stacked,
+  trackSpans: frameSpans(tracks.frames).spans,
+}));
 """
 
 
@@ -376,7 +445,15 @@ def run_node() -> dict:
         path = os.path.join(tmp, "harness.mjs")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(HARNESS % {"scene": json.dumps(_file_url(SCENE_JS))})
-        payload = json.dumps({"project": PROJECT, "times": TIMES, "endMs": END_MS})
+        payload = json.dumps(
+            {
+                "project": PROJECT,
+                "times": TIMES,
+                "endMs": END_MS,
+                "tracks": PICTURE_TRACKS,
+                "trackTimes": TRACK_TIMES,
+            }
+        )
         proc = subprocess.run(
             ["node", path, payload],
             capture_output=True, text=True, encoding="utf-8", timeout=60,
@@ -856,6 +933,71 @@ check("an un-keyframed clip resolves to its stored values untouched",
        plain["shapes"][0]["opacity"]) == (0.25, 45, 0.6))
 check("an un-keyframed frame resolves to an identity transform",
       (plain["frame"]["scale"], plain["frame"]["x"], plain["frame"]["y"]) == (1.0, 0.5, 0.5))
+
+# ---------------------------------------------------------------------------
+print("\nThe PICTURE TRACKS — a stack, its gaps, and a transition per track")
+# ⚠ THE WHOLE SCENE IS COMPARED, `pictures` included, so this covers the stacking
+# order, every resolved value on every track, and the render key.
+stack_bad = 0
+stack_detail = ""
+for i, t in enumerate(TRACK_TIMES):
+    want = normalise(js["stacked"][i]["scene"])
+    got = normalise(scene_at(PICTURE_TRACKS, t, None))
+    if want != got:
+        stack_bad += 1
+        if not stack_detail:
+            stack_detail = f"at t={t}ms — {first_difference(want, got)}"
+    want_sig = js["stacked"][i]["signature"]
+    got_sig = scene_signature(scene_at(PICTURE_TRACKS, t, None))
+    if want_sig != got_sig:
+        stack_bad += 1
+        if not stack_detail:
+            stack_detail = f"signature at t={t}ms:\n    js: {want_sig}\n    py: {got_sig}"
+check(f"both evaluators agree at all {len(TRACK_TIMES)} sampled moments",
+      stack_bad == 0, stack_detail)
+
+check("and they place every clip identically",
+      normalise(js["trackSpans"]) == normalise(frame_spans(PICTURE_TRACKS["frames"])[0]),
+      str(frame_spans(PICTURE_TRACKS["frames"])[0]))
+
+# The rules the fixture exists to pin, stated as assertions of their own so a
+# failure names the RULE rather than "the scenes differ at 1500ms".
+at = lambda t: scene_at(PICTURE_TRACKS, t, None)  # noqa: E731
+
+spans_of = frame_spans(PICTURE_TRACKS["frames"])[0]
+check("a clip with no start_ms lands after the last one on ITS track",
+      [s for s in spans_of if s["index"] == 3][0]["start"] == 4000)
+check("…and the one on the track above lands after ITS track's last clip, not that one",
+      [s for s in spans_of if s["index"] == 6][0]["start"] == 1200)
+
+check("a moment with nothing on ANY track resolves to NO picture",
+      at(1900)["pictures"] == [] and at(1900)["frame"] is None)
+check("…and a gap on the base track alone still shows the track above it",
+      [p["frame"]["index"] for p in at(1700)["pictures"]] == [6])
+
+check("the stack comes back BOTTOM TRACK FIRST",
+      [p["track"] for p in at(1000)["pictures"]] == [0, 1])
+check("…and `frame` is the topmost of them",
+      at(1000)["frame"]["index"] == 5)
+
+check("where two clips overlap on one track, the LATER one wins",
+      [p["frame"]["index"] for p in at(1000)["pictures"] if p["track"] == 1] == [5])
+
+check("a transition on a real cut plays",
+      at(2900)["pictures"][0]["transition"] == "dissolve")
+check("…and it is the OUTGOING clip that `frame` names, for the whole window",
+      at(3100)["pictures"][0]["frame"]["index"] == 1)
+check("a transition ACROSS A GAP is inert — there is no edit point in a hole",
+      all(p["transition"] != "wipe"
+          for t in (1300, 1400, 1500, 1600, 1700) for p in at(t)["pictures"]))
+check("a transition on the track ABOVE plays on that track and no other",
+      [(p["track"], p["transition"]) for p in at(1150)["pictures"]]
+      == [(0, None), (1, "dissolve")])
+
+check("the render key names every track, so two stacks are two stills",
+      scene_signature(at(1000)) != scene_signature(at(1400)))
+check("…and a moment with no picture at all signs as none",
+      scene_signature(at(1900)).startswith("f-"))
 
 print()
 if failures:

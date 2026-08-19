@@ -95,6 +95,45 @@
   z-index: 3;
 }
 
+/* --- "Put the footage on its own track" ----------------------------------- */
+/* Sits beside the eye on a picture row, and ONLY while that row is carrying both
+   stills and footage — so it is a one-time action that removes its own reason to
+   exist. Styled as the eye's sibling rather than as a primary control: it is a
+   convenience for the layout people had before picture tracks, not something the
+   editor needs you to press. See `onSplitFootage` in Timeline.jsx. */
+.tl-layer-split {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 0.25rem;
+  font-size: 0.6rem;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tl-layer-split:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+/* --- A picture overlapping its neighbour ---------------------------------- */
+/* ⚠ TWO CLIPS CAN OVERLAP ON ONE PICTURE TRACK, which the old butt-jointed
+   sequence made impossible. Only one of them can be on screen (`stackAt` takes
+   the one that starts later), so the other is not playing — and a bar that looks
+   normal while drawing nothing is the worst outcome. Marked rather than
+   prevented: refusing the drop would fight the pointer mid-drag, and silently
+   deciding which picture wins is not a decision to make on someone's behalf.
+
+   A dashed warning edge, matching `.over-end` — the other "this is on the
+   timeline but not in the film" state — so the two read as one idea. */
+.tl-bar.clash {
+  outline: 1px dashed var(--warn);
+  outline-offset: -1px;
+  z-index: 4;
+}
+
 /* --- Moving a clip to another row ---------------------------------------- */
 /* A MOVE drag has a vertical half now: let go over another row of the same kind
    and the clip goes there (`laneMoveTarget` in Timeline.jsx). Three marks say so
@@ -142,6 +181,7 @@
 /* The clip being carried off this row. Dimmed rather than hidden: a gap where it
    used to be would make the row it is LEAVING look edited already, and the move
    can still be abandoned by dragging back. */
+.tl-bar.lifting,
 .tl-text.lifting,
 .tl-shape.lifting,
 .tl-overlay.lifting,

@@ -30,3 +30,4 @@ uploads/
 # OS
 Thumbs.db
 .DS_Store
+*_probe_failed.png

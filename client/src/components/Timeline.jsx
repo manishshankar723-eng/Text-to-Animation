@@ -75,8 +75,8 @@ import {
   ANIMATABLE,
   clipKind,
   DEFAULT_SPEED,
-  frameOrigin,
   frameSpans,
+  frameTrack,
 } from "../animatic/scene.js";
 import {
   MAX_TRANSITION_MS,
@@ -117,14 +117,14 @@ const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overla
 // `renderLane` drawing exactly the same clips.
 const LANE_ICON = { frames: "🖼", image: "🖼", text: "T", shape: "◆", audio: "♪" };
 const LANE_HINT = {
-  frames: "Your frames, in order — this is the video",
+  frames: "A picture track — stills and footage, each placed on its own",
   image: "Pictures composited OVER the video, timed on their own",
   text: "On-screen text, timed on its own",
   shape: "Shapes drawn over the picture, timed on their own",
   audio: "An audio track, mixed on export",
 };
 const LANE_ADD = {
-  frames: "Add images to the end of the sequence",
+  frames: "Add pictures to the end of this track",
   image: "Add a picture to this layer",
   text: "Add a text clip at the playhead",
   shape: "Add a shape at the playhead",
@@ -134,16 +134,20 @@ const LANE_ADD = {
 /**
  * Does this picture row draw that clip?
  *
- * The picture track is ONE sequence drawn as two rows — the stills and the
- * footage — and `lane.only` is which. The split is by ORIGIN (`frameOrigin`), not
- * by kind: by kind, every board shot that has been animated with Veo would jump
- * to the footage row and cut the board's sequence into islands. A row with no
- * `only` is the whole track, which is what every other workspace and every
- * project without footage draws.
+ * ⚠ BY TRACK, WHICH IS A PROPERTY OF THE CLIP. It used to be by ORIGIN — the
+ * picture was ONE sequence laid end to end and was drawn as two rows, "the
+ * stills" and "the footage", filtered by where each clip came from. Those rows
+ * looked independent and were not: every clip's place was the sum of the clips
+ * before it, so trimming footage moved the stills. That is the bug this whole
+ * change exists for, and a filtered VIEW could never have fixed it.
+ *
+ * A row is now a real track (`lane.track`), a clip says which one it is on, and
+ * moving it between them is a drag (`laneMoveTarget`). Where a clip CAME from is
+ * still worth knowing and is still `frameOrigin` — it is what files the Media
+ * pane's three sections — but it no longer decides where the clip is drawn.
  */
 function laneShows(lane, frame) {
-  if (!lane.only) return true;
-  return (lane.only === "video") === (frameOrigin(frame) === "video");
+  return frameTrack(frame) === (lane.track || 0);
 }
 
 export function formatTime(ms) {
@@ -314,6 +318,19 @@ export default function Timeline({
   // window as well or the trim throws away timeline and keeps the same footage.
   // Falls back to `onResize` when it isn't given, so the length still lands.
   onFrameChange,
+  /**
+   * PICTURE-CLIP EDITS FROM THIS BAR, as one call: `(patches)` where each patch
+   * is `{ id, …fields }`.
+   *
+   * ⚠ SEVERAL CLIPS AT ONCE, ON PURPOSE. A picture edit is rarely one clip any
+   * more: a RIPPLE trim moves everything after it on that track, a ROLLING trim
+   * gives the neighbour what it takes, and a group move carries the selection.
+   * One call is one `setFrames`, which is one render and one press of Ctrl+Z —
+   * forty separate writes would be forty of each. `onFrameChange` is still there
+   * for the single-clip callers that predate tracks (the Properties pane, the
+   * Media pane's duration field).
+   */
+  onFramesChange,
   onTextChange,
   onShapeChange,
   onOverlayChange,
@@ -364,6 +381,20 @@ export default function Timeline({
   // row — see `toggleLaneHidden`. The lane carries the current state (`hidden`)
   // and its own token (`vis`); this file never works either out.
   onToggleHidden,
+  /**
+   * "PUT THE FOOTAGE ON ITS OWN TRACK" — offered on a picture row that is
+   * carrying both, and on no other row.
+   *
+   * ⚠ IT EXISTS BECAUSE THE OLD LAYOUT WAS WORTH KEEPING, not because the model
+   * needs it. The picture rows used to be split by ORIGIN — one sequence drawn as
+   * "Images" and "Video" — which is what made trimming footage move the stills. A
+   * row is a real track now, and a project opens on ONE of them because that
+   * reproduces its existing edit exactly. This is the one press that gets the
+   * two-row view back, and it only ever MOVES clips: every one keeps the moment it
+   * plays at. The editor owns what it does (`splitFootageOntoTrack`); the button
+   * appears only while `lane.mixed` says there is something to split.
+   */
+  onSplitFootage,
   // The active tool (V/C/B/N/H/Z) changes what a click and an edge-drag DO.
   tool = "select",
   snapping = true,
@@ -405,9 +436,13 @@ export default function Timeline({
   const gutterRef = useRef(null); // the labels, moved by hand when it scrolls
   // While an edge or a clip is being dragged we show a DRAFT, so things move
   // with the pointer without writing to the project on every mouse event.
-  const [draft, setDraft] = useState(null); // { id, durationMs }
-  // Text and shape clips behave identically, so ONE draft covers both; `kind`
-  // says which list the change is written back to when the pointer comes up.
+  // ONE DRAFT FOR EVERY CLIP ON THE BAR — a picture, a caption, a shape, an
+  // overlay. `kind` says which list the change is written back to when the
+  // pointer comes up. ⚠ PICTURES USED TO HAVE A SECOND, SMALLER ONE of their own
+  // (`draft`, carrying a duration and nothing else), because a picture had no
+  // start to draft: its place was the sum of the clips before it. It has a start
+  // now, so it drafts like everything else and there is one implementation of
+  // move / trim-head / trim-tail instead of three.
   const [clipDraft, setClipDraft] = useState(null); // { kind, id, startMs, durationMs }
   // One audio clip being dragged. `mode` says by which edge — "move" slides the
   // whole clip, "end" pulls the right edge, "start" pulls the LEFT one, which is
@@ -589,7 +624,58 @@ export default function Timeline({
   // actually work on. The header already reports it ("audio 0:59 — video ends
   // early"), and so does the transport clock past that point.
 
-  const durationOf = (f) => (draft && draft.id === f.id ? draft.durationMs : f.duration_ms);
+  // --- Where every picture sits --------------------------------------------
+  // ⚠ ONE EVALUATOR, `frameSpans`, AND IT IS THE SAME ONE THE MONITOR AND THE
+  // EXPORTER USE. The bars used to be placed by a running total written out here,
+  // which was a second opinion about the timeline and is now flatly wrong: a clip
+  // is placed by its own `start_ms` on its own track, and adding up the clips
+  // before it answers a question nobody is asking.
+  //
+  // ⚠ NO `endMs`. Holding the last picture out to the end of a long audio track is
+  // a RENDER rule; drawing the last bar stretched to the end of the music would be
+  // a lie about how long that clip is.
+  const savedSpans = frameSpans(frames).spans;
+  const savedSpanOf = new Map(frames.map((f, i) => [f.id, savedSpans[i]]));
+
+  /**
+   * Where one picture is DRAWN — its saved span, with any drag in flight applied.
+   *
+   * Five cases, and every one of them is a thing a picture drag can do:
+   *   the clip being dragged     — its draft, including which TRACK it would land
+   *                                on (`toTrack`).
+   *   the clip a ROLLING trim is giving to / taking from — `neighbour`.
+   *   every other selected clip on a GROUP move — shifted by the same delta.
+   *   everything after a RIPPLE trim on that track — shifted by the same delta.
+   *   anything else              — exactly what is saved.
+   */
+  const picBox = (f) => {
+    const base = savedSpanOf.get(f.id) || { start: 0, end: 0, track: 0 };
+    const saved = { start: base.start, duration: base.end - base.start, track: base.track };
+    const d = clipDraft?.kind === "frames" ? clipDraft : null;
+    if (!d) return saved;
+    if (d.id === f.id) {
+      return { start: d.startMs, duration: d.durationMs, track: d.toTrack ?? base.track };
+    }
+    if (d.neighbour && d.neighbour.id === f.id) {
+      return { ...saved, start: d.neighbour.startMs, duration: d.neighbour.durationMs };
+    }
+    if (d.group && d.deltaMs && isSel("frame", f.id)) {
+      return { ...saved, start: Math.max(0, base.start + d.deltaMs) };
+    }
+    if (d.rippleMs && base.track === d.track && base.start >= d.rippleFromMs) {
+      return { ...saved, start: Math.max(0, base.start + d.rippleMs) };
+    }
+    return saved;
+  };
+  const durationOf = (f) => picBox(f).duration;
+  const startOf = (f) => picBox(f).start;
+  // The frames as they are being DRAWN — what the transition badges and the snap
+  // targets are built from, so a badge travels with its cut mid-drag instead of
+  // sitting where the cut used to be until the pointer comes up.
+  const draftedFrames = frames.map((f) => {
+    const box = picBox(f);
+    return { ...f, start_ms: box.start, duration_ms: box.duration, track: box.track };
+  });
   // The three numbers that place ONE audio clip, each showing the draft while
   // that clip is being dragged. Measured with NO total on purpose: the timeline
   // spans whatever the audio needs, so clamping a clip to the span here would
@@ -634,12 +720,12 @@ export default function Timeline({
   const SNAP_PX = 8;
   const snapTargets = () => {
     const points = [0, span, timeMs];
-    let clock = 0;
-    for (const f of frames) {
-      points.push(clock);
-      clock += f.duration_ms || 0;
+    // Every picture's two edges, on every track — read from the same placement
+    // the bars are drawn at, so an edge snaps to the cut you can SEE rather than
+    // to where a running total thinks it is.
+    for (const f of draftedFrames) {
+      points.push(f.start_ms, f.start_ms + f.duration_ms);
     }
-    points.push(clock);
     for (const c of texts) points.push(c.start_ms, c.start_ms + c.duration_ms);
     for (const s of shapes) points.push(s.start_ms, s.start_ms + s.duration_ms);
     for (const o of overlays) points.push(o.start_ms, o.start_ms + o.duration_ms);
@@ -727,11 +813,15 @@ export default function Timeline({
   /**
    * WHICH ROWS TAKE WHAT.
    *
-   * ⚠ A CLIP CANNOT CHANGE WHAT IT IS by being dropped somewhere else. The
-   * picture track is drawn as two rows filtered by origin (`laneShows`), so a
-   * video clip belongs on Video and a still on Images — dropping one on the
-   * other row is refused, not silently converted. Text and shape rows are not
-   * drop targets at all: nothing in the Media pane is a caption or a rectangle.
+   * ⚠ A PICTURE TRACK TAKES BOTH STILLS AND FOOTAGE. It used to refuse the
+   * wrong one, because the two picture rows were one sequence filtered by ORIGIN
+   * and a clip's row was read off the clip rather than chosen — so "drop a video
+   * on the Images row" was a promise the row could not keep. A row is a real
+   * TRACK now and which one a clip sits on is yours to decide, so both are
+   * welcome on any of them.
+   *
+   * Text and shape rows are still not drop targets at all: nothing in the Media
+   * pane is a caption or a rectangle.
    */
   function laneTakes(lane, kind) {
     if (!kind) return false;
@@ -750,10 +840,7 @@ export default function Timeline({
     // unlike "fx" there is nothing left for `dropAsset` to refuse afterwards,
     // because every audio row means the same thing to one.
     if (kind === "afx") return lane.kind === "audio";
-    if (lane.kind === "frames") {
-      if (kind === "files") return true;
-      return lane.only === "video" ? kind === "video" : kind === "image";
-    }
+    if (lane.kind === "frames") return kind === "files" || kind === "image" || kind === "video";
     // An IMAGE LAYER is a picture composited over the video, not a place in the
     // sequence — so it takes a still and makes a copy of it up there. ⚠ It
     // refused stills at first and that read as a broken row (user-reported,
@@ -1088,168 +1175,64 @@ export default function Timeline({
     startMarquee(e);
   }
 
-  // --- Frame edge dragging (the edit point between two pictures) -----------
-  // ROLLING (N) vs RIPPLE (B, and the default): a ripple moves the cut and
-  // everything after it slides — the video gets longer or shorter. A rolling
-  // edit gives to one frame exactly what it takes from the next, so the cut
-  // moves but the video stays EXACTLY as long. That's the whole distinction,
-  // and it's why rolling refuses at the last frame: there is nothing to absorb it.
-  function startResize(e, frame, index) {
-    // The edit point between two pictures, and the blade beats it too.
-    if (razorPress(e, "frame", frame.id)) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const next = frames[index + 1];
-    const rolling = tool === "rolling" && Boolean(next);
-    dragRef.current = {
-      id: frame.id,
-      startX: e.clientX,
-      startMs: frame.duration_ms,
-      // Where this cut sits, so the drag can snap against the other cuts.
-      edgeMs: frames.slice(0, index + 1).reduce((sum, f) => sum + (f.duration_ms || 0), 0),
-      rolling,
-      nextId: rolling ? next.id : null,
-      nextMs: rolling ? next.duration_ms : 0,
-    };
-    setDraft({ id: frame.id, durationMs: frame.duration_ms });
+  // --- Trimming a picture --------------------------------------------------
+  /**
+   * WHAT THE THREE TOOLS DO TO A PICTURE'S EDGE, now that a clip has a start of
+   * its own. All three go through the one clip drag (`startClipDrag`); this is
+   * where the difference between them is written down.
+   *
+   *   V (select) — a PLAIN TRIM. The edge moves and nothing else does, which is
+   *       what "each layer independent" means and was impossible before: the
+   *       picture was one butt-jointed sequence, so shortening any clip pulled
+   *       every clip after it — on every row — backwards with it. A gap is left
+   *       behind, and a gap on a picture track shows the track underneath (or the
+   *       letterbox colour). This is the default because it is the only one that
+   *       never touches a clip you were not pointing at.
+   *   B (ripple) — the trim, and then everything after it ON THAT TRACK slides by
+   *       the same amount, so no gap is left. The old behaviour of every picture
+   *       trim, kept as a tool rather than as the only thing on offer.
+   *   N (rolling) — the trim, and the NEIGHBOUR absorbs it: the cut moves, both
+   *       clips change length, and nothing else moves at all. Needs a real cut to
+   *       roll — a clip with a gap after it has no neighbour to give to, so it
+   *       falls back to a plain trim.
+   */
+  function pictureNeighbours(frame) {
+    const own = savedSpanOf.get(frame.id);
+    if (!own) return { before: null, after: null };
+    let before = null;
+    let after = null;
+    for (const f of frames) {
+      const s = savedSpanOf.get(f.id);
+      if (!s || s.track !== own.track || f.id === frame.id) continue;
+      if (s.end === own.start) before = f;
+      if (s.start === own.end) after = f;
+    }
+    return { before, after };
   }
 
-  /**
-   * The head of the FIRST picture — the one edge on the whole sequence that is
-   * not a cut.
-   *
-   * ⚠ IT IS THE ONLY PICTURE EDGE THAT TRIMS THE CLIP ITSELF. Every other head
-   * grip on this row drags the cut in front of it (`startResize` on the frame
-   * before), because that is the edit at that edge. The first picture has no
-   * frame before it and no cut to move: its head is 0:00, and the only thing you
-   * can do there is start LATER INTO the clip — the ripple trim-in every NLE
-   * does — with everything after it moving up.
-   *
-   * ⚠ AND FOR A VIDEO CLIP THAT MEANS MOVING `in_ms`, NOT JUST SHORTENING IT.
-   * `sourceAt` reads `in_ms + t * speed`, so skipping `head` ms of TIMELINE has
-   * to skip `head * speed` of FILE or the picture at 0:00 does not change and
-   * all you did was throw away the end of the shot. `out_ms` is an absolute
-   * position in the source and stays exactly where it is.
-   *
-   * The travel is bounded up front, in timeline ms, so the edge stops at
-   * whichever wall comes first instead of quietly hitting one and going on:
-   *   · trimming IN  — the clip's own floor, and the last moment of source there
-   *     is to show (`out_ms`).
-   *   · trimming OUT — however much footage sits BEFORE `in_ms`. Nothing, for a
-   *     still: it has no source to give back, so its head only goes one way.
-   */
-  function startHeadTrim(e, frame) {
-    if (razorPress(e, "frame", frame.id)) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const video = clipKind(frame) === "video";
+  /** How much SOURCE a video clip has either side of the window it is showing. */
+  function sourceRoom(frame) {
     const inMs = Math.max(0, Number(frame.in_ms) || 0);
     let speed = Number(frame.speed);
     if (!Number.isFinite(speed) || speed <= 0) speed = DEFAULT_SPEED;
+    const video = clipKind(frame) === "video";
     const outMs = frame.out_ms;
-    // `out_ms` is EXCLUSIVE, so the last moment actually shown is one ms inside
-    // it — the same reading `sourceAt` takes.
-    const sourceRoom =
-      video && outMs !== null && outMs !== undefined
-        ? Math.floor((Number(outMs) - 1 - inMs) / speed)
-        : Infinity;
-    dragRef.current = {
-      id: frame.id,
-      startX: e.clientX,
-      startMs: frame.duration_ms,
-      // The head of the film. Named for the snap, which excludes it so the edge
-      // cannot stick to where it already is.
-      edgeMs: 0,
-      head: true,
-      // ⚠ THE FRAME ITSELF, because its KEYFRAMES have to be re-timed with it —
-      // a Ken Burns push is stored relative to the frame's own start, so cutting
-      // the head off and leaving the keys where they are slides the move out of
-      // step with the footage it was matched to. Read as it was when the drag
-      // began, which is the only version that means anything here.
-      frame,
-      // No rolling at the head of the film: rolling gives to one side of a CUT
-      // what it takes from the other, and there is no other side here.
-      rolling: false,
-      nextId: null,
-      nextMs: 0,
+    return {
       video,
       inMs,
       speed,
-      // ⚠ BOTH BOUNDS STRADDLE 0, always, so "did not move" can never come back
-      // as an edit — `clamp` returns its low bound when they cross.
-      minHead: video ? -Math.floor(inMs / speed) : 0,
-      maxHead: Math.max(0, Math.min(frame.duration_ms - MIN_MS, sourceRoom)),
+      // ⚠ `out_ms` IS EXCLUSIVE, so the last moment actually shown is one ms
+      // inside it — the same reading `sourceAt` takes.
+      ahead:
+        video && outMs !== null && outMs !== undefined
+          ? Math.floor((Number(outMs) - 1 - inMs) / speed)
+          : Infinity,
+      // Nothing for a still: it has no footage to give back, so its head only
+      // goes one way.
+      behind: video ? Math.floor(inMs / speed) : 0,
     };
-    setDraft({ id: frame.id, durationMs: frame.duration_ms });
   }
 
-  useEffect(() => {
-    if (!draft) return undefined;
-    function move(e) {
-      const d = dragRef.current;
-      if (!d) return;
-      const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
-      if (d.head) {
-        // ⚠ WHAT SNAPS IS THE CLIP'S FAR EDGE, not the one under the pointer.
-        // The head of the first picture is pinned to 0:00 and cannot move — it
-        // is the START OF THE FILM — so trimming into it moves the FIRST CUT
-        // instead, and that is the edge with something to line up against: the
-        // audio does NOT ripple, so the cut can be pulled onto a beat.
-        const cut = snapMs(d.startMs - deltaMs, [d.startMs]);
-        const head = clamp(d.startMs - cut, d.minHead, d.maxHead);
-        const next = Math.max(MIN_MS, Math.round(d.startMs - head));
-        d.latest = next;
-        setDraft({ id: d.id, durationMs: next });
-        return;
-      }
-      // The cut is snapped (to another cut, the playhead, a clip edge), then
-      // turned back into a duration — snapping a LENGTH would line the edge up
-      // with nothing. Its own position is excluded or it would stick to itself.
-      const cut = snapMs(d.edgeMs + deltaMs, [d.edgeMs]);
-      let next = Math.max(MIN_MS, cut - (d.edgeMs - d.startMs));
-      if (d.rolling) {
-        // Never eat the whole of the next frame.
-        next = Math.min(next, d.startMs + d.nextMs - MIN_MS);
-      }
-      d.latest = next;
-      setDraft({ id: d.id, durationMs: next });
-    }
-    function up() {
-      const d = dragRef.current;
-      dragRef.current = null;
-      setDraft(null);
-      // No `latest` = pressed and released without moving, so nothing changed.
-      if (d && d.latest !== undefined && d.latest !== d.startMs) {
-        if (d.head) {
-          // The two fields travel TOGETHER in one patch. Written apart they
-          // would be two renders and two steps to undo through, and a project
-          // saved between them would have a clip that lost its head without
-          // losing the footage in it.
-          const head = d.startMs - d.latest;
-          const patch = { duration_ms: d.latest };
-          if (d.video) patch.in_ms = Math.max(0, Math.round(d.inMs + head * d.speed));
-          // Same surgery a caption's head trim gets, and for the same reason —
-          // see `trimKeyframesHead`. Null for a frame that animates nothing,
-          // which is most of them, and null means "write no field".
-          const keyframes = trimKeyframesHead(d.frame, head);
-          if (keyframes) patch.keyframes = keyframes;
-          if (onFrameChange) onFrameChange(d.id, patch);
-          else onResize(d.id, patch.duration_ms);
-          return;
-        }
-        onResize(d.id, d.latest);
-        if (d.rolling) {
-          onResize(d.nextId, Math.max(MIN_MS, d.nextMs - (d.latest - d.startMs)));
-        }
-      }
-    }
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-  }, [draft, pxPerSec, onResize, onFrameChange, tool]);
 
   // The lane kinds and the SELECTION kinds are spelled differently in one place
   // only — a lane of pictures over the video is `image`, the thing on it is an
@@ -1271,7 +1254,13 @@ export default function Timeline({
   // back off the clip. A still cannot become footage by being dropped somewhere
   // else, which is exactly what `laneTakes` already says about a drop out of the
   // Media pane.
-  const CROSS_LANE_KINDS = ["text", "shape", "image", "audio"];
+  // ⚠ "frames" IS IN THIS LIST NOW, and that is the second half of the
+  // multi-track change. The picture rows used to be one sequence drawn twice and
+  // filtered by origin, so "which row" was not something a clip could be told —
+  // this list said so, and the comment above said why. A row is a real TRACK now
+  // and a clip carries which one, so dragging a shot up onto the track above is
+  // the same gesture as dragging a caption onto the next text row.
+  const CROSS_LANE_KINDS = ["frames", "text", "shape", "image", "audio"];
 
   /**
    * The row under the pointer, or null.
@@ -1311,6 +1300,9 @@ export default function Timeline({
     if (!from || from.kind !== to.kind) return null;
     return to.key;
   }
+
+  /** The destination lane of a drag in flight, or null. */
+  const laneOfKey = (key) => (key ? lanes.find((l) => l.key === key) || null : null);
 
   /** Is this the row a clip is about to be dropped onto? */
   function laneIsTarget(lane) {
@@ -1362,9 +1354,12 @@ export default function Timeline({
   function startClipDrag(e, clip, mode, lane) {
     if (e.button !== 0) return;
     const kind = lane.kind;
-    // A caption, a shape or an overlay picture — and this is BOTH the body and
-    // the trim handle, since both come through here.
+    // A picture, a caption, a shape or an overlay — and this is BOTH the body and
+    // the trim handles, since all of them come through here.
     if (razorPress(e, SEL_KIND[kind], clip.id)) return;
+    // Only the editing tools drag a clip. Hand and zoom mean what they mean
+    // everywhere else on this bar, and the razor has already had its turn above.
+    if (tool !== "select" && tool !== "ripple" && tool !== "rolling") return;
     e.stopPropagation();
     e.preventDefault();
     const selKind = SEL_KIND[kind];
@@ -1376,12 +1371,38 @@ export default function Timeline({
       return;
     }
     const select =
-      kind === "shape" ? onSelectShape : kind === "image" ? onSelectOverlay : onSelectText;
+      kind === "frames"
+        ? onSelect
+        : kind === "shape"
+          ? onSelectShape
+          : kind === "image"
+            ? onSelectOverlay
+            : onSelectText;
     // A clip already IN the selection keeps it — that is what makes dragging a
     // selection possible at all. Pressing an unselected clip selects just it,
     // which is what a press on anything has always done.
     const inSelection = isSel(selKind, clip.id);
     if (!inSelection) select(clip.id);
+    // ⚠ A PICTURE'S START COMES FROM THE PLACEMENT, NOT OFF THE CLIP. `start_ms`
+    // is allowed to be null on a picture and means "after the last clip on my
+    // track" (see `frameSpans`), so the number to drag FROM is the one the bar is
+    // actually drawn at. Writing it back is also what fills that null in, which
+    // is the one-way door every clip goes through the first time it is moved.
+    const box = kind === "frames" ? picBox(clip) : null;
+    const startMs = box ? box.start : clip.start_ms;
+    const durationMs = box ? box.duration : clip.duration_ms;
+    // Ripple and rolling are PICTURE tools. On a caption or a shape there is
+    // nothing after it on that row that ought to move — those rows have never
+    // been a sequence — so the tool is ignored there rather than doing something
+    // surprising to a clip you were not pointing at.
+    const trimming = mode === "resize" || mode === "trim-start";
+    const neighbours = kind === "frames" && trimming ? pictureNeighbours(clip) : null;
+    const rollWith =
+      kind === "frames" && tool === "rolling" && trimming
+        ? mode === "resize"
+          ? neighbours.after
+          : neighbours.before
+        : null;
     dragRef.current = {
       kind,
       id: clip.id,
@@ -1389,9 +1410,23 @@ export default function Timeline({
       // The row it started on, so the vertical half of the drag has something to
       // compare against — see `laneMoveTarget`.
       fromKey: lane.key,
+      track: kind === "frames" ? frameTrack(clip) : null,
+      // The source window a video clip is showing, so a head trim can be stopped
+      // at the ends of the FOOTAGE rather than only at the ends of the clip.
+      source: kind === "frames" ? sourceRoom(clip) : null,
+      ripple: kind === "frames" && tool === "ripple" && trimming,
+      // The clip a ROLLING trim gives to / takes from, read as it was when the
+      // drag began — the only version that means anything here.
+      roll: rollWith
+        ? {
+            id: rollWith.id,
+            startMs: picBox(rollWith).start,
+            durationMs: picBox(rollWith).duration,
+          }
+        : null,
       startX: e.clientX,
-      startMs: clip.start_ms,
-      durationMs: clip.duration_ms,
+      startMs,
+      durationMs,
       // ⚠ THE CLIP ITSELF, not just its two numbers, because a head trim has to
       // read its KEYFRAMES to re-time them — and it reads them as they were when
       // the drag began, which is the only version that means anything here.
@@ -1404,9 +1439,10 @@ export default function Timeline({
     setClipDraft({
       kind,
       id: clip.id,
-      startMs: clip.start_ms,
-      durationMs: clip.duration_ms,
+      startMs,
+      durationMs,
       deltaMs: 0,
+      track: kind === "frames" ? frameTrack(clip) : null,
       // The row it would land on, once the pointer has left its own. Null until
       // then, which is every drag that stays where it started.
       toKey: null,
@@ -1546,13 +1582,30 @@ export default function Timeline({
       // targets, or it would stick to where it already is.
       const own = [d.startMs, d.startMs + d.durationMs];
       const end = d.startMs + d.durationMs;
+      // ⚠ HOW FAR A HEAD TRIM MAY TRAVEL, and on a video clip it is not just the
+      // clip's own edges. `sourceAt` reads `in_ms + t * speed`, so pulling the
+      // head in has to skip footage as well as timeline — and it can only skip
+      // what is THERE. Trimming in stops at the last moment of source `out_ms`
+      // leaves to show; trimming back out stops at the head of the file. A still
+      // has no footage to give back, so `behind` is 0 and its head only goes one
+      // way. Both walls straddle 0 so "did not move" can never come back as an
+      // edit.
+      const room = d.source;
+      const headFloor = room ? Math.max(0, d.startMs - room.behind) : 0;
+      const headCeil = room
+        ? Math.min(end - MIN_MS, d.startMs + Math.max(0, room.ahead))
+        : end - MIN_MS;
       const next =
         d.mode === "trim-start"
           ? (() => {
               // The clip's START is what snaps to a cut; its END is nailed down,
               // so the length is whatever is left between them. Clamped at 0:00
               // on one side and MIN_MS short of its own end on the other.
-              const startMs = clamp(snapMs(d.startMs + deltaMs, own), 0, end - MIN_MS);
+              const startMs = clamp(
+                snapMs(d.startMs + deltaMs, own),
+                headFloor,
+                Math.max(headFloor, headCeil)
+              );
               return { kind: d.kind, id: d.id, startMs, durationMs: end - startMs };
             })()
           : d.mode === "move"
@@ -1592,6 +1645,52 @@ export default function Timeline({
       // multi-clip drag stays on its rows and only travels in time.
       next.toKey =
         d.mode === "move" && !d.group ? laneMoveTarget(d.fromKey, e.clientY) : null;
+      next.track = d.track;
+      if (next.toKey) {
+        const to = laneOfKey(next.toKey);
+        // Which TRACK it would land on, for the ghost and for the write. Null on
+        // every other kind of row, where a destination is a `layer_id` instead.
+        if (to && to.kind === "frames") next.toTrack = to.track || 0;
+      }
+      // --- The picture tools, on a trim ------------------------------------
+      // ⚠ HOW MUCH THE EDGE ACTUALLY MOVED, which for a head trim is the START
+      // and for a tail trim is the END. Everything below is expressed in that one
+      // number so the two grips share the arithmetic.
+      const edgeDelta =
+        d.mode === "trim-start"
+          ? next.startMs - d.startMs
+          : next.durationMs - d.durationMs;
+      if (d.roll && edgeDelta) {
+        // ROLLING (N): the neighbour absorbs it, so the cut moves and nothing
+        // else does. On a TAIL trim the clip after starts later and is shorter by
+        // the same amount; on a HEAD trim the clip before ends earlier. Never eat
+        // the whole of it — a clip has to be left to roll against.
+        const give = clamp(edgeDelta, -d.roll.durationMs + MIN_MS, d.roll.durationMs - MIN_MS);
+        if (d.mode === "resize") {
+          next.neighbour = {
+            id: d.roll.id,
+            startMs: d.roll.startMs + give,
+            durationMs: d.roll.durationMs - give,
+          };
+          next.durationMs = d.durationMs + give;
+        } else {
+          next.neighbour = {
+            id: d.roll.id,
+            startMs: d.roll.startMs,
+            durationMs: d.roll.durationMs + give,
+          };
+          next.startMs = d.startMs + give;
+          next.durationMs = d.durationMs - give;
+        }
+      } else if (d.ripple && edgeDelta) {
+        // RIPPLE (B): everything after this clip ON THIS TRACK slides by the same
+        // amount, so the trim leaves no gap. Measured from the clip's SAVED end,
+        // because that is where "after it" was when the drag began — measuring
+        // from the moving edge would pick clips up and put them down again as the
+        // pointer crossed them.
+        next.rippleMs = edgeDelta;
+        next.rippleFromMs = d.startMs + d.durationMs;
+      }
       d.latest = next;
       setClipDraft(next);
     }
@@ -1614,11 +1713,13 @@ export default function Timeline({
       // by clicking empty space first — and clicking a clip would look broken.
       if (!moved && d?.group) {
         const select =
-          d.kind === "shape"
-            ? onSelectShape
-            : d.kind === "image"
-              ? onSelectOverlay
-              : onSelectText;
+          d.kind === "frames"
+            ? onSelect
+            : d.kind === "shape"
+              ? onSelectShape
+              : d.kind === "image"
+                ? onSelectOverlay
+                : onSelectText;
         select(d.id);
         return;
       }
@@ -1627,6 +1728,55 @@ export default function Timeline({
         // would be forty renders and forty steps to undo through.
         if (d.latest.group) {
           onMoveSelection?.(d.latest.deltaMs);
+          return;
+        }
+        // ---- A PICTURE ----------------------------------------------------
+        // ⚠ EVERY PICTURE EDIT IS ONE `onFramesChange` CALL, however many clips
+        // it touches, because a picture edit is rarely one clip: a RIPPLE trim
+        // moves everything after it on that track, a ROLLING trim gives the
+        // neighbour what it takes, and a cross-track move writes `track` as well
+        // as the time. One call is one render and one press of Ctrl+Z.
+        if (d.kind === "frames") {
+          const patches = [];
+          const own = { id: d.id, start_ms: d.latest.startMs, duration_ms: d.latest.durationMs };
+          if (d.mode === "trim-start") {
+            // ⚠ THE HEAD OF A VIDEO CLIP MOVES `in_ms` TOO, and this is the one
+            // place that has ever been true: `sourceAt` reads `in_ms + t * speed`,
+            // so skipping `head` ms of TIMELINE must skip `head * speed` of FILE
+            // or the picture at the head does not change and all the trim did was
+            // throw away the end of the shot. `out_ms` is absolute in the source
+            // and stays exactly where it is.
+            const head = d.latest.startMs - d.startMs;
+            if (d.source?.video) {
+              own.in_ms = Math.max(0, Math.round(d.source.inMs + head * d.source.speed));
+            }
+            // And its KEYFRAMES are re-timed, for the same reason a caption's
+            // are: a Ken Burns push is stored relative to the clip's own start,
+            // so cutting the head off and leaving the keys where they are slides
+            // the move out of step with the footage it was matched to. Null for a
+            // clip that animates nothing, which is most of them.
+            const keyframes = trimKeyframesHead(d.clip, head);
+            if (keyframes) own.keyframes = keyframes;
+          }
+          const to = relaned ? laneOfKey(d.latest.toKey) : null;
+          if (to && to.kind === "frames") own.track = to.track || 0;
+          patches.push(own);
+          if (d.latest.neighbour) {
+            patches.push({
+              id: d.latest.neighbour.id,
+              start_ms: d.latest.neighbour.startMs,
+              duration_ms: d.latest.neighbour.durationMs,
+            });
+          }
+          if (d.latest.rippleMs) {
+            for (const f of frames) {
+              const s = savedSpanOf.get(f.id);
+              if (!s || s.track !== d.track || s.start < d.latest.rippleFromMs) continue;
+              if (f.id === d.id) continue;
+              patches.push({ id: f.id, start_ms: Math.max(0, s.start + d.latest.rippleMs) });
+            }
+          }
+          if (onFramesChange) onFramesChange(patches);
           return;
         }
         const write =
@@ -1664,15 +1814,18 @@ export default function Timeline({
       window.removeEventListener("pointerup", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     clipDraft,
     pxPerSec,
     onTextChange,
     onShapeChange,
     onOverlayChange,
+    onFramesChange,
     onMoveSelection,
     onMoveToLane,
     lanes,
+    frames,
   ]);
 
   // --- Transitions on the cuts --------------------------------------------
@@ -1736,15 +1889,36 @@ export default function Timeline({
    * rows of one sequence divide the cuts between them instead of both drawing all
    * of them. Omitted — one row showing everything — every cut is drawn.
    */
-  function renderTransitions(shows = null) {
-    // Built from the DRAFTED durations, not the saved ones, so a badge travels
-    // with the cut while its frame's edge is being dragged instead of sitting
-    // where the cut used to be until the pointer comes up.
-    const drafted = frames.map((f) => ({ ...f, duration_ms: durationOf(f) }));
+  /**
+   * The transition badges on ONE picture track.
+   *
+   * ⚠ A CUT IS TWO CLIPS THAT TOUCH, ON THE SAME TRACK — not "clip i and clip
+   * i+1". That was exact while the picture was a butt-jointed sequence with no
+   * holes in it, and is wrong twice over now: the next clip in the list may be on
+   * another track, and two clips can be neighbours on the timeline without
+   * touching. There is no edit point in a GAP, so no badge and no ＋ is drawn
+   * there — the same rule `transitionWindow` enforces on the render side, stated
+   * once in each place because both have to agree about where a cut is.
+   *
+   * Built from the DRAFTED placement so a badge travels with its cut while an
+   * edge is being dragged, instead of sitting where the cut used to be until the
+   * pointer comes up.
+   */
+  function renderTransitions(track = 0) {
+    const drafted = draftedFrames;
     const { spans } = frameSpans(drafted);
     const out = [];
-    for (let i = 0; i < spans.length - 1; i++) {
-      if (shows && !shows(frames[i])) continue;
+    for (let i = 0; i < spans.length; i++) {
+      if (spans[i].track !== track) continue;
+      // The clip this one cuts TO: the next on this track whose start is exactly
+      // this one's end. `transitionWindow` picks the same one.
+      let j = -1;
+      for (let k = 0; k < spans.length; k++) {
+        if (k === i || spans[k].track !== track) continue;
+        if (spans[k].start !== spans[i].end) continue;
+        if (j < 0 || k < j) j = k;
+      }
+      if (j < 0) continue;
       const cut = spans[i].end;
       const at = (cut / 1000) * pxPerSec;
       const transition = transitions.find((t) => t.after_frame_id === frames[i].id);
@@ -1775,7 +1949,7 @@ export default function Timeline({
       // The cap the renderer applies, so the handle stops where the effect does.
       const maxMs = Math.min(
         MAX_TRANSITION_MS,
-        Math.min(spans[i].end - spans[i].start, spans[i + 1].end - spans[i + 1].start)
+        Math.min(spans[i].end - spans[i].start, spans[j].end - spans[j].start)
       );
       const durationMs = dragging ? trDraft.durationMs : win.durationMs;
       const width = Math.max(10, (durationMs / 1000) * pxPerSec);
@@ -2102,9 +2276,9 @@ export default function Timeline({
   function selectLane(lane) {
     const of = (list) => list.filter((c) => (c.layer_id || "") === lane.layerId);
     let items = [];
-    // ⚠ WHAT THIS ROW SHOWS, not the whole sequence — the picture track is drawn
-    // as two rows (`only`), and "select everything on this row" that reached
-    // across both would be the one gesture that can't tell them apart.
+    // ⚠ WHAT THIS ROW SHOWS — the clips on THIS TRACK. It used to mean "the ones
+    // this origin-filtered view draws", which was the same list read a different
+    // way; a row is a real track now, so this is simply the row.
     if (lane.kind === "frames") {
       items = frames
         .filter((f) => laneShows(lane, f))
@@ -2225,47 +2399,47 @@ export default function Timeline({
 
   function renderLane(lane) {
     if (lane.kind === "frames") {
-      // ⚠ PLACED BY TIME, NOT BY FLOW, and this is load-bearing. The bars used
-      // to be a flex row that added themselves up, so anything that made ONE bar
-      // wider than the time it represents — a `min-width`, or a padding that a
-      // border-box cannot shrink past — pushed every picture after it to the
-      // right. The lane then no longer lined up with the ruler above it, it grew
-      // wider than the timeline's own width, and the last shots ran off the end
-      // of the pane where no amount of scrolling could reach them: you had to
-      // zoom out to see your own sequence.
-      //
-      // With each bar at an absolute `left` taken from the running total, a
-      // minimum width can only ever overlap its neighbour by a pixel or two —
-      // it can no longer move it. The picture lane and the clock cannot drift.
-      //
-      // ⚠ THE CLOCK RUNS OVER THE WHOLE SEQUENCE, WHATEVER THE ROW SHOWS. The
-      // picture track is drawn as two rows — the stills and the footage (`only`,
-      // set in the editor's `lanes`) — and they are ONE track: the clips play in
-      // order, so a bar's place is decided by every clip before it and not by the
-      // ones this row happens to draw. Advance the clock first, skip second. Skip
-      // first and the row would pack its bars up against the start and claim the
-      // footage plays at 0:00.
-      let clock = 0;
-      const shows = (f) => laneShows(lane, f);
+      // ⚠ ONE PICTURE TRACK, AND ITS CLIPS ARE PLACED BY TIME LIKE EVERY OTHER
+      // CLIP ON THIS BAR. This row used to draw the WHOLE sequence filtered by
+      // where each clip came from (`lane.only`, `frameOrigin`) and place each bar
+      // at a running total — so the two picture rows shared one clock, and
+      // trimming footage moved the stills ("when i do video trim so i see my
+      // image layer conetnt move", user-reported). That was the bug; a track is
+      // the fix. `laneShows` is now "is this clip on this track", and the bars
+      // come straight out of `frameSpans` — the same placement the monitor and
+      // the exporter use.
+      const on = frames.filter((f) => laneShows(lane, f));
       return (
         <div
-          className={`tl-lane tl-bars ${lane.hidden ? "off" : ""} ${dropClass(lane)}`}
+          className={[
+            "tl-lane tl-bars",
+            lane.hidden ? "off" : "",
+            dropClass(lane),
+            laneIsTarget(lane) ? "drop-lane" : "",
+          ].join(" ")}
           key={lane.key}
           data-lane={lane.key}
           onPointerDown={startLanePress}
           {...dropProps(lane)}
         >
           {dropMark(lane)}
-          {frames.map((f, i) => {
-            const ms = durationOf(f);
-            const w = (ms / 1000) * pxPerSec;
-            // Named, because the drop highlight needs the same number the bar is
-            // drawn at — re-deriving it from `starts` would be the one place
-            // that disagreed once a clip was mid-drag.
-            const start = clock;
+          {laneGhost(lane)}
+          {on.map((f) => {
+            const box = picBox(f);
+            const ms = box.duration;
+            const w = Math.max(6, (ms / 1000) * pxPerSec);
+            const start = box.start;
             const left = (start / 1000) * pxPerSec;
-            clock += ms;
-            if (!shows(f)) return null;
+            // ⚠ TWO CLIPS OVERLAPPING ON ONE TRACK IS POSSIBLE NOW, and only one
+            // of them can be on screen (`stackAt` takes the later one). Marked
+            // rather than prevented: refusing the drop would fight the pointer,
+            // and silently deciding the picture is worse than saying so.
+            const clash = on.some((other) => {
+              if (other.id === f.id) return false;
+              const o = picBox(other);
+              return o.start < start + ms && o.start + o.duration > start;
+            });
+            const index = frames.indexOf(f);
             return (
               <div
                 key={f.id}
@@ -2275,100 +2449,77 @@ export default function Timeline({
                   isSel("frame", f.id) ? "sel" : "",
                   inBand("frame", f.id) ? "banded" : "",
                   dropOnto(lane, start, ms) ? "drop-onto" : "",
+                  clash ? "clash" : "",
+                  clipDraft?.toKey && clipDraft.id === f.id ? "lifting" : "",
                 ].join(" ")}
                 style={{ left, width: w }}
-                onPointerDown={(e) => {
-                  // The razor cuts wherever it is clicked ON the picture —
-                  // that is the tool's whole behaviour, and it must beat
-                  // "select this frame". ⚠ It NAMES the frame now: the time
-                  // alone was what let a press somewhere else cut this one.
-                  if (razorPress(e, "frame", f.id)) return;
-                  // A press on a picture is about that picture — it must not
-                  // also start a rubber band on the lane underneath.
-                  e.stopPropagation();
-                  if (e.shiftKey || e.ctrlKey || e.metaKey) {
-                    onToggleSelect?.("frame", f.id);
-                    return;
-                  }
-                  onSelect(f.id);
-                }}
-                title={`${f.label || `Frame ${i + 1}`} — ${(ms / 1000).toFixed(1)}s`}
+                onPointerDown={(e) => startClipDrag(e, f, "move", lane)}
+                title={
+                  `${f.label || `Frame ${index + 1}`} — ${(start / 1000).toFixed(1)}s ` +
+                  `for ${(ms / 1000).toFixed(1)}s` +
+                  (clash ? " · OVERLAPPING its neighbour — only the later one shows" : "") +
+                  "\nDrag it along to re-time it, or up and down onto another picture track." +
+                  "\nIts edges trim it; B ripples what follows, N rolls the cut."
+                }
               >
-                <span className="tl-bar-label">{w > 34 ? f.label || i + 1 : ""}</span>
+                <span className="tl-bar-label">{w > 34 ? f.label || index + 1 : ""}</span>
                 {w > 56 && <span className="tl-bar-secs">{(ms / 1000).toFixed(1)}s</span>}
                 {fxBadge("frame", f, w)}
-                {/* A frame's own keys — a Ken Burns push lives here, so this is
-                    the lane where they matter most. Times are relative to the
-                    frame, so they ride along when its hold is re-timed. */}
-                {renderKeys(
-                  f,
-                  "frames",
-                  w,
-                  frames.slice(0, i).reduce((sum, x) => sum + (x.duration_ms || 0), 0)
-                )}
-                {/* THE HEAD GRIP, and on a picture it is THE CUT BEFORE THIS
-                    ONE — so it drags the PREVIOUS frame's hold, which is the
-                    same edit point its own tail grip is.
-                    ⚠ A PICTURE HAS NO START OF ITS OWN. Its start is the sum of
-                    every hold before it, so "trim this one's head" cannot mean
-                    what it means on a caption: shortening the clip itself would
-                    ripple everything left and move its far edge, not this one,
-                    which is precisely what the tail grip already does. Moving
-                    the cut is the only edit that puts THIS edge under the
-                    pointer — and it obeys ripple / rolling (B / N) for free,
-                    because it is `startResize` on the frame before.
-                    ⚠ THE FIRST PICTURE IS THE EXCEPTION, and it took a second
-                    edit rather than no grip at all: there is no cut in front of
-                    it, so its head grip trims INTO the clip — `startHeadTrim`,
-                    which moves a video clip's `in_ms` with the length. The rule
-                    both halves obey is "the head grip edits whatever is at this
-                    clip's head": a cut where there is one, the start of the film
-                    where there isn't. */}
+                {/* A picture's own keys — a Ken Burns push lives here, so this is
+                    the row where they matter most. Times are relative to the
+                    clip, so they ride along when it is moved or re-timed. */}
+                {renderKeys(f, "frames", w, start)}
+                {/* A GRIP AT BOTH ENDS, AND BOTH ARE REAL TRIMS NOW. The head one
+                    used to drag the CUT IN FRONT of the clip — `startResize` on
+                    the frame before — because a picture had no start of its own,
+                    so shortening it would have moved its far edge instead of the
+                    one under the pointer. It has a start now, so the head grip
+                    moves the START and leaves the END where it is, exactly as it
+                    does on a caption; on a video clip it moves `in_ms` with it so
+                    the trim skips footage rather than throwing away the shot's
+                    end. See the tool rules above `pictureNeighbours`. */}
                 {w >= BOTH_GRIPS_MIN_PX && (
                   <span
                     className="tl-handle tl-handle-l"
-                    onPointerDown={(e) =>
-                      i > 0 ? startResize(e, frames[i - 1], i - 1) : startHeadTrim(e, f)
-                    }
+                    onPointerDown={(e) => startClipDrag(e, f, "trim-start", lane)}
                     title={
-                      i === 0
-                        ? clipKind(f) === "video"
-                          ? "Drag to trim the head of this shot — it starts later into the footage and everything after it moves up"
-                          : "Drag to trim the head of this shot — everything after it moves up"
-                        : tool === "rolling"
-                          ? "Rolling edit — drag the cut at the head of this shot; the shot before absorbs it and the video stays the same length"
-                          : "Drag the cut at the head of this shot — the shot before it is held longer or shorter"
+                      tool === "rolling"
+                        ? "Rolling edit — drag the cut at the head; the clip before it absorbs the change"
+                        : tool === "ripple"
+                          ? "Ripple trim — the head comes in later and everything after it on this track moves up"
+                          : clipKind(f) === "video"
+                            ? "Drag to trim the head — it starts later into the footage and still ends where it did"
+                            : "Drag to trim the head — it comes in later and still ends where it did"
                     }
                   />
                 )}
                 <span
                   className="tl-handle"
-                  onPointerDown={(e) => startResize(e, f, i)}
+                  onPointerDown={(e) => startClipDrag(e, f, "resize", lane)}
                   title={
                     tool === "rolling"
-                      ? "Rolling edit — drag the cut; the next frame absorbs it and the video stays the same length"
-                      : "Drag to change how long this frame is held"
+                      ? "Rolling edit — drag the cut; the next clip absorbs it and the track stays the same length"
+                      : tool === "ripple"
+                        ? "Ripple trim — everything after it on this track moves with the edge, so no gap is left"
+                        : "Drag to change how long this is held — it leaves a gap rather than moving its neighbours"
                   }
                 />
               </div>
             );
           })}
           {/* The cuts, drawn OVER the bars: a transition belongs to the edit
-              point between two pictures, not to either of them.
-              ⚠ ON THE ROW THAT OWNS THE OUTGOING PICTURE, so a cut is drawn once
-              and on the row you would reach for it. Every cut on both rows would
-              put a ＋ where nothing joins, and a dissolve you could drag from two
-              places. */}
-          {renderTransitions(shows)}
-          {/* The empty state belongs to the row that can be filled from nothing.
-              The Video row only exists when there IS footage. */}
-          {!frames.length && !lane.only && (
+              point between two pictures, not to either of them. One track's cuts
+              only — see `renderTransitions`. */}
+          {renderTransitions(lane.track || 0)}
+          {/* The empty state belongs to a row with nothing on it at all. */}
+          {!on.length && (
             <button
               type="button"
               className="tl-track-empty tl-track-add"
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={() => onAddToLane(lane)}
             >
-              🖼 No pictures yet — click to add some
+              🖼 Nothing on this picture track — click to add some
             </button>
           )}
         </div>
@@ -2689,6 +2840,26 @@ export default function Timeline({
                 >
                   <span className="tl-layer-ico">{lane.icon || LANE_ICON[lane.kind]}</span>
                   <span className="tl-layer-name">{lane.name}</span>
+                  {/* Only while there IS footage mixed in with stills on this row.
+                      It disappears the moment it has been used, which is the whole
+                      of its life cycle — see `onSplitFootage`. */}
+                  {lane.mixed && onSplitFootage && (
+                    <button
+                      type="button"
+                      className="tl-layer-split"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSplitFootage(lane);
+                      }}
+                      title={
+                        "Put this row's video clips on a picture track of their own. " +
+                        "Nothing is re-timed — every clip still plays at the same moment; " +
+                        "they just get a row you can trim without touching the stills."
+                      }
+                    >
+                      ▶⇧
+                    </button>
+                  )}
                   {/* TURN THE ROW OFF. Audio has had its 🔇 since there were
                       tracks to mute, and every other row had nothing — so the way
                       to check a shot without its captions was to delete them.
