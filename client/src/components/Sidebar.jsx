@@ -1,6 +1,12 @@
 // Left navigation rail. Home + a Workflows section (the live Text-to-Image
 // pipeline plus placeholders for future workflows) + an Upgrade CTA.
+//
+// COLLAPSED MODE: the same markup, narrowed to an icon-only rail (the toggle
+// lives in the brand row, Ctrl/Cmd+B does it from the keyboard). Nothing is
+// removed when it collapses — the labels are hidden in CSS — so every row keeps
+// its `title`, which becomes the only name you can read at 68px wide.
 import Avatar from "./Avatar.jsx";
+import Icon from "./Icon.jsx";
 
 // Workflow nav items. `status: "live"` is the working pipeline; "soon" items
 // are placeholders for the roadmap the user is building toward.
@@ -32,13 +38,15 @@ export default function Sidebar({
   onToggleTheme,
   onUpgrade,
   onProfileClick,
+  collapsed = false,
+  onToggleCollapse,
 }) {
   const who = displayName || email || "";
   const initial = (who || "?").trim().charAt(0).toUpperCase();
   const workspace = displayName || (email || "My workspace").split("@")[0];
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       {/* Brand + the account avatar. The avatar sits here because the top-left
           is where people look for "me" — clicking it opens the profile. */}
       <div className="sb-brand">
@@ -53,6 +61,20 @@ export default function Sidebar({
         >
           <Avatar size={30} initial={initial === "?" ? "" : initial} />
         </button>
+        {/* Stays in the SAME corner in both states, so the button you clicked
+            to close the rail is the button that reopens it. */}
+        <button
+          type="button"
+          className="sb-collapse"
+          onClick={onToggleCollapse}
+          title={
+            collapsed ? "Expand sidebar  Ctrl+B" : "Collapse sidebar  Ctrl+B"
+          }
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+        >
+          <Icon name="sidebar" size="1.15em" />
+        </button>
       </div>
 
       {/* Home */}
@@ -60,12 +82,19 @@ export default function Sidebar({
         <button
           className={`sb-item ${active === "home" ? "active" : ""}`}
           onClick={() => onNavigate("home")}
+          title="Home"
         >
-          <span className="sb-ico">🏠</span> Home
+          <span className="sb-ico">🏠</span>
+          <span className="sb-item-label">Home</span>
         </button>
 
-        {/* Workflows */}
-        <div className="sb-section-label">Workflows</div>
+        {/* Workflows. Collapsed there is no room for the heading, so the group
+            is marked by the rule the heading would have sat above. */}
+        {collapsed ? (
+          <div className="sb-divider" />
+        ) : (
+          <div className="sb-section-label">Workflows</div>
+        )}
         {WORKFLOWS.map((w) => (
           <button
             key={w.id}
@@ -119,8 +148,9 @@ export default function Sidebar({
           </span>
         </button>
 
-        <button className="sb-upgrade" onClick={onUpgrade}>
-          <span className="sb-upgrade-ico">⚡</span> Upgrade
+        <button className="sb-upgrade" onClick={onUpgrade} title="Upgrade">
+          <span className="sb-upgrade-ico">⚡</span>
+          <span className="sb-upgrade-label">Upgrade</span>
         </button>
       </div>
     </aside>

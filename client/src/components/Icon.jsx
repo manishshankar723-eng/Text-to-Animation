@@ -259,6 +259,16 @@ const PATHS = {
       />
     </>
   ),
+
+  // The sidebar toggle: a panel with its left rail drawn in. Same glyph for
+  // both directions — the rail is the sidebar, and the tooltip says which way
+  // a click goes, so the icon never has to flip and jump.
+  sidebar: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" {...STROKE} />
+      <path d="M9.5 4v16" {...STROKE} />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = "1.05em", className = "", title }) {

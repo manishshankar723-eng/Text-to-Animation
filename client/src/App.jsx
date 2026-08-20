@@ -30,6 +30,21 @@ function readShareToken() {
   return t && /^[a-f0-9]{32}$/i.test(t) ? t : null;
 }
 
+// Whether the nav rail is collapsed to icons. Remembered per browser, like the
+// theme is: someone who works in the narrow rail wants it narrow next time too.
+// Kept HERE and not in Sidebar because `.shell` is a two-column grid — the rail
+// and the page width have to change in the same render or the layout tears.
+const NAV_COLLAPSED_KEY = "cas_nav_collapsed";
+
+function readNavCollapsed() {
+  try {
+    return localStorage.getItem(NAV_COLLAPSED_KEY) === "1";
+  } catch {
+    // Private mode / storage disabled — start expanded, don't crash the boot.
+    return false;
+  }
+}
+
 export default function App() {
   const [shareToken, setShareToken] = useState(readShareToken);
   const [email, setEmail] = useState(api.getEmail());
@@ -56,12 +71,39 @@ export default function App() {
   // main.jsx already applied the stored theme before the first paint; this only
   // has to re-stamp <html> when the user flips the switch.
   const [theme, setTheme] = useState(getTheme);
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
   // The name the user chose on their profile, so the sidebar shows it instead
   // of the local part of their email. Refreshed whenever they leave the profile
   // page, which is the only place it can change.
   const [displayName, setDisplayName] = useState("");
 
   useEffect(() => applyTheme(theme), [theme]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
+    } catch {
+      // Nothing to do — the rail still works, it just won't be remembered.
+    }
+  }, [navCollapsed]);
+
+  // Ctrl/Cmd+B, the shortcut every editor with a side panel uses. Skipped while
+  // a field has focus so it can't fight a text control's own bold binding.
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key !== "b" && e.key !== "B") return;
+      const el = document.activeElement;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) {
+        return;
+      }
+      e.preventDefault();
+      setNavCollapsed((c) => !c);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!authed) {
@@ -235,7 +277,7 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${navCollapsed ? "nav-collapsed" : ""}`}>
       <Sidebar
         active={nav}
         onNavigate={navigate}
@@ -245,6 +287,8 @@ export default function App() {
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         onUpgrade={() => setUpgradeOpen(true)}
         onProfileClick={() => setAccountOpen(true)}
+        collapsed={navCollapsed}
+        onToggleCollapse={() => setNavCollapsed((c) => !c)}
       />
       {/* Keyed by nav + reset counter: clicking the current workflow again
           changes the key, React remounts it, and it opens on its first page. */}

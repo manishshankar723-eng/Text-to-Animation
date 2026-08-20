@@ -200,7 +200,24 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **WHITE LABELS ON COLOURED STROKES, SHAPES GET A
+**Last updated:** 2026-08-20 — **THE NAV RAIL COLLAPSES TO ICONS, LIKE
+ChatGPT's** (user-specified, with the ChatGPT panel and its icon rail as the
+reference). ⚠ **THE COLLAPSED RAIL IS THE SAME DOM WITH THE LABELS HIDDEN IN
+CSS** — that is what keeps every row's `title`, which at 68px is the only place a
+workflow can say its name. ⚠ **AND THE STATE LIVES IN `App.jsx`, NOT
+`Sidebar.jsx`**: `.shell` is a two-column grid, so the rail and the page must
+change width in the same render — App stamps `.shell.nav-collapsed` (68px track,
+transitioned) and passes `collapsed` + `onToggleCollapse` down. Persisted in
+`localStorage` (`cas_nav_collapsed`), toggled by the brand-row button or
+**Ctrl/Cmd+B** (which bails while a field has focus, so it can't fight a text
+control's bold). ⚠ **THE RAIL IS 280px NOW, UP FROM 264px** — the brand row grew
+a fourth control and "Character Studio" was ellipsising; the width plus a
+tightened row was measured in a browser to fit, so anything added to that row
+again clips the app's name first. **Rendered headless in all four states**
+(dark/light × open/collapsed) — ⚠ but **NOT opened in the real app**: no dev
+server and no Playwright run this pass.
+
+**Previously:** **WHITE LABELS ON COLOURED STROKES, SHAPES GET A
 VIOLET, AND THE SIX TOOL LETTERS ARE ICONS** (user-specified). Three asks in one
 pass. ⚠ **THE COLOUR IS THE STROKE AND THE WORDS ARE `var(--text)`, NEVER `#fff`**
 — ＋ Add layer, the four green tools, and every layer head's number and name; a
@@ -1513,7 +1530,85 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — WHITE LABELS ON COLOURED STROKES, SHAPES GET A VIOLET, AND THE SIX TOOL LETTERS ARE ICONS (user-specified, with three screenshots)
+### 2026-08-20 (latest) — THE NAV RAIL COLLAPSES TO ICONS, LIKE ChatGPT's (user-specified, with four screenshots)
+
+> "i want add sidebar like chatgpt when user close side so user get image 2 type
+>  view like only icon
+>
+>  add fuction like this in my workflow screen in ui"
+>
+> — with ChatGPT's open panel (image 1) and its collapsed icon rail (image 2) as
+> the reference, plus two shots of the toggle's tooltip ("Close sidebar",
+> "Collapse sidebar Ctrl+B").
+
+**THE COLLAPSED RAIL IS THE SAME DOM, NARROWED — NOTHING IS UNMOUNTED.** The
+labels, the Soon badge, the live dots, the theme switch's track and the account
+chip's two lines are hidden in CSS (`.sidebar.collapsed`), which is what keeps
+the `title` on every row alive: at 68px the tooltip is the ONLY place a workflow
+can say its name, so a conditional render that dropped the row's attributes
+would have taken the collapsed rail's only labelling with it. Every row also
+keeps its full height and its outline, so the thing you are aiming at does not
+move when the rail narrows — only its text goes.
+
+⚠ **THE STATE LIVES IN `App.jsx`, NOT IN `Sidebar.jsx`.** `.shell` is a
+two-column grid (`280px 1fr`), so the rail and the page have to change width in
+the SAME render — a `collapsed` flag owned by the sidebar would narrow the aside
+while the grid track stayed 280px and left a dead column beside it. App holds it,
+stamps `.shell.nav-collapsed` (`grid-template-columns: 68px 1fr`), and passes
+`collapsed` + `onToggleCollapse` down. The TRACK is what transitions (0.18s), not
+the aside's width: animating the aside alone makes the page edge jump a frame
+ahead of the rail.
+
+- **Remembered per browser** — `localStorage` key `cas_nav_collapsed`, read at
+  boot the way `theme.js` reads its own. Both the read and the write are wrapped
+  in `try` so a storage-disabled browser starts expanded instead of failing to
+  boot.
+- **Ctrl/Cmd+B** toggles it from anywhere, and the toggle's tooltip is where that
+  is written down. ⚠ The handler **bails while an INPUT / TEXTAREA / SELECT /
+  contenteditable has focus**, so it can never fight a text control's own bold
+  binding — the editor is full of name fields.
+- **The toggle sits in the brand row and stays in the same corner in both
+  states**, so the button that closed the rail is the button that reopens it. It
+  draws `Icon.jsx`'s new `sidebar` glyph — a panel with its left rail — the same
+  in both directions, because a flipping chevron moves the target under the
+  cursor you just clicked with.
+- **Two things had to become spans to be hideable**: Home's bare `Home` text node
+  and Upgrade's bare `Upgrade` — CSS cannot hide a text node, so they are
+  `.sb-item-label` / `.sb-upgrade-label` now.
+- **The "WORKFLOWS" heading is swapped for a hairline** (`.sb-divider`) when
+  collapsed, rather than squeezed: the group still reads as a group, and this is
+  the one label that IS conditionally rendered, because a heading nobody can read
+  is not a heading.
+- **The brand avatar is hidden in the collapsed rail** — the footer chip already
+  carries one, and two faces in a 68px column read as a bug.
+- **Under 820px the collapse button is `display: none`** and the collapsed track
+  is overridden back to `1fr`: at that width the rail is already a full-width
+  block above the page, so narrowing it would hide the labels for nothing.
+
+⚠ **THE RAIL IS 280px WIDE NOW, UP FROM 264px, AND THAT WAS FORCED.** The brand
+row carries the logo, the name, the account avatar AND the new toggle; at 264
+"Character Studio" ellipsised to "Character St…", and the app's own name is the
+one label that must not be clipped. The 16px plus a tightened brand row (gap
+0.55→0.35rem, side padding 0.6→0.3rem, logo 1.4→1.3rem, a 26px toggle) is what
+buys it back — **measured in a browser, not guessed**: `scrollWidth` 125 vs 125.1
+available, i.e. it now fits at its natural width with the slack in the row rather
+than in the label. Anything added to that row again will clip the name first.
+
+**Files:** `client/src/components/Sidebar.jsx` (collapsed prop + toggle + the two
+new label spans + the divider), `client/src/components/Icon.jsx` (`sidebar`
+glyph), `client/src/App.jsx` (state, `localStorage`, Ctrl+B, `.shell` class),
+`client/src/styles/shell.css` (280px track, `.nav-collapsed`, `.sb-collapse`,
+`.sb-divider`, the `.sidebar.collapsed` block).
+
+**Verified:** `npx vite build` clean (only the pre-existing >500kB chunk
+warning), and the rail was RENDERED HEADLESS in all four states — dark/light ×
+open/collapsed — from the compiled `dist` stylesheet and read back, which is how
+the clipped brand name was caught and confirmed fixed. ⚠ **NOT opened in the real
+app**: no dev server, no login, no Playwright suite this pass, so the Ctrl+B
+handler, the `localStorage` round-trip and the grid transition have been read and
+built but not exercised in a live browser.
+
+### 2026-08-20 — WHITE LABELS ON COLOURED STROKES, SHAPES GET A VIOLET, AND THE SIX TOOL LETTERS ARE ICONS (user-specified, with three screenshots)
 
 > "i want change + add Layer buttun, Animate with veo, text, colour card and
 >  Voiceover buttun text color keep sholid white not buttun color
