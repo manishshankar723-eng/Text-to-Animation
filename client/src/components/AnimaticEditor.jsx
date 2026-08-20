@@ -35,8 +35,10 @@ import {
   LOOK_KINDS,
   TEXT_DEFAULTS,
   defaultFor,
+  cardRowKind,
   clipRowKind,
   dominantRowKind,
+  isBoardRow,
   ROW_TAKES,
   frameOrigin,
   frameSpans,
@@ -122,11 +124,15 @@ import { forgetAudio } from "../animatic/beats.js";
 import { beatMarks, cutsToDurations, planBeatCuts } from "../animatic/beat_cut.js";
 import useTimelineTransport, { useMonitorVideo } from "../animatic/useTimelineTransport.js";
 import useUndoStack from "../animatic/useUndoStack.js";
-import FrameStrip, { sortFiles } from "./FrameStrip.jsx";
+// ⚠ `sortFiles` ONLY. The strip itself was the Media pane's list of CLIPS; the
+// pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
+// its file-name sort still does, on every upload path.
+import { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
 import PaneSplitter from "./PaneSplitter.jsx";
+import MediaBin from "./MediaBin.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
 import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
@@ -155,6 +161,19 @@ import {
 // same count pill, one of them subtly different — and the two panes sit side by
 // side. One component means Frames collapses exactly the way Motion does.
 import { PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
+// THE MEDIA LIBRARY — what has been added to this animatic, as opposed to where
+// it plays. See the note at the top of `animatic/assets.js` for why the pane and
+// the timeline are two lists now.
+import {
+  assetFromAudio,
+  assetFromFrame,
+  assetKey,
+  assetOrigin,
+  assetUrl,
+  clipFromAsset,
+  libraryFromProject,
+  mergeAssets,
+} from "../animatic/assets.js";
 
 // The timeline's scale, in pixels per second. CONTINUOUS, not a list of steps:
 // the scroll bar's grips ask for whatever scale frames the stretch you dragged
@@ -190,38 +209,49 @@ const MAX_PICTURE_TRACK = 15;
 // here. The timeline reads the same table to decide whether to light a row up as
 // a drop target, and two copies of "what may land here" would drift into a row
 // that accepts your file and then refuses it.
+// ⚠ TWO NAMES PER KIND, AND THE SHORT ONE IS WHAT THE GUTTER SHOWS. The label
+// column is a fixed width shared with four controls, so "Storyboard images" could
+// only ever arrive there as "Storybo…" — two rows truncating to the same eight
+// characters, which is the one thing a row label must not do. Asked for by name:
+// "you change name Storyborad video to Story..Video and Storyborad Image to
+// Story..Image". `name` stays the full phrase for PROSE — a notice saying which
+// row something belongs on has room for it.
 const ROW_KIND = {
   board_image: {
     name: "Storyboard images",
+    short: "Story..Image",
     takes: ROW_TAKES.board_image,
     hint: "Panels imported from a storyboard — in the cut, one shot each",
     add: "Import a storyboard onto this row",
   },
   board_video: {
     name: "Storyboard video",
+    short: "Story..Video",
     takes: ROW_TAKES.board_video,
     hint: "Veo renders of your panels — each drawn OVER the panel it came from",
     add: "Animate a panel with ✨ to fill this row",
   },
   stills: {
     name: "Stills",
+    short: "Stills",
     takes: ROW_TAKES.stills,
     hint: "Full-frame photos in the cut, each placed on its own",
     add: "Add images to the end of this row",
   },
   video: {
     name: "Video",
+    short: "Video",
     takes: ROW_TAKES.video,
     hint: "Footage in the cut, each clip placed on its own",
     add: "Add video to the end of this row",
   },
 };
 
-// A picture row's name: its kind's own word, numbered from 2 for the second of
-// that kind — the same rule `addLayer` follows for Text / Shapes / Audio, and for
-// the same reason (the first one on screen is just "Video").
+// A picture row's name: its kind's own SHORT word, numbered from 2 for the second
+// of that kind — the same rule `addLayer` follows for Text / Shapes / Audio, and
+// for the same reason (the first one on screen is just "Video").
 const rowKindName = (kind, nth = 0) =>
-  `${ROW_KIND[kind]?.name || ROW_KIND.video.name}${nth > 0 ? ` ${nth + 1}` : ""}`;
+  `${ROW_KIND[kind]?.short || ROW_KIND.video.short}${nth > 0 ? ` ${nth + 1}` : ""}`;
 
 // Is this file one of the kinds that row accepts? `kindOf` answers "image" /
 // "video" / "audio" / "other"; a row's `takes` is a list of the same words.
@@ -246,6 +276,13 @@ const RESOLUTIONS = [
 // high zoom and nothing else — a proxy is a lossless resize, so colour, timing
 // and geometry are untouched. See the rules at the top of `proxies.py`.
 const PREVIEW_MAX_EDGE = 960;
+// ⚠ THE LIBRARY FETCHES ITS OWN, SMALLER PICTURES, and that is on purpose. A
+// library card is a ~100px tile, and a card usually points at the same file as a
+// clip already on the timeline — so asking for the monitor's 960px proxy would
+// hold two copies of every panel in memory to draw one of them at a tenth of the
+// size. The proxies are cached per width on disk, so the second width costs one
+// resize per file and nothing after that. See `proxies.py`.
+const LIBRARY_MAX_EDGE = 240;
 
 // The frame shapes and their pixel sizes moved to `animatic/aspects.js` — the
 // Shape chips in Video properties, the Program pane's picker and the export
@@ -463,6 +500,12 @@ export default function AnimaticEditor({
   // redrawn panel keeps its frame id and its route, and only the version moves.
   // See the fetch effect below.
   const urlSrcRef = useRef({});
+  // asset id → object URL of its LIBRARY thumbnail, and the path each came from.
+  // Keyed by ASSET id rather than clip id because a card outlives its clips —
+  // see the fetch effect for why it cannot share `urls`.
+  const [assetUrls, setAssetUrls] = useState({});
+  const assetUrlsRef = useRef({});
+  const assetSrcRef = useRef({});
   // upload_id → object URL, for the overlay pictures.
   const [overlayUrls, setOverlayUrls] = useState({});
   const overlayUrlsRef = useRef({});
@@ -698,6 +741,7 @@ export default function AnimaticEditor({
     loading,
     title, setTitle,
     frames, setFrames,
+    assets, setAssets,
     settings, setSettings,
     texts, setTexts,
     shapes, setShapes,
@@ -963,6 +1007,82 @@ export default function AnimaticEditor({
     return `${lane.kind}:${lane.layerId || ""}`;
   };
 
+  // ⚠ THE SAME TOKENS AS `hiddenLanes`, A DIFFERENT MEANING. Hidden takes a row
+  // out of the VIDEO; locked takes it out of REACH and changes nothing about the
+  // film. Two lists rather than one flag with two bits, because a row can be
+  // either, both, or neither, and because the exporter reads one and must never
+  // read the other — see `locked_lanes` in server/schemas.py.
+  const lockedLanes = useMemo(
+    () => new Set(settings.locked_lanes || []),
+    [settings.locked_lanes]
+  );
+
+  const toggleLaneLocked = (lane) => {
+    const token = laneToken(lane);
+    if (!token) return;
+    const wasLocked = lockedLanes.has(token);
+    setSettings((sett) => {
+      const now = new Set(sett.locked_lanes || []);
+      if (now.has(token)) now.delete(token);
+      else now.add(token);
+      return { ...sett, locked_lanes: [...now] };
+    });
+    setNotice(
+      wasLocked
+        ? `${lane.name} can be edited again.`
+        : `${lane.name} is locked — it still plays and still exports, but nothing on it can be moved, trimmed or deleted.`
+    );
+  };
+
+  /**
+   * IS THIS ROW LOCKED? — asked by every edit, from the token alone.
+   *
+   * ⚠ TAKES A LANE-SHAPED THING, NOT A LANE. A drag knows a lane; the razor and
+   * a clip delete know only a clip's track or its layer id, and rebuilding a
+   * whole lane object to ask one question is how the answer comes to differ by
+   * caller. So the callers build the same two-field shape `laneToken` needs.
+   */
+  const laneIsLocked = useCallback(
+    (lane) => {
+      const token = laneToken(lane);
+      return !!token && lockedLanes.has(token);
+    },
+    [lockedLanes]
+  );
+
+  /** Is the row this PICTURE CLIP sits on locked? */
+  const frameLocked = useCallback(
+    (frame) => laneIsLocked({ kind: "frames", track: frameTrack(frame) }),
+    [laneIsLocked]
+  );
+
+  /**
+   * IS THE ROW THIS SELECTED ITEM SITS ON LOCKED? — for the KEYBOARD paths.
+   *
+   * ⚠ THE MOUSE IS ALREADY HANDLED, IN THE TIMELINE. Every press on a clip goes
+   * through `startClipDrag`, which refuses a locked lane before it does anything
+   * else — so on a locked row a click does not select, a drag does not move and
+   * the razor does not cut. What that cannot see is Delete and Ctrl+K, which act
+   * on a selection that may predate the lock, or that a double-click on the
+   * gutter made. This is the guard for those.
+   *
+   * ⚠ AUDIO IS ALWAYS UNLOCKED, and honestly so: `laneToken` gives an audio row
+   * no token, so there is nothing to store a lock against — a loose audio row is
+   * keyed by the FILE it holds, which changes as clips are dragged in and out.
+   * The padlock is disabled on those rows for the same reason.
+   */
+  const itemLocked = useCallback(
+    (item) => {
+      if (!item) return false;
+      const { kind, clip } = item;
+      if (kind === "frame") return frameLocked(clip);
+      const laneKind = kind === "overlay" ? "image" : kind;
+      if (laneKind !== "text" && laneKind !== "shape") return false;
+      return laneIsLocked({ kind: laneKind, layerId: clip?.layer_id || "" });
+    },
+    [frameLocked, laneIsLocked]
+  );
+
   const toggleLaneHidden = (lane) => {
     const token = laneToken(lane);
     if (!token) return;
@@ -1197,6 +1317,67 @@ export default function AnimaticEditor({
     };
   }, [frames]);
 
+  // One small blob per LIBRARY CARD.
+  //
+  // ⚠ A SECOND CACHE, NOT A SHARE OF `urls`, and the reason is that `urls` is
+  // keyed by CLIP id — a card whose clips have all been deleted has no clip id to
+  // look under, which is precisely the state the library exists to represent. So
+  // it is keyed by ASSET id and fetched at `LIBRARY_MAX_EDGE`, a tenth of the
+  // area, which is also what stops the second copy costing anything much.
+  //
+  // ⚠ AND IT RE-FETCHES WHEN THE PATH MOVES, exactly as the frame cache does
+  // (`urlSrcRef`): a board panel keeps its identity through a redraw and only the
+  // server's `?v=` changes, so caching on "have I got one?" alone is how a
+  // redrawn panel goes on showing the old drawing for ever.
+  useEffect(() => {
+    let alive = true;
+    const wanted = new Map();
+    for (const asset of assets) {
+      const path = asset.url || assetUrl(animaticId, asset);
+      if (path) wanted.set(asset.id, path);
+    }
+    for (const id of Object.keys(assetUrlsRef.current)) {
+      if (!wanted.has(id)) {
+        URL.revokeObjectURL(assetUrlsRef.current[id]);
+        delete assetUrlsRef.current[id];
+        delete assetSrcRef.current[id];
+      }
+    }
+    const missing = [...wanted].filter(
+      ([id, path]) => !assetUrlsRef.current[id] || assetSrcRef.current[id] !== path
+    );
+    if (!missing.length) {
+      setAssetUrls({ ...assetUrlsRef.current });
+      return undefined;
+    }
+    (async () => {
+      for (let i = 0; i < missing.length; i += 5) {
+        if (!alive) return;
+        await Promise.all(
+          missing.slice(i, i + 5).map(async ([id, path]) => {
+            try {
+              const url = await api.fetchAnimaticMedia(path, LIBRARY_MAX_EDGE);
+              if (!alive) {
+                URL.revokeObjectURL(url);
+                return;
+              }
+              const stale = assetUrlsRef.current[id];
+              assetUrlsRef.current[id] = url;
+              assetSrcRef.current[id] = path;
+              if (stale) retireBlob(stale);
+            } catch {
+              /* a card with no picture shows an empty tile, not an error banner */
+            }
+          })
+        );
+        if (alive) setAssetUrls({ ...assetUrlsRef.current });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [assets, animaticId]);
+
   // One blob per overlay picture, keyed by UPLOAD ID — several overlays can
   // point at the same file (a logo used four times), so keying by clip id would
   // fetch and hold the same bytes over and over.
@@ -1342,6 +1523,9 @@ export default function AnimaticEditor({
       for (const url of Object.values(urlsRef.current)) URL.revokeObjectURL(url);
       urlsRef.current = {};
       urlSrcRef.current = {};
+      for (const url of Object.values(assetUrlsRef.current)) URL.revokeObjectURL(url);
+      assetUrlsRef.current = {};
+      assetSrcRef.current = {};
       for (const url of Object.values(overlayUrlsRef.current)) URL.revokeObjectURL(url);
       overlayUrlsRef.current = {};
       for (const url of Object.values(videoUrlsRef.current)) URL.revokeObjectURL(url);
@@ -1363,36 +1547,62 @@ export default function AnimaticEditor({
     [texts]
   );
 
-  // ------------------------------------------------- the picture track, split
-  // The same one sequence, grouped by where each clip came from (`frameOrigin`).
-  //
-  // ⚠ THIS IS A VIEW, NOT THREE TRACKS. `frames` is still ONE sequence played in
-  // order, and it has to be: the clips are laid end to end, so a length here is
-  // a time everything else — the audio, the captions, the export — is measured
-  // against. What the grouping buys is the question you actually ask of the
-  // Media pane ("where's the video I just dropped in?") and of the timeline
-  // ("which row is my footage on?"), neither of which the one long strip could
-  // answer once a board ran to thirty panels.
-  //
-  // `at` is what keeps it honest: every clip carries its INDEX IN THE FULL
-  // SEQUENCE, so a number badge, a drop position and a reorder all mean the same
-  // thing in a section as they do in the whole strip.
-  const pictureTrack = useMemo(() => {
-    const groups = { board: [], video: [], image: [] };
-    const at = new Map();
-    frames.forEach((f, i) => {
-      at.set(f.id, i);
-      groups[frameOrigin(f)].push(f);
-    });
-    return { ...groups, at };
-  }, [frames]);
+  // ----------------------------------------------------- the media library
+  /**
+   * THE LIBRARY, GROUPED THE WAY THE MEDIA PANE SHOWS IT.
+   *
+   * ⚠ GROUPED BY ORIGIN, NOT BY KIND — `assetOrigin`, the same rule `frameOrigin`
+   * uses on clips, and for the same reason: a board shot that has been through Veo
+   * is a video FILE now and must stay in Storyboard Frames where the user left it,
+   * rather than moving to Video the moment it is animated.
+   */
+  const library = useMemo(() => {
+    const groups = { board: [], video: [], image: [], audio: [] };
+    for (const asset of assets) (groups[assetOrigin(asset)] || groups.image).push(asset);
+    return groups;
+  }, [assets]);
 
-  // A clip's place in the whole sequence — for the strip's numbers, and for
-  // translating a drop inside one section back into the sequence.
-  const seqIndex = useCallback(
-    (frame) => pictureTrack.at.get(frame?.id) ?? 0,
-    [pictureTrack]
+  /**
+   * HOW MANY CLIPS USE EACH LIBRARY CARD, by asset id.
+   *
+   * ⚠ MATCHED BY SOURCE (`assetKey`), NEVER BY ID. A clip and the card it came
+   * from are two rows in two lists with two id spaces — that separation is the
+   * whole feature — so the only thing that can link them is the thing behind
+   * both: which file, or which panel of which board.
+   *
+   * It drives the ×N badge and, more importantly, the ✕'s wording: "also deletes
+   * 2 clips" has to be said before it happens rather than discovered after.
+   */
+  const libraryUse = useMemo(() => {
+    const idOfKey = new Map();
+    for (const asset of assets) idOfKey.set(assetKey(asset), asset.id);
+    const count = new Map();
+    const bump = (key) => {
+      const id = idOfKey.get(key);
+      if (id) count.set(id, (count.get(id) || 0) + 1);
+    };
+    for (const frame of frames) bump(assetKey(assetFromFrame(frame)));
+    for (const track of audioTracks) bump(assetKey(assetFromAudio(track)));
+    return count;
+  }, [assets, frames, audioTracks]);
+
+  const assetUsedCount = useCallback(
+    (asset) => libraryUse.get(asset?.id) || 0,
+    [libraryUse]
   );
+
+  /**
+   * PUT SOURCES IN THE LIBRARY — called by every path that adds something.
+   *
+   * ⚠ EVERY ADD PATH HAS TO CALL THIS, and that is the one thing about the library
+   * that is easy to get wrong: a source that reaches the timeline without reaching
+   * the library is a clip you can delete and never get back, which is the bug this
+   * whole feature was reported over. `mergeAssets` dedupes, so calling it twice for
+   * the same file is free and calling it once too often is harmless.
+   */
+  const addToLibrary = useCallback((cards) => {
+    setAssets((list) => mergeAssets(list, cards));
+  }, [setAssets]);
 
   // ------------------------------------------------------ the video rows
   /**
@@ -1417,7 +1627,17 @@ export default function AnimaticEditor({
       // than folded to 0, which would silently pile it onto the base track.
       if (!Number.isInteger(track) || track < 0 || track > MAX_PICTURE_TRACK) continue;
       if (!byTrack.has(track)) {
-        byTrack.set(track, { track, rowKind: l.kind, name: l.name, layerId: l.id });
+        // ⚠ A BOARD ROW IS CALLED AFTER ITS KIND, NEVER AFTER THE BOARD. The
+        // import used to name the row after the storyboard it came from, so the
+        // gutter read "TTBB_E…" and nothing on screen said which of the four
+        // kinds that row was — reported as "i see my storyborad namke come and
+        // show in layer but this not happen i want you keep Story..Image". There
+        // is no rename in the UI, so a stored name on one of these two rows is
+        // never something the user typed: it is either that board title or an
+        // older build's long label, and both are better read as the canonical
+        // one. Blanking it here hands it to the numbering pass below.
+        const name = isBoardRow(l.kind) ? "" : l.name;
+        byTrack.set(track, { track, rowKind: l.kind, name, layerId: l.id });
       }
     }
     // `pictureTracks` always includes 0, so the base row exists in an empty
@@ -1635,14 +1855,24 @@ export default function AnimaticEditor({
     // the timeline already holds the clips and counts them itself.
     return out.map((lane) => {
       const vis = laneToken(lane);
-      return { ...lane, vis, hidden: !!vis && hiddenLanes.has(vis) };
+      return {
+        ...lane,
+        vis,
+        hidden: !!vis && hiddenLanes.has(vis),
+        // ⚠ AN AUDIO ROW HAS NO TOKEN (`laneToken` returns "" for it), so it
+        // cannot be hidden — it has its own mute — and it cannot be locked
+        // either. That is a gap worth naming rather than papering over: a lock
+        // needs a stable per-row token, and a loose audio row is keyed by the
+        // FILE it holds, which changes when a clip is dragged in from elsewhere.
+        locked: !!vis && lockedLanes.has(vis),
+      };
     });
     // ⚠ `hasCaptionClips`, not `texts`, for the reason above — this list only
     // cares WHETHER any clip is on the captions lane. `frames` is in here for one
     // question too: WHICH TRACKS EXIST, which decides how many picture rows there
     // are. That does mean the list rebuilds when a picture is added or moved
     // across tracks, which is exactly when the rows change.
-  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, videoTracks]);
+  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, lockedLanes, videoTracks]);
 
   // ------------------------------------------------------------ undo / redo
   // One stack for the whole document — see `useUndoStack`. `gestureProps` is
@@ -1687,6 +1917,13 @@ export default function AnimaticEditor({
         return;
       }
       const source = frames[i];
+      // ⚠ THE KEYBOARD RAZOR ONLY. A razor CLICK on a locked row never gets here
+      // — `startClipDrag` refuses it first — but Ctrl+K cuts whatever is under
+      // the playhead and has no lane to have been refused by.
+      if (frameLocked(source)) {
+        setNotice("That row is locked — unlock it in the gutter to cut it.");
+        return;
+      }
       const offset = Math.round(ms - span.start);
       if (offset < MIN_MS || source.duration_ms - offset < MIN_MS) {
         setNotice(
@@ -1853,6 +2090,21 @@ export default function AnimaticEditor({
    */
   function deleteMany(items) {
     if (!items.length) return;
+    // ⚠ THE LOCKED ONES ARE DROPPED, NOT THE WHOLE PRESS. A marquee across six
+    // rows where one is locked should delete the five — refusing the lot would
+    // make one locked row block every edit near it, which is not what a lock on
+    // ONE row means. What was skipped is counted, so nothing goes quiet.
+    const locked = items.filter(itemLocked);
+    const live = locked.length ? items.filter((i) => !itemLocked(i)) : items;
+    if (!live.length) {
+      setNotice(
+        `Nothing deleted — ${
+          locked.length === 1 ? "that clip is" : `all ${locked.length} are`
+        } on a locked row.`
+      );
+      return;
+    }
+    items = live;
     const frameIds = idsOf(items, "frame");
     const textIds = idsOf(items, "text");
     const shapeIds = idsOf(items, "shape");
@@ -1873,7 +2125,11 @@ export default function AnimaticEditor({
       setAudioTracks((list) => list.filter((a) => !audioIds.has(clipId(a))));
     }
     selectOnly({});
-    setNotice(`Deleted ${selectionLabel(items)}.`);
+    setNotice(
+      `Deleted ${selectionLabel(items)}.${
+        locked.length ? ` ${locked.length} left alone — locked row.` : ""
+      }`
+    );
   }
 
   /**
@@ -2431,6 +2687,11 @@ export default function AnimaticEditor({
   };
 
   function deleteFrame(id) {
+    const doomed = frames.find((f) => f.id === id);
+    if (doomed && frameLocked(doomed)) {
+      setNotice("That row is locked — unlock it in the gutter to delete from it.");
+      return;
+    }
     // ⚠ The next list is computed HERE rather than inside the updater: writing
     // to a second piece of state from inside a `setFrames(current => …)` is a
     // setState-during-render, which React runs twice in StrictMode. Same rule
@@ -2853,39 +3114,51 @@ export default function AnimaticEditor({
    * for them to live, and silently moving them to another row would be worse
    * than saying so.
    *
-   * ⚠ A VIDEO ROW IS THE EXCEPTION, AND ITS CLIPS ARE NOT DELETED. They carry a
-   * track NUMBER rather than a layer id, so the base track is always somewhere
-   * they can live — and a shot is the most expensive thing on this timeline to
-   * lose (a board panel, a file someone uploaded, a Veo render that was paid
-   * for). So they drop to track 0 KEEPING THE MOMENT THEY PLAY AT: the film is
-   * frame-for-frame what it was, and all that changed is which row draws them.
+   * ⚠ AND A PICTURE ROW IS NO LONGER THE EXCEPTION — ITS CLIPS GO TOO. They carry
+   * a track NUMBER rather than a layer id, so track 0 was always somewhere they
+   * COULD live, and they used to drop there keeping the moment they played at. Two
+   * things were wrong with that. The confirm this ✕ opens has always said "The row
+   * and the 1 clip on it" — a promise the code did not keep — and what the user
+   * actually saw was the clip reappearing on a row it was never put on: "when i
+   * delete layer. so only delete layer not clip and i want delete clip too".
+   *
+   * ⚠ AND IT IS ONLY SAFE TO DELETE THEM BECAUSE THE MEDIA LIBRARY EXISTS NOW. A
+   * shot is the most expensive thing on this timeline to lose — a board panel, an
+   * upload, a Veo render that was paid for — and that was the whole argument for
+   * saving them. Since `assets.js`, deleting a clip leaves its SOURCE in Media, so
+   * what goes here is the placement, not the picture: drag the card back out and
+   * it lands on a row of its own kind again. The notice says so, because "and 42
+   * clips" is only an answerable question if you know what survives it.
    */
   function removeLayer(layerId) {
     const layer = layers.find((l) => l.id === layerId);
     if (layer && ROW_KIND[layer.kind]) {
       const track = Number(layer.track);
-      // Its clips' evaluated starts, captured BEFORE the record goes: a clip with
-      // no `start_ms` of its own begins where the one before it on THIS row
-      // ended, and that row is about to stop existing.
-      const landing = new Map(
-        pictureSpans.spans
-          .filter((sp) => sp.track === track)
-          .map((sp) => [frames[sp.index].id, sp.start])
-      );
+      const on = frames.filter((f) => frameTrack(f) === track);
       setLayers((list) => list.filter((l) => l.id !== layerId));
-      if (landing.size) {
-        setFrames((list) =>
-          list.map((f) =>
-            landing.has(f.id) ? { ...f, track: 0, start_ms: landing.get(f.id) } : f
-          )
-        );
+      if (on.length) {
+        // ⚠ JUST THIS TRACK, AND NOTHING ELSE MOVES. A picture holds its own
+        // start, so the rows around it stay exactly where they were — the same
+        // reason `clearLane` can empty one row without re-timing the others.
+        const going = new Set(on.map((f) => f.id));
+        const kept = frames.filter((f) => !going.has(f.id));
+        setFrames(kept);
+        // ⚠ AND THE SAME TWO CHORES EVERY OTHER FRAME DELETE DOES — the list is
+        // computed above rather than inside an updater for the reason
+        // `deleteFrame` gives (a setState from inside another one runs twice in
+        // StrictMode). A transition whose clip has gone, or one that has become
+        // the last cut, is a transition to nothing; and a selection pointing at a
+        // deleted clip is a Properties pane describing something that is not
+        // there. `selectOnly({})` is what `deleteMany` does, and this is the same
+        // kind of press: a whole row at once, not one clip.
+        setTransitions((list) => pruneTransitions(list, kept));
+        selectOnly({});
       }
-      const base = videoTracks.find((r) => r.track === 0);
       setNotice(
-        landing.size
-          ? `${layer.name} removed — its ${landing.size} clip${
-              landing.size === 1 ? "" : "s"
-            } dropped to ${base?.name || "the base row"}, still at the same moment.`
+        on.length
+          ? `${layer.name} removed with its ${on.length} clip${
+              on.length === 1 ? "" : "s"
+            } — the sources are still in Media, so you can drop them back in.`
           : `${layer.name} removed.`
       );
       return;
@@ -2920,10 +3193,13 @@ export default function AnimaticEditor({
    * This deletes what is ON the row and keeps the row, which is the only thing
    * "remove" can honestly mean here.
    *
-   * ⚠ ASKS FIRST, unlike every other ✕ in the gutter, because this is the one
-   * that can be forty clips — a whole board's worth of pictures behind one click.
-   * Undo covers it (it is an ordinary document edit), but a confirm is cheaper
-   * than finding that out.
+   * ⚠ AND IT NO LONGER ASKS — THE ROW'S ✕ HAS ALREADY ASKED. This used to raise a
+   * `window.confirm` because it was the one ✕ in the gutter that could be forty
+   * clips behind one click. Every ✕ in the gutter opens the row's own popover now
+   * (`.tl-layer-confirm`, counted and anchored to the row), so the native dialog
+   * was a second question about the same press — in a different place, in the
+   * browser's own styling, which is exactly what "same place dropdown" was asked
+   * to replace. It is the only caller, so nothing else loses a guard.
    */
   function clearLane(lane) {
     const on = (list) => list.filter((c) => (c.layer_id || "") === (lane.layerId || ""));
@@ -2937,17 +3213,23 @@ export default function AnimaticEditor({
     if (!count) return;
 
     const what = `${count} clip${count === 1 ? "" : "s"} on ${lane.name}`;
-    if (!window.confirm(`Delete ${what}? Ctrl+Z puts them back.`)) return;
 
     if (lane.kind === "frames") {
       // Just this track. ⚠ AND NOTHING ELSE MOVES: a picture holds its own start,
       // so emptying a track leaves the rows around it exactly where they were.
       // (It used to shorten the whole sequence, because there was only one.)
-      setFrames((list) => list.filter((f) => frameTrack(f) !== (lane.track || 0)));
+      const kept = frames.filter((f) => frameTrack(f) !== (lane.track || 0));
+      setFrames(kept);
+      // The same two chores `deleteFrame` and `removeLayer` do — a transition
+      // whose clip has gone is a transition to nothing, and a selection pointing
+      // at a deleted clip is a Properties pane describing thin air. This skipped
+      // both, which was a real hole rather than a difference of opinion.
+      setTransitions((list) => pruneTransitions(list, kept));
+      selectOnly({});
     } else if (lane.kind === "text") setTexts(off);
     else if (lane.kind === "shape") setShapes(off);
     else if (lane.kind === "image") setOverlays(off);
-    setNotice(`Deleted ${what}.`);
+    setNotice(`Deleted ${what} — Ctrl+Z puts them back.`);
   }
 
   // The ＋ on a lane. ONE entry point, so "add to this row" behaves the same
@@ -3159,6 +3441,93 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * REMOVE A LIBRARY CARD, and every clip made from it.
+   *
+   * ⚠ NO CONFIRM STEP, ASKED FOR DIRECTLY: "when user cilck x buttun so clip in
+   * media panel so direct delele fuction no dropdwon delete and cancel option not
+   * need here". The layer ✕ in the gutter DOES confirm, and the difference is
+   * deliberate rather than inconsistent — a layer ✕ can take forty clips and a
+   * whole row with it, where this takes one source you are looking at. The count
+   * is on the button's tooltip before the press, which is where the warning went.
+   *
+   * ⚠ AND IT TAKES THE CLIPS WITH IT. Leaving them would be a clip playing from a
+   * source that is no longer listed anywhere — unfixable from the UI, because
+   * every control that could reach it is in the pane the card just left.
+   */
+  function deleteAsset(asset) {
+    if (!asset?.id) return;
+    const key = assetKey(asset);
+    const goneFrames = frames.filter((f) => assetKey(assetFromFrame(f)) === key);
+    const goneAudio = audioTracks.filter((a) => assetKey(assetFromAudio(a)) === key);
+    const kept = frames.filter((f) => !goneFrames.includes(f));
+
+    setAssets((list) => list.filter((a) => a.id !== asset.id));
+    if (goneFrames.length) {
+      setFrames(kept);
+      // Same rule `deleteFrame` follows: a transition whose clip has gone, or one
+      // that has become the last cut, is a transition to nothing.
+      setTransitions((list) => pruneTransitions(list, kept));
+      const goneIds = new Set(goneFrames.map((f) => f.id));
+      setSelectedId((cur) => (goneIds.has(cur) ? null : cur));
+    }
+    if (goneAudio.length) {
+      const goneIds = new Set(goneAudio.map((a) => clipId(a)));
+      setAudioTracks((list) => list.filter((a) => !goneIds.has(clipId(a))));
+      setSelectedTrackId((cur) => (goneIds.has(cur) ? null : cur));
+    }
+    const used = goneFrames.length + goneAudio.length;
+    setNotice(
+      used
+        ? `“${asset.label || "Media"}” removed, with ${used} clip${
+            used === 1 ? "" : "s"
+          } that used it.`
+        : `“${asset.label || "Media"}” removed from Media.`
+    );
+  }
+
+  /**
+   * PUT A LIBRARY CARD ON THE TIMELINE without a drag — its ＋, and a double-click.
+   *
+   * ⚠ A DRAG CANNOT BE THE ONLY WAY. There is no keyboard path through one, and a
+   * library scrolled forty cards away from the row you want is a drag that cannot
+   * be completed. This lands it on the first row that will TAKE it, at the
+   * playhead, and says which row that was.
+   */
+  function placeAsset(asset) {
+    if (!asset?.id) return;
+    const at = Math.round(timeRef.current || 0);
+    if ((asset.kind || "image") === "audio") {
+      setNotice(
+        "Drag a sound onto an audio row — which row it goes on decides what it is mixed with."
+      );
+      return;
+    }
+    // The row this kind belongs on: one of its own kind if there is one, else a
+    // new one. Exactly the rule `addAssets` follows for a file with no row named.
+    // ⚠ ONE DERIVATION, SHARED WITH THE DRAG AND WITH `clipRowKind`. This was
+    // written out by hand and the drop rule was written out again in `dropAsset`,
+    // and the two disagreed: ＋ put a Veo card on the Storyboard video row while a
+    // DRAG of the same card was refused there.
+    const wantKind = cardRowKind(asset.kind || "image", assetOrigin(asset) === "board");
+    const row = rowOfKind(wantKind);
+    let track = row ? row.track : addPictureTrack(wantKind, { quiet: true });
+    if (track === null) return; // no room; addPictureTrack said so
+    if (laneIsLocked({ kind: "frames", track })) {
+      setNotice(`${row?.name || "That row"} is locked — unlock it to add to it.`);
+      return;
+    }
+    // 2000 is the default hold every other add path in this file uses — see
+    // `addFiles` and `newVideoClip`. Footage ignores it and opens at its own
+    // natural length (`clipFromAsset`).
+    const clip = clipFromAsset(asset, { id: newId(), animaticId, defaultMs: 2000 });
+    setFrames((list) => insertPictures(list, [clip], frameIndexAt(at, track), track, at));
+    selectOnly({ frame: clip.id });
+    setNotice(
+      `“${asset.label || "Media"}” added to ${row?.name || "a new row"} at ${formatTime(at)}.`
+    );
+  }
+
   async function dropAsset({ lane, atMs, asset, files }) {
     const at = Math.max(0, Math.round(atMs || 0));
 
@@ -3212,6 +3581,80 @@ export default function AnimaticEditor({
     }
 
     if (!asset?.id) return;
+
+    // ---- a card out of the MEDIA LIBRARY ----------------------------------
+    // ⚠ A COPY, NOT A MOVE, and that one word is the whole difference from the
+    // `"frame"` branch below. A library card has no place in the cut to be moved
+    // FROM — it may have none or four — so dragging it out MAKES a clip. Drag the
+    // same card onto three rows and you get three clips that trim and grade
+    // independently, which is what a library is for.
+    if (asset.kind === "asset") {
+      const card = assets.find((a) => a.id === asset.id);
+      if (!card) return;
+      const kind = card.kind || "image";
+
+      // Audio is not a picture clip: it becomes a track on an audio row. It also
+      // needs no upload — the file is already on the server — so this is the one
+      // add path that reaches `setAudioTracks` without going near a file dialog.
+      if (kind === "audio") {
+        if (lane.kind !== "audio") {
+          setNotice("A sound goes on an audio row — the picture rows take stills and footage.");
+          return;
+        }
+        const clip = {
+          id: newId(),
+          upload_id: card.upload_id,
+          layer_id: lane.layerId || "",
+          filename: card.label || "",
+          duration_ms: card.duration_ms || 0,
+          start_ms: at,
+          offset_ms: 0,
+          volume: 1,
+          muted: false,
+          url: `/animatics/${animaticId}/media/${card.upload_id}`,
+        };
+        setAudioTracks((list) => [...list, clip]);
+        selectOnly({ track: clipId(clip) });
+        setNotice(`“${card.label || "Audio"}” added to ${lane.name} at ${formatTime(at)}.`);
+        return;
+      }
+
+      // Onto an image LAYER: a picture composited OVER the cut, not a place in
+      // the sequence — the same distinction the `"frame"` branch draws, and the
+      // reason both rows are called "image" and mean different things.
+      if (lane.kind === "image") {
+        await overlayFromFrame(clipFromAsset(card, { id: newId(), animaticId }), lane, at);
+        return;
+      }
+      if (lane.kind !== "frames") {
+        setNotice(`${lane.name} doesn't take media — drop it on a picture row.`);
+        return;
+      }
+      // ⚠ THE CARD'S OWN ROW, NOT THE ROW'S FILE RULE — and that is the fix for
+      // the drag the user could not complete. `rowTakesFile` answers "what may be
+      // UPLOADED here", and both board rows answer "nothing"; asking it about a
+      // library card meant a Veo render could not be dragged back onto the
+      // Storyboard video row it had just been deleted from, and landed on plain
+      // Video instead ("i can't drop in Storyboad layer but i drop in Video
+      // layer"). `cardRowKind` is the same derivation `clipRowKind` uses for a
+      // clip, so a card and the clip made from it can never disagree about where
+      // it belongs — and it is the same answer `laneTakes` lit the row up with.
+      const rowKind = lane.rowKind || "video";
+      const want = cardRowKind(kind, assetOrigin(card) === "board");
+      if (rowKind !== want) {
+        setNotice(
+          `“${card.label || "Media"}” belongs on ${ROW_KIND[want].name} — ` +
+            `${lane.name} is a ${ROW_KIND[rowKind]?.name || "different"} row.`
+        );
+        return;
+      }
+      const track = lane.track || 0;
+      const clip = clipFromAsset(card, { id: newId(), animaticId, defaultMs: 2000 });
+      setFrames((list) => insertPictures(list, [clip], frameIndexAt(at, track), track, at));
+      selectOnly({ frame: clip.id });
+      setNotice(`“${card.label || "Media"}” added to ${lane.name} at ${formatTime(at)}.`);
+      return;
+    }
 
     // ---- a picture already in the sequence --------------------------------
     if (asset.kind === "frame") {
@@ -3412,6 +3855,17 @@ export default function AnimaticEditor({
         url: `/animatics/${animaticId}/media/${item.upload_id}`,
       }));
       setOverlays((list) => [...list, ...added]);
+      // The same uploads a still would make, so they list in the library beside
+      // them — and dragging one back out onto an image layer makes another
+      // overlay (`dropAsset`). An overlay is a placement, like every other clip.
+      addToLibrary(
+        added.map((o) =>
+          assetFromFrame(
+            { kind: "image", src: { kind: "upload", upload_id: o.upload_id }, label: "" },
+            newId()
+          )
+        )
+      );
       if (added.length) selectOnly({ overlay: added[added.length - 1].id });
       setNotice(
         `Added ${added.length} picture${added.length === 1 ? "" : "s"} to this layer — drag to place ${added.length === 1 ? "it" : "them"} on the frame.`
@@ -3827,6 +4281,10 @@ export default function AnimaticEditor({
       // starts and ripples what follows them on that row — a list splice alone
       // would drop them on top of whatever already occupied that stretch.
       setFrames((list) => insertPictures(list, added, insertAt, track, atMs));
+      // ⚠ AND INTO THE LIBRARY. The clip is where it plays; the card is the record
+      // that the file was ever uploaded, and it has to outlive the clip — see
+      // `addToLibrary`.
+      addToLibrary(added.map((f) => assetFromFrame(f, newId())));
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
@@ -3872,6 +4330,7 @@ export default function AnimaticEditor({
       // starts and ripples what follows them on that row — a list splice alone
       // would drop them on top of whatever already occupied that stretch.
       setFrames((list) => insertPictures(list, added, insertAt, track, atMs));
+      addToLibrary(added.map((f) => assetFromFrame(f, newId())));
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
@@ -3895,6 +4354,12 @@ export default function AnimaticEditor({
       next.splice(at, 0, card);
       return next;
     });
+    // ⚠ A COLOUR CARD GOES IN THE LIBRARY TOO, keyed by its HEX — so a project
+    // with four blackouts has one card, and deleting the last of them still
+    // leaves "black" there to drag back out. It is the one asset with no file
+    // behind it, which is why `assetUrl` returns "" for it and `MediaBin` draws a
+    // swatch rather than waiting for a picture.
+    addToLibrary([assetFromFrame(card, newId())]);
     selectOnly({ frame: card.id });
     setMediaTab("media");
     // A card is a still you made, so it lists with the images — see `frameOrigin`.
@@ -3967,7 +4432,12 @@ export default function AnimaticEditor({
       let track = boardImport?.track ?? null;
       let lanes = null;
       if (track === null) {
-        const lane = pictureLane("board_image", res.name || "");
+        // ⚠ NOT `res.name` — THE ROW IS NOT NAMED AFTER THE BOARD. It used to be,
+        // and the gutter then read "TTBB_E…" for the one row whose kind matters
+        // most, with no hint that it was the storyboard row at all. Which board
+        // the panels came from is on every card and in the notice below; what the
+        // label has to say is which of the four kinds this row is.
+        const lane = pictureLane("board_image");
         if (!lane) return; // no room; `pictureLane` said so
         lanes = [...layers, lane];
         track = lane.track;
@@ -3979,11 +4449,20 @@ export default function AnimaticEditor({
       const next = placed.map((f) =>
         fresh.has(f.id) ? { ...f, url: `/animatics/${animaticId}/frame/${f.id}` } : f
       );
+      // ⚠ THE LIBRARY GOES UP IN THE SAME WRITE AS THE FRAMES. A panel imported
+      // and then deleted before the debounce fired would otherwise be gone from
+      // both lists — the one case the library exists to prevent. Same reasoning as
+      // the row below it: everything one action creates is saved by one PUT.
+      const cards = mergeAssets(
+        assets,
+        added.map((f) => assetFromFrame(f, newId()))
+      );
       // The write these pictures are served out of. `url` is excluded from the
       // saved shape (`frameForSave`), so carrying it here changes nothing about
       // what is sent — and it means the frames arrive on screen already pointing
       // at a route that answers.
-      await flush({ frames: next, ...(lanes ? { layers: lanes } : {}) });
+      await flush({ frames: next, assets: cards, ...(lanes ? { layers: lanes } : {}) });
+      setAssets(cards);
       if (lanes) setLayers(lanes);
       framesRef.current = next;
       setFrames(next);
@@ -4194,6 +4673,18 @@ export default function AnimaticEditor({
           muted: false,
           url: `/animatics/${animaticId}/media/${res.upload_id}`,
         },
+      ]);
+      // ⚠ THE FILE JOINS THE LIBRARY, and it is the file and not the clip. A
+      // razored voiceover is four clips reading one recording, so the library
+      // keeps ONE card — keyed by upload id (`assetKey`) — and deleting every
+      // clip of it still leaves the recording there to drag back out.
+      addToLibrary([
+        assetFromAudio({
+          id: res.upload_id,
+          upload_id: res.upload_id,
+          filename: res.filename || file.name,
+          duration_ms: durationMs,
+        }, newId()),
       ]);
       // Here rather than in the callers: this is the one function every audio
       // add goes through — the pane's drop card, the Audio lane's ＋ and
@@ -4650,11 +5141,16 @@ export default function AnimaticEditor({
       // out of step with the panels it is sitting over — which is the one thing
       // this row must not do.
       setFrames((list) => [...list, render]);
+      // ⚠ AND INTO THE LIBRARY, because a render is the one asset that CANNOT be
+      // got back: an upload can be dropped in again and a panel is still on the
+      // board, but re-making this costs money. Deleting the clip must never be
+      // the thing that loses it.
+      setAssets((list) => mergeAssets(list, [assetFromFrame(render, newId())]));
       // The ref too, so several clips attaching in one pass each see the ones
       // before them — `already` below is asked against this list.
       framesRef.current = [...framesRef.current, render];
     },
-    [animaticId]
+    [animaticId, setAssets]
   );
 
   /**
@@ -4810,6 +5306,30 @@ export default function AnimaticEditor({
       setLayers(adopted);
       p = { ...p, layers: adopted };
       changed = true;
+    }
+    // ⚠ AND THE MEDIA LIBRARY IS DERIVED ONCE, for a project cut before there was
+    // one. Same one-time basis as the two blocks above, and the same reasoning:
+    // an animatic whose Media pane opened empty would look like every upload it
+    // had ever had was gone.
+    //
+    // ⚠ `null` ONLY, NEVER AN EMPTY LIST. `null` is "this project predates the
+    // library"; `[]` is "the library is empty because the user emptied it". Both
+    // arrive as falsy, so testing truthiness here is exactly how the ✕ on the last
+    // card would come to look broken — every card back on the next reload. The
+    // server keeps the distinction alive on purpose; see `_assets_of`.
+    if (p.assets == null) {
+      const derived = libraryFromProject(
+        { frames: p.frames || [], audioTracks: p.audio_tracks || [] },
+        newId
+      );
+      // Nothing on the timeline means nothing to derive, and writing an empty list
+      // would make a brand-new animatic dirty on open for no reason — and stop it
+      // being discarded on the way out (`isEmpty`).
+      if (derived.length) {
+        setAssets(derived);
+        p = { ...p, assets: derived };
+        changed = true;
+      }
     }
     if (p.status === "running") setExportJob({ status: "running", progress: null });
     // RECOVER ANY PAID CLIP THAT NEVER LANDED. A render that finished while
@@ -5818,7 +6338,7 @@ export default function AnimaticEditor({
             )}
             <span className="tiny muted">
               {mediaTab === "media"
-                ? `${frames.length} frames`
+                ? `${assets.length} in Media`
                 : mediaTab === "effects"
                   ? `${FX_ITEM_COUNT} to drag`
                   : `${shapes.length} on the timeline`}
@@ -5944,101 +6464,55 @@ export default function AnimaticEditor({
                 ⚠ The add-assets control stays OUTSIDE the sections: it is what
                 fills them, and a drop target you can collapse is one you cannot
                 drop on. */}
-            {/* ⚠ THREE SECTIONS, ONE SEQUENCE. The picture track is grouped by
-                WHERE EACH CLIP CAME FROM (`pictureTrack` / `frameOrigin`), which
-                is the question you ask this pane: "where is the video I just
-                dropped in?" was unanswerable in a strip of thirty-two panels
-                that happened to end with it. Grouping by origin and not by kind
-                is what keeps an animated board shot — a video clip now — in
-                Storyboard Frames where you left it.
-                Each strip gets `indexOf`, so a number badge, a drop and a
-                reorder still mean a place in the WHOLE sequence: the sections are
-                a way of looking at one track, not three tracks. A section with
-                nothing in it isn't drawn — an empty "Video" heading on a board
-                that has none is a row of furniture. */}
+            {/* ⚠ THESE SECTIONS LIST THE LIBRARY, NOT THE TIMELINE, and that is the
+                whole of the change the user asked for. They used to list `frames`
+                grouped by origin — the Media pane WAS the timeline — so deleting
+                a clip deleted the only record that its source had ever been
+                added: "i want when user delete video, storboard image, veo video,
+                audio and shapes in timeline after upload in media so only clip
+                delete in timeline not delete in media panel". Now a card is a
+                SOURCE (`animatic/assets.js`), it survives every clip made from
+                it, and dragging it back out makes a new one.
+                ⚠ STILL GROUPED BY ORIGIN (`assetOrigin`), for the same reason the
+                clips were: an animated board shot is a video FILE, and it has to
+                stay in Storyboard Frames where you left it rather than moving to
+                Video the moment Veo touches it.
+                ⚠ AND AUDIO IS ONE OF THEM NOW. It used to be a list of audio
+                CLIPS, which vanished with the last clip like everything else
+                here; it is a list of FILES, one card per recording however many
+                pieces the razor has cut it into.
+                A section with nothing in it isn't drawn — an empty "Video"
+                heading on a board that has none is a row of furniture. */}
             {[
-              { id: "media:frames", title: "Storyboard Frames", list: pictureTrack.board },
-              { id: "media:video", title: "Video", list: pictureTrack.video },
-              { id: "media:images", title: "Images", list: pictureTrack.image },
+              { id: "media:frames", title: "Storyboard Frames", list: library.board },
+              { id: "media:video", title: "Video", list: library.video },
+              { id: "media:images", title: "Images", list: library.image },
+              { id: "media:audio", title: "Audio", list: library.audio },
             ]
               .filter((sec) => sec.list.length > 0)
               .map((sec) => (
                 <PropGroup key={sec.id} id={sec.id} title={sec.title} count={sec.list.length}>
-                  <FrameStrip
-                    vertical
+                  <MediaBin
                     view={mediaView}
-                    showAdd={false}
-                    heading={false}
-                    frames={sec.list}
-                    indexOf={seqIndex}
-                    urls={urls}
-                    selectedId={selectedId}
-                    uploading={uploading}
-                    onSelect={(id) => {
-                      selectOnly({ frame: id });
-                      const i = frames.findIndex((f) => f.id === id);
-                      if (i >= 0) seek(starts[i]);
-                    }}
-                    onReorder={reorder}
-                    onDuration={(id, ms) => patchFrame(id, { duration_ms: ms })}
-                    onDelete={deleteFrame}
-                    onDuplicate={duplicateFrame}
-                    onAddFiles={addAssets}
+                    assets={sec.list}
+                    urls={assetUrls}
+                    usedCount={assetUsedCount}
+                    onPlace={placeAsset}
+                    onDelete={deleteAsset}
                   />
                 </PropGroup>
               ))}
 
-            {/* Only appears once there IS audio — an empty "Audio" heading with
-                its own add button was the third of the three controls. */}
-            {audioTracks.length > 0 && (
-              <PropGroup id="media:audio" title="Audio" count={audioTracks.length}>
-                {/* A LIST, not a mixer. Volume and the rest live in Properties
-                    — click a track to edit it, same as a frame or a caption. */}
-                {audioTracks.map((track) => (
-                  <button
-                    type="button"
-                    className={`an-media-track ${
-                      selectedTrackId === clipId(track) ? "sel" : ""
-                    }`}
-                    key={clipId(track)}
-                    onClick={() => selectOnly({ track: clipId(track) })}
-                    /* Drag it onto an audio lane to move it there — see
-                       `dropAsset`. The empty `…-audio` marker beside the
-                       payload is what lets a lane refuse it mid-drag, when
-                       `getData` still reads blank (`dragKind` in
-                       Timeline.jsx). */
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData(
-                        "application/x-anim-asset",
-                        JSON.stringify({ kind: "audio", id: clipId(track) })
-                      );
-                      e.dataTransfer.setData("application/x-anim-audio", "");
-                    }}
-                  >
-                    <span className="an-media-ico">♪</span>
-                    <span className="an-media-name" title={track.filename}>
-                      {track.filename}
-                      {/* Which PIECE of the file this is, once there is more
-                          than one. Without it a cut track reads as the same
-                          name listed twice with no way to tell them apart. */}
-                      {audioTracks.filter((a) => a.upload_id === track.upload_id).length > 1 && (
-                        <span className="muted">
-                          {" "}
-                          · clip{" "}
-                          {audioTracks
-                            .filter((a) => a.upload_id === track.upload_id)
-                            .findIndex((a) => clipId(a) === clipId(track)) + 1}
-                        </span>
-                      )}
-                    </span>
-                    <span className="tiny muted">
-                      {track.muted ? "muted" : `${Math.round((track.volume ?? 1) * 100)}%`}
-                    </span>
-                  </button>
-                ))}
-              </PropGroup>
+            {/* ⚠ THE ONE THING A LIBRARY CANNOT SAY: that there is nothing in it
+                yet. Every section above hides itself when empty, which is right
+                for four of them and wrong for all four at once — an empty pane
+                with a drop target and no words reads as a pane that is broken. */}
+            {!assets.length && (
+              <p className="muted tiny">
+                Nothing in Media yet. Whatever you add — an upload, a storyboard
+                import, a Veo render, a sound — stays listed here, so deleting a
+                clip from the timeline never loses the source.
+              </p>
             )}
           </div>
           )}
@@ -6920,6 +7394,11 @@ export default function AnimaticEditor({
             onRemoveTrack={removeTrack}
             onClearLane={clearLane}
             onToggleHidden={toggleLaneHidden}
+            onToggleLocked={toggleLaneLocked}
+            /* The timeline's refusals used to all be visible ones — a target that
+               never lit up, a bar that did not move. A locked row is the first
+               that looks like nothing happening, so it needs the status strip. */
+            onNotice={setNotice}
             onSplitFootage={splitFootageOntoTrack}
             tool={tool}
             snapping={snapping}

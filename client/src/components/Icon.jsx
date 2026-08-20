@@ -57,6 +57,22 @@ const PATHS = {
     </>
   ),
   close: <path d="M18 6 6 18M6 6l12 12" {...STROKE} />,
+  // ⚠ A PAIR, LIKE eye / eye-off, and the shackle is what differs — closed on
+  // the body for `lock`, lifted and open on one side for `unlock`. Drawn rather
+  // than the padlock emoji pair for the reason at the top of this file: those
+  // carry their own colour and cannot show the app's accent when a row is locked.
+  lock: (
+    <>
+      <rect x="4.5" y="10.5" width="15" height="10.5" rx="2" {...STROKE} />
+      <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" {...STROKE} />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x="4.5" y="10.5" width="15" height="10.5" rx="2" {...STROKE} />
+      <path d="M8 10.5V7a4 4 0 0 1 7.5-1.9" {...STROKE} />
+    </>
+  ),
   save: (
     <>
       <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" {...STROKE} />

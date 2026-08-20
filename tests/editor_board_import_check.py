@@ -156,6 +156,17 @@ def route_api(route, request):
                          "panel_count": PANELS}]})
         return
 
+    # --- the MEDIA LIBRARY's own picture route -------------------------------
+    # ⚠ CONTENT-ADDRESSED, AND THAT IS WHY IT IS A SECOND ROUTE. A library card
+    # is asked "which panel?" — (board, index) — so it answers with no clip on the
+    # timeline and no save behind it, which is exactly what the frame route below
+    # cannot do. The two are checked in one file on purpose: this import creates a
+    # clip AND a card, and they are served by different rules.
+    if "/animatics/probe/panel/" in url:
+        EVENTS.append(("card", url.split("/panel/")[1].split("?")[0]))
+        route.fulfill(status=200, headers=cors, content_type="image/png", body=PANEL_PNG)
+        return
+
     # --- one panel's picture, and the rule that broke ------------------------
     match = re.search(r"/animatics/probe/frame/(\w+)", url)
     if match:
@@ -220,11 +231,17 @@ createRoot(document.getElementById("root")).render(
 /**
  * THE MEDIA PANE'S THUMBNAILS, counted by what is actually IN them.
  *
- * ⚠ `drawn` COUNTS <img> ELEMENTS, `waiting` COUNTS SPINNERS. `FrameStrip`
- * renders one or the other per card (`.fs-thumb img` when a blob exists,
- * `.fs-thumb-wait` when it does not), so the two numbers together ARE the
- * screenshot in the report: forty-two cards, forty-two spinners, no pictures.
- * Counting cards alone would have passed against the bug.
+ * ⚠ `drawn` COUNTS <img> ELEMENTS, `waiting` COUNTS SPINNERS. A card renders one
+ * or the other (`.fs-thumb img` when a blob exists, `.fs-thumb-wait` when it does
+ * not), so the two numbers together ARE the screenshot in the report: forty-two
+ * cards, forty-two spinners, no pictures. Counting cards alone would have passed
+ * against the bug.
+ *
+ * ⚠ THESE ARE THE MEDIA LIBRARY'S CARDS NOW (`MediaBin`), not the timeline's.
+ * When this was written the pane listed clips, so the count doubled as "did the
+ * frames get their urls?"; the pane lists SOURCES now and the cards are served by
+ * `/panel/{board}/{index}` instead. The frame-url question it was really written
+ * for is asked directly, below, by `saved_before_shown`.
  */
 probe.thumbs = () => ({
   cards: document.querySelectorAll(".fs-thumb").length,
@@ -425,9 +442,18 @@ def main():
                   sorted(bars) == sorted(IMPORTED_IDS), str(bars))
             lanes = set(bars.values())
             check("…all on ONE row of their own", len(lanes) == 1, str(lanes))
+            # ⚠ AFTER ITS KIND, NOT AFTER THE BOARD — and this check used to assert
+            # the opposite. Naming the row "TTBB EP One" left the gutter reading
+            # "TTBB E…" with nothing on screen saying which of the four picture
+            # kinds it was, and the user asked for the kind: "i see my storyborad
+            # namke come and show in layer but this not happen i want you keep
+            # Story..Image". Which board the panels came from is on every card in
+            # Media and in the import's own notice.
             names = page.evaluate("() => window.__probe.laneNames()")
-            check("and the gutter calls it after the board",
-                  any(BOARD_NAME in n for n in names), str(names))
+            check("and the gutter calls it after its KIND",
+                  "Story..Image" in names, str(names))
+            check("…not after the board",
+                  not any(BOARD_NAME in n for n in names), str(names))
 
             # ⚠ ONE WRITE, NOT TWO. The row and the frames that sit on it go up
             # together; two writes racing the 900ms autosave is how a row loses
@@ -437,7 +463,7 @@ def main():
             check("the frames went up in a single write", carried is not None,
                   f"saves: {[len(e[1]) for e in saves]}")
             check("and that same write carried their row",
-                  any(BOARD_NAME in (lane.get("name") or "") for lane in SAVED["layers"]),
+                  any(lane.get("kind") == "board_image" for lane in SAVED["layers"]),
                   json.dumps(SAVED["layers"])[:200])
             check("with the clips on the row's own track",
                   bool(SAVED["layers"]) and all(

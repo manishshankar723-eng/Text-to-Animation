@@ -653,7 +653,10 @@ export function getAnimatic(id) {
 // `clear_audio: true`, because `audio: null` can't be told apart from "not sent".
 export function saveAnimatic(
   id,
-  { title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks } = {}
+  {
+    title, settings, frames, assets, texts, shapes, layers, overlays, transitions,
+    audioTracks,
+  } = {}
 ) {
   const body = {};
   if (title !== undefined) body.title = title;
@@ -664,6 +667,18 @@ export function saveAnimatic(
   if (shapes !== undefined) body.shapes = shapes;
   // The lanes themselves, and the pictures composited over the sequence.
   if (layers !== undefined) body.layers = layers;
+  // THE MEDIA LIBRARY. Whole list, like the shapes — an empty array empties it,
+  // which is a thing the user can do (✕ on the last card) and must therefore be
+  // sayable.
+  //
+  // ⚠ THIS DESTRUCTURED LIST IS A WHITELIST, AND IT HAS DROPPED A FIELD ALREADY.
+  // `assets` was added to `AnimaticSaveRequest`, to `flush`, to the signature and
+  // to the schema — and not to this line, so every save quietly sent the whole
+  // project WITHOUT the library and the server never heard of it. Nothing errors:
+  // an unnamed key simply isn't in `body`. Caught by
+  // `tests/editor_media_bin_check.py`, which asserts on the PUT body itself for
+  // exactly this reason. Same trap as `frameForSave`; add to BOTH.
+  if (assets !== undefined) body.assets = assets;
   if (overlays !== undefined) body.overlays = overlays;
   // What happens on the cuts. Whole list again — an empty array puts the
   // sequence back to straight cuts.

@@ -514,11 +514,39 @@ export const ROW_TAKES = {
  * you can DO next; it is not a rule that rejects work already done.
  */
 export function clipRowKind(frame) {
-  const board = !!frame?.src?.storyboard_id;
-  const video = clipKind(frame) === "video";
-  if (board) return video ? "board_video" : "board_image";
+  return cardRowKind(clipKind(frame), !!frame?.src?.storyboard_id);
+}
+
+/**
+ * THE SAME QUESTION, ASKED WITH THE TWO THINGS A DRAG CAN ANSWER MID-FLIGHT.
+ *
+ * ⚠ IT EXISTS BECAUSE A MEDIA-LIBRARY CARD IS NOT A FILE, and `ROW_TAKES` only
+ * ever knew about files. Both board rows take NO file (that is the point of them
+ * — they are filled by the import and by ✨ Animate), and applying that same
+ * table to a library card said "a Veo render may not go on the Storyboard video
+ * row", which is absurd: the card came OFF that row. Reported as "i delete veo
+ * video clip in timeline … then i select Veo video clip and drang and drop on
+ * same storyboard video layer but i can't drop in Storyboad layer but i drop in
+ * Video layer".
+ *
+ * ⚠ AND IT IS THE BODY `clipRowKind` NOW DELEGATES TO, so the row a card lands on
+ * and the row the clip made from it belongs on are one derivation. Two copies is
+ * how a drop lands somewhere the very next drag refuses to move it away from.
+ *
+ * @param kind      a clip/asset kind — "image" | "video" | "color"
+ * @param fromBoard did this come out of a storyboard? (`src.storyboard_id` on a
+ *                  clip or a card; the `application/x-anim-board` marker on a
+ *                  drag, which is all a lane can read during `dragover`)
+ */
+export function cardRowKind(kind, fromBoard) {
+  const video = clipKind({ kind }) === "video";
+  if (fromBoard) return video ? "board_video" : "board_image";
   return video ? "video" : "stills";
 }
+
+/** Is this one of the two rows the storyboard owns? */
+export const isBoardRow = (rowKind) =>
+  rowKind === "board_image" || rowKind === "board_video";
 
 /**
  * The kind of row a set of clips MOSTLY belongs on, for naming a row that no

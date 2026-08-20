@@ -862,6 +862,65 @@ class AnimaticFrameSource(BaseModel):
     )
 
 
+class AnimaticAsset(BaseModel):
+    """ONE ITEM IN THE MEDIA LIBRARY — a source, with no place in the cut.
+
+    ⚠ THE LIBRARY AND THE TIMELINE ARE TWO DIFFERENT LISTS NOW, and this class is
+    the whole of that change. The Media pane used to BE the timeline, grouped by
+    where each clip came from: it listed `frames`, so deleting a clip deleted the
+    only record that the file had ever been added. Reported as "when i upload /
+    generate Veo video and then i delete in time so i see in media panel also
+    delete … i want when user delete video, storboard image, veo video, audio and
+    shapes in timeline after upload in media so only clip delete in timeline not
+    delete in media panel".
+
+    So: an ASSET is what you have, a clip is where you put it. Deleting a clip
+    leaves the asset; dragging the asset out makes a new clip; the asset only goes
+    when its own ✕ is pressed.
+
+    ⚠ IT CARRIES NO TIMING AND NO PLACE. No `start_ms`, no `track`, no `in_ms`,
+    no effects — every one of those is a property of a CLIP, and an asset that
+    carried them would be a second, competing answer to "where does this play?".
+    `duration_ms` here is the source's NATURAL length (0 = unknown), used to open
+    a new clip at the right size and to print "54.4s" on the card.
+
+    ⚠ AND IT IS A REFERENCE, exactly as a frame is. A board panel asset holds the
+    board id and the index, so re-drawing that panel updates the library card and
+    every clip made from it; nothing is ever copied.
+    """
+
+    id: str = Field(..., description="Stable client-side id.")
+    # What a clip made from this asset IS — the same vocabulary as
+    # `AnimaticFrame.kind`, plus "audio" for a sound file, which becomes an audio
+    # track rather than a picture clip.
+    kind: str = Field(
+        "image",
+        description="'image' | 'video' | 'color' | 'audio' — what a clip made from this is.",
+    )
+    # Where the picture comes from. Unused by an audio asset (see `upload_id`) and
+    # by a colour card (see `color`), both of which still carry a default so the
+    # shape is one shape.
+    src: AnimaticFrameSource = Field(default_factory=AnimaticFrameSource)
+    # An audio asset's file. Audio has no `AnimaticFrameSource` — an audio track
+    # references its upload directly — so this is the one field that is not
+    # reachable through `src`.
+    upload_id: str = ""
+    label: str = ""
+    # The SOURCE's natural length, not a clip's hold. 0 = we could not measure it,
+    # in which case a new clip opens at the default hold.
+    duration_ms: int = Field(0, ge=0, le=24 * 3_600_000)
+    color: str = "#000000"
+    # Filled on READ, never stored — same rule as `AnimaticFrame.url` and for the
+    # same reason: the path is resolved per request, so a saved one goes stale.
+    #
+    # ⚠ THE CLIENT CAN BUILD EVERY ONE OF THESE ITSELF, and that is deliberate.
+    # An upload is served by upload id and a panel by (board, index) — neither
+    # needs the asset to be ON the saved project — so a freshly imported library
+    # card has a picture before the autosave has run. That is the bug the
+    # storyboard import hit from the other direction; see `doBoardImport`.
+    url: str | None = None
+
+
 class AnimaticFrame(BaseModel):
     """ONE PICTURE CLIP: where it sits, which track it is on, how long it holds.
 
@@ -1392,6 +1451,16 @@ class AnimaticSettings(BaseModel):
     # Empty on every animatic that predates it, which then exports exactly as it
     # always did.
     hidden_lanes: list[str] = Field(default_factory=list)
+    # WHICH LANES ARE LOCKED, in the same token vocabulary as `hidden_lanes`
+    # (`laneToken` on the client writes both).
+    #
+    # ⚠ A LOCK IS EDITING ONLY, AND THAT IS THE DIFFERENCE FROM AN EYE. A hidden
+    # lane is left out of the monitor AND the export — it changes the film. A
+    # locked lane plays and exports exactly as it did; what it refuses is being
+    # changed: nothing on it can be moved, trimmed, razored, dropped onto,
+    # selected or deleted. So this list is read by the EDITOR and deliberately
+    # ignored by `animatic_render.py` and by the exporter.
+    locked_lanes: list[str] = Field(default_factory=list)
 
 
 class AnimaticProject(BaseModel):
@@ -1413,6 +1482,18 @@ class AnimaticProject(BaseModel):
     # Lanes the user added. Empty on every project that predates layers, which
     # then shows exactly the default lanes it always did.
     layers: list[AnimaticLayer] = Field(default_factory=list)
+    # THE MEDIA LIBRARY — what has been added to this animatic, whether or not
+    # anything is currently on the timeline.
+    #
+    # ⚠ `None` AND `[]` ARE DIFFERENT ANSWERS, AND THE DEFAULT HAD TO BE `None`
+    # FOR THAT TO BE SAYABLE. `None` means this project was saved before the
+    # library existed — the editor derives one from its frames and audio the first
+    # time it is opened. `[]` means the library is EMPTY ON PURPOSE, because the
+    # user pressed ✕ on the last card. With `default_factory=list` the two came
+    # out of the API as the same `[]`, so a backfill could not tell them apart and
+    # emptying the library would have put every card straight back on reload — the
+    # ✕ would have looked broken. See `_assets_of` and `libraryFromProject`.
+    assets: list[AnimaticAsset] | None = None
     # Pictures composited over the sequence (image layers).
     overlays: list[AnimaticOverlay] = Field(default_factory=list)
     # What happens on the cuts. Empty on every animatic saved before transitions
@@ -1469,6 +1550,10 @@ class AnimaticSaveRequest(BaseModel):
     # audio tracks below, and for the same reason).
     shapes: list[AnimaticShape] | None = None
     layers: list[AnimaticLayer] | None = None
+    # The whole library, every time — an empty list empties it. Same rule as the
+    # shapes and the audio tracks, and for the same reason: with a list, "none" is
+    # just an empty list and needs no companion flag.
+    assets: list[AnimaticAsset] | None = None
     overlays: list[AnimaticOverlay] | None = None
     # Send the whole list; an empty list removes every transition, so the
     # sequence goes back to straight cuts.

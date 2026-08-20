@@ -73,6 +73,7 @@ import { keysOf } from "../animatic/keyframes.js";
 import { clamp } from "../animatic/util.js";
 import {
   ANIMATABLE,
+  cardRowKind,
   clipKind,
   clipRowKind,
   ROW_TAKES,
@@ -399,6 +400,17 @@ export default function Timeline({
   // row — see `toggleLaneHidden`. The lane carries the current state (`hidden`)
   // and its own token (`vis`); this file never works either out.
   onToggleHidden,
+  // Say something in the status strip. ⚠ The timeline had no way to speak before
+  // the lock: every refusal it made was silent because it was also VISIBLE (a
+  // drop target that never lit up, a bar that did not move). A locked row is the
+  // first refusal with no visible cause — you pressed a clip and nothing
+  // happened — so it has to say why.
+  onNotice,
+  // The padlock. `(lane) => void`, mirroring `onToggleHidden` exactly — the lane
+  // carries the state (`locked`) and its token, and this file never works either
+  // out. ⚠ WHAT LOCKED MEANS IS ENFORCED HERE THOUGH, not in the editor: a lock
+  // stops GESTURES, and the gestures live in this file. See `laneLocked`.
+  onToggleLocked,
   /**
    * "PUT THE FOOTAGE ON ITS OWN TRACK" — offered on a picture row that is
    * carrying both, and on no other row.
@@ -452,6 +464,17 @@ export default function Timeline({
   const scrollRef = useRef(null); // the scroller — both axes live in this one box
   const innerRef = useRef(null); // the content box the marquee is drawn inside
   const gutterRef = useRef(null); // the labels, moved by hand when it scrolls
+  // ⚠ THE LABELS' CLIPPING BOX, AND IT MUST NEVER BE SCROLLED. It is
+  // `overflow: hidden` and the labels are kept in step with the tracks by a
+  // TRANSFORM on `gutterRef` — so any `scrollTop` on this box is pure
+  // misalignment: every label ends up beside the wrong track. A hidden box can
+  // still be scrolled by the browser, which is exactly what happened when the
+  // ✕'s confirm opened BELOW the last row and its Delete button took focus:
+  // "my layer buttun goes up and my time clip layer still". Held at 0 in
+  // `readView`; the popover itself now opens outside this box entirely.
+  const gutterClipRef = useRef(null);
+  const colsRef = useRef(null); // the two columns — what the confirm is placed in
+  const confirmRef = useRef(null); // the ✕'s popover, positioned beside its row
   // While an edge or a clip is being dragged we show a DRAFT, so things move
   // with the pointer without writing to the project on every mouse event.
   // ONE DRAFT FOR EVERY CLIP ON THE BAR — a picture, a caption, a shape, an
@@ -513,6 +536,14 @@ export default function Timeline({
     // scroll DOWN — miss this and every label ends up beside the wrong track.
     if (gutterRef.current) {
       gutterRef.current.style.transform = `translateY(${-el.scrollTop}px)`;
+    }
+    // ⚠ AND THE BOX AROUND THEM STAYS AT THE TOP. See `gutterClipRef`: the
+    // labels are moved by the transform above, so a scroll of their own box is
+    // an offset nothing corrects for. The browser scrolls a hidden box to reveal
+    // a focused control inside it, so this is a guard rather than an edit — one
+    // line, on the path that already runs whenever anything moves.
+    if (gutterClipRef.current && gutterClipRef.current.scrollTop !== 0) {
+      gutterClipRef.current.scrollTop = 0;
     }
     const rulerH = trackRef.current?.offsetHeight || 0;
     const next = {
@@ -812,6 +843,10 @@ export default function Timeline({
   // JSON payload, and this reads the marker. Without that trick a lane could
   // not know whether to accept until it was too late to say so.
   const [dropAt, setDropAt] = useState(null);
+  // Which row's ✕ is asking "are you sure?" — the lane's key, or null. ⚠ ONE AT A
+  // TIME BY CONSTRUCTION: it holds a key rather than a flag per row, so opening a
+  // second confirm closes the first and there is never a column of them.
+  const [confirmKey, setConfirmKey] = useState(null);
   // ⚠ "fx" AND "afx" ARE TWO KINDS, because the rows that take one do not take
   // the other: an effect or a video transition belongs to the picture, a
   // crossfade to the audio. One shared marker would light every row up for every
@@ -829,6 +864,24 @@ export default function Timeline({
   }
 
   /**
+   * DID THIS DRAG COME OUT OF A STORYBOARD? — the other half of `dragKind`.
+   *
+   * ⚠ A KIND CANNOT SAY WHICH ROW A CARD BELONGS ON. A Veo render and a file the
+   * user dropped in are both "video" and they live on different rows, so the
+   * Media pane stamps `application/x-anim-board` beside the kind marker for a
+   * card whose source is a board panel (`assetOrigin` — see MediaBin.jsx). Only
+   * the type LIST is readable during `dragover`, which is why this is a marker
+   * rather than a field in the payload.
+   *
+   * ⚠ ONLY THE LIBRARY STAMPS IT, so nothing else changes meaning: a file drop, a
+   * shape, an effect and a clip being re-timed all read `false` here and go on
+   * being judged by `ROW_TAKES` exactly as before.
+   */
+  function dragFromBoard(e) {
+    return Array.from(e.dataTransfer?.types || []).includes("application/x-anim-board");
+  }
+
+  /**
    * WHICH ROWS TAKE WHAT.
    *
    * ⚠ A PICTURE TRACK TAKES BOTH STILLS AND FOOTAGE. It used to refuse the
@@ -841,8 +894,31 @@ export default function Timeline({
    * Text and shape rows are still not drop targets at all: nothing in the Media
    * pane is a caption or a rectangle.
    */
-  function laneTakes(lane, kind) {
+  /**
+   * IS THIS ROW LOCKED? — THE ONE GATE, and every refusal goes through it.
+   *
+   * ⚠ IT TAKES A LANE KEY, NOT A LANE, because half the callers only have one.
+   * A drop knows its lane; a drag in flight knows `fromKey`, and the row a clip
+   * is being dragged ONTO is found by key too (`laneMoveTarget`). Passing lanes
+   * around would mean each caller looking one up, which is how one of them comes
+   * to check something subtly different.
+   *
+   * ⚠ AND IT IS ASKED IN THIS FILE, NOT IN THE EDITOR, because a lock stops
+   * GESTURES and the gestures live here. The editor holds the list (it is
+   * `settings.locked_lanes`, saved with the project) and refuses the few edits it
+   * owns itself — `placeAsset`, and the razor via `frameLocked`.
+   */
+  function laneLocked(key) {
+    if (!key) return false;
+    return !!lanes.find((l) => l.key === key)?.locked;
+  }
+
+  function laneTakes(lane, kind, fromBoard = false) {
     if (!kind) return false;
+    // ⚠ FIRST, BEFORE THE KIND IS EVEN LOOKED AT. A locked row takes nothing at
+    // all, so it never lights up as a drop target — a row that highlights and
+    // then refuses is worse than one that never offers.
+    if (lane.locked) return false;
     // ⚠ AN EFFECT AND A TRANSITION SHARE ONE MARKER, because a lane cannot tell
     // them apart mid-drag — the payload is unreadable until the drop. So the
     // rows that take EITHER say yes to both, and `dropAsset` is what refuses a
@@ -864,7 +940,17 @@ export default function Timeline({
     // because a drag from the desktop does not reveal what it is carrying until
     // the drop: `dropAsset` is what refuses it then, by name.
     if (lane.kind === "frames") {
-      const takes = ROW_TAKES[lane.rowKind || "video"] || [];
+      const rowKind = lane.rowKind || "video";
+      // ⚠ A CARD OUT OF A STORYBOARD IS JUDGED BY WHERE IT BELONGS, NOT BY WHAT
+      // THE ROW ACCEPTS AS A FILE. `ROW_TAKES` says "no files" for both board
+      // rows — correct for an upload, and it also turned away the one drag that
+      // has every right to land there: a Veo render being dragged back out of
+      // Media onto the Storyboard video row it was deleted from. It fell through
+      // to the plain Video row instead, because that IS a video row. So a board
+      // card goes to the board row of its kind and to no other row at all, which
+      // is the strict-rows rule stated once (`cardRowKind`).
+      if (fromBoard) return rowKind === cardRowKind(kind, true);
+      const takes = ROW_TAKES[rowKind] || [];
       if (kind === "files") return takes.length > 0;
       return takes.includes(kind);
     }
@@ -897,7 +983,7 @@ export default function Timeline({
     const over = (e) => {
       const kind = dragKind(e);
       if (!kind) return;
-      const ok = laneTakes(lane, kind);
+      const ok = laneTakes(lane, kind, dragFromBoard(e));
       // ⚠ ONLY AN ACCEPTING LANE CALLS preventDefault. That is what tells the
       // browser a drop may happen here — leaving it off is what gives a lane
       // that refuses the "no entry" cursor, for free and in the reader's own
@@ -932,7 +1018,7 @@ export default function Timeline({
       onDrop: (e) => {
         const kind = dragKind(e);
         setDropAt(null);
-        if (!laneTakes(lane, kind)) return;
+        if (!laneTakes(lane, kind, dragFromBoard(e))) return;
         e.preventDefault();
         let asset = null;
         try {
@@ -1316,10 +1402,16 @@ export default function Timeline({
    * Which row a clip dragged off `fromKey` would land on, as a lane KEY — null
    * for "the one it is already on", which is what every ordinary move reports
    * and the only answer that leaves the clip's row alone.
+   *
+   * ⚠ A LOCKED ROW IS NOT A DESTINATION. Refusing the drag at its source
+   * (`startClipDrag`) protects the clips ON a locked row; this protects the row
+   * itself from having something dropped onto it, which is the other half — and
+   * the reason you would lock an EMPTY row in the first place.
    */
   function laneMoveTarget(fromKey, clientY, clip = null) {
     const to = laneAtPoint(clientY);
     if (!to || to.key === fromKey) return null;
+    if (to.locked) return null;
     if (!CROSS_LANE_KINDS.includes(to.kind)) return null;
     const from = lanes.find((l) => l.key === fromKey);
     // A caption cannot land on a shapes row: the two rows draw different things
@@ -1389,6 +1481,23 @@ export default function Timeline({
   // alone cannot tell one text row from another.
   function startClipDrag(e, clip, mode, lane) {
     if (e.button !== 0) return;
+    // ⚠ EVERY GESTURE ON A CLIP COMES THROUGH HERE — the body, both trim handles,
+    // and the razor's own press below — so one line locks the lot. It refuses
+    // BEFORE `razorPress`, or the razor would still cut a locked row.
+    if (lane.locked) {
+      e.stopPropagation();
+      // ⚠ AND THE SELECTION IS CLEARED, which is not fussiness — it is the
+      // difference between a refusal and a trap. A locked clip cannot be
+      // selected, so without this the press leaves whatever was selected BEFORE
+      // still selected, quite possibly scrolled off screen; the user then presses
+      // Delete believing they are acting on the clip they just clicked, and
+      // something else disappears. Found exactly that way, by
+      // `tests/editor_media_bin_check.py` asserting on the whole timeline rather
+      // than on the one clip it thought it was checking.
+      onSelectMany?.([], {});
+      onNotice?.(`${lane.name} is locked — unlock it in the gutter to edit it.`);
+      return;
+    }
     const kind = lane.kind;
     // A picture, a caption, a shape or an overlay — and this is BOTH the body and
     // the trim handles, since all of them come through here.
@@ -2291,6 +2400,27 @@ export default function Timeline({
     return out;
   }
 
+  // ⚠ ESCAPE AND AN OUTSIDE PRESS BOTH CLOSE THE ✕'S CONFIRM, and both have to
+  // be written or it is a popover you can only dismiss by answering it — which
+  // for a destructive question is the one dismissal that must not be the only
+  // one. Same pair, for the same reason, as ＋ Add layer's dropdown in
+  // AnimaticEditor.
+  useEffect(() => {
+    if (!confirmKey) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setConfirmKey(null);
+    };
+    const onDown = (e) => {
+      if (!e.target.closest?.(".tl-layer-confirm, .tl-layer-del")) setConfirmKey(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [confirmKey]);
+
   const playheadX = Math.max(0, Math.min(width, (timeMs / 1000) * pxPerSec));
 
   /**
@@ -2309,6 +2439,91 @@ export default function Timeline({
     if (lane.kind === "image") return of(overlays);
     return 0;
   }
+
+  /**
+   * What a removable row's confirm says is about to go with it.
+   *
+   * Its own function only because it is a sentence with a plural and a zero case,
+   * and three nested ternaries inside JSX is where a plural comes out as
+   * "1 clips".
+   */
+  function confirmWhat(on) {
+    if (!on) return "The row is empty.";
+    return `The row and the ${on} clip${on === 1 ? "" : "s"} on it.`;
+  }
+
+  /**
+   * WHAT ONE ROW'S ✕ WOULD DO — asked by the button, its tooltip AND the popover.
+   *
+   * ⚠ IT IS ONE FUNCTION BECAUSE THE POPOVER NO LONGER LIVES IN THE ROW. It used
+   * to be rendered inside the gutter row that opened it, so it could read the
+   * loop's own variables; it is drawn beside the row now (over the track column,
+   * out of the gutter's clipping box — see `renderConfirm`), which means the
+   * three of them have to agree from a distance instead.
+   */
+  function laneDelete(lane) {
+    const clips = lane.kind === "audio" ? lane.tracks || [] : [];
+    // A DEFAULT row can only be emptied, never removed — see `clearLane` in
+    // AnimaticEditor. `count` is what its ✕ would take.
+    const clearable = !lane.removable && lane.kind !== "audio";
+    const count = clearable ? laneCount(lane) : 0;
+    return {
+      clips,
+      ids: clips.map(clipId),
+      count,
+      // Has this row's ✕ anything to do? It is rendered either way — see the
+      // cluster comment in the gutter — so this is what decides faint or live.
+      deletable: lane.removable || (clips.length > 0 && !lane.layerId) || count > 0,
+    };
+  }
+
+  /**
+   * THE CONFIRM SITS BESIDE ITS ROW, AND ITS `top` IS MEASURED EVERY RENDER.
+   *
+   * ⚠ IT USED TO HANG BELOW THE ROW, INSIDE THE GUTTER'S CLIPPING BOX, and that
+   * was two bugs in one: on the lower rows it opened past the bottom of the
+   * column, and focusing its Delete button made the browser scroll that
+   * `overflow: hidden` box to reveal it — which slid every LABEL up while the
+   * TRACKS stayed put. Reported exactly that way: "my layer buttun goes up and my
+   * time clip layer still so this look not good so i want you show dropdown like
+   * layer of side like in clip layer side not below."
+   *
+   * ⚠ SO IT IS A CHILD OF `.tl-cols`, NOT OF THE ROW: that box is the only
+   * ancestor that spans both columns and clips nothing, so the popover can sit
+   * over the track lane beside its row. The price is that `top` is not a CSS
+   * offset any more, and it is MEASURED FROM THE DOM rather than worked out from
+   * the lane's index — the same rule `laneAtPoint` follows, and for the same
+   * reason: a second copy of the timeline's vertical geometry would be wrong for
+   * the whole of a vertical zoom.
+   *
+   * ⚠ AND IT RUNS ON EVERY RENDER, WITH NO DEPENDENCY LIST. Scrolling the tracks
+   * moves the labels by a transform and re-renders (`readView` stores the offset),
+   * so re-measuring here is what keeps the popover on its row instead of drifting
+   * off it. Two `getBoundingClientRect`s while a confirm is open is nothing.
+   */
+  useLayoutEffect(() => {
+    const el = confirmRef.current;
+    const cols = colsRef.current;
+    if (!confirmKey || !el || !cols) return;
+    const row = gutterRef.current?.querySelector(`[data-lane-row="${confirmKey}"]`);
+    if (!row) return;
+    const colsBox = cols.getBoundingClientRect();
+    const rowBox = row.getBoundingClientRect();
+    const half = el.offsetHeight / 2;
+    // Centred on the row, then held inside the pane: a confirm about the top row
+    // must not open half way off the top of the timeline.
+    const centre = rowBox.top + rowBox.height / 2 - colsBox.top;
+    const top = Math.max(half + 2, Math.min(centre, colsBox.height - half - 2));
+    el.style.top = `${top}px`;
+  });
+
+  // The row whose ✕ is asking, and what answering it would take. `null` when
+  // nothing is asking — and also when the row it asked about has gone, which is
+  // the honest way for the popover to close after a Delete.
+  const confirmLane = confirmKey ? lanes.find((l) => l.key === confirmKey) || null : null;
+  const confirmAsk = confirmLane
+    ? laneDelete(confirmLane)
+    : { clips: [], ids: [], count: 0, deletable: false };
 
   /** Everything on one lane, whether or not it is on screen. */
   function selectLane(lane) {
@@ -2348,6 +2563,10 @@ export default function Timeline({
              caption green where text you typed yourself is yellow. */
           lane.layerId === CAPTION_LAYER_ID ? "tl-captions" : "",
           lane.hidden ? "off" : "",
+          /* ⚠ THE HATCH IS ON THE LANE, NOT ON EACH CLIP, so an EMPTY locked row
+             still reads as locked — which matters, because an empty row is
+             exactly what you lock before dropping something on it by accident. */
+          lane.locked ? "locked" : "",
           dropClass(lane),
           laneIsTarget(lane) ? "drop-lane" : "",
         ].join(" ")}
@@ -2477,6 +2696,7 @@ export default function Timeline({
           className={[
             "tl-lane tl-bars",
             lane.hidden ? "off" : "",
+            lane.locked ? "locked" : "",
             dropClass(lane),
             laneIsTarget(lane) ? "drop-lane" : "",
           ].join(" ")}
@@ -2510,15 +2730,26 @@ export default function Timeline({
                 className={[
                   "tl-bar",
                   /* WHAT THIS BAR HOLDS, IN ONE WORD, AND THE CSS TURNS IT INTO A
-                     COLOUR (`.tl-bar.is-video` / `.is-still` in
-                     animatic-lanes.css): footage is orange, a picture is pink.
+                     COLOUR (`.tl-bar.is-veo` / `.is-video` / `.is-still` in
+                     animatic-lanes.css): a Veo render is pastel purple, other
+                     footage orange, a picture pink.
                      ⚠ `frameOrigin`, WHICH IS BACK IN THIS FILE FOR THIS AND ONLY
                      THIS. It stopped deciding WHERE a clip is drawn when picture
                      tracks landed — that is `frameTrack` now, and re-using origin
                      for placement is the bug that change existed to fix. Saying
                      what a clip IS is a different question, and the honest one to
-                     ask it. "board" is a storyboard panel: a still, like an image. */
-                  frameOrigin(f) === "video" ? "is-video" : "is-still",
+                     ask it. "board" is a storyboard panel: a still, like an image.
+                     ⚠ AND A RENDER IS ASKED FOR FIRST, BY `clipRowKind`. It is a
+                     board clip AND a video, so `frameOrigin` alone called it a
+                     still and drew a paid render the same pink as the panel it was
+                     made from — asked for as "keep add Video veo video clip color
+                     like pestal prupel". `board_video` is that question, already
+                     answered in one place for the strict rows. */
+                  clipRowKind(f) === "board_video"
+                    ? "is-veo"
+                    : frameOrigin(f) === "video"
+                      ? "is-video"
+                      : "is-still",
                   isSel("frame", f.id) ? "sel" : "",
                   inBand("frame", f.id) ? "banded" : "",
                   dropOnto(lane, start, ms) ? "drop-onto" : "",
@@ -2846,7 +3077,7 @@ export default function Timeline({
         {addTools && <div className="tl-add-tools">{addTools}</div>}
       </div>
 
-      <div className="tl-cols">
+      <div className="tl-cols" ref={colsRef}>
         {/* Layer names. Outside the scroller, so they stay put.
             Generated from the SAME `lanes` list as the tracks, so a label can
             never end up beside the wrong lane — which is exactly what happened
@@ -2867,31 +3098,29 @@ export default function Timeline({
           {/* Everything below the ruler spacer scrolls DOWN with the tracks —
               `readView` moves it — and is clipped here rather than overflowing
               the pane. */}
-          <div className="tl-gutter-clip">
+          <div className="tl-gutter-clip" ref={gutterClipRef}>
             <div className="tl-gutter-rows" ref={gutterRef}>
             {lanes.map((lane) => {
               // A lane is one TRACK, which since the razor may be several
               // clips. The gutter speaks for all of them: its speaker mutes the
               // whole row and its ✕ removes the whole row, because "this track"
               // is what the label names — the pieces are an edit inside it.
-              const clips = lane.kind === "audio" ? lane.tracks || [] : [];
-              const ids = clips.map(clipId);
+              // ⚠ WHAT THE ✕ WOULD TAKE COMES FROM `laneDelete`, not from four
+              // lines written out here: the popover is drawn elsewhere now (it
+              // sits beside the row rather than under it) and the two must not be
+              // able to disagree about what is about to be deleted.
+              const { clips, ids, count, deletable } = laneDelete(lane);
               const muted = clips.length > 0 && clips.every((t) => t.muted);
               const selected = ids.includes(selectedTrackId);
-              // A DEFAULT row can only be emptied, never removed — see
-              // `clearLane` in AnimaticEditor. `count` is what its ✕ would take.
-              const clearable = !lane.removable && lane.kind !== "audio";
-              const count = clearable ? laneCount(lane) : 0;
-              // Has this row's ✕ anything to do? It is rendered either way — see
-              // the cluster comment below — so this is what decides faint or live.
-              const deletable =
-                lane.removable || (clips.length > 0 && !lane.layerId) || count > 0;
               return (
                 <div
                   key={lane.key}
+                  /* The handle the confirm is measured against — see the layout
+                     effect by `laneDelete`. A key, not an index: rows come and go. */
+                  data-lane-row={lane.key}
                   className={`tl-gutter-row tl-lane-row tl-gutter-${lane.kind} ${
                     selected ? "sel" : ""
-                  } ${lane.hidden ? "off" : ""}`}
+                  } ${lane.hidden ? "off" : ""} ${lane.locked ? "locked" : ""}`}
                   title={
                     (lane.hint || LANE_HINT[lane.kind]) +
                     "\nDouble-click to select everything on this row."
@@ -2994,14 +3223,51 @@ export default function Timeline({
                         <Icon name={lane.hidden ? "eye-off" : "eye"} />
                       </button>
                     )}
+                    {/* THE PADLOCK. ⚠ IT IS NOT A SECOND EYE, and the two sit
+                        side by side precisely so the difference is legible: the eye
+                        takes the row OUT OF THE VIDEO, the lock leaves the video
+                        alone and takes the row out of REACH. A locked row plays and
+                        exports exactly as it did; what it refuses is being changed
+                        — dragged, trimmed, razored, dropped onto, selected or
+                        deleted — which is what you want on a board you have
+                        finished blocking out and are now cutting audio against.
+                        ⚠ AND IT IS DISABLED ON THE SAME ROWS THE EYE IS, for the
+                        same reason: a lock needs a stable per-row token, and an
+                        audio row is keyed by the FILE it holds, which changes when
+                        a clip is dragged in from elsewhere. See `laneToken`. */}
+                    <button
+                      type="button"
+                      className={`tl-layer-btn tl-layer-lock ${lane.locked ? "on" : ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (lane.vis) onToggleLocked?.(lane);
+                      }}
+                      disabled={!lane.vis}
+                      title={
+                        !lane.vis
+                          ? "This row can't be locked"
+                          : lane.locked
+                            ? `Unlock ${lane.name} — it can be edited again`
+                            : `Lock ${lane.name} — it keeps playing and exporting, but nothing on it can be moved, trimmed or deleted`
+                      }
+                      aria-pressed={!!lane.locked}
+                    >
+                      <Icon name={lane.locked ? "lock" : "unlock"} />
+                    </button>
                     <button
                       type="button"
                       className="tl-layer-btn tl-layer-add"
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (lane.locked) return;
                         onAddToLane(lane);
                       }}
-                      title={lane.add || LANE_ADD[lane.kind]}
+                      disabled={!!lane.locked}
+                      title={
+                        lane.locked
+                          ? `${lane.name} is locked — unlock it to add to it`
+                          : lane.add || LANE_ADD[lane.kind]
+                      }
                     >
                       ＋
                     </button>
@@ -3013,24 +3279,40 @@ export default function Timeline({
                                                     and everything on it is deleted
                         A default row with nothing on it keeps the ghost: see the
                         cluster comment above for why it is disabled and not gone. */}
+                    {/* ⚠ IT ASKS FIRST NOW, AND IT ASKS WHERE IT WAS PRESSED.
+                        Asked for exactly that way: "when user click x buttun so
+                        user get same place dropdron with deleted layer masg then
+                        user click delete and cancel so a layer and clip delete".
+                        A row's ✕ is the most destructive control in the gutter —
+                        on a storyboard row it can take forty panels with it — and
+                        it sat one careless click from the ＋ beside it.
+                        ⚠ A POPOVER ANCHORED TO THE ROW, NOT A MODAL. A modal in the
+                        middle of the screen loses the connection between the
+                        question and the row it is about, and on a gutter of ten
+                        rows that connection is the only thing that makes the
+                        question answerable. Same surface as ＋ Add layer's
+                        dropdown, which is the other thing that opens out of this
+                        column. */}
                     <button
                       type="button"
                       className="tl-layer-btn tl-layer-del"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (lane.removable) onRemoveLayer(lane.layerId);
-                        else if (clips.length) onRemoveTrack(ids);
-                        else if (count > 0) onClearLane?.(lane);
+                        if (lane.locked || !deletable) return;
+                        setConfirmKey((open) => (open === lane.key ? null : lane.key));
                       }}
-                      disabled={!deletable}
+                      disabled={!deletable || !!lane.locked}
+                      aria-expanded={confirmKey === lane.key}
                       title={
-                        lane.removable
-                          ? `Remove ${lane.name}`
-                          : clips.length
-                            ? `Remove ${clips[0].filename}`
-                            : count > 0
-                              ? `Delete everything on ${lane.name} (${count})`
-                              : `Nothing on ${lane.name} to delete yet`
+                        lane.locked
+                          ? `${lane.name} is locked — unlock it to delete it`
+                          : lane.removable
+                            ? `Remove ${lane.name}`
+                            : clips.length
+                              ? `Remove ${clips[0].filename}`
+                              : count > 0
+                                ? `Delete everything on ${lane.name} (${count})`
+                                : `Nothing on ${lane.name} to delete yet`
                       }
                     >
                       <Icon name="close" />
@@ -3042,6 +3324,81 @@ export default function Timeline({
             </div>
           </div>
         </div>
+
+        {/* ⚠ THE ✕'S CONFIRM, BESIDE THE ROW IT IS ABOUT — one popover, here,
+            rather than one per row inside the gutter. It hung BELOW its row
+            before, which put it past the bottom of the column on the lower rows
+            and, worse, made the browser scroll the labels' `overflow: hidden` box
+            to reveal it: the names slid up while the tracks stood still ("my
+            layer buttun goes up and my time clip layer still"). This box is the
+            only ancestor that spans both columns and clips nothing. Its `top` is
+            measured off the row — see the layout effect by `laneDelete`. */}
+        {confirmLane && (
+          <div
+            className="tl-layer-confirm"
+            ref={confirmRef}
+            role="dialog"
+            data-confirm={confirmLane.key}
+            aria-label={`Delete ${confirmLane.name}?`}
+            /* The lane under it is a click target of its own (it selects the
+               track, it scrubs, it starts a marquee), so the popover has to stop
+               everything it is handed. */
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <span className="tl-layer-confirm-msg">
+              {confirmLane.removable
+                ? `Delete “${confirmLane.name}”?`
+                : confirmAsk.clips.length
+                  ? `Remove “${confirmAsk.clips[0].filename}”?`
+                  : `Empty “${confirmLane.name}”?`}
+              {/* ⚠ WHAT IS ABOUT TO GO, COUNTED. "and 42 clips" is a different
+                  decision from "and 1", and a confirm that does not say which is
+                  a click-through. */}
+              <span className="tl-layer-confirm-what">
+                {confirmLane.removable
+                  ? confirmWhat(laneCount(confirmLane))
+                  : confirmAsk.clips.length
+                    ? `${confirmAsk.clips.length} clip${
+                        confirmAsk.clips.length === 1 ? "" : "s"
+                      } of this track.`
+                    : `${confirmAsk.count} clip${
+                        confirmAsk.count === 1 ? "" : "s"
+                      }. The row itself stays.`}
+              </span>
+            </span>
+            <span className="tl-layer-confirm-acts">
+              {/* Cancel first, then the destructive one — the order every other
+                  dialog in this editor uses. */}
+              <button
+                type="button"
+                className="tl-layer-confirm-btn"
+                onClick={() => setConfirmKey(null)}
+              >
+                Cancel
+              </button>
+              {/* ⚠ `focus({ preventScroll: true })`, NEVER `autoFocus`. Plain
+                  autofocus is what scrolled the gutter out of alignment: the
+                  browser brings a newly focused control into view, and it will
+                  scroll an `overflow: hidden` ancestor to do it. The keyboard
+                  still lands on the safe-to-press-twice button. */}
+              <button
+                type="button"
+                className="tl-layer-confirm-btn danger"
+                ref={(el) => el?.focus({ preventScroll: true })}
+                onClick={() => {
+                  setConfirmKey(null);
+                  if (confirmLane.removable) onRemoveLayer(confirmLane.layerId);
+                  else if (confirmAsk.clips.length) onRemoveTrack(confirmAsk.ids);
+                  else if (confirmAsk.count > 0) onClearLane?.(confirmLane);
+                }}
+              >
+                Delete
+              </button>
+            </span>
+          </div>
+        )}
 
         <div className="tl-scroll" ref={scrollRef} onScroll={readView}>
           <div className={`tl-inner tool-${tool}`} style={{ width }} ref={innerRef}>

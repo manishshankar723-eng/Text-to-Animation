@@ -54,6 +54,7 @@ from .schemas import (
     AnimaticCaptionsRequest,
     AnimaticCreateRequest,
     AnimaticFrame,
+    AnimaticAsset,
     AnimaticLayer,
     AnimaticMediaItem,
     AnimaticOverlay,
@@ -294,6 +295,74 @@ def _texts_of(job: Job) -> list[AnimaticTextClip]:
     return out
 
 
+def _assets_of(job: Job) -> list[AnimaticAsset] | None:
+    """The MEDIA LIBRARY — what has been added to this animatic.
+
+    ⚠ RETURNS `None` WHEN THE KEY WAS NEVER WRITTEN, and that is not the same
+    answer as an empty list. A project saved before the library existed has no
+    `assets` key at all, and the editor derives one from its frames and audio the
+    first time it is opened (`libraryFromProject` in `animatic/assets.js`). A
+    project WITH an empty list has had its library emptied on purpose — the user
+    pressed ✕ on the last card — and re-deriving one from the timeline would put
+    every card straight back, so the ✕ would look broken.
+
+    Flattening the two into `[]` is therefore a bug, not a simplification, which
+    is why `AnimaticProject.assets` is `| None` rather than defaulting to a list.
+
+    The DERIVATION itself is deliberately not here: it lives in the client's pure
+    `assets.js`, in one language, where `tests/asset_fields_check.py` can reach it
+    — the same rule `frame_save.js` follows. A Python twin of it would be a second
+    thing to keep in step for no gain.
+    """
+    if "assets" not in (job.params or {}):
+        return None
+    raw = (job.params or {}).get("assets") or []
+    out: list[AnimaticAsset] = []
+    for item in raw:
+        try:
+            out.append(AnimaticAsset(**item))
+        except Exception:  # noqa: BLE001 — one bad row must not 500 the project
+            logger.warning("[animatic %s] dropping unreadable asset %r", job.job_id, item)
+    return out
+
+
+def _asset_url(job: Job, asset: AnimaticAsset) -> str | None:
+    """Serve path for one library card's picture, or None if it has none.
+
+    ⚠ EVERY SHAPE HERE IS RESOLVABLE WITHOUT THE ASSET BEING ON THE SAVED
+    PROJECT — an upload by its upload id, a panel by (board, index). That is the
+    point: the client builds the same strings when it adds a card, so a freshly
+    imported library has pictures before the autosave has run. Contrast
+    `AnimaticFrame.url`, which resolves an id through the saved frame list and
+    therefore 404s until a save lands — the bug `doBoardImport` is written around.
+    """
+    src = asset.src
+    if asset.kind == "audio":
+        return f"/animatics/{job.job_id}/media/{asset.upload_id}" if asset.upload_id else None
+    if asset.kind == "color":
+        return None  # a swatch, not a file
+    if src.kind == "video":
+        # A VIDEO wants a still, not the MP4 — an <img> can only fail to draw one.
+        return (
+            f"/animatics/{job.job_id}/media/{src.upload_id}?poster=1"
+            if src.upload_id
+            else None
+        )
+    if src.kind == "upload":
+        return f"/animatics/{job.job_id}/media/{src.upload_id}" if src.upload_id else None
+    if src.kind in ("panel", "pose") and src.storyboard_id and src.index is not None:
+        # ⚠ VERSIONED, so re-drawing the panel on the board changes the library
+        # card too. The client caches one blob per path and never re-fetches a
+        # path it already holds — see `_frame_version` and `urlSrcRef`.
+        stamp = _frame_version(job, AnimaticFrame(id="_asset", src=src.model_dump()))
+        pose = f"&frame={int(src.frame)}" if src.kind == "pose" and src.frame is not None else ""
+        return (
+            f"/animatics/{job.job_id}/panel/{src.storyboard_id}/{int(src.index)}"
+            f"?v={stamp}{pose}"
+        )
+    return None
+
+
 def _layers_of(job: Job) -> list[AnimaticLayer]:
     """The lanes the user added. Absent (empty) on every pre-layers project,
     which then shows exactly the default lanes it always did."""
@@ -469,6 +538,9 @@ def _project_of(job: Job) -> AnimaticProject:
         # Same url shape as a frame's picture — the editor fetches both the
         # same way, and an overlay is servable the moment it is uploaded.
         overlay.url = f"/animatics/{job.job_id}/media/{overlay.upload_id}"
+    assets = _assets_of(job)
+    for asset in assets or []:
+        asset.url = _asset_url(job, asset)
     tracks = _audio_tracks_of(job)
     for track in tracks:
         # By upload id, not the project-level /audio route: straight after an
@@ -486,6 +558,7 @@ def _project_of(job: Job) -> AnimaticProject:
         texts=_texts_of(job),
         shapes=_shapes_of(job),
         layers=_layers_of(job),
+        assets=assets,
         overlays=overlays,
         transitions=_transitions_of(job),
         audio_tracks=tracks,
@@ -925,6 +998,17 @@ def save_animatic(
             )
         params["layers"] = [layer.model_dump() for layer in body.layers]
 
+    if body.assets is not None:
+        if len(body.assets) > config.MAX_ANIMATIC_ASSETS:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"The media library can hold at most {config.MAX_ANIMATIC_ASSETS} items."
+                ),
+            )
+        # `url` is filled on read, so it is never stored — see AnimaticAsset.
+        params["assets"] = [a.model_dump(exclude={"url"}) for a in body.assets]
+
     if body.overlays is not None:
         if len(body.overlays) > config.MAX_ANIMATIC_SHAPES:
             raise HTTPException(
@@ -1306,6 +1390,55 @@ def get_frame_image(
     if w:
         # Falls back to `path` itself for every reason a proxy can't be made, so
         # the worst case here is exactly what this route did before.
+        path = proxies.proxy_for(path, _proxy_dir(job_id), w)
+    return FileResponse(path, media_type="image/png")
+
+
+@router.get("/{job_id}/panel/{storyboard_id}/{index}")
+def get_board_panel(
+    job_id: str,
+    storyboard_id: str,
+    index: int,
+    frame: int = -1,
+    w: int = 0,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Serve one BOARD PANEL by (board, index) — for the media library.
+
+    ⚠ CONTENT-ADDRESSED, NOT ID-ADDRESSED, and that is the whole reason it exists
+    beside `get_frame_image`. That route looks a frame up in the SAVED project, so
+    it cannot answer for a library card that has no clip on the timeline — and it
+    404s for anything the autosave has not written yet. This one is asked "which
+    panel?" and answers from the board, so a card is servable the instant it is
+    added and stays servable after its last clip is deleted.
+
+    `frame` asks for one KEY POSE of that panel's sequence instead of the panel
+    itself; `w` proxies the picture down exactly as the frame route does.
+
+    ⚠ BOTH JOBS ARE OWNERSHIP-CHECKED. The animatic here, and the BOARD inside
+    `_resolve_frame_path` — a board id is a user-supplied string, so without the
+    second check this would read any storyboard on the instance by id. Same pair
+    as `import_storyboard`.
+    """
+    import proxies
+
+    job = _get_owned_animatic(job_id, current)
+    # A synthetic frame, purely to reuse the ONE resolver. Writing a second path
+    # lookup here is how the library and the timeline would come to disagree
+    # about which variant of a re-styled board is the current one.
+    probe = AnimaticFrame(
+        id="_panel",
+        src={
+            "kind": "pose" if frame >= 0 else "panel",
+            "storyboard_id": storyboard_id,
+            "index": index,
+            "frame": frame if frame >= 0 else None,
+        },
+    )
+    path = _resolve_frame_path(job, probe)
+    if not path:
+        raise HTTPException(status_code=404, detail="That panel's image is missing.")
+    if w:
         path = proxies.proxy_for(path, _proxy_dir(job_id), w)
     return FileResponse(path, media_type="image/png")
 

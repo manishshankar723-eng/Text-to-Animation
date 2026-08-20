@@ -540,6 +540,22 @@
   --clip-edge: var(--clip-video-edge);
   --clip-seam: var(--clip-video-edge);
 }
+/* ⚠ A VEO RENDER, AND IT IS THE ONE EXCEPTION TO "COLOUR SAYS WHAT IT IS". By
+   that rule a render is footage and should be orange; it was actually drawn PINK,
+   because `frameOrigin` answers "board" for it (it keeps the panel's `src`) and
+   pink is the not-video case. Asked for directly: "keep add Video veo video clip
+   color like pestal prupel". It is worth the fifth hue because a render is the
+   only clip here that cost money — telling it apart from the panel it was made
+   from, and from footage that was dropped in, is a glance rather than a label.
+   ⚠ ITS CLASS COMES FROM `clipRowKind`, not from `frameOrigin`: "is this a board
+   panel that has been animated" is exactly the `board_video` question, already
+   answered in one place for the strict rows. */
+.tl-bar.is-veo {
+  --clip-tint: var(--clip-veo-tint);
+  --clip-tint-alt: var(--clip-veo-tint-alt);
+  --clip-edge: var(--clip-veo-edge);
+  --clip-seam: var(--clip-veo-edge);
+}
 /* A still on a picture track: a generated image or a storyboard panel. Both are
    pictures, and the timeline's question is "is this moving?" — where the still
    CAME from is the Media pane's filing, not a third colour here. */

@@ -1174,18 +1174,21 @@
   white-space: nowrap;
   min-width: 0;
 }
-/* --- The three row controls: hide · add · remove -------------------------- */
-/* ⚠ ONE CLUSTER, THREE FIXED SLOTS, ON EVERY ROW. The buttons used to place
+/* --- The four row controls: hide · lock · add · remove --------------------- */
+/* ⚠ ONE CLUSTER, FOUR FIXED SLOTS, ON EVERY ROW. The buttons used to place
    themselves — each carried `margin-left: auto` and was rendered only when it
    had something to do, so a row without an eye put its ＋ in the eye's column
    and the icons zig-zagged down the gutter (user-reported against a reference
-   NLE, where a track head's controls never move). A grid of three equal
-   columns cannot do that, and Timeline.jsx now always renders all three —
-   disabled when there is nothing for one to do — so no slot is ever empty. */
+   NLE, where a track head's controls never move). A grid of equal columns cannot
+   do that, and Timeline.jsx always renders all four — disabled when there is
+   nothing for one to do — so no slot is ever empty.
+   ⚠ THE COUNT LIVES IN ONE PLACE. It was three before the lock; if a fifth is
+   ever added, this `repeat()` is the only number to change, because every button
+   is `var(--tl-act-w)` wide and the gutter column sizes itself off the cluster. */
 .tl-layer-acts {
   margin-left: auto;
   display: grid;
-  grid-template-columns: repeat(3, var(--tl-act-w));
+  grid-template-columns: repeat(4, var(--tl-act-w));
   align-items: center;
   justify-items: center;
   gap: 0.16rem;
@@ -1453,4 +1456,183 @@
 }
 .an-media-track:hover {
   border-color: var(--primary);
+}
+
+
+/* --- 🔒 A LOCKED ROW ------------------------------------------------------- */
+/* ⚠ LOCK AND HIDE ARE DIFFERENT IDEAS AND MUST NOT LOOK THE SAME. The eye takes
+   a row OUT OF THE VIDEO; the lock leaves the video untouched and takes the row
+   out of REACH. So a locked row is not dimmed — dimming says "not in the film",
+   which would be a lie — it is *stamped*: the padlock lights up in the accent
+   and the clips get a faint diagonal hatch that reads as "not editable" without
+   obscuring what they are. A row can be both, and the two treatments stack
+   because one dims and the other hatches. */
+.tl-layer-lock.on {
+  color: var(--primary);
+}
+.tl-layer-lock .icon {
+  width: 0.95em;
+  height: 0.95em;
+}
+.tl-gutter-row.locked .tl-layer-name {
+  /* Not dimmed, and not struck through. Italic is the lightest mark that still
+     says "this one is different" at a glance down a column of ten rows. */
+  font-style: italic;
+}
+/* The hatch. On the LANE rather than on each clip, so an empty locked row is
+   visibly locked too — which matters, because an empty row is exactly what you
+   lock before dropping something on it by accident. */
+.tl-lane.locked::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--text) 7%, transparent) 0 2px,
+    transparent 2px 9px
+  );
+}
+/* A locked lane refuses the drop, so it must never light up as a target. */
+.tl-lane.locked.drop-ok,
+.tl-lane.locked.drop-no {
+  box-shadow: none;
+}
+
+/* --- The ✕'s confirm, in the gutter ------------------------------------- */
+/* ⚠ IT OPENS WHERE THE PRESS HAPPENED, and that is the whole request: "when user
+   click x buttun so user get same place dropdron with deleted layer masg then
+   user click delete and cancel". So it is anchored to the row — not a modal in
+   the middle of the screen, which is a different gesture with a different feel
+   and loses the connection between the question and the thing it is about.
+   It borrows `.tl-layer-menu`'s surface deliberately: the ＋ Add layer dropdown
+   is the other thing that opens out of this gutter, and two popovers in one
+   column that looked different would read as two unrelated mechanisms. */
+/* ⚠ IT OPENS TO THE SIDE, OVER THE TRACK COLUMN — never below the row. Below was
+   two bugs: on the lower rows it opened past the bottom of the gutter, and
+   focusing its Delete scrolled the labels' `overflow: hidden` box to reveal it,
+   which slid every NAME up while the TRACKS stayed put. Reported as "my layer
+   buttun goes up and my time clip layer still so this look not good so i want you
+   show dropdown like layer of side like in clip layer side not below."
+   ⚠ SO IT IS PLACED IN `.tl-cols` AND `top` IS SET IN JS. That box spans both
+   columns and clips nothing; the offset is measured off the row it belongs to
+   (see the layout effect beside `laneDelete` in Timeline.jsx) because the lane
+   heights are a vertical zoom away from being a constant. `translateY(-50%)`
+   centres it on the row, so the caret and the row line up at any track height. */
+.tl-layer-confirm {
+  position: absolute;
+  left: calc(var(--tl-gutter-w) + 1rem);
+  top: 0;
+  transform: translateY(-50%);
+  z-index: 40;
+  width: max-content;
+  max-width: 15rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 35%);
+  text-align: left;
+}
+/* A caret pointing back at the row this is about. It is the only thing tying the
+   question to its row now that the popover has left the gutter, so it is drawn
+   rather than implied — and it is centred, because the box is. */
+.tl-layer-confirm::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -0.42rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  transform: translateY(-50%) rotate(45deg);
+  margin-left: 0.21rem;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.tl-layer-confirm-msg {
+  font-size: 0.74rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+/* What is about to go, spelled out. A count is the one thing that makes this
+   question answerable: "and 42 clips" is a different decision from "and 1". */
+.tl-layer-confirm-what {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.tl-layer-confirm-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+.tl-layer-confirm-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+}
+.tl-layer-confirm-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+/* Destructive, so it is the one that carries the weight — and it is SECOND, the
+   order every other dialog in this editor uses (Cancel, then the primary). */
+.tl-layer-confirm-btn.danger {
+  border-color: color-mix(in srgb, var(--fail) 55%, var(--border));
+  color: var(--fail);
+}
+.tl-layer-confirm-btn.danger:hover {
+  background: color-mix(in srgb, var(--fail) 14%, transparent);
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+/* --- Media LIBRARY cards ------------------------------------------------- */
+/* `MediaBin` reuses every `.fs-*` class on purpose — see the note at the top of
+   that file. These are the four things a library card has that a clip does not. */
+/* The source's own length, PRINTED. Sized and aligned like `.fs-dur-input` so
+   the foot of a library card and the foot of a clip card line up, but with no
+   box: there is nothing to type into. */
+.fs-dur-static {
+  display: inline-block;
+  width: 2.6rem;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.15rem 0.25rem;
+  text-align: right;
+  color: var(--muted);
+}
+/* An audio file has no picture. A glyph, not a permanent spinner — a spinner
+   that never resolves is the exact thing this whole feature was reported over. */
+.fs-bin-audio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 1.4rem;
+  color: var(--muted);
+}
+/* "×2" = two clips use it; "–" = it is in the library and not in the cut. ⚠ The
+   unused state is QUIET, NOT A WARNING: an unused source is the normal, healthy
+   state of a library, not a problem to flag. */
+.fs-num-unused {
+  opacity: 0.55;
+  font-weight: 400;
+}
+.fs-bin-card {
+  cursor: grab;
+}
+.fs-bin-card:active {
+  cursor: grabbing;
 }

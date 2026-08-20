@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
 
+import { assetForSave } from "./assets.js";
 import { frameForSave } from "./frame_save.js";
 
 const AUTOSAVE_MS = 900;
@@ -39,6 +40,7 @@ function signatureOf(doc) {
     title: doc.title,
     settings: doc.settings,
     frames: (doc.frames || []).map(frameForSave),
+    assets: (doc.assets || []).map(assetForSave),
     texts: doc.texts,
     shapes: doc.shapes,
     layers: doc.layers,
@@ -88,6 +90,11 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   // has an implicit DEFAULT lane (clips whose layer_id is ""), which is what an
   // animatic saved before layers is made of, and what a new one starts with.
   const [layers, setLayers] = useState([]);
+  // THE MEDIA LIBRARY — what has been added to this animatic, whether or not
+  // anything is on the timeline right now. ⚠ A SECOND LIST, NOT A VIEW OF
+  // `frames`: deleting a clip must not delete the record that its source was ever
+  // added. See `animatic/assets.js`.
+  const [assets, setAssets] = useState([]);
   // Pictures composited over the sequence — the content of image layers.
   const [overlays, setOverlays] = useState([]);
   // What happens ON the cuts. Anchored to the frame each one FOLLOWS, and
@@ -142,6 +149,13 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
         setTexts(p.texts || []);
         setShapes(p.shapes || []);
         setLayers(p.layers || []);
+        // ⚠ `p.assets` UNDEFINED AND `p.assets` EMPTY ARE DIFFERENT ANSWERS.
+        // Undefined means "saved before the library existed" and empty means
+        // "emptied on purpose", and only `onLoaded` can tell them apart — it
+        // backfills the first and leaves the second alone. Deciding it here would
+        // be exactly how the ✕ on the last card comes to look broken. See
+        // `libraryFromProject`.
+        setAssets(p.assets || []);
         setOverlays(p.overlays || []);
         setTransitions(p.transitions || []);
         setSettings(p.settings);
@@ -218,6 +232,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
           texts: doc.texts,
           shapes: doc.shapes,
           layers: doc.layers,
+          assets: doc.assets.map(assetForSave),
           overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
           transitions: doc.transitions,
           audioTracks: doc.audioTracks,
@@ -259,6 +274,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
         title,
         settings,
         frames,
+        assets,
         texts,
         shapes,
         layers,
@@ -266,17 +282,23 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
         transitions,
         audioTracks,
       }),
-    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
+    [
+      title, settings, frames, assets, texts, shapes, layers, overlays, transitions,
+      audioTracks,
+    ]
   );
 
   // The document as one object — what the undo stack snapshots, and (with the
   // signature alongside) what the unmount flush sends.
   const doc = useMemo(
     () => ({
-      title, settings, frames, texts, shapes, layers, overlays, transitions,
+      title, settings, frames, assets, texts, shapes, layers, overlays, transitions,
       audioTracks,
     }),
-    [title, settings, frames, texts, shapes, layers, overlays, transitions, audioTracks]
+    [
+      title, settings, frames, assets, texts, shapes, layers, overlays, transitions,
+      audioTracks,
+    ]
   );
 
   // Keep the latest project in a ref so the unmount flush sees it.
@@ -331,6 +353,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
     setTitle(snapshot.title);
     setSettings(snapshot.settings);
     setFrames(snapshot.frames);
+    setAssets(snapshot.assets || []);
     setTexts(snapshot.texts);
     setShapes(snapshot.shapes);
     setLayers(snapshot.layers);
@@ -344,6 +367,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
     // the document
     title, setTitle,
     frames, setFrames,
+    assets, setAssets,
     settings, setSettings,
     texts, setTexts,
     shapes, setShapes,

@@ -70,6 +70,18 @@
   --clip-image-tint: rgba(244, 156, 190, 0.17);
   --clip-image-tint-alt: rgba(244, 156, 190, 0.25);
   --clip-image-edge: rgba(244, 156, 190, 0.52);
+  /* A VEO RENDER GETS ITS OWN PASTEL PURPLE, and it is the one content colour
+     that is not about what a clip IS. A render is footage — orange, by the rule
+     above — and it read as a still (pink) besides, because it keeps the board
+     `src` it was made from. Asked for by name: "keep add Video veo video clip
+     color like pestal prupel". It earns the fifth hue because it is the only
+     clip on the timeline that COST MONEY: telling a paid render apart from the
+     panel under it and from footage you dropped in is worth a glance, not a
+     label. Purple sits away from both the orange and the pink, and away from the
+     gold that means "selected". */
+  --clip-veo-tint: rgba(182, 152, 242, 0.18);
+  --clip-veo-tint-alt: rgba(182, 152, 242, 0.26);
+  --clip-veo-edge: rgba(182, 152, 242, 0.54);
   --clip-text-tint: rgba(244, 216, 122, 0.2);
   --clip-text-edge: rgba(244, 216, 122, 0.55);
   --clip-caption-tint: rgba(150, 214, 160, 0.2);
@@ -142,7 +154,7 @@
   --tl-clip-bg: rgba(138, 107, 23, 0.1);
   --tl-clip-bg-alt: rgba(138, 107, 23, 0.17);
   --tl-clip-seam: rgba(138, 107, 23, 0.34);
-  /* The same four kinds, light mode. The dark theme's pastels are near-white
+  /* The same five kinds, light mode. The dark theme's pastels are near-white
      washes on a white track, so these keep the HUE and go deeper — exactly what
      the gold tints above do, and for the same reason. */
   --clip-video-tint: rgba(180, 96, 14, 0.14);
@@ -151,6 +163,11 @@
   --clip-image-tint: rgba(176, 58, 102, 0.13);
   --clip-image-tint-alt: rgba(176, 58, 102, 0.21);
   --clip-image-edge: rgba(176, 58, 102, 0.5);
+  /* The Veo purple, deeper for a white track — same hue, same reasoning as the
+     four above it. */
+  --clip-veo-tint: rgba(103, 58, 183, 0.14);
+  --clip-veo-tint-alt: rgba(103, 58, 183, 0.22);
+  --clip-veo-edge: rgba(103, 58, 183, 0.5);
   --clip-text-tint: rgba(138, 107, 23, 0.16);
   --clip-text-edge: rgba(138, 107, 23, 0.52);
   --clip-caption-tint: rgba(31, 122, 61, 0.14);

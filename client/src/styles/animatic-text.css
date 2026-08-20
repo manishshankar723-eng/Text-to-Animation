@@ -16,8 +16,15 @@
      top, and whatever is left is the name. At 6.6rem a name truncated to "m..."
      told you nothing about which lane was which; at 9rem it was still only
      "Capti..." / "Eleve..." (user-reported, with a screenshot). This leaves
-     ~10 characters, which is "Captions", "Pictures" and "Shapes" whole. */
-  --tl-gutter-w: 11rem;
+     ~10 characters, which is "Captions", "Pictures" and "Shapes" whole.
+     ⚠ 11rem → 13rem for THE LONGEST LABEL THERE IS: the two storyboard rows.
+     Even shortened to "Story..Image" / "Story..Video" (12 characters) they did
+     not fit, and those are the two rows that MUST be told apart — truncated they
+     both read "Story..". Asked for with the rename: "if anme show not proper so
+     you increase layer width like all fit ans show look good". The name and the
+     four controls are ONE budget; the controls are the fixed half, so the extra
+     2rem all goes to the name. */
+  --tl-gutter-w: 13rem;
   /* Two rows of ruler now — the timecode over its own tick — where it used to be
      one row of bare "0:05". `.tl-ruler` and the gutter's spacer both read this. */
   --tl-ruler-h: 1.5rem;
@@ -80,6 +87,15 @@
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  /* ⚠ AND IT IS THE POSITIONING CONTEXT FOR THE ✕'S CONFIRM. That popover has to
+     sit BESIDE a gutter row and over the track lane, which means it cannot live
+     inside the gutter — that column is `overflow: hidden` and would cut it off,
+     and scrolling it to fit is what knocked the labels out of line with the
+     tracks. This box is the only ancestor that spans both columns and clips
+     nothing, so `.tl-layer-confirm` is placed against it (its `top` is measured
+     off the row in Timeline.jsx). Removing this line does not break the layout —
+     it silently re-anchors the popover to whatever is positioned further up. */
+  position: relative;
 }
 .tl-gutter {
   /* ⚠ ONE width, `--tl-gutter-w` on `.tl-wrap`, because two things are this
@@ -571,7 +587,10 @@
 
 @media (max-width: 720px) {
   .tl-wrap {
-    --tl-gutter-w: 8rem;
+    /* ⚠ 8rem → 9.5rem, in step with the 13rem above and for the same reason: a
+       phone still has to tell "Story..Image" from "Story..Video". The smaller
+       0.68rem gutter font below buys back most of what the extra width costs. */
+    --tl-gutter-w: 9.5rem;
     /* Narrower gutter, narrower controls — otherwise three 1.15rem slots plus
        their gaps eat most of the column and the layer name is down to an
        ellipsis again. */

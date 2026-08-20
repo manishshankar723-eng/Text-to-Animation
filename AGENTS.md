@@ -144,8 +144,8 @@ structural fact about the codebase:
 - ⚠ **SEVERAL tests run a BROWSER on purpose, and none of them is the e2e suite.**
   The three below were the first, and the editor ones that came after them
   (`editor_picture_tracks_check.py`, `editor_lane_move_check.py`,
-  `editor_board_import_check.py`, `editor_veo_attach_check.py`) all borrow the same
-  harness — start Vite, answer
+  `editor_board_import_check.py`, `editor_veo_attach_check.py`,
+  `editor_media_bin_check.py`) all borrow the same harness — start Vite, answer
   every call from Playwright's router, mount the real `<AnimaticEditor>`. ⚠ If you
   need a new one, COPY THE NEAREST EXISTING ROUTER rather than writing a third
   harness; `editor_board_import_check.py`'s is the one to copy when what you are
@@ -200,7 +200,57 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **A PAID VEO RENDER HAD NO `url`, SO IT WAS A
+**Last updated:** 2026-08-20 — **THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS
+WITH IT, AND A VEO RENDER IS PURPLE** (user-reported, three screenshots). ⚠ **THE
+CONFIRM'S BUG WAS NOT WHERE IT OPENED — IT WAS WHAT OPENING IT DID.** It hung
+BELOW its row inside `.tl-gutter-clip`, which is `overflow: hidden`, and the labels
+are held level with the tracks by a TRANSFORM — so the browser scrolled that hidden
+box to reveal the autofocused Delete button and every NAME slid up while every
+TRACK stood still. It is one popover in `.tl-cols` now (the only box spanning both
+columns that clips nothing), placed beside its row with a `top` MEASURED off the
+row every render, its Delete focuses with `preventScroll`, and `readView` holds
+that box's `scrollTop` at 0. Also: **deleting a picture row now deletes its
+clips** — the confirm always said "the row and the 1 clip on it" while the code
+dropped them to track 0, and it is the Media library that makes deleting them safe
+(the SOURCE outlives the clip) — and **a Veo render is pastel purple**
+(`--clip-veo-*`, `.tl-bar.is-veo`, chosen by `clipRowKind`), where it used to be
+drawn the same pink as the panel it came from. Regression checks are in
+`tests/editor_media_row_routing_check.py` — ⚠ **STILL NOT RUN.**
+
+**Previously:** **A MEDIA CARD GOES BACK ON THE ROW IT CAME FROM,
+AND THE GUTTER SAYS WHICH ROW THAT IS** (user-reported). A Veo render dragged out
+of Media could not be dropped on the Storyboard video row its clip had just been
+deleted from; it landed on plain Video instead. ⚠ **`ROW_TAKES` IS ABOUT FILES AND
+IT WAS BEING ASKED ABOUT CARDS** — both board rows take no file *on purpose*
+(the import and ✨ Animate fill them), so the one drag with every right to land
+there was refused, while Video accepted it because a render is genuinely video.
+`cardRowKind(kind, fromBoard)` in `scene.js` is the rule now, `clipRowKind`
+delegates to it, and the drag learns "did this come from a board?" from a new
+`application/x-anim-board` marker — only the TYPE LIST is readable during
+`dragover`. The drag, the drop and ＋ all ask the one function. Also: **the two
+storyboard rows are "Story..Image" / "Story..Video"** (`ROW_KIND[*].short`),
+`--tl-gutter-w` 11rem → 13rem so both fit uncut, and **a board row is never named
+after the board** — the import used to, so the gutter read "TTBB E…" for the row
+whose kind matters most. Regression test:
+`tests/editor_media_row_routing_check.py` — ⚠ **WRITTEN, NOT YET RUN** (the
+Playwright suite runs only when the user asks for it).
+
+**Previously:** **THE MEDIA PANE IS A LIBRARY, NOT A VIEW OF THE
+TIMELINE** (user-specified). An ASSET is a source, a clip is a placement of one:
+deleting a clip leaves the card, dragging the card out makes a new clip, and the
+card goes only when its own ✕ is pressed (direct, no confirm — as asked).
+`client/src/animatic/assets.js` + `AnimaticAsset` + `MediaBin.jsx`. ⚠ **`assets`
+IS `| None`**: `None` = predates the library (derive one), `[]` = emptied on
+purpose — flatten them and the ✕ looks broken. ⚠ **A CARD IS SERVABLE WITH NO SAVE
+AND NO CLIP**, via the new content-addressed `/animatics/{id}/panel/{board}/{i}`.
+Also: **🔒 ON EVERY ROW** (`settings.locked_lanes` — editing only, never the
+export; enforced in `Timeline.jsx` where the gestures are), and **THE ROW ✕ NOW
+ASKS FIRST** in a popover anchored to that row, counting what goes with it. ⚠ The
+new test caught `api.saveAnimatic` silently dropping `assets` — `frameForSave`'s
+whitelist trap for the third time. Regression tests:
+`tests/asset_fields_check.py`, `tests/editor_media_bin_check.py`.
+
+**Previously:** **A PAID VEO RENDER HAD NO `url`, SO IT WAS A
 SPINNER IN MEDIA AND A BLACK HOLE IN THE MONITOR** (user-reported).
 `attachVeoClip` wrote its clip out as a literal instead of using `newVideoClip`
 and left `url` off — which kills the thumbnail fetch AND the monitor, whose
@@ -1398,7 +1448,278 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — A PAID VEO RENDER HAD NO `url`, SO IT WAS A SPINNER IN MEDIA AND A BLACK HOLE IN THE MONITOR (user-reported, with a screenshot)
+### 2026-08-20 (latest) — THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS WITH IT, AND A VEO RENDER IS PURPLE (user-reported, with three screenshots)
+
+> "when i delete Story..Video 2 layer that time dropdown msg appair in below so my
+>  layer buttun goes up and my time clip layer still so this look not good so i
+>  want you show dropdown like layer of side like in clip layer side not below.
+>
+>  second you look image 3 when i delete layer. so only delete layer not clip and i
+>  want delete clip too
+>
+>  third keep add Video veo video clip color like pestal prupel"
+
+**1. THE CONFIRM OPENS BESIDE THE ROW, OVER THE TRACKS.** ⚠ **AND THE BUG WAS NOT
+WHERE IT OPENED — IT WAS WHAT OPENING IT DID.** The popover hung below its row
+INSIDE `.tl-gutter-clip`, which is `overflow: hidden`, and the labels are kept
+level with the tracks by a TRANSFORM on `.tl-gutter-rows` (`readView`) rather than
+by scrolling. So when the Delete button took focus, the browser scrolled that
+hidden box to bring it into view — and every NAME slid up while every TRACK stood
+still. That is the "layer buttun goes up and my time clip layer still" in the
+report, and it is invisible to any check that only looks at what the popover says.
+Three parts, and all three are needed:
+- ⚠ **ONE POPOVER, IN `.tl-cols`, NOT ONE PER ROW IN THE GUTTER.** That box is the
+  only ancestor spanning both columns that clips nothing, so a popover in it can
+  sit over the track lane beside its row. `.tl-cols` gained `position: relative`
+  for it; `.tl-layer-confirm` is `left: calc(var(--tl-gutter-w) + 1rem)` with a
+  caret pointing back at the row.
+- ⚠ **ITS `top` IS MEASURED OFF THE ROW, EVERY RENDER** — a layout effect with no
+  dependency list, reading `[data-lane-row="<lane key>"]`. Deriving it from the
+  lane's index and `--tl-track-h` would be a second copy of the timeline's
+  vertical geometry and wrong for the whole of a vertical zoom (the same rule
+  `laneAtPoint` follows). Scrolling re-renders, so re-measuring is what keeps it
+  on its row; it is clamped to the pane so the top row's confirm cannot open half
+  off the top.
+- ⚠ **`focus({ preventScroll: true })`, NEVER `autoFocus`**, and `readView` now
+  holds `.tl-gutter-clip.scrollTop` at 0 — a guard for every other control in
+  there, since focusing any of them can scroll a hidden box.
+- `laneDelete(lane)` is new, because the popover no longer sits inside the row
+  whose variables it read: the button, its tooltip and the confirm now agree from
+  a distance through one function.
+- ⚠ **AND `clearLane`'S `window.confirm` IS GONE** — a second question about the
+  same press, in the browser's own styling, which is exactly what "same place
+  dropdown" was asked to replace. The popover is its only caller, so nothing lost
+  a guard; while there, it picked up the `pruneTransitions` + `selectOnly({})` that
+  every other delete path does and it had been skipping.
+
+**2. DELETING A PICTURE ROW DELETES ITS CLIPS.** ⚠ **THE CONFIRM HAS ALWAYS SAID
+"The row and the 1 clip on it"** and `removeLayer` dropped them to track 0 instead
+— so the clip did not go, it MOVED, and reappeared on a row it had never been put
+on (image 3). ⚠ **AND IT IS THE MEDIA LIBRARY THAT MAKES DELETING THEM SAFE.** The
+old behaviour was argued from cost: a board panel, an upload, a paid Veo render are
+the most expensive things on this timeline to lose. Since `assets.js` the SOURCE
+outlives the clip, so what is deleted here is the placement — the notice says so
+("the sources are still in Media, so you can drop them back in"), and dragging the
+card back now lands it on a row of its own kind. It also does the two chores every
+other frame delete does and this one skipped: `pruneTransitions` and
+`selectOnly({})`.
+
+**3. A VEO RENDER IS PASTEL PURPLE.** ⚠ **IT WAS DRAWN PINK — THE SAME PINK AS THE
+PANEL IT WAS MADE FROM.** The bar's colour came from `frameOrigin`, which answers
+"board" for a render (it keeps the panel's `src`), and pink is the not-video case;
+so the one clip on this timeline that COST MONEY wore the colour of the one that
+did not. `--clip-veo-tint` / `-alt` / `-edge` in `theme.css` (both themes, pastel
+in dark and deeper in light like the other four), `.tl-bar.is-veo` in
+`animatic-lanes.css`, and the class comes from `clipRowKind(f) === "board_video"` —
+the strict-rows question, already answered in one place — rather than from a fifth
+copy of "is this an animated panel".
+
+**Files:** `client/src/components/Timeline.jsx` (`laneDelete`, the popover moved out
+of the gutter, the positioning effect, `gutterClipRef`, `is-veo`),
+`client/src/components/AnimaticEditor.jsx` (`removeLayer`),
+`client/src/styles/animatic-editor.css` (the popover, side-anchored, with a caret),
+`client/src/styles/animatic-text.css` (`.tl-cols` positioning context),
+`client/src/styles/theme.css` (the Veo purple, both themes),
+`client/src/styles/animatic-lanes.css` (`.tl-bar.is-veo`).
+
+**Tests:** `tests/editor_media_row_routing_check.py` grew a section for all three —
+⚠ and the assertion for the first one is **`probe.drift()`, one number per row**
+(gutter row top minus its lane's top), because "the popover is over there now" is
+not the thing that was broken: every label being beside its own track after the
+confirm opens is. It also checks the confirm is `beside` and not `below`, that it
+stays inside the pane, that Delete takes the clip AND leaves the other rows alone,
+and that the render's bar carries `is-veo`. `tests/editor_media_bin_check.py`'s
+`rowByName` probe now finds the confirm by `data-confirm` rather than inside the
+row. ⚠ **NEITHER FILE HAS BEEN RUN** — the browser suite runs only when the user
+asks — so all of it is unverified beyond `npx vite build`.
+
+### 2026-08-20 — A MEDIA CARD GOES BACK ON THE ROW IT CAME FROM, AND THE GUTTER SAYS WHICH ROW THAT IS (user-reported, with a screenshot)
+
+> "see when i generate storyborad a image to video so video come in Storyborad
+>  video layer but then i delete veo video clip in timeline so then next i do
+>  media panel and then i select Veo video clip and drang and drop on same
+>  storyboard video layer but i can't drop in Storyboad layer but i drop in Video
+>  layer this is happng now … i want one thing when one time come clip in media
+>  penal so i drop and drag in particuler layer like veo vidio go in Storyboerd in
+>  layer any time … you change name Storyborad video to Story..Video and
+>  Storyborad Image to Story..Image … i see my storyborad namke come and show in
+>  layer but this not happen i want you keep Story..Image … and if anme show not
+>  proper so you increase layer width like all fit ans show look good"
+
+Two bugs and one rename, all about the same row.
+
+**1. `ROW_TAKES` IS ABOUT FILES, AND IT WAS BEING ASKED ABOUT LIBRARY CARDS.**
+⚠ **BOTH BOARD ROWS TAKE NOTHING BY DESIGN** — `board_image` is filled by the
+storyboard import and `board_video` by ✨ Animate, and refusing uploads on them is
+the whole point of the strict rows. Asking that same table about a card out of the
+Media pane refused the one drag that had every right to land there (a Veo render
+being put back after its clip was deleted) and plain **Video accepted it instead,
+because a render genuinely IS video**. A kind can never answer "which row": two
+cards in the library are `video` and they belong on different rows.
+- `cardRowKind(kind, fromBoard)` — new in `client/src/animatic/scene.js`, and
+  **`clipRowKind` now delegates to it**, so the row a CARD lands on and the row the
+  CLIP made from it belongs on are one derivation. Two copies is how a drop lands
+  somewhere the next drag refuses to move it away from — which is exactly what had
+  happened between `placeAsset` (＋ / double-click, right) and `dropAsset` (the
+  drag, wrong).
+- ⚠ **A NEW EMPTY MARKER, `application/x-anim-board`**, stamped by `MediaBin.jsx`
+  beside the kind marker. `getData` is blank until the drop in every browser and
+  only the TYPE LIST is readable during `dragover` — the same trick the kind
+  markers already use — so "did this come out of a storyboard?" has to be a type,
+  not a field in the payload. `dragFromBoard` reads it; `laneTakes` then asks
+  `cardRowKind` instead of `ROW_TAKES`, so **the right row lights up and the wrong
+  one shows the no-entry cursor mid-drag**, which is the half the user sees first.
+- ⚠ **ONLY THE LIBRARY STAMPS IT**, so nothing else changed meaning: files, shapes,
+  effects and a clip being re-timed all read `false` and go on being judged exactly
+  as before.
+
+**2. THE TWO STORYBOARD ROWS ARE "Story..Image" AND "Story..Video".** `ROW_KIND`
+gained a `short` name for the gutter; `name` stays the full phrase for prose (a
+notice saying which row something belongs on has room for it). ⚠ **AND A BOARD ROW
+IS NEVER NAMED AFTER THE BOARD**: `doBoardImport` used to pass the storyboard's
+title to `pictureLane`, so the gutter read "TTBB E…" for the one row whose KIND
+matters most, and `videoTracks` now blanks a stored name on either board row so
+every project already saved reads the canonical one too. There is no rename in the
+UI, so a stored name on those two rows is never something the user typed — it is
+that board title, or an older build's long label.
+
+**3. `--tl-gutter-w` 11rem → 13rem** (9.5rem at the 720px breakpoint). Even at 12
+characters the two labels did not fit, and truncated they both read "Story.." —
+the one thing a row label must not do. The name and the four row controls are ONE
+budget and the controls are the fixed half, so all of the extra width goes to the
+name.
+
+**Files:** `client/src/animatic/scene.js` (`cardRowKind`, `isBoardRow`,
+`clipRowKind` delegating), `client/src/components/MediaBin.jsx` (the board
+marker), `client/src/components/Timeline.jsx` (`dragFromBoard`, `laneTakes`),
+`client/src/components/AnimaticEditor.jsx` (`ROW_KIND[*].short`, `rowKindName`,
+`videoTracks`, `placeAsset`, `dropAsset`, `doBoardImport`),
+`client/src/styles/animatic-text.css` (the gutter width).
+
+**Tests:** `tests/editor_media_row_routing_check.py` — new, and every refusal is
+read twice (the timeline is unchanged AND the row said `.drop-no` under the
+pointer), because a refused drop looks exactly like a drag that missed. Its drag
+is dispatched in THREE steps rather than one: `dropAt` is React state set from a
+continuous-priority drag event, so the class is not on the lane by the time
+`dispatchEvent` returns. ⚠ **IT HAS NOT BEEN RUN** — the browser suite is only run
+when the user asks — so it is unverified.
+`tests/editor_board_import_check.py` had its "the gutter calls it after the board"
+check INVERTED (that assertion WAS the bug), and `tests/editor_media_bin_check.py`
+now addresses the row as "Story..Image".
+
+### 2026-08-20 — THE MEDIA PANE IS A LIBRARY, A ROW CAN BE LOCKED, AND ITS ✕ ASKS FIRST (user-specified, with a screenshot)
+
+> "i see when i upload/generate Veo video and then i delete in time so i see in
+>  media panel also delete … i want when user delete video, storboard image, veo
+>  video, audio and shapes in timeline after upload in media so only clip delete
+>  in timeline not delete in media panel i want stay in media panel so user need
+>  deleetd cipl again so user go media panle and drang and drop in perticular
+>  layer … i wnat you add lock icon in layer … x cross icon when user click x
+>  buttun so user get same place dropdron with deleted layer masg then user click
+>  delete and cancel"
+
+Three features, one report. All three are answers to "what happens when I press a
+delete", so each one's fix is the other two's regression risk — which is why they
+share a test.
+
+**1. THE LIBRARY AND THE TIMELINE ARE TWO LISTS NOW.** ⚠ **THE MEDIA PANE USED TO
+*BE* THE TIMELINE** — it listed `frames` grouped by `frameOrigin` — so deleting a
+clip deleted the only record that its source had ever been added, and the only way
+back was to upload it again. A **Veo render was unrecoverable**: re-making it costs
+money. So an ASSET is a source and a clip is a placement of one:
+- `client/src/animatic/assets.js` — new, pure, no React. `assetKey` (identity, by
+  SOURCE, so importing a board twice is one card), `assetOrigin` (which section),
+  `assetUrl`, `clipFromAsset`, `libraryFromProject`, `mergeAssets`, `assetForSave`.
+- `AnimaticAsset` in `server/schemas.py`; `assets` on the project and on the save
+  request; `MAX_ANIMATIC_ASSETS` (1000 — deliberately above the frame cap, because
+  the library outlives the timeline).
+- `client/src/components/MediaBin.jsx` — new. Reuses every `.fs-*` class so it is
+  the same object to the eye; what differs is semantic (no reorder, no typed hold,
+  and a drag COPIES).
+- Deleting a clip now touches only the clip. A card's own ✕ removes the source AND
+  its clips, **with no confirm** — asked for directly ("no dropdwon delete and
+  cancel option not need here"); the count is on the tooltip before the press.
+
+⚠ **`None` AND `[]` ARE DIFFERENT ANSWERS FOR `assets`, AND THE FIELD IS `| None`
+FOR THAT REASON.** `None` = saved before the library existed → the editor derives
+one from the frames and audio on first open. `[]` = emptied on purpose. With
+`default_factory=list` both arrive as `[]`, the backfill cannot tell them apart,
+and emptying the library puts every card back on reload — the ✕ looks broken. The
+derivation lives in `assets.js` only; a Python twin would be a second thing to
+keep in step.
+
+⚠ **A LIBRARY CARD IS SERVABLE WITH NO SAVE AND NO CLIP.** New route
+`GET /animatics/{id}/panel/{board}/{index}` — content-addressed, where
+`get_frame_image` is id-addressed and resolves through the SAVED frame list. That
+is the same trap `doBoardImport` hit two entries ago, avoided by construction this
+time: an upload is served by upload id and a panel by (board, index), so the
+client builds every url itself (`assetUrl`, twin of `_asset_url`).
+
+**2. 🔒 EVERY ROW HAS A PADLOCK, beside the eye.** ⚠ **LOCK AND HIDE ARE DIFFERENT
+IDEAS**: the eye takes a row out of the VIDEO (monitor and export); the lock
+changes nothing about the film and takes the row out of REACH — nothing on it can
+be moved, trimmed, razored, dropped onto, selected or deleted. So
+`settings.locked_lanes` is read by the EDITOR and deliberately ignored by
+`animatic_render.py` and the exporter. Same token vocabulary as `hidden_lanes`
+(`laneToken`), so an audio row can be neither — it has no stable token.
+Enforcement is in `Timeline.jsx`, because a lock stops GESTURES and the gestures
+live there (`laneLocked`, one gate); the editor guards only what it owns —
+`deleteFrame`, `deleteMany`, the keyboard razor, `placeAsset`.
+
+**3. THE ROW ✕ ASKS FIRST, WHERE IT WAS PRESSED.** A popover anchored to the row
+(`.tl-layer-confirm`), not a modal — on a gutter of ten rows the connection between
+the question and the row is the only thing that makes it answerable. It names the
+row and COUNTS what goes with it ("The row and the 42 clips on it"), Cancel then
+Delete, Escape and an outside press both close it.
+
+⚠ **THE CLUSTER IS FOUR SLOTS NOW, NOT THREE** — `hide · lock · add · remove`,
+`repeat(4, var(--tl-act-w))`. The count lives in that one `repeat()`.
+
+**Files:** `client/src/animatic/assets.js` (new),
+`client/src/components/MediaBin.jsx` (new), `AnimaticEditor.jsx`, `Timeline.jsx`,
+`Icon.jsx` (`lock` / `unlock`), `useAnimaticProject.js`, `api.js`,
+`styles/animatic-editor.css`, `server/schemas.py`, `server/animatics.py`,
+`server/config.py`, `tests/asset_fields_check.py` (new),
+`tests/editor_media_bin_check.py` (new), `tests/editor_board_import_check.py`.
+
+**Verified:** `npm run build` clean; `python -c "import server.main"` clean.
+`tests/asset_fields_check.py` (new, 21 checks — node parity against
+`AnimaticAsset`) and `tests/editor_media_bin_check.py` (new, 30 checks — the real
+editor) both pass, as do `frame_save_fields_check`, `render_parity`,
+`picture_tracks_check`, `hidden_lane_check`, `selection_check`, `video_clip_check`,
+`editor_board_import_check`, `editor_veo_attach_check`,
+`editor_picture_tracks_check`, `editor_razor_check`, `editor_effects_drop_check`.
+`editor_lane_move_check` still fails its 3 stale `promptFit` checks — pre-existing,
+still under Next Steps.
+
+⚠ **THE NEW BROWSER TEST FOUND TWO REAL BUGS IN THIS WORK, and both are the same
+shape as bugs this file already documents:**
+- **`api.saveAnimatic` SILENTLY DROPPED `assets`.** The field was added to the
+  schema, the save request, `flush` and the signature — and not to that function's
+  destructured parameter list, which is a whitelist. Nothing errors; an unnamed key
+  simply is not in `body`, so every save sent the project without its library and
+  the server never heard of it. **This is `frameForSave`'s trap in a third place.**
+  Caught because the test asserts on the PUT BODY, not on the screen.
+- **A LOCKED CLIP LEFT A STALE SELECTION.** Clicking one correctly did not select
+  it, and incorrectly did not clear what was already selected — so Delete removed a
+  clip on another row while the locked one sat there looking protected. Caught only
+  because the assertion compared the WHOLE timeline; the version that checked just
+  the locked clip passed against the bug. `startClipDrag` now clears the selection
+  on a locked lane.
+
+⚠ **WHAT WAS DELIBERATELY *NOT* BUILT: a library for shapes or text.** The report
+says "and shapes", and the answer is that the Shapes tab already IS a library a
+deletion cannot empty, and a caption is typed rather than sourced. Neither has a
+source to keep, so giving them cards would be inventing state to list.
+
+⚠ **THE MEDIA PANE NO LONGER LISTS CLIPS AT ALL**, and one thing moved with it: a
+hold used to be TYPED on a Media card. It is typed in Properties (Duration) and
+dragged on the timeline, so nothing was lost — but if a card ever needs to show a
+clip's hold again, that is why it does not.
+
+---
+
+### 2026-08-20 — A PAID VEO RENDER HAD NO `url`, SO IT WAS A SPINNER IN MEDIA AND A BLACK HOLE IN THE MONITOR (user-reported, with a screenshot)
 
 > "same erroe when i upload video see image not view in program panel and in
 >  media now i see uploading type view"
@@ -11065,6 +11386,37 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **THE STORYBOARD STRIP'S OWN DRAG IS STILL THE LOOSE ONE.** The Media
+      library and the timeline's own bar drag both route by
+      `cardRowKind` / `clipRowKind` now, but `FrameStrip.jsx` stamps its marker off
+      `frameOrigin`, which answers "board" — so a Veo clip dragged out of the
+      STRIP is marked `image`, the Stills row accepts it, and `dropAsset`'s
+      `"frame"` branch refuses nothing by kind. Left alone deliberately (outside
+      the report), and the fix is small: the same `application/x-anim-board` marker
+      plus a `clipRowKind` check on that branch. Decide first whether a strip drag
+      should be a MOVE that obeys the strict rows, or stay the one place a clip can
+      change which KIND of row it lives on.
+- [ ] **EYES ON THE MEDIA LIBRARY WITH A REAL PROJECT.** Built and covered by two
+      tests, but only ever seen against fixtures. Worth looking at on the user's
+      42-panel board: does the pane stay legible with 43 cards in four sections;
+      does the ×N badge read as "how many clips use this" without being explained;
+      is `LIBRARY_MAX_EDGE` (240px) sharp enough for the list view and cheap enough
+      for 43 of them at once. ⚠ And the one behaviour no fixture proves: a project
+      saved BEFORE the library existed derives one on first open
+      (`libraryFromProject`) and saves it — so the very first open of an existing
+      animatic is the one that has to be right.
+- [ ] **DECIDE WHETHER A LOCK SHOULD SURVIVE INTO THE EXPORT UI.** It deliberately
+      does not touch the export (a locked row plays exactly as it did), which is
+      right — but there is currently no reminder anywhere that a row is locked
+      except the gutter. If someone locks a row, closes the editor and comes back a
+      week later, the italic name and the hatch are the whole signal. Possibly
+      enough; not decided with the user.
+- [ ] **AUDIO ROWS CANNOT BE LOCKED OR HIDDEN**, because `laneToken` gives them no
+      token — a loose audio row is keyed by the FILE it holds, which changes as
+      clips are dragged in and out. The padlock and the eye are both disabled
+      there and say so. Fixing it properly means giving every audio row a stable
+      identity (a layer record, as the picture rows got), which is the same shape
+      of change and worth doing together with anything else that needs it.
 - [ ] **ANIMATE A PANEL WITH VEO, IN THE REAL EDITOR — THE PARTS A FIXTURE
       CANNOT REACH.** `tests/editor_veo_attach_check.py` now proves the ATTACH: a
       ready render lands on a Storyboard video row above its panel, at the panel's

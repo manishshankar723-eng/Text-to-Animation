@@ -93,6 +93,11 @@ MAX_ANIMATIC_SHAPES = int(os.environ.get("API_MAX_ANIMATIC_SHAPES", "400"))
 # Lanes on the timeline. This is a rough cut, not a compositing suite — past a
 # couple of dozen rows nothing is legible anyway.
 MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
+# Items in the MEDIA LIBRARY. ⚠ Deliberately higher than MAX_ANIMATIC_FRAMES:
+# the library outlives the timeline, so a project that has had clips deleted and
+# re-added holds more sources than it has clips. It is a list of references, not
+# of files, so the cost of a row here is a few hundred bytes.
+MAX_ANIMATIC_ASSETS = int(os.environ.get("API_MAX_ANIMATIC_ASSETS", "1000"))
 # Audio FILES per animatic (music + voiceover is the usual pair). Every extra
 # file is another upload to store, so this stays small.
 MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
