@@ -51,10 +51,6 @@ export default function App() {
   // Set by the board's "Make animatic" button: the animatic already exists, so
   // the animatics workflow opens straight into its editor instead of the library.
   const [pendingAnimaticId, setPendingAnimaticId] = useState(null);
-  // Same idea one workflow further down: the animatic editor's "Make final
-  // video" creates the project, then hands its id over so this workflow opens
-  // straight into the workspace instead of its library.
-  const [pendingFinalVideoId, setPendingFinalVideoId] = useState(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   // main.jsx already applied the stored theme before the first paint; this only
@@ -218,18 +214,11 @@ export default function App() {
       <StoryboardToAnimatics
         openId={pendingAnimaticId}
         onOpened={() => setPendingAnimaticId(null)}
-        onMakeFinalVideo={(id) => {
-          setPendingFinalVideoId(id);
-          setNav("animatics-to-video");
-        }}
       />
     );
   } else if (nav === "animatics-to-video") {
     content = (
-      <AnimaticsToVideo
-        openId={pendingFinalVideoId}
-        onOpened={() => setPendingFinalVideoId(null)}
-      />
+      <AnimaticsToVideo />
     );
   } else if (nav === "create-animatic-image") {
     content = (

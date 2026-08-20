@@ -35,6 +35,9 @@ import {
   LOOK_KINDS,
   TEXT_DEFAULTS,
   defaultFor,
+  clipRowKind,
+  dominantRowKind,
+  ROW_TAKES,
   frameOrigin,
   frameSpans,
   frameTrack,
@@ -165,6 +168,65 @@ const ZOOM_STEP = 1.6;
 const MIN_MS = 100;
 // Mirrors API_MAX_ANIMATIC_AUDIO_TRACKS on the server.
 const MAX_AUDIO_TRACKS = 4;
+// `AnimaticFrame.track` is `le=15`, so a sixteenth row is a value the server
+// would reject. Checked where a row is ADDED, so the refusal is a notice rather
+// than a failed save.
+const MAX_PICTURE_TRACK = 15;
+
+// WHAT EACH KIND OF PICTURE ROW IS CALLED, and what it will accept. The kinds
+// themselves are `ROW_KINDS` in `scene.js`, next to `clipRowKind` — so the
+// timeline, the editor and the exporter cannot disagree about which row a clip
+// belongs on.
+//
+// ⚠ THE FOUR ARE STRICT: a clip may only be dragged, dropped or imported onto a
+// row of its own kind. Asked for directly — "i only move each same layer clip
+// like image move in only image layer and video move video any layer".
+//
+// ⚠ NEITHER BOARD ROW TAKES FILES (`takes: []`), and that is the point of them
+// being separate. They are filled by the storyboard import and by ✨ Animate;
+// putting an upload on the row your board panels live on is exactly the mixing
+// the strict rows exist to stop. Their ＋ opens the thing that DOES fill them.
+// ⚠ `takes` COMES FROM `ROW_TAKES` IN scene.js and is not written out again
+// here. The timeline reads the same table to decide whether to light a row up as
+// a drop target, and two copies of "what may land here" would drift into a row
+// that accepts your file and then refuses it.
+const ROW_KIND = {
+  board_image: {
+    name: "Storyboard images",
+    takes: ROW_TAKES.board_image,
+    hint: "Panels imported from a storyboard — in the cut, one shot each",
+    add: "Import a storyboard onto this row",
+  },
+  board_video: {
+    name: "Storyboard video",
+    takes: ROW_TAKES.board_video,
+    hint: "Veo renders of your panels — each drawn OVER the panel it came from",
+    add: "Animate a panel with ✨ to fill this row",
+  },
+  stills: {
+    name: "Stills",
+    takes: ROW_TAKES.stills,
+    hint: "Full-frame photos in the cut, each placed on its own",
+    add: "Add images to the end of this row",
+  },
+  video: {
+    name: "Video",
+    takes: ROW_TAKES.video,
+    hint: "Footage in the cut, each clip placed on its own",
+    add: "Add video to the end of this row",
+  },
+};
+
+// A picture row's name: its kind's own word, numbered from 2 for the second of
+// that kind — the same rule `addLayer` follows for Text / Shapes / Audio, and for
+// the same reason (the first one on screen is just "Video").
+const rowKindName = (kind, nth = 0) =>
+  `${ROW_KIND[kind]?.name || ROW_KIND.video.name}${nth > 0 ? ` ${nth + 1}` : ""}`;
+
+// Is this file one of the kinds that row accepts? `kindOf` answers "image" /
+// "video" / "audio" / "other"; a row's `takes` is a list of the same words.
+const rowTakesFile = (rowKind, fileKind) =>
+  (ROW_KIND[rowKind]?.takes || []).includes(fileKind);
 
 const RESOLUTIONS = [
   { id: 720, label: "720p" },
@@ -489,13 +551,30 @@ export default function AnimaticEditor({
   const [dropping, setDropping] = useState(false);
   // The "what kind of layer?" picker opened by ＋ Add layer.
   const [layerMenu, setLayerMenu] = useState(false);
-  // ⚠ HOW MANY EMPTY PICTURE TRACKS TO DRAW BEYOND THE ONES IN USE, and it is
-  // VIEW state on purpose — not saved. A picture track is a NUMBER on a clip
-  // (`frameTrack`), so the rows are derived from which numbers are in use; there
-  // is no record to create. This is only "the user asked for a row to drop onto",
-  // and an empty row that survived a reload would be a layer the document does not
-  // have. Anything actually put on it makes the row real.
-  const [extraPictureTracks, setExtraPictureTracks] = useState(0);
+  // --- Importing a storyboard onto a row of its own ---
+  // Null = closed. Otherwise `{ track }`, where a null track means "make the row
+  // as part of the import" — which is what ＋ Add layer does, and what "when i
+  // import storyboard so that time create automatic new layer" asks for.
+  const [boardImport, setBoardImport] = useState(null);
+  // The user's boards, fetched when the picker opens. Null = not fetched yet, so
+  // "still loading" and "you have none" are different things on screen.
+  const [boardList, setBoardList] = useState(null);
+  const [boardPick, setBoardPick] = useState("");
+  const [boardBusy, setBoardBusy] = useState(false);
+  // ⚠ ITS OWN ERROR, inside the panel. The editor's banner renders in the status
+  // bar BEHIND the modal overlay, so a failed import would write its reason
+  // somewhere the user cannot see and the button would look dead. Same lesson as
+  // `speechError` and `reframeError`.
+  const [boardError, setBoardError] = useState("");
+  // ⚠ THERE IS NO "EXTRA PICTURE TRACKS" COUNTER ANY MORE, and its removal is
+  // the whole of this fix. It was VIEW state — "the user asked for a row to drop
+  // onto" — on the reasoning that a picture track is a NUMBER on a clip and an
+  // empty row is therefore a layer the document does not have. Which is true, and
+  // was the bug: an added row you had not filled yet vanished the moment you left
+  // the editor, reported as "when i see again my video picker layer not show". A
+  // picture track is a RECORD in `layers` now (`kind: "video"`, carrying its track
+  // number), so an empty row is part of the document, is saved with it, and its ✕
+  // removes it like any other layer's. See `videoTracks`.
   // The export dialog, and the file name it will download as.
   const [exportOpen, setExportOpen] = useState(false);
   const [exportName, setExportName] = useState("");
@@ -532,6 +611,7 @@ export default function AnimaticEditor({
   // an old one is never re-attached over a frame the user has since changed.
   const veoHandledRef = useRef(new Set());
   const framesRef = useRef([]);
+  const layersRef = useRef([]);
 
   // --- Captions and voiceover (the other two things here that spend quota) ---
   // Same two-step discipline as ✨ Animate, deliberately: a panel that spends
@@ -584,12 +664,10 @@ export default function AnimaticEditor({
 
   const textAreaRef = useRef(null);
   const audioInputRef = useRef(null);
-  const imageInputRef = useRef(null);
+  // A VIDEO ROW's ＋. Takes footage AND stills, because that is what the row
+  // holds — see the input itself for what naming it after one of the two cost.
+  const pictureInputRef = useRef(null);
   const assetInputRef = useRef(null);
-  // The Video row's ＋. A picker of its own rather than the general one, because
-  // the row it fills holds one kind of clip: offering images on it would put them
-  // somewhere the user did not press.
-  const videoInputRef = useRef(null);
   const overlayInputRef = useRef(null);
   // Which audio lane a just-picked file belongs to ("" = a lane of its own).
   const pendingAudioLane = useRef("");
@@ -651,6 +729,19 @@ export default function AnimaticEditor({
   // Where each picture starts, parallel to `frames` — what the caption tools, the
   // strip's badges and the Properties pane all read.
   const starts = useMemo(() => pictureSpans.spans.map((s) => s.start), [pictureSpans]);
+  // The same numbers keyed by CLIP ID — what a selection reads, since a
+  // selection carries ids and not positions.
+  //
+  // ⚠ NOT `frame.start_ms`, and that is the whole reason this exists. A clip
+  // saved before tracks has no `start_ms` of its own and begins where the one
+  // before it on its track ended (see `frameSpans`), so reading the field
+  // directly answers `undefined` for exactly the clips a group move must not
+  // drop. `spans` is parallel to `frames`, so index i is frame i.
+  const frameStartById = useMemo(() => {
+    const by = new Map();
+    frames.forEach((f, i) => by.set(f.id, pictureSpans.spans[i]?.start ?? 0));
+    return by;
+  }, [frames, pictureSpans]);
 
   // Exactly one thing is selected at a time, and the Properties pane follows it:
   // a transition, else a text clip, else a shape, else a track, else a frame,
@@ -1303,6 +1394,68 @@ export default function AnimaticEditor({
     [pictureTrack]
   );
 
+  // ------------------------------------------------------ the video rows
+  /**
+   * WHICH PICTURE TRACKS EXIST, highest first — the compositing order, since a
+   * higher track draws over a lower one.
+   *
+   * ⚠ TWO SOURCES, AND BOTH ARE NECESSARY. A clip's `track` proves a row is
+   * OCCUPIED; a `kind: "video"` layer record proves one was ASKED FOR, which is
+   * the only evidence an EMPTY row can leave. Records alone would hide every row
+   * of every animatic saved before those records existed; clips alone is what
+   * made an added-but-unfilled row vanish on reload.
+   *
+   * A record wins on NAME, because that is the half it exists to carry — the
+   * number can only ever produce "Video 3".
+   */
+  const videoTracks = useMemo(() => {
+    const byTrack = new Map();
+    for (const l of layers) {
+      if (!ROW_KIND[l.kind]) continue;
+      const track = Number(l.track);
+      // A record with no usable track number describes no row. Dropped rather
+      // than folded to 0, which would silently pile it onto the base track.
+      if (!Number.isInteger(track) || track < 0 || track > MAX_PICTURE_TRACK) continue;
+      if (!byTrack.has(track)) {
+        byTrack.set(track, { track, rowKind: l.kind, name: l.name, layerId: l.id });
+      }
+    }
+    // `pictureTracks` always includes 0, so the base row exists in an empty
+    // project — which is what makes it somewhere to drop the first clip.
+    //
+    // ⚠ A ROW NO RECORD NAMES IS CALLED AFTER WHAT IS ON IT (`dominantRowKind`),
+    // and that is the whole migration for every animatic saved before these
+    // kinds existed. An animatic built from a board opens with its panels on
+    // track 0, so that row reads "Storyboard images" rather than "Video" without
+    // anything being moved or rewritten — the clips already say what they are.
+    // An empty row has no clips to ask, and falls back to a plain video row,
+    // which is what a new animatic should open with.
+    for (const track of pictureTracks(frames)) {
+      if (!byTrack.has(track)) {
+        const on = frames.filter((f) => frameTrack(f) === track);
+        byTrack.set(track, { track, rowKind: dominantRowKind(on), name: "", layerId: null });
+      }
+    }
+    // Numbered per KIND, low track first, so "Storyboard images 2" is the second
+    // storyboard row rather than the second row of any sort. Done after the map
+    // is complete because it is a question about the whole set.
+    const rows = [...byTrack.values()].sort((a, b) => a.track - b.track);
+    const seen = new Map();
+    for (const row of rows) {
+      const nth = seen.get(row.rowKind) || 0;
+      seen.set(row.rowKind, nth + 1);
+      if (!row.name) row.name = rowKindName(row.rowKind, nth);
+    }
+    // …and handed back HIGHEST FIRST, which is the compositing order.
+    return rows.reverse();
+  }, [layers, frames]);
+
+  /** The first row of a kind, or null — where an import or a render belongs. */
+  const rowOfKind = useCallback(
+    (kind) => videoTracks.find((r) => r.rowKind === kind) || null,
+    [videoTracks]
+  );
+
   // ----------------------------------------------------------------- lanes
   // ONE list describing every row on the timeline, in top-to-bottom order. The
   // gutter labels and the tracks are both generated from it, so a label can
@@ -1375,25 +1528,44 @@ export default function AnimaticEditor({
     // exists (`pictureTracks`), so a project with no pictures still has a row to
     // put some on.
     //
-    // ⚠ NAMED LIKE THE OTHER LAYERS: "Pictures", then "Pictures 2", … so the
-    // gutter reads consistently and the numbering matches what "+ Add layer"
-    // says it is adding. They are not removable: a picture track is structural,
-    // and its ✕ empties it (`onClearLane`) exactly as the default text and shape
-    // rows do.
-    // The tracks in use, plus any empty ones asked for — see `extraPictureTracks`.
-    const usedTracks = pictureTracks(frames);
-    const allTracks = [...usedTracks];
-    for (let n = Math.max(...usedTracks) + 1; n <= extraPictureTracks; n += 1) {
-      allTracks.push(n);
-    }
-    for (const track of allTracks.reverse()) {
+    // ⚠ CALLED "Video", then "Video 2", … AND NOT "Pictures". The row takes
+    // footage and stills alike, so naming it after one of the two kinds was a lie
+    // about what you could put on it — reported as "the name is confusing".
+    // "Video" is also what the Media pane's own group is called and what every
+    // NLE calls this row, so the gutter, the pane and "＋ Add layer" now agree.
+    // ⚠ THE OVERLAY LAYER IS STILL "Images", and that is a different thing: it
+    // composites a picture OVER this row rather than being part of the cut.
+    //
+    // ⚠ EVERY TRACK IN USE, UNION EVERY TRACK WITH A RECORD — see `videoTracks`.
+    for (const row of videoTracks) {
+      const { track } = row;
       out.push({
         key: `frames:${track}`,
         kind: "frames",
         track,
-        name: track === 0 ? "Pictures" : `Pictures ${track + 1}`,
-        layerId: null,
-        removable: false,
+        // ⚠ WHICH OF THE FOUR PICTURE KINDS THIS ROW IS. `kind` stays "frames"
+        // because that is what the row DRAWS (clips out of `frames`, as opposed
+        // to captions or audio) and the timeline branches on it everywhere; this
+        // is the finer question of what may LAND here, which is what makes the
+        // rows strict. Both are needed: a caption can never go on a picture row
+        // at all, and a board panel can only go on a board-image one.
+        rowKind: row.rowKind,
+        name: row.name,
+        // ⚠ THE RECORD'S ID, OR NULL FOR A ROW THAT ONLY CLIPS PROVE EXISTS.
+        // Unlike every other lane this is NOT what its clips point at — a picture
+        // clip carries the track NUMBER — so it is only here so the ✕ knows
+        // whether there is a record to delete.
+        layerId: row.layerId,
+        // Track 0 is the floor of the stack and the place a removed row's clips
+        // fall back to, so it is the one row that cannot be removed. Its ✕ empties
+        // it instead, exactly as the default Text and Shapes rows do.
+        //
+        // ⚠ AND A ROW WITH NO RECORD IS NOT REMOVABLE EITHER, however high it is:
+        // `onRemoveLayer` is given a layer id, so a null one would be a ✕ that
+        // does nothing at all. Rows are adopted on load, so this is the safety
+        // net rather than the normal case — and the fallback (empty the row) is
+        // the honest thing for a row only its clips prove exists.
+        removable: track !== 0 && !!row.layerId,
         // Is this row carrying stills AND footage? If so it can be split into
         // two — see `splitFootageOntoTrack`, and the ▶⇧ in the gutter.
         mixed: (() => {
@@ -1403,9 +1575,9 @@ export default function AnimaticEditor({
         })(),
         hint:
           track === 0
-            ? "The base picture track — stills and footage, each placed on its own"
-            : `Picture track ${track + 1} — drawn OVER the tracks below it; a gap shows what is under it`,
-        add: "Add pictures to the end of this track",
+            ? ROW_KIND[row.rowKind].hint
+            : `${ROW_KIND[row.rowKind].hint} — drawn OVER the tracks below it, and a gap shows what is under it`,
+        add: ROW_KIND[row.rowKind].add,
       });
     }
     // Audio: a track saved before layers owns its own lane (that is how it has
@@ -1470,7 +1642,7 @@ export default function AnimaticEditor({
     // question too: WHICH TRACKS EXIST, which decides how many picture rows there
     // are. That does mean the list rebuilds when a picture is added or moved
     // across tracks, which is exactly when the rows change.
-  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, extraPictureTracks]);
+  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, videoTracks]);
 
   // ------------------------------------------------------------ undo / redo
   // One stack for the whole document — see `useUndoStack`. `gestureProps` is
@@ -1655,11 +1827,21 @@ export default function AnimaticEditor({
       else if (item.kind === "overlay") start = startOf(overlays, item.id);
       else if (item.kind === "audio") {
         start = audioTracks.find((a) => clipId(a) === item.id)?.start_ms;
-      } else continue; // a picture is not moved, so it sets no floor
+      } else if (item.kind === "frame") {
+        // ⚠ A PICTURE SETS A FLOOR LIKE EVERYTHING ELSE. It used to be skipped
+        // here ("a picture is not moved"), which was true while the picture was
+        // one butt-jointed sequence and stopped being true when clips got their
+        // own `start_ms` on numbered tracks. Left out, a selection whose
+        // LEFTMOST clip was a picture measured its wall from something further
+        // right — so dragging left pushed the picture through 0:00, where
+        // `moveSelection`'s own clamp then squashed it against the front and
+        // broke the spacing the group move exists to preserve.
+        start = frameStartById.get(item.id);
+      } else continue;
       if (start !== undefined) floor = Math.min(floor, Math.max(0, start || 0));
     }
     return floor === Infinity ? 0 : floor;
-  }, [liveSelection, texts, shapes, overlays, audioTracks]);
+  }, [liveSelection, texts, shapes, overlays, audioTracks, frameStartById]);
 
   /**
    * Delete every selected clip, in one pass and one undo step.
@@ -1704,14 +1886,25 @@ export default function AnimaticEditor({
    * wall, and it is the WHOLE MOVE that stops there rather than each clip on its
    * own: see `selectionFloorMs`.
    *
-   * ⚠ Pictures are not moved — see `MOVABLE` in `animatic/selection.js`. A frame
-   * starts where the one before it ended; "later" is not a thing you can do to
-   * one without re-timing the sequence.
+   * ⚠ PICTURES MOVE HERE TOO, and the missing branch below was the bug behind
+   * "we are not able to move here and there properly". `frame` has been in
+   * `MOVABLE` (`animatic/selection.js`) since clips got their own `start_ms` on
+   * numbered tracks, so the timeline let the drag start and drew the ghost — and
+   * then this function, which still said pictures cannot move, wrote every OTHER
+   * kind and dropped them. The clip snapped back to where it was, with no error
+   * and nothing in the undo stack to show for it.
+   *
+   * ⚠ A PICTURE'S START IS NOT NECESSARILY ITS `start_ms`. A clip saved before
+   * tracks has none and begins where the one before it on its row ended, so
+   * `+ delta` on the field would move it from 0 rather than from where you can
+   * see it. The move is written from `frameStartById` — the evaluated start,
+   * which is also what makes the write pin the clip down explicitly.
    */
   function moveSelection(deltaMs) {
     const delta = Math.max(-selectionFloorMs, Math.round(deltaMs || 0));
     if (!delta) return;
     const items = liveSelection;
+    const frameIds = idsOf(items, "frame");
     const textIds = idsOf(items, "text");
     const shapeIds = idsOf(items, "shape");
     const overlayIds = idsOf(items, "overlay");
@@ -1719,6 +1912,17 @@ export default function AnimaticEditor({
     // No per-clip clamp: the delta above is already the most the whole selection
     // can travel, so `+ delta` cannot take anything below zero.
     const slide = (c) => ({ ...c, start_ms: Math.max(0, (c.start_ms || 0) + delta) });
+    // ⚠ ONE `setFrames`, so a group move of forty pictures is one render and one
+    // press of Ctrl+Z — the same rule `patchFrames` and `insertPictures` follow.
+    if (frameIds.size) {
+      setFrames((list) =>
+        list.map((f) =>
+          frameIds.has(f.id)
+            ? { ...f, start_ms: Math.max(0, (frameStartById.get(f.id) ?? 0) + delta) }
+            : f
+        )
+      );
+    }
     if (textIds.size) setTexts((list) => list.map((c) => (textIds.has(c.id) ? slide(c) : c)));
     if (shapeIds.size) setShapes((list) => list.map((s) => (shapeIds.has(s.id) ? slide(s) : s)));
     if (overlayIds.size) {
@@ -1852,7 +2056,7 @@ export default function AnimaticEditor({
       return;
     }
     if (!items.length) {
-      setNotice("Nothing groupable is selected. Pictures can't be grouped — they're a sequence.");
+      setNotice("Nothing groupable is selected. Clips on a video track can't be grouped.");
       return;
     }
     const group = join ? `g${newId()}` : "";
@@ -2110,23 +2314,43 @@ export default function AnimaticEditor({
    *
    * `atIndex` is an index into `frames` (what `frameIndexAt` returns), so "at the
    * end" is `frames.length` and lands the clips after the last one on their track.
+   *
+   * ⚠ `atMs` IS WHERE YOU DROPPED IT, and it only decides anything when the
+   * newcomers are going on the END of their track — which is every drop onto a
+   * row you just made. Without it, a clip dropped on an empty "Video 2" at 0:45
+   * jumped to 0:00, because "the end of an empty track" is zero: you aimed at a
+   * moment and the clip landed somewhere else. Honouring it means a deliberate
+   * GAP in front of the clip, which is a thing that exists now — a gap on a
+   * video row shows the row underneath. Inserting BETWEEN two clips still ignores
+   * it and ripples, because there the nearest cut is the only placement that
+   * doesn't bury what is already there.
    */
-  function insertPictures(list, added, atIndex, track) {
+  function insertPictures(list, added, atIndex, track, atMs = null) {
     const spans = frameSpans(list).spans;
     const on = spans.filter((s) => s.track === track).sort((a, b) => a.start - b.start);
     // Where the newcomers begin: the start of the clip they are going in front
-    // of, or the end of the track when they are going on the end.
+    // of, or — on the end of the track — the later of the drop time and whatever
+    // is already there, so they never land on top of the last clip.
     const ahead = on.find((s) => s.index >= atIndex);
-    const at = ahead ? ahead.start : on.length ? on[on.length - 1].end : 0;
+    const tail = on.length ? on[on.length - 1].end : 0;
+    const dropAt = Number.isFinite(atMs) ? Math.max(0, Math.round(atMs)) : null;
+    const at = ahead ? ahead.start : Math.max(tail, dropAt ?? tail);
     let clock = at;
     const placed = added.map((clip) => {
       const start = clock;
       clock += Math.max(100, Number(clip.duration_ms) || 2000);
       return { ...clip, track, start_ms: start };
     });
+    // How far everything after them on this track has to move to make room.
+    // Nothing does when they went on the end — there is nothing after them —
+    // which is why a drop into a gap leaves the rest of the project alone.
     const shift = clock - at;
-    const next = list.map((f) => {
-      const span = spans.find((s) => s.index === list.indexOf(f));
+    // ⚠ INDEXED, NOT `indexOf`. `spans` is parallel to `list`, so span i belongs
+    // to clip i — `list.indexOf(f)` re-scanned the list for every clip (n² on a
+    // thirty-panel board) and answered the FIRST match, which is the wrong clip
+    // the moment two entries are the same object reference.
+    const next = list.map((f, i) => {
+      const span = spans[i];
       if (!span || span.track !== track || span.start < at) return f;
       return { ...f, start_ms: span.start + shift };
     });
@@ -2167,7 +2391,7 @@ export default function AnimaticEditor({
         placed.has(f.id) ? { ...f, start_ms: placed.get(f.id) } : f
       );
     });
-    setNotice("Re-ordered — that picture row is closed up in the new order.");
+    setNotice("Re-ordered — that video row is closed up in the new order.");
   }
 
   function duplicateFrame(id) {
@@ -2491,19 +2715,66 @@ export default function AnimaticEditor({
   /**
    * A new, EMPTY picture track above the ones that exist.
    *
-   * ⚠ NOT AN `addLayer`, and the difference is what a picture track IS. The other
-   * rows are records in `layers` with an id that clips point at; a picture track
-   * is a NUMBER on the clip (`frameTrack`), and the rows are derived from which
-   * numbers are in use (`pictureTracks`). So there is nothing to create — the row
-   * appears when something is on it. What this does is remember that you asked for
-   * one, so an empty row is drawn to drop onto.
+   * ⚠ IT IS AN `addLayer` NOW, WITH A TRACK NUMBER ON IT — and that change is the
+   * fix for "when i see again my video picker layer not show". It used to bump a
+   * view-only counter, on the reasoning that a picture track is a NUMBER on a clip
+   * (`frameTrack`) and the rows are derived from the numbers in use, so there was
+   * nothing to create: the row became real when something landed on it. True, and
+   * useless — an empty row is exactly what you make BEFORE you have something to
+   * put on it, and it did not survive the trip to the library and back. The record
+   * carries the two things the number cannot: that the row exists while empty, and
+   * what it is called.
+   *
+   * ⚠ THE NUMBER STILL COMES FROM THE CLIPS AND THE RECORDS TOGETHER, so a row
+   * can never be handed a track something else already occupies.
    */
-  function addPictureTrack() {
-    const next = Math.max(...pictureTracks(frames)) + 1;
-    setExtraPictureTracks((n) => Math.max(n, next));
-    setNotice(
-      `Picture track ${next + 1} added — drag a clip up onto it, or use its ＋.`
-    );
+  /**
+   * @param rowKind which of the four picture kinds — see `ROW_KIND`
+   * @param name    override the kind's own numbered name (the storyboard import
+   *                names its row after the board)
+   * @param quiet   skip the notice, for when the caller says something better
+   * @returns the track number it claimed, or null if there was no room
+   *
+   * ⚠ IT RETURNS THE TRACK, because the two callers that are not the ＋ Add layer
+   * menu need to put something ON the row they just made — an import's frames, a
+   * Veo render — and reading it back out of `videoTracks` would mean reading
+   * state that this render has not produced yet.
+   */
+  function addPictureTrack(rowKind = "video", { name = "", quiet = false } = {}) {
+    const lane = pictureLane(rowKind, name);
+    if (!lane) return null; // no room; `pictureLane` said so
+    setLayers((list) => [...list, lane]);
+    if (!quiet) {
+      setNotice(
+        ROW_KIND[lane.kind].takes.length
+          ? `${lane.name} added — drag a clip up onto it, or use its ＋.`
+          : `${lane.name} added — ${ROW_KIND[lane.kind].add.toLowerCase()}.`
+      );
+    }
+    return lane.track;
+  }
+
+  /**
+   * The lane record `addPictureTrack` would create — WITHOUT adding it.
+   *
+   * Split out for the storyboard import, which cannot let the row reach state
+   * first: it has to send the row and the frames that sit on it to the server in
+   * ONE write, and the only way to have both values before a render is to build
+   * them. See `doBoardImport`.
+   *
+   * @returns the lane, or null — having said why — when there is no room.
+   */
+  function pictureLane(rowKind = "video", name = "") {
+    const kind = ROW_KIND[rowKind] ? rowKind : "video";
+    const next = Math.max(...pictureTracks(frames), ...videoTracks.map((r) => r.track)) + 1;
+    if (next > MAX_PICTURE_TRACK) {
+      setNotice(`That's the limit — an animatic can hold ${MAX_PICTURE_TRACK + 1} picture rows.`);
+      return null;
+    }
+    // Numbered among the rows of ITS OWN kind, so the second storyboard row is
+    // "Storyboard images 2" however many video rows sit between them.
+    const nth = videoTracks.filter((r) => r.rowKind === kind).length;
+    return { id: newId(), kind, name: name || rowKindName(kind, nth), track: next };
   }
 
   /**
@@ -2532,7 +2803,11 @@ export default function AnimaticEditor({
       );
       return;
     }
-    const to = Math.max(...pictureTracks(frames)) + 1;
+    const to = Math.max(...pictureTracks(frames), ...videoTracks.map((r) => r.track)) + 1;
+    if (to > MAX_PICTURE_TRACK) {
+      setNotice(`That's the limit — an animatic can hold ${MAX_PICTURE_TRACK + 1} video rows.`);
+      return;
+    }
     const spans = new Map(pictureSpans.spans.map((s) => [frames[s.index].id, s.start]));
     const moving = new Set(footage.map((f) => f.id));
     // Which transitions stop meaning anything: their cut is between a clip that
@@ -2552,9 +2827,15 @@ export default function AnimaticEditor({
         moving.has(f.id) ? { ...f, track: to, start_ms: spans.get(f.id) ?? 0 } : f
       )
     );
-    setExtraPictureTracks((n) => Math.max(n, to));
+    // ⚠ AND IT CLAIMS THE ROW AS A RECORD, not just by putting clips on it. The
+    // clips alone would draw the row, but emptying it later would make it vanish
+    // — the same disappearing row this whole change is about.
+    setLayers((list) => [
+      ...list,
+      { id: newId(), kind: "video", name: rowKindName("video", videoTracks.filter((r) => r.rowKind === "video").length), track: to },
+    ]);
     setNotice(
-      `${footage.length} video clip${footage.length === 1 ? "" : "s"} moved to Pictures ${to + 1} — ` +
+      `${footage.length} video clip${footage.length === 1 ? "" : "s"} moved to Video ${to + 1} — ` +
         "every one still plays at the same moment." +
         (stranded.length
           ? ` ${stranded.length} transition${stranded.length === 1 ? "" : "s"} now sit${
@@ -2564,10 +2845,51 @@ export default function AnimaticEditor({
     );
   }
 
-  // Removing a lane takes its contents with it: they have nowhere else to live,
-  // and silently moving them to another row would be worse than saying so.
+  /**
+   * ✕ on a row the user ADDED: delete the record, and deal with what was on it.
+   *
+   * For a caption, a shape, an overlay or an audio clip that means DELETING the
+   * clips too: they point at this lane by `layer_id`, so there is nowhere else
+   * for them to live, and silently moving them to another row would be worse
+   * than saying so.
+   *
+   * ⚠ A VIDEO ROW IS THE EXCEPTION, AND ITS CLIPS ARE NOT DELETED. They carry a
+   * track NUMBER rather than a layer id, so the base track is always somewhere
+   * they can live — and a shot is the most expensive thing on this timeline to
+   * lose (a board panel, a file someone uploaded, a Veo render that was paid
+   * for). So they drop to track 0 KEEPING THE MOMENT THEY PLAY AT: the film is
+   * frame-for-frame what it was, and all that changed is which row draws them.
+   */
   function removeLayer(layerId) {
     const layer = layers.find((l) => l.id === layerId);
+    if (layer && ROW_KIND[layer.kind]) {
+      const track = Number(layer.track);
+      // Its clips' evaluated starts, captured BEFORE the record goes: a clip with
+      // no `start_ms` of its own begins where the one before it on THIS row
+      // ended, and that row is about to stop existing.
+      const landing = new Map(
+        pictureSpans.spans
+          .filter((sp) => sp.track === track)
+          .map((sp) => [frames[sp.index].id, sp.start])
+      );
+      setLayers((list) => list.filter((l) => l.id !== layerId));
+      if (landing.size) {
+        setFrames((list) =>
+          list.map((f) =>
+            landing.has(f.id) ? { ...f, track: 0, start_ms: landing.get(f.id) } : f
+          )
+        );
+      }
+      const base = videoTracks.find((r) => r.track === 0);
+      setNotice(
+        landing.size
+          ? `${layer.name} removed — its ${landing.size} clip${
+              landing.size === 1 ? "" : "s"
+            } dropped to ${base?.name || "the base row"}, still at the same moment.`
+          : `${layer.name} removed.`
+      );
+      return;
+    }
     // The captions lane is drawn from its CLIPS as well as from its record (see
     // `lanes`), so removing it has to work even when the record is the half
     // that went missing — otherwise the ✕ on a visible row does nothing.
@@ -2632,18 +2954,62 @@ export default function AnimaticEditor({
   // whether it is pressed in the gutter or on the empty band of the track.
   // Which lane it was pressed on decides what gets added, and where.
   const pendingOverlayLane = useRef("");
-  // Which picture track a ＋ / drop is filling. Set at the gesture and read when
-  // the files arrive, the same way `pendingAudioLane` works.
+  // Which video track the OS FILE DIALOG is filling.
+  //
+  // ⚠ THIS REF IS ONLY FOR THE PICKER, and it is read once and cleared. It used
+  // to be the single source of truth for "which track do new files go on", read
+  // by `addFiles` and `addVideoClips` directly — and since only the lane ＋ ever
+  // SET it and nothing ever reset it, every other way in (a drop on a row, the
+  // Media pane's own button) silently used whatever row was last touched, or
+  // track 0. That is why a second video landed beside the first one instead of
+  // on the row it was dropped on. The track is a PARAMETER now; this only
+  // carries it across the file dialog, which is asynchronous and has no other
+  // way to remember what it was opened for.
   const pendingPictureTrack = useRef(0);
+
+  // …and which KIND of row that was, so the dialog can offer only the files the
+  // row accepts. Same read-and-clear discipline, same reason.
+  const pendingPictureKind = useRef("video");
+
+  // Read-and-clear, so a stale value can never decide a later import.
+  function takePendingTrack() {
+    const track = pendingPictureTrack.current || 0;
+    const rowKind = pendingPictureKind.current || "video";
+    pendingPictureTrack.current = 0;
+    pendingPictureKind.current = "video";
+    return { track, rowKind };
+  }
 
   function addToLane(lane) {
     if (lane.kind === "frames") {
-      // ⚠ WHICH TRACK the picked files land on, remembered for the change
-      // handler. A picture track takes stills AND footage now, so there is one
-      // picker rather than one per row — `addAssets` routes by file type, which
-      // it always did.
+      // ⚠ THE ＋ OPENS WHATEVER FILLS THAT ROW, and for two of the four kinds
+      // that is not a file dialog at all. A storyboard row is filled by the
+      // import; a Veo row is filled by ✨ Animate. Offering a file picker on
+      // either would put an upload on the row your board panels live on, which
+      // is the mixing the strict rows exist to stop.
+      const rowKind = lane.rowKind || "video";
+      if (rowKind === "board_image") {
+        openBoardImport(lane.track || 0);
+        return;
+      }
+      if (rowKind === "board_video") {
+        setNotice(
+          "This row holds Veo renders — pick a storyboard panel and press ✨ Animate to fill it."
+        );
+        return;
+      }
+      // ⚠ ONE PICKER, FILTERED BY THE ROW. It used to open the IMAGE input
+      // (`accept="image/*"`, straight into the image-only `addFiles`) whatever
+      // the row was, so the file dialog hid the very MP4 the same row accepted by
+      // drag and drop. `accept` is now the row's own `takes`, and `addAssets`
+      // routes by file type as it always did.
       pendingPictureTrack.current = lane.track || 0;
-      imageInputRef.current?.click();
+      pendingPictureKind.current = rowKind;
+      const input = pictureInputRef.current;
+      if (input) {
+        input.accept = ROW_KIND[rowKind].takes.map((k) => `${k}/*`).join(",");
+        input.click();
+      }
       return;
     }
     if (lane.kind === "text") {
@@ -2800,15 +3166,30 @@ export default function AnimaticEditor({
     if (files?.length) {
       if (lane.kind === "frames") {
         // ⚠ `addAssets`, NOT a picker of its own: it is the one door every
-        // upload goes through, and it routes by file type. A video dropped on
-        // the Images row still becomes a video clip — it simply appears on the
-        // Video row, which is the truth about what it is.
-        const usable = files.filter((f) => kindOf(f) === "image" || kindOf(f) === "video");
+        // upload goes through, and it routes by file type — here against the
+        // row's own `takes`, so a photo cannot land on a footage row and a board
+        // row takes neither.
+        const rowKind = lane.rowKind || "video";
+        const usable = files.filter((f) => rowTakesFile(rowKind, kindOf(f)));
         if (!usable.length) {
-          setNotice("That is not a picture or a video — the picture rows take images and footage.");
+          const takes = ROW_KIND[rowKind]?.takes || [];
+          setNotice(
+            takes.length
+              ? `${lane.name} takes ${takes.join(" and ")} — that file belongs on another row.`
+              : `${lane.name} is filled by ${ROW_KIND[rowKind].add.toLowerCase()}, not by dropping files on it.`
+          );
           return;
         }
-        await addAssets(usable, frameIndexAt(at));
+        // ⚠ THE ROW YOU DROPPED ON, PASSED EXPLICITLY — both to place the clip
+        // and to find the cut it goes in front of. Neither was true before: the
+        // track came from a ref only the lane ＋ ever wrote, so a file dropped on
+        // "Video 2" was inserted on "Video" next to whatever was already there,
+        // and `frameIndexAt(at)` with no track picked the nearest cut across ALL
+        // rows — an index on one row deciding an insert on another. Reported as
+        // "the video tracker … imports that only even if we add it on a
+        // different layer".
+        const track = lane.track || 0;
+        await addAssets(usable, frameIndexAt(at, track), track, at, rowKind);
         return;
       }
       if (lane.kind === "image") {
@@ -2817,7 +3198,7 @@ export default function AnimaticEditor({
       }
       const audio = files.filter((f) => kindOf(f) === "audio");
       if (!audio.length) {
-        setNotice("The audio rows take sound files — a picture belongs on the picture track.");
+        setNotice("The audio rows take sound files — footage and images belong on a video track.");
         return;
       }
       if (audioFileCount() >= MAX_AUDIO_TRACKS) {
@@ -3394,13 +3775,42 @@ export default function AnimaticEditor({
     window.addEventListener("pointerup", up);
   }
 
+  // ⚠ ESCAPE AND AN OUTSIDE PRESS CLOSE ＋ Add layer, and both have to be written
+  // by hand now that it is a dropdown — the modal overlay it replaced did the two
+  // of them for free.
+  //
+  // ⚠ THE ＋ ITSELF IS EXEMPT from the outside-press close, because it TOGGLES:
+  // closing on its `pointerdown` would let the `click` that follows reopen what
+  // the press just shut, which looks exactly like a dead button.
+  useEffect(() => {
+    if (!layerMenu) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setLayerMenu(false);
+    };
+    const onDown = (e) => {
+      if (e.target.closest?.(".tl-layer-menu, .tl-add-layer")) return;
+      setLayerMenu(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [layerMenu]);
+
   // Typing in the caption box should focus it as soon as a clip is picked.
   useEffect(() => {
     if (selectedTextId) textAreaRef.current?.focus();
   }, [selectedTextId]);
 
-  async function addFiles(files, insertAt) {
-    if (!files.length) return;
+  // ⚠ `track` IS A PARAMETER on all three of these, not a ref they reach for.
+  // See `pendingPictureTrack` for what reaching for it cost.
+  //
+  // Returns how many landed, so `addAssets` can insert the videos AFTER them
+  // rather than at an index these have already shifted.
+  async function addFiles(files, insertAt, track = 0, atMs = null) {
+    if (!files.length) return 0;
     setUploading(true);
     setError("");
     try {
@@ -3416,17 +3826,17 @@ export default function AnimaticEditor({
       // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
       // starts and ripples what follows them on that row — a list splice alone
       // would drop them on top of whatever already occupied that stretch.
-      setFrames((list) =>
-        insertPictures(list, added, insertAt, pendingPictureTrack.current || 0)
-      );
+      setFrames((list) => insertPictures(list, added, insertAt, track, atMs));
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
       } else {
         setNotice(`Added ${added.length} image${added.length === 1 ? "" : "s"}.`);
       }
+      return added.length;
     } catch (e) {
       setError(e.message);
+      return 0;
     } finally {
       setUploading(false);
     }
@@ -3444,7 +3854,7 @@ export default function AnimaticEditor({
    * Returns how many landed, so the one shared "here's what I did with your
    * files" notice can report them alongside the images and audio.
    */
-  async function addVideoClips(files, insertAt) {
+  async function addVideoClips(files, insertAt, track = 0, atMs = null) {
     if (!files.length) return 0;
     setUploading(true);
     setError("");
@@ -3461,9 +3871,7 @@ export default function AnimaticEditor({
       // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
       // starts and ripples what follows them on that row — a list splice alone
       // would drop them on top of whatever already occupied that stretch.
-      setFrames((list) =>
-        insertPictures(list, added, insertAt, pendingPictureTrack.current || 0)
-      );
+      setFrames((list) => insertPictures(list, added, insertAt, track, atMs));
       if (added.length && !selectedId) setSelectedId(added[0].id);
       if (res.rejected?.length) {
         setNotice(`Skipped ${res.rejected.length}: ${res.rejected.join(", ")}`);
@@ -3494,6 +3902,111 @@ export default function AnimaticEditor({
     setNotice("Added a colour card.");
   }
 
+  /**
+   * Open the storyboard picker. `track` is the row to fill, or null to make one.
+   *
+   * The list is fetched on every open rather than cached: boards are made in
+   * another workflow entirely, so a list from ten minutes ago can easily be
+   * missing the one the user just drew.
+   */
+  function openBoardImport(track = null) {
+    setBoardImport({ track });
+    setBoardPick("");
+    setBoardError("");
+    setBoardList(null);
+    api
+      .listStoryboards()
+      .then((res) => setBoardList(res.items || res || []))
+      .catch((e) => {
+        setBoardList([]);
+        setBoardError(e.message);
+      });
+  }
+
+  /**
+   * Bring the picked board's panels in, onto a Storyboard images row.
+   *
+   * ⚠ NOTHING REACHES STATE UNTIL THE SAVE HAS LANDED, and that ordering is the
+   * whole of this function. A frame's picture is served from
+   * `/animatics/{id}/frame/{frameId}`, a route that resolves by looking the frame
+   * up in the SAVED project — so a url handed out before the save can only 404,
+   * and the fetch effect caches nothing on failure and does not retry. One 404
+   * per panel is therefore permanent: a black Program monitor and forty-two blank
+   * tiles in Media, for an import that reported success.
+   *
+   * It used to place the frames, `await flush()`, and then patch the urls in —
+   * right in intent and broken in fact, because `flush` reads the document and
+   * the dirty flag out of REFS THAT EFFECTS FILL. One microtask after
+   * `setFrames`, React has not re-rendered: the flush saw a clean project and
+   * returned without writing anything, so the urls went out against a server that
+   * had never heard of these frames. Reported as "image panel not show and in
+   * media in not upload properly".
+   *
+   * So the frames, their row and their urls are all built as plain values here,
+   * handed to `flush` as an override, and only committed once the write is
+   * acknowledged. The import spins for the length of one PUT and then everything
+   * appears at once, already fetchable.
+   *
+   * ⚠ THE ROW IS BUILT, NOT ADDED (`pictureLane`). It has to go to the server in
+   * the SAME write as the frames that sit on it — two writes racing the debounce
+   * is how a row loses the name it was given.
+   */
+  async function doBoardImport() {
+    if (!boardPick || boardBusy) return;
+    setBoardBusy(true);
+    setBoardError("");
+    try {
+      const res = await api.importStoryboardIntoAnimatic(animaticId, boardPick);
+      const added = res.frames || [];
+      if (!added.length) {
+        setBoardError("That board has no drawn panels yet.");
+        return;
+      }
+      // The row to fill: the one whose ＋ was pressed, or one built for this
+      // import. `lanes` stays null in the first case — there is no row to save.
+      let track = boardImport?.track ?? null;
+      let lanes = null;
+      if (track === null) {
+        const lane = pictureLane("board_image", res.name || "");
+        if (!lane) return; // no room; `pictureLane` said so
+        lanes = [...layers, lane];
+        track = lane.track;
+      }
+      // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
+      // starts and ripples what follows them on that row.
+      const placed = insertPictures(framesRef.current, added, undefined, track, null);
+      const fresh = new Set(added.map((f) => f.id));
+      const next = placed.map((f) =>
+        fresh.has(f.id) ? { ...f, url: `/animatics/${animaticId}/frame/${f.id}` } : f
+      );
+      // The write these pictures are served out of. `url` is excluded from the
+      // saved shape (`frameForSave`), so carrying it here changes nothing about
+      // what is sent — and it means the frames arrive on screen already pointing
+      // at a route that answers.
+      await flush({ frames: next, ...(lanes ? { layers: lanes } : {}) });
+      if (lanes) setLayers(lanes);
+      framesRef.current = next;
+      setFrames(next);
+      setBoardImport(null);
+      setNotice(
+        `${added.length} panel${added.length === 1 ? "" : "s"} imported from “${
+          res.title || "storyboard"
+        }”.${
+          res.panels_only
+            ? " Its key poses would have overflowed this animatic, so one frame per shot came across."
+            : ""
+        }`
+      );
+      // Where the panels landed — the pane that now holds them, opened for them.
+      setMediaTab("media");
+      openGroup("media:frames");
+    } catch (e) {
+      setBoardError(e.message);
+    } finally {
+      setBoardBusy(false);
+    }
+  }
+
   // Opening the OS file dialog is the whole action for the audio layer, so both
   // entry points (the tools row and the ＋ on the Audio track) share this.
   function openAudioPicker() {
@@ -3503,20 +4016,93 @@ export default function AnimaticEditor({
   // ONE way in for everything. Images become frames, an audio file becomes the
   // track — the user shouldn't have to pick the right button first, and used to
   // face three of them for the same job.
-  async function addAssets(fileList, insertAt) {
+  /**
+   * @param rowKind which kind of picture row this landed on, or "" for "no
+   *                particular row" — the Media pane's own button and the drop
+   *                target beside it, where the file's own type picks the row.
+   *
+   * ⚠ A FILE ONLY EVER LANDS ON A ROW OF ITS OWN KIND. With `rowKind` given, a
+   * file the row does not take is REFUSED and named; without one, images go to a
+   * Stills row and footage to a Video row — creating that row if the project has
+   * none. That is what makes "image moves only in image layers, video moves only
+   * in video layers" true of importing as well as of dragging.
+   */
+  async function addAssets(fileList, insertAt, track = 0, atMs = null, rowKind = "") {
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
-    const images = sortFiles(files.filter((f) => kindOf(f) === "image"));
+    let images = sortFiles(files.filter((f) => kindOf(f) === "image"));
     const audios = files.filter((f) => kindOf(f) === "audio");
-    const videos = files.filter((f) => kindOf(f) === "video");
+    let videos = files.filter((f) => kindOf(f) === "video");
     const others = files.filter((f) => kindOf(f) === "other");
 
-    if (images.length) await addFiles(images, insertAt);
-    // A video file becomes a CLIP on the picture track, alongside the stills —
+    // --- Which row does each half go on? ------------------------------------
+    // Audio never came through here needing a row, so it is untouched below.
+    let imageTrack = track;
+    let videoTrack = track;
+    const refused = [];
+    if (rowKind) {
+      // A row was named, so anything it does not take is refused rather than
+      // quietly redirected: you pressed ＋ on THAT row.
+      if (images.length && !rowTakesFile(rowKind, "image")) {
+        refused.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
+        images = [];
+      }
+      if (videos.length && !rowTakesFile(rowKind, "video")) {
+        refused.push(`${videos.length} video clip${videos.length === 1 ? "" : "s"}`);
+        videos = [];
+      }
+    } else {
+      // No row named: each kind finds (or is given) a row of its own. ⚠ THE ROW IS
+      // MADE BEFORE THE UPLOAD so its track number is known here — `addPictureTrack`
+      // hands the number back precisely because `videoTracks` will not have
+      // rebuilt yet.
+      if (images.length) {
+        const row = rowOfKind("stills");
+        imageTrack = row ? row.track : addPictureTrack("stills", { quiet: true });
+        if (imageTrack === null) images = [];
+      }
+      if (videos.length) {
+        const row = rowOfKind("video");
+        videoTrack = row ? row.track : addPictureTrack("video", { quiet: true });
+        if (videoTrack === null) videos = [];
+      }
+    }
+    if (refused.length) {
+      setNotice(
+        `${refused.join(" and ")} skipped — ${
+          ROW_KIND[rowKind]?.name || "that row"
+        } takes ${ROW_KIND[rowKind]?.takes.join(" and ") || "nothing"}. Use that kind's own row.`
+      );
+    }
+
+    const addedImages = images.length ? await addFiles(images, insertAt, imageTrack, atMs) : 0;
+    // A video file becomes a CLIP on the video track, alongside the stills —
     // one timeline, three kinds of clip, which is the whole point of the phase.
+    //
+    // ⚠ AFTER THE IMAGES, not at the same index. Both used to be handed the same
+    // `insertAt`, so dropping a still and a clip together put the clip IN FRONT
+    // of the still — the second insert used an index the first one had already
+    // shifted. `insertAt` is undefined for an append, where there is nothing to
+    // shift.
+    // ⚠ ONLY WHEN BOTH LANDED ON THE SAME ROW does the image count shift the
+    // video's index — on separate rows the two inserts are independent.
+    const sameRow = imageTrack === videoTrack;
+    const videoAt =
+      insertAt === undefined ? undefined : insertAt + (sameRow ? addedImages : 0);
     let addedVideos = 0;
-    if (videos.length) addedVideos = await addVideoClips(sortFiles(videos), insertAt);
+    // ⚠ AND THE VIDEOS GO AFTER THE IMAGES IN TIME AS WELL AS IN THE LIST: the
+    // stills just consumed the stretch starting at `atMs`, so re-using it would
+    // stack the clip on top of them. Only matters on an end-of-track drop, which
+    // is the only place `atMs` is read.
+    if (videos.length) {
+      addedVideos = await addVideoClips(
+        sortFiles(videos),
+        videoAt,
+        videoTrack,
+        sameRow && addedImages ? null : atMs
+      );
+    }
     // Each audio file becomes its OWN track — dropping music and a voiceover
     // together gives you two layers, which is the point of the layer control.
     const room = MAX_AUDIO_TRACKS - audioFileCount();
@@ -3870,6 +4456,15 @@ export default function AnimaticEditor({
     framesRef.current = frames;
   }, [frames]);
 
+  // The row records, for the same reason and read by the same callback. ⚠ THE VEO
+  // POLL KEYS ON `animating` ALONE (see the note on that state), so the
+  // `reconcileVeoClips` it holds can be several renders old — reading rows out of
+  // that closure would answer "there is no Storyboard video row" long after one
+  // was made, and make a second one.
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
+
   function openAnimate(frameId) {
     const frame = frames.find((f) => f.id === frameId);
     setAnimateFor(frameId);
@@ -3941,33 +4536,126 @@ export default function AnimaticEditor({
   // Turn a finished render into a video clip ON the frame it came from. This is
   // an ordinary document edit — the clip bytes and the paid record are already
   // safe on the server, so the worst a failed attach costs is the attach.
-  const attachVeoClip = useCallback((clip) => {
-    if (!clip?.upload_id) return;
-    setFrames((list) =>
-      list.map((f) =>
-        f.id === clip.frame_id
-          ? {
-              ...f,
-              kind: "video",
-              // ⚠ THE ORIGIN SURVIVES THE ANIMATION. `src` used to be replaced
-              // outright, which threw away `storyboard_id`/`index` — and those
-              // are the only record that this clip is a board shot rather than a
-              // file someone dropped in. The Media pane groups by exactly that
-              // (`frameOrigin`), so an animated Shot 1 would have jumped out of
-              // Storyboard Frames and into Video. Harmless to keep: every server
-              // path branches on `src.kind` first, so the extra ids are inert.
-              src: { ...(f.src || {}), kind: "video", upload_id: clip.upload_id },
-              // The clip is as long as we asked Veo for, and it opens showing
-              // all of it — trimming and speed are then the ordinary controls.
-              duration_ms: clip.duration_ms || f.duration_ms,
-              in_ms: 0,
-              out_ms: clip.duration_ms || null,
-              speed: 1,
-            }
-          : f
-      )
-    );
+  /**
+   * A FINISHED VEO RENDER GOES ON THE STORYBOARD VIDEO ROW, ABOVE ITS PANEL.
+   *
+   * ⚠ IT USED TO REPLACE THE STILL IN PLACE — same clip, `kind` flipped to
+   * "video" — and the panel was gone. Asked to be separated: "user want genearte
+   * shortyborad image to video footage from VEO 3 model in editor then video
+   * genarte and come in Storyboad video layer Sepratlty just up of image layer".
+   * So it is a NEW clip on a row of its own, and the panel stays exactly where it
+   * was underneath.
+   *
+   * ⚠ WHY "ABOVE" IS THE WHOLE POINT: a higher track draws over a lower one, so
+   * the render is what plays — and 👁 on that row instantly shows the board again.
+   * That makes the animation non-destructive and comparable, which replacing the
+   * still could never be.
+   *
+   * ⚠ THE ORIGIN IS CARRIED OVER (`storyboard_id` / `index`) and that is what
+   * makes the new clip read as `board_video` rather than as a file someone
+   * dropped in — see `clipRowKind`. It is also what the Media pane groups by, so
+   * an animated Shot 1 stays with the storyboard rather than jumping into Video.
+   *
+   * ⚠ AND IT STARTS WHERE THE PANEL STARTS, so the render plays at the moment the
+   * shot was cut to. Its LENGTH is what Veo was asked for, which may differ from
+   * the panel's hold — that is a real difference and it is left visible rather
+   * than trimmed to match, because which of the two is right is the user's call.
+   */
+  /**
+   * WHICH TRACK THE STORYBOARD VIDEO ROW IS, making it if there is none.
+   *
+   * ⚠ CALLED ONCE PER RECONCILE PASS AND THE ANSWER PASSED IN, not called per
+   * clip. A Veo batch finishes as several ready clips at once, and each one
+   * asking "is there a row yet?" would get "no" from the same pre-render state —
+   * so a batch of four would try to make four rows, all claiming the same track.
+   *
+   * ⚠ AND IT READS THE REFS, not this render's `layers` / `frames`. The poll that
+   * leads here holds a callback several renders old on purpose (see `animating`),
+   * so the closure's idea of which rows exist is not to be trusted.
+   */
+  const boardVideoTrack = useCallback(() => {
+    const rows = layersRef.current || [];
+    const existing = rows.find((l) => l.kind === "board_video");
+    if (existing && Number.isInteger(Number(existing.track))) return Number(existing.track);
+    const used = [
+      ...pictureTracks(framesRef.current),
+      ...rows.filter((l) => ROW_KIND[l.kind]).map((l) => Number(l.track) || 0),
+    ];
+    const next = Math.max(...used) + 1;
+    if (next > MAX_PICTURE_TRACK) {
+      // ⚠ SAY THE RENDER IS SAFE. It is paid for and sitting on the server as an
+      // ordinary upload; what failed is finding it a row.
+      setNotice(
+        `The render is safe, but there is no room for a ${ROW_KIND.board_video.name} row — ` +
+          `an animatic can hold ${MAX_PICTURE_TRACK + 1} picture rows.`
+      );
+      return null;
+    }
+    const record = {
+      id: newId(),
+      kind: "board_video",
+      name: rowKindName("board_video", 0),
+      track: next,
+    };
+    // Written to the ref as well as to state, so a second call in this same tick
+    // finds the row instead of making another.
+    layersRef.current = [...rows, record];
+    setLayers((list) => [...list, record]);
+    return next;
   }, []);
+
+  const attachVeoClip = useCallback(
+    (clip, track) => {
+      if (!clip?.upload_id || track === null || track === undefined) return;
+      const source = framesRef.current.find((f) => f.id === clip.frame_id);
+      if (!source) return;
+      // Where the panel sits, evaluated — a clip with no `start_ms` of its own
+      // begins where its neighbour on that row ended.
+      const spans = frameSpans(framesRef.current).spans;
+      const i = framesRef.current.indexOf(source);
+      const startMs = spans[i]?.start ?? 0;
+
+      // ⚠ BUILT BY `newVideoClip`, NOT WRITTEN OUT AGAIN, and that is a fix
+      // rather than a tidy-up. This wrote the clip out by hand and left out the
+      // one field a hand-written copy always leaves out: `url`. The thumbnail
+      // effect only fetches frames that HAVE one, so a paid render sat on its
+      // loading spinner in Media for ever — and the monitor, whose fallback
+      // while the video blob downloads IS that thumbnail, showed a black
+      // rectangle instead of the picture. Reported as "see image not view in
+      // program panel and in media now i see uploading type view". A reload
+      // fixed it, because the server fills a url in on read — which is exactly
+      // the bug `newVideoClip`'s own ⚠ note describes, happening a second time
+      // in the one place that did not use it.
+      const render = {
+        ...newVideoClip(
+          clip.upload_id,
+          clip.duration_ms || source.duration_ms,
+          source.label || "",
+          animaticId
+        ),
+        // ⚠ THE PANEL'S `src` IS KEPT UNDERNEATH THE VIDEO ONE, so the render
+        // still knows which board shot it came from — that is what keeps it in
+        // Storyboard Frames rather than Video (`frameOrigin`).
+        src: { ...(source.src || {}), kind: "video", upload_id: clip.upload_id },
+        track,
+        start_ms: startMs,
+        // Only as long as the render actually IS. `newVideoClip` infers this from
+        // the duration it was handed, which falls back to the PANEL's hold when
+        // the clip could not be measured — and a source window longer than the
+        // file is a clip that freezes on its last frame.
+        out_ms: clip.duration_ms || null,
+      };
+      // ⚠ A PLAIN APPEND, NOT `insertPictures`. The render's place is decided by
+      // `start_ms` above, and rippling would push whatever else is on that row
+      // out of step with the panels it is sitting over — which is the one thing
+      // this row must not do.
+      setFrames((list) => [...list, render]);
+      // The ref too, so several clips attaching in one pass each see the ones
+      // before them — `already` below is asked against this list.
+      framesRef.current = [...framesRef.current, render];
+    },
+    [animaticId]
+  );
 
   /**
    * Put every finished render where it belongs, and say whether any is still going.
@@ -3987,6 +4675,14 @@ export default function AnimaticEditor({
       let attached = 0;
       let failure = "";
       let pending = 0;
+      // ⚠ RESOLVED LAZILY AND ONCE. Lazily because most passes attach nothing and
+      // must not create a row for a batch that is still rendering; once because
+      // every clip in a finished batch belongs on the SAME row.
+      let track;
+      const rowForRenders = () => {
+        if (track === undefined) track = boardVideoTrack();
+        return track;
+      };
       for (const clip of clips || []) {
         if (clip.status === "queued" || clip.status === "rendering") {
           pending += 1;
@@ -4007,13 +4703,22 @@ export default function AnimaticEditor({
           continue;
         }
         veoHandledRef.current.add(clip.id);
-        if ((frame.kind || "image") === "video") continue;
-        attachVeoClip(clip);
+        // ⚠ "IS THIS RENDER ALREADY ON THE TIMELINE?" — asked by UPLOAD ID, and
+        // it had to change with the row. The test used to be "is the source frame
+        // video yet", which worked only because the render REPLACED the panel; now
+        // the panel stays a still for ever, so that test would answer "no" on
+        // every load and attach a second copy each time. The upload id is the
+        // thing that is actually unique to a render.
+        const already = (framesRef.current || currentFrames || []).some(
+          (f) => f.src?.upload_id === clip.upload_id
+        );
+        if (already) continue;
+        attachVeoClip(clip, rowForRenders());
         attached += 1;
       }
       return { attached, failure, pending };
     },
-    [attachVeoClip]
+    [attachVeoClip, boardVideoTrack]
   );
 
   /**
@@ -4030,6 +4735,14 @@ export default function AnimaticEditor({
    */
   onLoadedRef.current = (p) => {
     setSelectedId(p.frames?.[0]?.id || null);
+    // Did this handler CHANGE the document? Two of the things below do, and the
+    // answer decides whether the load may be adopted as the saved baseline.
+    //
+    // ⚠ IT USED TO BE `attached === 0` ALONE, which stopped being true the moment
+    // `track` and `start_ms` joined the saved shape: the normalisation just below
+    // rewrites both, and folding that into "what the server already has" means it
+    // is recomputed on every single load instead of written down once.
+    let changed = false;
     // ⚠ EVERY PICTURE GETS AN EXPLICIT `start_ms` THE FIRST TIME IT IS OPENED,
     // and this is the one place that happens.
     //
@@ -4055,6 +4768,48 @@ export default function AnimaticEditor({
       setFrames(placed);
       framesRef.current = placed;
       p = { ...p, frames: placed };
+      changed = true;
+    }
+    // ⚠ AND EVERY PICTURE ROW ABOVE THE BASE ONE GETS A RECORD, for the same
+    // reason and on the same one-time basis. A row used to be proved only by the
+    // clips sitting on it, so a row's existence and a row's EMPTINESS were the
+    // same state — which is why an empty one could not be kept. Adopting the
+    // rows a project already has makes them all real rows: the ✕ has a record to
+    // remove, and emptying one no longer makes it disappear underneath you.
+    //
+    // ⚠ TRACK 0 IS DELIBERATELY NOT ADOPTED. The base row always exists whether
+    // or not anything is on it (`videoTracks`), so a record for it would say
+    // nothing — and writing one into a brand-new empty animatic would stop it
+    // being discarded on the way out (`isEmpty`).
+    const rows = p.layers || [];
+    const claimed = new Set(
+      rows.filter((l) => ROW_KIND[l.kind]).map((l) => Number(l.track))
+    );
+    const loadedFrames = p.frames || [];
+    const orphans = pictureTracks(loadedFrames).filter(
+      (t) => t > 0 && t <= MAX_PICTURE_TRACK && !claimed.has(t)
+    );
+    if (orphans.length) {
+      // ⚠ THE KIND COMES FROM THE CLIPS, not from a default. A project cut before
+      // these rows existed has its board panels and its footage already separated
+      // onto tracks (that is what the ▶⇧ split did), so asking each row what is on
+      // it gives "Storyboard images" and "Video" with nothing moved. Guessing
+      // "video" for all of them would label the board row wrongly and then let a
+      // panel be dragged onto a footage row, which strict rows are meant to stop.
+      const perKind = new Map();
+      for (const l of rows) {
+        if (ROW_KIND[l.kind]) perKind.set(l.kind, (perKind.get(l.kind) || 0) + 1);
+      }
+      const adopted = [...rows];
+      for (const t of orphans) {
+        const kind = dominantRowKind(loadedFrames.filter((f) => frameTrack(f) === t));
+        const nth = perKind.get(kind) || 0;
+        perKind.set(kind, nth + 1);
+        adopted.push({ id: newId(), kind, name: rowKindName(kind, nth), track: t });
+      }
+      setLayers(adopted);
+      p = { ...p, layers: adopted };
+      changed = true;
     }
     if (p.status === "running") setExportJob({ status: "running", progress: null });
     // RECOVER ANY PAID CLIP THAT NEVER LANDED. A render that finished while
@@ -4075,7 +4830,7 @@ export default function AnimaticEditor({
     // This is also where UNDO history begins. Anything recorded before this
     // point describes an editor that hadn't loaded yet.
     resetHistory();
-    return attached === 0;
+    return attached === 0 && !changed;
   };
 
   // ⚠ KEYED ON `animating` ALONE. Everything this loop writes — the clip list,
@@ -5174,7 +5929,7 @@ export default function AnimaticEditor({
                 {uploading ? "Uploading…" : "Add assets or drop them here"}
               </span>
               <span className="an-asset-note">
-                Images and video for the picture track · an MP3 for the audio
+                Video and images for the video track · an MP3 for the audio
               </span>
             </button>
 
@@ -6051,7 +6806,117 @@ export default function AnimaticEditor({
             onKeyMove={moveKeyframe}
             onAddToLane={addToLane}
             onRemoveLayer={removeLayer}
-            onAddLayer={() => setLayerMenu(true)}
+            onAddLayer={() => setLayerMenu((open) => !open)}
+            /* ＋ Add layer's own dropdown. It adds an EMPTY row and nothing
+               else — it used to add content too (an upload dialog for images, a
+               caption, a shape), which is not what "add a layer" means: you add
+               the row, then you put things on it with that row's own ＋.
+               Anchored to the button by the timeline (`.tl-head`) and filled
+               here, because which layers exist is this file's business.
+               ⚠ ONE LINE PER KIND AND NO PROSE: the notes under each label are
+               gone — a menu is read by scanning it, and five sentences is not a
+               scan. What a kind means is on the item's `title`, the same place
+               the empty lanes and the row ＋ put theirs. */
+            addLayerMenu={
+              layerMenu && (
+                <div className="tl-layer-menu" role="menu" aria-label="Add a layer">
+                  {[
+                    // ⚠ THE FOUR PICTURE ROWS COME FIRST, and each is a row in
+                    // the CUT — as opposed to Images below, which composites over
+                    // it. `row` marks them so the click handler knows to make a
+                    // picture track rather than an ordinary layer record.
+                    {
+                      kind: "board_image",
+                      row: true,
+                      ico: "🖼",
+                      label: "Storyboard images",
+                      note: "Import a storyboard's panels onto a row of their own",
+                    },
+                    {
+                      kind: "board_video",
+                      row: true,
+                      ico: "✨",
+                      label: "Storyboard video",
+                      note: "Where ✨ Animate puts a Veo render — above the panel it came from",
+                    },
+                    {
+                      kind: "video",
+                      row: true,
+                      ico: "🎞",
+                      label: "Video track",
+                      note: "Another row for footage — drawn OVER the tracks below it",
+                    },
+                    {
+                      kind: "stills",
+                      row: true,
+                      ico: "🖼",
+                      label: "Stills track",
+                      note: "Another row for full-frame photos in the cut",
+                    },
+                    {
+                      kind: "image",
+                      ico: "🖼",
+                      label: "Images",
+                      note: "Pictures composited OVER the video — a logo, an inset, a cut-in",
+                    },
+                    {
+                      kind: "text",
+                      ico: "T",
+                      label: "Text",
+                      note: "Another row of captions, timed on their own",
+                    },
+                    {
+                      kind: "shape",
+                      ico: "◆",
+                      label: "Shape",
+                      note: "Another row for boxes, circles, pentagons and stars",
+                    },
+                    {
+                      kind: "audio",
+                      ico: "♪",
+                      // ⚠ COUNTED IN FILES, NOT CLIPS — `audioFileCount()`, the
+                      // same measure every other audio limit in this file uses
+                      // (`addAssets`, `dropAsset`, `addAudioTrack`). This one
+                      // read `audioTracks.length`, which is the number of CLIPS:
+                      // razor one voiceover into four pieces and the menu said
+                      // you were at the four-track maximum and greyed itself
+                      // out, on a project holding one file. Reported as "why is
+                      // audio import not available through the dropdown".
+                      label: "Audio",
+                      note: `An empty track, mixed with the others (${audioFileCount()}/${MAX_AUDIO_TRACKS})`,
+                      disabled: audioFileCount() >= MAX_AUDIO_TRACKS,
+                      disabledNote: `You already have the maximum of ${MAX_AUDIO_TRACKS} audio files — cutting one into pieces doesn't count against it`,
+                    },
+                    // ⚠ NO "Video — not supported yet" ENTRY, because it IS
+                    // supported: a video track holds footage and stills alike,
+                    // and it is the first item here.
+                  ].map((opt) => (
+                    <button
+                      key={opt.kind}
+                      type="button"
+                      role="menuitem"
+                      className="tl-layer-menu-opt"
+                      disabled={opt.disabled}
+                      title={opt.disabled ? opt.disabledNote : opt.note}
+                      onClick={() => {
+                        setLayerMenu(false);
+                        // ⚠ A STORYBOARD ROW IS MADE BY THE IMPORT, not before
+                        // it. An empty one would be a row you cannot fill from
+                        // its own ＋ without the picker anyway, so the picker IS
+                        // the entry point — "user click Storyboad image then user
+                        // get a pop up".
+                        if (opt.kind === "board_image") openBoardImport(null);
+                        else if (opt.row) addPictureTrack(opt.kind);
+                        else addLayer(opt.kind);
+                      }}
+                    >
+                      <span className="tl-layer-menu-ico">{opt.ico}</span>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )
+            }
             onRemoveTrack={removeTrack}
             onClearLane={clearLane}
             onToggleHidden={toggleLaneHidden}
@@ -6379,7 +7244,7 @@ export default function AnimaticEditor({
           vertical version without converting the video first. */}
       {settingsOpen && (
         <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
-          <div className="card an-layer-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="card an-ws-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setSettingsOpen(false)}>
               ✕
             </button>
@@ -6396,16 +7261,16 @@ export default function AnimaticEditor({
               of the Program pane.
             </p>
 
-            <div className="an-layer-list">
+            <div className="an-ws-list">
               {WORKSPACES.map((w) => (
                 <button
                   key={w.id}
                   type="button"
-                  className={`an-layer-opt an-ws-opt ${workspace === w.id ? "on" : ""}`}
+                  className={`an-ws-opt ${workspace === w.id ? "on" : ""}`}
                   onClick={() => chooseWorkspace(w.id)}
                   aria-pressed={workspace === w.id}
                 >
-                  <span className="an-layer-opt-ico an-ws-opt-ico">
+                  <span className="an-ws-opt-ico">
                     {/* The size is CSS's (`.an-ws-opt-ico .icon`), not this
                         attribute's — the drawing fills its square in both
                         places and that rule is where it is decided. */}
@@ -6423,83 +7288,77 @@ export default function AnimaticEditor({
         </div>
       )}
 
-      {/* ＋ Add layer — pick what kind. */}
-      {/* Adds an EMPTY lane and nothing else. It used to add content — an
-          upload dialog for images, a caption, a shape — which is not what
-          "add a layer" means: you add the row, then you put things on it with
-          that row's own ＋. */}
-      {layerMenu && (
-        <div className="modal-overlay" onClick={() => setLayerMenu(false)}>
-          <div className="card an-layer-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setLayerMenu(false)}>
+      {/* --- Import a storyboard onto a row of its own --------------------- */}
+      {/* ⚠ SPENDS NOTHING. The panels are already drawn and already paid for;
+          this only references them, exactly as "Make animatic" on the board does.
+          So there is no priced confirmation step — the two-step discipline is for
+          the buttons that spend, and adding it here would teach the user to click
+          through a dialog that never has a price on it. */}
+      {boardImport && (
+        <div className="modal-overlay" onClick={() => setBoardImport(null)}>
+          <div className="card an-board-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setBoardImport(null)}>
               ✕
             </button>
-            <h2>Add a layer</h2>
+            <h2>Import a storyboard</h2>
             <p className="muted">
-              A new, empty row on the timeline. Fill it afterwards with the ＋ on
-              the layer itself.
+              Its drawn panels come in on a row of their own, in order. The
+              storyboard is referenced, not copied — redraw a panel there and it
+              updates here.
             </p>
 
-            <div className="an-layer-list">
-              {[
-                {
-                  kind: "picture",
-                  ico: "🎞",
-                  label: "Picture track",
-                  note: "Another row for stills and footage — drawn OVER the tracks below it",
-                },
-                {
-                  kind: "image",
-                  ico: "🖼",
-                  label: "Images",
-                  note: "Pictures composited OVER the video — a logo, an inset, a cut-in",
-                },
-                {
-                  kind: "text",
-                  ico: "T",
-                  label: "Text",
-                  note: "Another row of captions, timed on their own",
-                },
-                {
-                  kind: "shape",
-                  ico: "◆",
-                  label: "Shape",
-                  note: "Another row for boxes, circles, pentagons and stars",
-                },
-                {
-                  kind: "audio",
-                  ico: "♪",
-                  label: "Audio",
-                  note: `An empty track, mixed with the others (${audioTracks.length}/${MAX_AUDIO_TRACKS})`,
-                  disabled: audioTracks.length >= MAX_AUDIO_TRACKS,
-                  disabledNote: `You already have the maximum of ${MAX_AUDIO_TRACKS} tracks`,
-                },
-              ].map((opt) => (
-                <button
-                  key={opt.kind}
-                  type="button"
-                  className="an-layer-opt"
-                  disabled={opt.disabled}
-                  onClick={() => {
-                    setLayerMenu(false);
-                    if (opt.kind === "picture") addPictureTrack();
-                    else addLayer(opt.kind);
-                  }}
-                >
-                  <span className="an-layer-opt-ico">{opt.ico}</span>
-                  <span>
-                    <strong>{opt.label}</strong>
-                    <span className="tiny muted">
-                      {opt.disabled ? opt.disabledNote : opt.note}
-                    </span>
-                  </span>
-                </button>
-              ))}
+            {boardError && <p className="error">{boardError}</p>}
 
-              {/* ⚠ THE "Video — not supported yet" ENTRY IS GONE, because it is
-                  supported: a picture track holds footage and stills alike, and
-                  it is the first entry in this list. Leaving a disabled row
-                  saying otherwise would be the worse kind of stale copy. */}
+            {boardList === null ? (
+              <p className="muted tiny">Looking for your storyboards…</p>
+            ) : !boardList.length ? (
+              <p className="muted tiny">
+                You have no storyboards yet — make one in Script to Storyboard
+                first.
+              </p>
+            ) : (
+              <div className="an-board-list">
+                {boardList.map((b) => {
+                  const id = b.job_id || b.id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`an-board-opt ${boardPick === id ? "on" : ""}`}
+                      onClick={() => setBoardPick(id)}
+                      aria-pressed={boardPick === id}
+                    >
+                      <span>
+                        <strong>{b.character_name || b.title || UNTITLED}</strong>
+                        {/* How much is actually DRAWN, which is what will come
+                            across — a board with forty planned shots and two
+                            drawings imports two. */}
+                        <span className="tiny muted">
+                          {b.panel_count
+                            ? `${b.panel_count} panel${b.panel_count === 1 ? "" : "s"}`
+                            : "no panels drawn yet"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Cancel first, then the primary — the order every other dialog in
+                this editor uses. */}
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setBoardImport(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!boardPick || boardBusy}
+                onClick={doBoardImport}
+              >
+                {boardBusy ? "Importing…" : "Import"}
+              </button>
             </div>
           </div>
         </div>
@@ -7067,14 +7926,27 @@ export default function AnimaticEditor({
 
       {/* One hidden input per media type, shared by every entry point that
           adds to that layer (the pane, the strip and the timeline's ＋). */}
+      {/* A VIDEO TRACK's own ＋. ⚠ BOTH KINDS, and through `addAssets` rather
+          than `addFiles`: the row holds footage and stills alike, so an
+          image-only filter here hid the MP4 the same row accepted by drag and
+          drop, and the image-only handler behind it would have uploaded one as a
+          still if the OS let it through. The row it is filling comes from
+          `pendingPictureTrack`, read once and cleared. */}
+      {/* ⚠ `accept` IS SET WHEN THE DIALOG IS OPENED, not fixed here — a Stills
+          row offers images, a Video row offers footage, and neither offers the
+          other. Written onto the element in `addToLane` rather than rendered,
+          because the row is only known at the moment of the press and re-rendering
+          an input to change its filter would lose the click that opened it. */}
       <input
-        ref={imageInputRef}
+        ref={pictureInputRef}
         type="file"
-        accept="image/*"
         multiple
         hidden
         onChange={(e) => {
-          if (e.target.files?.length) addFiles(sortFiles(e.target.files));
+          const { track, rowKind } = takePendingTrack();
+          if (e.target.files?.length) {
+            addAssets(e.target.files, undefined, track, null, rowKind);
+          }
           e.target.value = "";
         }}
       />
@@ -7121,18 +7993,11 @@ export default function AnimaticEditor({
           e.target.value = "";
         }}
       />
-      {/* The Video row's own ＋ — same handler, narrower filter. */}
-      <input
-        ref={videoInputRef}
-        type="file"
-        accept="video/*"
-        multiple
-        hidden
-        onChange={(e) => {
-          if (e.target.files?.length) addAssets(e.target.files);
-          e.target.value = "";
-        }}
-      />
+      {/* ⚠ THERE IS NO VIDEO-ONLY INPUT ANY MORE. There was one, nothing ever
+          clicked it (no `.click()` anywhere), and its `accept="video/*"` was the
+          opposite half of the same mistake the row's ＋ was making: a picker that
+          takes one of the two kinds a video row holds. One picker, both kinds —
+          `pictureInputRef` above. */}
     </div>
   );
 }

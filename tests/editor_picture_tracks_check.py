@@ -184,8 +184,7 @@ console.error = (...args) => {
 };
 
 createRoot(document.getElementById("root")).render(
-  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}}
-                  onMakeFinalVideo={() => {}} />
+  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}} />
 );
 
 /**
@@ -541,19 +540,45 @@ def main():
                       "same moment" in page.evaluate("() => window.__probe.notice()"),
                       page.evaluate("() => window.__probe.notice()"))
 
-            print("\nDragging a picture between tracks")
+            # -----------------------------------------------------------------
+            # A CLIP ONLY MOVES TO A ROW OF ITS OWN KIND
+            # -----------------------------------------------------------------
+            # ⚠ THIS CHECK USED TO EXPECT THE OPPOSITE, and the change is
+            # deliberate rather than a regression. It asserted that "a still
+            # dragged up onto the footage track goes there", which was true while
+            # any picture row took any picture clip. The rows are STRICT now — the
+            # split above left `frames:0` holding stills and `frames:1` holding
+            # footage, and each row only accepts its own kind (`clipRowKind` /
+            # `ROW_TAKES`). Asked for directly: "i only move each same layer clip
+            # like image move in only image layer and video move video any layer".
+            #
+            # Both directions are checked, because a rule that only holds one way
+            # round is not the rule — and a refused drag must leave the timeline
+            # exactly as it was rather than half-moving anything.
+            print("\nA picture only moves to a row of its own kind")
             before = page.evaluate("() => window.__probe.bars()")
-            missed = drag(page, '[data-sel="frame:p3"]', 0, dy=-40,
-                          lane_key="frames:1")
+            drag(page, '[data-sel="frame:p3"]', 0, dy=-40, lane_key="frames:1")
             after = page.evaluate("() => window.__probe.bars()")
             check(
-                "a still dragged up onto the footage track goes there",
-                not missed and after["p3"]["lane"] == "frames:1",
-                missed or after["p3"]["lane"],
+                "a still dragged onto the footage row is refused",
+                after["p3"]["lane"] == "frames:0",
+                f'landed on {after["p3"]["lane"]}',
             )
-            check("…and the clips it left behind did not move",
-                  not missed and moved(before, after) == [],
-                  missed or f"moved: {moved(before, after)}")
+            check("…and nothing moved on the way",
+                  moved(before, after) == [] and resized(before, after) == [],
+                  f"moved {moved(before, after)}, resized {resized(before, after)}")
+
+            before = page.evaluate("() => window.__probe.bars()")
+            drag(page, '[data-sel="frame:vid"]', 0, dy=40, lane_key="frames:0")
+            after = page.evaluate("() => window.__probe.bars()")
+            check(
+                "and footage dragged onto the stills row is refused too",
+                after["vid"]["lane"] == "frames:1",
+                f'landed on {after["vid"]["lane"]}',
+            )
+            check("…and nothing moved on the way either",
+                  moved(before, after) == [] and resized(before, after) == [],
+                  f"moved {moved(before, after)}, resized {resized(before, after)}")
 
             print("\nAfterwards")
             errors = page.evaluate("() => window.__probe.errors")

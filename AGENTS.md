@@ -141,7 +141,15 @@ structural fact about the codebase:
 - **Playwright** (`requirements-dev.txt`) drives the only browser test,
   `tests/e2e_animatic.py`. ⚠ Standing user preference: **do not run the browser
   suite unless asked** — see "Browser tests (Playwright)" below.
-- ⚠ **Three tests run a BROWSER on purpose, and they are not the e2e suite.**
+- ⚠ **SEVERAL tests run a BROWSER on purpose, and none of them is the e2e suite.**
+  The three below were the first, and the editor ones that came after them
+  (`editor_picture_tracks_check.py`, `editor_lane_move_check.py`,
+  `editor_board_import_check.py`, `editor_veo_attach_check.py`) all borrow the same
+  harness — start Vite, answer
+  every call from Playwright's router, mount the real `<AnimaticEditor>`. ⚠ If you
+  need a new one, COPY THE NEAREST EXISTING ROUTER rather than writing a third
+  harness; `editor_board_import_check.py`'s is the one to copy when what you are
+  checking involves a picture the server refuses to serve yet.
   `tests/monitor_effects_check.py` mounts the MONITOR (the maths tests never
   unmount anything, which is how a `dispose()` crash shipped),
   `tests/editor_effects_drop_check.py` mounts the whole EDITOR and performs a
@@ -192,19 +200,54 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **THE TIMELINE SAYS WHAT A CLIP IS IN COLOUR,
-THE EMPTY ROWS STOPPED TALKING, AND THE PICTURE ROWS GOT A SURFACE** (three
-user-reported faults in one message). Footage orange, pictures pink, text
-yellow, captions green — shapes and audio untouched, because a swatch and a
-waveform already say what they hold. ⚠ **THE TINTS ARE ASSIGNED AS CUSTOM
-PROPERTIES, NEVER AS `background`**: a plain `.tl-bar.is-video` rule
-out-specifies `.tl-bar:hover` and `.tl-bar.sel` and would have killed the hover
-edge and the gold selection fill — and gold meaning "selected" on every lane is
-why the four content colours are PASTEL in the first place. ⚠ **`.tl-lane.tl-bars`
-KEEPS THE LANE PANEL NOW**: stripping it was right while the picture was one
-unbroken sequence and wrong the moment a gap became legal. ⚠ **AN EMPTY ROW IS
-BLANK** — the five prompts are gone, the band is still the add button, and what
-it does is on its `title`. See the Work Log.
+**Last updated:** 2026-08-20 — **A PAID VEO RENDER HAD NO `url`, SO IT WAS A
+SPINNER IN MEDIA AND A BLACK HOLE IN THE MONITOR** (user-reported).
+`attachVeoClip` wrote its clip out as a literal instead of using `newVideoClip`
+and left `url` off — which kills the thumbnail fetch AND the monitor, whose
+fallback while a video blob downloads IS that thumbnail. ⚠ **IF YOU WRITE A CLIP
+LITERAL WITH A FILE BEHIND IT, YOU HAVE WRITTEN THIS BUG** — it is the second
+time, `newVideoClip`'s own note is about the first. Regression test:
+`tests/editor_veo_attach_check.py`, watched fail first, and its monitor assertion
+is a COLOUR because "the monitor drew something" passes against the bug (it drew
+the panel underneath). See the Work Log.
+
+**Previously:** **AN IMPORTED STORYBOARD ARRIVED WITH NO
+PICTURES, BECAUSE `flush()` CANNOT SAVE WHAT YOU HAVE JUST PUT IN STATE**
+(user-reported). It reads the document and the dirty flag out of refs that
+EFFECTS fill, so `setFrames(...)` then `await flush()` — the shape
+`doBoardImport` used — ran a render too early, saw a clean project and wrote
+nothing; the panel urls then 404'd for ever against a server that had never heard
+of those frames. ⚠ **`flush` TAKES AN OVERRIDE NOW** (`flush({ frames, layers })`)
+and `doBoardImport` COMMITS NOTHING UNTIL THE WRITE LANDS, sending the frames,
+their urls and their row in ONE PUT. ⚠ **`signatureOf` IS THE ONE SIGNATURE
+BUILDER**, shared by the save and the dirty-check. Regression test:
+`tests/editor_board_import_check.py`, watched fail first. ⚠ **THE VEO REROUTE IS
+STILL UNEXERCISED IN A BROWSER.** See the Work Log.
+
+**Previously:** **THE STORYBOARD HAS ITS OWN TWO ROWS, AND A
+PICTURE ROW IS ONE OF FOUR STRICT KINDS** (user-specified). `board_image` /
+`board_video` / `stills` / `video`, declared in `scene.js`; which row a clip
+belongs on is DERIVED from the clip (`clipRowKind`), never stored. ⚠ **A CLIP ONLY
+LANDS ON A ROW OF ITS OWN KIND**, enforced in the drag (`laneMoveTarget`), the drop
+(`ROW_TAKES`) and the import (`addAssets`). ⚠ **NEITHER BOARD ROW TAKES FILES** —
+one is filled by `POST /animatics/{id}/import-storyboard` (the picker), the other
+by ✨ Animate. ⚠ **A VEO RENDER NO LONGER REPLACES ITS PANEL**: it lands on the
+Storyboard video row ABOVE it, at the same start, with the still left underneath,
+so 👁 on that row shows the board again. ⚠ **A ROW NO RECORD NAMES IS CALLED AFTER
+WHAT IS ON IT** (`dominantRowKind`) — that is the whole migration, and it is why a
+board-built animatic opens reading "Storyboard images" with nothing moved.
+⚠ **THE IMPORT PICKER AND THE VEO REROUTING HAVE NOT BEEN OPENED IN A BROWSER.**
+See the Work Log.
+
+**Previously:** **A CLIP'S ROW, POSITION AND LOOK WERE NEVER SAVED, AND AN EMPTY
+ROW COULD NOT EXIST** (user-reported). `frameForSave` had fallen five fields behind
+`AnimaticFrame` — `track`, `start_ms`, `effects`, `mask`, `blend` — and the same
+function builds the dirty-check signature, so moving a clip between rows never even
+marked the document dirty. It moved to its own pure module
+(`client/src/animatic/frame_save.js`) with `tests/frame_save_fields_check.py`
+comparing it against the schema. A picture track became an `AnimaticLayer`
+(`kind` + `track`), so an empty row survives and its ✕ removes it.
+See the Work Log.
 
 **Previously:** **THE LAYER ROW’S THREE CONTROLS ARE FINALLY
 IN THEIR CLUSTER, AND THE LAYER NAME HAS ROOM AGAIN** (user-reported, with a
@@ -1053,7 +1096,7 @@ Pipeline stages (see `pipeline.py`):
   `POST /animatics/{id}/reframe/estimate` — **free** · `POST /animatics/{id}/reframe` — **SPENDS QUOTA.** 202, one vision call per shot on the video pool. Writes `scale`/`x`/`y` onto the frames server-side, so the client re-reads the project when it finishes. Back to QUEUED never FAILED, like the other two AI passes
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - **Animatics → Final Video (`server/videos.py`, kind `final_video`):**
-  `POST /final-videos` — new project; with `source_animatic_id` and no shots it fills the shot list from that animatic's frames (the editor's "🎞️ Make final video"); `source_storyboard_id` does the same from drawn panels · `GET /final-videos` — library · `GET/PUT /final-videos/{id}` — read / save (`shots`, `art`, `settings`, `title`; PUT is the workspace autosave, 409 while busy) · `DELETE /final-videos/{id}`
+  `POST /final-videos` — new project; with `source_animatic_id` and no shots it fills the shot list from that animatic's frames (`FinalVideoLibrary`'s "new from animatic"; the animatic editor's own shortcut to this was removed 2026-08-20); `source_storyboard_id` does the same from drawn panels · `GET /final-videos` — library · `GET/PUT /final-videos/{id}` — read / save (`shots`, `art`, `settings`, `title`; PUT is the workspace autosave, 409 while busy) · `DELETE /final-videos/{id}`
   `GET /final-videos/backend` — is Veo reachable? Checked before the first paid call so a missing key is a banner, not a two-minute wait for a failure
   `POST /final-videos/{id}/art` (multi-file) — upload stills into the art tray · `GET /final-videos/{id}/art/{ref_id}` — serve a reference (upload, board panel, or one view of a Text-to-Image character run) · `GET /final-videos/{id}/media/{upload_id}` — a just-uploaded still, before the project is saved
   `POST /final-videos/{id}/estimate` — **free**; what a render request would cost. The client calls this to fill the confirm dialog, so the price is on screen before the button that spends it
@@ -1355,7 +1398,638 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — THE EMPTY ROWS STOPPED TALKING, THE PICTURE ROWS GOT A SURFACE, AND A CLIP NOW SAYS WHAT IT IS IN COLOUR (all three user-reported)
+### 2026-08-20 (latest) — A PAID VEO RENDER HAD NO `url`, SO IT WAS A SPINNER IN MEDIA AND A BLACK HOLE IN THE MONITOR (user-reported, with a screenshot)
+
+> "same erroe when i upload video see image not view in program panel and in
+>  media now i see uploading type view"
+
+The clip landed on its Storyboard video row, at the right moment, at the right
+length — and showed nothing. Read as "the upload didn't finish", which is why the
+report calls it an upload; it is a **render**.
+
+**⚠ ONE MISSING FIELD, AND IT BREAKS TWO DIFFERENT THINGS.** `attachVeoClip` wrote
+its clip out as an object literal instead of going through `newVideoClip`, and left
+out the one field a hand-written copy always leaves out: `url`.
+- The thumbnail effect only fetches frames that **have** a url, so no poster was
+  ever requested and the Media card sat on `.fs-thumb-wait` for ever.
+- `ProgramCanvas` falls back to a video clip's THUMBNAIL while the video blob is
+  still downloading (blobs come one at a time — they are the biggest files in the
+  project). No thumbnail means no fallback, so the monitor drew **nothing** for the
+  render and the panel underneath showed through.
+
+⚠ **THIS IS THE SAME BUG `newVideoClip`'s OWN NOTE DESCRIBES**, happening a second
+time in the one place that did not use that factory — "I upload a video file here
+but it doesn't show in the media panel", fixed there, re-introduced here. A reload
+hid it, because the server fills a url in on read (`_with_urls`). **If you write a
+clip literal with a file behind it, you have written this bug.** Use the factory.
+
+**The fix:** `attachVeoClip` spreads `newVideoClip(...)` and overrides only what is
+genuinely different — the panel's `src` kept underneath the video one (so the
+render stays in Storyboard Frames, not Video), `track`, `start_ms`, and `out_ms`
+(which must be the RENDER's length, not the factory's inference from a duration
+that falls back to the panel's hold). `animaticId` joined its dep list; the effect
+holding this callback already restarts on it, so nothing about its lifetime moved.
+
+**Evidence it was this and not the upload path.** The user's own 54.4s upload had
+its poster **cached on disk** (`_stills/…`), i.e. requested and served fine; the
+4.01s render's poster had **never been extracted**, i.e. never asked for. Server
+side was blameless: `probe_duration` and `extract_frames` both ran clean on the two
+real files in `output/_animatics/d81a7ac7…/media/`.
+
+**Files:** `client/src/components/AnimaticEditor.jsx` (`attachVeoClip`),
+`tests/editor_veo_attach_check.py` (new).
+
+**Verified:** `tests/editor_veo_attach_check.py` — new, and **watched fail first**.
+Against the bug it reports the Media card as
+`{"label": "Shot 1", "badge": "▶ 4.0s", "drawn": false, "waiting": true}` and the
+monitor as `rgb(30, 80, 220)` — the panel's own blue showing through — which is the
+user's screenshot in numbers. Against the fix all 13 checks pass.
+`editor_board_import_check` and `editor_picture_tracks_check` still pass.
+
+⚠ **THE MONITOR ASSERTION IS A COLOUR, AND THAT IS THE ONLY HONEST WAY TO WRITE
+IT.** The panel is blue and the render's poster is red, stacked at the same moment
+with the render on the row above, and the raw video route is **aborted on purpose**
+so the thumbnail fallback is the only path red can take to the screen. "The monitor
+drew something" would have passed against the bug — it drew the panel.
+
+⚠ **IT NEEDS NO ANIMATE DIALOG AND SPENDS NOTHING.** `reconcileVeoClips` is
+self-healing and runs on every LOAD, so a `veo_clips` record in the fixture drives
+the same attach. Copy that trick for anything else on the Veo path.
+
+---
+
+### 2026-08-20 — AN IMPORTED STORYBOARD CAME IN WITH NO PICTURES, BECAUSE THE SAVE IT WAITED FOR NEVER HAPPENED (user-reported, with a screenshot)
+
+> "see when i open new animatics and clicl add layer then i click Storyboard image
+>  then select my storyborad project and import so take see image panel not show
+>  and in media in not upload properly"
+
+Exactly the thing the previous entry said to look at first, and it went wrong in
+the place that entry named. Forty-two panels imported, the row appeared, the clips
+were on the timeline — and every thumbnail was a spinner, the Program monitor was
+black, and Media listed 42 cards with nothing in them.
+
+**⚠ THE BUG IS NOT IN THE IMPORT. IT IS THAT `flush()` CANNOT SAVE WHAT YOU HAVE
+JUST PUT IN STATE.** A board panel is REFERENCED, never uploaded, so its picture
+comes from `/animatics/{id}/frame/{frameId}` — a route that resolves by looking
+the frame up in the **saved** project. `doBoardImport` knew that and did the right
+things in the right order: place the frames, `await flush()`, then write the urls.
+
+But `flush` answers both of its questions from refs that **effects** fill —
+`dirtyRef` ("is there anything to save?") and `docRef` ("what is the document?").
+One microtask after `setFrames`, which is where that `await` lands, React has not
+re-rendered and neither ref has moved. So the flush saw a clean project, returned
+at its first line, and wrote **nothing**. The urls then went out against a server
+that had never heard of those frames, every one 404'd, and the fetch effect
+caches nothing on failure and does not retry — one permanent miss per panel. The
+autosave did save them 900ms later, but `frames` never changed again, so the
+effect never re-ran and the tiles stayed blank until the next unrelated edit.
+
+⚠ **IT COULD ONLY HAPPEN ON A FRESH ANIMATIC**, which is why the report opens with
+"when i open new animatics". On a document with an unsaved edit already in it the
+flush had something to write and the frames went up by accident.
+
+**The fix, in two parts:**
+- **`flush` takes an override**: `flush({ frames, layers })` merges the values it
+  is handed over `docRef` and writes unconditionally, signing the baseline from
+  the document it actually sent. That is what makes "set it, then save it"
+  expressible at all. The signature builder moved out to a module-level
+  `signatureOf` so the save and the dirty-check cannot drift — same rule as
+  `frameForSave`. ⚠ A patched flush also RE-THROWS on failure, because a caller
+  that saves on purpose and then acts on the result has to know; the autosave has
+  nobody to tell.
+- **`doBoardImport` commits nothing until the write lands.** The frames, their
+  urls and their row are built as plain values, sent in ONE `flush`, and only then
+  put in state. So the pictures are fetchable the first time anything asks for
+  them. The import spins for one PUT and then everything appears at once.
+- ⚠ **THE ROW GOES UP IN THE SAME WRITE AS ITS FRAMES.** `pictureLane` was split
+  out of `addPictureTrack` (which is now a thin wrapper over it and behaves
+  identically) so the lane can be *built* without reaching state first. Two
+  writes racing the 900ms autosave is how a row loses the name it was given.
+- The import also opens the Media pane on **Storyboard Frames**, the section its
+  panels land in — every other add path in this file already did this
+  (`addAssets`, `addColourCard`) and this one did not.
+
+**Files:** `client/src/animatic/useAnimaticProject.js` (`signatureOf`, `flush`
+override), `client/src/components/AnimaticEditor.jsx` (`pictureLane`,
+`doBoardImport`), `tests/editor_board_import_check.py` (new).
+
+**Verified:** `tests/editor_board_import_check.py` — new, and **watched fail
+first**, per the rule in "Tests & tooling". Against the old ordering it reports
+`{'cards': 3, 'drawn': 0, 'waiting': 3}` and three 404s, which is the user's
+screenshot reproduced; against the fix all 19 checks pass. It drives the real
+gesture (＋ Add layer → Storyboard images → pick the board → Import) and its fake
+server enforces the REAL rule — `GET /frame/{id}` is a 404 until a PUT has
+carried that id — so the assertion is the ORDER of two requests as well as the
+pixels. `editor_picture_tracks_check`, `hidden_lane_check` and
+`frame_save_fields_check` still pass. `editor_lane_move_check` still fails its 3
+stale `promptFit` checks — pre-existing, unchanged, and confirmed against `HEAD`
+(the empty band has been a childless `<button>` since `10fd0bd`); still under
+Next Steps.
+
+⚠ **THE VEO REROUTE IS STILL UNEXERCISED.** Only the import half of the previous
+entry's warning has been closed.
+
+---
+
+### 2026-08-20 — THE STORYBOARD GETS ITS OWN TWO ROWS, AND A PICTURE ROW IS ONE OF FOUR STRICT KINDS (user-specified in detail)
+
+> "i want you add Storybord Layer seprately like when i import storyborad so that
+>  time create automatic new layer of Storyborad image Layer … then user click
+>  Storyboad image then user get a pop up like all generated storyborad project
+>  with name so user click any project then click Import … user want genearte
+>  shortyborad image to video footage from VEO 3 model in editor then video
+>  genarte and come in Storyboad video layer Sepratlty just up of image layer"
+
+**A PICTURE ROW HAS A KIND NOW, AND THERE ARE FOUR OF THEM** —
+`board_image` / `board_video` / `stills` / `video`, declared in `scene.js` as
+`ROW_KINDS` beside `clipRowKind`. The kind of row a clip BELONGS on is DERIVED,
+never stored: a board reference (`src.storyboard_id`) says it came from a
+storyboard and `clipKind` says whether it is footage yet, so the four rows fall
+out of two questions already on the clip and there is no fifth field to disagree
+with them. That is also why the Veo change below needed no migration — an
+animated panel keeps its `storyboard_id`, so it reads as `board_video` the moment
+it becomes video.
+
+⚠ **THE ROWS ARE STRICT: a clip only ever lands on a row of its own kind.** The
+user's rule, in their words: "i only move each same layer clip like image move in
+only image layer and video move video any layer". Enforced in three places, all
+reading the same two tables:
+- **the drag** — `laneMoveTarget` in `Timeline.jsx` took only the LANE kind, and
+  all four picture rows are `kind: "frames"`, so any picture clip could land on
+  any picture row. It now also compares `clipRowKind(clip)` against the row's
+  `rowKind`, and the drag is handed the clip so it has something to ask.
+- **the drop** — `laneTakes` and `dropAsset` both read `ROW_TAKES`. A `files`
+  drag says yes wherever either kind would, because a desktop drag does not
+  reveal what it carries until the drop; `dropAsset` then refuses it BY NAME.
+- **the import** — `addAssets` takes a `rowKind`. Given one, a file the row does
+  not take is refused and counted in the notice; given none (the Media pane's own
+  button, where no row was pressed), images go to a Stills row and footage to a
+  Video row, creating that row if the project has none.
+
+⚠ **`ROW_TAKES` LIVES IN `scene.js`, NOT IN THE EDITOR.** The timeline reads it to
+decide whether to light a row up as a drop target and the editor reads it to
+decide what the file dialog offers; two copies would drift into a row that
+accepts your file and then refuses it. `ROW_KIND` in the editor holds only the
+presentation half (name, hint, ＋ text) and takes its `takes` from that table.
+
+⚠ **NEITHER BOARD ROW ACCEPTS FILES AT ALL** (`takes: []`), and that is the point
+of them being separate rather than a naming convention. A storyboard row is
+filled by the import and a Veo row by ✨ Animate; an upload on either is exactly
+the mixing the strict rows exist to stop. Their ＋ opens the thing that DOES fill
+them — the picker, or a notice pointing at ✨ Animate — instead of a file dialog.
+
+⚠ **A ROW NO RECORD NAMES IS CALLED AFTER WHAT IS ON IT** (`dominantRowKind`), and
+that is the entire migration for every animatic saved before these kinds existed.
+An animatic built from a board opens with its panels on track 0, so that row reads
+**"Storyboard images"** rather than "Video" with nothing moved and nothing
+rewritten — the clips already say what they are. The load-time adoption uses the
+same answer, so the record it writes carries the right kind rather than a guessed
+"video" (which would have mislabelled the board row and then allowed a panel to be
+dragged onto a footage row, defeating the point). An empty row has no clips to ask
+and falls back to a plain video row, which is what a new animatic opens with:
+**Video, Text, Shapes, Audio**, as asked.
+
+**IMPORTING A STORYBOARD INTO AN ANIMATIC THAT ALREADY EXISTS.**
+`POST /animatics/{id}/import-storyboard` (`AnimaticBoardImportRequest` /
+`Response`), which reuses `_frames_from_board` — the same builder the board's
+"Make animatic" uses, so a shot's key poses come across at their real rate and
+only shots without a sequence fall back to a held panel.
+- ⚠ **IT RETURNS THE FRAMES AND SAVES NOTHING.** Same contract as the image and
+  video uploads: the server produces the material, the client decides where on
+  the timeline it lands. `source_storyboard_id` on create is the other job — that
+  one fills a brand-new project.
+- ⚠ **BOTH JOBS ARE OWNERSHIP-CHECKED.** The animatic because we are handing back
+  its own future content, and the BOARD separately because a board id is a
+  user-supplied string — without the second check this would read any storyboard
+  on the instance by id.
+- ⚠ **THE FRAME CAP IS COUNTED AGAINST WHAT IS ALREADY ON THE TIMELINE**, which is
+  the difference from create (where the project is empty). Over the cap it falls
+  back to one frame per shot and SAYS SO (`panels_only`) rather than silently
+  importing something other than what was asked for.
+- The picker itself is `.an-board-modal`, listing `api.listStoryboards()` with each
+  board's drawn-panel count, one to select and Import. ⚠ **IT SPENDS NOTHING** —
+  the panels are already drawn and paid for, this only references them, so there is
+  no priced confirmation step. Adding one would teach the user to click through a
+  dialog that never has a price on it.
+- ⚠ **THE ROW IS MADE BY THE IMPORT AND ITS TRACK READ FROM THE RETURN VALUE.**
+  `addPictureTrack` hands the number back precisely because `videoTracks` is
+  derived from state the current render has not produced yet.
+- ⚠ **THE URLS ARE WRITTEN AFTER THE SAVE**, and this is the subtle part. A frame's
+  picture is served from `/animatics/{id}/frame/{frameId}`, a route that resolves
+  by looking the frame up in the SAVED project — so a url handed out before the
+  save can only 404, and the fetch effect caches nothing on failure and never
+  retries. So: place the frames, `flush()`, then patch the urls in. `url` is
+  excluded from the saved shape, so that second write does not re-dirty the
+  document; it exists purely to make the fetch effect run now that the pictures
+  are fetchable.
+
+**A VEO RENDER GOES ON ITS OWN ROW, ABOVE THE PANEL IT CAME FROM.** `attachVeoClip`
+used to REPLACE the still in place — same clip, `kind` flipped to "video" — and the
+panel was gone. It now makes a NEW clip on the Storyboard video row at the panel's
+own start, and **the panel stays underneath**.
+- ⚠ **WHY "ABOVE" IS THE WHOLE POINT**: a higher track draws over a lower one, so
+  the render is what plays, and 👁 on that row instantly shows the board again.
+  That makes animating non-destructive and comparable, which replacing the still
+  could never be. Its LENGTH is what Veo was asked for and may differ from the
+  panel's hold — left visible rather than trimmed to match, because which of the
+  two is right is the user's call.
+- ⚠ **IDEMPOTENCY MOVED TO THE UPLOAD ID.** The old test was "is the source frame
+  video yet", which worked only because the render replaced the panel. The panel
+  is a still for ever now, so that test would answer "no" on every load and
+  attach a second copy each time. `reconcileVeoClips` asks whether any frame
+  already carries this clip's `upload_id`.
+- ⚠ **THE ROW IS RESOLVED ONCE PER PASS, FROM REFS.** A batch finishes as several
+  ready clips at once, and each one asking "is there a row yet?" would get "no"
+  from the same pre-render state — four renders, four rows, all claiming the same
+  track. `boardVideoTrack()` is called lazily and once per reconcile, writes the
+  new record into `layersRef` as well as state so a second call in the same tick
+  finds it, and reads `layersRef`/`framesRef` rather than the closure because the
+  Veo poll deliberately holds a callback several renders old (see `animating`).
+  `attachVeoClip` appends to `framesRef` too, so clips attaching in one pass see
+  the ones before them.
+- Out of room it says **the render is safe** — it is paid for and on the server as
+  an ordinary upload; what failed is finding it a row.
+
+**Files:** `client/src/animatic/scene.js` (`ROW_KINDS`, `ROW_TAKES`, `isCutRow`,
+`clipRowKind`, `dominantRowKind`), `client/src/components/AnimaticEditor.jsx`,
+`client/src/components/Timeline.jsx`, `client/src/styles/animatic-editor.css`,
+`client/src/api.js`, `server/schemas.py`, `server/animatics.py`,
+`tests/editor_picture_tracks_check.py`.
+
+⚠ **ONE TEST'S EXPECTATION WAS DELIBERATELY REVERSED.**
+`editor_picture_tracks_check.py` asserted "a still dragged up onto the footage
+track goes there", which was true while any picture row took any picture clip.
+It now asserts the refusal, IN BOTH DIRECTIONS (a still onto footage, and footage
+onto stills), and that a refused drag leaves the timeline exactly as it was. A
+rule that only holds one way round is not the rule.
+
+**Verified:** `npm run build` clean; `python -c "import server.main"` clean.
+`frame_save_fields_check`, `picture_tracks_check`, `selection_check`,
+`video_clip_check`, `hidden_lane_check`, `transition_check`, `razor_check`,
+`editor_picture_tracks_check`, `editor_razor_check`, `editor_effects_drop_check`
+all pass. `editor_lane_move_check` still fails its 3 stale `promptFit` checks —
+unchanged and pre-existing, see Next Steps. **The import picker and the Veo
+rerouting have NOT been exercised in a browser** — no storyboard fixture drives
+either path in the suite, so they are built-and-built-only. That is the top thing
+to look at.
+
+---
+
+### 2026-08-20 — RECOVERING `AnimaticEditor.jsx` AFTER A PATCH SCRIPT TRUNCATED IT
+
+Not a feature; recorded because the failure mode is cheap to repeat and the
+recovery had one non-obvious step.
+
+**WHAT HAPPENED.** A patch script did `io.open(path,'wb').write(s.encode('utf-8'))`.
+`open(...,'wb')` truncates the file the moment it is called and the argument is
+only evaluated afterwards, so a `UnicodeEncodeError` in the encode left the file
+at **0 bytes** — 7138 lines gone. Nothing could recover it: the work was
+uncommitted (no stash, no index blob, no dangling object), VSCode local history
+had no entry, and the build emits no sourcemaps.
+
+⚠ **THE ENCODING ERROR CAME FROM A HEREDOC.** `\\uXXXX` escapes written inside a
+`<<'PY'` heredoc reached Python as real lone surrogates, which cannot be encoded
+as UTF-8. Put literal characters in a written-out `.py` file instead of escapes in
+a heredoc.
+
+**THE FIX FOR THE PROCESS** is `scratchpad/safepatch.py`: it refuses to patch an
+empty file, asserts every substitution's occurrence count BEFORE writing anything,
+encodes to bytes before opening the target, writes a sibling temp file and
+`os.replace`s it over the original. Every patch in this session's later work went
+through it, and two of them failed their assertions and wrote nothing — which is
+the point.
+
+**THE NON-OBVIOUS PART OF THE RECOVERY.** The copy the user restored turned out to
+be plain git HEAD run through a formatter: `git diff` said 6543/6547 lines changed,
+`git diff -w` said **4 added / 8 removed**, and all four hunks were a formatter
+joining multi-line template literals. So it held nothing unique, and HEAD was the
+better base (2-space, matching every other file, no 6500-line whitespace diff).
+⚠ **BUT HEAD WAS MISSING WORK THAT SPANNED THREE FILES.** The ＋ Add layer
+DROPDOWN was uncommitted, and only `AnimaticEditor.jsx` had died —
+`animatic-editor.css` still had its `.tl-layer-menu` rules with `.an-layer-opt`
+already folded away, and `Timeline.jsx` still had the `addLayerMenu` prop. So
+reverting one file left the surviving halves pointing at markup and CSS classes
+that no longer existed, and HEAD's modal would have rendered completely unstyled.
+The editor's half was rebuilt from this file's own work-log entry for it.
+**Lesson: when uncommitted work spans files, reverting one file is not a local
+decision.** `git diff -w --numstat` is what separates real changes from formatting
+churn before deciding.
+
+### 2026-08-20 — A CLIP'S ROW, POSITION AND LOOK WERE NEVER SAVED, AND AN EMPTY ROW COULD NOT EXIST (user-reported: "i look same previous arrangement of ecah layer of clip")
+
+> "what i see problem now wheni click video picker and all video go in video
+>  layer but then i go click back butun in animatic editor so when i see again my
+>  video picker layer not show and again i show same video picker icon only first
+>  video layer so this is big prolem … and when i bo back then i come so i look
+>  same previous arrangement of ecah layer of clip"
+
+**`frameForSave` HAD FALLEN FIVE FIELDS BEHIND `AnimaticFrame`, AND ONE OF THEM
+WAS THE WHOLE MULTI-TRACK TIMELINE.** It is a WHITELIST of what a picture clip
+sends to the server, and a field the schema gains and that function does not
+mention is computed by the editor, drawn in the monitor, and then thrown away on
+the way out — with no error anywhere, because dropping a key is not a failure.
+Missing: `track`, `start_ms`, `effects`, `mask`, `blend`. So every clip came back
+on **track 0 with no start**, and since `start_ms: null` means "after the last
+clip on my track", the rows collapsed into one and the clips re-laid themselves
+end to end. Every colour grade, mask and blend mode went with them.
+
+⚠ **AND IT WAS WORSE THAN LOSING THEM ON RELOAD, because the same function builds
+the dirty-check SIGNATURE.** A field that is not in the saved shape is not in the
+signature either, so moving a clip to another row **did not make the document look
+changed**: the autosave never fired, and Save believed there was nothing to write.
+The edit was not lost in transit — it was never sent. That is why the multi-track
+work of earlier the same day looked like it worked and then wasn't there.
+
+⚠ **THIS IS THE SECOND TIME THIS EXACT LIST HAS DRIFTED** — the function's own
+docstring records the first (`scale`/`x`/`y`/`opacity`/`keyframes`, so Phase 1's
+motion never survived a reload). So the fix is not only the five fields:
+
+- **`frameForSave` moved to its own pure module**, `client/src/animatic/frame_save.js`.
+  It used to sit in `useAnimaticProject.js`, which imports React and therefore
+  cannot be loaded outside a browser — so the one thing about it worth checking
+  automatically could not be. Same rule as `selection.js` / `scene.js`: logic with
+  a right answer lives where a test can reach it.
+- **`tests/frame_save_fields_check.py`** compares the keys the client actually
+  sends (under node) against `AnimaticFrame.model_fields`, and fails on the next
+  field that goes missing. It also pins the three things a careless "just add the
+  field" fix gets wrong: `start_ms` stays **null** (null is not 0 — it means
+  "after the last clip on my track", and 0 would nail every pre-tracks clip to the
+  head of its row), `mask` is **omitted** rather than sent as null (`AnimaticMask`
+  is not optional, so null fails validation on the majority of clips), and what
+  comes out is fed through `AnimaticFrame` itself.
+
+**AN EMPTY VIDEO ROW IS A RECORD NOW, SO IT CAN EXIST.** The other half of the
+report. A picture track was a NUMBER on a clip and the rows were derived from the
+numbers in use, so a row's EXISTENCE and a row's EMPTINESS were the same state —
+`extraPictureTracks` was view-only, explicitly "not saved", and an added row you
+had not filled yet vanished on the way to the library and back.
+
+- **`AnimaticLayer` gains `track: int | None`** and `kind` gains `'video'`. A
+  picture track is a layer record like Text 3 and Shapes are. ⚠ **IT IS STILL THE
+  ODD ONE OUT**: its clips do NOT point at it by `layer_id` — a picture clip
+  carries the track NUMBER, because that number is also the compositing order and
+  the export reads it directly. The record exists to say the one thing the number
+  cannot: *this row exists, and it is called this*.
+- **`videoTracks`** unions the tracks CLIPS are on with the tracks RECORDS claim,
+  highest first. Both halves are necessary: records alone would hide every row of
+  every animatic saved before them, and clips alone is the bug.
+- **Rows are ADOPTED on load** — every track above the base with no record gets
+  one, once, in `onLoadedRef`. So the ✕ has a record to remove and emptying a row
+  no longer makes it disappear underneath you. ⚠ **TRACK 0 IS DELIBERATELY NOT
+  ADOPTED**: the base row exists whether or not anything is on it, so a record for
+  it would say nothing — and writing one into a brand-new animatic would stop it
+  being discarded on the way out (`isEmpty`).
+- ⚠ **`onLoadedRef` NOW RETURNS `attached === 0 && !changed`.** It was `attached`
+  alone, which stopped being right the moment `track`/`start_ms` joined the saved
+  shape: the load-time `start_ms` normalisation rewrites both, and folding that
+  into "what the server already has" means recomputing it on every load instead of
+  writing it down once.
+- **✕ on a video row removes the row; its clips drop to track 0 keeping the moment
+  they play at** (user's choice). ⚠ **THEIR CLIPS ARE NOT DELETED, unlike every
+  other layer's** — those point at their lane by `layer_id` and have nowhere else
+  to live, whereas a picture clip's track number always has a base to fall back
+  to, and a shot is the most expensive thing on this timeline to lose (a board
+  panel, an upload, a Veo render that was paid for). The landing positions are
+  captured from `pictureSpans` BEFORE the record goes, because a clip with no
+  `start_ms` of its own begins where its neighbour on *that* row ended.
+- Track 0 is not removable (its ✕ empties it, like the default Text and Shapes
+  rows), and neither is a row no record proves exists — `onRemoveLayer` takes a
+  layer id, so a null one would be a ✕ that does nothing.
+- `addPictureTrack` and `splitFootageOntoTrack` both write a record, and both
+  refuse past `MAX_PICTURE_TRACK` (15, the schema's cap on `AnimaticFrame.track`)
+  with a notice rather than a failed save.
+
+**Files:** `client/src/animatic/frame_save.js` (new),
+`client/src/animatic/useAnimaticProject.js`, `client/src/components/AnimaticEditor.jsx`,
+`server/schemas.py` (`AnimaticLayer`), `tests/frame_save_fields_check.py` (new).
+
+**Verified:** `npm run build` clean. `tests/frame_save_fields_check.py` 14/14.
+`picture_tracks_check.py`, `selection_check.py`, `video_clip_check.py`,
+`hidden_lane_check.py`, `editor_picture_tracks_check.py`, `editor_razor_check.py`,
+`editor_effects_drop_check.py` all pass. `editor_lane_move_check.py` still fails
+its 3 stale `promptFit` checks — unchanged, pre-existing, see Next Steps.
+**Not opened in a browser by hand.**
+
+⚠ **AGREED AND NOT YET BUILT — the storyboard layers.** The user's requirement in
+full, decided this session and deliberately left for the next pass so the
+persistence fix could be tested on its own:
+
+1. A new animatic shows only **Video, Text, Shapes, Audio** (already true).
+2. **`+ Add layer → Storyboard images…`** opens a popup listing the user's
+   storyboard projects by name → pick one → **Import** → the panels land on their
+   own "Storyboard images" row. `api.listStoryboards()` and the server's
+   `_frames_from_board` already exist; the endpoint that imports into an EXISTING
+   animatic does not. Importing a board should CREATE that row automatically.
+3. **`+ Add layer → Storyboard video`**, and a Veo render lands on it — directly
+   ABOVE the storyboard images row, at the same time, **with the still left
+   underneath** (user's choice). A higher track draws over a lower one, so the
+   animation plays and 👁 on that row instantly shows the board again. ⚠ This is a
+   change to `attachVeoClip`, which currently REPLACES the still in place (keeping
+   `src.storyboard_id`, so an animated panel is already a board-origin video clip
+   — which is exactly the distinction the two rows need).
+4. **Row kinds are STRICT** (user's choice): a board panel may only sit on a
+   Storyboard images row, a Veo render only on a Storyboard video row, an upload
+   only on its own kind of row. Photos and footage never share a row. ⚠ `frames`
+   vs `image` is ALREADY enforced by `laneMoveTarget` (`from.kind !== to.kind`);
+   what is missing is the finer rule WITHIN the cut, which `frameOrigin` +
+   `clipKind` can answer without a new field on the clip.
+   ⚠ **STRICTNESS AND THE VEO CHANGE ARE ONE UNIT** — shipping strict rows while
+   Veo still replaces a still in place would leave the render sitting on a row its
+   own kind is not allowed on.
+
+### 2026-08-20 — THE PICTURE ROWS ARE CALLED **VIDEO** NOW, THEIR ＋ TAKES FOOTAGE, AN IMPORT LANDS ON THE ROW YOU AIMED AT, AND A SELECTION OF CLIPS ACTUALLY MOVES (all four user-reported, with two screenshots)
+
+> "at the place of picture we have video which can also have both import a video
+>  or a photo don't restrict it and the name is confusing we are not able to move
+>  here and there properly in the picture tracker and why is audio import not
+>  available through the dropdown and why is the video tracker not importing
+>  another video differently if there is one there in the timline before it
+>  imports that only even if we add it on different layer"
+
+**FOUR SEPARATE FAULTS BEHIND ONE REPORT.** Three of them were the same shape:
+code that had been updated when the picture track became a stack of real tracks
+(2026-08-20, earlier the same day) sitting beside code that still believed the
+old model, with no error to say so.
+
+**1 — "Pictures" WAS THE WRONG NAME, AND THE ROW'S ＋ ENFORCED IT.** The rows are
+`Video`, `Video 2`, … (`lanes` in `AnimaticEditor.jsx`), the dropdown item is
+**Video track**, and the lane hint / ＋ tooltip say "footage and stills". The name
+was the visible half; the ENFORCEMENT was the real bug: the row's ＋ clicked an
+input with `accept="image/*"` whose `onChange` called `addFiles` — the
+**image-only** upload path — so the file dialog HID the very MP4 the same row
+accepted by drag and drop, and forcing one through ("All files") uploaded it as a
+still. One picker for both kinds now (`pictureInputRef`, `accept="image/*,video/*"`,
+straight into `addAssets`, which has routed by file type all along).
+⚠ **THE DEAD VIDEO-ONLY INPUT IS GONE** — `videoInputRef` existed, nothing ever
+clicked it, and its `accept="video/*"` was the opposite half of the same mistake.
+⚠ **`LANE_ICON.frames` IS 🎞, NOT 🖼** — the video row and the overlay ("Images")
+row drew the SAME icon, which is the other half of why the two were confusable.
+The overlay row keeps 🖼 and its name: it composites a picture OVER the cut, which
+is a different thing.
+
+**2 — AN IMPORT IGNORED THE ROW YOU DROPPED IT ON.** Which track new media landed
+on was read from a ref, `pendingPictureTrack`, that **only the lane ＋ ever set and
+nothing ever reset**. Every other way in — a file dropped on a row, the Media
+pane's own button, the drop target beside it — silently used whatever row was
+last touched, or track 0. That is the whole of "it imports that only even if we
+add it on different layer": your second video went in beside the first one.
+`dropAsset` compounded it by calling `frameIndexAt(at)` with **no track**, so the
+insert INDEX came from the nearest cut across all rows while the insert itself
+happened on a different one.
+- **The track is a parameter now** — `addAssets(files, insertAt, track, atMs)`
+  → `addFiles` / `addVideoClips` → `insertPictures`. The ref survives only to
+  carry the row across the OS file dialog, which is asynchronous and has no other
+  way to remember what it was opened for, and it is **read once and cleared**
+  (`takePendingTrack`).
+- ⚠ **AND THE DROP TIME IS HONOURED ON AN END-OF-TRACK INSERT** (`atMs`). "The
+  end of an empty track" is zero, so a clip dropped at 0:45 on a row you just
+  made jumped to 0:00 — harmless while the target row was always 0, and the first
+  thing you would hit now that it is not. A deliberate GAP in front of the clip
+  is a thing that exists in this model (a gap shows the row underneath).
+  Inserting BETWEEN two clips still snaps to the nearest cut and ripples.
+- Two things fixed in passing, both in `insertPictures`: a mixed drop put the
+  VIDEO in front of the STILL (both were handed the same `insertAt`, and the
+  second insert used an index the first had already shifted), and the ripple pass
+  used `list.indexOf(f)` to find each clip's span — n² on a thirty-panel board,
+  and the wrong answer the moment two entries are the same object reference.
+  `spans` is parallel to `list`; it is indexed now.
+
+**3 — A SELECTION OF PICTURES COULD BE DRAGGED BUT NOT MOVED.** `frame` has been
+in `MOVABLE` since clips got their own `start_ms`, so the timeline started the
+drag and drew the ghost — and then `moveSelection` in `AnimaticEditor.jsx`, which
+still carried the comment "Pictures are not moved", wrote every OTHER kind and
+dropped them. The clip snapped back, with no error and nothing in the undo stack.
+- `moveSelection` has a `frame` branch (one `setFrames`, one Ctrl+Z), and
+  `selectionFloorMs` counts pictures, so a mixed selection whose leftmost clip is
+  a picture measures its 0:00 wall from the right clip.
+- ⚠ **A PICTURE'S START IS NOT NECESSARILY ITS `start_ms`.** A clip saved before
+  tracks has none and begins where the one before it on its row ended, so the
+  move is written from a new `frameStartById` (the EVALUATED start, out of
+  `frameSpans`) — `+ delta` on the raw field would move such a clip from 0.
+- ⚠ **AND THE SAME BUG HAD A SECOND MOUTH**: `SelectionProperties.jsx` computed
+  `movable` from `GROUPABLE` instead of `MOVABLE`. The two lists differ by exactly
+  that one kind, so the **Nudge** buttons were hidden for a selection of nothing
+  but video clips — the selection this pane is most often opened on. Its
+  breakdown row now says "video clip(s)" with 🎞, and its ⓘ no longer claims
+  pictures stay where they are.
+
+**4 — THE DROPDOWN'S AUDIO ITEM COUNTED CLIPS, NOT FILES.** It disabled on
+`audioTracks.length >= MAX_AUDIO_TRACKS`, which is the number of CLIPS; every
+other audio limit in the file uses `audioFileCount()` (distinct uploads). Razor
+one voiceover into four pieces and the menu greyed itself out at "4/4" on a
+project holding **one** file — exactly the reporter's case (3 pieces of an
+ElevenLabs take + one music bed = 4 clips, 2 files). Counted in files now, and
+the disabled note says cutting one up does not count against it. ⚠ **The item
+still adds an EMPTY ROW and no file** — confirmed with the user as the intended
+behaviour, consistent with every other kind in that menu: you add the row, then
+you put things on it with that row's own ＋.
+
+**Files:** `client/src/components/AnimaticEditor.jsx` (lane names + hints,
+`frameStartById`, `selectionFloorMs`, `moveSelection`, `insertPictures`,
+`addToLane`, `dropAsset`, `addFiles` / `addVideoClips` / `addAssets`, the hidden
+inputs, the ＋ Add layer menu, four notices),
+`client/src/components/properties/SelectionProperties.jsx`,
+`client/src/components/Timeline.jsx` (`LANE_ICON`, `LANE_HINT`, `LANE_ADD`).
+No server change — the upload endpoint was already correct: every
+`POST /animatics/{id}/videos` mints a fresh `uuid` and stores its own file, so
+the second video really was uploaded; it was only put in the wrong place.
+
+**Verified:** `npm run build` in `client/` clean. `tests/editor_picture_tracks_check.py`,
+`tests/picture_tracks_check.py`, `tests/editor_razor_check.py`,
+`tests/editor_effects_drop_check.py`, `tests/selection_check.py`,
+`tests/video_clip_check.py` all pass. ⚠ **`tests/editor_lane_move_check.py` FAILS
+3 of its checks, and it was ALREADY FAILING before this work** — its `promptFit`
+probe looks for a TEXT NODE inside `.tl-track-empty` and measures 0 prompts,
+because the empty-row prose was deliberately REMOVED on 2026-08-20 ("remove
+information text look in blanck layer"); the band is now a childless `<button>`
+carrying its sentence on `title`. Stale test, not a regression — see Next Steps.
+**Not opened in a browser by hand.**
+
+### 2026-08-20 — ＋ ADD LAYER IS A DROPDOWN UNDER THE BUTTON NOW, NOT A DIALOG, AND EACH KIND IS ONE LINE (user-reported, with screenshots of both)
+
+> "i want when i click +add layer so not open popup i want open dropdown in same
+>  place and and only keep main name and remove information text pf each layer"
+
+**A FIVE-ITEM CHOICE IS A MENU, NOT A MODAL.** "Add a layer" dimmed the whole
+editor, put a heading, a paragraph and a ✕ round the list, and threw your eye to
+the middle of the screen and back for one word. It hangs off the ＋ instead:
+`.tl-layer-menu`, absolutely positioned under `.tl-head`, starting at the layer
+column's width and growing only if a label needs it, so the list opens where the
+press landed and reads as that column's own.
+
+- ⚠ **THE TIMELINE HOLDS IT, THE EDITOR FILLS IT** — a new `addLayerMenu` node
+  prop on `<Timeline>`, written to the same rule as `addTools` right beside it:
+  *what* layers exist and what one costs is `AnimaticEditor`'s business, and this
+  file only knows where the ＋ that opens them stands. **Rendering the node IS
+  "open"** (`addLayerMenu={layerMenu && (…)}`), so `layerMenu` stays the single
+  answer to "is the menu up?" and there is no second copy in `Timeline.jsx` to
+  disagree with it. `aria-haspopup` / `aria-expanded` on the button.
+- ⚠ **`.tl-head` IS NOW POSITIONED AND AT `z-index: 12`.** It is the menu's
+  containing block, and 12 clears everything drawn on a lane — the pinned ruler
+  (8) and the playhead grip (9) included — or the picker would open BEHIND the
+  timeline it adds a row to. `.tl-cols` is not positioned, so raising this one
+  box is enough. ⚠ **IT IS STILL CLIPPED BY `.an-timeline-body`'s
+  `overflow: hidden`**: five tight rows are ~9rem, which the pane clears at any
+  usable height, but that is the ceiling on how long this list can get before it
+  needs a fixed-position rect instead.
+- ⚠ **ESCAPE AND AN OUTSIDE PRESS HAVE TO BE WRITTEN NOW** — the modal overlay
+  did both for free. One effect while the menu is open. **The ＋ is exempt from
+  the outside-press close**, because it TOGGLES: closing on its `pointerdown`
+  would let the `click` that follows reopen what it just shut, which looks
+  exactly like a dead button.
+
+**ONE LINE PER KIND: icon, name, nothing else.** The note under each label
+("Another row for stills and footage — drawn OVER the tracks below it", ×5) is
+gone — a menu is read by SCANNING it, and five sentences is not a scan. Each
+note moved to the item's `title`, which is where this editor already puts the
+long answer (the empty lanes and every row ＋ did the same on 2026-08-20). The
+Audio item still explains itself when it is disabled, on the same `title`.
+
+⚠ **THE WORKSPACE DIALOG OWNS ITS OWN ROWS NOW.** It was wearing
+`.an-layer-opt an-ws-opt` — borrowing the add-layer picker's modal, list, row
+and icon-chip rules and overriding four things. Add-layer is a dropdown, so
+those base rules had exactly one user left; they are folded into `.an-ws-modal` /
+`.an-ws-list` / `.an-ws-opt` / `.an-ws-opt-ico` and the double class names in
+the JSX are gone. **No visual change to that dialog** — same declarations, one
+name. Verified with `npm run build` in `client/` (clean); no browser run.
+
+### 2026-08-20 — THE ANIMATIC EDITOR'S TOP BAR IS TWO GROUPS NOW, AND "MAKE FINAL VIDEO" IS GONE FROM IT (user-reported, with a screenshot of the bar)
+
+> "First remove make final video buttun not need in Storyboad to animatics
+>  workflow and Mp4 out of date buttun keep side of export video buttun and save
+>  buttun keep long video workshapes side"
+
+**THE HAND-OFF BUTTON IS REMOVED, NOT HIDDEN.** `🎞️ Make final video` created a
+`/final-videos` project from this animatic and navigated to the next workflow —
+a second front door to a workflow that already has its own. Deleted end to end
+rather than left behind a flag: the button, `makeFinalVideo()`, the `makingVideo`
+state and the `onMakeFinalVideo` prop in `AnimaticEditor.jsx`; the prop's
+pass-through in `StoryboardToAnimatics.jsx`; the handler **and** the
+`pendingFinalVideoId` state in `App.jsx`. ⚠ **`AnimaticsToVideo` LOST ITS
+`openId` / `onOpened` PROPS WITH IT** — that pair existed only to consume the id
+this button minted, and nothing else ever set it, so leaving them would have left
+a prop pair no caller could reach. The workflow now always opens on
+`FinalVideoLibrary`, which is where a final video is started from and already
+creates its own projects (`api.createFinalVideo`). ⚠ **THE SERVER IS UNTOUCHED**:
+`POST /final-videos` still accepts `source_animatic_id`, and the library still
+uses it — only the editor's shortcut to it is gone. The four editor probes in
+`tests/` that passed `onMakeFinalVideo={() => {}}` drop the prop.
+
+**THE BAR READS AS DOCUMENT-THEN-OUTPUT.** Order was
+`MP4 · Save · Export · Make final video`; it is now
+`workspace name · workspace · Save │ MP4 · Export video · 🗑`. Save sits beside
+the workspace because both are about the DOCUMENT you are editing, and the last
+export sits against the button that makes the next one because "here is the file
+you have" and "make a new one" are one question. ⚠ **PURE REORDER — NO LOGIC
+MOVED.** The download button still names its file from `video.container` (the
+export that was made, never the dialog's current setting) and still wears
+`an-stale` + "(out of date)" when the project changed after it; Export still
+captures the playhead into `still_ms` on the way INTO the dialog. Delete stays
+last, furthest from the button you came here to press. Verified with
+`npm run build` in `client/` (clean); no browser run this session.
+
+### 2026-08-20 — THE EMPTY ROWS STOPPED TALKING, THE PICTURE ROWS GOT A SURFACE, AND A CLIP NOW SAYS WHAT IT IS IN COLOUR (all three user-reported)
 
 > "first remove information text look in blanck layer … and see picture both
 >  layer no Backgrond fill panel like other not match other layer type bg look …
@@ -10391,6 +11065,54 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **ANIMATE A PANEL WITH VEO, IN THE REAL EDITOR — THE PARTS A FIXTURE
+      CANNOT REACH.** `tests/editor_veo_attach_check.py` now proves the ATTACH: a
+      ready render lands on a Storyboard video row above its panel, at the panel's
+      start, and shows its own picture in Media and in the monitor. What a
+      `veo_clips` fixture still cannot drive, because it starts from an
+      already-finished render: the animate dialog and its price, the poll from
+      queued → rendering → ready, whether 👁 on that row shows the board again,
+      whether a SECOND render re-uses the row rather than making another, and a
+      reload after a render now that idempotency keys on `upload_id`. ⚠ **THE IMPORT HALF OF THIS ITEM IS CLOSED**
+      — the picker's thumbnail handshake was exactly the bug the user reported, and
+      `tests/editor_board_import_check.py` now drives it end to end. What is left
+      to eyeball there is only the board LIST against real data (are the panel
+      counts sensible on a board with undrawn shots).
+- [x] **A STORYBOARD FIXTURE FOR THE BROWSER SUITE.** Done, in
+      `tests/editor_board_import_check.py`, and it turned out not to need a real
+      storyboard job at all: the fixture that matters is the SERVER'S RULE, not the
+      board. Its router answers `/storyboards` with one board and `GET
+      /animatics/probe/frame/{id}` with a 404 until a PUT has carried that id,
+      which is what `get_frame_image` does. Copy that router for anything else that
+      shows a referenced panel — it is the only fixture that can catch a
+      too-early url, and a router that always serves the picture cannot.
+- [ ] **DECIDE WHETHER A BOARD ROW SHOULD ACCEPT A SECOND IMPORT.** Today's ＋ on a
+      Storyboard images row opens the picker and appends to that row, so two boards
+      can share it. That may be right (one animatic, two reels) or may want a row
+      per board. Not decided with the user; the current behaviour is the permissive
+      one and appending is at least non-destructive.
+- [ ] **`tests/editor_lane_move_check.py` IS STALE IN 3 CHECKS — FIX THE TEST, NOT
+      THE CODE.** Its `promptFit` probe walks `.tl-track-empty` looking for a TEXT
+      NODE child and measures 0 prompts, so all three "no empty-row prompt is
+      sliced by its row" checks fail on `bool(fit)`. The prose those checks were
+      written for was deliberately REMOVED on 2026-08-20 ("remove information text
+      look in blanck layer") — the band is a childless `<button>` carrying its
+      sentence on `title` now. Two honest options: assert the band FILLS its row
+      and clips nothing (geometry, no text), or delete the three checks and say in
+      the docstring why. ⚠ It was already failing before the 2026-08-20 naming
+      work; do not read it as a regression from that.
+- [ ] **THE ROW NAMING QUESTION IS ANSWERED — "EYES ON THE PICTURE TRACKS" IS
+      SHORTER NOW.** The sub-question "does the row NAMING (‘Pictures’, ‘Pictures
+      2’) make sense beside ‘Text’/‘Text 2’" was answered by the user directly:
+      it did not, and they are `Video` / `Video 2`. What still needs a human eye
+      on that item: the gap, `.tl-bar.clash`, the ▶⇧ button, and the
+      first-open autosave.
+- [ ] **A DROP ON AN EMPTY ROW NOW LEAVES A GAP IN FRONT OF IT — LOOK AT IT.**
+      `insertPictures` honours the drop time on an end-of-track insert, which is
+      what makes "put this video on Video 2 at 0:45" land at 0:45. It also means a
+      first clip can sit in the middle of a row with bare lane behind it. Worth
+      confirming that reads as deliberate rather than as a clip that failed to
+      snap — same open question as the hatch under "EYES ON THE PICTURE TRACKS".
 - [x] **THE PICTURE TRACK IS A STACK OF INDEPENDENT TRACKS — DONE 2026-08-20.**
       A picture carries `track` and `start_ms`; a plain trim moves one clip; a gap
       shows the track underneath; transitions are track-local. See the Work Log,

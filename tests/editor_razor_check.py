@@ -229,8 +229,7 @@ console.error = (...args) => {
 };
 
 createRoot(document.getElementById("root")).render(
-  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}}
-                  onMakeFinalVideo={() => {}} />
+  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}} />
 );
 
 /**

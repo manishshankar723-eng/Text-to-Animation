@@ -195,8 +195,7 @@ Compositor.prototype.dispose = function patchedDispose() {
 };
 
 createRoot(document.getElementById("root")).render(
-  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}}
-                  onMakeFinalVideo={() => {}} />
+  <AnimaticEditor animaticId="probe" onBack={() => {}} onDeleted={() => {}} />
 );
 
 /** The centre pixel of the finished frame, straight out of the framebuffer. */

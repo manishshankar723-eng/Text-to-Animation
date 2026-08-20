@@ -74,6 +74,8 @@ import { clamp } from "../animatic/util.js";
 import {
   ANIMATABLE,
   clipKind,
+  clipRowKind,
+  ROW_TAKES,
   DEFAULT_SPEED,
   frameOrigin,
   frameSpans,
@@ -117,16 +119,20 @@ const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overla
 // way that matters to this file, and the only thing it needs is to say what it
 // is in the gutter. A `kind` of its own would have meant a fourth branch in
 // `renderLane` drawing exactly the same clips.
-const LANE_ICON = { frames: "🖼", image: "🖼", text: "T", shape: "◆", audio: "♪" };
+// ⚠ THE VIDEO ROW AND THE OVERLAY ROW NO LONGER SHARE AN ICON. Both were
+// 🖼, so the gutter drew "Video" and "Images" identically — half of why the
+// two rows were confusable, the other half being that the video row used to be
+// called "Pictures" too. 🎞 is a strip of film: the cut itself.
+const LANE_ICON = { frames: "🎞", image: "🖼", text: "T", shape: "◆", audio: "♪" };
 const LANE_HINT = {
-  frames: "A picture track — stills and footage, each placed on its own",
+  frames: "A video track — footage and stills, each placed on its own",
   image: "Pictures composited OVER the video, timed on their own",
   text: "On-screen text, timed on its own",
   shape: "Shapes drawn over the picture, timed on their own",
   audio: "An audio track, mixed on export",
 };
 const LANE_ADD = {
-  frames: "Add pictures to the end of this track",
+  frames: "Add video or images to the end of this track",
   image: "Add a picture to this layer",
   text: "Add a text clip at the playhead",
   shape: "Add a shape at the playhead",
@@ -374,6 +380,16 @@ export default function Timeline({
   // the pane head, a bar's width away from the only other control that adds
   // anything — asked for as "one place where all the add buttons are".
   addTools = null,
+  // The add-layer picker itself, handed in the same way and for the same
+  // reason: WHAT layers exist and what adding one costs is the editor's
+  // business, this file only knows where the ＋ that opens it stands. Render it
+  // and it is open; pass null and it is shut — the editor owns that state, so
+  // there is one answer to "is the menu up?" and no second copy here to
+  // disagree with it. ⚠ IT IS A DROPDOWN UNDER THE BUTTON, NOT A DIALOG: it
+  // used to be a full-screen modal, which is a lot of ceremony for "which kind
+  // of row?" and threw your eye to the middle of the screen and back
+  // (user-reported).
+  addLayerMenu = null,
   onRemoveTrack,
   // ✕ on a DEFAULT row — the row itself is structural and stays, so this empties
   // it. Separate from `onRemoveLayer` because they are different promises: one
@@ -842,7 +858,16 @@ export default function Timeline({
     // unlike "fx" there is nothing left for `dropAsset` to refuse afterwards,
     // because every audio row means the same thing to one.
     if (kind === "afx") return lane.kind === "audio";
-    if (lane.kind === "frames") return kind === "files" || kind === "image" || kind === "video";
+    // ⚠ A PICTURE ROW IS ONE OF FOUR KINDS NOW (`lane.rowKind`), and only two of
+    // them take files at all — a storyboard row is filled by the import and a Veo
+    // row by ✨ Animate. `files` still says yes wherever either kind would,
+    // because a drag from the desktop does not reveal what it is carrying until
+    // the drop: `dropAsset` is what refuses it then, by name.
+    if (lane.kind === "frames") {
+      const takes = ROW_TAKES[lane.rowKind || "video"] || [];
+      if (kind === "files") return takes.length > 0;
+      return takes.includes(kind);
+    }
     // An IMAGE LAYER is a picture composited over the video, not a place in the
     // sequence — so it takes a still and makes a copy of it up there. ⚠ It
     // refused stills at first and that read as a broken row (user-reported,
@@ -1292,7 +1317,7 @@ export default function Timeline({
    * for "the one it is already on", which is what every ordinary move reports
    * and the only answer that leaves the clip's row alone.
    */
-  function laneMoveTarget(fromKey, clientY) {
+  function laneMoveTarget(fromKey, clientY, clip = null) {
     const to = laneAtPoint(clientY);
     if (!to || to.key === fromKey) return null;
     if (!CROSS_LANE_KINDS.includes(to.kind)) return null;
@@ -1300,6 +1325,15 @@ export default function Timeline({
     // A caption cannot land on a shapes row: the two rows draw different things
     // and a clip does not change what it is by being dropped somewhere else.
     if (!from || from.kind !== to.kind) return null;
+    // ⚠ AND WITHIN THE PICTURE ROWS, THE SAME RULE ONE LEVEL DOWN. All four are
+    // `kind: "frames"`, so the check above lets any picture clip onto any picture
+    // row — which is what the user asked to stop: "image move in only image
+    // layer and video move video any layer". A clip's kind is DERIVED from the
+    // clip (`clipRowKind`), so this cannot disagree with what the row was named
+    // after, and there is no field to keep in step.
+    if (to.kind === "frames" && clip && clipRowKind(clip) !== (to.rowKind || "video")) {
+      return null;
+    }
     return to.key;
   }
 
@@ -1646,7 +1680,9 @@ export default function Timeline({
       // things on that one row" is not an edit with a single meaning, so a
       // multi-clip drag stays on its rows and only travels in time.
       next.toKey =
-        d.mode === "move" && !d.group ? laneMoveTarget(d.fromKey, e.clientY) : null;
+        d.mode === "move" && !d.group
+          ? laneMoveTarget(d.fromKey, e.clientY, d.kind === "frames" ? d.clip : null)
+          : null;
       next.track = d.track;
       if (next.toKey) {
         const to = laneOfKey(next.toKey);
@@ -2790,15 +2826,22 @@ export default function Timeline({
           buttons are". What they MAKE is still the editor's business; this file
           only gives them somewhere to stand (`addTools`). */}
       <div className="tl-headbar">
+        {/* ⚠ THE MENU IS THE BUTTON'S SIBLING, INSIDE `.tl-head`, because the
+            head is what it hangs from: the picker is positioned against this
+            box, so it opens exactly where the press happened and is as wide as
+            the column it adds a row to. */}
         <div className="tl-head">
           <button
             type="button"
             className="tl-add-layer"
             onClick={onAddLayer}
             title="Add an empty layer — pick what kind"
+            aria-haspopup="menu"
+            aria-expanded={!!addLayerMenu}
           >
             ＋ Add layer
           </button>
+          {addLayerMenu}
         </div>
         {addTools && <div className="tl-add-tools">{addTools}</div>}
       </div>

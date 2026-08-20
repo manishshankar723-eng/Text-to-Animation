@@ -7,20 +7,14 @@
 //
 // The three video steps live INSIDE the workspace rather than out here, because
 // a user moves between them freely (render a shot, add art, render again).
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import FinalVideoLibrary from "./FinalVideoLibrary.jsx";
 import FinalVideoWorkspace from "./FinalVideoWorkspace.jsx";
 
-export default function AnimaticsToVideo({ openId, onOpened }) {
-  const [current, setCurrent] = useState(openId || null);
-
-  // The animatic editor's "Make final video" navigates here with an id already
-  // created; consume it so returning to the library later doesn't re-open it.
-  useEffect(() => {
-    if (!openId) return;
-    setCurrent(openId);
-    onOpened?.();
-  }, [openId, onOpened]);
+// Nothing hands this workflow an id from outside any more — a project is always
+// started from its own library — so it opens on the library and nowhere else.
+export default function AnimaticsToVideo() {
+  const [current, setCurrent] = useState(null);
 
   if (current) {
     return (

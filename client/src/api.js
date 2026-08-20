@@ -715,6 +715,19 @@ export function uploadAnimaticVideos(id, files) {
   return request(`/animatics/${id}/videos`, { method: "POST", body: fd, isForm: true });
 }
 
+// Bring a STORYBOARD's drawn panels into an animatic that already exists.
+//
+// ⚠ NOT `createAnimatic({ source_storyboard_id })`, which starts a NEW project
+// from a board. This one is pressed mid-cut and returns the frames instead of
+// saving them, because which row they land on is the editor's decision — see
+// `import_storyboard` on the server.
+export function importStoryboardIntoAnimatic(id, storyboardId, defaultDurationMs = 2000) {
+  return request(`/animatics/${id}/import-storyboard`, {
+    method: "POST",
+    body: { storyboard_id: storyboardId, default_duration_ms: defaultDurationMs },
+  });
+}
+
 export function uploadAnimaticAudio(id, file) {
   const fd = new FormData();
   fd.append("file", file);
@@ -950,7 +963,9 @@ export async function downloadAnimaticVideo(id, filename) {
 // output. Anything below that can spend says so in its comment.
 
 // Start a project. Pass `sourceAnimaticId` alone and the server fills the shot
-// list from that animatic's frames (the animatic's "Make final video").
+// list from that animatic's frames — the final-video library's "start from an
+// animatic". The animatic editor used to have its own button for this; it was
+// removed 2026-08-20, the endpoint's behaviour was not.
 export function createFinalVideo({
   title,
   sourceAnimaticId,

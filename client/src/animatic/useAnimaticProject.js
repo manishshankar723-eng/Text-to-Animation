@@ -16,43 +16,38 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
 
+import { frameForSave } from "./frame_save.js";
+
 const AUTOSAVE_MS = 900;
 
+
 /**
- * Exactly what a frame looks like when it is SAVED.
+ * The project as one comparable string — EXACTLY what a save sends.
  *
- * ⚠ Used by both the autosave and the dirty-check signature, and that is the
- * whole point of it being one function: when the two were written out
- * separately they were free to drift, and they had — the saved shape carried
- * only id/src/duration/label, so a frame's `scale`, `x`, `y`, `opacity` and its
- * whole `keyframes` track were computed by the editor, previewed in the monitor,
- * and then silently dropped on the way to the server. Phase 1's motion never
- * survived a reload. It does now, and a clip's source range rides on the same
- * fix.
+ * Shared by the dirty-check signature and by `flush`, which has to be able to
+ * sign a document it was HANDED rather than one it read off `docRef`. Written
+ * out once because the two used to drift, and a field missing from the signature
+ * is worse than one missing from the save: the document does not look changed,
+ * so nothing is ever sent. Same rule as `frameForSave`.
  *
- * `url` is deliberately absent: the server fills it on read and ignores it on
- * write, so sending it back would put a stale path in the saved document.
+ * ⚠ `overlays` GO IN RAW, with their urls. The save strips them (the server
+ * rebuilds them on read), but both sides of the comparison have to be built the
+ * same way — the baseline is one of these strings.
  */
-export function frameForSave(f) {
-  return {
-    id: f.id,
-    src: f.src,
-    duration_ms: f.duration_ms,
-    label: f.label || "",
-    kind: f.kind || "image",
-    // The picture's own pan / zoom / fade, and the curves driving them.
-    scale: f.scale ?? 1,
-    x: f.x ?? 0.5,
-    y: f.y ?? 0.5,
-    opacity: f.opacity ?? 1,
-    keyframes: f.keyframes || {},
-    // The source window and read speed — video clips only, harmless elsewhere.
-    in_ms: f.in_ms ?? 0,
-    out_ms: f.out_ms ?? null,
-    speed: f.speed ?? 1,
-    color: f.color || "#000000",
-  };
+function signatureOf(doc) {
+  return JSON.stringify({
+    title: doc.title,
+    settings: doc.settings,
+    frames: (doc.frames || []).map(frameForSave),
+    texts: doc.texts,
+    shapes: doc.shapes,
+    layers: doc.layers,
+    overlays: doc.overlays,
+    transitions: doc.transitions,
+    audioTracks: doc.audioTracks,
+  });
 }
+
 
 /**
  * @param animaticId  which project to open
@@ -177,39 +172,76 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   }, [animaticId]);
 
   // ---------------------------------------------------------------- saving
-  const flush = useCallback(async () => {
-    if (!loadedRef.current || !dirtyRef.current) return;
-    const doc = docRef.current;
-    if (!doc) return;
-    dirtyRef.current = false;
-    // Captured BEFORE the request: if the user edits while it's in flight, the
-    // new signature won't match this and the project correctly stays dirty.
-    const sent = doc.signature;
-    setSaveState("saving");
-    try {
-      await api.saveAnimatic(animaticId, {
-        title: doc.title,
-        settings: doc.settings,
-        frames: doc.frames.map(frameForSave),
-        texts: doc.texts,
-        shapes: doc.shapes,
-        layers: doc.layers,
-        overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
-        transitions: doc.transitions,
-        audioTracks: doc.audioTracks,
-      });
-      baselineRef.current = sent;
-      setSaveState("saved");
-      setSavedFlash(true);
-      // The exported file no longer matches the project — the server flags this
-      // too, but saying so immediately is what stops a stale download.
-      setVideo((v) => (v ? { ...v, stale: true } : v));
-    } catch (e) {
-      dirtyRef.current = true;
-      setSaveState("error");
-      onErrorRef.current?.(e.message);
-    }
-  }, [animaticId]);
+  /**
+   * Write the project to the server NOW rather than on the debounce.
+   *
+   * @param patch fields to save INSTEAD OF what `docRef` holds, merged over it.
+   *
+   * ⚠ `patch` IS WHAT MAKES "SET IT, THEN SAVE IT" POSSIBLE, and without it that
+   * sequence silently saved nothing. Both of the questions this function asks —
+   * "is there anything to save?" (`dirtyRef`) and "what is the document?"
+   * (`docRef`) — are answered by EFFECTS, which run after the render. So a
+   * caller that has just called `setFrames` and then awaited `flush()` is a
+   * render too early on both counts: it sees a clean project, returns at the
+   * first line, and the write it was waiting for never happens.
+   *
+   * That is not a theoretical race. It is what left every panel of an imported
+   * storyboard a black tile: `doBoardImport` places the frames, flushes, and then
+   * points them at `/animatics/{id}/frame/{id}` — a route that resolves through
+   * the SAVED project. The flush wrote nothing, so every one of those urls 404'd,
+   * and the fetch does not retry. See `doBoardImport` in `AnimaticEditor.jsx`.
+   *
+   * Handing the new value in answers both questions without waiting for a render:
+   * a patched flush writes unconditionally, and the baseline it adopts is signed
+   * from the document it actually sent.
+   */
+  const flush = useCallback(
+    async (patch = null) => {
+      if (!loadedRef.current) return;
+      if (!patch && !dirtyRef.current) return;
+      const base = docRef.current;
+      if (!base) return;
+      const doc = patch ? { ...base, ...patch } : base;
+      dirtyRef.current = false;
+      // Captured BEFORE the request: if the user edits while it's in flight, the
+      // new signature won't match this and the project correctly stays dirty.
+      // A patched document has no signature of its own yet — sign it here, with
+      // the same builder the dirty-check uses, so the caller's edit reads as
+      // saved on the very next render instead of firing a second write.
+      const sent = patch ? signatureOf(doc) : base.signature;
+      setSaveState("saving");
+      try {
+        await api.saveAnimatic(animaticId, {
+          title: doc.title,
+          settings: doc.settings,
+          frames: doc.frames.map(frameForSave),
+          texts: doc.texts,
+          shapes: doc.shapes,
+          layers: doc.layers,
+          overlays: doc.overlays.map((o) => ({ ...o, url: undefined })),
+          transitions: doc.transitions,
+          audioTracks: doc.audioTracks,
+        });
+        baselineRef.current = sent;
+        setSaveState("saved");
+        setSavedFlash(true);
+        // The exported file no longer matches the project — the server flags this
+        // too, but saying so immediately is what stops a stale download.
+        setVideo((v) => (v ? { ...v, stale: true } : v));
+      } catch (e) {
+        dirtyRef.current = true;
+        setSaveState("error");
+        onErrorRef.current?.(e.message);
+        // ⚠ RE-THROWN FOR A PATCHED FLUSH ONLY. A caller that saves on purpose
+        // and then acts on the result — the storyboard import, whose urls are
+        // only servable once the write lands — has to know it failed. The
+        // autosave has nobody to tell, and a rejection there would surface as an
+        // unhandled one from a timer.
+        if (patch) throw e;
+      }
+    },
+    [animaticId]
+  );
 
   // Let the tick fade after a moment. Cleared on any new edit too, via the
   // autosave effect below.
@@ -223,10 +255,10 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   // answers "is there anything to save?" honestly.
   const signature = useMemo(
     () =>
-      JSON.stringify({
+      signatureOf({
         title,
         settings,
-        frames: frames.map(frameForSave),
+        frames,
         texts,
         shapes,
         layers,
@@ -281,7 +313,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
     // render would 409 and flash "⚠ Not saved" at someone watching a clip they
     // have just paid for. The edit stays dirty and goes as soon as it ends.
     if (serverBusy) return undefined;
-    const t = setTimeout(flush, AUTOSAVE_MS);
+    const t = setTimeout(() => flush(), AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [signature, serverBusy, flush]);
 

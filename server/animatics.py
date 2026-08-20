@@ -49,6 +49,8 @@ from .schemas import (
     AnimaticAnimateRequest,
     AnimaticAudio,
     AnimaticAudioResponse,
+    AnimaticBoardImportRequest,
+    AnimaticBoardImportResponse,
     AnimaticCaptionsRequest,
     AnimaticCreateRequest,
     AnimaticFrame,
@@ -1064,6 +1066,77 @@ async def upload_images(
         "[animatic %s] %d image(s) uploaded, %d rejected", job_id, len(items), len(rejected)
     )
     return AnimaticUploadResponse(items=items, rejected=rejected)
+
+
+@router.post("/{job_id}/import-storyboard", response_model=AnimaticBoardImportResponse)
+def import_storyboard(
+    job_id: str,
+    body: AnimaticBoardImportRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Read a board's drawn panels as frames, for an animatic that ALREADY EXISTS.
+
+    ⚠ NOT THE SAME JOB AS `source_storyboard_id` ON CREATE, though it shares the
+    builder. That one fills a brand-new project and saves it; this one is pressed
+    in the middle of a cut, so it RETURNS the frames and saves nothing — where
+    they land is the editor's decision, and it puts them on a row of their own
+    ("Storyboard images"). Same contract as the image and video uploads: the
+    server produces the material, the client decides the timeline.
+
+    ⚠ BOTH JOBS ARE OWNERSHIP-CHECKED. The animatic is checked because we are
+    about to hand back its own future content, and the BOARD is checked
+    separately because a board id is a user-supplied string — without the second
+    check this would read any storyboard on the instance by id.
+    """
+    job = _get_owned_animatic(job_id, current)
+    board = get_owned_job(body.storyboard_id, current)
+    if board.kind != JobKind.STORYBOARD:
+        raise HTTPException(status_code=400, detail="That isn't a storyboard.")
+
+    frames = _frames_from_board(board, body.default_duration_ms)
+    if not frames:
+        raise HTTPException(
+            status_code=409,
+            detail="That storyboard has no drawn panels yet — generate some first.",
+        )
+
+    # ⚠ THE CAP IS COUNTED AGAINST WHAT IS ALREADY ON THE TIMELINE, which is the
+    # difference that matters here: on create the project is empty, so the board
+    # only had to fit on its own. Falling back to one frame per shot beats
+    # refusing the import outright — the user can bring the poses of the shots
+    # they care about across by hand.
+    existing = len((job.params or {}).get("frames") or [])
+    panels_only = False
+    if existing + len(frames) > config.MAX_ANIMATIC_FRAMES:
+        frames = _panel_frames_only(board, body.default_duration_ms)
+        panels_only = True
+        logger.info(
+            "[animatic %s] board %s expands past the frame cap (%d already here, cap %d) "
+            "— importing one frame per shot.",
+            job_id, body.storyboard_id, existing, config.MAX_ANIMATIC_FRAMES,
+        )
+    if existing + len(frames) > config.MAX_ANIMATIC_FRAMES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"That board needs {len(frames)} frames and this animatic already has "
+                f"{existing}, over the limit of {config.MAX_ANIMATIC_FRAMES}."
+            ),
+        )
+
+    title = (board.character_name or "Storyboard").strip()
+    logger.info(
+        "[animatic %s] imported %d frame(s) from board %s%s",
+        job_id, len(frames), body.storyboard_id, " (panels only)" if panels_only else "",
+    )
+    return AnimaticBoardImportResponse(
+        frames=frames,
+        # The row's name comes from here so it is built once rather than on both
+        # sides of the wire.
+        name=f"{title} — storyboard",
+        title=title,
+        panels_only=panels_only,
+    )
 
 
 @router.post("/{job_id}/videos", response_model=AnimaticVideoUploadResponse)

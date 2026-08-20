@@ -20,15 +20,15 @@ import Icon from "../Icon.jsx";
 import { PropGroup, PropRow } from "./PropGroup.jsx";
 import {
   countByKind,
-  GROUPABLE,
   KINDS,
+  MOVABLE,
   selectionLabel,
 } from "../../animatic/selection.js";
 
 // What each kind is called in the breakdown, and the same icon its lane carries
 // in the gutter — so the list reads as "these rows" rather than as jargon.
 const ROWS = {
-  frame: { icon: "🖼", one: "picture", many: "pictures" },
+  frame: { icon: "🎞", one: "video clip", many: "video clips" },
   text: { icon: "T", one: "text clip", many: "text clips" },
   shape: { icon: "◆", one: "shape", many: "shapes" },
   overlay: { icon: "🖼", one: "picture layer", many: "picture layers" },
@@ -54,10 +54,14 @@ export default function SelectionProperties({
   onClose,
 }) {
   const counts = countByKind(selection);
-  // Can any of this be moved along the timeline? Pictures cannot — they are a
-  // sequence, not free-floating clips — so a selection of nothing but pictures
-  // gets no nudge buttons rather than buttons that quietly do nothing.
-  const movable = selection.some((item) => GROUPABLE.includes(item.kind));
+  // Can any of this be moved along the timeline?
+  //
+  // ⚠ `MOVABLE`, NOT `GROUPABLE`. The two lists differ by exactly one kind —
+  // `frame` — and reading the wrong one hid the Nudge buttons for a selection of
+  // nothing but video clips, which are the clips this pane is most often opened
+  // on. Grouping and moving are different questions: a picture can be moved but
+  // cannot carry a `group_id` (see the note on both lists in selection.js).
+  const movable = selection.some((item) => MOVABLE.includes(item.kind));
 
   return (
     <div className="an-props">
@@ -90,7 +94,7 @@ export default function SelectionProperties({
         <PropGroup id="selection:move" title="Nudge">
           <PropRow
             full
-            info="Moves everything by the same amount, so the spacing between them never changes. Pictures stay where they are — a shot starts where the one before it ended, so it has nowhere else to be."
+            info="Moves everything by the same amount, so the spacing between them never changes. Video clips travel with the rest — each one is placed on its own row, so it has somewhere to go."
           >
             <span className="an-set-chips">
               <button type="button" className="opt-chip" onClick={() => onMove(-NUDGE_BIG_MS)}>

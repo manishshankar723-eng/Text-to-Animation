@@ -455,6 +455,100 @@ export function frameOrigin(frame) {
 }
 
 /**
+ * THE FOUR KINDS OF ROW A CLIP CAN LIVE ON, in compositing order bottom-first.
+ *
+ * ⚠ THIS IS THE `kind` ON A PICTURE ROW'S `AnimaticLayer` RECORD, and the reason
+ * there are four rather than one is that the user asked for the storyboard to
+ * keep its own rows: "i want you add Storybord Layer seprately … and user then
+ * next user want genearte shortyborad image to video footage from VEO 3 model in
+ * editor then video genarte and come in Storyboad video layer Sepratlty".
+ *
+ * ⚠ THE ORDER MATTERS — it is the order a freshly built stack is laid out in, so
+ * a Veo render draws OVER the panel it was made from (which is what lets 👁 on
+ * the render row show the board again underneath) and footage you dropped in
+ * draws over both.
+ */
+export const ROW_KINDS = ["board_image", "board_video", "stills", "video"];
+
+/** Is this a row that holds clips from `frames` — as opposed to text/shape/audio? */
+export const isCutRow = (kind) => ROW_KINDS.includes(kind);
+
+/**
+ * WHICH KINDS OF FILE EACH ROW ACCEPTS, in `kindOf` / `laneTakes` words.
+ *
+ * ⚠ IT LIVES HERE, BESIDE THE KINDS, because two very separate places ask it:
+ * the timeline decides whether to light a row up as a drop target, and the editor
+ * decides what the file dialog offers and what a drop is allowed to do. Written
+ * out twice they would drift, and the drift would read as "the row accepted my
+ * file and then refused it".
+ *
+ * ⚠ THE TWO BOARD ROWS TAKE NOTHING, and that is deliberate rather than an
+ * omission. A storyboard row is filled by the import and a Veo row by ✨ Animate;
+ * an uploaded file on either is the mixing the strict rows exist to stop.
+ */
+export const ROW_TAKES = {
+  board_image: [],
+  board_video: [],
+  stills: ["image"],
+  video: ["video"],
+};
+
+/**
+ * WHICH KIND OF ROW THIS CLIP BELONGS ON — the strict-rows rule, in one place.
+ *
+ * ⚠ IT IS DERIVED, NOT STORED, and that is deliberate: every part of the answer
+ * is already on the clip. A board reference (`src.storyboard_id`) says the clip
+ * came from a storyboard and `clipKind` says whether it is footage yet, so the
+ * four rows fall out of two questions and there is no fifth field that can
+ * disagree with them. It also means `attachVeoClip` moving a render onto its own
+ * row needs no migration: an animated panel KEEPS its `storyboard_id` (see the
+ * note in `attachVeoClip`), so it reads as `board_video` the moment it is video.
+ *
+ * ⚠ A COLOUR CARD IS A STILL. No file behind it, but it is full-frame, it takes
+ * up time, and a row of its own for two black slugs would be noise.
+ *
+ * ⚠ PRESENTATION AND PERMISSION ONLY — nothing here changes what is drawn or
+ * exported. The export reads a clip's `track` NUMBER and nothing else, so a clip
+ * sitting on a row of the wrong kind (which every project saved before these
+ * rows existed may have) still plays exactly as it did. Strictness governs what
+ * you can DO next; it is not a rule that rejects work already done.
+ */
+export function clipRowKind(frame) {
+  const board = !!frame?.src?.storyboard_id;
+  const video = clipKind(frame) === "video";
+  if (board) return video ? "board_video" : "board_image";
+  return video ? "video" : "stills";
+}
+
+/**
+ * The kind of row a set of clips MOSTLY belongs on, for naming a row that no
+ * record names — every row of every animatic saved before the records existed.
+ *
+ * ⚠ "MOSTLY", because a legacy row is allowed to hold a mix: it was built when a
+ * picture row took anything. The row is called after what is actually on it,
+ * which is the honest label and the one the ▶⇧ split button then acts on. Ties
+ * go to `ROW_KINDS` order, so an empty row is a plain video row — what a new
+ * animatic opens with.
+ */
+export function dominantRowKind(clips) {
+  const tally = new Map();
+  for (const clip of clips || []) {
+    const kind = clipRowKind(clip);
+    tally.set(kind, (tally.get(kind) || 0) + 1);
+  }
+  let best = "video";
+  let bestN = 0;
+  for (const kind of ROW_KINDS) {
+    const n = tally.get(kind) || 0;
+    if (n > bestN) {
+      bestN = n;
+      best = kind;
+    }
+  }
+  return best;
+}
+
+/**
  * WHICH MOMENT OF THE SOURCE FILE a video clip is showing, in ms.
  *
  * Null for anything that isn't video — a still and a colour card have no source

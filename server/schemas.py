@@ -1069,13 +1069,47 @@ class AnimaticLayer(BaseModel):
     be organised on separate rows instead of piling into one.
 
     Every kind also has an implicit DEFAULT lane (clips with `layer_id == ""`),
-    which is what every animatic saved before layers existed is made of. The
-    base picture sequence (`frames`) is not a layer: it is the video.
+    which is what every animatic saved before layers existed is made of.
+
+    ⚠ A PICTURE TRACK IS ONE OF THESE NOW TOO, and it is the odd one out: its
+    clips do NOT point at it by `layer_id`. A picture clip says which row it is on
+    with a NUMBER (`AnimaticFrame.track`), because that number is also the
+    compositing order — higher draws over lower — and the export reads it
+    directly. So a `kind: "video"` layer exists to say **"this row exists, and it
+    is called this"**, which is the one thing the number cannot say: an EMPTY row
+    has no clips to carry it.
+
+    That was the bug. A row you added and had not filled yet was pure view state,
+    so it vanished on reload — "when i see again my video picker layer not show".
+    A row is a record now, so it survives, and its ✕ can remove it like any other
+    layer's.
     """
 
     id: str
-    kind: str = Field(..., description="'image' | 'text' | 'shape' | 'audio'.")
+    kind: str = Field(
+        ...,
+        description=(
+            "A PICTURE TRACK: 'board_image' | 'board_video' | 'stills' | 'video'. "
+            "Or an overlay/timed row: 'image' | 'text' | 'shape' | 'audio'. "
+            "'image' is pictures composited OVER the cut; the four picture kinds "
+            "are IN it."
+        ),
+    )
     name: str = ""
+    # WHICH picture track this row is — the four picture kinds only, None
+    # everywhere else. Not an id, because `AnimaticFrame.track` is a number and
+    # the two have to agree; this is the record for that number, not a second way
+    # of naming it.
+    #
+    # ⚠ SAME CAP AS `AnimaticFrame.track` (le=15). A row numbered higher than a
+    # clip's track allows is a row no clip could ever be put on, and
+    # `tests/frame_save_fields_check.py` compares the two.
+    track: int | None = Field(
+        None,
+        ge=0,
+        le=15,
+        description="For a picture-track kind: which track this row is.",
+    )
 
 
 class AnimaticOverlay(BaseModel):
@@ -1503,6 +1537,35 @@ class AnimaticVideoUploadResponse(BaseModel):
     # Files that couldn't be stored or read, named rather than silently dropped
     # — same rule as the image upload response.
     rejected: list[str] = Field(default_factory=list)
+
+
+class AnimaticBoardImportRequest(BaseModel):
+    """Body for POST /animatics/{id}/import-storyboard.
+
+    Bringing a board into an animatic that ALREADY EXISTS, which is not the same
+    job as `source_storyboard_id` on create: that one fills a brand-new project,
+    this one adds a row to a project someone is in the middle of cutting. The
+    frames come back rather than being saved, because WHERE they land is the
+    client's decision — the same contract the image and video uploads follow.
+    """
+
+    storyboard_id: str = Field(..., description="The board to read panels from.")
+    default_duration_ms: int = Field(2000, ge=100, le=600_000)
+
+
+class AnimaticBoardImportResponse(BaseModel):
+    """Returned from POST /animatics/{id}/import-storyboard."""
+
+    frames: list[AnimaticFrame] = Field(default_factory=list)
+    # What to call the row these go on, so the name comes from the board rather
+    # than from a string built twice on two sides of the wire.
+    name: str = ""
+    title: str = ""
+    # True when the board's key poses would have overflowed the frame cap and one
+    # frame per shot was used instead. The client says so — silently importing
+    # something other than what was asked for is the kind of thing that reads as
+    # a bug months later.
+    panels_only: bool = False
 
 
 class AnimaticAudioResponse(BaseModel):

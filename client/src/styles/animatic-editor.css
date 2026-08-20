@@ -866,6 +866,61 @@
 .an-topbar .an-ws-btn:hover:not(:disabled) {
   color: var(--text);
 }
+/* The picker's own box and rows. ⚠ THESE WERE THE ADD-LAYER PICKER'S RULES
+   (`.an-layer-modal` / `-list` / `-opt`) and the workspace dialog borrowed them
+   by wearing both class names. Add-layer is a dropdown on the timeline now
+   (`.tl-layer-menu`), so this dialog is the only thing left that wants a column
+   of icon-plus-label-plus-note rows — it owns them under its own name rather
+   than keeping a base class with one user.
+   ⚠ AND IT HAS A SECOND USER AGAIN: the STORYBOARD PICKER is the same shape —
+   a column of pick-one rows in a modal — so it is listed alongside rather than
+   given a copy of these declarations. Two selectors on one rule is the thing
+   the note above was for; what it warned against was a base class kept alive
+   for a single user. */
+.an-ws-modal,
+.an-board-modal {
+  max-width: 26rem;
+  width: 92vw;
+  position: relative;
+}
+.an-ws-list,
+.an-board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+.an-ws-opt,
+.an-board-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0.6rem 0.75rem;
+}
+.an-ws-opt:hover:not(:disabled),
+.an-board-opt:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.an-ws-opt-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--primary);
+  font-weight: 700;
+  flex-shrink: 0;
+}
 /* Same in the picker: the option's square is the one place the two layouts are
    compared side by side, so the drawing fills that too. */
 .an-ws-opt-ico .icon {
@@ -873,7 +928,8 @@
   height: 1.6rem;
 }
 /* The workspace you're already in, in the picker. */
-.an-ws-opt.on {
+.an-ws-opt.on,
+.an-board-opt.on {
   border-color: var(--primary);
 }
 .an-ws-tick {
@@ -881,11 +937,12 @@
   color: var(--primary);
   font-weight: 700;
 }
-/* The tick is a THIRD child, so `.an-layer-opt > span:last-child` — which is
-   what stacks an option's label over its note — would land on the tick instead.
-   Name the label span by position and the option keeps its shape with or
-   without a tick. */
-.an-ws-opt > span:nth-child(2) {
+/* The tick is a THIRD child, so a `> span:last-child` rule — the obvious way to
+   stack an option's label over its note — would land on the tick instead. Name
+   the label span by position and the option keeps its shape with or without a
+   tick. */
+.an-ws-opt > span:nth-child(2),
+.an-board-opt > span:nth-child(2) {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -1222,10 +1279,17 @@
   /* A row of buttons keeps its height; the tracks below take the slack. */
   flex: 0 0 auto;
 }
+/* ⚠ POSITIONED, AND ABOVE THE TRACKS. It is what the add-layer dropdown hangs
+   from, so it has to be the containing block for it — and the z-index has to
+   clear everything drawn on a lane, the pinned ruler (8) and the playhead grip
+   (9) included, or the menu would open BEHIND the timeline it is adding a row
+   to. `.tl-cols` is not positioned, so raising this one box is enough. */
 .tl-head {
   flex: 0 0 auto;
   width: var(--tl-gutter-w);
   max-width: 100%;
+  position: relative;
+  z-index: 12;
 }
 /* Text / Colour card / Voiceover, handed in by the editor (`addTools`). Over
    the tracks, beside the only other control that adds anything — that pairing
@@ -1295,56 +1359,76 @@
   height: 0.85em;
 }
 
-/* --- Add-layer picker ---------------------------------------------------- */
-.an-layer-modal {
-  max-width: 26rem;
-  width: 92vw;
-  position: relative;
-}
-.an-layer-list {
+/* --- Add-layer picker: a dropdown under ＋ Add layer --------------------- */
+/* ⚠ IT WAS A FULL-SCREEN MODAL AND IS NOW A MENU (user-reported). "Which kind
+   of row?" is a five-item choice, and a dialog for it dimmed the timeline, threw
+   the eye to the middle of the screen and put the answer a long way from the
+   button that asked the question. It hangs off `.tl-head` instead, so the list
+   opens where the press landed.
+   ⚠ IT STARTS AT THE COLUMN'S WIDTH AND GROWS ONLY IF A LABEL NEEDS IT — the
+   menu belongs to the layer column, so it reads as that column's own list; a
+   fixed width would either clip "Picture track" or float free of the button. */
+.tl-layer-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: 14rem;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  margin-top: 1rem;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 35%);
 }
-.an-layer-opt {
+/* One line per kind: icon, name, nothing else. The note that used to sit under
+   each name is on the button's `title` — the same place an empty lane and a
+   row's ＋ put theirs. */
+.tl-layer-menu-opt {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: 0.5rem;
   width: 100%;
   box-sizing: border-box;
   text-align: left;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 9px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
   color: var(--text);
   cursor: pointer;
-  padding: 0.6rem 0.75rem;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.45rem;
+  white-space: nowrap;
 }
-.an-layer-opt:hover:not(:disabled) {
-  border-color: var(--primary);
+.tl-layer-menu-opt:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--primary);
 }
-.an-layer-opt:disabled {
+.tl-layer-menu-opt:disabled {
   opacity: var(--disabled-opacity);
   cursor: not-allowed;
 }
-.an-layer-opt > span:last-child {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-.an-layer-opt-ico {
+.tl-layer-menu-ico {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.9rem;
-  height: 1.9rem;
-  border-radius: 7px;
-  background: var(--panel);
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 5px;
+  background: var(--panel-2);
   color: var(--primary);
+  font-size: 0.72rem;
   font-weight: 700;
   flex-shrink: 0;
+}
+/* The hover fill is the icon's background too, so the chip stays visible
+   against it. */
+.tl-layer-menu-opt:hover:not(:disabled) .tl-layer-menu-ico {
+  background: var(--panel);
 }
 .an-past-end-note {
   font-size: 0.7rem;
