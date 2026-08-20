@@ -120,6 +120,11 @@
   min-height: 0;
   overflow: hidden;
 }
+/* ⚠ THE STROKE AND THE NUMBER CHIP COME FROM `--lane-edge` / `--lane-tint`,
+   which the ROW COLOUR block in animatic-lanes.css sets per hue — so a head is
+   drawn in the colour of the clips beside it ("layer buttun Strock color same of
+   layer clip color"). The fallbacks are what every row looked like before, so a
+   lane whose hue `laneHue` cannot name is plain rather than broken. */
 .tl-gutter-row {
   box-sizing: border-box;
   display: flex;
@@ -128,7 +133,7 @@
   font-size: 0.74rem;
   color: var(--muted);
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--lane-edge, var(--border));
   border-radius: 6px;
   padding: 0 0.4rem;
   overflow: hidden;
@@ -143,17 +148,36 @@
    kind, so EVERY row takes its box from `.tl-lane-row` (gutter) and `.tl-lane`
    (track) instead. Those two rules are now the only thing keeping the columns
    in step — see the LANES section further down. */
-.tl-layer-ico {
+/* THE ROW NUMBER, at the head of every gutter row. It replaced a per-kind glyph
+   (🎞 🖼 T ◆ ♪) — asked for as "i want remove layer icon and i want add Number
+   like 1, 2, 3, 4, 5". Same box the glyph had, so the names beside it stay on the
+   same left edge they were on and nothing in the column moved.
+   ⚠ `min-width`, NOT `width`: row 10 is two digits and a fixed box clipped it.
+   `tabular-nums` keeps 1 and 7 the same width so the names do not shuffle
+   sideways as you scroll a long stack.
+   ⚠ IT CARRIES THE ROW'S HUE AS A FILL, AND THE NUMERAL ON IT IS `--text`.
+   The fill is the reason the stroke reads as a HIGHLIGHT rather than an outline:
+   a 1px border alone is a hairline, and one filled chip per row is what the eye
+   catches down a column of eight. The NUMBER is not coloured — asked for as
+   "change text color this number and text color is sholid white", and it is the
+   better split anyway: the colour says which row, the white says what it says.
+   ⚠ `--text`, NOT `#fff`. It is white in the dark theme, which is what was
+   asked for; a literal white would be invisible on the light theme's white
+   panel. The fill comes from the ROW COLOUR block in animatic-lanes.css. */
+.tl-layer-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.05rem;
+  box-sizing: border-box;
+  min-width: 1.05rem;
   height: 1.05rem;
+  padding: 0 0.15rem;
   border-radius: 4px;
-  background: var(--panel);
-  color: var(--primary);
+  background: var(--lane-tint, var(--panel));
+  color: var(--text);
   font-size: 0.66rem;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 /* ⚠ NO `margin-left: auto` HERE ANY MORE — the cluster (`.tl-layer-acts` in
@@ -233,12 +257,14 @@
   border-style: dashed;
   border-color: var(--warn);
 }
+/* Pastel grey like every other clip label — see `.tl-bar-label` in animatic.css
+   for why the clips go grey where the gutter's names went white. */
 .tl-text-label {
   font-size: 0.7rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text);
+  color: var(--muted);
 }
 /* --- Shape track --------------------------------------------------------- */
 /* Structurally identical to the text track above — same free-floating clips,
@@ -256,6 +282,13 @@
   overflow: hidden;
   cursor: default;
 }
+/* ⚠ ITS COLOUR COMES OFF THE CLIP BLOCK, NOT OFF THIS RULE — same arrangement
+   as `.tl-bar`: `--clip-tint` / `--clip-edge` are assigned in the WHAT A CLIP IS,
+   IN COLOUR block in animatic-lanes.css, and the old neutral pair is the
+   fallback here. A shape bar was the last one on the timeline with no content
+   colour; it is violet now, matching the head of the row it sits on. The swatch
+   below still carries the SHAPE'S own colour — the two answer different
+   questions (which shape / which row). */
 .tl-shape {
   position: absolute;
   top: 3px;
@@ -265,8 +298,8 @@
   gap: 0.35rem;
   box-sizing: border-box;
   padding: 0 0.4rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  background: var(--clip-tint, var(--panel));
+  border: 1px solid var(--clip-edge, var(--border));
   border-radius: 5px;
   cursor: grab;
   overflow: hidden;
@@ -290,13 +323,16 @@
   width: 0.85rem;
   height: 0.85rem;
 }
+/* Shapes AND overlay pictures — the overlay clip borrows this class. Grey, for
+   the reason on `.tl-bar-label`. Neither goes gold when selected, so unlike the
+   bar and the text clip there is no `.sel` ink rule to keep in step. */
 .tl-shape-label {
   font-size: 0.68rem;
   text-transform: capitalize;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text);
+  color: var(--muted);
 }
 .tl-track-empty {
   font-size: 0.72rem;

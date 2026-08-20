@@ -1173,6 +1173,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  /* ⚠ WHITE, NOT THE ROW'S HUE AND NOT `--muted` EITHER (which the row sets for
+     everything in it). Asked for with the number beside it: "change text color
+     this number and text color is sholid white". The colour of a row is carried
+     by its stroke and its number chip — putting it on the NAME as well made the
+     one thing you actually read the hardest thing to read, and a muted name on a
+     stroked row looked switched off next to the `.off` state that means exactly
+     that. `--text`, so the light theme gets its near-black rather than an
+     invisible white. */
+  color: var(--text);
 }
 /* --- The four row controls: hide · lock · add · remove --------------------- */
 /* ⚠ ONE CLUSTER, FOUR FIXED SLOTS, ON EVERY ROW. The buttons used to place
@@ -1246,7 +1255,7 @@
    Both halves of the row are dimmed, because the gutter and the track are the
    same row and dimming one of them would read as a rendering fault. */
 .tl-gutter-row.off .tl-layer-name,
-.tl-gutter-row.off .tl-layer-ico {
+.tl-gutter-row.off .tl-layer-num {
   opacity: 0.45;
 }
 .tl-lane.off {
@@ -1308,6 +1317,56 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* --- AND ALL FOUR ARE GREEN --------------------------------------------- */
+/* ✨ Animate with Veo · T Text · ▣ Colour card · 🎙 Voiceover. Asked for as one
+   set — "Animate with veo, text, colour card and Voiceover buttun strock same of
+   tree like green" — and they are styled as one: a green stroke, a faint green
+   wash and green ink, so the row reads as "the things that MAKE something" next
+   to ＋ Add layer's gold.
+
+   ⚠ THE SELECTOR IS THE CONTAINER, NOT FOUR CLASSES. Whatever the editor hands
+   in as `addTools` belongs to this set by definition — a fifth tool added later
+   should not have to remember to opt in, and three of these four have no class
+   of their own to hang it on.
+
+   ⚠ GREEN HERE IS *NOT* `--clip-caption-*`, AND MUST NOT BE COLLAPSED INTO IT.
+   The captions row's mint is a CONTENT colour and this is a CONTROL colour, and
+   both are on screen at once — the captions head sits a row below this bar. The
+   tool green is deeper (a tree, as asked) and that difference is the only thing
+   keeping the two from reading as one signal. See `--tool-edge` in theme.css.
+
+   ⚠ THE HOVER RULE CARRIES `:not(:disabled)` BECAUSE `.btn:hover:not(:disabled)`
+   in base.css outweighs a plain `.tl-add-tools .btn:hover` — without it these
+   buttons would go gold the moment you pointed at one, which is the timeline's
+   selection colour. Two of the four are also disabled a lot of the time (no shot
+   to animate, no board dialogue to read), and a disabled tool keeps `.btn`'s own
+   fade rather than a green of its own. */
+/* ⚠ THE STROKE IS GREEN, THE LABEL IS WHITE. Asked for straight after the green
+   landed: "i want change + add Layer buttun, Animate with veo, text, colour card
+   and Voiceover buttun text color keep sholid white not buttun color". Green ink
+   on a green wash is a low-contrast button that also looks disabled, and the four
+   labels are the thing you read — the stroke is what groups them. The icons go
+   white with the text, since `Icon.jsx` draws in `currentColor`. */
+.tl-add-tools .btn {
+  border-color: var(--tool-edge);
+  background: var(--tool-tint);
+  color: var(--text);
+}
+.tl-add-tools .btn:hover:not(:disabled) {
+  border-color: var(--tool-edge);
+  background: var(--tool-tint);
+  color: var(--text);
+  /* The whole hover, since the border cannot move: a ring outside the button, in
+     its own colour. */
+  box-shadow: 0 0 0 2px var(--tool-tint);
+}
+.tl-add-tools .btn:disabled {
+  /* `.btn:disabled` only fades; the green would still be legible enough to look
+     pressable, so the stroke goes neutral as well as faint. */
+  border-color: var(--border);
+  background: var(--btn-bg);
+  color: var(--muted);
+}
 /* ⚠ IT TAKES ITS BOX FROM THE ROWS BELOW IT. As a small dashed strip it read
    as a caption over the column rather than the head of it — different height,
    different type, different colour from the layer rows it sits above
@@ -1330,7 +1389,11 @@
   background: var(--tl-clip-bg);
   border: 1px dashed var(--border-gold);
   border-radius: 6px;
-  color: var(--primary);
+  /* ⚠ WHITE LABEL, GOLD EDGE — the same split as the four green tools beside it
+     and the layer heads below it ("keep sholid white not buttun color"). The
+     dashed gold border and the gold wash still say what this control is; the
+     words are just words. */
+  color: var(--text);
   cursor: pointer;
   font-size: 0.74rem;
   font-weight: 600;

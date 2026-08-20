@@ -200,7 +200,72 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS
+**Last updated:** 2026-08-20 — **WHITE LABELS ON COLOURED STROKES, SHAPES GET A
+VIOLET, AND THE SIX TOOL LETTERS ARE ICONS** (user-specified). Three asks in one
+pass. ⚠ **THE COLOUR IS THE STROKE AND THE WORDS ARE `var(--text)`, NEVER `#fff`**
+— ＋ Add layer, the four green tools, and every layer head's number and name; a
+literal white would vanish on the light theme's white panel. That also retired
+`--lane-ink`. ⚠ **SHAPES ARE VIOLET ON BOTH SIDES OF THE ROW, WHICH OVERRULES A
+RULE WRITTEN DOWN IN TWO FILES** (a shape clip stayed neutral because its swatch
+carries the shape's own colour) — both comments now say what happened, because the
+swatch says WHICH SHAPE and the bar says WHICH ROW, and a neutral bar answered the
+second question with nothing. ⚠ **VIOLET AND THE VEO PURPLE ARE THE CLOSEST PAIR
+ON THIS TIMELINE** (~28° of hue, and they can sit one row apart) — check them
+together if either is retuned. ⚠ **AND THE TOOL LETTERS' SHORTCUTS NOW LIVE ONLY
+IN THE TOOLTIP**: the six buttons draw icons (`select` / `razor` / `ripple` /
+`rolling` / `hand` / `zoom` in `Icon.jsx`, plus `aria-label`, since the SVG is
+`aria-hidden`), so the "(V)" in every title is load-bearing. Then, in the other
+direction, **the CLIP labels went pastel grey** (`--muted` on `.tl-bar-label` /
+`.tl-text-label` / `.tl-shape-label`) — ⚠ **THE TWO COLUMNS ARE READ DIFFERENTLY**:
+a layer name is read once to find the row, a clip label is repeated forty times
+across a row of shots, and white at that count is what you see instead of the
+bars. Rolling was redrawn
+after looking at it — its first two-headed arrow merged into a diamond at the 18px
+the button actually is. **This CSS pass was looked at**: the icons and a head-bar +
+gutter mock built from the compiled `dist` stylesheet were rendered headless in
+both themes and read back. ⚠ **NOT THE REAL EDITOR THOUGH** — no Playwright suite
+run, so none of it met real project data.
+
+**Previously:** **A LAYER HEAD IS STROKED IN ITS OWN ROW'S COLOUR,
+AND THE FOUR MAKE-SOMETHING BUTTONS ARE GREEN** (user-specified). The gutter and
+the tracks now say the same thing in the same hue — Video orange, Stills and
+Story..Image pink, Story..Video purple, Text yellow, Captions mint, Audio gold —
+with the row's NUMBER CHIP filled in that hue, which is what turns a 1px stroke
+into a highlight you can find down a column of eight. ⚠ **ONE MAPPING, `laneHue`
+IN `Timeline.jsx`, AND IT MUST KEEP AGREEING WITH `clipRowKind`** — a picture
+row's hue comes from its STRICT KIND, and a head stroked orange above purple
+renders is worse than no stroke. ⚠ **THE STROKES ARE THEIR OWN `--lane-edge-*`
+TOKENS, NOT `--clip-*-edge` REUSED**: those pastels are translucent fills and wash
+out to grey at 1px, and a head must not read as another clip. Shapes and audio are
+stroked without claiming a content hue (audio's own gold; a lifted grey for
+shapes, which needs a separate `--lane-ink` because a stroke has to be seen and a
+numeral has to be read). The four tools in `.tl-add-tools` are green as a set —
+⚠ **`--tool-*` IS DELIBERATELY NOT `--clip-caption-*`** (a control colour beside
+a content colour, both on screen at once) and ⚠ **their hover restates everything
+with `:not(:disabled)`**, or `.btn:hover:not(:disabled)` in base.css turns them
+GOLD, which is the timeline's selection colour. Verified by `npx vite build` plus
+a read-back of the emitted CSS; ⚠ **NOT OPENED IN A BROWSER, SO THE CONTRAST
+JUDGEMENTS ARE REASONED AND NOT MEASURED** — look at Captions and Audio in dark
+and Shapes in both.
+
+**Previously:** **✨ ANIMATE WITH VEO IS IN THE TIMELINE'S ADD ROW,
+AND THE GUTTER NUMBERS ITS ROWS** (user-specified). The head row now reads
+`＋ Add layer · ✨ Animate with Veo · T Text · ▣ Colour card · 🎙 Voiceover`, in
+that order. ⚠ **THE NEW BUTTON WIDENS THE WAY IN, NOT WHAT MAY BE RENDERED** — it
+calls the same `openAnimate`, which only opens the priced dialog, and every spend
+guard stays on the server (`_animate_targets`). Because a toolbar has no selection
+to lean on, it aims at `selectedFrame || currentFrame` — the selected shot, else
+the shot under the playhead, which is the rule `＋ Text` already follows. And
+`LANE_ICON` is gone: each gutter row opens with its POSITION IN THE STACK, 1 at the
+top. ⚠ **THE NUMBER IS THE MAP INDEX, NEVER A STORED FIELD** — that is what makes
+a sixth layer say 6 by itself and renumbers the stack after a delete; a stored one
+prints "Layer 4" second in a stack of five. `.tl-layer-ico` → `.tl-layer-num`
+(`min-width`, `tabular-nums` — row 10 is two digits). Verified by
+`npx vite build`; ⚠ **NOT OPENED IN A BROWSER AND NO NEW REGRESSION CHECK** — both
+changes are placement, and "the button spends nothing on its own" is already
+asserted in `tests/animate_guard_check.py`.
+
+**Previously:** **THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS
 WITH IT, AND A VEO RENDER IS PURPLE** (user-reported, three screenshots). ⚠ **THE
 CONFIRM'S BUG WAS NOT WHERE IT OPENED — IT WAS WHAT OPENING IT DID.** It hung
 BELOW its row inside `.tl-gutter-clip`, which is `overflow: hidden`, and the labels
@@ -1448,7 +1513,260 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS WITH IT, AND A VEO RENDER IS PURPLE (user-reported, with three screenshots)
+### 2026-08-20 (latest) — WHITE LABELS ON COLOURED STROKES, SHAPES GET A VIOLET, AND THE SIX TOOL LETTERS ARE ICONS (user-specified, with three screenshots)
+
+> "i want change + add Layer buttun, Animate with veo, text, colour card and
+>  Voiceover buttun text color keep sholid white not buttun color
+>
+>  and you not add shapes storck color violet color and change clip too with same
+>  layer color petran
+>
+>  look image 2. i want you add icon replace V, C, B, N, H, Z leter. see iamge 3 i
+>  giive you ref but you not copy you add your own style and keep comman icon."
+>
+> — and mid-turn, with a fourth screenshot: "change text color this number and
+>  text color is sholid white"
+
+**1. THE COLOUR IS THE STROKE; THE WORDS ARE WHITE.** ＋ Add layer, the four green
+tools, and — after the follow-up — every layer head's NUMBER and NAME. Green ink
+on a green wash was a low-contrast button that also read as disabled, and the same
+was true one column left: colouring the row's name made the one thing you actually
+read the hardest thing to read, and a muted name on a stroked row looked switched
+OFF next to the `.off` state that means exactly that.
+- ⚠ **`var(--text)`, NEVER `#fff`.** It is white in the dark theme, which is what
+  was asked for, and near-black in the light one — a literal white would be
+  invisible on a white panel. Checked in both.
+- The icons inside Text and Colour card follow for free: `Icon.jsx` draws in
+  `currentColor`.
+- This also retired `--lane-ink`, which existed for one revision only to keep the
+  Shapes numeral readable. With every numeral on `--text` there is nothing left
+  for it to solve.
+
+**2. SHAPES ARE VIOLET, ON BOTH SIDES OF THE ROW.** ⚠ **THIS OVERRULES A RULE THAT
+WAS WRITTEN DOWN TWICE**, in `theme.css` and in `animatic-lanes.css`: a shape clip
+stayed neutral because `.tl-shape-swatch` already carries the shape's OWN colour,
+and two unrelated colours in one box was the thing to avoid. Both comments now say
+what happened instead of still claiming the old rule — the argument was thinner
+than it looked, because **the swatch says WHICH SHAPE and the bar says WHICH ROW**,
+and a neutral bar answered the second question with nothing. The swatch stays; it
+is a dot and the tint is the whole bar, so they do not compete.
+- `--clip-shape-tint` / `--clip-shape-edge` are the sixth content hue, and
+  `.tl-shape` now reads `--clip-tint` / `--clip-edge` with its old neutral pair as
+  the fallback — the same arrangement `.tl-bar` has always had, so `.sel` and
+  `.over-end` keep their specificity.
+- ⚠ **VIOLET AND THE VEO PURPLE ARE THE CLOSEST PAIR ON THIS TIMELINE** (~28° of
+  hue in dark, ~30° in light, and they can sit one row apart). The violet is
+  pushed toward magenta and run at a higher saturation; the purple is bluer and
+  softer. Rendered side by side before committing — if either is ever retuned,
+  check them together again.
+
+**3. V / C / B / N / H / Z ARE SIX DRAWN ICONS.** Pointer, scissors, ripple,
+rolling, hand, magnifier-with-a-plus — in `Icon.jsx`'s own 24-box with `STROKE`,
+not traced from the reference that was handed over ("you not copy you add your own
+style and keep comman icon").
+- ⚠ **THE SHORTCUT NOW LIVES ONLY IN THE TOOLTIP.** The letter on the button was
+  what taught the key; every `title` is still "<label> (<key>) — <hint>" and that
+  is now load-bearing. Each button also gained an `aria-label`, because the SVG is
+  `aria-hidden` and the button would otherwise announce as "button".
+- ⚠ **TWO OF THE SIX ARE NOT COMMON ICONS, BECAUSE THE TOOLS ARE NOT.** Ripple
+  and rolling have no everyday glyph, so they are drawn as what they DO and as a
+  PAIR: ripple is a fixed edge, an arrow and a clip sliding back onto it (the track
+  gets shorter); rolling is one bar whose outer edges never move with a seam in the
+  middle (the track stays the same length). Redraw one and you redraw both.
+- ⚠ **ROLLING WAS REDRAWN AFTER LOOKING AT IT.** The first version put a
+  two-headed arrow across the bar; its shaft ran straight over the seam and the
+  whole thing merged into one diamond at 18px — which is the size the button is,
+  so it is the size that decides. Four variants were rendered and compared; the
+  shipped one drops the shaft and keeps two shaftless chevrons, and it is the only
+  one where the SEAM survives.
+- ⚠ **`.an-tool-ico` EXISTS BECAUSE `.an-tool` IS SIZED FOR A CAPITAL LETTER**
+  (`min-width` + side padding). An 18px icon is wider than that content box, so the
+  six came out oblong beside the square ↶ / ↷ / 🧲 / 🥁 next to them. Fixed
+  width, no padding. The icon is also sized in `rem` not `em`: the button's
+  font-size is 0.72rem, so an `em` icon rendered at ~12px.
+
+**4. AND THE CLIP LABELS WENT THE OTHER WAY — PASTEL GREY.** Straight after the
+white landed: "keep clip text name keep pastel grey not white". ⚠ **THE TWO
+COLUMNS ARE READ DIFFERENTLY, AND THAT IS THE WHOLE ANSWER.** A layer NAME is read
+once, to find the row, so it is `--text`. A clip label is repeated forty times
+across a row of shots, and at that count white labels are what you see INSTEAD of
+the bars — grey lets the bar's content colour come forward, which is the only
+reason it has one. `--muted` on `.tl-bar-label`, `.tl-text-label` and
+`.tl-shape-label` (which the overlay clip borrows), the same token
+`.tl-bar-secs` already used, so a bar's name and its duration now match — they do
+not need a colour between them, one is long and left-aligned and the other is
+short and right-aligned. ⚠ **THE `.sel` INK RULES ABOVE THEM STILL WIN AND MUST**:
+a selected bar is gold and its label has to go `--gold-ink` or it disappears.
+
+**Files:** `client/src/components/Icon.jsx` (six new paths),
+`client/src/components/AnimaticEditor.jsx` (the tool buttons render `<Icon>`;
+`TOOLS`' contract note), `client/src/styles/theme.css` (`--clip-shape-*`, violet
+`--lane-edge-shape`, both themes; the palette note rewritten),
+`client/src/styles/animatic-lanes.css` (`.tl-shape`'s colour rule; the shape-head
+note), `client/src/styles/animatic-text.css` (`.tl-shape` reads the vars;
+`.tl-layer-num` ink), `client/src/styles/animatic-editor.css` (white labels on
+＋ Add layer, the four tools, and `.tl-layer-name`),
+`client/src/styles/animatic-tools.css` (`.an-tool-ico`),
+`client/src/styles/animatic.css` (`.tl-bar-label` grey).
+
+**Verified:** `npx vite build` clean, and — unusually for a CSS pass — **this one
+was actually looked at.** Two throwaway pages were rendered headless and read
+back: the six icons at 72px and at their real 18px, and a mock of the head bar
+plus seven gutter rows built from **the compiled `dist` stylesheet** with the real
+class names, shot in BOTH themes, with `getComputedStyle` read back to confirm the
+light theme was really applying (the first downscaled shot looked like it was not,
+and that was a misread). That is what caught the rolling icon and what confirms
+Shapes-violet against Storyboard-video-purple. The grey labels were shot the same
+way — nine bars, one of them selected, both themes — to confirm the gold clip's
+dark ink survived the change. ⚠ **STILL NOT THE REAL EDITOR** —
+the Playwright suite runs only when asked for, so nothing here was exercised
+against real project data.
+
+### 2026-08-20 — A LAYER HEAD IS STROKED IN ITS OWN ROW'S COLOUR, AND THE FOUR MAKE-SOMETHING BUTTONS ARE GREEN (user-specified, with a screenshot)
+
+> "i want we add color Strock in Layer buttun and Animate with veo, text, colour
+>  card and Voiceover buttun too i want layer and buttun look like some highlight
+>
+>  and you keep layer buttun Strock color same of layer clip color like video layer
+>  clip color is now pestal Orange so you keep video layar strock little Dark
+>
+>  And Animate with veo, text, colour card and Voiceover buttun strock same of tree
+>  like green"
+
+**1. THE GUTTER AND THE TRACKS NOW SAY THE SAME THING IN THE SAME COLOUR.** Every
+layer head takes the hue of the clips on its row — Video orange, Story..Image and
+Stills pink, Story..Video purple, Text yellow, Captions mint, Audio gold — so you
+can find the orange row without reading five names.
+- ⚠ **ONE MAPPING, IN `laneHue` (`Timeline.jsx`), AND IT MUST KEEP AGREEING WITH
+  `clipRowKind`.** A picture row's hue comes from its STRICT KIND (`rowKind`), not
+  from `kind`: all four picture rows draw `frames`, and the strict kind is exactly
+  the distinction the colours carry. A head stroked orange above a row of purple
+  renders would be worse than no stroke at all, which is why the answer is not
+  computed twice.
+- ⚠ **THE STROKES ARE THEIR OWN TOKENS (`--lane-edge-*`), NOT `--clip-*-edge`
+  REUSED.** Two reasons and both matter: those pastels are translucent FILLS and
+  wash out to grey when borrowed for a 1px border, and the head must not read as
+  another clip — it is the thing that NAMES the row. Deeper and opaque, which is
+  also what "keep video layar strock little Dark" asked for. Both themes, in
+  `theme.css`, and one step deeper again in light where they sit on white.
+- ⚠ **THE NUMBER CHIP CARRIES THE HUE TOO, and that is what makes it a
+  HIGHLIGHT.** A 1px border on its own is a hairline; one filled chip per row is
+  what the eye catches down a column of eight. It fills with the row's `-tint-alt`
+  and inks with the stroke.
+- ⚠ **SHAPES AND AUDIO ARE STROKED WITHOUT CLAIMING A CONTENT HUE.** The clip
+  palette leaves both alone on purpose (a shape carries the shape's OWN colour in
+  its swatch, audio carries a waveform), so audio takes the gold its clips are
+  already bordered with and Shapes takes a lifted grey — the colour a shape clip
+  is actually drawn in. Every head is stroked, as asked, and no row claims a hue
+  it has no right to.
+- ⚠ **SHAPES NEEDED A SEPARATE `--lane-ink`.** A stroke only has to be VISIBLE
+  against the panel; a numeral has to be READABLE inside the chip, and that grey
+  fails it in both themes (near-black on near-black, then near-white on white).
+  It is the one hue that overrides the ink.
+- Every rule assigns custom properties and nothing else — the same discipline as
+  the `.tl-bar.is-*` block it sits under, and for the same reason: `.off`,
+  `.locked` and `.sel` keep exactly the specificity they had. Fallbacks are the
+  old plain values, so a lane `laneHue` cannot name is plain, not broken.
+
+**2. ✨ ANIMATE WITH VEO · T TEXT · ▣ COLOUR CARD · 🎙 VOICEOVER ARE ONE GREEN
+SET.** Green stroke, faint green wash, green ink (the icons are `currentColor`, so
+they follow), against ＋ Add layer's gold beside them — the row now reads as "the
+things that MAKE something" next to "the thing that makes a ROW".
+- ⚠ **THE SELECTOR IS THE CONTAINER (`.tl-add-tools .btn`), NOT FOUR CLASSES.**
+  Whatever the editor hands in as `addTools` is in this set by definition; a fifth
+  tool should not have to remember to opt in, and three of the four have no class
+  of their own to hang it on.
+- ⚠ **`--tool-*` IS NOT `--clip-caption-*`, AND MUST NOT BE COLLAPSED INTO IT.**
+  The captions row's mint is a CONTENT colour, this is a CONTROL colour, and both
+  are on screen at once — the captions head sits a row under this bar. The tool
+  green is deeper (a tree, as asked) and that difference is the only thing keeping
+  them from reading as one signal.
+- ⚠ **THE HOVER RULE RESTATES EVERYTHING AND CARRIES `:not(:disabled)`**, because
+  `.btn:hover:not(:disabled)` in `base.css` outweighs a plain
+  `.tl-add-tools .btn:hover` — without it these four would go GOLD on hover, which
+  is the timeline's selection colour. The hover is a ring in their own green
+  instead, since the border cannot move. And `:disabled` goes neutral as well as
+  faint: two of the four are disabled a lot of the time (no shot to animate, no
+  board dialogue to read) and a green that stays legible looks pressable.
+
+**Files:** `client/src/styles/theme.css` (`--lane-edge-*`, `--tool-*`, both
+themes), `client/src/components/Timeline.jsx` (`LANE_HUE` + `laneHue`, the
+`tl-hue-*` class on the gutter row), `client/src/styles/animatic-lanes.css` (the
+new ROW COLOUR block beside the clip one), `client/src/styles/animatic-text.css`
+(`.tl-gutter-row`'s border and `.tl-layer-num` read the variables),
+`client/src/styles/animatic-editor.css` (the four green tools).
+
+**Verified:** `npx vite build` — clean, and the emitted CSS was read back to
+confirm all seven `.tl-hue-*` rules and the three `.tl-add-tools .btn` rules
+survive minification with their `var()` chains intact. ⚠ **NOT OPENED IN A
+BROWSER** (the Playwright suite runs only when asked for), so **the contrast
+judgements above are reasoned, not measured** — the four to look at first are
+Captions mint and Audio gold in DARK (the two dimmest strokes) and Shapes in BOTH
+(the only row with a separate ink).
+
+### 2026-08-20 — ✨ ANIMATE WITH VEO JOINS THE TIMELINE'S ADD ROW, AND THE GUTTER NUMBERS ITS ROWS INSTEAD OF DRAWING A GLYPH (user-specified, with three screenshots)
+
+> "Animate with Veo Buttun i want one more place for user confort you arange like
+>  this in timeline : + add layer, Animate with Veo and text, colour card and
+>  Voiceover
+>
+>  i want remove layer icon and i want add Number like 1, 2, 3, 4, 5 and if user
+>  add layer then automatic show number 6. 7. like increase"
+
+**1. A SECOND WAY TO ✨ ANIMATE WITH VEO, IN `addTools`.** The only one before this
+sat in the Properties pane's Footage group, which meant selecting the shot, finding
+the group and scrolling to it — while the shot you were animating was under the
+playhead. It is now first in the timeline's head row, in the order asked for:
+`＋ Add layer · ✨ Animate with Veo · T Text · ▣ Colour card · 🎙 Voiceover`.
+- ⚠ **IT WIDENS THE WAY IN, NOT WHAT MAY BE RENDERED.** Both buttons call the one
+  `openAnimate`, which opens the priced dialog and renders nothing — the rule every
+  paid path here follows. What is refused and what it costs stays in
+  `_animate_targets` / `_estimate_animate` (`server/animatics.py`); no guard was
+  copied, loosened or duplicated on the client.
+- ⚠ **IT NEEDED A TARGET, BECAUSE A TOOLBAR HAS NO SELECTION TO LEAN ON.**
+  `veoTarget = selectedFrame || currentFrame` — the selected shot if there is one,
+  else the shot under the playhead, which is the same rule `＋ Text` follows, so
+  every button in that row means "this shot" and means it the same way. Disabled
+  (with a tooltip saying why) when there is no shot at all or the server is busy.
+- Its label still changes to **"✨ Render again with Veo"** once that shot has a
+  ready render (`veoTargetClip`), for the reason `FrameProperties` gives: paying a
+  second time has to be a deliberate act and must never look like a retry.
+- Plain `btn small`, deliberately NOT the `.an-add-text` / `.an-add-card` weight —
+  those two are the pair that makes a clip out of nothing and costs nothing. This
+  one spends, like 🎙 Voiceover beside it.
+
+**2. THE GUTTER OPENS EVERY ROW WITH ITS NUMBER.** `LANE_ICON` is gone — the
+per-kind glyphs (🎞 / 🖼 / T / ◆ / ♪) are replaced by the row's position in
+the stack, `1` at the top (the row drawn over everything else, which is the order
+this gutter has always been in).
+- ⚠ **IT IS THE MAP INDEX, NOT A FIELD ON THE LANE.** That is the whole of "if user
+  add layer then automatic show number 6, 7": a sixth row is 6 the moment it
+  exists, and deleting row 2 makes what was 3 into 2. A stored number would go
+  stale on the first delete and print "Layer 4" second in a stack of five.
+- ⚠ **IT IS NOT AN ID.** Every handler on the row still goes by `lane.key`.
+- `lane.icon` is read nowhere now, so the captions lane's `icon: "❝"` went with
+  it rather than being left as a field nothing looks at. What a row IS was already
+  said twice over by its NAME beside the number and by the colour of the clips on
+  it; its POSITION had nothing saying it at all, and a number is what a track head
+  is called by in every NLE ("put that on 3").
+- `.tl-layer-ico` → `.tl-layer-num`, same box so nothing in the column moved, plus
+  `min-width` instead of `width` (row 10 is two digits and a fixed box clipped it)
+  and `tabular-nums` so 1 and 7 are the same width down a long stack.
+
+**Files:** `client/src/components/AnimaticEditor.jsx` (`veoTarget`,
+`veoTargetClip`, the button at the head of `addTools`, the captions lane's dead
+`icon`), `client/src/components/Timeline.jsx` (`LANE_ICON` removed, the gutter's
+`laneIndex`, `.tl-layer-num`), `client/src/styles/animatic-text.css`
+(`.tl-layer-num`), `client/src/styles/animatic-editor.css` (the dimmed-row rule
+follows the rename).
+
+**Verified:** `npx vite build` — clean, 129 modules. ⚠ **NOT OPENED IN A BROWSER**
+(the Playwright suite runs only when asked for) and **no regression check was
+written for either change**: both are placement, and the one thing worth asserting
+— that pressing the new button spends nothing on its own — is already covered by
+`tests/animate_guard_check.py` against the server it would have to go through.
+
+### 2026-08-20 — THE ROW ✕ ASKS BESIDE ITS ROW, TAKES THE CLIPS WITH IT, AND A VEO RENDER IS PURPLE (user-reported, with three screenshots)
 
 > "when i delete Story..Video 2 layer that time dropdown msg appair in below so my
 >  layer buttun goes up and my time clip layer still so this look not good so i
@@ -11425,7 +11743,12 @@ language — do NOT copy the Drawstory reference's look/colours.
       already-finished render: the animate dialog and its price, the poll from
       queued → rendering → ready, whether 👁 on that row shows the board again,
       whether a SECOND render re-uses the row rather than making another, and a
-      reload after a render now that idempotency keys on `upload_id`. ⚠ **THE IMPORT HALF OF THIS ITEM IS CLOSED**
+      reload after a render now that idempotency keys on `upload_id`. ⚠ **AND THERE
+      ARE TWO BUTTONS TO DRIVE NOW** (2026-08-20): the Properties one and the new
+      one in the timeline's add row. The second aims at `selectedFrame ||
+      currentFrame`, so the thing to check by eye is that it animates THE SHOT YOU
+      MEANT with nothing selected — the one under the playhead — and that its label
+      flips to "Render again with Veo" once that shot has a render. ⚠ **THE IMPORT HALF OF THIS ITEM IS CLOSED**
       — the picker's thumbnail handshake was exactly the bug the user reported, and
       `tests/editor_board_import_check.py` now drives it end to end. What is left
       to eyeball there is only the board LIST against real data (are the panel
@@ -11472,16 +11795,24 @@ language — do NOT copy the Drawstory reference's look/colours.
       this item asked ("what does a gap show?") was answered "the track below it,
       and the letterbox colour when there is nothing below" — which is what made
       the rest of it fall out.
-- [ ] **THE LANE ICONS ARE STILL EMOJI, AND ONE OF THEM CARRIES ITS OWN COLOUR.**
-      `LANE_ICON` in `Timeline.jsx` is `🖼 T ◆ ♪` with `❝` on the captions row and
-      🔇/🔊 on audio’s speaker. 🖼 and 🔇/🔊 render as full-colour emoji beside four
-      monochrome gold glyphs — which is the exact fault `Icon.jsx`’s header comment
-      was written about ("put them in a row and they look like they came from three
-      different apps"), and it is why the eye and the ✕ are drawn SVG already. The
-      work is four paths in `PATHS` (picture, shape, note, quote), `LANE_ICON`
-      holding icon NAMES, and `<Icon>` in the row. Left out of the 2026-08-20 fix
-      deliberately: the screenshot the user asked to get back has those emoji in it,
-      so changing them in the same pass would have answered a question nobody asked.
+- [ ] **THE TIMELINE BAR NOW MIXES SIX DRAWN ICONS WITH FOUR GLYPHS.** The six
+      tools are SVG since 2026-08-20; ↶ undo, ↷ redo, 🧲 snapping and 🥁 cut-to-beat
+      sit right beside them and are still text/emoji, and 🧲 / 🥁 render
+      full-colour next to monochrome strokes. That is the fault `Icon.jsx`'s header
+      comment was written about, and replacing the letters made the row MORE mixed,
+      not less — it was out of scope (the ask named V/C/B/N/H/Z and nothing else)
+      but it is the obvious next pass: four paths (undo-arrow, redo-arrow, magnet,
+      drum or metronome) and `<Icon>` in four buttons.
+- [ ] **THE SPEAKER IS THE LAST EMOJI IN THE GUTTER.** ⚠ **THE LANE ICONS HALF OF
+      THIS ITEM IS CLOSED, AND NOT THE WAY IT WAS PLANNED** — the user asked for the
+      icons GONE rather than redrawn, so `LANE_ICON` was deleted and each row opens
+      with its number (2026-08-20). The four `PATHS` this item wanted (picture,
+      shape, note, quote) are therefore not needed. What is still emoji is audio’s
+      🔇/🔊, which renders full-colour beside the monochrome SVG eye, lock and ✕
+      next to it — the exact fault `Icon.jsx`’s header comment was written about.
+      The work is two paths in `PATHS` (speaker, speaker-off) and `<Icon>` in the
+      mute button, and it should be done in the same pass as any other change to
+      that cluster.
 - [ ] **EYES ON THE PICTURE TRACKS, IN THE REAL EDITOR.** Two browser suites drive
       every gesture and assert on what moved; neither can say whether the bar READS
       as a stack. What needs looking at: does a GAP look like a deliberate hole

@@ -165,6 +165,89 @@ const PATHS = {
       <rect x="3.3" y="7.1" width="5" height="9" rx="0.6" fill="currentColor" stroke="none" />
     </>
   ),
+  // --- THE TIMELINE'S SIX TOOLS -------------------------------------------
+  // They were the LETTERS V / C / B / N / H / Z until now — Premiere's keys,
+  // printed straight into the buttons. Replaced on request ("i want you add icon
+  // replace V, C, B, N, H, Z leter"), with a reference toolbar handed over and an
+  // explicit "you not copy you add your own style and keep comman icon": so these
+  // are the ordinary shapes everyone already knows (pointer, scissors,
+  // magnifier), drawn in THIS file's 24-box with `STROKE`, not traced.
+  //
+  // ⚠ THE KEY IS NOW ONLY IN THE TOOLTIP, and that is the one thing this change
+  // cost. Every button's `title` is "<label> (<key>) — <hint>", which is where it
+  // has to stay: the shortcuts still work, and the letter was the only thing
+  // teaching them. Do not drop the key from a title.
+  //
+  // ⚠ TWO OF THE SIX ARE NOT COMMON ICONS, BECAUSE THE TOOLS ARE NOT COMMON:
+  // ripple and rolling have no everyday glyph, so they are drawn as WHAT THEY DO
+  // TO CLIPS — which is also how they differ from each other, and the pair has
+  // to be read as a pair. Ripple closes a gap (a fixed edge, an arrow, and the
+  // clip sliding back to it: the track gets SHORTER). Rolling moves a seam inside
+  // a bar whose outer edges never move (one bar, a seam, a two-headed arrow ON
+  // the seam: the track stays the SAME LENGTH). If either is redrawn, redraw both.
+
+  // The pointer. Solid, like `play`, for the same reason: an outlined cursor
+  // reads as a shape someone drew rather than as the cursor itself.
+  select: <path d="M4.5 3.5 11.8 21l2.6-7.6L22 10.8Z" fill="currentColor" stroke="none" />,
+  // The razor, as scissors — the one universal "cut here". Premiere's own blade
+  // is a lovelier drawing and illegible at 18px, which is the size this button is.
+  razor: (
+    <>
+      <circle cx="6" cy="6" r="2.6" {...STROKE} />
+      <circle cx="6" cy="18" r="2.6" {...STROKE} />
+      <path d="M20.5 3.5 8.2 15.8" {...STROKE} />
+      <path d="M14.3 14.4 20.5 20.5" {...STROKE} />
+      <path d="M8.2 8.2 11.6 11.6" {...STROKE} />
+    </>
+  ),
+  // Ripple: the edge that stays, and the clip after it sliding back onto it.
+  ripple: (
+    <>
+      <path d="M3.5 4.5v15" {...STROKE} />
+      <rect x="12.5" y="7" width="8" height="10" rx="1.5" {...STROKE} />
+      <path d="M10.5 12H5.2" {...STROKE} />
+      <path d="M7.4 9.8 5.2 12l2.2 2.2" {...STROKE} />
+    </>
+  ),
+  // Rolling: one bar, both ends nailed down, and the seam in the middle free to
+  // move either way.
+  // ⚠ THE CHEVRONS HAVE NO SHAFT, AND THAT IS THE WHOLE DRAWING. With a
+  // two-headed arrow across the bar the shaft ran straight over the seam and the
+  // pair merged into one diamond at 18px — which is the size this button is, so
+  // it is the size that decides. Rendered and compared against three
+  // alternatives; this is the only one where the SEAM survives, and the seam is
+  // the thing that moves.
+  rolling: (
+    <>
+      <rect x="2.5" y="6.5" width="19" height="11" rx="1.5" {...STROKE} />
+      <path d="M12 6.5v11" {...STROKE} />
+      <path d="M9.6 9.9 7.4 12l2.2 2.1" {...STROKE} />
+      <path d="M14.4 9.9 16.6 12l-2.2 2.1" {...STROKE} />
+    </>
+  ),
+  // The hand. Four strokes and no shortcut: a palm is one of the few shapes the
+  // eye will not accept simplified — a mitten reads as a mitten.
+  hand: (
+    <>
+      <path d="M18 11V6a2 2 0 0 0-4 0" {...STROKE} />
+      <path d="M14 10V4.5a2 2 0 0 0-4 0V6" {...STROKE} />
+      <path d="M10 10.5V6.5a2 2 0 0 0-4 0V14" {...STROKE} />
+      <path
+        d="M18 8a2 2 0 0 1 4 0v6a8 8 0 0 1-8 8h-1.6c-2.6 0-4.3-.9-5.7-2.3l-3.4-3.4a2 2 0 0 1 2.8-2.8L7.6 15"
+        {...STROKE}
+      />
+    </>
+  ),
+  // Zoom. The + is the DEFAULT direction, which is what a click does; Alt-click
+  // zooms out and the tooltip is the only place that can say so.
+  zoom: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.6" {...STROKE} />
+      <path d="M20.5 20.5 15.4 15.4" {...STROKE} />
+      <path d="M10.5 7.6v5.8M7.6 10.5h5.8" {...STROKE} />
+    </>
+  ),
+
   // The gear. Eight teeth as one ring of short spokes rather than a scalloped
   // outline: at 1em a drawn cog turns to mud, while spokes stay readable.
   settings: (

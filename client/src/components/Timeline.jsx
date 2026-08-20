@@ -115,16 +115,58 @@ const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overla
 // Per-lane chrome. Keyed by lane kind, so adding a kind is one entry here and
 // one branch in `renderLane` — not another copy of the whole gutter.
 //
-// ⚠ A LANE MAY OVERRIDE ANY OF THE THREE with its own `icon` / `hint` / `add`.
-// The captions lane is the one that does: it is an ordinary text lane in every
-// way that matters to this file, and the only thing it needs is to say what it
-// is in the gutter. A `kind` of its own would have meant a fourth branch in
+// ⚠ A LANE MAY OVERRIDE EITHER OF THE TWO with its own `hint` / `add`. The
+// captions lane is the one that does: it is an ordinary text lane in every way
+// that matters to this file, and the only thing it needs is to say what it is
+// in the gutter. A `kind` of its own would have meant a fourth branch in
 // `renderLane` drawing exactly the same clips.
-// ⚠ THE VIDEO ROW AND THE OVERLAY ROW NO LONGER SHARE AN ICON. Both were
-// 🖼, so the gutter drew "Video" and "Images" identically — half of why the
-// two rows were confusable, the other half being that the video row used to be
-// called "Pictures" too. 🎞 is a strip of film: the cut itself.
-const LANE_ICON = { frames: "🎞", image: "🖼", text: "T", shape: "◆", audio: "♪" };
+//
+// ⚠ THERE IS NO PER-KIND ICON HERE ANY MORE, and `lane.icon` is not read
+// anywhere. The gutter used to open every row with a glyph for its kind
+// (🎞 / 🖼 / T / ◆ / ♪); it opens with the row's NUMBER now — asked for as "i
+// want remove layer icon and i want add Number like 1, 2, 3, 4, 5 and if user
+// add layer then automatic show number 6. 7. like increase". The kind was
+// already said twice over by the row's NAME beside it and by the colour of the
+// clips on it, where the position in the stack had nothing saying it at all —
+// and a number is what a track head is called by in every NLE ("put that on
+// 3"). See `.tl-layer-num` in animatic-text.css, and the number's own note
+// where the gutter row is drawn.
+// --- WHAT COLOUR IS A ROW? -------------------------------------------------
+// One hue per lane, and it is THE HUE OF THE CLIPS THAT LANE HOLDS — asked for
+// as "you keep layer buttun Strock color same of layer clip color like video
+// layer clip color is now pestal Orange so you keep video layar strock little
+// Dark". The class it returns only assigns custom properties; the colours
+// themselves are in `theme.css` and the assignment is the ROW COLOUR block in
+// `animatic-lanes.css`, beside the one that colours the bars.
+//
+// ⚠ ONE FUNCTION, BECAUSE THE MAPPING IS THE PART THAT CAN GO WRONG. A head's
+// hue has to agree with what `clipRowKind` gives the bars beside it, and a second
+// copy of "board_video means purple" is one copy too many — a Storyboard-video
+// head stroked orange over a row of purple renders is worse than no stroke.
+//
+// ⚠ `stills` AND `board_image` ARE BOTH PINK, for the reason `.tl-bar.is-still`
+// gives: the timeline's question is "is this moving?", and where a still came
+// from is the Media pane's filing rather than a third hue.
+const LANE_HUE = {
+  board_image: "image",
+  board_video: "veo",
+  stills: "image",
+  video: "video",
+};
+const laneHue = (lane) => {
+  // A picture row's hue is its STRICT KIND, not its `kind` — all four of them
+  // draw `frames`, and that is exactly the distinction the colours carry.
+  if (lane.kind === "frames") return LANE_HUE[lane.rowKind] || "video";
+  // A picture composited over the cut is still a picture (`.tl-overlay`).
+  if (lane.kind === "image") return "image";
+  // The captions row is a text row wearing green — same rule, same reason as
+  // `.tl-captions .tl-text`.
+  if (lane.kind === "text") return lane.layerId === CAPTION_LAYER_ID ? "caption" : "text";
+  // "shape" and "audio", which are the two the palette leaves alone. See the
+  // ROW COLOUR block for what they get instead.
+  return lane.kind;
+};
+
 const LANE_HINT = {
   frames: "A video track — footage and stills, each placed on its own",
   image: "Pictures composited OVER the video, timed on their own",
@@ -3100,7 +3142,12 @@ export default function Timeline({
               the pane. */}
           <div className="tl-gutter-clip" ref={gutterClipRef}>
             <div className="tl-gutter-rows" ref={gutterRef}>
-            {lanes.map((lane) => {
+            {/* ⚠ THE INDEX IS RENDERED, so it is taken from the map rather than
+                stored on the lane: the number IS the row's place in the stack,
+                and a stored one would go stale the moment a row above it was
+                deleted — which is exactly how a "Layer 4" ends up second in a
+                stack of five. Its note is on the number itself, below. */}
+            {lanes.map((lane, laneIndex) => {
               // A lane is one TRACK, which since the razor may be several
               // clips. The gutter speaks for all of them: its speaker mutes the
               // whole row and its ✕ removes the whole row, because "this track"
@@ -3118,9 +3165,14 @@ export default function Timeline({
                   /* The handle the confirm is measured against — see the layout
                      effect by `laneDelete`. A key, not an index: rows come and go. */
                   data-lane-row={lane.key}
-                  className={`tl-gutter-row tl-lane-row tl-gutter-${lane.kind} ${
-                    selected ? "sel" : ""
-                  } ${lane.hidden ? "off" : ""} ${lane.locked ? "locked" : ""}`}
+                  /* `tl-hue-*` is the row's own colour — see `laneHue`. It is
+                     the only class here that says anything about CONTENT; the
+                     rest are states. */
+                  className={`tl-gutter-row tl-lane-row tl-gutter-${lane.kind} tl-hue-${laneHue(
+                    lane
+                  )} ${selected ? "sel" : ""} ${lane.hidden ? "off" : ""} ${
+                    lane.locked ? "locked" : ""
+                  }`}
                   title={
                     (lane.hint || LANE_HINT[lane.kind]) +
                     "\nDouble-click to select everything on this row."
@@ -3132,7 +3184,16 @@ export default function Timeline({
                      this cannot miss the clips that are scrolled off the end. */
                   onDoubleClick={() => selectLane(lane)}
                 >
-                  <span className="tl-layer-ico">{lane.icon || LANE_ICON[lane.kind]}</span>
+                  {/* THE ROW'S NUMBER, counted from the top of the stack — 1 is
+                      the row drawn over everything else, which is the order this
+                      gutter has always been in. It renumbers itself: add a sixth
+                      layer and it is 6, delete row 2 and what was 3 becomes 2,
+                      because it is the map index and not a field on the lane.
+                      ⚠ IT IS NOT AN ID AND MUST NEVER BE USED AS ONE — every
+                      handler on this row still goes by `lane.key`. */}
+                  <span className="tl-layer-num" title={`Layer ${laneIndex + 1}`}>
+                    {laneIndex + 1}
+                  </span>
                   {/* ⚠ ITS OWN `title`, ON TOP OF THE ROW'S. The column is a fixed
                       width and a long name still ends in an ellipsis there, so the
                       one place that has to be able to say the whole name is the

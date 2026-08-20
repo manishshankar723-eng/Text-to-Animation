@@ -24,6 +24,15 @@
   border-radius: 5px;
   cursor: pointer;
 }
+/* ⚠ A TOOL THAT DRAWS AN ICON IS SQUARE, and it has to say so. `.an-tool` is
+   sized for a capital letter — `min-width` plus side padding — and an 18px icon
+   is wider than that content box, so the button grew sideways and the six of them
+   came out oblong beside the square ↶ / ↷ / 🧲 / 🥁 next to them. A fixed
+   width and no padding: the icon centres itself in the flex box. */
+.an-tool-ico {
+  width: 1.7rem;
+  padding: 0;
+}
 .an-tool:hover:not(:disabled) {
   border-color: var(--border-gold);
   color: var(--primary);

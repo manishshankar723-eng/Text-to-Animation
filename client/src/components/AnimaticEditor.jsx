@@ -430,6 +430,14 @@ const newColorClip = (color, durationMs) => ({
 // --- Tools (Premiere's keys, only the ones that mean something here) --------
 // An animatic is stills, captions, shapes and audio: there are no keyframes to
 // pull, so there is no Pen tool. Everything else maps onto a real action.
+//
+// ⚠ EVERY `id` HERE IS ALSO AN ICON NAME IN `Icon.jsx`, because the buttons draw
+// icons rather than printing the letters. Add a tool and you add a path there in
+// the same breath — `Icon` renders nothing for a name it does not know, so a
+// missing one is an invisible button, not an error.
+// ⚠ AND `key` IS NOW ONLY VISIBLE IN THE TOOLTIP. It still binds the shortcut
+// (the keydown handler matches it against `e.code` as "Key" + the letter); it
+// just no longer labels the button, so the title is the only thing teaching it.
 const TOOLS = [
   {
     id: "select",
@@ -1725,7 +1733,10 @@ export default function AnimaticEditor({
         name: captionLayer?.name || CAPTION_LAYER_NAME,
         layerId: CAPTION_LAYER_ID,
         removable: true,
-        icon: "❝",
+        // ⚠ NO `icon` ANY MORE. The gutter numbers its rows instead of drawing a
+        // glyph for each kind (see `LANE_HINT`'s note in `Timeline.jsx`), so the ❝
+        // that stood here would be a field nothing reads. What this row IS is said by
+        // its name and its hint — which is where it was always said.
         hint: "Captions written from a track — a run replaces this row, never your own text",
         add: "Add a caption to this row by hand",
       });
@@ -4969,6 +4980,18 @@ export default function AnimaticEditor({
   const veoFor = (frameId) =>
     veoClips.filter((c) => c.frame_id === frameId).slice(-1)[0] || null;
 
+  // ✨ Animate with Veo has a SECOND way in now — the timeline's own add row,
+  // beside ＋ Add layer — and a button standing there has no selection to lean on
+  // the way the Properties pane's does. THE SELECTED SHOT IF THERE IS ONE, ELSE
+  // THE SHOT UNDER THE PLAYHEAD: the same rule ＋ Text follows, so every button in
+  // that row means "this shot" and means it the same way.
+  // ⚠ IT PICKS A TARGET, IT DOES NOT WIDEN WHAT MAY BE ANIMATED. Both buttons
+  // call the one `openAnimate`, which opens the priced dialog and nothing else —
+  // what a render costs and what it refuses stays with the server
+  // (`_animate_targets` in `server/animatics.py`).
+  const veoTarget = selectedFrame || currentFrame;
+  const veoTargetClip = veoTarget ? veoFor(veoTarget.id) : null;
+
   // Ask what it would cost. FREE — this is the call that fills the dialog.
   async function askToAnimate(force = false) {
     if (!animateFor || !animatePrompt.trim()) return;
@@ -7053,18 +7076,31 @@ export default function AnimaticEditor({
           </span>
 
           {/* The tool palette. Each one is a real behaviour on this timeline —
-              see TOOLS. Premiere's letters, so the muscle memory carries over. */}
+              see TOOLS. Premiere's letters still SELECT them; they no longer
+              label them.
+              ⚠ THE KEY LIVES IN THE `title` NOW AND NOWHERE ELSE. The button used
+              to print its letter, which taught the shortcut by simply being
+              there; drawing an icon instead ("i want you add icon replace V, C,
+              B, N, H, Z leter") takes that away, so the tooltip is the only thing
+              left that can teach it — the "(V)" in every title is load-bearing.
+              ⚠ AND `aria-label` IS THE LABEL, not the icon: the SVG is
+              `aria-hidden`, so without this the button would announce as
+              "button". `title` alone is not read reliably.
+              ⚠ SIZED IN `rem`, NOT `em`. `.an-tool`'s font-size is 0.72rem —
+              sized for a capital letter — so an `em` icon came out ~12px and
+              these drawings need ~18 to stay legible. */}
           <span className="an-tools" role="group" aria-label="Tools">
             {TOOLS.map((t) => (
               <button
                 key={t.id}
                 type="button"
-                className={`an-tool ${tool === t.id ? "on" : ""}`}
+                className={`an-tool an-tool-ico ${tool === t.id ? "on" : ""}`}
                 onClick={() => setTool(t.id)}
                 title={`${t.label} (${t.key}) — ${t.hint}`}
+                aria-label={`${t.label} (${t.key})`}
                 aria-pressed={tool === t.id}
               >
-                {t.key}
+                <Icon name={t.id} size="1.15rem" />
               </button>
             ))}
           </span>
@@ -7175,6 +7211,42 @@ export default function AnimaticEditor({
             onManageEffects={manageEffects}
             addTools={
               <>
+                {/* ⚠ SPENDS MONEY — and like the Properties pane's copy it renders
+                    nothing itself: it opens the dialog that prices the job first.
+                    It is a SECOND way to the same door, asked for as "Animate
+                    with Veo Buttun i want one more place for user confort": the
+                    only one before this sat in Properties, which meant selecting
+                    the shot, finding the Footage group and scrolling to it —
+                    while the thing you were animating was right under the
+                    playhead.
+                    FIRST IN THE ROW, before Text, because that is the order it
+                    was asked for ("+ add layer, Animate with Veo and text, colour
+                    card and Voiceover") and because it is the one control here
+                    that changes the PICTURE rather than adding something over it.
+                    Plain `btn small`, deliberately NOT the `.an-add-text` /
+                    `.an-add-card` weight: those two are the pair that makes a clip
+                    out of nothing and costs nothing. This one spends, and reading
+                    as one of them would be a lie about it — the same reason
+                    🎙 Voiceover is plain. */}
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={!veoTarget || serverBusy}
+                  onClick={() => veoTarget && openAnimate(veoTarget.id)}
+                  title={
+                    !veoTarget
+                      ? "Nothing to animate yet — add a shot first, or park the playhead on one"
+                      : veoTargetClip?.status === "ready"
+                        ? `Render “${veoTarget.label || "this shot"}” again with Veo — it costs the same as the first time`
+                        : `Turn “${veoTarget.label || "this shot"}” into real footage with Veo (you'll see the price first)`
+                  }
+                >
+                  {animating
+                    ? "✨ Animating…"
+                    : veoTargetClip?.status === "ready"
+                      ? "✨ Render again with Veo"
+                      : "✨ Animate with Veo"}
+                </button>
                 <button
                   type="button"
                   className="btn small an-add-text"

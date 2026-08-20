@@ -59,11 +59,17 @@
      `-alt` is the second shade the picture tracks alternate between so two
      neighbouring shots stay tellable apart when zoomed out; only the bars use
      it. `-edge` is the border.
-     ⚠ SHAPES ARE DELIBERATELY NOT IN HERE. A shape clip stays neutral because
-     the swatch inside it already carries the shape's OWN colour — see the
-     `.tl-shape` comment — and two unrelated colours in one box is exactly what
-     that rule was written to avoid. Audio is out for the same kind of reason:
-     the waveform is the content, and it is already its own colour. */
+     ⚠ SHAPES ARE IN HERE NOW, AND THEY USED NOT TO BE. The old rule was that a
+     shape clip stays neutral because the swatch inside it already carries the
+     shape's OWN colour, and two unrelated colours in one box is what the rule
+     was written to avoid. It was overruled directly — "you not add shapes storck
+     color violet color and change clip too with same layer color petran" — and
+     the argument for it was thinner than it looked: the swatch says WHICH shape,
+     the bar says WHAT ROW you are on, and a neutral bar was the one clip on the
+     timeline that answered the second question with nothing. The swatch stays.
+     ⚠ AUDIO IS STILL OUT, and for the reason that does still hold: the waveform
+     IS the content and is already its own colour, so there is nothing a tint
+     would add. */
   --clip-video-tint: rgba(244, 168, 104, 0.17);
   --clip-video-tint-alt: rgba(244, 168, 104, 0.25);
   --clip-video-edge: rgba(244, 168, 104, 0.52);
@@ -86,6 +92,48 @@
   --clip-text-edge: rgba(244, 216, 122, 0.55);
   --clip-caption-tint: rgba(150, 214, 160, 0.2);
   --clip-caption-edge: rgba(150, 214, 160, 0.55);
+  /* ⚠ VIOLET, AND IT HAS TO STAY CLEAR OF THE VEO PURPLE. Those two are the
+     closest pair on this timeline — ~28° of hue apart — so the violet is pushed
+     toward magenta and run at a higher saturation than the purple, which is
+     bluer and softer. If either is ever retuned, check them side by side: a
+     Shapes row and a Storyboard-video row can sit one above the other. */
+  --clip-shape-tint: rgba(210, 125, 240, 0.17);
+  --clip-shape-edge: rgba(210, 125, 240, 0.55);
+  /* --- A LAYER HEAD IS STROKED IN ITS OWN ROW'S COLOUR --------------------
+     ⚠ SAME HUE AS THE CLIPS ON THAT ROW, ONE STEP DEEPER AND AT FULL OPACITY.
+     Asked for in exactly those terms: "you keep layer buttun Strock color same
+     of layer clip color like video layer clip color is now pestal Orange so you
+     keep video layar strock little Dark". The pastels above are translucent
+     FILLS — borrowed for a 1px border they wash out to grey against the panel,
+     which is why these are their own tokens rather than `--clip-*-edge` reused.
+     Deeper also keeps the two apart on purpose: the gutter says what a row IS,
+     the bars say what is on it, and the head must not look like a clip.
+     ⚠ THE MAPPING FROM A ROW TO ONE OF THESE IS `laneHue` IN `Timeline.jsx`,
+     and it has to keep agreeing with `clipRowKind` — a Storyboard-video head
+     stroked orange over purple renders is worse than no stroke at all. */
+  --lane-edge-video: #c9793d;
+  --lane-edge-image: #c76f95;
+  --lane-edge-veo: #8a6fc9;
+  --lane-edge-text: #c9a94a;
+  --lane-edge-caption: #5f9c6c;
+  /* Audio's clips are bordered `--border-gold` and its waveform is gold, so its
+     head is the same gold, deepened. */
+  --lane-edge-audio: #a8873a;
+  /* Shapes, violet, matching the `--clip-shape-*` bars on that row — it was a
+     lifted grey for one revision, on the old "shapes stay neutral" rule, and
+     that rule is gone (see the palette note above). */
+  --lane-edge-shape: #b95fd7;
+  /* --- THE TIMELINE'S "MAKE SOMETHING" BUTTONS ARE GREEN -----------------
+     ✨ Animate with Veo · T Text · ▣ Colour card · 🎙 Voiceover, the four in
+     `.tl-add-tools`. Asked for as "buttun strock same of tree like green".
+     ⚠ IT IS A DEEPER GREEN THAN `--clip-caption-*` ON PURPOSE. The captions
+     row's mint is a CONTENT colour and this is a CONTROL colour, and the two are
+     visible at the same time — the captions head is one row under this button
+     bar. Tree green against mint is the only thing keeping them from reading as
+     the same signal, so do not collapse them into one token. */
+  --tool-edge: #4f9c63;
+  --tool-tint: rgba(120, 200, 140, 0.11);
+  --tool-ink: #93d6a6;
   --disabled-opacity: 0.45;
   /* Plain-button surface — see the .btn comment. */
   --btn-bg: var(--panel-2);
@@ -172,6 +220,23 @@
   --clip-text-edge: rgba(138, 107, 23, 0.52);
   --clip-caption-tint: rgba(31, 122, 61, 0.14);
   --clip-caption-edge: rgba(31, 122, 61, 0.5);
+  /* Light theme's violet is pushed further from the Veo purple again — the two
+     are only ~23° apart at these lightnesses, so this one goes to ~292°. */
+  --clip-shape-tint: rgba(149, 28, 168, 0.13);
+  --clip-shape-edge: rgba(149, 28, 168, 0.5);
+  /* The row-head strokes and the tool green, light theme. Deeper again than the
+     dark set: these sit on a white panel, so the same hue has to go DOWN in
+     lightness to hold the same weight. See the dark block for the reasoning. */
+  --lane-edge-video: #8f4c07;
+  --lane-edge-image: #8c2e51;
+  --lane-edge-veo: #522e91;
+  --lane-edge-text: #6d5512;
+  --lane-edge-caption: #186131;
+  --lane-edge-audio: #775c15;
+  --lane-edge-shape: #7a1589;
+  --tool-edge: #1f7a3d;
+  --tool-tint: rgba(31, 122, 61, 0.09);
+  --tool-ink: #14612f;
   /* 0.45 washes a disabled button out to nothing on a light surface. */
   --disabled-opacity: 0.6;
   --btn-bg: var(--panel);

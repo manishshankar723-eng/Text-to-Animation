@@ -586,12 +586,23 @@
 }
 /* The inset that used to be the bar's own padding. On the label instead, so a
    bar too narrow to hold a label is still drawn at its real width. */
+/* ⚠ PASTEL GREY, NOT WHITE, AND THAT IS THE OPPOSITE OF THE GUTTER. Asked for
+   directly: "keep clip text name keep pastel grey not white". The two columns are
+   read differently — a layer NAME is read once to find the row, so it is `--text`;
+   a clip label is repeated forty times across a row of shots, and at that count
+   white labels are what you see instead of the bars. Grey lets the content colour
+   of the bar come forward, which is the whole point of having one.
+   ⚠ `--muted`, THE SAME TOKEN `.tl-bar-secs` USES, so a bar's name and its
+   duration now match. They do not need a colour between them: one is long and
+   left-aligned, the other is short and right-aligned.
+   ⚠ AND THE `.sel` RULES ABOVE STILL WIN — a selected bar is gold and its label
+   has to go dark (`--gold-ink`) or it disappears. Do not fold these together. */
 .tl-bar-label {
   font-size: 0.7rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text);
+  color: var(--muted);
   padding-left: 0.35rem;
 }
 .tl-bar-secs {

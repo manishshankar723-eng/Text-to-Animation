@@ -584,3 +584,74 @@
   --clip-tint: var(--clip-caption-tint);
   --clip-edge: var(--clip-caption-edge);
 }
+/* ⚠ SHAPES ARE THE SIXTH HUE, AND THE BLOCK COMMENT ABOVE USED TO SAY THEY
+   WOULD NEVER BE. Overruled directly: "you not add shapes storck color violet
+   color and change clip too with same layer color petran". The argument against
+   was that `.tl-shape-swatch` already carries the shape's own colour; what that
+   missed is that the swatch says WHICH SHAPE and the bar says WHICH ROW, and a
+   neutral bar answered the second question with nothing. Both are on the clip
+   now and they are different sizes for a reason — the swatch is a dot, the tint
+   is the whole bar. Violet, because it is the hue asked for; see
+   `--clip-shape-*` in theme.css for why it is pushed away from the Veo purple. */
+.tl-shape {
+  --clip-tint: var(--clip-shape-tint);
+  --clip-edge: var(--clip-shape-edge);
+}
+
+/* --- WHAT A ROW IS, IN COLOUR ------------------------------------------- */
+/* The same idea one column to the left: a LAYER HEAD is stroked in the hue of
+   the clips on its row, so the gutter and the tracks say the same thing and you
+   can find the orange row without reading five names. Asked for directly: "you
+   keep layer buttun Strock color same of layer clip color like video layer clip
+   color is now pestal Orange so you keep video layar strock little Dark".
+
+   ⚠ SAME RULE AS THE BLOCK ABOVE: EVERY RULE HERE ASSIGNS CUSTOM PROPERTIES AND
+   NOTHING ELSE. `.tl-gutter-row` reads `--lane-edge` for its border and
+   `.tl-layer-num` reads `--lane-edge` / `--lane-tint` for the chip (both in
+   animatic-text.css), each with the old plain value as its fallback — so a state
+   rule like `.off` keeps exactly the specificity it had, and a row this block
+   somehow misses is plain rather than broken.
+
+   ⚠ THE HUE CLASS IS PUT ON BY `laneHue` IN `Timeline.jsx`, WHICH IS THE ONLY
+   PLACE THE MAPPING LIVES. It has to keep agreeing with `clipRowKind` — the head
+   of a Storyboard-video row stroked orange above purple renders is worse than no
+   stroke at all.
+
+   ⚠ THE STROKES ARE DEEPER THAN THE CLIP FILLS, from their own `--lane-edge-*`
+   tokens rather than `--clip-*-edge`. Two reasons, and both matter: a translucent
+   pastel borrowed for a 1px border washes out to grey against `--panel-2`, and
+   the head must not read as another clip — it is the thing that NAMES the row.
+
+   ⚠ AUDIO IS THE ONE HUE HERE WITH NO CLIP RULE OPPOSITE IT. It takes the gold
+   its own clips are already bordered with and its waveform is already drawn in,
+   so the head matches the row without the palette gaining a colour. Shapes had
+   the same arrangement (a lifted grey) for one revision and now has a violet of
+   its own on both sides — see `.tl-shape` above. */
+.tl-hue-video {
+  --lane-edge: var(--lane-edge-video);
+  --lane-tint: var(--clip-video-tint-alt);
+}
+.tl-hue-image {
+  --lane-edge: var(--lane-edge-image);
+  --lane-tint: var(--clip-image-tint-alt);
+}
+.tl-hue-veo {
+  --lane-edge: var(--lane-edge-veo);
+  --lane-tint: var(--clip-veo-tint-alt);
+}
+.tl-hue-text {
+  --lane-edge: var(--lane-edge-text);
+  --lane-tint: var(--clip-text-tint);
+}
+.tl-hue-caption {
+  --lane-edge: var(--lane-edge-caption);
+  --lane-tint: var(--clip-caption-tint);
+}
+.tl-hue-audio {
+  --lane-edge: var(--lane-edge-audio);
+  --lane-tint: var(--tl-clip-bg-alt);
+}
+.tl-hue-shape {
+  --lane-edge: var(--lane-edge-shape);
+  --lane-tint: var(--clip-shape-tint);
+}
