@@ -541,6 +541,65 @@
   margin: 0 auto;
 }
 
+/* The full-screen button. It lives at the EMPTY END of the Program head —
+   after the title, the shape menu and the size read-out — because that is the
+   corner every video player puts it in and so the only place anyone looks.
+   ⚠ `margin-left: auto`, NOT an `.an-spacer`. This head wraps: a growing
+   spacer would sit on whichever line it landed on and shove the button to the
+   far edge of a row it no longer shares with the title. `auto` margin pushes
+   against the line the button is actually on, which is right either way. */
+.an-fs-btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* --- The Program pane, full screen --------------------------------------- */
+/* ⚠ TWO IDENTICAL BLOCKS, AND THEY MAY NOT BE COMMA-JOINED. One unknown
+   selector invalidates a whole list, so `:fullscreen, :-webkit-full-screen`
+   would drop BOTH rules in whichever engine doesn't know the other's spelling
+   — which is every one of them.
+
+   Almost nothing has to be said here. The picture is already sized off its
+   container (`.an-screen-fit` is a size container and `.an-nle .an-screen`
+   measures it in `cqw`/`cqh`), so a body that fills the display makes the
+   monitor fill it too, at the project's exact aspect ratio, with no second
+   sizing rule to keep in step. What IS needed is a surface: the UA paints the
+   backdrop black behind the element but leaves the element's own background
+   alone, and `.an-pane-body` has none — the clock and the labels are dark ink
+   and would have gone to black on black. */
+.an-program-body:fullscreen {
+  background: var(--bg);
+  padding: 1.2rem;
+  gap: 1rem;
+}
+.an-program-body:-webkit-full-screen {
+  background: var(--bg);
+  padding: 1.2rem;
+  gap: 1rem;
+}
+/* Bigger transport, because it is now being read from across a room rather
+   than from a pane 300px wide. */
+.an-program-body:fullscreen .an-transport .an-tbtn {
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 0.9rem;
+}
+.an-program-body:fullscreen .an-transport .an-play {
+  width: 2.7rem;
+  height: 2.7rem;
+  font-size: 1.05rem;
+}
+.an-program-body:-webkit-full-screen .an-transport .an-tbtn {
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 0.9rem;
+}
+.an-program-body:-webkit-full-screen .an-transport .an-play {
+  width: 2.7rem;
+  height: 2.7rem;
+  font-size: 1.05rem;
+}
+
 /* --- Properties pane ----------------------------------------------------- */
 .an-pane-back {
   margin-left: auto;
@@ -1496,6 +1555,79 @@
 .tl-layer-menu-opt:hover:not(:disabled) .tl-layer-menu-ico {
   background: var(--panel);
 }
+/* --- A clip's right-click menu ------------------------------------------- */
+/* ⚠ IT OPENS BESIDE THE BAR, NOT UNDER THE POINTER, and that is the request:
+   "when user click right mouse on clip in timeline so user get side of clip
+   dropdown Download text buttun". A menu at the pointer would sit ON the clip and
+   hide the thing it is about; beside it, the bar stays visible and the connection
+   between the two is obvious.
+
+   ⚠ `left` AND `top` ARE BOTH SET IN JS, so there is nothing to set here — see
+   the layout effect beside the ✕'s confirm in Timeline.jsx. The bar it belongs to
+   lives inside `.tl-scroll`, which scrolls on both axes and clips; this box is a
+   child of `.tl-cols`, which clips nothing, so the offsets have to be measured
+   rather than inherited. It also flips to the LEFT of the bar when a clip near the
+   end of the pane leaves no room on the right — `data-side` records which, for
+   the caret below.
+
+   The surface is `.tl-layer-menu`'s, and the rows are literally its
+   `.tl-layer-menu-opt`: ➕ Add layer, the ✕'s confirm and this are three popovers
+   on one bar, and three different-looking ones would read as three unrelated
+   mechanisms. */
+.tl-clip-menu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateY(-50%);
+  z-index: 40;
+  width: max-content;
+  min-width: 9rem;
+  max-width: 15rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 35%);
+  text-align: left;
+}
+/* A caret pointing back at the bar. It is on whichever side the menu ISN'T — a
+   menu that flipped left points right — so it always points at the clip. */
+.tl-clip-menu::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 0.42rem;
+  height: 0.42rem;
+  transform: translateY(-50%) rotate(45deg);
+  background: var(--panel);
+}
+.tl-clip-menu[data-side="right"]::before {
+  left: -0.21rem;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.tl-clip-menu[data-side="left"]::before {
+  right: -0.21rem;
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+/* WHICH CLIP THIS IS ABOUT. On a crowded row the menu can end up some way from
+   its bar, and "Download" on its own would not say what of. A heading, not an
+   option: it is not pressable and it does not take the hover fill. */
+.tl-clip-menu-of {
+  padding: 0.2rem 0.45rem 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .an-past-end-note {
   font-size: 0.7rem;
   color: var(--warn);

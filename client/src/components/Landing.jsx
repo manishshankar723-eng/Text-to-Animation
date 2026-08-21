@@ -50,7 +50,7 @@ const WORKFLOWS = [
   },
   {
     icon: "🎬",
-    title: "Storyboard to Animatics",
+    title: "Video Editor",
     body:
       "Turn a board into a timed MP4 with captions and audio — dialogue, music, the lot. Runs on ffmpeg locally, so it spends no AI credits at all.",
     tags: ["Timed edit", "Captions + audio", "No credits"],

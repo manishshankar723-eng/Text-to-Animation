@@ -2050,6 +2050,15 @@ class AnimaticPanelSource(BaseModel):
     description: str = ""
     camera: str = ""
     location: str = ""
+    # WHAT IS SPOKEN in this shot, straight off the board. Empty for a silent
+    # shot, and every consumer treats that as "draw no dialogue block".
+    #
+    # ⚠ IT IS HERE FOR ✨ ANIMATE, NOT FOR THE REDRAW PANE. The panel prompt is
+    # never given the spoken lines — an image model draws words it is told about
+    # as speech bubbles (see `Shot.dialogue`) — but Veo can SAY them, so the
+    # animate dialog offers them as something the user appends to the motion
+    # prompt on purpose. The redraw pane simply ignores this field.
+    dialogue: list[DialogueLine] = Field(default_factory=list)
     title: str = ""
     can_regenerate: bool = False
     reason: str = ""

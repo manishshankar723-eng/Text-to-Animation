@@ -178,7 +178,7 @@ export default function Home({
     {
       id: "storyboard-to-animatics",
       icon: "🎬",
-      label: "Storyboard to Animatics",
+      label: "Video Editor",
       items: animatics.map((a) => ({
         key: a.job_id,
         title: a.title || "Animatic",

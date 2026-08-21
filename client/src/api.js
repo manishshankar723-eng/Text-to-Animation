@@ -943,6 +943,50 @@ export async function fetchAnimaticMedia(path, maxEdge = 0) {
   return URL.createObjectURL(await res.blob());
 }
 
+// SAVE ONE SOURCE FILE OUT OF A PROJECT — used by the Veo download, which is
+// the one asset in an animatic that cannot be got back: an upload can be dropped
+// in again and a panel is still on the board, but re-rendering this costs money.
+// So it has to be savable BEFORE the project is deleted.
+//
+// ⚠ IT GOES THROUGH `fetch`, NOT A PLAIN LINK, for the reason every download in
+// this file does: `/animatics/{id}/media/{upload_id}` requires a bearer token, and
+// an `<a href>` sends no headers — it would land on a 401 page. The blob is
+// fetched with the token, handed to a temporary `<a download>`, and revoked.
+//
+// ⚠ THE NAME IS THE CALLER'S. This route serves stills, footage and audio and
+// says nothing about which — there is no Content-Disposition to read, so
+// `serverFilename` has nothing to work with. The editor knows the clip's label,
+// which is what the user will look for on their desk.
+export async function downloadAnimaticMedia(id, uploadId, filename) {
+  if (!id || !uploadId) throw new Error("There's no file behind this clip.");
+  const token = getToken();
+  let res;
+  try {
+    res = await fetch(`${BASE}/animatics/${id}/media/${uploadId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error(`Can't reach the server at ${BASE}. Is the backend running?`);
+  }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail || detail;
+    } catch {
+      /* non-json */
+    }
+    throw new Error(detail);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "clip.mp4";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadAnimaticVideo(id, filename) {
   const token = getToken();
   let res;

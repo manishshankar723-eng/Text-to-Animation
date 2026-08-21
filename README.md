@@ -13,7 +13,7 @@ Six workflows ship in the UI, all live:
 | 🖼️ **Text to Turnaround Image** | Reference photo or prompt → per-part turnaround sheets → optional 3D (Meshy). |
 | 📝 **Script to Storyboard** | Script → shot list → drawn storyboard panels, with cast/set continuity. |
 | 🖼️ **Image to Animatic Image** | One panel → its key poses for a 2–10s shot. |
-| 🎬 **Storyboard to Animatics** | The NLE-style editor: timeline, keyframes, text, colour, audio mix → MP4/GIF/PNG. |
+| 🎬 **Video Editor** | The NLE-style editor: timeline, keyframes, text, colour, audio mix → MP4/GIF/PNG. |
 | 🎞️ **Image to AI Video** | Per-shot **Veo** render + assembly into the final cut. ⚠ **Billed per second.** |
 
 > **Agents (Claude / Codex / Gemini): read [`AGENTS.md`](./AGENTS.md) first**, not this

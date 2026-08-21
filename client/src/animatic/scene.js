@@ -549,6 +549,32 @@ export const isBoardRow = (rowKind) =>
   rowKind === "board_image" || rowKind === "board_video";
 
 /**
+ * IS THIS A VEO RENDER? — asked of a CLIP or of a MEDIA-LIBRARY CARD alike.
+ *
+ * ⚠ IT IS `cardRowKind` AND NOT A NEW FIELD, and that is the whole point. A
+ * paid render is already identified in this codebase exactly once, by the two
+ * facts on the clip itself: it came out of a storyboard (`src.storyboard_id`,
+ * kept underneath the video source — see `attachVeoClip`) and it is footage now.
+ * That pair is `board_video`, which is what draws these bars pastel purple
+ * (`.tl-bar.is-veo`) and what pins them to the Storyboard video row. A second
+ * definition — a `from_veo` flag, or a lookup into the server's `veo_clips` —
+ * would be a second opinion that can disagree with the colour on screen, and it
+ * would need a migration for every project rendered before the day it was added.
+ * This needs none: it is derived from what is already saved.
+ *
+ * ⚠ AND IT CANNOT CATCH AN UPLOAD BY MISTAKE. `ROW_TAKES` gives both board rows
+ * an empty list, so no dropped file ever acquires a `storyboard_id`; the only
+ * things that carry one are the import (stills) and ✨ Animate (footage).
+ *
+ * @param item a picture clip from `frames`, or an asset from the Media library.
+ *             Both carry `kind` and `src`, which is all this asks for.
+ */
+export function isVeoRender(item) {
+  if (!item) return false;
+  return cardRowKind(item.kind || "image", !!item.src?.storyboard_id) === "board_video";
+}
+
+/**
  * The kind of row a set of clips MOSTLY belongs on, for naming a row that no
  * record names — every row of every animatic saved before the records existed.
  *

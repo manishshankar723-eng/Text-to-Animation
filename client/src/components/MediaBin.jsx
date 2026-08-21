@@ -20,6 +20,7 @@
 // See `animatic/assets.js` for what an asset is and why the library exists.
 import Icon from "./Icon.jsx";
 import { assetOrigin } from "../animatic/assets.js";
+import { isVeoRender } from "../animatic/scene.js";
 
 /** A source's natural length, or "" when the server could not measure it. */
 function naturalLength(asset) {
@@ -45,6 +46,10 @@ function naturalLength(asset) {
  *                  for directly ("when user cilck x buttun so clip in media
  *                  panel so direct delele fuction no dropdwon delete and cancel
  *                  option not need here"), so there is no confirm step.
+ * @param onDownload SAVE THE FILE TO DISK. ⚠ DRAWN ON A VEO RENDER AND ON NOTHING
+ *                  ELSE — see the button below for why, and `isVeoRender` in
+ *                  `scene.js` for what counts as one. Optional: without it no card
+ *                  offers it, which is what every other list of these cards wants.
  */
 export default function MediaBin({
   assets,
@@ -53,6 +58,7 @@ export default function MediaBin({
   view = "icon",
   onPlace,
   onDelete,
+  onDownload,
 }) {
   return (
     <div className={`fs-wrap fs-vertical fs-view-${view === "list" ? "list" : "icon"}`}>
@@ -140,6 +146,43 @@ export default function MediaBin({
                   <span className="fs-dur-static">{length || "—"}</span>
                 </span>
                 <span className="fs-tools">
+                  {/* ⬇ — AND ONLY ON A VEO RENDER.
+                      ⚠ IT IS NOT AN OMISSION THAT THE OTHER CARDS LACK IT. Every
+                      other source in a project is already somewhere else: an
+                      upload came off this machine, a panel is still on the board,
+                      a colour card has no file at all. A render exists ONLY here
+                      and costs money to make again, and the reason it was asked
+                      for says exactly that — "if user want delete project so user
+                      first download veo gneereted video in midea panel". Deleting
+                      the project must stop being the thing that destroys it.
+
+                      ⚠ IT GOES FIRST IN THE ROW, AND THAT IS A LAYOUT RULE RATHER
+                      THAN A PREFERENCE. `.fs-tools` is the right-hand child of a
+                      `space-between` foot, so it grows LEFTWARD off the card's right
+                      edge and an extra
+                      button in the MIDDLE pushes ＋ one slot left on the cards that
+                      have one — and a library is a COLUMN of cards, so ＋ then sits
+                      in two different places down the same list. Reported exactly
+                      that way: "keep download icon first because not match uper
+                      clip in icon see". At the FRONT it costs nothing: ＋ and ✕
+                      stay in the same two columns on every card, and the only
+                      thing that varies is whether a third icon hangs off to the
+                      left of them, which is what a card having MORE to offer
+                      should look like. */}
+                  {onDownload && isVeoRender(asset) && (
+                    <button
+                      type="button"
+                      className="fs-tool"
+                      title={`Save “${asset.label || "this render"}” to your computer — it is a Veo render, so this is the only copy`}
+                      aria-label="Download this Veo video"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDownload(asset);
+                      }}
+                    >
+                      <Icon name="download" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="fs-tool"

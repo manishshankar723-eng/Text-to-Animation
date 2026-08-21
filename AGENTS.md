@@ -200,7 +200,78 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-20 — **THE NAV RAIL COLLAPSES TO ICONS, LIKE
+**Last updated:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
+PLACES** (user-specified). A ⬇ on its Media card and **Download** in a
+right-click menu beside its bar on the timeline. ⚠ **THE ⬇ IS FIRST IN THE
+CARD'S TOOL ROW** (⬇ ＋ ✕) so ＋ and ✕ stay in the same columns on every card —
+a layout rule, not a preference. ⚠ **ON A PAID RENDER AND ON
+NOTHING ELSE**, which was the ask — every other source is already on the user's
+machine or still on the board; a render exists only here and costs money to make
+again, so "delete the project" had to stop being the thing that destroys it.
+⚠ **`isVeoRender` IS `cardRowKind(…) === "board_video"`, THE SAME DERIVATION
+THAT PAINTS THESE BARS PURPLE** — no new field, no migration, and no second
+opinion that can disagree with the colour on screen. ⚠ **RIGHT-CLICK ON ANY
+OTHER CLIP KEEPS THE BROWSER'S OWN MENU** — the guard returns before
+`preventDefault`. ⚠ **AND THE FETCH CARRIES THE BEARER TOKEN** (`<a href>` sends
+no headers, so a plain link is a 401). Covered by `tests/veo_download_check.py`
+— 20 checks, node + source, no browser.
+
+**Previously:** 2026-08-21 — **THE PROGRAM MONITOR GOES FULL SCREEN**
+(user-specified, with a screenshot of a video player's control). A **Full screen**
+button sits at the empty right-hand end of the Program pane head, beside the
+aspect-ratio menu and the size read-out. ⚠ **IT IS THE PANE BODY THAT GOES FULL
+SCREEN** (`.an-program-body`) — picture *and* transport, not the picture alone:
+a preview you cannot pause or scrub is a screensaver. ⚠ **THE STATE IS DRIVEN BY
+`fullscreenchange`, NEVER BY THE CLICK** — Escape and F11 leave without telling
+us, so a flag flipped in the handler would leave the button drawing "exit" over a
+window that had already come back. ⚠ **THE ICON IS FOUR CORNER BRACKETS, NOT THE
+PLAYER'S DIAGONAL ARROWS** (`fullscreen` / `fullscreen-exit` in `Icon.jsx`) —
+asked for explicitly: a common glyph drawn in this app's own set, one object in
+two states like `eye` / `eye-off`. ⚠ **AND ALMOST NO SIZING CODE WAS NEEDED** —
+`.an-screen-fit` is already a size container and `.an-nle .an-screen` measures it
+in `cqw`/`cqh`, so a body that fills the display makes the monitor fill it at the
+project's exact aspect ratio. ⚠⚠ **AND THE HOOKS SIT AT THE TOP OF THE
+COMPONENT, NOT NEXT TO THE JSX** — `AnimaticEditor` returns early for `loading`
+and for a load error, so hooks declared below that ran on the second render and
+not the first, which is *"Rendered more hooks than during the previous render"*
+and a black page on opening any project. Shipped broken, reported, fixed the same
+session. `npx vite build` passes and does **not** catch it.
+
+**Previously:** 2026-08-21 — **✨ ANIMATE OPENS ON THE BOARD'S OWN PROMPT, AND
+OFFERS THE SHOT'S DIALOGUE** (user-specified). ⚠ **NO NEW ROUTE** — the redraw
+pane's free `GET /animatics/{id}/frames/{frame_id}/panel` already answered "what
+does the board say about this clip"; all that was added is `dialogue` on it.
+⚠ **THE DRAFT IS THE DESCRIPTION ONLY**, matching `_starting_prompt` in
+`server/videos.py`, and it is written **only over the frame label** — a late
+response must never overwrite what the user has typed. ⚠ **TICKING "Have Veo speak
+these lines" EDITS THE PROMPT BOX AND TURNS SOUND ON** — what goes to Veo is what
+is on screen, and Veo cannot speak with `generate_audio` off. ⚠ **AND THE SHOT'S
+NAME SITS ABOVE THE BOX** (`.an-animate-shot`) — the box carried it before the
+draft replaced it, and it is the only thing naming what is about to be paid for.
+Covered by `tests/animate_prompt_draft_check.py`.
+
+**Previously:** 2026-08-21 — **"New Project", "Untitled Project", AND A DEFAULT
+"Images" ROW** (user-specified). ⚠ **THE PLACEHOLDER TITLE IS A SENTINEL** — the
+editor compares against it to decide whether Save must ask for a name and whether
+an untouched project is discarded, and every project made before today carries
+the old wording, so ask **`isUntitled(title)`** (`AnimaticLibrary.jsx`), never
+`=== UNTITLED`. ⚠ **THE DEFAULT "Images" ROW IS `layerId: ""`, `removable: false`**
+— the same shape as the default Text and Shapes rows, which is why every drop,
+move and clear path already handled it; `addLayer` had already been numbering
+image layers from 2 for a row that did not exist. The library HEADINGS ("Your
+Animatics" and friends) are unchanged.
+
+**Previously:** 2026-08-21 — **＋ Add layer LOSES "Stills track", "Video track"
+BECOMES "Video", AND THE WORKFLOW IS "Video Editor"** (user-specified). ⚠ **THE
+TWO MENU ENTRIES BUILT THE SAME ROW** — a picture row takes footage and stills
+alike, so `stills` was a second name for `video`; only the MENU entry went, the
+`stills` row kind still exists because an unrouted image import creates one.
+⚠ **THE ROUTE ID `storyboard-to-animatics` AND THE "Your Animatics" LIBRARY TITLE
+ARE UNCHANGED** — the id is branched on in three places in `App.jsx`, and the
+library heading names the projects rather than the workflow. Nothing was run:
+label edits only.
+
+**Previously:** 2026-08-20 — **THE NAV RAIL COLLAPSES TO ICONS, LIKE
 ChatGPT's** (user-specified, with the ChatGPT panel and its icon rail as the
 reference). ⚠ **THE COLLAPSED RAIL IS THE SAME DOM WITH THE LABELS HIDDEN IN
 CSS** — that is what keeps every row's `title`, which at 68px is the only place a
@@ -1530,7 +1601,389 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-20 (latest) — THE NAV RAIL COLLAPSES TO ICONS, LIKE ChatGPT's (user-specified, with four screenshots)
+### 2026-08-21 (latest) — A VEO RENDER CAN BE SAVED TO DISK, FROM TWO PLACES (user-specified, with a screenshot of the Media card and the timeline)
+
+> "i want you add download icon in media panel of only Veo video so user
+>  download video in local. because if user want delete project so user first
+>  download veo gneereted video in midea panel or when user click right mouse on
+>  clip in timeline so user get side of clip dropdown Download text buttun so
+>  user download both place … only add fuction when user generte Veo video"
+
+**A VEO RENDER IS THE ONE ASSET IN A PROJECT THAT CANNOT BE GOT BACK.** An upload
+came off the user's machine and a panel is still on the storyboard; re-rendering
+this costs money. Until now the only way out of the editor was the whole animatic
+as one encoded MP4 — so deleting a project destroyed every render in it, and the
+reason given for the request says exactly that.
+
+⚠ **"ONLY VEO" IS THE REQUIREMENT, AND IT IS THE HALF THAT ROTS SILENTLY.** A
+⬇ that showed up on a panel or on a dropped file is not a crash and not a visible
+mistake — it is a Download that fetches a poster PNG, or one offered on a file
+the user already has. `tests/veo_download_check.py` pins the question against
+every other kind of source in the library, including the two near-misses: a board
+panel (same storyboard, not footage) and an uploaded video (same footage, no
+storyboard).
+
+⚠⚠ **`isVeoRender` IS `cardRowKind(kind, fromBoard) === "board_video"` — NOT A
+NEW FIELD, AND DO NOT ADD ONE.** A paid render was already identified in this
+codebase exactly once, by two facts on the clip itself: it came out of a
+storyboard (`src.storyboard_id`, kept underneath the video source — see
+`attachVeoClip`) and it is footage now. That pair is what draws these bars pastel
+purple (`.tl-bar.is-veo`) and pins them to the Storyboard video row. A `from_veo`
+flag, or a lookup into the server's `veo_clips`, would be a **second opinion that
+can disagree with the colour on screen**, and it would need a migration for every
+project rendered before the day it was added. This needs none — and the test
+asserts the two answers stay identical, so a bar cannot become purple without a
+⬇ or the other way round. (It also cannot catch an upload by mistake:
+`ROW_TAKES` gives both board rows an empty list, so no dropped file ever acquires
+a `storyboard_id`.)
+
+⚠ **THE ⬇ GOES FIRST IN THE CARD'S TOOL ROW — ⬇ ＋ ✕, NOT ＋ ⬇ ✕.** It
+shipped in the middle and was reported the same session: "keep download icon
+first because not match uper clip in icon see". `.fs-tools` is the right-hand
+child of a `space-between` foot, so it grows LEFTWARD off the card's edge — an
+extra button in the MIDDLE pushes ＋ one slot left on the cards that have one,
+and a library is a COLUMN of cards, so ＋ then sits in two different places down
+the same list. At the front it costs nothing: ＋ and ✕ stay in the same two
+columns on every card, and the only thing that varies is whether a third icon
+hangs off to the left of them. **A layout rule, not a preference** — anything
+added to this row later goes in front of ＋ for the same reason.
+
+⚠ **ONE HANDLER, TWO ENTRY POINTS.** `downloadVeoClip` in `AnimaticEditor.jsx`
+takes **a clip *or* a library card** — both carry `src.upload_id`, because a card
+is built from the clip by `assetFromFrame` — so the ⬇ and the menu cannot come to
+save different files. It re-asks `isVeoRender` itself rather than trusting its
+caller: it is the last gate before the bytes.
+
+⚠ **THE MENU OPENS BESIDE THE BAR, NOT UNDER THE POINTER**, which is what was
+asked for ("side of clip dropdown"). A menu at the pointer sits **on** the clip
+and hides the thing it is about. `.tl-clip-menu` is a child of `.tl-cols` with
+`top`/`left` measured in a layout effect — the same arrangement, and the same
+reasons, as the ✕'s confirm: the bar itself lives inside `.tl-scroll`, which
+scrolls on both axes and clips, so a menu rendered in there would be cut off at
+the edge of the pane. It flips to the left of the bar when a clip near the end of
+the pane leaves no room on the right, and `data-side` moves the caret to match.
+It borrows `.tl-layer-menu`'s surface and its `.tl-layer-menu-opt` rows, because
+＋ Add layer, the ✕'s confirm and this are now three popovers on one bar.
+
+⚠ **RIGHT-CLICKING ANY OTHER CLIP LEAVES THE BROWSER'S OWN MENU ALONE.** The
+guard returns **before** `preventDefault` — asserted by the test, because getting
+that order wrong means every bar on the timeline swallows the native menu and
+offers nothing in its place, which is strictly worse than the behaviour this
+replaced. A menu holding one greyed-out line would be worse than no menu: it
+promises a place where clip commands live and then has none. When there is
+something to put there for every clip, that is where it goes.
+
+⚠ **THE MENU OPENS, IT DOES NOT TOGGLE.** The outside-press listener fires on
+the same gesture's `pointerdown` and shuts whatever was open, so a functional
+toggle in `onContextMenu` would read the pending `null` and re-open on every
+second right-click of the same bar — which looks like the menu ignoring you.
+(Right-click was inert on this timeline before today: both `startClipDrag` and
+`startLanePress` already returned on `e.button !== 0`.)
+
+⚠ **THE FETCH GOES THROUGH `fetch`, NOT AN `<a href>`.**
+`/animatics/{id}/media/{upload_id}` is owner-checked and needs a bearer token; a
+plain link sends no headers and would land on a 401 page. `downloadAnimaticMedia`
+follows every other download in `api.js`: authed blob → temporary `<a download>`
+→ `revokeObjectURL` (a render is tens of megabytes — leaking one per press is
+real memory). **The name is the caller's**: this route serves stills, footage and
+audio alike and sets no Content-Disposition, so `serverFilename` has nothing to
+read; the editor knows the clip's label and sanitises it for Windows.
+
+⚠ **AND IT SAYS SOMETHING BEFORE IT STARTS.** There is no browser download bar
+until the whole blob has landed, so without the first notice a press on a large
+render looks like it did nothing for several seconds.
+
+**No server change.** The route already serves the MP4.
+
+**Files:** `client/src/animatic/scene.js` (`isVeoRender`), `client/src/api.js`
+(`downloadAnimaticMedia`), `client/src/components/AnimaticEditor.jsx`
+(`downloadVeoClip`, both props), `client/src/components/MediaBin.jsx` (the ⬇),
+`client/src/components/Timeline.jsx` (`onDownloadClip`, the menu, its two
+effects), `client/src/styles/animatic-editor.css` (`.tl-clip-menu`),
+`tests/veo_download_check.py` (new).
+
+**Verified:** `python tests/veo_download_check.py` — 20/20. `npx vite build` —
+clean. `tests/asset_fields_check.py`, `picture_tracks_check.py` and
+`selection_check.py` still pass.
+⚠ **PRE-EXISTING FAILURE, NOT CAUSED HERE:**
+`tests/editor_media_row_routing_check.py` fails one assertion — "…level with the
+row it is about", the ✕ confirm's vertical centring. Confirmed by reverting
+`Timeline.jsx` and `animatic-editor.css` to HEAD and re-running: it fails
+identically on the untouched files. Everything else in that suite passes.
+Not opened in a browser, per the standing "browser tests on request only" rule.
+
+### 2026-08-21 — THE PROGRAM MONITOR GOES FULL SCREEN (user-specified, with a screenshot of a player's "Full Screen video" control)
+
+> "i want you add in program panel ike this fuction Full Screen video you keep
+>  name Full screen and not copy same icon you add similar common icon set in
+>  Progran balnk cornaer og progrm text line"
+
+**The monitor is the smallest pane on the screen and it is the one you are
+actually watching.** A player has had a way out of that box since 2010; this
+editor did not, so checking a cut meant dragging two pane seams and dragging
+them back.
+
+⚠ **WHAT GOES FULL SCREEN IS `.an-program-body` — THE PICTURE *AND* THE
+TRANSPORT.** Not the picture alone (a preview you cannot pause, step or scrub is
+a screensaver, and the clock is how you know where you are), and not the whole
+`<section>` either — a pane head with an aspect-ratio menu on it is furniture at
+two metres, and the button that got you here would then be sitting in the middle
+of the film.
+
+⚠ **THE `fullscreen` FLAG IS WRITTEN BY THE EVENT, NEVER BY THE CLICK.** Escape,
+F11 and the browser's own chrome all leave full screen without telling the app,
+so a boolean flipped inside `toggleFullscreen` would have left the button drawing
+"exit" over a window that had already come back — and pressing it would then have
+done nothing, because there is nothing to exit. A `fullscreenchange` /
+`webkitfullscreenchange` listener is the only thing that knows, so it is the only
+thing that writes, and it compares against `programBodyRef.current` so another
+element's full screen is not mistaken for ours.
+
+⚠ **`requestFullscreen` IS `.catch`ed.** It rejects — an iframe without
+`allowfullscreen`, a call the browser doesn't consider a user gesture — and an
+unhandled rejection in a click handler is a console error plus a button that looks
+broken with nothing said about why.
+
+⚠ **THE ICON IS FOUR CORNER BRACKETS, WHICH WAS THE ASK: "not copy same icon,
+add similar common icon".** `fullscreen` and `fullscreen-exit` are new entries in
+`Icon.jsx`, stroked in `currentColor` like the rest of the set, and they are one
+object in two states (the corners fold inward to leave) exactly the way
+`eye` / `eye-off` is. The player's two diagonal arrows are a picture of a
+*gesture*; brackets are a picture of the *frame*, which is what this set is made
+of — a panel, an eye, a bin. Sized in `rem`, not `em`: `.an-tool`'s font-size is
+0.72rem and an `em` icon comes out ~12px, which is mud (the same trap the timeline
+tool buttons already carry a comment about).
+
+⚠ **ALMOST NO SIZING CODE WAS NEEDED, AND THAT IS THE POINT.**
+`.an-screen-fit` is already `container-type: size` and `.an-nle .an-screen` is
+already `min(100cqw, calc(100cqh * var(--ar-num)))`, so a body that fills the
+display makes the monitor fill it at the project's exact aspect ratio with no
+second sizing rule to keep in step. What the `:fullscreen` block actually sets is
+a **background** — the UA paints the backdrop black but leaves the element's own
+background alone, and `.an-pane-body` has none, so the clock and the labels would
+have gone dark-on-black — plus a bigger transport for reading across a room.
+
+⚠ **`:fullscreen` AND `:-webkit-full-screen` ARE TWO SEPARATE BLOCKS AND MAY NOT
+BE COMMA-JOINED.** One unknown selector invalidates a whole selector list, so the
+joined form drops *both* rules in every engine.
+
+⚠ **THE BUTTON IS PUSHED RIGHT WITH `margin-left: auto`, NOT AN `.an-spacer`.**
+`.an-pane-head` is `flex-wrap: wrap`; a growing spacer sits on whichever line it
+lands on and would shove the button to the far edge of a row it no longer shares
+with the title. It carries `aria-label` and `aria-pressed`, because the SVG is
+`aria-hidden` and the button would otherwise announce as "button".
+
+No keyboard shortcut was added — Escape already leaves, and there is no global
+key handler in this editor to hang an `F` on without auditing the timeline's
+V/B/N/H/Z bindings first. Say the word if you want one.
+
+**Files:** `client/src/components/Icon.jsx` (two new glyphs),
+`client/src/components/AnimaticEditor.jsx` (the ref, the flag, the listener, the
+toggle, the button), `client/src/styles/animatic-editor.css` (`.an-fs-btn` and
+the `:fullscreen` blocks).
+⚠⚠ **THE THREE HOOKS LIVE AT THE TOP OF THE COMPONENT, WITH THE MONITOR'S
+OTHER STATE, AND MOVING THEM DOWN NEXT TO THE JSX IS A BLACK PAGE.** They were
+written beside the Program pane at first — which is where they read best — and
+that is **below** `AnimaticEditor`'s two early returns (`if (loading)` and
+`if (error && !frames.length && !title)`). So on the first render, while the
+project was still opening, those `useRef` / `useState` / `useEffect` /
+`useCallback` calls never ran; on the render after it loaded, they did. React
+counts hooks: *"Rendered more hooks than during the previous render"*, thrown
+during render, which takes the whole editor down. **Reported as "not open new
+project and recent too in Video editor workflow" — the Video Editor workflow
+went to a blank black page on opening any project, new or recent.** Fixed by
+moving the block up beside `glFailed` / `onGlUnavailable`; the comment there now
+says why it may not move back. `npx vite build` is **not** a check for this — it
+compiled clean both before and after.
+
+**Verified:** `npx vite build` — clean, 129 modules; and no hook call now appears
+after line ~6151 (`if (loading)`) in `AnimaticEditor.jsx`, which is the actual
+guard against the fault above. **Not** opened in a browser by me, per the standing
+"browser tests on request only" rule — the user saw the crash and reported it.
+
+### 2026-08-21 — ✨ ANIMATE OPENS ON THE BOARD'S OWN PROMPT, AND OFFERS THE SHOT'S DIALOGUE (user-specified, with a screenshot of the dialog)
+
+> "when i generte animate with Veo so user get this pop up So i want this time
+>  user see prompt too so user control prompt if user want add some prompt and
+>  dialouge like generted in last Storyboard panel show this type"
+
+**THE BOX WAS PREFILLED WITH THE FRAME'S LABEL — "Shot 1" — WHICH IS A NAME AND
+NOT A PROMPT.** The panel that clip was drawn from already carried a sentence
+describing the shot and a list of who says what in it, and the user was retyping
+both. It now opens on the panel's **description**, and the shot's spoken lines
+are offered underneath.
+
+⚠ **NO NEW ROUTE. `GET /animatics/{id}/frames/{frame_id}/panel` ALREADY ANSWERED
+THIS QUESTION** — it is the free, owner-checked read the redraw pane
+(`RegeneratePanelInline`) uses, and it already returned `description` / `camera` /
+`location` / `title`. The whole server change is **`dialogue` on the same
+response** (`AnimaticPanelSource`), filtered the way `_dialogue_lines` already
+filters it for the voiceover: a line with no words is dropped here, not in the
+UI, so one rule lives in one place. Adding a second "what does the board say
+about this clip" endpoint would have been two owner checks to keep in step.
+
+⚠ **THE DRAFT IS THE DESCRIPTION ONLY, WHICH IS WHAT `_starting_prompt` BUILDS
+IN `server/videos.py`.** Two workflows animating the same panel must open on the
+same wording. Camera and location are deliberately left out: they describe how
+the STILL is framed, and handing them to Veo invites it to re-frame a shot it was
+asked to move.
+
+⚠ **THE PANEL READ IS ASYNCHRONOUS AND THE BOX IS FOCUSED THE WHOLE TIME.** Two
+guards, and both are the difference between a help and a hazard: the response is
+dropped unless `animatePanelReq` still names the frame it was started for (open a
+second ✨ Animate while the first is in flight and it would otherwise fill the box
+with the wrong shot), and the draft is written **only over the label we put
+there** — anything the user has already typed outranks a draft that arrives late.
+A shot with no board, or a board that has gone, simply keeps the label; this read
+improves the prompt and is never a precondition.
+
+**THE DIALOGUE IS A DECISION, NOT A DEFAULT — AND TICKING IT EDITS THE PROMPT
+BOX.** The lines are drawn with `DialogueBox`, the same component the storyboard
+uses, so a line looks the same in both places. ⚠ **"Have Veo speak these lines"
+WRITES THEM INTO THE TEXT, it does not set a flag that gets bolted on at submit
+time** — the dialog exists so what goes to Veo is what is on screen, and anything
+appended invisibly would be the exact opposite of the ask. Unticking takes back
+the block it added *and only that*: `animateSpokenRef` holds the exact text, and
+an edited block no longer matches, so the user's words stay.
+⚠ **AND TICKING IT TURNS SOUND ON.** Veo cannot say a line with `generate_audio`
+off — it renders mouths moving in silence and bills for it. If sound is switched
+back off by hand the block says so in `--warn`, because this is the one dialog in
+this editor where money moves.
+⚠ **THE IMAGE SIDE STILL KEEPS DIALOGUE OUT OF ITS PROMPTS** (see `Shot.dialogue`
+— a drawing model renders the words as speech bubbles). Veo is the exception, and
+the comment on the new schema field says so, so nobody "fixes" the panel prompt to
+match.
+
+- ⚠ **THE SHOT'S NAME MOVED ABOVE THE BOX, AND HAD TO** — same session,
+  reported the moment the draft landed ("see you remove image name like Shot1").
+  The box used to open on the frame's LABEL, so "Shot 1" was the one thing on
+  screen naming what you were about to pay to animate; filling it with the
+  board's description took that away and nothing replaced it. `.an-animate-shot`
+  now carries the name in `--primary` with the board quiet beside it, above the
+  box, in the same label-over-control rhythm as Quality / Size / Length. It reads
+  `frames.find(...)` on every render rather than a value captured in
+  `openAnimate`, so renaming a clip with the dialog open cannot leave it naming
+  the shot by a name it no longer has. The "Drafted from…" line under the box
+  dropped the board's name with it: **the board is named once**, and what is left
+  there is the part that is not obvious — this is a draft, and typing over it does
+  not touch the storyboard.
+- **`maxLength` 1000 → 2000** on the prompt box: dialogue now lives in it, and a
+  silent truncation of a paid prompt is the worst way to find that out.
+- **`.an-name-modal` scrolls itself now** (`max-height: calc(100vh - 2rem)`).
+  ⚠ `.modal-overlay` is a centred grid that does NOT scroll, so a card taller
+  than the viewport loses its own footer off both ends — and the footer is where
+  Cancel and the priced button are. This dialog is the tallest of them.
+
+**Verified:** new `tests/animate_prompt_draft_check.py` — 27 checks, all passing,
+covering the description draft, the dropped empty line, a silent shot, a shot
+with lines but no description, a non-panel frame, and ⚠ **both cross-account
+paths** (someone else's animatic 404s; a CRAFTED frame pointing at a board you do
+not own returns empty wording, not the board's). `tests/animate_guard_check.py`
+still passes — every spend guard holds. `npx vite build` clean. ⚠ **NOT opened in
+a browser**, per the standing instruction.
+
+### 2026-08-21 (later) — "New Project", "Untitled Project", AND A DEFAULT **Images** ROW (user-specified, with three screenshots)
+
+> "first you chnage name New Animatics to New Project and when when i open new
+>  Project sso show untitled Project
+>
+>  and add Image layer in default like other see image 1"
+>
+> — image 1 the timeline gutter (Text / Shapes / Video / Audio, no Images row),
+> image 2 the editor topbar reading "Untitled animatic", image 3 the library's
+> NEW ANIMATIC tile.
+
+**THE PLACEHOLDER TITLE IS A SENTINEL, NOT A LABEL — DO NOT COMPARE AGAINST IT
+WITH `===`.** `UNTITLED` is now `"Untitled Project"`, and the editor reads it
+twice: `needsName` (Save on an unnamed project opens the save-as prompt instead
+of writing) and `isEmpty` (an untouched project is DISCARDED on the way out, so
+the library doesn't fill with blank rows — `tests/e2e_animatic.py` checks exactly
+that). ⚠ **EVERY PROJECT MADE BEFORE TODAY CARRIES `"Untitled animatic"` IN THE
+DATABASE**, so flipping the constant alone would have promoted all of them to
+"named": Save would silently write the old placeholder to the library forever and
+the prompt would never appear again. So the comparison moved into an exported
+**`isUntitled(title)`** (`AnimaticLibrary.jsx`) that accepts the new string, the
+`LEGACY_UNTITLED` list, and blank — and all three editor call sites now ask it.
+Add to that list, never swap it. `tests/editor_board_import_check.py` still
+builds its fixture with the OLD title on purpose: that is the legacy path's
+regression guard.
+
+- **The server's fallback matches** — `character_name=title or "Untitled Project"`
+  in `server/animatics.py`. Only reachable from a direct API call (the New tile
+  sends the title itself), but a mismatch there is a project the editor would
+  treat as already named.
+- **The tile is "New Project"**, its counter says "N projects created", and the
+  empty-state line that pointed at **New Animatic** by name follows it — a
+  sentence naming a button that no longer exists is worse than either wording.
+- ⚠ **"Your Animatics" / "Recent Animatics" / "All Animatics" ARE UNCHANGED**, as
+  is the editor's ← back button and the e2e title assertion. Flagged to the user
+  rather than renamed: those headings name the LIBRARY, and the ask named the
+  tile and the placeholder.
+
+**AND THE DEFAULT "Images" ROW IS ALWAYS ON THE TIMELINE NOW**, beside the Text,
+Shapes, Video and Audio rows that always were (`lanes` in `AnimaticEditor.jsx`).
+It used to appear only once an image layer RECORD existed, so a new project
+opened with four rows and nowhere obvious to drop a logo or a cut-in. ⚠ **THE
+CODE ALREADY ASSUMED THIS ROW EXISTED**: `addLayer` numbers a new image layer
+from **2** ("Images 2") precisely because the default row is supposed to be
+holding the name "Images" — it was naming a row after a row that wasn't there.
+It is `layerId: ""` and `removable: false`, the same shape as the default Text
+and Shapes rows, which means every path already handles it: an overlay with no
+`layer_id` lands on it (`clipLane`, `laneCount`), its ✕ EMPTIES rather than
+deletes (`clearLane`), and `addToLane` / `dropAsset` / `moveClipToLane` all read
+`lane.layerId || ""`. ⚠ **IT IS STILL A DIFFERENT THING FROM THE VIDEO ROW** — it
+composites OVER the cut; Video is part of it. The gutter now reads Text · Shapes
+· Images · Video · Audio.
+
+**Verified:** `vite build` clean (129 modules). ⚠ **NOT opened in a browser** —
+no dev server and no Playwright this pass, per the standing instruction that the
+suite runs when asked.
+
+### 2026-08-21 — "Stills track" LEAVES ＋ Add layer, "Video track" BECOMES "Video", AND THE WORKFLOW IS CALLED "Video Editor" (user-specified, with a screenshot of the open menu)
+
+> "remove still tracker layer in add layer buttun not need same work image layer
+>  and chnage name video tracker to Video
+>
+>  and change name my workflow Storyborad to Animatics to Video Editor"
+
+**THE MENU HAD TWO DOORS INTO ONE ROOM.** ＋ Add layer listed a *Video track* and
+a *Stills track* as separate kinds, but a picture row takes footage AND stills
+alike — `ROW_TAKES.video`, the row's own ＋ and `dropAsset` all say so, and the
+gutter has named every one of those rows "Video" since the row-naming pass. So
+the two entries built rows that differ only in the word `kind` and in what the
+first import happens to be. **`stills` is now off the menu**; the Video entry's
+note says out loud that full-frame photos belong on it, and a ⚠ comment beside it
+records why there is no second entry so it does not get re-added.
+
+- **`kind: "stills"` IS STILL A LIVE ROW KIND — only the menu entry went.**
+  `ROW_KIND.stills`, `rowOfKind("stills")` and `addPictureTrack("stills")` are
+  untouched, because an image import with no row named still routes through them
+  (`addAssets`, ~line 4551) and existing projects have rows carrying that kind.
+  ⚠ **The consequence is asymmetric and deliberate**: a plain image drop can
+  still MAKE a Stills row that you can no longer ask for by name. Folding that
+  route onto the video row is a behaviour change, not a rename, so it was left
+  alone — see Next Steps.
+- **"Video track" → "Video"**, which is what the gutter, the Media pane's group
+  and every other NLE already call it. The three picture-row entries and the
+  `Images` entry below them are unchanged; **`Images` is still the OVERLAY** —
+  it composites over the cut rather than being part of it, and that is the
+  distinction the removed entry was blurring.
+
+**AND THE WORKFLOW IS "Video Editor" EVERYWHERE A HUMAN READS IT** —
+`Sidebar.jsx` (`WORKFLOWS`), `Home.jsx` (the recent-work group), `Landing.jsx`
+(the workflow card), plus `README.md` and the Playwright suite's click target in
+`tests/e2e_animatic.py`. ⚠ **THE ROUTE ID `storyboard-to-animatics` IS
+UNCHANGED** — `App.jsx` branches on it in three places and `Home.jsx` keys its
+group by it; renaming a nav id is a separate change with no user-visible payoff.
+⚠ **AND THE LIBRARY IS STILL "Your Animatics"** (`AnimaticLibrary.jsx`, the
+editor's back links, the e2e title assertion): that heading names the PROJECTS,
+not the workflow, and the user renamed the workflow.
+
+**Not run this pass:** no dev server, no Playwright, no build — the changes are
+label edits plus one deleted array entry, and per the standing instruction the
+browser suite runs when asked.
+
+### 2026-08-20 — THE NAV RAIL COLLAPSES TO ICONS, LIKE ChatGPT's (user-specified, with four screenshots)
 
 > "i want add sidebar like chatgpt when user close side so user get image 2 type
 >  view like only icon
@@ -11799,6 +12252,17 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **DECIDE WHERE A PLAIN IMAGE IMPORT LANDS, NOW THAT "Stills track" IS OFF
+      THE MENU.** ＋ Add layer no longer offers a `stills` row (2026-08-21), but
+      `addAssets` still auto-creates one for images when no row is named
+      (`rowOfKind("stills")` → `addPictureTrack("stills")`, `AnimaticEditor.jsx`
+      ~4551), so a drop can build a row the user can no longer ask for by name.
+      ⚠ **THE ROW KIND CANNOT SIMPLY BE DELETED** — saved projects carry it, and
+      `ROW_KIND.stills` is what names and validates those rows on load. The
+      options are (a) route unrouted images onto a `video` row and keep `stills`
+      as a legacy kind that still loads, or (b) leave it as is and accept that
+      the two kinds are made by different doors. Ask the user which; this pass
+      only removed the menu entry, which is all that was asked for.
 - [ ] **THE STORYBOARD STRIP'S OWN DRAG IS STILL THE LOOSE ONE.** The Media
       library and the timeline's own bar drag both route by
       `cardRowKind` / `clipRowKind` now, but `FrameStrip.jsx` stamps its marker off

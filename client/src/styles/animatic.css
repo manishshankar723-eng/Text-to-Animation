@@ -739,6 +739,60 @@
   max-width: 28rem;
   width: 92vw;
   position: relative;
+  /* ⚠ THE OVERLAY CENTRES AND DOES NOT SCROLL (`.modal-overlay` is a grid with
+     `place-items: center`), so a card taller than the viewport loses its own
+     footer off both ends — and the footer is where Cancel and the priced
+     button live. ✨ Animate is the tallest of these dialogs now that it carries
+     the prompt draft and the shot's dialogue, so the card scrolls itself. */
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
+/* --- ✨ Animate: the board's own words, above the render settings -------- */
+/* WHICH SHOT this is, directly over the prompt box. The name used to be IN the
+   box (the draft was the frame's label); now that the box opens on the board's
+   description, this row is the only thing naming what is about to be paid for. */
+.an-animate-shot {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.9rem 0 0.3rem;
+}
+.an-animate-shot-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+/* The board it came from, quiet beside the name — it identifies the shot, it is
+   not a second thing to read. */
+.an-animate-shot-src {
+  font-size: 0.74rem;
+  color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Where the draft in the prompt box came from. Quiet on purpose: it explains
+   the text, it is not a second instruction to read. */
+.an-animate-src {
+  margin: 0.4rem 0 0;
+}
+/* The shot's spoken lines plus the one checkbox that puts them in the prompt.
+   The block itself is `DialogueBox`, the same component the board draws — so a
+   line looks the same in both places and nothing here restyles it. */
+.an-animate-speech {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.an-animate-speech .dialogue {
+  margin-bottom: 0.5rem;
+}
+/* Dialogue asked for with the sound switched off — the one combination in this
+   dialog that would render, bill, and deliver nothing anyone can hear. */
+.an-animate-warn {
+  color: var(--warn);
+  margin: 0.4rem 0 0;
 }
 .an-name-input {
   width: 100%;

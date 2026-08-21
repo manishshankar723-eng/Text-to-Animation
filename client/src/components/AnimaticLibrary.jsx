@@ -15,9 +15,25 @@ import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 import { formatTime } from "./Timeline.jsx";
 
-// The placeholder title a new animatic carries until it is saved with a
-// real one. Exported so the editor knows when to ask for a name.
-export const UNTITLED = "Untitled animatic";
+// The placeholder title a new project carries until it is saved with a real
+// one. Exported so the editor knows when to ask for a name.
+export const UNTITLED = "Untitled Project";
+
+// ⚠ THE OLD PLACEHOLDER STILL HAS TO COUNT AS "UNNAMED". This string is a
+// SENTINEL, not just a label: the editor compares a project's title against it
+// to decide whether Save should ask for a real name, and whether an empty
+// project is a throwaway it may delete on the way out. Every project made
+// before 2026-08-21 carries the previous wording in the database, so comparing
+// against the new string alone would quietly promote all of them to "named" —
+// Save would write "Untitled animatic" to the library forever and the
+// save-as prompt would never appear. Ask `isUntitled`, never `=== UNTITLED`.
+const LEGACY_UNTITLED = ["Untitled animatic"];
+
+/** Is this title the placeholder — this one, an older one, or nothing at all? */
+export function isUntitled(title) {
+  const t = (title || "").trim();
+  return !t || t === UNTITLED || LEGACY_UNTITLED.includes(t);
+}
 
 // "Recent Animatics" highlights just the single newest one; everything
 // (including that one) is listed under "All Animatics" below.
@@ -385,7 +401,7 @@ export default function AnimaticLibrary({ onOpen }) {
             <div className="card lib-card lib-ghost-empty">
               <span className="lib-empty-ico">🎬</span>
               <p className="lib-empty-text">
-                No animatics yet — hit <strong>New Animatic</strong>, or build one{" "}
+                No projects yet — hit <strong>New Project</strong>, or build one{" "}
                 <strong>From a Storyboard</strong>.
               </p>
             </div>
@@ -423,11 +439,11 @@ export default function AnimaticLibrary({ onOpen }) {
           onClick={createBlank}
         >
           <span className="lib-new-plus">+</span>
-          <span className="lib-new-title">New Animatic</span>
+          <span className="lib-new-title">New Project</span>
           <span className="tiny muted">
             {loading
-              ? "Loading your animatics…"
-              : `${items.length} animatic${items.length === 1 ? "" : "s"} created`}
+              ? "Loading your projects…"
+              : `${items.length} project${items.length === 1 ? "" : "s"} created`}
           </span>
         </button>
 

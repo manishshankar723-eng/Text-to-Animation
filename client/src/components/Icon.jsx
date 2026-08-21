@@ -269,6 +269,32 @@ const PATHS = {
       <path d="M9.5 4v16" {...STROKE} />
     </>
   ),
+
+  // --- Full screen ---------------------------------------------------------
+  // Four corner BRACKETS, not the two diagonal arrows a video player usually
+  // draws. The arrows are a picture of a gesture; the brackets are a picture of
+  // the frame itself, which is what the rest of this set is made of — a panel,
+  // an eye, a bin. Beside the aspect-ratio menu in the Program head it reads as
+  // "the frame, bigger", and it is the one glyph here that is all corners, so
+  // it never gets mistaken for the sidebar's panel at 1em.
+  fullscreen: (
+    <>
+      <path d="M8.5 3.5H5.2A1.7 1.7 0 0 0 3.5 5.2V8.5" {...STROKE} />
+      <path d="M15.5 3.5h3.3a1.7 1.7 0 0 1 1.7 1.7V8.5" {...STROKE} />
+      <path d="M20.5 15.5v3.3a1.7 1.7 0 0 1-1.7 1.7H15.5" {...STROKE} />
+      <path d="M3.5 15.5v3.3a1.7 1.7 0 0 0 1.7 1.7H8.5" {...STROKE} />
+    </>
+  ),
+  // The same four corners folded INWARD. One object in two states, like
+  // eye / eye-off: whichever is showing, you are looking at the same frame.
+  "fullscreen-exit": (
+    <>
+      <path d="M8.5 3.5v3.3A1.7 1.7 0 0 1 6.8 8.5H3.5" {...STROKE} />
+      <path d="M15.5 3.5v3.3a1.7 1.7 0 0 0 1.7 1.7h3.3" {...STROKE} />
+      <path d="M15.5 20.5v-3.3a1.7 1.7 0 0 1 1.7-1.7h3.3" {...STROKE} />
+      <path d="M8.5 20.5v-3.3a1.7 1.7 0 0 0-1.7-1.7H3.5" {...STROKE} />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = "1.05em", className = "", title }) {

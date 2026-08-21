@@ -86,8 +86,8 @@ with sync_playwright() as pw:
     check("sidebar rendered", page.locator(".sidebar").is_visible())
     check("landed logged-in (no login form)", page.locator(".sidebar").count() == 1)
 
-    print("\n=== 2. Storyboard to Animatics library ===")
-    page.click("text=Storyboard to Animatics")
+    print("\n=== 2. Video Editor library ===")
+    page.click("text=Video Editor")
     page.wait_for_selector(".lib-new", timeout=15000)
     check("page title", page.locator(".wf-title").inner_text().strip() == "Your Animatics",
           page.locator(".wf-title").inner_text().strip())

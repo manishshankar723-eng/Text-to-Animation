@@ -76,6 +76,7 @@ from .schemas import (
     AnimaticVoiceoverRequest,
     AudioCostEstimate,
     CostEstimate,
+    DialogueLine,
     Job,
     JobCreatedResponse,
     JobKind,
@@ -858,8 +859,13 @@ def create_animatic(
             detail=f"An animatic can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
         )
 
+    # ⚠ THE SAME PLACEHOLDER THE CLIENT USES — `UNTITLED` in
+    # client/src/components/AnimaticLibrary.jsx, which the editor compares
+    # against to decide whether Save must ask for a real name. Only reachable
+    # from a direct API call (the New tile sends the title itself), but a
+    # mismatch here would be a project the editor treats as already named.
     job = get_store().create(
-        character_name=title or "Untitled animatic",
+        character_name=title or "Untitled Project",
         kind=JobKind.ANIMATIC,
         owner=current.email,
         params={
@@ -2658,6 +2664,18 @@ def get_frame_panel(
         description=str(panel.get("description") or ""),
         camera=str(panel.get("camera") or ""),
         location=str(panel.get("location") or ""),
+        # The shot's spoken lines, for ✨ Animate — see `AnimaticPanelSource`.
+        # ⚠ A LINE WITH NO WORDS IS NOT DIALOGUE and is dropped here rather than
+        # in the UI, the same rule `_dialogue_lines` follows for the voiceover:
+        # an empty line would be an empty quotation in a Veo prompt.
+        dialogue=[
+            DialogueLine(
+                character=str((spoken or {}).get("character") or "").strip(),
+                line=str((spoken or {}).get("line") or "").strip(),
+            )
+            for spoken in (panel.get("dialogue") or [])
+            if str((spoken or {}).get("line") or "").strip()
+        ],
         title=board.character_name or "Storyboard",
         # A POSE is a drawing OF the panel, so redrawing the panel would leave
         # this clip showing the old pose — the honest answer is no, with the

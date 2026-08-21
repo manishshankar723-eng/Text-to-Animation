@@ -26,7 +26,7 @@ export const WORKFLOWS = [
   { id: "script-to-storyboard", label: "Script to Storyboard", icon: "📝", status: "live" },
   { id: "create-animatic-image", label: "Image to Animatic Image", icon: "🖼️", status: "live" },
   { id: "animatics-to-video", label: "Image to AI Video", icon: "🎞️", status: "live" },
-  { id: "storyboard-to-animatics", label: "Storyboard to Animatics", icon: "🎬", status: "live" },
+  { id: "storyboard-to-animatics", label: "Video Editor", icon: "🎬", status: "live" },
 ];
 
 export default function Sidebar({

@@ -81,6 +81,7 @@ import {
   frameOrigin,
   frameSpans,
   frameTrack,
+  isVeoRender,
 } from "../animatic/scene.js";
 import { CAPTION_LAYER_ID } from "../animatic/captions.js";
 import {
@@ -448,6 +449,19 @@ export default function Timeline({
   // first refusal with no visible cause — you pressed a clip and nothing
   // happened — so it has to say why.
   onNotice,
+  /**
+   * SAVE A VEO RENDER TO DISK — `(clip) => void`, from a clip's right-click menu.
+   *
+   * ⚠ THE MENU EXISTS ONLY FOR A PAID RENDER, and this prop is how the timeline
+   * knows the editor can do anything about one at all. Right-clicking any other
+   * clip leaves the browser's own menu alone, which is the honest behaviour for a
+   * bar that has nothing of its own to offer — a menu holding one greyed-out line
+   * would be worse than no menu. `isVeoRender` decides; see `scene.js`.
+   *
+   * Optional: without it no clip opens a menu and the timeline is exactly what it
+   * was before this existed.
+   */
+  onDownloadClip,
   // The padlock. `(lane) => void`, mirroring `onToggleHidden` exactly — the lane
   // carries the state (`locked`) and its token, and this file never works either
   // out. ⚠ WHAT LOCKED MEANS IS ENFORCED HERE THOUGH, not in the editor: a lock
@@ -517,6 +531,7 @@ export default function Timeline({
   const gutterClipRef = useRef(null);
   const colsRef = useRef(null); // the two columns — what the confirm is placed in
   const confirmRef = useRef(null); // the ✕'s popover, positioned beside its row
+  const clipMenuRef = useRef(null); // a clip's right-click menu, positioned beside its bar
   // While an edge or a clip is being dragged we show a DRAFT, so things move
   // with the pointer without writing to the project on every mouse event.
   // ONE DRAFT FOR EVERY CLIP ON THE BAR — a picture, a caption, a shape, an
@@ -889,6 +904,10 @@ export default function Timeline({
   // TIME BY CONSTRUCTION: it holds a key rather than a flag per row, so opening a
   // second confirm closes the first and there is never a column of them.
   const [confirmKey, setConfirmKey] = useState(null);
+  // Which clip's right-click menu is open — a frame id, or null. ⚠ ONE AT A TIME
+  // BY CONSTRUCTION, exactly like `confirmKey` above: it holds an id rather than a
+  // flag per bar, so opening a second menu closes the first.
+  const [clipMenuId, setClipMenuId] = useState(null);
   // ⚠ "fx" AND "afx" ARE TWO KINDS, because the rows that take one do not take
   // the other: an effect or a video transition belongs to the picture, a
   // crossfade to the audio. One shared marker would light every row up for every
@@ -2463,6 +2482,27 @@ export default function Timeline({
     };
   }, [confirmKey]);
 
+  // The clip menu dismisses the same two ways, and it needs a THIRD: the bar it
+  // belongs to can be deleted, moved to another row or razored in half while the
+  // menu is up, and a menu pointing at a clip that has gone is a Download that
+  // would fetch nothing. `clipMenuClip` below returns null in that case, which
+  // shuts it — the same way `confirmLane` closes itself when its row goes.
+  useEffect(() => {
+    if (!clipMenuId) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setClipMenuId(null);
+    };
+    const onDown = (e) => {
+      if (!e.target.closest?.(".tl-clip-menu")) setClipMenuId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [clipMenuId]);
+
   const playheadX = Math.max(0, Math.min(width, (timeMs / 1000) * pxPerSec));
 
   /**
@@ -2558,6 +2598,66 @@ export default function Timeline({
     const top = Math.max(half + 2, Math.min(centre, colsBox.height - half - 2));
     el.style.top = `${top}px`;
   });
+
+  /**
+   * THE CLIP MENU SITS BESIDE ITS BAR — measured, for the same reasons the
+   * confirm above is, plus one more.
+   *
+   * ⚠ IT IS A CHILD OF `.tl-cols` WHILE ITS BAR IS INSIDE `.tl-scroll`, so its
+   * offset cannot be a CSS one: the bar's own box is inside a horizontally
+   * scrolled, clipping ancestor, and a menu rendered in there would be cut off at
+   * the edge of the pane and would slide under the gutter. Measuring from the DOM
+   * puts it beside the bar wherever the bar currently is.
+   *
+   * ⚠ AND IT RUNS ON EVERY RENDER, WITH NO DEPENDENCY LIST. Scrolling the tracks
+   * re-renders (`readView` stores the offset), so re-measuring here is what keeps
+   * the menu on its clip rather than stranded where the clip used to be.
+   *
+   * ⚠ IT FLIPS TO THE LEFT WHEN THERE IS NO ROOM ON THE RIGHT. The natural side
+   * is after the bar — that is the empty part of a track — but a clip that ends
+   * near the end of the pane would open a menu half off the screen, and the
+   * gutter is not somewhere it may spill into either.
+   */
+  useLayoutEffect(() => {
+    const el = clipMenuRef.current;
+    const cols = colsRef.current;
+    if (!clipMenuId || !el || !cols) return;
+    // ⚠ A QUOTED ATTRIBUTE VALUE, NOT `CSS.escape`. That function escapes for an
+    // IDENTIFIER, and it would turn the colon in `frame:abc` into `frame\:abc` —
+    // which is correct in an id selector and wrong inside quotes, where the value
+    // is taken literally and any character but the quote is allowed.
+    const bar = scrollRef.current?.querySelector(
+      `[data-sel="${selKey("frame", clipMenuId)}"]`
+    );
+    if (!bar) return;
+    const colsBox = cols.getBoundingClientRect();
+    const barBox = bar.getBoundingClientRect();
+
+    const half = el.offsetHeight / 2;
+    const centre = barBox.top + barBox.height / 2 - colsBox.top;
+    el.style.top = `${Math.max(
+      half + 2,
+      Math.min(centre, colsBox.height - half - 2)
+    )}px`;
+
+    // The gutter is the floor for `left`: the menu may cover the tracks, never
+    // the row names, which are what tell you which clip this is about.
+    const gutterW = gutterRef.current?.getBoundingClientRect().width || 0;
+    const gap = 8;
+    const right = barBox.right - colsBox.left + gap;
+    const left = barBox.left - colsBox.left - el.offsetWidth - gap;
+    const fitsRight = right + el.offsetWidth <= colsBox.width - 4;
+    const x = fitsRight ? right : Math.max(gutterW + 4, left);
+    el.style.left = `${Math.min(x, Math.max(gutterW + 4, colsBox.width - el.offsetWidth - 4))}px`;
+    el.dataset.side = fitsRight ? "right" : "left";
+  });
+
+  // The clip its menu is about — null when nothing is open, and ALSO null when
+  // the clip has since been deleted or has left the picture rows, which is how
+  // the menu closes itself rather than offering a download of nothing.
+  const clipMenuClip = clipMenuId
+    ? frames.find((f) => f.id === clipMenuId && isVeoRender(f)) || null
+    : null;
 
   // The row whose ✕ is asking, and what answering it would take. `null` when
   // nothing is asking — and also when the row it asked about has gone, which is
@@ -2800,6 +2900,29 @@ export default function Timeline({
                 ].join(" ")}
                 style={{ left, width: w }}
                 onPointerDown={(e) => startClipDrag(e, f, "move", lane)}
+                /* RIGHT-CLICK — AND ONLY ON A VEO RENDER.
+                   ⚠ EVERY OTHER BAR KEEPS THE BROWSER'S OWN MENU, deliberately.
+                   The one thing this menu has to offer is saving a paid render
+                   ("or when user click right mouse on clip in timeline so user get
+                   side of clip dropdown Download text buttun"), and a menu that
+                   opened on a caption with one greyed-out line in it would be a
+                   worse answer than no menu — it would promise a place where clip
+                   commands live and then have none. When there IS something to put
+                   here for every clip, this is where it goes.
+                   ⚠ IT DOES NOT SELECT THE CLIP. A right-click that moved the
+                   selection would throw away a multi-clip selection someone had
+                   just built, and the menu names the clip it is about anyway. */
+                onContextMenu={(e) => {
+                  if (!onDownloadClip || !isVeoRender(f)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  // ⚠ IT OPENS, IT DOES NOT TOGGLE. The outside-press listener
+                  // has already fired on this same gesture's `pointerdown` and
+                  // shut whatever was open, so a toggle here would read the
+                  // pending `null` and re-open on every second right-click of the
+                  // same bar — which looks like the menu ignoring you.
+                  setClipMenuId(f.id);
+                }}
                 title={
                   `${f.label || `Frame ${index + 1}`} — ${(start / 1000).toFixed(1)}s ` +
                   `for ${(ms / 1000).toFixed(1)}s` +
@@ -3458,6 +3581,52 @@ export default function Timeline({
                 Delete
               </button>
             </span>
+          </div>
+        )}
+
+        {/* ⬇ A CLIP'S OWN MENU, BESIDE THE BAR IT BELONGS TO — asked for exactly
+            there: "so user get side of clip dropdown Download text buttun".
+            ⚠ IT IS A CHILD OF `.tl-cols`, LIKE THE ✕'S CONFIRM, AND FOR THE SAME
+            REASON. The bar lives inside `.tl-scroll`, which clips and scrolls; a
+            menu rendered in there would be cut off at the edge of the pane. This
+            box is the only ancestor that spans both columns and clips nothing.
+            Its `top` and `left` are measured off the bar — see the layout effect
+            beside the confirm's.
+            ⚠ AND IT BORROWS `.tl-layer-menu`'s SURFACE, as the confirm does: three
+            popovers in one bar that looked different would read as three unrelated
+            mechanisms. */}
+        {clipMenuClip && (
+          <div
+            className="tl-clip-menu"
+            ref={clipMenuRef}
+            role="menu"
+            aria-label={`${clipMenuClip.label || "Clip"} — actions`}
+            /* The lane under it scrubs, selects and starts a marquee, so the menu
+               has to stop everything it is handed. */
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {/* WHICH CLIP THIS IS ABOUT. The menu can sit some way from its bar on
+                a crowded row, and "Download" alone would not say what of. */}
+            <span className="tl-clip-menu-of">{clipMenuClip.label || "Veo render"}</span>
+            <button
+              type="button"
+              role="menuitem"
+              className="tl-layer-menu-opt"
+              ref={(el) => el?.focus({ preventScroll: true })}
+              onClick={() => {
+                setClipMenuId(null);
+                onDownloadClip(clipMenuClip);
+              }}
+              title="Save this Veo render to your computer — deleting the project will not lose it then"
+            >
+              <span className="tl-layer-menu-ico">
+                <Icon name="download" />
+              </span>
+              Download
+            </button>
           </div>
         )}
 

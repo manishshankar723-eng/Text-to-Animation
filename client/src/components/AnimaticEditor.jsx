@@ -39,6 +39,7 @@ import {
   clipRowKind,
   dominantRowKind,
   isBoardRow,
+  isVeoRender,
   ROW_TAKES,
   frameOrigin,
   frameSpans,
@@ -128,7 +129,7 @@ import useUndoStack from "../animatic/useUndoStack.js";
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
 // its file-name sort still does, on every upload path.
 import { sortFiles } from "./FrameStrip.jsx";
-import { UNTITLED } from "./AnimaticLibrary.jsx";
+import { UNTITLED, isUntitled } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
 import PaneSplitter from "./PaneSplitter.jsx";
@@ -144,6 +145,9 @@ import EffectsLibrary from "./EffectsLibrary.jsx";
 import { FX_ITEM_COUNT, fxEntry } from "../animatic/fx_library.js";
 import { MAX_EFFECTS } from "../animatic/gl/shaders/layer.js";
 import RegeneratePanelInline, { RelengthShotInline } from "./RegeneratePanelInline.jsx";
+// The board's own dialogue block, reused verbatim in the ✨ Animate dialog so a
+// shot's spoken lines look the same here as they do on the storyboard.
+import DialogueBox from "./DialogueBox.jsx";
 import {
   AudioProperties,
   FrameProperties,
@@ -637,6 +641,23 @@ export default function AnimaticEditor({
   // The "animate this shot" panel. Null = closed; otherwise the frame id.
   const [animateFor, setAnimateFor] = useState(null);
   const [animatePrompt, setAnimatePrompt] = useState("");
+  // The BOARD PANEL behind the shot being animated — its wording and its spoken
+  // lines. Null while the (free) read is in flight, and for a shot that is not a
+  // board panel at all; the dialog simply shows no board block in either case.
+  const [animatePanel, setAnimatePanel] = useState(null);
+  // Are the board's spoken lines currently appended to the prompt? ⚠ NOT A
+  // SEPARATE FIELD THAT GETS SENT — ticking it writes the lines INTO the prompt
+  // box, because the whole point of showing the prompt is that what goes to Veo
+  // is what is on screen. Anything added invisibly would be the opposite.
+  const [animateSpeak, setAnimateSpeak] = useState(false);
+  // Which frame the in-flight panel read was started for, so a second ✨ Animate
+  // opened before the first answers cannot fill the box with the wrong shot's
+  // wording. Compared on arrival and nothing else.
+  const animatePanelReq = useRef(null);
+  // The exact block `animateSpeak` appended, so unticking can take back what it
+  // put in — and only that. If the user has since edited the lines the block no
+  // longer matches, and the text stays: their edit outranks the checkbox.
+  const animateSpokenRef = useRef("");
   const [animateRender, setAnimateRender] = useState({
     tier: "fast",
     resolution: "720p",
@@ -1188,6 +1209,66 @@ export default function AnimaticEditor({
   // Stable, because `ProgramCanvas` builds its WebGL context once and a prop that
   // changed identity every render used to take the context down with it.
   const onGlUnavailable = useCallback(() => setGlFailed(true), []);
+
+  // --- Full screen ---------------------------------------------------------
+  // The Program pane, blown up to the whole display, the way a video player
+  // does it. It is the MONITOR'S BODY that goes full screen — picture plus
+  // transport — not the picture alone: a preview you cannot pause or scrub is
+  // a screensaver, and not the whole pane either, because a pane head with an
+  // aspect-ratio menu on it is furniture at 2 metres.
+  //
+  // ⚠ THE FLAG IS DRIVEN BY THE EVENT, NEVER BY THE CLICK. Escape, F11 and the
+  // browser's own chrome all leave full screen without telling us, so a boolean
+  // flipped in the handler would have left the button drawing "exit" over a
+  // window that had already come back — and pressing it would then have done
+  // nothing, because there is nothing to exit. `fullscreenchange` is the only
+  // thing that knows, so it is the only thing that writes.
+  //
+  // ⚠ AND IT LIVES UP HERE, WITH THE MONITOR'S OTHER STATE, BECAUSE THIS
+  // COMPONENT RETURNS EARLY. Below the view marker there is `if (loading)` and
+  // `if (error && !frames.length)`, so a hook declared next to the Program pane's
+  // JSX — which is where these three naturally belong — does not run on the
+  // first render and does on the second. React counts hooks: that is "Rendered
+  // more hooks than during the previous render", and it takes the whole editor
+  // down to a black page the moment a project finishes opening. It was written
+  // there first and did exactly that.
+  const programBodyRef = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const sync = () =>
+      setFullscreen(
+        (document.fullscreenElement || document.webkitFullscreenElement) ===
+          programBodyRef.current
+      );
+    sync();
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
+
+  // ⚠ `.catch` IS NOT OPTIONAL. `requestFullscreen` rejects — an iframe without
+  // `allowfullscreen`, a browser that refuses outside a user gesture — and an
+  // unhandled rejection in a click handler is an error in the console and a
+  // button that looks broken with no reason given.
+  const toggleFullscreen = useCallback(() => {
+    const el = programBodyRef.current;
+    if (!el) return;
+    const current = document.fullscreenElement || document.webkitFullscreenElement;
+    if (current) {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      return;
+    }
+    const request = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!request) return;
+    Promise.resolve(request.call(el)).catch((e) =>
+      console.warn("[monitor] full screen was refused.", e)
+    );
+  }, []);
+
   const activeTexts = scene.texts;
   const activeShapes = scene.shapes;
   const activeOverlays = scene.overlays;
@@ -1228,10 +1309,10 @@ export default function AnimaticEditor({
     !transitions.length &&
     !audioTracks.length &&
     !video &&
-    (!title.trim() || title.trim() === UNTITLED);
+    isUntitled(title);
   // Has content but still carries the placeholder name, so Save should ask for
   // a real one first.
-  const needsName = !title.trim() || title.trim() === UNTITLED;
+  const needsName = isUntitled(title);
 
   useMonitorVideo({ scene, frames, videoElsRef, playing, rate });
 
@@ -1751,6 +1832,19 @@ export default function AnimaticEditor({
     }
     // Pictures composited OVER the sequence sit directly above it: they are the
     // last thing drawn before the frame itself.
+    //
+    // ⚠ THE DEFAULT "Images" ROW IS ALWAYS HERE, exactly as Text, Shapes and
+    // Video always are. It used to appear only once an image layer RECORD
+    // existed, so a new project opened with four rows and no obvious place to
+    // drop a logo or a cut-in — and `addLayer` has always named the first ADDED
+    // image layer "Images 2" (it numbers from 2 because the default row is
+    // supposed to be on screen holding the name "Images"), which named a row
+    // after a row that was not there. Its `layerId` is "" and an overlay with no
+    // `layer_id` lands on it, the same rule `clipLane`, `clearLane` and
+    // `addToLane` already used for the default Text and Shapes rows.
+    // ⚠ AND IT IS `removable: false` — its ✕ EMPTIES it rather than deleting it,
+    // because it is the row a layerless overlay falls back to.
+    out.push({ key: "image:", kind: "image", name: "Images", layerId: "", removable: false });
     for (const l of of("image")) {
       out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
     }
@@ -3498,6 +3592,49 @@ export default function AnimaticEditor({
   }
 
   /**
+   * SAVE A VEO RENDER TO DISK — the Media card's ⬇ and the timeline clip's
+   * right-click menu, which are one function because they are one promise.
+   *
+   * ⚠ IT IS OFFERED ON A PAID RENDER AND ON NOTHING ELSE, which is the whole
+   * ask: "only add fuction when user generte Veo video". Every other source in a
+   * project is already on the user's machine or is one click away on the board —
+   * an upload they dropped in, a panel the storyboard still holds. A render is the
+   * one thing that exists ONLY here and costs money to make again, so the reason
+   * given for it was "if user want delete project so user first download veo
+   * gneereted video": deleting the project has to stop being the thing that
+   * destroys it. `isVeoRender` is the same question the timeline already asks to
+   * paint these bars purple — see `scene.js`, and do not add a second one.
+   *
+   * ⚠ IT TAKES A CLIP *OR* A LIBRARY CARD. Both carry `src.upload_id`, because a
+   * card is built from the clip by `assetFromFrame`, so one handler serves both
+   * places and they cannot come to disagree about which file they save.
+   *
+   * ⚠ AND IT SAYS SOMETHING BEFORE IT STARTS. A Veo render is tens of megabytes
+   * fetched as an authed blob — there is no browser download bar until the whole
+   * file has landed, so without the first notice the press looks like it did
+   * nothing for several seconds.
+   */
+  async function downloadVeoClip(item) {
+    const uploadId = item?.src?.upload_id || "";
+    if (!isVeoRender(item) || !uploadId) return;
+    const label = (item.label || "").trim();
+    // Windows refuses \ / : * ? " < > | in a file name, and a name that the OS
+    // rejects is a download that fails after the bytes have already been fetched.
+    const base =
+      label.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 80) ||
+      "veo-clip";
+    setError("");
+    setNotice(`Saving “${base}.mp4”…`);
+    try {
+      await api.downloadAnimaticMedia(animaticId, uploadId, `${base}.mp4`);
+      setNotice(`Saved “${base}.mp4” to your downloads.`);
+    } catch (e) {
+      setError(e.message);
+      setNotice("");
+    }
+  }
+
+  /**
    * PUT A LIBRARY CARD ON THE TIMELINE without a drag — its ＋, and a double-click.
    *
    * ⚠ A DRAG CANNOT BE THE ONLY WAY. There is no keyboard path through one, and a
@@ -4967,18 +5104,121 @@ export default function AnimaticEditor({
     layersRef.current = layers;
   }, [layers]);
 
+  /**
+   * The board's own words for one shot, as the first draft of its motion prompt.
+   *
+   * ⚠ THE DESCRIPTION ONLY, which is the same draft `_starting_prompt` builds in
+   * `server/videos.py` for the Image-to-AI-Video workspace. Two workflows
+   * animating the same panel should open on the same wording, and the camera and
+   * location lines are about how the STILL is framed — Veo is being asked what
+   * moves, and handing it the framing invites it to re-frame the shot.
+   */
+  const boardDraftPrompt = (panel) => (panel?.description || "").trim();
+
+  /**
+   * The shot's spoken lines, written the way a Veo prompt wants to hear them.
+   *
+   * Quoted, because the words have to arrive as SPEECH rather than as more
+   * description — an unquoted line reads as another instruction about the scene.
+   * A line whose speaker the breakdown could not attribute says "A voice", the
+   * same fallback the board's own dialogue block uses.
+   */
+  const spokenPromptBlock = (dialogue) =>
+    (dialogue || [])
+      .map((d) => ({ who: (d?.character || "").trim(), line: (d?.line || "").trim() }))
+      .filter((d) => d.line)
+      .map((d) => `${d.who || "A voice"} says: "${d.line}"`)
+      .join("\n");
+
   function openAnimate(frameId) {
     const frame = frames.find((f) => f.id === frameId);
     setAnimateFor(frameId);
     // The frame's label is a starting draft, not a finished prompt — a label
     // says what the shot IS and Veo wants to hear what MOVES — but an empty box
     // is worse, and the placeholder explains the difference.
-    setAnimatePrompt(frame?.label || "");
+    const label = frame?.label || "";
+    setAnimatePrompt(label);
     setAnimateConfirm(null);
+    setAnimatePanel(null);
+    setAnimateSpeak(false);
+    animateSpokenRef.current = "";
+
+    // ⚠ THE BOARD IS THE BETTER DRAFT, AND IT IS A FREE READ. "Shot 1" is a
+    // label, not a prompt; the panel this clip was drawn from already carries a
+    // sentence describing the shot AND who says what in it, and until now the
+    // user retyped both. Reported as "so user see prompt too so user control
+    // prompt … and dialouge like generted in last Storyboard panel".
+    // Same endpoint the redraw pane reads (`getFramePanel`) — one owner-checked
+    // route for "what does the board say about this clip", not two.
+    animatePanelReq.current = frameId;
+    api
+      .getFramePanel(animaticId, frameId)
+      .then((info) => {
+        // A second ✨ Animate opened while this was in flight: its own read owns
+        // the box now, and filling it here would be the wrong shot's wording.
+        if (animatePanelReq.current !== frameId) return;
+        if (!info?.storyboard_id) return;
+        setAnimatePanel(info);
+        const draft = boardDraftPrompt(info);
+        if (!draft) return;
+        // ⚠ ONLY OVER THE LABEL WE PUT THERE. The read is asynchronous and the
+        // box is focused the whole time, so anything the user has already typed
+        // outranks the draft — arriving late and overwriting it would be the
+        // worst thing this could do.
+        setAnimatePrompt((current) => (current.trim() === label.trim() ? draft : current));
+      })
+      .catch(() => {
+        /* No board, no draft. The label stays and the dialog is unchanged —
+           this read is an improvement on the prompt, never a precondition. */
+      });
+  }
+
+  /**
+   * Tick / untick "have Veo speak these lines".
+   *
+   * ⚠ IT EDITS THE PROMPT BOX, IT DOES NOT SET A FLAG. The dialog exists so the
+   * user can see and control exactly what is sent, so the lines are written into
+   * the text they are already reading rather than bolted on at submit time.
+   * Unticking takes back the block IT added and nothing else — an edited block
+   * no longer matches, and the user's words stay.
+   */
+  function toggleAnimateSpeak(on) {
+    const block = spokenPromptBlock(animatePanel?.dialogue);
+    if (!block) return;
+    if (on) {
+      setAnimatePrompt((p) => {
+        const base = (p || "").trimEnd();
+        return base ? `${base}\n\n${block}` : block;
+      });
+      animateSpokenRef.current = block;
+      setAnimateSpeak(true);
+      // ⚠ VEO CANNOT SAY A LINE WITH THE SOUND OFF. Leaving the checkbox as it
+      // was would render mouths moving in silence and bill for it, so asking for
+      // dialogue turns sound on — and the note under the box says it costs more,
+      // because this is the one dialog in the editor where money moves.
+      setAnimateRender((r) => (r.generate_audio ? r : { ...r, generate_audio: true }));
+    } else {
+      const added = animateSpokenRef.current;
+      setAnimatePrompt((p) => {
+        const trimmed = (p || "").trimEnd();
+        return added && trimmed.endsWith(added)
+          ? trimmed.slice(0, trimmed.length - added.length).trimEnd()
+          : p;
+      });
+      animateSpokenRef.current = "";
+      setAnimateSpeak(false);
+    }
   }
 
   const veoFor = (frameId) =>
     veoClips.filter((c) => c.frame_id === frameId).slice(-1)[0] || null;
+
+  // The shot the ✨ Animate dialog is open on — read for the NAME above its
+  // prompt box. ⚠ Looked up on every render rather than captured in
+  // `openAnimate`, so renaming a clip while the dialog is open cannot leave the
+  // dialog naming it by a name it no longer has.
+  const animateFrame =
+    animateFor === null ? null : frames.find((f) => f.id === animateFor) || null;
 
   // ✨ Animate with Veo has a SECOND way in now — the timeline's own add row,
   // beside ＋ Add layer — and a button standing there has no selection to lean on
@@ -5920,7 +6160,7 @@ export default function AnimaticEditor({
   // moment. Once it has a real name, Save just writes.
   function handleSave() {
     if (needsName) {
-      setSaveAsName(title.trim() === UNTITLED ? "" : title);
+      setSaveAsName(isUntitled(title) ? "" : title);
       return;
     }
     flush();
@@ -6132,8 +6372,8 @@ export default function AnimaticEditor({
           className="an-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Untitled animatic"
-          aria-label="Animatic title"
+          placeholder={UNTITLED}
+          aria-label="Project title"
         />
 
         {/* Only speaks when it has something to say. A permanent "✓ Saved" is
@@ -6522,6 +6762,7 @@ export default function AnimaticEditor({
                     usedCount={assetUsedCount}
                     onPlace={placeAsset}
                     onDelete={deleteAsset}
+                    onDownload={downloadVeoClip}
                   />
                 </PropGroup>
               ))}
@@ -6607,8 +6848,29 @@ export default function AnimaticEditor({
                 Make it {suggestedAspect}
               </button>
             )}
+            {/* The empty end of the head, which is where a player puts this and
+                so the only place anyone looks for it. ⚠ PUSHED RIGHT WITH
+                `margin-left: auto`, NOT with an `.an-spacer`: this head wraps,
+                and a growing spacer on a wrapped line drags the button to the
+                far edge of a row it no longer shares with the title. */}
+            <button
+              type="button"
+              className="an-tool an-tool-ico an-fs-btn"
+              onClick={toggleFullscreen}
+              title={
+                fullscreen
+                  ? "Leave full screen (Esc)"
+                  : "Full screen — the monitor and its transport fill the display"
+              }
+              aria-label={fullscreen ? "Leave full screen" : "Full screen"}
+              aria-pressed={fullscreen}
+            >
+              {/* ⚠ SIZED IN `rem`. `.an-tool` is 0.72rem — sized for a capital
+                  letter — so an `em` icon comes out ~12px, which is mud. */}
+              <Icon name={fullscreen ? "fullscreen-exit" : "fullscreen"} size="1.05rem" />
+            </button>
           </div>
-          <div className="an-pane-body an-program-body">
+          <div className="an-pane-body an-program-body" ref={programBodyRef}>
             {/* The fitter is a size container; the screen sizes itself off its
                 height, so the frame shape on screen is exactly the frame shape
                 that gets exported. */}
@@ -7367,7 +7629,7 @@ export default function AnimaticEditor({
               layerMenu && (
                 <div className="tl-layer-menu" role="menu" aria-label="Add a layer">
                   {[
-                    // ⚠ THE FOUR PICTURE ROWS COME FIRST, and each is a row in
+                    // ⚠ THE THREE PICTURE ROWS COME FIRST, and each is a row in
                     // the CUT — as opposed to Images below, which composites over
                     // it. `row` marks them so the click handler knows to make a
                     // picture track rather than an ordinary layer record.
@@ -7389,15 +7651,14 @@ export default function AnimaticEditor({
                       kind: "video",
                       row: true,
                       ico: "🎞",
-                      label: "Video track",
-                      note: "Another row for footage — drawn OVER the tracks below it",
-                    },
-                    {
-                      kind: "stills",
-                      row: true,
-                      ico: "🖼",
-                      label: "Stills track",
-                      note: "Another row for full-frame photos in the cut",
+                      // ⚠ NO SEPARATE "Stills track" BESIDE THIS ONE. There used
+                      // to be one, and it made the same row under a second name:
+                      // a video row takes footage AND stills (see the row ＋ and
+                      // `dropAsset`), so the menu offered two doors into one
+                      // place. Full-frame photos go here; Images below is the
+                      // one that composites OVER the cut.
+                      label: "Video",
+                      note: "Another row for footage and full-frame stills — drawn OVER the tracks below it",
                     },
                     {
                       kind: "image",
@@ -7471,6 +7732,7 @@ export default function AnimaticEditor({
                never lit up, a bar that did not move. A locked row is the first
                that looks like nothing happening, so it needs the status strip. */
             onNotice={setNotice}
+            onDownloadClip={downloadVeoClip}
             onSplitFootage={splitFootageOntoTrack}
             tool={tool}
             snapping={snapping}
@@ -7931,15 +8193,71 @@ export default function AnimaticEditor({
               Veo turns this still into real footage. Describe what MOVES — the
               picture already says what it is.
             </p>
+            {/* ⚠ THE SHOT'S NAME, AND IT IS HERE BECAUSE THE PROMPT BOX STOPPED
+                CARRYING IT. The box used to open on the frame's LABEL, so "Shot 1"
+                was the one thing on screen naming what you were about to pay to
+                animate — filling the box with the board's description took that
+                away. Reported as "see you remove image name like Shot1 i want yuo
+                add name too in this pop up ... panel Up keep".
+                Above the box, in the same label-over-control rhythm as Quality /
+                Size / Length below it. */}
+            <div className="an-animate-shot">
+              <span className="an-animate-shot-name">
+                {animateFrame?.label || "This shot"}
+              </span>
+              {animatePanel?.title && (
+                <span className="an-animate-shot-src">from “{animatePanel.title}”</span>
+              )}
+            </div>
             <textarea
               className="an-tp-text"
               autoFocus
               rows={3}
               value={animatePrompt}
               placeholder="e.g. he lowers the lamp and turns towards the door; slow push in"
-              maxLength={1000}
+              maxLength={2000}
               onChange={(e) => setAnimatePrompt(e.target.value)}
             />
+
+            {/* ⚠ WHAT THE BOARD ALREADY SAYS ABOUT THIS SHOT, and it is only a
+                DRAFT. The box above opens on the panel's description instead of
+                the frame's label ("Shot 1"), which is a name and not a prompt.
+                Saying where the words came from is what makes editing them feel
+                safe — nothing typed here is written back to the storyboard. */}
+            {animatePanel?.storyboard_id && boardDraftPrompt(animatePanel) && (
+              <p className="tiny muted an-animate-src">
+                {/* ⚠ THE BOARD IS NAMED ONCE, in the row above the box. Saying it
+                    again here was two labels for one fact. What is left is the
+                    part that is not obvious: this text is a DRAFT and typing over
+                    it does not touch the storyboard. */}
+                Drafted from the storyboard — editing it here changes the render,
+                never the board.
+              </p>
+            )}
+
+            {/* The shot's spoken lines. ⚠ NEVER APPENDED ON THEIR OWN — the
+                image side deliberately keeps dialogue OUT of a prompt (a drawing
+                model renders words as speech bubbles), but Veo can say them, so
+                this is offered as a decision rather than taken. */}
+            {spokenPromptBlock(animatePanel?.dialogue) && (
+              <div className="an-animate-speech">
+                <DialogueBox dialogue={animatePanel.dialogue} />
+                <label className="an-check">
+                  <input
+                    type="checkbox"
+                    checked={animateSpeak}
+                    onChange={(e) => toggleAnimateSpeak(e.target.checked)}
+                  />
+                  Have Veo speak these lines
+                </label>
+                {animateSpeak && !animateRender.generate_audio && (
+                  <p className="tiny an-animate-warn">
+                    Sound is off, so these lines would be mouthed and never
+                    heard. Turn on “Let Veo generate sound too” below.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="an-prop-row">
               <span className="an-prop-label">Quality</span>
