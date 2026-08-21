@@ -1107,6 +1107,148 @@ def generate_storyboard_panel(
     return None
 
 
+# ---------------------------------------------------------------------------
+# ONE IMAGE FROM ONE SENTENCE — the Media pane's ✨
+# ---------------------------------------------------------------------------
+# ⚠ THE ONLY IMAGE CALL HERE THAT IMPOSES NO ART DIRECTION, and that is the
+# whole of its job. Every other function in this file exists to make a picture
+# that MATCHES something — a board's style, a locked character, a scene's look —
+# and each one wraps the caller's words in a paragraph of instructions to get
+# there. This one is for "generate any type of image with text prompt fill": the
+# user's sentence IS the brief, so it goes in first and unedited, and all that
+# follows it is the handful of constraints that keep the result usable AS A
+# LAYER — full-bleed, no caption burnt in, no drawn frame around it.
+#
+# ⚠ IT IS NOT `generate_storyboard_panel` WITH THE STYLE LEFT OUT. That one
+# opens with "A single full-bleed storyboard IMAGE: <style>" and closes with a
+# family-friendly storyboard rider, and both would quietly turn "a neon city at
+# night" into a sketch of one. Two callers, two prompts, no shared middle to
+# drift.
+_FREEFORM_IMAGE_RIDER = (
+    "Render this as one finished image that fills the frame edge to edge, "
+    "{aspect_txt}. No text, no caption, no watermark, no signature, and no "
+    "border or panel frame drawn around the picture."
+)
+
+
+def _aspect_config_kwargs(aspect_ratio: str) -> dict:
+    """`image_config=ImageConfig(aspect_ratio=…)`, when this SDK has it.
+
+    ⚠ ASKED FOR PROPERLY *AND* CROPPED AFTERWARDS, because neither alone is
+    enough. The config is how you actually get a 9:16 picture rather than a 16:9
+    one with the subject in the middle — but it is a recent field, and an older
+    `google-genai` would reject the kwarg and take the whole call down with it.
+    So it degrades to nothing (the prompt still asks in words) and the caller
+    centre-crops what comes back either way. Same shape as `_sampling_kwargs`
+    in script_breakdown.py, which drops what its SDK does not carry.
+    """
+    ratio = (aspect_ratio or "").strip()
+    if not ratio:
+        return {}
+    if "image_config" not in types.GenerateContentConfig.model_fields:
+        logger.warning(
+            "google-genai has no `image_config`; asking for %s in the prompt only. "
+            "Upgrade the SDK for exact framing.", ratio,
+        )
+        return {}
+    try:
+        return {"image_config": types.ImageConfig(aspect_ratio=ratio)}
+    except Exception as e:  # noqa: BLE001 — an unsupported ratio is not fatal
+        logger.warning("[image] %s is not an aspect this SDK will send (%s)", ratio, e)
+        return {}
+
+
+def generate_image(
+    description: str,
+    aspect_ratio: str = "16:9",
+    provider: str | None = None,
+    variation: int | None = None,
+) -> Image.Image | None:
+    """Generate ONE image from a plain description. No style, no references.
+
+    The Media pane's ✨: a picture to drop on the Images layer — a title card, a
+    texture, an inset, a logo plate — where nothing about it has to match a
+    storyboard.
+
+    `aspect_ratio` is "W:H" and is asked for twice: once through the SDK's
+    `image_config` (which is what actually frames it) and once in words, so an
+    older SDK still gets close. The caller is expected to crop the result.
+
+    ⚠ `variation=None` BY DEFAULT, which is the opposite of the panel calls. They
+    seed so that a board is reproducible; this is a button somebody presses again
+    when they do not like what came back, and a seeded call would hand them the
+    identical picture every press.
+
+    Returns a PIL image, or None if the model returned nothing (a safety filter
+    is the usual reason) — the caller turns that into something readable.
+    """
+    provider = _resolve_provider(provider)
+    client = get_client(provider)
+    model_id = _model_id(provider)
+
+    description = (description or "").strip()
+    if not description:
+        return None
+    aspect_txt = _STORYBOARD_ASPECT_HINTS.get(
+        aspect_ratio, f"framed {aspect_ratio}" if aspect_ratio else "well framed"
+    )
+    # ⚠ THE USER'S WORDS FIRST AND WHOLE. Anything in front of them reads as the
+    # brief and demotes the sentence they actually typed.
+    prompt = f"{description}\n\n{_FREEFORM_IMAGE_RIDER.format(aspect_txt=aspect_txt)}"
+    extra = _aspect_config_kwargs(aspect_ratio)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(
+                "[image] Generating (provider=%s, model=%s, aspect=%s, attempt %d/%d)…",
+                provider, model_id, aspect_ratio or "-", attempt, MAX_RETRIES,
+            )
+            with _throttle():
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[prompt],
+                    config=_image_config(
+                        _seed_for(prompt, attempt, variation=variation), **extra
+                    ),
+                )
+
+            if (
+                response.candidates
+                and response.candidates[0].content
+                and response.candidates[0].content.parts
+            ):
+                for part in response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        image = Image.open(io.BytesIO(part.inline_data.data)).convert("RGB")
+                        logger.info("[image] Got image (%dx%d)", image.width, image.height)
+                        return image
+
+            logger.warning(
+                "[image] Empty response (content filter likely). Prompt: %.80s…", prompt
+            )
+            return None
+
+        except Exception as e:  # noqa: BLE001
+            # Only retry what a retry can fix — the same rule the panel call
+            # follows: a safety block or a bad request never succeeds, so failing
+            # fast beats burning the backoff budget in front of a waiting dialog.
+            if not _is_retryable(e):
+                logger.error("[image] permanent error, not retrying: %s", e)
+                return None
+            if attempt >= MAX_RETRIES:
+                logger.error("[image] call failed after %d attempts: %s", MAX_RETRIES, e)
+                return None
+            delay = _backoff_delay(attempt, e)
+            logger.warning(
+                "[image] transient error (attempt %d/%d), retrying in %.1fs: %s",
+                attempt, MAX_RETRIES, delay, e,
+            )
+            time.sleep(delay)
+            continue
+
+    return None
+
+
 def generate_character_reference(
     description: str,
     provider: str | None = None,

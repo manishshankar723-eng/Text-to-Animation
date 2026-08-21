@@ -884,6 +884,137 @@
   color: var(--warn);
   margin: 0.4rem 0 0;
 }
+
+/* --- Generate a shot before / after this one ----------------------------- */
+/* WHAT THE NEW SHOT GOES BETWEEN. The shot being written does not exist yet, so
+   its neighbours are the only thing there is to judge it against — this is the
+   one block ✨ Animate has no equivalent of. Boxed and quiet: it is context to
+   glance at, not two more paragraphs to read. */
+.an-shot-gap {
+  margin: 0.7rem 0 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  display: grid;
+  gap: 0.3rem;
+}
+.an-shot-gap p {
+  margin: 0;
+}
+/* "Before" / "After" — a label on its line, not a word in the sentence. */
+.an-shot-gap-side {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+/* The prompt box with ✨ standing in its corner. ⚠ THE BUTTON IS POSITIONED
+   OVER THE BOX, NOT PLACED BESIDE IT: the box is the widest control in this
+   dialog and putting the ✨ in a row of its own would either shrink it or add a
+   line of chrome under everything. `padding-right` on the textarea is what keeps
+   the typing out from under the button — without it a long line runs behind the
+   star. */
+.an-shot-prompt {
+  position: relative;
+  /* THE WIDTH THE BROWSER KEEPS FOR THE TEXTAREA'S OWN SCROLLBAR. One number,
+     because two rules below depend on it and they have to agree: the ✨ sat at
+     `right: 0.4rem`, which is ON the scrollbar the moment the prompt runs past
+     three lines — reported as "Ai icone cover Scrol bar move ai icon little".
+     ⚠ AND `scrollbar-gutter: stable` IS THE OTHER HALF. Without it the gutter
+     only exists while the text overflows, so the ✨ would have to move as you
+     type; reserved always, the button has one place and stays in it. */
+  --shot-ai-gutter: 15px;
+}
+.an-shot-prompt .an-tp-text {
+  padding-right: calc(2.4rem + var(--shot-ai-gutter));
+  scrollbar-gutter: stable;
+}
+.an-shot-ai {
+  position: absolute;
+  top: 0.4rem;
+  right: calc(0.4rem + var(--shot-ai-gutter));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--primary);
+  cursor: pointer;
+}
+.an-shot-ai:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--panel-2);
+}
+.an-shot-ai:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* WORKING. ⚠ IT IS ALSO `disabled` — pressing it twice pays for two suggestions
+   — and the dim above would read as "this button is off", which is the opposite
+   of what is happening. So the dim comes back off and the outline lights
+   instead: the star is stroked, so the icon itself brightens with it, which a
+   filled shape could not have shown. */
+.an-shot-ai.is-working:disabled {
+  opacity: 1;
+  border-color: var(--primary);
+  background: var(--panel-2);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+/* The wait, under the box. `.an-prop-progress` brings the message and the bar;
+   this only says where it sits and how much room it takes, so the dialog does
+   not jump by a line when the hint swaps for the row.
+   ⚠ NO SPINNER IN THIS ONE — see the note at its markup. Every other use of
+   `.an-prop-progress` puts a `.spinner-inline` in front of the message, and here
+   that was a second thing saying what the bar already says. The message keeps
+   the full width now that nothing sits in front of it. */
+.an-shot-thinking {
+  margin: 0.45rem 0 0;
+  row-gap: 0.3rem;
+}
+.an-shot-thinking .an-prop-progress-msg {
+  flex: 1 1 100%;
+}
+/* WHICH MODEL IS ABOUT TO DRAW — `.an-select`'s box, with nothing to pick.
+   ⚠ IT BORROWS THE SELECT'S SURFACE RATHER THAN INVENTING A FIELD, so the row
+   lines up with Shape and Length above it and with Quality / Size / Length in
+   the ✨ Animate dialog next door: one look for "a setting of this render",
+   whether or not this particular one can be changed.
+   ⚠ `width: 100%` IS WHAT PUTS THE LABEL ON ITS OWN LINE. `theme.css` sets a
+   global `select { width: 100% }`, which is the only reason the real selects in
+   this dialog wrap their label above them — a value that did not claim the row
+   sat beside its label instead and broke the rhythm, which is what was
+   reported. Matching it here is matching the cause, not the symptom. */
+.an-select-static {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  /* A field, not a control: no pointer, no focus ring, and it takes no tab
+     stop because it is a `<span>`. */
+  cursor: default;
+  overflow-wrap: anywhere;
+}
+/* The backend it resolves through — quiet beside the model id, which is the
+   part anyone is actually reading. */
+.an-shot-provider {
+  color: var(--muted);
+}
+/* The ✨'s one line, with its ⓘ on the end of it. `baseline` rather than
+   `center` so the circle sits on the text it belongs to however the line wraps. */
+.an-shot-hint {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.an-shot-hint > span {
+  min-width: 0;
+}
+.an-shot-note {
+  margin: 0.35rem 0 0;
+}
 .an-name-input {
   width: 100%;
   box-sizing: border-box;

@@ -295,6 +295,28 @@ const PATHS = {
       <path d="M8.5 20.5v-3.3a1.7 1.7 0 0 0-1.7-1.7H3.5" {...STROKE} />
     </>
   ),
+  // --- ASK THE MODEL TO WRITE IT ------------------------------------------
+  // The four-point star every product now uses for "AI did this". It is a DRAWN
+  // icon rather than the ✨ emoji the ✨ Animate buttons carry, because it sits
+  // inside a text box as a control — an emoji there inherits the box's font and
+  // lands a different size and colour in every browser.
+  //
+  // ⚠ STROKED, LIKE THE REST OF THIS FILE. It was drawn solid, as `play` and
+  // `select` are, on the reasoning that a stroked star is a scribble at 1em —
+  // and in the box it read as a small filled blob rather than as an icon
+  // ("add only ai icon strock so view icon highlight type"). An outline at this
+  // size is legible after all, and it is what makes the star read as one of the
+  // set: the hover and the working state then light the OUTLINE, which a filled
+  // shape cannot show.
+  //
+  // ⚠ AND IT IS ONE STAR NOW, NOT TWO. It was a big one with a small one beside
+  // it, because a single star can read as a favourite — but that is the FIVE
+  // point star ratings use. A four-point star, stroked and drawn to the edges of
+  // the box, is unmistakable on its own, and the second one only cost the first
+  // one the room it needed to be seen at 17px.
+  sparkle: (
+    <path d="M12 3 14.2 9.8 21 12 14.2 14.2 12 21 9.8 14.2 3 12 9.8 9.8Z" {...STROKE} />
+  ),
 };
 
 export default function Icon({ name, size = "1.05em", className = "", title }) {

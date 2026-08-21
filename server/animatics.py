@@ -15,7 +15,10 @@ The job's status describes the EXPORT, which is the only long-running thing here
 Editing a project that already has a video marks it `stale`, so the UI can say
 the downloadable file no longer matches what's on screen.
 
-Nothing in this module calls an AI backend — an animatic costs no quota.
+Most of this module calls no AI backend — laying out an animatic costs no
+quota. The exceptions are named as such at their routes: ✨ Animate (Veo),
+captions, voiceover, reframe, redrawing a panel, and generating a shot
+between two others.
 """
 
 import glob
@@ -56,9 +59,17 @@ from .schemas import (
     AnimaticDialogueLine,
     AnimaticDialogueSheet,
     AnimaticFrame,
+    AnimaticGeneratedImage,
+    AnimaticImageBackend,
+    AnimaticImageGenerateRequest,
     AnimaticAsset,
     AnimaticLayer,
     AnimaticMediaItem,
+    AnimaticNeighbourShotContext,
+    AnimaticNeighbourShotRequest,
+    AnimaticNeighbourShotResponse,
+    AnimaticNeighbourSuggestRequest,
+    AnimaticNeighbourSuggestResponse,
     AnimaticOverlay,
     AnimaticPanelRegenerateRequest,
     AnimaticPanelSource,
@@ -998,6 +1009,23 @@ def get_lut(name: str, current: CurrentUser = Depends(get_current_user)):
     return FileResponse(path, media_type="text/plain", filename=f"{name}.cube")
 
 
+@router.get("/image-model", response_model=AnimaticImageBackend)
+def get_image_model(current: CurrentUser = Depends(get_current_user)):
+    """FREE. Which image model a ✨ in this editor would call.
+
+    ⚠ DECLARED BEFORE `/{job_id}`, like `/luts` above it — a path segment that is
+    not an id has to be matched before the catch-all, or "image-model" is read as
+    a project id and 404s.
+
+    ⚠ AND IT TAKES NO PROJECT, because the answer does not depend on one: the
+    model comes from `IMAGE_PROVIDER` / `*_IMAGE_MODEL` in the environment. It is
+    still authed — it names infrastructure, and there is no reason to tell the
+    world which backend this instance runs.
+    """
+    provider, model = _image_model_id(None)
+    return AnimaticImageBackend(model=model, provider=provider)
+
+
 @router.get("/{job_id}", response_model=AnimaticProject)
 def get_animatic(job_id: str, current: CurrentUser = Depends(get_current_user)):
     """The full project: frames, timing, audio and settings."""
@@ -1219,6 +1247,103 @@ async def upload_images(
         "[animatic %s] %d image(s) uploaded, %d rejected", job_id, len(items), len(rejected)
     )
     return AnimaticUploadResponse(items=items, rejected=rejected)
+
+
+
+# ---------------------------------------------------------------------------
+# ONE IMAGE FROM ONE SENTENCE — the Media pane's ✨
+# ---------------------------------------------------------------------------
+# ⚠ THE SIBLING OF THE UPLOAD ABOVE, AND DELIBERATELY SO: it answers with the
+# same `AnimaticMediaItem`, writes to the same folder under the same id space,
+# and is placed by the client exactly as an uploaded file is. From the moment it
+# returns, nothing downstream can tell the two apart — which is what lets a
+# generated picture list in Media, drag onto a lane, export and delete without a
+# single code path learning that it was generated.
+#
+# ⚠ IT IS NOT THE SHOT GENERATOR WITH THE BOARD LEFT OUT. That one draws a SHOT:
+# the board's style, its references, its bible, its neighbours, its row. This one
+# draws whatever the sentence says and belongs to nothing — see the note on
+# `AnimaticImageGenerateRequest`, and `gemini_client.generate_image`, which is
+# the only image call in this codebase that imposes no art direction.
+def _image_name_from_prompt(prompt: str, limit: int = 42) -> str:
+    """A library card's name, from the words that made the picture.
+
+    The opening of the prompt, cut at a WORD boundary — the person who typed it
+    recognises the card by its first few words, and "A neon-lit alley in the ra…"
+    is a name where "Generated image 3" is a filing reference. Falls back to a
+    plain label for a prompt that is all punctuation.
+    """
+    words = " ".join(str(prompt or "").split())
+    if len(words) <= limit:
+        return words or "Generated image"
+    cut = words[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:-")
+    return (cut or words[:limit]).rstrip() + "…"
+
+
+@router.post("/{job_id}/images/generate", response_model=AnimaticGeneratedImage)
+def generate_animatic_image(
+    job_id: str,
+    body: AnimaticImageGenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA. Draw one picture from a sentence, and store it as an upload.
+
+    One image, synchronously — the dialog waits on it, which is why the retry
+    policy behind `generate_image` fails fast on anything a retry cannot fix.
+
+    ⚠ IT IS RETURNED, NOT PLACED. The client decides where it goes, the same
+    contract every other "the server makes the material" route here follows —
+    which for this one means the Media library and the overlay Images lane.
+    """
+    from gemini_client import generate_image
+    from storyboard_pipeline import _crop_to_aspect
+
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Describe the picture you want.")
+    aspect = (body.aspect_ratio or "").strip() or _settings_of(job).aspect_ratio or "16:9"
+
+    try:
+        image = generate_image(prompt, aspect_ratio=aspect)
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[animatic %s] image generation failed", job_id)
+        raise HTTPException(status_code=502, detail=f"Could not draw it: {e}") from None
+    if image is None:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The model returned no picture (it may have been blocked by a "
+                "safety filter). Try describing it differently."
+            ),
+        )
+
+    # ⚠ CROPPED AS WELL AS ASKED FOR. `generate_image` sends the ratio through
+    # the SDK's `image_config`, which an older google-genai does not carry — and
+    # a model can round it anyway. This is the guarantee: the picture the client
+    # places is the shape the dialog said it would be. A no-op when it already is.
+    image = _crop_to_aspect(image, aspect)
+
+    upload_id = uuid.uuid4().hex[:12]
+    os.makedirs(_media_dir(job_id), exist_ok=True)
+    image.save(_image_path(job_id, upload_id), "PNG")
+    logger.info(
+        "[animatic %s] drew an image (upload %s, %dx%d) for %s",
+        job_id, upload_id, image.width, image.height, current.email,
+    )
+    return AnimaticGeneratedImage(
+        item=AnimaticMediaItem(
+            upload_id=upload_id,
+            filename=f"{upload_id}.png",
+            width=image.width,
+            height=image.height,
+        ),
+        name=_image_name_from_prompt(prompt),
+        model=_image_model_id(None)[1],
+    )
 
 
 @router.post("/{job_id}/import-storyboard", response_model=AnimaticBoardImportResponse)
@@ -2440,8 +2565,17 @@ def _shot_key(src) -> str:
     ⚠ Twin of `shotKey` in `scene.js`, down to the empty third field: a key pose
     and its panel share a board and an index, and without `frame` a render of
     pose 7 would pair with the panel sitting under it.
+
+    ⚠ A GENERATED IN-BETWEEN SHOT HAS NO INDEX AND KEYS ON ITS OWN `shot_id`.
+    It is not on the board, so there is no index to key on — and borrowing one
+    would pair it with the real panel sitting at that index. The `gen-` prefix
+    keeps the two spaces apart for good.
     """
-    if not src or not src.storyboard_id or src.index is None:
+    if not src or not src.storyboard_id:
+        return ""
+    if getattr(src, "shot_id", ""):
+        return f"{src.storyboard_id}:gen-{src.shot_id}:"
+    if src.index is None:
         return ""
     return f"{src.storyboard_id}:{src.index}:{'' if src.frame is None else src.frame}"
 
@@ -3148,6 +3282,481 @@ def regenerate_frame_panel(
     frame = _frame_or_404(job, frame_id)
     frame.url = f"/animatics/{job_id}/frame/{frame.id}?v={_frame_version(job, frame)}"
     return frame
+
+
+# ---------------------------------------------------------------------------
+# A SHOT THAT IS NOT ON THE BOARD — "generate a shot before / after this one"
+# ---------------------------------------------------------------------------
+# Right-click a storyboard clip on the timeline and the shot that is MISSING
+# either side of it can be drawn and dropped into the cut, pushing everything
+# after it along exactly as a Veo take does.
+#
+# ⚠ THE BOARD IS NEVER EDITED, AND THAT IS THE LOAD-BEARING DECISION HERE. The
+# obvious implementation is `POST /storyboards/{id}/panels/insert` followed by a
+# draw — and it is wrong: that route renumbers panels so that `index ==
+# position`, while an animatic frame references a panel BY INDEX. Inserting a
+# panel in the middle would therefore re-point every frame after it, in THIS
+# project and in every other animatic built from the same board, at the wrong
+# picture. So the drawing is stored as an ordinary animatic upload and the clip
+# carries `shot_id` instead of an index — see `AnimaticFrameSource`.
+#
+# Three calls, in the order the dialog makes them: read the context (free),
+# suggest the wording (a text call), draw it (an image call).
+_SIDES = ("before", "after")
+
+
+def _neighbour_side(side: str) -> str:
+    """Which side of the clip: "before" or "after". Never guessed at."""
+    value = (side or "").strip().lower()
+    if value not in _SIDES:
+        raise HTTPException(
+            status_code=400, detail="`side` must be 'before' or 'after'."
+        )
+    return value
+
+
+def _shot_wording(job: Job, frame: AnimaticFrame | None, boards: dict) -> str:
+    """WHAT THIS CLIP IS, in words — for writing the shot next to it.
+
+    Three sources, in the order of how much they actually say: the board panel
+    behind it, the prompt a GENERATED shot was drawn from, and last the clip's
+    label ("Shot 4"), which is a name and barely a description — but a name is
+    still better than handing the model nothing at all.
+
+    `boards` is a per-request cache of board records, for the same reason
+    `_frame_version` takes one: a neighbour lookup asks about a handful of clips
+    off one board.
+    """
+    if frame is None:
+        return ""
+    src = frame.src
+    if src.kind in ("panel", "pose") and src.storyboard_id and src.index is not None:
+        board_id = src.storyboard_id
+        if board_id not in boards:
+            board = get_store().get(board_id)
+            # The same owner check `_resolve_frame_path` makes, for the same
+            # reason: frames are user-editable JSON.
+            boards[board_id] = (
+                board
+                if board is not None
+                and board.owner == job.owner
+                and board.kind == JobKind.STORYBOARD
+                else None
+            )
+        board = boards[board_id]
+        if board is not None:
+            panel = panel_for_index(board, int(src.index)) or {}
+            described = str(panel.get("description") or "").strip()
+            if described:
+                return described
+    if (src.prompt or "").strip():
+        return src.prompt.strip()
+    return (frame.label or "").strip()
+
+
+def _shot_cast(job: Job, frame: AnimaticFrame | None, boards: dict) -> tuple[list, list]:
+    """The characters and named assets in one clip's shot, for its references.
+
+    A shot invented between two others is almost always the same people in the
+    same place, so the neighbours' cast is what locks the new drawing's faces to
+    the rest of the board. Empty for a clip with no panel behind it — a
+    generated shot has no cast list of its own, and guessing one from its prose
+    would be a second, worse breakdown.
+    """
+    if frame is None:
+        return [], []
+    src = frame.src
+    if src.kind not in ("panel", "pose") or not src.storyboard_id or src.index is None:
+        return [], []
+    board = boards.get(src.storyboard_id)
+    if board is None:
+        return [], []
+    panel = panel_for_index(board, int(src.index)) or {}
+    return list(panel.get("characters") or []), list(panel.get("assets") or [])
+
+
+def _board_row_order(job: Job) -> list[tuple[int, AnimaticFrame]]:
+    """Every storyboard STILL, in the order it plays, with its list index.
+
+    ⚠ PLAY ORDER, NOT LIST ORDER. Dragging a clip on the timeline moves it
+    without touching the list, so "the shot before this one" is a question about
+    `start_ms` — the same sort `_lay_out_speech` and `spreadPanelsForRenders`
+    both make before walking the panels.
+
+    ⚠ PER TRACK IS THE CALLER'S JOB. This returns the lot; the caller narrows to
+    the row the clicked clip is on, because an animatic may hold a second
+    storyboard row and the shot before this one is on the row you right-clicked.
+    """
+    frames = _frames_of(job)
+    raw = [f.model_dump(exclude={"url"}) for f in frames]
+    spans, _total = animatic_render.frame_spans(raw)
+    order = [i for i, f in enumerate(frames) if _is_board_panel(f)]
+    order.sort(key=lambda i: (spans[i]["start"], i))
+    return [(i, frames[i]) for i in order]
+
+
+def _neighbour_pair(
+    job: Job, frame: AnimaticFrame, side: str
+) -> tuple[AnimaticFrame | None, AnimaticFrame | None, list[AnimaticFrame]]:
+    """The two shots the new one goes BETWEEN, plus the stretch around them.
+
+    Returns `(before, after, outline)`. Either of the first two is None at the
+    ends of the row — "generate a shot before the first shot" is a real thing to
+    ask for, and the prompt says so rather than inventing a neighbour.
+    """
+    row = [(i, f) for i, f in _board_row_order(job) if f.track == frame.track]
+    position = next((n for n, (_i, f) in enumerate(row) if f.id == frame.id), None)
+    if position is None:
+        return (frame, None, [frame]) if side == "after" else (None, frame, [frame])
+
+    if side == "after":
+        before = frame
+        after = row[position + 1][1] if position + 1 < len(row) else None
+        gap = position + 1
+    else:
+        before = row[position - 1][1] if position > 0 else None
+        after = frame
+        gap = position
+
+    # The stretch of film around the gap — two shots either side. Enough for the
+    # model to see where the story is going without pasting a fifty-shot board
+    # into a prompt that is about two of them.
+    window = [f for _i, f in row[max(0, gap - 2): gap + 2]]
+    return before, after, window
+
+
+def _neighbour_board(job: Job, frame: AnimaticFrame) -> tuple[Job | None, str]:
+    """The board this clip belongs to, and why there isn't one.
+
+    ⚠ NOT `_board_behind`, WHICH ASKS A DIFFERENT QUESTION. That one wants the
+    PANEL behind a clip, so it refuses anything that is not `kind='panel'`. This
+    one wants the board's LOOK — its style, aspect, references and bible — which
+    a generated in-between shot carries just as much as a panel does, so that it
+    can have a neighbour of its own.
+    """
+    src = frame.src
+    if _clip_kind(frame) == "video":
+        return None, "This clip is footage. Generate a shot beside the picture underneath it."
+    board_id = src.storyboard_id or ""
+    if not board_id:
+        return None, (
+            "This clip did not come from a storyboard, so there is no look to draw "
+            "a new shot in."
+        )
+    if not _ID_RE.match(board_id):
+        return None, "This clip has lost its link to the storyboard it came from."
+    board = get_store().get(board_id)
+    # Owner check: frames are user-editable JSON, so without it a crafted board
+    # id would draw with another account's references. Same rule as
+    # `_resolve_frame_path`.
+    if board is None or board.owner != job.owner or board.kind != JobKind.STORYBOARD:
+        return None, "The storyboard this shot came from is no longer available."
+    return board, ""
+
+
+def _neighbour_label(frame: AnimaticFrame, side: str) -> str:
+    """The new shot's name — "After Shot 4" — built once, here.
+
+    Named after the clip it is beside rather than by number, because it has no
+    number: it is not on the board, and the shots around it keep the numbers
+    they already have. Same reason `AnimaticBoardImportResponse.name` is built
+    server side — a name assembled on both sides of the wire drifts.
+    """
+    base = (frame.label or "").strip() or "this shot"
+    return f"{'After' if side == 'after' else 'Before'} {base}"
+
+
+def _neighbour_aspect(job: Job, board: Job | None) -> str:
+    """The shape to draw in: the BOARD's, then the project's, then 16:9.
+
+    The board's first, because the picture has to sit beside the board's other
+    pictures — a shot drawn 9:16 into a 16:9 board is a letterboxed stranger in
+    the cut whatever the project's own frame is set to.
+    """
+    if board is not None:
+        aspect = str((board.params or {}).get("aspect_ratio") or "").strip()
+        if aspect:
+            return aspect
+    return _settings_of(job).aspect_ratio or "16:9"
+
+
+def _image_model_id(board: Job | None) -> tuple[str, str]:
+    """(provider, model) that will draw this — resolved exactly as the draw will.
+
+    ⚠ SHOWN, NOT CHOSEN. There is one image model and it is set in the
+    environment (`IMAGE_PROVIDER` / `*_IMAGE_MODEL`), so the dialog says which
+    one is about to run rather than offering a picker over a list of one. A
+    misconfigured provider is itself a real answer and comes back empty, so the
+    dialog still opens.
+    """
+    from gemini_client import _model_id, _resolve_provider
+
+    try:
+        provider = _resolve_provider((board.params or {}).get("provider") if board else None)
+        return provider, _model_id(provider)
+    except ValueError:
+        return "", ""
+
+
+def _neighbour_context(job: Job, frame_id: str, side: str) -> AnimaticNeighbourShotContext:
+    """Everything the dialog opens on. Free — no model is called."""
+    frame = _frame_or_404(job, frame_id)
+    side = _neighbour_side(side)
+    label = _neighbour_label(frame, side)
+
+    board, reason = _neighbour_board(job, frame)
+    provider, model = _image_model_id(board)
+
+    if board is None:
+        return AnimaticNeighbourShotContext(
+            frame_id=frame_id, side=side, label=label,
+            aspect_ratio=_neighbour_aspect(job, None),
+            model=model, provider=provider,
+            can_generate=False, reason=reason,
+        )
+
+    boards = {board.job_id: board}
+    before, after, _window = _neighbour_pair(job, frame, side)
+    return AnimaticNeighbourShotContext(
+        frame_id=frame_id,
+        side=side,
+        label=label,
+        storyboard_id=board.job_id,
+        title=board.character_name or "Storyboard",
+        before_description=_shot_wording(job, before, boards),
+        after_description=_shot_wording(job, after, boards),
+        aspect_ratio=_neighbour_aspect(job, board),
+        model=model,
+        provider=provider,
+        can_generate=True,
+    )
+
+
+@router.get(
+    "/{job_id}/frames/{frame_id}/neighbour",
+    response_model=AnimaticNeighbourShotContext,
+)
+def get_neighbour_shot(
+    job_id: str,
+    frame_id: str,
+    side: str = "after",
+    current: CurrentUser = Depends(get_current_user),
+):
+    """FREE. What the "generate a shot beside this one" dialog opens on.
+
+    Answers "can this be done at all?" in the same breath, the same contract
+    `get_frame_panel` follows — the dialog reads the reason out rather than
+    offering a button that is going to 400.
+    """
+    job = _get_owned_animatic(job_id, current)
+    return _neighbour_context(job, frame_id, side)
+
+
+@router.post(
+    "/{job_id}/frames/{frame_id}/neighbour/suggest",
+    response_model=AnimaticNeighbourSuggestResponse,
+)
+def suggest_neighbour_shot(
+    job_id: str,
+    frame_id: str,
+    body: AnimaticNeighbourSuggestRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA — a TEXT call, which costs a fraction of a drawing.
+
+    ⚠ IT WRITES INTO THE BOX, IT DOES NOT DRAW. Nothing is generated until the
+    user has read what it wrote and pressed the button below it, which is the
+    same two-step every spending path in this editor follows: the expensive
+    thing is never the thing a single press does.
+
+    The suggestion is written from the two shots either side and the stretch of
+    film around them, so it is a beat that is MISSING rather than a restatement
+    of the shot that was right-clicked.
+    """
+    from script_breakdown import ScriptBreakdownError, suggest_shot_between
+
+    job = _get_owned_animatic(job_id, current)
+    frame = _frame_or_404(job, frame_id)
+    side = _neighbour_side(body.side)
+    board, reason = _neighbour_board(job, frame)
+    if board is None:
+        raise HTTPException(status_code=400, detail=reason)
+
+    boards = {board.job_id: board}
+    before, after, window = _neighbour_pair(job, frame, side)
+    outline = [w for w in (_shot_wording(job, f, boards) for f in window) if w]
+
+    try:
+        description = suggest_shot_between(
+            previous=_shot_wording(job, before, boards),
+            following=_shot_wording(job, after, boards),
+            outline=outline,
+            notes=body.notes,
+            title=board.character_name or "",
+            provider=(board.params or {}).get("provider"),
+        )
+    except ScriptBreakdownError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from None
+
+    logger.info(
+        "[animatic %s] suggested a shot %s %s for %s", job_id, side, frame_id, current.email
+    )
+    return AnimaticNeighbourSuggestResponse(description=description)
+
+
+@router.post(
+    "/{job_id}/frames/{frame_id}/neighbour",
+    response_model=AnimaticNeighbourShotResponse,
+)
+def generate_neighbour_shot(
+    job_id: str,
+    frame_id: str,
+    body: AnimaticNeighbourShotRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS QUOTA. Draw the shot that goes beside this clip.
+
+    One image, synchronously — the same single call the board's own Regenerate
+    makes, through the board's style, aspect, references and continuity bible,
+    so the new shot sits between its neighbours instead of looking like it came
+    from somewhere else.
+
+    ⚠ IT IS RETURNED, NOT SAVED. The clip comes back and the CLIENT decides
+    where in the cut it goes — the same contract the image, video and board
+    imports follow, and the reason the timeline can put it beside the clip you
+    right-clicked and ripple everything after it in one undoable edit.
+
+    ⚠ AND THE STORYBOARD IS NOT TOUCHED. See the note at the top of this
+    section: a panel inserted into the board renumbers the panels after it, and
+    animatic frames reference panels by index.
+    """
+    from storyboard_pipeline import draw_loose_shot
+
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+
+    frame = _frame_or_404(job, frame_id)
+    side = _neighbour_side(body.side)
+    board, reason = _neighbour_board(job, frame)
+    if board is None:
+        raise HTTPException(status_code=400, detail=reason)
+    if board.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="That storyboard is busy right now — wait for it to finish, or stop it.",
+        )
+
+    existing = len(_frames_of(job))
+    if existing + 1 > config.MAX_ANIMATIC_FRAMES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"This project already has {existing} clips, the limit of "
+                f"{config.MAX_ANIMATIC_FRAMES}."
+            ),
+        )
+
+    boards = {board.job_id: board}
+    before, after, _window = _neighbour_pair(job, frame, side)
+    params = board.params or {}
+    variant_list, active = variants_of(board.result or {})
+    variant_style = (
+        (variant_list[active].get("style") if variant_list else None)
+        or params.get("style")
+        or "custom"
+    )
+
+    # The look anchor is the clip that was right-clicked, when it is a panel —
+    # the nearest drawn picture there is, and the one the new shot will sit
+    # directly beside. `_continuity_for_redraw` picks the nearest panel of the
+    # same SCENE for a redraw; here the neighbour IS the scene.
+    anchor_index = (
+        int(frame.src.index)
+        if frame.src.kind in ("panel", "pose") and frame.src.index is not None
+        else None
+    )
+    # ⚠ THE NEIGHBOURS' CAST, not this shot's — it has none, because nothing has
+    # broken it down. Both sides, so a shot between a two-hander and a reaction
+    # gets both faces locked to their references.
+    characters: list = []
+    assets_named: list = []
+    for neighbour in (before, after):
+        chars, props = _shot_cast(job, neighbour, boards)
+        characters += [c for c in chars if c not in characters]
+        assets_named += [a for a in props if a not in assets_named]
+
+    aspect = (body.aspect_ratio or "").strip() or _neighbour_aspect(job, board)
+
+    try:
+        image = draw_loose_shot(
+            board.job_id,
+            body.description,
+            style=variant_style,
+            aspect_ratio=aspect,
+            output_dir=config.OUTPUT_DIR,
+            characters=characters,
+            assets_named=assets_named,
+            character_ref_paths=params.get("character_ref_paths") or {},
+            asset_ref_paths=params.get("asset_ref_paths") or {},
+            variant=active,
+            provider=params.get("provider"),
+            world=params.get("world") or {},
+            cast=params.get("cast") or [],
+            assets=params.get("assets") or [],
+            anchor_index=anchor_index,
+            story_context={
+                "previous": _shot_wording(job, before, boards),
+                "next": _shot_wording(job, after, boards),
+                "previous_same_scene": before is not None,
+            },
+        )
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[animatic %s] generating a shot %s %s failed", job_id, side, frame_id)
+        raise HTTPException(status_code=502, detail=f"Could not draw the shot: {e}") from None
+
+    if image is None:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The model returned no picture (it may have been blocked by a "
+                "safety filter). Try rewording the shot."
+            ),
+        )
+
+    # It lands as an ordinary animatic upload — from here on nothing downstream
+    # can tell it from a still that was dragged in, which is the point.
+    upload_id = uuid.uuid4().hex[:12]
+    os.makedirs(_media_dir(job_id), exist_ok=True)
+    image.save(_image_path(job_id, upload_id), "PNG")
+
+    clip = AnimaticFrame(
+        id=uuid.uuid4().hex[:12],
+        src={
+            "kind": "upload",
+            "upload_id": upload_id,
+            # ⚠ THE BOARD IS CARRIED THOUGH THERE IS NO PANEL. It is what puts
+            # this clip on the Storyboard images row (`clipRowKind`) and keeps
+            # it filed under Storyboard Frames in the Media pane
+            # (`frameOrigin`) — a shot generated into the board's row belongs
+            # with the board's shots.
+            "storyboard_id": board.job_id,
+            # Its identity as a shot, since it has no panel index. This is what
+            # a Veo take of it will pair with — see `_shot_key`.
+            "shot_id": uuid.uuid4().hex[:12],
+            "prompt": body.description.strip(),
+        },
+        duration_ms=body.duration_ms,
+        label=_neighbour_label(frame, side),
+        # Servable immediately, before the project is saved — the same url
+        # `addFiles` gives a fresh upload.
+        url=f"/animatics/{job_id}/media/{upload_id}",
+    )
+    logger.info(
+        "[animatic %s] drew a shot %s %s (upload %s) for %s",
+        job_id, side, frame_id, upload_id, current.email,
+    )
+    return AnimaticNeighbourShotResponse(frame=clip, model=_image_model_id(board)[1])
 
 
 @router.get("/{job_id}/frames/{frame_id}/sequence", response_model=PanelSequenceInfo)

@@ -753,6 +753,100 @@ def _continuity_for_redraw(
     return context, anchor
 
 
+def draw_loose_shot(
+    board_job_id: str,
+    description: str,
+    *,
+    style: str = "custom",
+    aspect_ratio: str = "16:9",
+    output_dir: str = "output",
+    characters: list | None = None,
+    assets_named: list | None = None,
+    character_ref_paths: dict | None = None,
+    asset_ref_paths: dict | None = None,
+    variant: int = 0,
+    provider: str | None = None,
+    world: dict | None = None,
+    cast: list | dict | None = None,
+    assets: list | dict | None = None,
+    anchor_index: int | None = None,
+    story_context: dict | None = None,
+) -> "Image.Image | None":
+    """Draw ONE shot in a board's look WITHOUT putting it on the board.
+
+    ⚠ THE ONLY DIFFERENCE FROM `regenerate_panel` IS WHERE IT GOES, and that
+    difference is the whole reason this exists. A redraw belongs to a panel: it
+    is archived as a version of it, written into the board's result, and read
+    back through the board's index. This one is a shot the timeline invented
+    between two others — the animatic editor's "generate a shot after this one"
+    — and it must NOT become a panel, because inserting one renumbers every
+    panel after it and every other animatic pointing at that board by index
+    would then show the wrong picture. So the image is RETURNED and the caller
+    stores it as an ordinary animatic upload. Nothing here writes to disk.
+
+    Everything else is deliberately identical, because the new shot has to sit
+    between its neighbours without looking like it came from somewhere else: the
+    board's active style variant and aspect, its written continuity bible, its
+    world, its locked character and asset references, and `anchor_index` — a
+    DRAWN panel of the board used as the look anchor, which for this caller is
+    the shot right beside the gap and therefore the most relevant one there is.
+
+    `characters` / `assets_named` are the names appearing in this shot; the
+    caller passes its neighbours' cast, since a shot invented between two others
+    is almost always the same people in the same place.
+
+    Returns a PIL image, or None if the model returned nothing (safety filter).
+    """
+    from gemini_client import generate_storyboard_panel
+
+    description = (description or "").strip()
+    if not description:
+        return None
+
+    board_folder = os.path.join(output_dir, "_storyboards", board_job_id)
+    char_refs = _load_character_refs(character_ref_paths)
+    asset_refs = _load_refs(asset_ref_paths, "asset")
+    shot_char_refs = _gather_refs(characters or [], char_refs, 3)
+    shot_asset_refs = _gather_refs(assets_named or [], asset_refs, 3)
+    asset_bible = _bible_for(assets)
+
+    anchor = None
+    if anchor_index is not None:
+        path = os.path.join(_variant_dir(board_folder, variant), f"panel_{int(anchor_index):02d}.png")
+        if os.path.isfile(path):
+            try:
+                anchor = Image.open(path).convert("RGB")
+            except OSError:
+                anchor = None
+
+    image = generate_storyboard_panel(
+        description=description,
+        style=style,
+        aspect_ratio=aspect_ratio,
+        characters=characters or [],
+        location="",
+        camera="",
+        reference_images=shot_char_refs or None,
+        asset_reference_images=shot_asset_refs or None,
+        scene_reference_image=anchor,
+        provider=provider,
+        world=world,
+        character_bible=_bible_for(cast),
+        asset_bible=_assets_in(assets_named or [], asset_bible),
+        story_context=story_context,
+        # ⚠ UNSEEDED, like the Retry button and for the same reason: pressing
+        # "generate" again after a picture you did not like must not hand back
+        # the identical drawing.
+        variation=None,
+    )
+    if image is None:
+        return None
+    # Normalised and conformed exactly as a panel is, so a shot generated into
+    # the middle of a board reads as one of its pictures rather than standing
+    # out as a differently-shaped, differently-graded one.
+    return conform_to_style(normalise_panel(image, aspect_ratio), style)
+
+
 def regenerate_panel(
     job_id: str,
     panel: dict,

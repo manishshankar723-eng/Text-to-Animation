@@ -1289,3 +1289,142 @@ def break_down_script(
                     continue
 
     raise ScriptBreakdownError(last_reason)
+
+
+# ---------------------------------------------------------------------------
+# ONE SHOT THAT ISN'T IN THE SCRIPT — the timeline's "generate a shot between"
+# ---------------------------------------------------------------------------
+# ⚠ THE OPPOSITE JOB TO THE BREAKDOWN ABOVE, and that is why it has its own
+# sampling. `break_down_script` is EXTRACTION — the same script must give the
+# same shot list twice, hence temperature 0 and a fixed seed. This is INVENTION:
+# the shot being asked for is not in the script at all, and the button that asks
+# for it is pressed again when the first answer isn't right. A deterministic
+# suggestion would return the identical sentence every press, which reads as the
+# button being broken.
+_INFILL_SYSTEM = (
+    "You are a professional film storyboard supervisor. You are given two "
+    "CONSECUTIVE shots of a film and asked for the ONE shot that belongs "
+    "between them. Answer with the shot description only — one or two "
+    "sentences of what the camera SEES, present tense, concrete and visual. "
+    "No shot number, no label, no camera jargon heading, no quotation marks, "
+    "no dialogue, and never any words that are to be drawn INTO the picture."
+)
+
+_INFILL_TEMPERATURE = 0.9
+
+# The furniture a chat model puts around a one-line answer: a shot heading, a
+# bullet, a number, a pair of quotes. Every one of them would be typed straight
+# into an image prompt and drawn — a model handed "1." draws a numeral in the
+# corner of the picture — so it comes off here.
+_SHOT_LINE_FURNITURE = re.compile(
+    r"^\s*(?:shot\s*\d+\s*[:.\-—]\s*|[-*•]\s*|\d+[.)]\s*)+", re.I
+)
+
+
+def tidy_shot_line(text: str) -> str:
+    """One shot description, with the chat furniture taken off the front.
+
+    ⚠ PUBLIC AND SEPARATE FROM THE CALL, so it can be checked without spending
+    anything — see `tests/shot_infill_check.py`. The prefixes stack ("Shot 4: -
+    a low angle…"), hence the trailing `+`.
+    """
+    return _SHOT_LINE_FURNITURE.sub("", str(text or "")).strip().strip('"').strip()
+
+
+def suggest_shot_between(
+    previous: str = "",
+    following: str = "",
+    outline: list[str] | None = None,
+    notes: str = "",
+    title: str = "",
+    provider: str | None = None,
+) -> str:
+    """Write the shot that belongs BETWEEN two shots. Returns a description.
+
+    `previous` and `following` are the shots either side — either may be empty,
+    which is the honest description of "generate a shot before the first one" or
+    "after the last one", and the prompt says which case it is rather than
+    pretending there is a neighbour.
+
+    `outline` is the surrounding stretch of the film in play order, so the
+    suggestion is written against the story's shape rather than against two
+    sentences in isolation — the same reasoning behind `story_context` on the
+    image side (see gemini_client.build_flow_context).
+
+    `notes` is whatever the user has already typed. It is STEERING, not a
+    replacement: the model is told to honour it and still write a shot that fits
+    between the two.
+
+    Raises `ScriptBreakdownError` with a readable reason — this is reached from
+    a route and the failure the caller wants is the one the user needs to read.
+    """
+    provider = _resolve_provider(provider)
+    client = get_client(provider)
+    model_id = _model_id(provider)
+
+    lines: list[str] = []
+    if title.strip():
+        lines.append(f"Film: {title.strip()}")
+    if outline:
+        lines.append("The stretch of the film this sits in, in order:")
+        lines.extend(f"  {n + 1}. {shot}" for n, shot in enumerate(outline))
+        lines.append("")
+
+    if previous.strip() and following.strip():
+        lines.append(f"The shot BEFORE the gap: {previous.strip()}")
+        lines.append(f"The shot AFTER the gap: {following.strip()}")
+        lines.append(
+            "Write the ONE shot that goes in the gap. It must follow on from the "
+            "first and lead into the second — a beat that is currently missing "
+            "between them, not a restatement of either."
+        )
+    elif following.strip():
+        lines.append(f"The film currently OPENS on this shot: {following.strip()}")
+        lines.append(
+            "Write the ONE shot that should come immediately BEFORE it — the beat "
+            "that sets it up."
+        )
+    elif previous.strip():
+        lines.append(f"The film currently ENDS on this shot: {previous.strip()}")
+        lines.append(
+            "Write the ONE shot that should come immediately AFTER it — the beat "
+            "that follows from it."
+        )
+    else:
+        # Neither neighbour said anything about itself. Rare (a clip with no
+        # board wording and no label), and a refusal here would be worse than a
+        # generic opening shot the user can rewrite.
+        lines.append(
+            "There is no wording for the shots either side. Write one "
+            "establishing shot that could sit anywhere in this film."
+        )
+
+    if notes.strip():
+        lines.append("")
+        lines.append(
+            f"The director has already written this much, and it must be honoured "
+            f"in your answer: {notes.strip()}"
+        )
+
+    prompt = "\n".join(lines)
+
+    try:
+        response = client.models.generate_content(
+            model=model_id,
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=_INFILL_SYSTEM,
+                temperature=_env_float("TEXT_INFILL_TEMPERATURE", _INFILL_TEMPERATURE),
+            ),
+        )
+    except Exception as e:  # noqa: BLE001 — surface a clear reason
+        logger.error("[infill] shot suggestion failed: %s", e)
+        raise ScriptBreakdownError(f"Text API error: {e}") from None
+
+    text = (getattr(response, "text", "") or "").strip()
+    if not text:
+        raise ScriptBreakdownError(
+            "The model returned nothing (it may have been blocked by a safety "
+            "filter). Try describing the shot yourself."
+        )
+    return tidy_shot_line(text)

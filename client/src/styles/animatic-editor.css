@@ -276,6 +276,51 @@
 /* The Media pane's single control: click it or drop onto the pane. It replaced
    three separate ones ("Add images", the drop card, "Add an MP3") that all did
    the same job. */
+/* THE DROP CARD AND ITS ✨, which are two controls doing two different things:
+   one takes a file you have, the other draws one you do not.
+   ⚠ THE ✨ IS A SIBLING POSITIONED OVER THE CARD, not a child of it — the card
+   is a `<button>` and a button inside a button does not render. Same
+   arrangement, same corner and same star as the ✨ in the generate dialogs
+   (`.an-shot-ai`), so "a model makes this for you" is one mark in this editor
+   rather than two that resemble each other. */
+/* ⚠ IT IS THE WRAPPER THAT IS PINNED TO THE TOP OF THE PANE, NOT THE CARD — see
+   `.an-media-body > .an-asset-add` below, which carries the sticky, the fixed
+   `--an-drop-h` height and the cover shadow the card used to. `position` is set
+   there; the card is filled to it here. `sticky` is a positioned ancestor like
+   `relative`, so the ✨ still anchors to this box. */
+.an-asset-add > .an-asset-drop {
+  /* Room for the star, so the card's own text stays centred in what is LEFT of
+     it rather than centred under it. */
+  padding-right: 2.6rem;
+  /* The wrapper owns the height now — every section heading pins at exactly
+     `--an-drop-h`, so the card has to fill it rather than set it. */
+  height: 100%;
+  margin-bottom: 0;
+}
+.an-asset-ai {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--primary);
+  cursor: pointer;
+}
+.an-asset-ai:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--panel-2);
+}
+.an-asset-ai:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: default;
+}
 .an-asset-drop {
   display: flex;
   flex-direction: column;
@@ -346,8 +391,15 @@
      step, and the note inside it wraps to two lines on a narrow pane. */
   --an-drop-h: 7rem;
 }
-/* The Shapes tab has no ＋ card, so its headings stick to the very top. */
-.an-media-body:not(:has(> .an-asset-drop)) {
+/* The Shapes tab has no ＋ card, so its headings stick to the very top.
+   ⚠ IT ASKS FOR `.an-asset-add`, THE WRAPPER, AND SO DO THE THREE RULES BELOW.
+   All four are DIRECT-CHILD selectors, and the ✨ that was added to the card
+   made it a grandchild — which silently switched the Media tab to the Shapes
+   tab's layout: no pinned card, headings pinned at the very top, and the pane's
+   top padding back. Reported as "i scrol bar move so my +add … box panle go up
+   but i want still not move". If the card is ever re-wrapped again, these four
+   are what has to follow it. */
+.an-media-body:not(:has(> .an-asset-add)) {
   --an-drop-h: 0rem;
 }
 /* ⚠ NO TOP PADDING ON THE PANE THAT HAS THE ＋ CARD. `.an-pane-body` gives every
@@ -358,7 +410,7 @@
    pane, and it also removes the question of whether a sticky item pins to the
    padding box or the content box: with no padding they are the same edge. The
    card's own 0.9rem of padding is the breathing room now. */
-.an-media-body:has(> .an-asset-drop) {
+.an-media-body:has(> .an-asset-add) {
   padding-top: 0;
 }
 /* ⚠ NOTHING IN HERE MAY SHRINK — THIS IS WHAT SCROLLS THE PANE. A flex item's
@@ -383,7 +435,7 @@
    scroll position, which is the whole reason it was kept outside the
    collapsible sections in the first place.
  */
-.an-media-body > .an-asset-drop {
+.an-media-body > .an-asset-add {
   position: sticky;
   top: 0;
   z-index: 3;
@@ -855,6 +907,21 @@
   color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
+/* THE INLINE SPINNER SPINS IN GOLD ON A DARK PANEL — scoped to the two places
+   in this editor where it sits on one.
+   ⚠ IT IS NOT A FIX TO `.spinner-inline` ITSELF, and must not become one. That
+   rule takes its moving edge from `--primary-ink`, which is near-black, and that
+   is CORRECT for nearly all of its ~50 uses: they sit INSIDE a gold button
+   ("Starting…", "Saving…", "Zipping…"), where a gold edge on gold would be
+   invisible. On a dark panel the same near-black edge all but vanishes the other
+   way, so the circle reads as a static grey ring rather than as something
+   turning — reported against the generate-a-shot dialog as the circle not
+   looking like it was working. Two selectors fix the dark-panel cases and leave
+   every button alone. */
+.an-status-export .spinner-inline,
+.an-prop-progress .spinner-inline {
+  border-top-color: var(--primary);
+}
 .an-status-bar {
   display: inline-block;
   width: 9rem;
@@ -868,6 +935,31 @@
   height: 100%;
   background: var(--gold-bar);
   transition: width 0.3s ease;
+}
+/* THE SAME BAR WITH NOTHING TO REPORT — a pass that has no percentage.
+   ⚠ A DETERMINATE BAR CANNOT SAY "WORKING": an export and a Veo render arrive
+   with a percentage, but a single synchronous text call has none, so the fill
+   would sit at 0% and the bar would read as a pass that has stalled. It slides
+   instead, which is the honest shape for "something is happening and I cannot
+   say how far along".
+   ⚠ `transition: none` MATTERS — the base rule animates `width`, and leaving it
+   on fights the slide on the first frame.
+   The animation is `skeleton-slide`, the one `.skeleton-bar-fill` already uses
+   in text-to-image.css: two indeterminate bars in one app that slid at
+   different speeds would read as two different mechanisms. */
+.an-status-bar.is-waiting > span {
+  width: 40%;
+  transition: none;
+  animation: skeleton-slide 1.3s ease-in-out infinite;
+}
+/* A slide that never stops is a distraction for anyone who has asked the OS to
+   stop them. The bar stays, filled, so the row still reads as busy. */
+@media (prefers-reduced-motion: reduce) {
+  .an-status-bar.is-waiting > span {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
 }
 .an-stale {
   border-color: var(--warn);

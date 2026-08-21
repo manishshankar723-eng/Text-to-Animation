@@ -914,6 +914,78 @@ export function relengthFrameSequence(id, frameId, durationSeconds) {
   });
 }
 
+// --- One image from one sentence (the Media pane's ✨) -----------------------
+// ⚠ NOT THE SHOT GENERATOR BELOW. That draws a SHOT — the board's style, its
+// references, its neighbours, its row. This draws whatever the sentence says and
+// belongs to nothing: a title card, a texture, an inset. It comes back as the
+// same upload item a FILE upload returns, so from that point the client places
+// it exactly as it places a dropped picture — into the library, and onto the
+// overlay Images lane.
+
+// Free, and it needs no project: which image model a ✨ here would call. Shown
+// in the dialog before anything is spent.
+export function getImageModel() {
+  return request("/animatics/image-model");
+}
+
+// SPENDS QUOTA. Draws it. Synchronous — one image, so there is no job to poll.
+export function generateAnimaticImage(id, { prompt, aspectRatio = "" } = {}) {
+  return request(`/animatics/${id}/images/generate`, {
+    method: "POST",
+    body: { prompt, aspect_ratio: aspectRatio },
+  });
+}
+
+// --- A shot that is NOT on the board ----------------------------------------
+// "Generate a shot before / after this one", from a storyboard clip's
+// right-click menu on the timeline. ⚠ THE BOARD IS NOT EDITED: the picture comes
+// back as an ordinary animatic upload and the clip carries `src.shot_id` instead
+// of a panel index, because inserting a panel renumbers every panel after it and
+// an animatic frame references a panel BY INDEX. The server's own note at
+// `generate_neighbour_shot` carries the reasoning.
+
+// Free. What the dialog opens on — the name to give the shot, the shots either
+// side of the gap, the board's aspect, and which model is about to draw it.
+// `side` is "before" | "after".
+export function getNeighbourShot(id, frameId, side = "after") {
+  return request(
+    `/animatics/${id}/frames/${frameId}/neighbour?side=${encodeURIComponent(side)}`
+  );
+}
+
+// SPENDS QUOTA — a TEXT call, a fraction of the price of a drawing. Writes the
+// missing beat between the two shots and hands it back for the user to edit.
+// `notes` is whatever is already in the box: steering, not a replacement.
+export function suggestNeighbourShot(id, frameId, { side = "after", notes = "" } = {}) {
+  return request(`/animatics/${id}/frames/${frameId}/neighbour/suggest`, {
+    method: "POST",
+    body: { side, notes },
+  });
+}
+
+// SPENDS QUOTA. Draws the shot. Synchronous — one image, so there is no job to
+// poll.
+//
+// ⚠ RETURNS A CLIP, NOT A SAVED PROJECT. Where it goes in the cut is the
+// client's decision — the same contract the image, video and board imports
+// follow — which is what lets the editor insert it beside the clip you
+// right-clicked and ripple every layer in ONE undoable edit.
+export function generateNeighbourShot(
+  id,
+  frameId,
+  { side = "after", description, aspectRatio = "", durationMs = 8000 } = {}
+) {
+  return request(`/animatics/${id}/frames/${frameId}/neighbour`, {
+    method: "POST",
+    body: {
+      side,
+      description,
+      aspect_ratio: aspectRatio,
+      duration_ms: durationMs,
+    },
+  });
+}
+
 // --- Auto-reframe -----------------------------------------------------------
 // One vision call per shot says where the subject is; the server turns that into
 // the ordinary `scale`/`x`/`y` a frame already has. Same estimate/run pair as

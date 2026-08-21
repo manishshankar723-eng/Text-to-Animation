@@ -475,14 +475,24 @@ check(
     "a ref is empty at load and stale in a poll — and failing that way is silent",
 )
 # Every one of `RIPPLED_LISTS`, at every site that moves the board's row. The
-# counts are the point: two sites ripple texts through a setter (the attach and
-# the load) and the third takes the server's own list, and all three must reach
-# the shapes and the overlays.
+# counts are the point.
+#
+# FOUR SITES move that row now: the Veo attach, the load's self-heal, the
+# voiceover run (which takes the server's own lists, checked separately below),
+# and — since "generate the shot before / after this one" —
+# `placeGeneratedShot`, which inserts a drawn shot into the middle of the row.
+#
+# ⚠ THE FOURTH SITE RIPPLES THE CAPTIONS WITHOUT `coverGrownShots`, and that is
+# correct rather than an omission: nothing GREW there. A shot was added between
+# two others, so every caption keeps the length it had and simply happens later.
+# It is counted separately so the guard still notices if that site ever stops
+# reaching the captions at all — which is the whole point of counting.
 for name, call, want in [
-    ("texts", "setTexts((list) => coverGrownShots(rippleClips(list, shifts), grown));", 2),
-    ("shapes", "setShapes((list) => rippleClips(list, shifts));", 3),
-    ("overlays", "setOverlays((list) => rippleClips(list, shifts));", 3),
-    ("audio", "setAudioTracks((list) => rippleAudio(list, shifts, newId));", 2),
+    ("texts of a shot that grew", "setTexts((list) => coverGrownShots(rippleClips(list, shifts), grown));", 2),
+    ("texts where nothing grew", "setTexts((list) => rippleClips(list, shifts));", 1),
+    ("shapes", "setShapes((list) => rippleClips(list, shifts));", 4),
+    ("overlays", "setOverlays((list) => rippleClips(list, shifts));", 4),
+    ("audio", "setAudioTracks((list) => rippleAudio(list, shifts, newId));", 3),
 ]:
     check(
         f"every site carries the {name} through a LIVE setter",
@@ -509,9 +519,20 @@ check(
     f"found {editor.count('grownSpans(')}",
 )
 check(
-    "the pictures on every other row are carried at all three sites",
-    editor.count("rippleFrames(") == 3,
+    "the pictures on every other row are carried at all four sites",
+    editor.count("rippleFrames(") == 4,
     f"found {editor.count('rippleFrames(')}",
+)
+# ⚠ AND THE INSERT PASSES A `keep` SET, WHERE THE OTHER THREE DO NOT. Those run
+# after `spreadPanelsForRenders`, which places the panels AND the takes over
+# them, so `rippleFrames`'s own board-wide skip is exactly right. The insert
+# places ONE ROW, so the takes above it — and a second storyboard row — have not
+# been moved and must be carried. See `tests/shot_insert_check.py`, which drives
+# both answers.
+check(
+    "…and the insert says which row it placed itself, so the rest is carried",
+    "rippleFrames(next, shifts, keep)" in editor,
+    "without it the takes stay put while the panels under them move 8s away",
 )
 check(
     "…and the load re-runs the layout, so an old take's panel is put right",

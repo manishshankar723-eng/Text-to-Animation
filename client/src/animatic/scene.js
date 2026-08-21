@@ -420,6 +420,9 @@ export const DEFAULT_SPEED = 1;
  *  own `le=600_000` on the wire — a length computed here that exceeds it is a
  *  422 on the next autosave, which is a lost project rather than a long shot. */
 export const MAX_FRAME_MS = 600_000;
+/** And the shortest. ⚠ `AnimaticFrame.duration_ms`'s own `ge=100`, for the same
+ *  reason as its ceiling: a shorter one is a 422 on the next autosave. */
+export const MIN_FRAME_MS = 100;
 
 /**
  * What this clip is made of.
@@ -881,10 +884,73 @@ export function pictureTracks(frames) {
  * copies over. `frame` is in the key because a key pose and its panel share a
  * `storyboard_id` and an `index` — without it a render of pose 7 would pair with
  * the panel sitting under it.
+ *
+ * ⚠ A GENERATED IN-BETWEEN SHOT HAS NO INDEX AND KEYS ON ITS OWN `shot_id`. It
+ * is a shot drawn into the board's row that is NOT on the board (see
+ * `AnimaticFrameSource` on the server), so there is no panel index to key on —
+ * and borrowing one would pair it with the real panel sitting at that index. The
+ * `gen-` prefix keeps the two spaces apart for good. ⚠ Twin of `_shot_key` in
+ * `server/animatics.py`; both have to answer the same, or a take makes room for
+ * itself in the editor and not in the export.
  */
 function shotKey(src) {
-  if (!src?.storyboard_id || src.index === null || src.index === undefined) return "";
+  if (!src?.storyboard_id) return "";
+  if (src.shot_id) return `${src.storyboard_id}:gen-${src.shot_id}:`;
+  if (src.index === null || src.index === undefined) return "";
   return `${src.storyboard_id}:${src.index}:${src.frame ?? ""}`;
+}
+
+/**
+ * PUT ONE CLIP IMMEDIATELY BEFORE OR AFTER ANOTHER, on that clip's own row.
+ *
+ * What "generate the shot after this one" does with the picture it gets back,
+ * and the reason the rest of the film then has somewhere to move to.
+ *
+ * ⚠ WHY THIS IS NOT `insertPictures` (AnimaticEditor.jsx). That one is anchored
+ * to a DROP POINT — an index and a millisecond you aimed at — and it finds the
+ * clip to go in front of with `on.find(s => s.index >= atIndex)`, a list-index
+ * test made against a start-ordered row. That holds while list order and play
+ * order agree, and they stop agreeing the moment a clip is DRAGGED: a drag
+ * re-times a clip without touching the list. This insert is anchored to a CLIP,
+ * so it asks the only question that survives a drag — where does that clip start
+ * and end — and never consults list order at all.
+ *
+ * ⚠ IT MOVES ONE ROW. Everything at or after the seam on the neighbour's track
+ * makes room; carrying the REST of the film along is the caller's job
+ * (`renderShifts` + the `RIPPLED_LISTS` setters), exactly as it is after a Veo
+ * take makes room for itself. Two passes because they are two questions.
+ *
+ * @param side "after" (the seam is the neighbour's END) | "before" (its START)
+ * @returns `{frames, placed}` — `placed` is the clip as it was actually laid
+ *          down, with its row and its start on it, and null when the neighbour
+ *          is no longer in the list, which is how a dialog left open across a
+ *          delete fails safely.
+ */
+export function insertShotBeside(frames, clip, neighbourId, side = "after") {
+  const list = frames || [];
+  const { spans } = frameSpans(list);
+  const i = list.findIndex((f) => f?.id === neighbourId);
+  if (i < 0 || !clip) return { frames: list, placed: null };
+  const track = spans[i].track;
+  // The seam. ⚠ Read off the EVALUATED span, so a clip with no `start_ms` of its
+  // own — every clip of every animatic saved before tracks existed — is placed
+  // by where it actually plays rather than by a field it does not carry.
+  const at = side === "before" ? spans[i].start : spans[i].end;
+  const room = Math.max(
+    MIN_FRAME_MS,
+    Math.min(MAX_FRAME_MS, Math.round(Number(clip.duration_ms) || 2000))
+  );
+  const placed = { ...clip, track, start_ms: at };
+  const next = list.map((f, n) => {
+    const span = spans[n];
+    if (!span || span.track !== track || span.start < at) return f;
+    return { ...f, start_ms: span.start + room };
+  });
+  // Spliced in beside the neighbour in the LIST as well as on the row. The list
+  // is what the Media pane numbers and what `reorder` re-lays, so a shot that
+  // plays second and is stored last would read as out of order in both.
+  next.splice(side === "before" ? i : i + 1, 0, placed);
+  return { frames: next, placed };
 }
 
 /**

@@ -464,6 +464,24 @@ export default function Timeline({
    * was before this existed.
    */
   onDownloadClip,
+  /**
+   * GENERATE THE SHOT BEFORE / AFTER THIS ONE — `(clip, side) => void`, from a
+   * storyboard clip's right-click menu. `side` is "before" | "after".
+   *
+   * ⚠ OFFERED ON A STORYBOARD STILL AND ON NOTHING ELSE (`clipRowKind` answering
+   * `board_image`). The new shot is drawn in the BOARD's look — its style, its
+   * references, its continuity bible — so a clip with no board behind it has
+   * nothing to draw in, and a Veo take is footage of a shot that already exists.
+   *
+   * ⚠ IT OPENS A DIALOG AND NOTHING ELSE. Same rule as every other paid path
+   * this file touches: what a drawing costs and what it refuses stays with the
+   * editor and the server, and the timeline only reports which clip and which
+   * side.
+   *
+   * Optional, exactly as `onDownloadClip` is — without both, no clip opens a
+   * menu at all.
+   */
+  onGenerateShot,
   // The padlock. `(lane) => void`, mirroring `onToggleHidden` exactly — the lane
   // carries the state (`locked`) and its token, and this file never works either
   // out. ⚠ WHAT LOCKED MEANS IS ENFORCED HERE THOUGH, not in the editor: a lock
@@ -2712,12 +2730,35 @@ export default function Timeline({
     el.dataset.side = fitsRight ? "right" : "left";
   });
 
+  /**
+   * WHAT A CLIP'S MENU WOULD HOLD — `{download, generate}`, or null for none.
+   *
+   * ⚠ NULL MEANS THE BROWSER'S OWN MENU STAYS, and that is deliberate: a bar
+   * with nothing of its own to offer would otherwise open a box of greyed-out
+   * lines, which promises a place where clip commands live and then has none.
+   * Both entries are gated on their handler as well as on the clip, so an editor
+   * that passes neither gets exactly the timeline it had before either existed.
+   *
+   * Asked here rather than at the two call sites so the menu that OPENS and the
+   * menu that RENDERS cannot come to disagree about whether there is anything in
+   * it.
+   */
+  const clipMenuOffers = (frame) => {
+    if (!frame) return null;
+    const download = !!onDownloadClip && isVeoRender(frame);
+    // A storyboard STILL. Not a take (that is footage of a shot that already
+    // exists) and not a dropped file (there is no board look to draw in).
+    const generate = !!onGenerateShot && clipRowKind(frame) === "board_image";
+    return download || generate ? { download, generate } : null;
+  };
+
   // The clip its menu is about — null when nothing is open, and ALSO null when
   // the clip has since been deleted or has left the picture rows, which is how
   // the menu closes itself rather than offering a download of nothing.
   const clipMenuClip = clipMenuId
-    ? frames.find((f) => f.id === clipMenuId && isVeoRender(f)) || null
+    ? frames.find((f) => f.id === clipMenuId && clipMenuOffers(f)) || null
     : null;
+  const clipMenuCan = clipMenuOffers(clipMenuClip);
 
   // The row whose ✕ is asking, and what answering it would take. `null` when
   // nothing is asking — and also when the row it asked about has gone, which is
@@ -2958,20 +2999,23 @@ export default function Timeline({
                 ].join(" ")}
                 style={{ left, width: w }}
                 onPointerDown={(e) => startClipDrag(e, f, "move", lane)}
-                /* RIGHT-CLICK — AND ONLY ON A VEO RENDER.
-                   ⚠ EVERY OTHER BAR KEEPS THE BROWSER'S OWN MENU, deliberately.
-                   The one thing this menu has to offer is saving a paid render
-                   ("or when user click right mouse on clip in timeline so user get
-                   side of clip dropdown Download text buttun"), and a menu that
-                   opened on a caption with one greyed-out line in it would be a
-                   worse answer than no menu — it would promise a place where clip
-                   commands live and then have none. When there IS something to put
-                   here for every clip, this is where it goes.
+                /* RIGHT-CLICK — ON A BAR THAT HAS SOMETHING TO OFFER.
+                   Two kinds do: a Veo render can be saved to disk ("or when user
+                   click right mouse on clip in timeline so user get side of clip
+                   dropdown Download text buttun"), and a storyboard still can
+                   have the missing shot either side of it drawn ("i want when
+                   user click rightclick on Story..image layer clip on timeline so
+                   user get Generate befor shot and Generate after shot image
+                   buttun in dropdown").
+                   ⚠ EVERY OTHER BAR KEEPS THE BROWSER'S OWN MENU, deliberately —
+                   a menu that opened on a caption with one greyed-out line in it
+                   would be a worse answer than no menu. `clipMenuOffers` is the
+                   one place that decides; see its note.
                    ⚠ IT DOES NOT SELECT THE CLIP. A right-click that moved the
                    selection would throw away a multi-clip selection someone had
                    just built, and the menu names the clip it is about anyway. */
                 onContextMenu={(e) => {
-                  if (!onDownloadClip || !isVeoRender(f)) return;
+                  if (!clipMenuOffers(f)) return;
                   e.preventDefault();
                   e.stopPropagation();
                   // ⚠ IT OPENS, IT DOES NOT TOGGLE. The outside-press listener
@@ -3668,23 +3712,74 @@ export default function Timeline({
           >
             {/* WHICH CLIP THIS IS ABOUT. The menu can sit some way from its bar on
                 a crowded row, and "Download" alone would not say what of. */}
-            <span className="tl-clip-menu-of">{clipMenuClip.label || "Veo render"}</span>
-            <button
-              type="button"
-              role="menuitem"
-              className="tl-layer-menu-opt"
-              ref={(el) => el?.focus({ preventScroll: true })}
-              onClick={() => {
-                setClipMenuId(null);
-                onDownloadClip(clipMenuClip);
-              }}
-              title="Save this Veo render to your computer — deleting the project will not lose it then"
-            >
-              <span className="tl-layer-menu-ico">
-                <Icon name="download" />
-              </span>
-              Download
-            </button>
+            <span className="tl-clip-menu-of">
+              {clipMenuClip.label ||
+                (clipMenuCan?.download ? "Veo render" : "Storyboard shot")}
+            </span>
+            {/* ⚠ BEFORE, THEN AFTER, IN THAT ORDER — the order they sit in on the
+                timeline, so the menu reads like the row it is pointing at.
+                Both open the same dialog; `side` is the only difference, which is
+                why they are two lines here and one handler in the editor. */}
+            {clipMenuCan?.generate && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="tl-layer-menu-opt"
+                  ref={(el) => el?.focus({ preventScroll: true })}
+                  onClick={() => {
+                    setClipMenuId(null);
+                    onGenerateShot(clipMenuClip, "before");
+                  }}
+                  title="Draw the shot that is missing in FRONT of this one, in the board's own look, and drop it into the cut"
+                >
+                  <span className="tl-layer-menu-ico">
+                    <Icon name="sparkle" />
+                  </span>
+                  Generate shot before
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="tl-layer-menu-opt"
+                  onClick={() => {
+                    setClipMenuId(null);
+                    onGenerateShot(clipMenuClip, "after");
+                  }}
+                  title="Draw the shot that is missing AFTER this one, in the board's own look, and drop it into the cut"
+                >
+                  <span className="tl-layer-menu-ico">
+                    <Icon name="sparkle" />
+                  </span>
+                  Generate shot after
+                </button>
+              </>
+            )}
+            {clipMenuCan?.download && (
+              <button
+                type="button"
+                role="menuitem"
+                className="tl-layer-menu-opt"
+                /* ⚠ FOCUSED ONLY WHEN IT IS THE FIRST LINE. Two `ref` focus calls
+                   in one menu fight over the keyboard, and the winner is whichever
+                   ran last — which is not the line at the top. */
+                ref={
+                  clipMenuCan.generate
+                    ? undefined
+                    : (el) => el?.focus({ preventScroll: true })
+                }
+                onClick={() => {
+                  setClipMenuId(null);
+                  onDownloadClip(clipMenuClip);
+                }}
+                title="Save this Veo render to your computer — deleting the project will not lose it then"
+              >
+                <span className="tl-layer-menu-ico">
+                  <Icon name="download" />
+                </span>
+                Download
+              </button>
+            )}
           </div>
         )}
 

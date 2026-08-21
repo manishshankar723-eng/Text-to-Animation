@@ -439,7 +439,16 @@
      button that does something on click must say so. */
   cursor: pointer;
 }
+/* ⚠ `aria-expanded` IS IN THE LIST BECAUSE THE ⓘ IS NOT ONLY A PROPERTIES
+   CONTROL ANY MORE. The two `.note-on` selectors read the state off an ANCESTOR,
+   which works for a row and a group and for nothing else — so the Effects
+   library's ⓘ and the generate-a-shot dialog's stayed muted while their note was
+   pinned open, which is the one moment the icon has something to say. The button
+   publishes `aria-expanded` itself (see `InfoDot`), so keying on that needs no
+   wrapper class and is additive: where a `.note-on` ancestor exists, both
+   selectors already match together. */
 .an-note-i:hover,
+.an-note-i[aria-expanded="true"],
 .an-row.note-on .an-note-i,
 .an-grp.note-on > .an-grp-head .an-note-i {
   border-color: var(--primary);

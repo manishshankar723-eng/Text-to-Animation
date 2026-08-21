@@ -860,6 +860,30 @@ class AnimaticFrameSource(BaseModel):
     upload_id: str | None = Field(
         None, description="Uploaded image id (kind='upload') or video id (kind='video')."
     )
+    # --- A GENERATED IN-BETWEEN SHOT ---------------------------------------
+    # ⚠ THESE TWO ARE WHAT MAKES A SHOT THAT IS *NOT ON THE BOARD* STILL A BOARD
+    # SHOT. "Generate a shot after this one" (the timeline's right-click menu)
+    # draws a new picture with Gemini and stores it as an ordinary animatic
+    # UPLOAD — the board is deliberately NOT edited, because inserting a panel
+    # renumbers every panel after it and every OTHER animatic referencing that
+    # board by index would then show the wrong picture. So `kind` stays
+    # "upload", `storyboard_id` is carried anyway (that is what puts the clip on
+    # the Storyboard images row and keeps it in Storyboard Frames in the Media
+    # pane), and there is no `index`, because there is no panel.
+    #
+    # `shot_id` is the clip's own identity as a SHOT, and it exists because
+    # `index` cannot be borrowed for the job: `_shot_key` / `shotKey` pair a Veo
+    # take with the shot it was made from by (board, index), and a generated
+    # shot claiming an index would pair with the real panel sitting at it.
+    # ⚠ It survives ✨ Animate, because `attachVeoClip` copies the whole `src`.
+    shot_id: str = Field(
+        "", description="A generated in-between shot's own identity (no panel index)."
+    )
+    # ⚠ THE WORDING IT WAS DRAWN FROM, kept ON the clip because there is no
+    # panel to read it back off. `GET /frames/{id}/panel` answers "nothing" for
+    # these, so this is what ✨ Animate drafts its motion prompt from and what
+    # the next in-between shot is written between.
+    prompt: str = Field("", description="What a generated shot was drawn from.")
 
 
 class AnimaticAsset(BaseModel):
@@ -1628,6 +1652,55 @@ class AnimaticVideoUploadResponse(BaseModel):
     rejected: list[str] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# ONE IMAGE FROM ONE SENTENCE — the Media pane's ✨
+# ---------------------------------------------------------------------------
+# ⚠ NOT THE SAME THING AS "generate a shot beside this one", though both draw a
+# picture and both are reached from a ✨. That one belongs to the STORYBOARD: it
+# is a shot, it is drawn in the board's look with the board's references, it goes
+# on the board's row and it sits between two named neighbours. This one belongs
+# to nothing — a title card, a texture, an inset, a logo plate — so it takes no
+# style, no continuity and no neighbours, and it lands on the overlay "Images"
+# lane, which is where every other picture that is not a shot already goes
+# (`belongsOnImageLane`). Keeping them apart is what stops the freeform prompt
+# acquiring a storyboard rider that would draw "a neon city" as a sketch of one.
+class AnimaticImageBackend(BaseModel):
+    """WHICH MODEL WILL DRAW — free, and it needs no project.
+
+    Shown in the dialog before anything is generated, the same way the shot
+    dialog names its model: there is one image model and it is set in the
+    environment, so this is a statement, not a choice.
+    """
+
+    model: str = ""
+    provider: str = ""
+
+
+class AnimaticImageGenerateRequest(BaseModel):
+    """Body for POST /animatics/{id}/images/generate — SPENDS QUOTA."""
+
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    # "" = the project's own shape, which is what the dialog opens on.
+    aspect_ratio: str = Field("", max_length=16)
+
+
+class AnimaticGeneratedImage(BaseModel):
+    """The drawn picture, as an UPLOAD the client can place.
+
+    ⚠ IT IS THE SAME `AnimaticMediaItem` A FILE UPLOAD RETURNS, on purpose: from
+    here on nothing downstream can tell a generated picture from one that was
+    dragged in, so it lists, drags, places, exports and deletes identically.
+    """
+
+    item: AnimaticMediaItem
+    # What to call it in the Media library. Built HERE rather than on both sides
+    # of the wire — the same rule `AnimaticBoardImportResponse.name` follows —
+    # and it is the prompt's opening words, because that is what the person who
+    # typed it will recognise the card by.
+    name: str = ""
+    model: str = ""
+
+
 class AnimaticBoardImportRequest(BaseModel):
     """Body for POST /animatics/{id}/import-storyboard.
 
@@ -2171,6 +2244,96 @@ class AnimaticPanelRegenerateRequest(BaseModel):
     description: str | None = None
     camera: str | None = None
     location: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# A SHOT THAT IS NOT ON THE BOARD — "generate a shot before / after this one"
+# ---------------------------------------------------------------------------
+# Right-click a storyboard clip on the timeline and the missing shot either side
+# of it can be drawn and dropped into the cut, pushing everything after it along
+# exactly as a Veo take does. Three calls, in the order the dialog makes them:
+# read the context (free), suggest the wording (a text call), draw it (an image
+# call). The picture lands as an animatic UPLOAD and the BOARD IS NEVER TOUCHED
+# — see the note on `AnimaticFrameSource.shot_id` for why that is not a shortcut.
+class AnimaticNeighbourShotContext(BaseModel):
+    """What the "generate a shot" dialog opens on. Free — no model is called.
+
+    `can_generate` is False with a `reason` for a clip that has no storyboard
+    behind it, the same contract `AnimaticPanelSource` follows: the dialog reads
+    the reason out instead of offering a button that is going to 400.
+    """
+
+    frame_id: str
+    # "before" | "after" — which side of the clip the new shot goes on.
+    side: str = "after"
+    # WHAT TO CALL IT, built here so the name is written once rather than on
+    # both sides of the wire — the same rule `AnimaticBoardImportResponse.name`
+    # follows. "After Shot 4".
+    label: str = ""
+    storyboard_id: str | None = None
+    title: str = ""
+    # The shots this new one would sit BETWEEN, in timeline order — what the
+    # suggestion is written from, and what the dialog shows so the user can see
+    # what it is being written between.
+    before_description: str = ""
+    after_description: str = ""
+    # The shape to draw in. The board's own ratio is the default; the dialog
+    # offers the storyboard's list and adds this one if it isn't on it.
+    aspect_ratio: str = "16:9"
+    # WHICH MODEL DRAWS IT, resolved from IMAGE_PROVIDER exactly as the draw
+    # itself will resolve it. Shown, not chosen: there is one image model and it
+    # is set in the environment, so a picker here would be theatre.
+    model: str = ""
+    provider: str = ""
+    can_generate: bool = False
+    reason: str = ""
+
+
+class AnimaticNeighbourSuggestRequest(BaseModel):
+    """Body for …/neighbour/suggest — write the missing shot for me.
+
+    A TEXT call, not an image one: it costs a fraction of a draw and nothing is
+    drawn until the user has read what it wrote.
+    """
+
+    side: str = Field("after", description="'before' | 'after'.")
+    # Anything already typed in the box. Steering, not a replacement — the model
+    # is told to honour it while still writing a shot that fits between the two.
+    notes: str = Field("", max_length=2000)
+
+
+class AnimaticNeighbourSuggestResponse(BaseModel):
+    """The suggested wording. One shot, one sentence or two."""
+
+    description: str = ""
+
+
+class AnimaticNeighbourShotRequest(BaseModel):
+    """Body for …/neighbour — SPENDS QUOTA. Draw this shot.
+
+    `duration_ms` is how long the new clip HOLDS on the timeline, not anything
+    about the image: the picture is a still and the dialog is where its length
+    in the cut is decided.
+    """
+
+    side: str = Field("after", description="'before' | 'after'.")
+    description: str = Field(..., min_length=1, max_length=2000)
+    # "" = the board's own shape, which is what the dialog opens on.
+    aspect_ratio: str = Field("", max_length=16)
+    duration_ms: int = Field(8000, ge=100, le=600_000)
+
+
+class AnimaticNeighbourShotResponse(BaseModel):
+    """The drawn shot, as a CLIP the client can put on the timeline.
+
+    ⚠ IT IS RETURNED, NOT SAVED, exactly as the image/video uploads and the
+    board import are: the server makes the material and the client decides where
+    in the cut it goes — which here means "beside the clip you right-clicked,
+    pushing the rest of the film along".
+    """
+
+    frame: AnimaticFrame
+    model: str = ""
 
 
 class AnimaticRelengthRequest(BaseModel):

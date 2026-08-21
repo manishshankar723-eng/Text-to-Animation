@@ -46,6 +46,7 @@ import {
   frameOrigin,
   frameSpans,
   frameTrack,
+  insertShotBeside,
   lookProps,
   lookPropParts,
   lookValueOf,
@@ -66,6 +67,7 @@ import {
   rippleClips,
   rippleFrames,
 } from "../animatic/ripple.js";
+import { ASPECTS as BOARD_ASPECTS } from "../storyboardOptions.js";
 import { DEFAULT_FONT, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
 import {
   disableProp,
@@ -181,7 +183,7 @@ import {
 // media-only collapsible would be the same control drawn twice — same twist,
 // same count pill, one of them subtly different — and the two panes sit side by
 // side. One component means Frames collapses exactly the way Motion does.
-import { PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
+import { InfoDot, PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
 // THE MEDIA LIBRARY — what has been added to this animatic, as opposed to where
 // it plays. See the note at the top of `animatic/assets.js` for why the pane and
 // the timeline are two lists now.
@@ -307,6 +309,26 @@ const LIBRARY_MAX_EDGE = 240;
 // The frame shapes and their pixel sizes moved to `animatic/aspects.js` — the
 // Shape chips in Video properties, the Program pane's picker and the export
 // dialog's size table all read the one list now.
+
+// HOW LONG A GENERATED IN-BETWEEN SHOT HOLDS, and what else may be picked.
+// The same ladder the key-pose re-block offers (`panel_sequence.ALLOWED_DURATIONS`),
+// so "how long is this shot" is asked the same way wherever it is asked.
+//
+// ⚠ EIGHT IS THE DEFAULT BECAUSE THE PICTURE IS GOING STRAIGHT ONTO A TIMELINE
+// and the next thing that usually happens to it is ✨ Animate, whose longest
+// take is 8 seconds. Opening on the board's 2-second hold would mean re-timing
+// the clip by hand after every render.
+const SHOT_GEN_SECONDS = [2, 4, 6, 8, 10];
+const SHOT_GEN_DEFAULT_SECONDS = 8;
+
+// The same ladder for a picture generated into the Images layer — and a
+// DIFFERENT default, which is deliberate. A generated SHOT opens at 8s because
+// the next thing that happens to it is usually ✨ Animate, whose longest take is
+// 8s. This one is an overlay: it goes on the lane where every picture anyone has
+// ever dropped in arrives at 2 seconds (`addOverlayFiles`), and matching the
+// lane it lands on matters more than matching the other dialog — the first thing
+// you compare it to is the clip beside it, not a dialog you closed.
+const IMG_GEN_DEFAULT_SECONDS = 2;
 
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -708,6 +730,52 @@ export default function AnimaticEditor({
   // The PRICED confirmation. Nothing is submitted until this has been shown and
   // accepted — the rule every paid path in this app follows.
   const [animateConfirm, setAnimateConfirm] = useState(null);
+  // The "generate the shot before / after this one" dialog. Null = closed;
+  // otherwise `{frameId, side}` — WHICH clip it is beside and WHICH side of it,
+  // because the dialog is one component and the side is the only difference
+  // between the two menu lines that open it.
+  const [shotGen, setShotGen] = useState(null);
+  // The free context read: the name to give the shot, the two shots it goes
+  // between, the board's aspect and which model is about to draw. Null until it
+  // lands — the dialog opens immediately and fills in.
+  const [shotGenCtx, setShotGenCtx] = useState(null);
+  const [shotGenPrompt, setShotGenPrompt] = useState("");
+  const [shotGenAspect, setShotGenAspect] = useState("");
+  const [shotGenSeconds, setShotGenSeconds] = useState(SHOT_GEN_DEFAULT_SECONDS);
+  // Drawing (the image call) and suggesting (the text call) are two different
+  // waits with two different buttons, so they are two flags — one would grey
+  // out the ✨ while the picture renders and read as the ✨ having failed.
+  const [shotGenBusy, setShotGenBusy] = useState(false);
+  const [shotGenAsking, setShotGenAsking] = useState(false);
+  // Is the ✨'s ⓘ open? Folded by default, like every other explanation in this
+  // editor — see `InfoDot`. Standing prose about what a control does costs its
+  // three lines on every visit for something read once.
+  const [shotGenNote, setShotGenNote] = useState(false);
+
+  // The MEDIA PANE's ✨ — "draw me any picture". Null = closed.
+  //
+  // ⚠ A SEPARATE DIALOG FROM THE SHOT ONE, AND SEPARATE STATE, though they share
+  // a card and half their rows. They are two different questions: that one draws
+  // a SHOT — the board's look, its references, the gap between two named
+  // neighbours, and it lands on the board's row — while this one draws whatever
+  // the sentence says, belongs to no storyboard, and lands on the overlay Images
+  // lane like every other picture that is not a shot (`belongsOnImageLane`).
+  // Folding them into one component would mean a prop for every one of those
+  // differences and a prompt that has to decide which of two riders to send.
+  const [imgGen, setImgGen] = useState(null);
+  const [imgGenPrompt, setImgGenPrompt] = useState("");
+  const [imgGenAspect, setImgGenAspect] = useState("");
+  const [imgGenSeconds, setImgGenSeconds] = useState(IMG_GEN_DEFAULT_SECONDS);
+  const [imgGenBusy, setImgGenBusy] = useState(false);
+  const [imgGenNote, setImgGenNote] = useState(false);
+  // Which model will draw, read once and cached for the session. ⚠ It does not
+  // depend on the project — it is `IMAGE_PROVIDER` in the environment — so it is
+  // read on first open and never again.
+  const [imageModel, setImageModel] = useState(null);
+  // Which (frame, side) the in-flight context read was started for. ⚠ Same
+  // guard as `animatePanelReq`: open a second menu while the first read is in
+  // the air and the late answer would describe the wrong gap.
+  const shotGenReq = useRef(null);
   const [animateBusy, setAnimateBusy] = useState(false);
   // ⚠ A PLAIN BOOLEAN, and the polling effect below keys on THIS ALONE.
   // It used to key on the polled job object, which the poll itself wrote — so
@@ -5290,7 +5358,14 @@ export default function AnimaticEditor({
     // says what the shot IS and Veo wants to hear what MOVES — but an empty box
     // is worse, and the placeholder explains the difference.
     const label = frame?.label || "";
-    setAnimatePrompt(label);
+    // ⚠ A GENERATED IN-BETWEEN SHOT CARRIES ITS OWN WORDING, and it is the only
+    // description of that shot there is: it has no panel — it is not on the
+    // board — so the free read below finds nothing for it and would leave the
+    // box on "After Shot 4", which is a name. `src.prompt` is what it was drawn
+    // from, and it does the same job here that the panel's description does for
+    // a panel. Applied synchronously because it needs no call.
+    const seed = (frame?.src?.prompt || "").trim() || label;
+    setAnimatePrompt(seed);
     setAnimateConfirm(null);
     setAnimatePanel(null);
     setAnimateSpeak(false);
@@ -5314,11 +5389,13 @@ export default function AnimaticEditor({
         setAnimatePanel(info);
         const draft = boardDraftPrompt(info);
         if (!draft) return;
-        // ⚠ ONLY OVER THE LABEL WE PUT THERE. The read is asynchronous and the
+        // ⚠ ONLY OVER THE DRAFT WE PUT THERE. The read is asynchronous and the
         // box is focused the whole time, so anything the user has already typed
         // outranks the draft — arriving late and overwriting it would be the
-        // worst thing this could do.
-        setAnimatePrompt((current) => (current.trim() === label.trim() ? draft : current));
+        // worst thing this could do. Tested against `seed`, not the label: a
+        // generated shot's own wording is in the box, and a late panel read
+        // must not overwrite that either.
+        setAnimatePrompt((current) => (current.trim() === seed.trim() ? draft : current));
       })
       .catch(() => {
         /* No board, no draft. The label stays and the dialog is unchanged —
@@ -5437,6 +5514,342 @@ export default function AnimaticEditor({
       setError(e.message);
     } finally {
       setAnimateBusy(false);
+    }
+  }
+
+
+  // --------------------------------------- generate a shot beside another one
+  // ⚠ THE SECOND PATH IN THIS EDITOR THAT CALLS A MODEL FROM THE TIMELINE, and
+  // unlike ✨ Animate it is not metered per second, so it does not go through a
+  // priced confirm — it is one drawing, the same call the board's own Regenerate
+  // makes. What it DOES share is the two-step shape: the dialog writes the
+  // wording (and ✨ can write it for you, a cheap text call), and nothing is
+  // drawn until the button under it is pressed.
+  //
+  // ⚠ AND THE STORYBOARD IS NEVER TOUCHED. The picture comes back as an ordinary
+  // animatic upload carrying the board id and a `shot_id` of its own, which is
+  // what puts it on the Storyboard images row without claiming a panel index
+  // that belongs to a real panel. The server's `generate_neighbour_shot` note
+  // carries the whole of that reasoning.
+
+  /**
+   * Open the dialog for "the shot before / after this clip".
+   *
+   * ⚠ IT FLUSHES FIRST. The neighbours are worked out SERVER SIDE, off the saved
+   * project — so a shot dragged into a new place a moment ago has to be on the
+   * server before the question "what does this sit between?" is asked, or the
+   * suggestion is written between two shots that no longer sit either side of
+   * anything. Same rule `askToAnimate` and `askForSpeech` follow.
+   */
+  async function openGenerateShot(clip, side) {
+    if (!clip?.id) return;
+    if (frameLocked(clip)) {
+      setNotice("That row is locked — unlock it in the gutter to add a shot to it.");
+      return;
+    }
+    const key = `${clip.id}:${side}`;
+    shotGenReq.current = key;
+    setShotGen({ frameId: clip.id, side });
+    setShotGenCtx(null);
+    setShotGenPrompt("");
+    setShotGenAspect("");
+    setShotGenSeconds(SHOT_GEN_DEFAULT_SECONDS);
+    // Folded again on every open. A note pinned open on the last shot would
+    // otherwise greet the next one with three lines it has already been read.
+    setShotGenNote(false);
+    setError("");
+    try {
+      await flush();
+      const info = await api.getNeighbourShot(animaticId, clip.id, side);
+      // A second menu was opened while this was in the air: its own read owns
+      // the dialog now, and filling it here would describe the wrong gap.
+      if (shotGenReq.current !== key) return;
+      setShotGenCtx(info);
+      // ⚠ ONLY OVER THE EMPTY DEFAULT. The read is asynchronous and the shape
+      // picker is live the whole time, so a ratio the user has already chosen
+      // outranks the board's default arriving late.
+      setShotGenAspect((current) => current || info.aspect_ratio || "");
+    } catch (e) {
+      if (shotGenReq.current !== key) return;
+      setError(e.message);
+    }
+  }
+
+  /**
+   * ✨ — have the model write the missing beat.
+   *
+   * A TEXT call, a fraction of the price of a drawing, and it is the whole
+   * reason the box opens EMPTY rather than on a draft: there is no panel behind
+   * a shot that does not exist yet, so there is nothing to prefill it with. What
+   * is already typed goes up as STEERING and comes back folded into the answer —
+   * which is why this replaces the box rather than appending to it, and why the
+   * line under the button says so.
+   */
+  async function suggestShotPrompt() {
+    const target = shotGen;
+    if (!target || shotGenAsking) return;
+    setShotGenAsking(true);
+    setError("");
+    try {
+      const res = await api.suggestNeighbourShot(animaticId, target.frameId, {
+        side: target.side,
+        notes: shotGenPrompt.trim(),
+      });
+      // The dialog may have been closed, or moved to the other side of the clip,
+      // while this was in the air.
+      if (shotGenReq.current !== `${target.frameId}:${target.side}`) return;
+      const written = (res?.description || "").trim();
+      // ⚠ NEVER BLANK THE BOX. An empty answer is a failed suggestion, and
+      // taking the user's own words away as well would be the worst outcome.
+      if (written) setShotGenPrompt(written);
+      else setNotice("The model had nothing to add — try describing the shot yourself.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setShotGenAsking(false);
+    }
+  }
+
+  /**
+   * Draw it, and put it in the cut.
+   *
+   * The server makes the picture and hands back a CLIP; where it goes is decided
+   * here, because that is a timeline question — the same split the image, video
+   * and board imports already follow.
+   */
+  async function doGenerateShot() {
+    const target = shotGen;
+    if (!target || !shotGenPrompt.trim() || shotGenBusy) return;
+    setShotGenBusy(true);
+    setError("");
+    try {
+      // The neighbours are resolved server side off the SAVED project, and the
+      // dialog has been open long enough for the timeline to have moved.
+      await flush();
+      const res = await api.generateNeighbourShot(animaticId, target.frameId, {
+        side: target.side,
+        description: shotGenPrompt.trim(),
+        aspectRatio: shotGenAspect,
+        durationMs: shotGenSeconds * 1000,
+      });
+      if (!res?.frame?.id) throw new Error("The server drew nothing.");
+      placeGeneratedShot(res.frame, target.frameId, target.side);
+      setShotGen(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setShotGenBusy(false);
+    }
+  }
+
+  // THE SHAPES THE MEDIA ✨ OFFERS — the same list, plus the PROJECT's shape
+  // when that is not on it. A film can be 4:5 or 21:9, and the first thing
+  // anyone draws for it is usually the shape of the film.
+  const imgGenAspects = (() => {
+    const ids = BOARD_ASPECTS.map((a) => a.id);
+    const own = imgGenAspect || settings.aspect_ratio;
+    return own && !ids.includes(own) ? [...ids, own] : ids;
+  })();
+
+  // THE SHAPES THE GENERATE DIALOG OFFERS — the storyboard's list, plus the
+  // board's OWN ratio when that is not on it. A board can be 3:4 or anything
+  // else the workflow's Custom field accepted, and a picker that silently
+  // showed it as 16:9 would be lying about the picture it is about to draw.
+  // Same rule `knownAspect` exists for on the video side.
+  const shotGenAspects = (() => {
+    const ids = BOARD_ASPECTS.map((a) => a.id);
+    const own = shotGenCtx?.aspect_ratio || shotGenAspect;
+    return own && !ids.includes(own) ? [...ids, own] : ids;
+  })();
+
+  /**
+   * THE NEW SHOT GOES IN, AND THE WHOLE FILM MOVES OVER FOR IT.
+   *
+   * ⚠ ONE EDIT, ONE UNDO, AND EVERY LIST. This is the same job `attachVeoClip`
+   * does when a take is longer than the shot it was made from, and it is done
+   * the same way for the same reasons: `insertShotBeside` places the clip and
+   * makes room on ITS row, `renderShifts` turns what that did into a step map,
+   * and the map carries the captions, the typed text, the shapes, the overlays
+   * and the voiceover along with it. Asked for as "generated video and come in
+   * same layer after same setected clip and move all clip of all layer".
+   *
+   * ⚠ THE MAP IS BUILT FROM THE AFFECTED ROW ALONE. `renderShifts` reads every
+   * `board_image` clip in the project, and a SECOND storyboard row — which did
+   * not move — would contribute a run of zero-shift points that `shiftAt` then
+   * reads as "nothing after this owes anything", cancelling the debt for every
+   * caption past it. Filtering both lists to the one row this insert touched is
+   * exact: `frameSpans` lays a track out from that track's clips alone, so a
+   * clip's evaluated start is the same in the filtered list as in the whole one.
+   *
+   * ⚠ AND THE ROW IT PLACED IS `keep`, NOT "every board row". The clips on that
+   * row are already standing at their NEW starts, so looking them up in a map
+   * written in OLD time would add their debt a second time. Everything else that
+   * came off a board — a Veo take sitting over a panel that just moved, a second
+   * storyboard row — has NOT been placed by this pass and must be carried, which
+   * is exactly what `rippleFrames`'s own board-wide skip would have prevented.
+   */
+  function placeGeneratedShot(built, neighbourId, side) {
+    const before = framesRef.current || frames;
+    const { frames: next, placed } = insertShotBeside(before, built, neighbourId, side);
+    if (!placed) {
+      setError("That shot is no longer on the timeline — the picture is safe in Media.");
+      setAssets((list) => mergeAssets(list, [assetFromFrame(built, newId())]));
+      return;
+    }
+    const onRow = (f) => frameTrack(f) === placed.track;
+    const shifts = renderShifts(before.filter(onRow), next.filter(onRow));
+    const keep = new Set(next.filter(onRow).map((f) => f.id));
+    const settled = rippleFrames(next, shifts, keep);
+    setFrames(settled);
+    if (shifts.length) {
+      // ⚠ FUNCTIONAL SETTERS, NEVER A REF — see the same five calls in
+      // `attachVeoClip` for what reading these out of a ref cost. ⚠ ALL FIVE OF
+      // `RIPPLED_LISTS`, and the only thing left to get wrong is forgetting one.
+      //
+      // ⚠ NO `coverGrownShots` HERE, and that is not an omission: nothing GREW.
+      // A shot was added between two others, so every caption keeps the length
+      // it had and simply happens later.
+      setTexts((list) => rippleClips(list, shifts));
+      setShapes((list) => rippleClips(list, shifts));
+      setOverlays((list) => rippleClips(list, shifts));
+      // ⚠ `newId` FROM HERE, because cutting the voiceover at the seam mints a
+      // clip — ids are the editor's to hand out, not a pure module's.
+      setAudioTracks((list) => rippleAudio(list, shifts, newId));
+    }
+    // ⚠ AND INTO THE LIBRARY, because a generated shot is like a paid render and
+    // unlike an upload: deleting the clip must not be the thing that loses the
+    // only copy of a picture that cost something to make.
+    addToLibrary([assetFromFrame(placed, newId())]);
+    framesRef.current = settled;
+    setSelectedId(placed.id);
+    setNotice(
+      shifts.length
+        ? `Added “${placed.label}” — everything after it moved along to make room.`
+        : `Added “${placed.label}”.`
+    );
+  }
+
+
+  // --------------------------------------------- draw any picture (Media ✨)
+  /**
+   * Open the Media pane's ✨.
+   *
+   * ⚠ NO CONTEXT CALL AND NOTHING TO FLUSH, unlike the shot dialog. That one has
+   * to ask the server what its clip sits between, which is a question about the
+   * SAVED project; this one has no neighbours, no board and no clip — the whole
+   * brief is the sentence about to be typed. The only read is "which model", and
+   * it is cached for the session because it cannot change under us.
+   */
+  function openImageGen() {
+    setImgGen({ at: timeRef.current });
+    setImgGenPrompt("");
+    // The project's own shape is the sensible default for a picture going into
+    // this film; the picker offers the rest.
+    setImgGenAspect(settings.aspect_ratio || "16:9");
+    setImgGenSeconds(IMG_GEN_DEFAULT_SECONDS);
+    setImgGenNote(false);
+    setError("");
+    if (imageModel) return;
+    api
+      .getImageModel()
+      .then(setImageModel)
+      .catch(() => {
+        /* The dialog says "…" for the model and still works. Naming the backend
+           is an honesty, never a precondition. */
+      });
+  }
+
+  /**
+   * Draw it, then put it where a picture goes.
+   *
+   * ⚠ IT LANDS EXACTLY WHERE A DROPPED FILE LANDS — the library AND the overlay
+   * "Images" lane — because the server hands back the same upload item a file
+   * upload returns and `belongsOnImageLane` has always been the one place that
+   * decides where a picture that is not a shot goes. Asked for as "come back in
+   * media in image tab name under and in layer image layer come generated
+   * image".
+   *
+   * ⚠ AND IT IS ONE EDIT. The card and the clip are written in the same tick, so
+   * one Ctrl+Z takes back the placement — and the card survives it, which is the
+   * whole point of the library: deleting the clip must never be what loses a
+   * picture that cost something to make.
+   */
+  async function doGenerateImage() {
+    const target = imgGen;
+    if (!target || !imgGenPrompt.trim() || imgGenBusy) return;
+    setImgGenBusy(true);
+    setError("");
+    try {
+      const res = await api.generateAnimaticImage(animaticId, {
+        prompt: imgGenPrompt.trim(),
+        aspectRatio: imgGenAspect,
+      });
+      const item = res?.item;
+      if (!item?.upload_id) throw new Error("The server drew nothing.");
+      const name = (res.name || "").trim() || "Generated image";
+      const overlay = {
+        id: newId(),
+        // ⚠ THE DEFAULT Images LANE (`layer_id: ""`), the same one `addAssets`
+        // sends an uploaded picture to when no row was named. This ✨ is on the
+        // pane, not on a row, so there is no row it could mean instead.
+        layer_id: "",
+        upload_id: item.upload_id,
+        // Where the playhead was when the dialog opened. ⚠ Captured at OPEN and
+        // not read now: a drawing takes a while, and a picture that landed
+        // wherever the playhead had wandered to would be a surprise.
+        start_ms: Math.max(0, Math.round(target.at || 0)),
+        duration_ms: Math.max(MIN_MS, imgGenSeconds * 1000),
+        x: 0.5,
+        y: 0.5,
+        // ⚠ THE WHOLE FRAME, WHERE AN UPLOADED OVERLAY OPENS AT 0.3. Those are
+        // two different things arriving: a file you dropped in is usually an
+        // inset — a logo, a cut-in — and starting it small is right, because you
+        // are about to place it. This was DRAWN, to order, at the shape the
+        // dialog asked for, so it is a picture of the film and it arrives as
+        // one. Reported the moment it first landed: "image not comback and view
+        // full in program panel … so set full panel in program not con and show
+        // samll".
+        // ⚠ FULL FRAME IS SAFE AT ANY SHAPE. Both renderers fit a picture INSIDE
+        // its box preserving aspect ("contain" — `draw_overlays` in animatic.py
+        // and its twin in `gl/compositor.js`), so a 1:1 image asked for in a 16:9
+        // film fills the height and is letterboxed, never stretched.
+        w: 1,
+        h: 1,
+        opacity: 1,
+        rotation: 0,
+        // Servable immediately, before the project is saved — the same url
+        // `addOverlayFiles` gives a fresh upload.
+        url: `/animatics/${animaticId}/media/${item.upload_id}`,
+      };
+      setOverlays((list) => [...list, overlay]);
+      // ⚠ NAMED, unlike an uploaded overlay's card. A dropped file has a
+      // filename to fall back on; this has the words that made it, which is what
+      // the person who typed them will recognise it by. The server builds the
+      // name so it is built once (`_image_name_from_prompt`).
+      addToLibrary([
+        assetFromFrame(
+          {
+            kind: "image",
+            src: { kind: "upload", upload_id: item.upload_id },
+            label: name,
+            duration_ms: overlay.duration_ms,
+          },
+          newId()
+        ),
+      ]);
+      selectOnly({ overlay: overlay.id });
+      setImgGen(null);
+      setNotice(
+        // ⚠ IT NO LONGER SAYS "drag it to place it". It arrives covering the
+        // frame now, so the next thing to do is not placement — and a notice
+        // telling you to place something that is already where it belongs reads
+        // as the editor not knowing what it just did.
+        `Added “${name}” to Media and to the Images layer, covering the frame — drag its corners if you want it smaller.`
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setImgGenBusy(false);
     }
   }
 
@@ -5802,6 +6215,43 @@ export default function AnimaticEditor({
         changed = true;
       }
     }
+    // ⚠ AND A RECORDING THAT IS ON THE TIMELINE WITH NO CARD IS PUT RIGHT, which
+    // is the narrow repair the block above cannot make: a project WITH a library is
+    // never re-derived, so a file that missed the library when it was added misses
+    // it for ever. The server-side voiceover pass was that gap (see the speech
+    // poll), so every project that ran one before it was fixed is carrying a
+    // voiceover the Media pane cannot show — "i see in timeline i have audio layer
+    // with audio clip but why not audio clip show in media?" — and it opens that way
+    // every time, because nothing here was looking.
+    //
+    // ⚠ IT IS SAFE FOR ONE REASON AND IT IS WORTH SAYING WHICH: the ✕ takes the
+    // clips with it (`deleteAsset`), so a card CANNOT be deleted while a clip made
+    // from it is still playing. A track on the timeline whose upload has no card is
+    // therefore always a gap and never a choice, which is exactly what re-deriving
+    // the WHOLE library gets wrong and why that one is spelled `== null`.
+    //
+    // ⚠ AUDIO ONLY, deliberately. The same sweep over `frames` would mint a junk
+    // card for every clip whose `src` is empty — a colour card is the shape that has
+    // no file — and there is no add path for pictures that skips the library: they
+    // all go through `addToLibrary`. Widen it when one appears, not before.
+    if (p.assets != null) {
+      const have = new Set((p.assets || []).map(assetKey));
+      const missing = [];
+      for (const track of p.audio_tracks || []) {
+        if (!track?.upload_id) continue;
+        const card = assetFromAudio(track, newId());
+        const key = assetKey(card);
+        if (have.has(key)) continue;
+        have.add(key);
+        missing.push(card);
+      }
+      if (missing.length) {
+        const healedAssets = mergeAssets(p.assets || [], missing);
+        setAssets(healedAssets);
+        p = { ...p, assets: healedAssets };
+        changed = true;
+      }
+    }
     if (p.status === "running") setExportJob({ status: "running", progress: null });
     // RECOVER ANY PAID CLIP THAT NEVER LANDED. A render that finished while
     // this editor was closed is still a charge on someone's card, and the
@@ -6148,6 +6598,28 @@ export default function AnimaticEditor({
         setAudioTracks(rippleAudio(project.audio_tracks || [], shifts, newId, keep));
         setShapes((list) => rippleClips(list, shifts));
         setOverlays((list) => rippleClips(list, shifts));
+        // ⚠ AND THE RECORDING JOINS THE LIBRARY. This is the one add path that
+        // reached the timeline WITHOUT reaching the Media pane, because the file it
+        // adds is made on the SERVER: every other route goes through
+        // `addAudioTrack`, which puts a card in as it goes, and this one takes the
+        // project back off the wire and writes `audio_tracks` straight into state.
+        // So a generated voiceover played on the timeline and was listed nowhere —
+        // reported as "i see in timeline i have audio layer with audio clip but why
+        // not audio clip show in media?" — and razoring or deleting its clips lost
+        // the take with no way back short of a second paid run.
+        //
+        // ⚠ THE FILE, NOT THE CLIP, and every track rather than the new one:
+        // `assetKey` keys audio by upload id and `mergeAssets` dedupes on it, so a
+        // voiceover the server cut into four pieces still makes ONE card, and the
+        // music bed that was already listed does not gain a second.
+        addToLibrary(
+          (project.audio_tracks || [])
+            .filter((t) => t?.upload_id)
+            .map((t) => assetFromAudio(t, newId()))
+        );
+        // Same reason `addAudioTrack` does it: the section that now holds something
+        // is no use to anyone folded shut.
+        openGroup("media:audio");
         setSpeechRunning(false);
         setSpeechProgress(null);
         if (job.error) setError(job.error);
@@ -6173,6 +6645,7 @@ export default function AnimaticEditor({
     setFrames,
     setShapes,
     setOverlays,
+    addToLibrary,
   ]);
 
   // -------------------------------------------- Phase 7: back to the board
@@ -7060,7 +7533,13 @@ export default function AnimaticEditor({
           >
             {/* One control for everything — images, audio, whatever. There were
                 three ("Add images", the drop card, and "Add an MP3") for what is
-                really a single action. */}
+                really a single action.
+                ⚠ THE ✨ IS A SIBLING, NOT A CHILD. The drop card is a `<button>`
+                and a button inside a button is not a thing the browser will
+                render — so the two sit in a positioned wrapper and the ✨ is
+                placed in its corner, the same arrangement as the prompt box's
+                ✨ in the generate dialogs. */}
+            <div className="an-asset-add">
             <button
               type="button"
               className="an-asset-drop"
@@ -7080,6 +7559,22 @@ export default function AnimaticEditor({
                 Video for the video track · images for the Images layer · an MP3 for the audio
               </span>
             </button>
+              {/* ⚠ IT DRAWS A PICTURE, IT DOES NOT UPLOAD ONE — which is why it
+                  is a control of its own on this card rather than another line
+                  in the note under it. Same star and same corner as the ✨ in
+                  the generate dialogs, so "a model writes this for you" is one
+                  mark everywhere in the editor. */}
+              <button
+                type="button"
+                className="an-asset-ai"
+                disabled={uploading || imgGenBusy}
+                onClick={openImageGen}
+                title="Describe a picture and have Gemini draw it — it lands in Media and on the Images layer"
+                aria-label="Generate an image with AI"
+              >
+                <Icon name="sparkle" size="1.15em" />
+              </button>
+            </div>
 
             {/* ⚠ EVERY LIST IN THIS PANE IS A SECTION YOU CAN CLOSE, and it is
                 the Properties pane's section (`PropGroup`) — same twist, same
@@ -8098,6 +8593,10 @@ export default function AnimaticEditor({
                that looks like nothing happening, so it needs the status strip. */
             onNotice={setNotice}
             onDownloadClip={downloadVeoClip}
+            /* Right-click a storyboard still → draw the shot missing either side
+               of it. Opens the dialog and nothing else; nothing is drawn until
+               the button in it is pressed. */
+            onGenerateShot={openGenerateShot}
             onSplitFootage={splitFootageOntoTrack}
             tool={tool}
             snapping={snapping}
@@ -8536,6 +9035,385 @@ export default function AnimaticEditor({
                 onClick={doBoardImport}
               >
                 {boardBusy ? "Importing…" : "Import"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Draw any picture, from the Media pane's ✨ --------------------- */}
+      {/* ⚠ THE SAME CARD AS "Generate this shot", AND A DIFFERENT DIALOG. What
+          they share is the shape — an intro, a prompt box, Shape / Length /
+          Model, a two-button footer — because they are the same kind of moment
+          and this editor does not get to invent a new layout per feature. What
+          they do NOT share is the middle: there is no shot name here (this
+          picture is not a shot), no Before/After (it sits between nothing), and
+          no ✨ inside the box (there are no neighbours to write it from — the
+          sentence IS the brief). Every one of those is a real difference, which
+          is exactly why this is not the same component with five props. */}
+      {imgGen && (
+        <div className="modal-overlay" onClick={() => setImgGen(null)}>
+          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setImgGen(null)}>
+              ✕
+            </button>
+            <h2>Generate an image</h2>
+            <p className="muted">
+              Describe any picture and Gemini draws it. It lands in Media and on
+              the Images layer.
+            </p>
+
+            <textarea
+              className="an-tp-text"
+              autoFocus
+              rows={3}
+              value={imgGenPrompt}
+              placeholder="e.g. a hand-painted title card, cracked gold lettering on deep navy — or a rain-soaked neon alley at night"
+              maxLength={2000}
+              onChange={(e) => setImgGenPrompt(e.target.value)}
+            />
+            <p className="tiny muted an-animate-src an-shot-hint">
+              <span>Anything you can describe — this one is not a storyboard shot.</span>
+              <InfoDot open={imgGenNote} onToggle={() => setImgGenNote((was) => !was)} />
+            </p>
+            {imgGenNote && (
+              <p className="an-note an-shot-note">
+                Nothing about the storyboard is applied — no style, no locked
+                characters, no shots either side — so the words you type are the
+                whole brief. It arrives on the Images layer, which composites
+                OVER the cut rather than into it, so it covers nothing until you
+                drag it where you want it on the frame.
+              </p>
+            )}
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Shape</span>
+              <select
+                className="an-select"
+                value={imgGenAspect}
+                onChange={(e) => setImgGenAspect(e.target.value)}
+              >
+                {imgGenAspects.map((id) => {
+                  const note = BOARD_ASPECTS.find((a) => a.id === id)?.note;
+                  return (
+                    <option key={id} value={id}>
+                      {note ? `${id} — ${note}` : id}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* HOW LONG THE CLIP HOLDS. ⚠ Two seconds, which is what every other
+                picture arriving on the Images layer opens at — see
+                `IMG_GEN_DEFAULT_SECONDS` for why this differs from the shot
+                dialog's eight. */}
+            <div className="an-prop-row">
+              <span className="an-prop-label">Length</span>
+              <select
+                className="an-select"
+                value={imgGenSeconds}
+                onChange={(e) => setImgGenSeconds(Number(e.target.value))}
+              >
+                {SHOT_GEN_SECONDS.map((s) => (
+                  <option key={s} value={s}>
+                    {s} seconds
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Model</span>
+              <span className="an-select an-select-static">
+                {imageModel?.model || "…"}
+                {imageModel?.provider && (
+                  <span className="an-shot-provider"> · {imageModel.provider}</span>
+                )}
+              </span>
+            </div>
+
+            {imgGenBusy && (
+              <div className="an-prop-progress an-shot-thinking" role="status">
+                <span className="an-prop-progress-msg">Drawing your image…</span>
+                <span className="an-status-bar is-waiting">
+                  <span />
+                </span>
+              </div>
+            )}
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setImgGen(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!imgGenPrompt.trim() || imgGenBusy}
+                onClick={doGenerateImage}
+              >
+                {imgGenBusy ? "Drawing the image…" : "Generate the image"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Generate the shot before / after this one --------------------- */}
+      {/* ⚠ ONE DIALOG FOR BOTH MENU LINES. `shotGen.side` is the only difference
+          between them, and it is what the server needs to know which gap it is
+          writing into — two near-identical dialogs would be two places to keep
+          the shape picker, the length and the ✨ in step.
+
+          ⚠ IT IS THE ✨ ANIMATE DIALOG'S LAYOUT ON PURPOSE. The two are the same
+          question asked about the same clip — make something new from this shot —
+          and this is not the screen to be inventive on. Same card, same
+          name-over-box rhythm, same `.an-name-actions` footer. */}
+      {shotGen && (
+        <div className="modal-overlay" onClick={() => setShotGen(null)}>
+          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShotGen(null)}>
+              ✕
+            </button>
+            <h2>Generate this shot</h2>
+            {/* ⚠ TWO LINES, LIKE ✨ ANIMATE'S. It said where the drawing lands
+                as well, which is three lines for something the shot name under
+                it already says ("After Shot 9") — and in a card this tall the
+                intro is the first thing that should give room back. */}
+            <p className="muted">
+              A new drawing in the storyboard's own look. Describe what the
+              camera SEES.
+            </p>
+
+            {/* WHICH SHOT THIS WILL BE. ⚠ The name comes from the server, which
+                is where it is built — see `_neighbour_label`. "New shot" stands
+                in for the beat before the read lands rather than a second copy
+                of the name-builder living here to disagree with it. */}
+            <div className="an-animate-shot">
+              <span className="an-animate-shot-name">
+                {shotGenCtx?.label || "New shot"}
+              </span>
+              {shotGenCtx?.title && (
+                <span className="an-animate-shot-src">from “{shotGenCtx.title}”</span>
+              )}
+            </div>
+
+            {/* WHAT IT GOES BETWEEN. The one thing this dialog can show that
+                ✨ Animate cannot: the shot being written does not exist yet, so
+                the only way to judge what belongs here is to read its
+                neighbours. Either side is missing at the ends of the row, and it
+                says so rather than showing an empty quotation. */}
+            {shotGenCtx?.can_generate && (
+              <div className="an-shot-gap">
+                <p className="tiny muted">
+                  <span className="an-shot-gap-side">Before</span>{" "}
+                  {shotGenCtx.before_description || "nothing — this would open the film."}
+                </p>
+                <p className="tiny muted">
+                  <span className="an-shot-gap-side">After</span>{" "}
+                  {shotGenCtx.after_description || "nothing — this would end the film."}
+                </p>
+              </div>
+            )}
+
+            {/* THE BOX OPENS EMPTY, AND THAT IS THE DIFFERENCE FROM ✨ ANIMATE.
+                There is no panel behind a shot that does not exist yet, so there
+                is nothing to draft from — the ✨ in the corner is what fills it,
+                reading the two shots above and the film around them. */}
+            <div className="an-shot-prompt">
+              <textarea
+                className="an-tp-text"
+                autoFocus
+                rows={3}
+                value={shotGenPrompt}
+                placeholder="e.g. low angle on the doorway as he steps through it, the lamp swinging behind him"
+                maxLength={2000}
+                onChange={(e) => setShotGenPrompt(e.target.value)}
+              />
+              {/* ⚠ A DRAWN ICON, NOT THE ✨ EMOJI the Animate buttons carry: this
+                  one sits INSIDE a text box as a control, and an emoji there
+                  inherits the box's font and lands a different size and colour in
+                  every browser.
+                  ⚠ IT KEEPS ITS COLOUR WHILE IT WORKS. It is `disabled` for the
+                  duration — pressing it twice would pay for two suggestions — but
+                  the ordinary disabled dim would read as "this button is off",
+                  which is the opposite of what is happening, so `is-working`
+                  takes the dim back off and lights the outline instead. */}
+              <button
+                type="button"
+                className={`an-shot-ai${shotGenAsking ? " is-working" : ""}`}
+                disabled={!shotGenCtx?.can_generate || shotGenAsking || shotGenBusy}
+                onClick={suggestShotPrompt}
+                title={
+                  shotGenPrompt.trim()
+                    ? "Write this shot for me, using what you have typed as direction — it replaces the box"
+                    : "Write this shot for me, from the shots either side of it and the story around them"
+                }
+                aria-label="Write this shot for me"
+              >
+                <Icon name="sparkle" size="1.15em" />
+              </button>
+            </div>
+
+            {/* ⚠ A MOVING BAR, NOT A LINE OF GREY TEXT. The wait for a text call
+                is a couple of seconds of nothing, and "Reading the shots either
+                side…" in `muted` under the box was not enough to tell anybody
+                that a model was running — reported as "while generating user not
+                see any working bar motion".
+                ⚠ IT IS `.an-prop-progress`, the row this editor already uses for
+                a server pass reported beside the button that started it (the
+                captions run). Two things differ, and both had to.
+                ⚠ ONE INDICATOR, AND IT IS THE BAR. The row carries a
+                `.spinner-inline` as well everywhere else, and here that was two
+                things saying the same thing side by side — reported as "why you
+                add two working bar … you remove one working status bar not need
+                two bar view". The bar is the one that survives: it is the wider
+                mark, it reads from across the pane, and it is the half that says
+                "still going" rather than merely "busy". ⚠ AND THE SPINNER WAS
+                THE WORSE OF THE TWO HERE FOR A REASON THAT IS NOT A MATTER OF
+                TASTE: `.spinner-inline` takes its moving edge from
+                `--primary-ink`, which is near-black because nearly every one of
+                its ~50 uses sits INSIDE a gold button. On this dark panel that
+                edge all but vanishes and the circle reads as a static grey ring,
+                which is why it was reported as not obviously working. Recolouring
+                it is not available — it would break every one of those buttons.
+                ⚠ AND THE BAR SLIDES rather than filling: a captions run reports a
+                percentage and a single model call reports nothing at all. See
+                `.an-status-bar.is-waiting`. */}
+            {shotGenAsking ? (
+              <div className="an-prop-progress an-shot-thinking" role="status">
+                <span className="an-prop-progress-msg">
+                  Reading the shots either side, and the story around them…
+                </span>
+                <span className="an-status-bar is-waiting">
+                  <span />
+                </span>
+              </div>
+            ) : (
+              /* ⚠ ONE LINE, WITH THE REST BEHIND THE ⓘ — the standing rule for
+                 this whole editor, and this dialog was ignoring it. Three lines
+                 of grey prose about a control you understand after using it once
+                 took more of the card than the two shots the new one goes
+                 between, which are the part you actually have to read
+                 ("information text keep samll but informative … or you want older
+                 style like I icone"). Same `InfoDot` as the Properties rows and
+                 the Effects library, imported rather than redrawn. */
+              <p className="tiny muted an-animate-src an-shot-hint">
+                <span>✨ writes the missing beat between the two shots above.</span>
+                <InfoDot
+                  open={shotGenNote}
+                  onToggle={() => setShotGenNote((was) => !was)}
+                />
+              </p>
+            )}
+            {shotGenNote && !shotGenAsking && (
+              <p className="an-note an-shot-note">
+                It reads both shots and the stretch of film around them, so what
+                it writes is a beat that is MISSING rather than a re-run of the
+                shot you right-clicked. Type first and it works to your
+                direction; either way it replaces the box, and you can edit
+                every word of what it writes before anything is drawn.
+              </p>
+            )}
+
+            {/* Why the button is going to refuse — read out here rather than
+                left for a 400, the same contract the redraw pane follows. */}
+            {shotGenCtx && !shotGenCtx.can_generate && (
+              <p className="tiny an-animate-warn">{shotGenCtx.reason}</p>
+            )}
+
+            <div className="an-prop-row">
+              <span className="an-prop-label">Shape</span>
+              <select
+                className="an-select"
+                value={shotGenAspect}
+                onChange={(e) => setShotGenAspect(e.target.value)}
+              >
+                {shotGenAspects.map((id) => {
+                  const note = BOARD_ASPECTS.find((a) => a.id === id)?.note;
+                  return (
+                    <option key={id} value={id}>
+                      {note ? `${id} — ${note}` : id}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* HOW LONG IT HOLDS ON THE TIMELINE — a property of the CLIP, not
+                of the picture. Eight by default because the next thing that
+                usually happens to a new shot is ✨ Animate, whose longest take
+                is eight seconds. */}
+            <div className="an-prop-row">
+              <span className="an-prop-label">Length</span>
+              <select
+                className="an-select"
+                value={shotGenSeconds}
+                onChange={(e) => setShotGenSeconds(Number(e.target.value))}
+              >
+                {SHOT_GEN_SECONDS.map((s) => (
+                  <option key={s} value={s}>
+                    {s} seconds
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* WHICH MODEL DRAWS IT. ⚠ Shown, not chosen: there is one image
+                model and it is set in the environment (`IMAGE_PROVIDER` and
+                `VERTEX_IMAGE_MODEL` / `GEMINI_IMAGE_MODEL`), so a picker over a
+                list of one would be theatre. Asked for as "quality model also so
+                user see which model genearte iamge".
+                ⚠ BUT IT IS IN A BOX, AND THE BOX IS `.an-select`'s. It was the
+                one row here whose value was bare text beside its label, so it
+                broke the label-over-control rhythm the other rows keep and read
+                as a different kind of thing from Quality / Size / Length in the
+                ✨ Animate dialog next door — reported as "i want you keep
+                consistancy in popop image and video".
+                ⚠ NOT A DISABLED `<select>`, which is the obvious way to get the
+                box and the wrong one: disabled greys the row out and says "this
+                is off", when the fact is that the choice does not exist. A
+                static field looks live and simply is not a control. */}
+            <div className="an-prop-row">
+              <span className="an-prop-label">Model</span>
+              <span className="an-select an-select-static">
+                {shotGenCtx?.model || "…"}
+                {shotGenCtx?.provider && (
+                  <span className="an-shot-provider"> · {shotGenCtx.provider}</span>
+                )}
+              </span>
+            </div>
+
+            {/* AND THE SAME BAR FOR THE DRAWING, which is the LONGER of the two
+                waits by some way — a synchronous image call, where the only sign
+                of life was the button relabelling itself. Same row, same reason:
+                one image reports no stages and no percentage, so it slides. And
+                no spinner beside it either, for the reason above — the two waits
+                in this dialog must look like one mechanism. */}
+            {shotGenBusy && (
+              <div className="an-prop-progress an-shot-thinking" role="status">
+                <span className="an-prop-progress-msg">
+                  Drawing the shot in the storyboard's look…
+                </span>
+                <span className="an-status-bar is-waiting">
+                  <span />
+                </span>
+              </div>
+            )}
+
+            <div className="an-name-actions">
+              <button type="button" className="btn ghost" onClick={() => setShotGen(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={
+                  !shotGenCtx?.can_generate || !shotGenPrompt.trim() || shotGenBusy
+                }
+                onClick={doGenerateShot}
+              >
+                {shotGenBusy ? "Drawing the shot…" : "Generate the shot"}
               </button>
             </div>
           </div>

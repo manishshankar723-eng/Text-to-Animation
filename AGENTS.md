@@ -200,7 +200,174 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY
+**Last updated:** 2026-08-22 — **A GENERATED VOICEOVER IS A FILE THE LIBRARY
+HAS TO KNOW ABOUT** (user-specified). An audio layer held `Voiceover.wav` and the
+Media pane listed no audio at all. The library was never the problem: an UPLOAD
+has filed a card since the day the library existed (`addAudioTrack`). What had no
+card was audio the **SERVER** makes — the captions/voiceover pass writes
+`audio_tracks` into the saved project, and the poll that collects the result read
+the document back and pushed that list straight into state, the one
+`setAudioTracks` in the editor with no `addToLibrary` beside it. ⚠ **AND IT DID
+NOT HEAL ON RELOAD:** `libraryFromProject` re-derives only when `assets` is
+`null`, so a project that already had cards never got the missing one. Fixed in
+both places — the poll files the recording (the FILE, keyed `audio:<upload_id>`,
+so four razored pieces are one card) and `onLoadedRef` gives a card to any audio
+track that has none, marking the load dirty so it is written down once. The narrow
+repair is safe because the ✕ takes the clips with it (`deleteAsset`): a track with
+no card is always a gap, never a choice. Audio only — the same sweep over `frames`
+would mint junk cards for empty-`src` clips.
+
+**Previously:** **A SENTENCE BECOMES A PICTURE, AND THE PICTURE
+IS AN ORDINARY UPLOAD** (user-specified). The Media pane's "＋ Add assets" card
+carries a **✨** now: press it, describe any picture, and Gemini draws it — it
+arrives as a named card in **Media ▸ Images** and as a clip on the **Images
+layer**. ⚠ **IT IS NOT THE SHOT GENERATOR WITH THE BOARD LEFT OUT**, and keeping
+the two apart is the whole design. `POST …/frames/{id}/neighbour` draws a SHOT:
+the board's style variant, its references, its written bible, the gap between two
+named neighbours, and it lands on the board's row. This draws whatever the
+sentence says — a title card, a texture, an inset — so it sends NONE of that, and
+it lands on the overlay Images lane, which is where every picture that is not a
+shot has gone since the Stills row was removed (`belongsOnImageLane`). Sharing a
+prompt builder would mean "a rain-soaked neon alley" came back as a pencil
+thumbnail of one, in whatever style the board happens to be in.
+**`gemini_client.generate_image`** is therefore the only image call in this
+codebase that imposes no art direction: the user's sentence goes in first and
+whole, followed by the handful of constraints that keep the result usable as a
+LAYER (full-bleed, no burnt-in caption, no drawn frame). ⚠ **THE ASPECT IS ASKED
+FOR *AND* CROPPED TO** — through the SDK's `image_config`, guarded because an
+older `google-genai` has no such field, and centre-cropped afterwards so the
+shape the dialog promised is the shape delivered whatever the model rounded to.
+⚠ **AND IT IS UNSEEDED**, unlike every panel call: those seed so a board is
+reproducible, and this is a button you press again when you do not like what came
+back. Server: **`GET /animatics/image-model`** (free, no project — declared
+before `/{job_id}` or it is read as one) and **`POST
+/animatics/{id}/images/generate`**, which answers with the SAME
+`AnimaticMediaItem` a file upload returns — so from that moment nothing
+downstream can tell a generated picture from a dropped one. The client places it,
+as it places every upload — ⚠ **AT FULL FRAME, where an uploaded overlay opens at
+0.3** (second report, same day): a file you dropped in is usually an inset and
+starting it small is right, but this was DRAWN to order at the shape the dialog
+asked for, so it is a picture of the film and arrives as one. Safe at any shape,
+because both renderers fit a picture INSIDE its box preserving aspect
+("contain"). ⚠ **AND THE ＋ CARD IS PINNED TO THE TOP OF THE PANE AGAIN** (same
+report): the ✨ had to go in a WRAPPER — the card is a `<button>` and a button
+inside a button does not render — and **four** rules in `animatic-editor.css`
+select that card as a DIRECT CHILD of `.an-media-body`, so wrapping it silently
+gave the Media tab the Shapes tab's layout: no pinned card, headings pinned at
+the very top, the pane's top padding back. All four now name the wrapper, and
+`tests/image_generate_check.py` reads both files and fails if a `>
+.an-asset-drop` selector ever comes back. Files: `gemini_client.py`, `server/schemas.py`,
+`server/animatics.py`, `client/src/api.js`, `components/AnimaticEditor.jsx`,
+`styles/animatic-editor.css`. **Verified:** new `tests/image_generate_check.py` —
+52 checks, all passing, including ⚠ nine that assert no style, cast, bible,
+world, reference, anchor or neighbour reaches the model, the crop, the naming,
+and every refusal. `npx vite build` clean; the media-bin, image-lane-routing and
+asset-fields suites still pass. ⚠ **NO MODEL WAS CALLED AND NOTHING WAS OPENED IN
+A BROWSER.**
+
+**Previously:** 2026-08-22 — **A SHOT CAN BE DRAWN INTO THE GAP, AND THE
+STORYBOARD NEVER NOTICES** (user-specified). Right-click a clip on the Storyboard
+images row and the menu now offers **Generate shot before** / **Generate shot
+after**; both open one dialog laid out like ✨ Animate's, named after the clip it
+is beside (**"After Shot 4"**), with an EMPTY prompt box carrying a ✨ in its
+corner, a Shape picker defaulting to the board's own ratio, a Length defaulting to
+**8 seconds**, and the image model named so you can see what is about to draw.
+Generating drops the picture onto the same row immediately beside the clip and
+**pushes the whole film along** — panels, takes, captions, typed text, shapes,
+overlays and the voiceover, which is cut at the seam. ⚠ **THE BOARD IS NEVER
+EDITED, AND THAT IS THE LOAD-BEARING DECISION.** The obvious build is
+`POST /storyboards/{id}/panels/insert` then a draw, and it is wrong: that route
+renumbers panels so `index == position`, while an animatic frame references a
+panel BY INDEX — one insert would silently re-point every frame after it, in this
+project and in every other animatic built from the same board, at the wrong
+picture. So the drawing is stored as an ordinary animatic UPLOAD and the clip
+carries `src.storyboard_id` (which is what puts it on the board's row and keeps it
+in Storyboard Frames) plus two new fields: **`src.shot_id`**, its identity as a
+shot, and **`src.prompt`**, the wording it was drawn from. ⚠ **`shot_id` EXISTS
+BECAUSE `index` CANNOT BE BORROWED** — `shotKey` / `_shot_key` pair a Veo take
+with the shot it was made from by (board, index), and a generated shot claiming an
+index would pair with the real panel sitting at it; the key is `board:gen-<id>:`
+and both twins were changed together. ⚠ **AND `src.prompt` IS WHAT ✨ ANIMATE NOW
+DRAFTS FROM** for these clips: they have no panel, so the free panel read finds
+nothing and the box would otherwise open on the name. ⚠ **THE SEAM IS A CLIP'S
+EDGE, NOT A DROP POINT**, which is why this is `insertShotBeside` (scene.js) and
+not `insertPictures`: that one finds its neighbour with a LIST-index test against
+a START-ordered row, and the two orders stop agreeing the moment anything is
+dragged. ⚠ **AND `rippleFrames` TAKES A `keep` SET NOW.** Its board-wide skip is
+right after `spreadPanelsForRenders`, which places the panels AND the takes; this
+insert places ONE ROW, so the takes above it — and a second storyboard row — must
+still be carried. ⚠ **THE SHIFT MAP IS BUILT FROM THE AFFECTED ROW ALONE**: a
+second storyboard row that did not move contributes zero-shift points, and
+`shiftAt` reads the last point at or before a moment, so those would cancel the
+debt of every caption past them. ✨ is a TEXT call (`suggest_shot_between`, its
+own temperature — the breakdown is extraction and this is invention), written from
+the two shots either side and the stretch of film around them, and the drawing
+call gets the board's style, aspect, references, bible and BOTH neighbours' cast.
+⚠ **AND THE WAIT IS A MOVING BAR** (second report, same day — "while
+generating user not see any working bar motion"): both waits in the dialog now
+draw `.an-prop-progress` — the row this editor already uses for a server pass
+reported beside the button that started it — with **`.an-status-bar.is-waiting`**,
+a new INDETERMINATE variant whose fill slides instead of growing, because a single
+model call has no percentage and a determinate bar sitting at 0% reads as a pass
+that has stalled. It reuses `skeleton-slide`, the keyframes `.skeleton-bar-fill`
+already animates, and stops under `prefers-reduced-motion`. ⚠ **AND THE ✨ IS
+STROKED NOW** ("add only ai icon strock so view icon highlight type") — it was
+drawn solid on the reasoning that an outline is a scribble at 1em, and in the box
+it read as a filled blob; one four-point star, stroked to the edges of the
+24-box, replaces the big-plus-small pair, and lighting the OUTLINE is what lets
+the button show it is working, which a filled shape could not.
+⚠ **AND THE DIALOG WAS THEN MADE TO MATCH ✨ ANIMATE'S** (third report, same
+day). **Model is a BOX now** — `.an-select`'s surface, claimed full width so its
+label sits above it — because it was the one row whose value was bare text beside
+its label, which broke the rhythm every other row keeps and read as a different
+kind of thing from Quality / Size / Length next door ("i want you keep
+consistancy in popop image and video"). ⚠ *Not* a disabled `<select>`: greying it
+says "this is off" when the fact is that the choice does not exist. **The ✨'s
+three-line hint went behind an ⓘ** — the standing rule for this editor
+(`InfoDot`, the same one the Properties rows and the Effects library use), and
+this dialog was the newest place ignoring it; one line stays, the rest opens on
+ask, and the intro paragraph lost the half the shot name already says. ⚠ **AND
+`.an-note-i` NOW LIGHTS ON `aria-expanded`** — its "on" colour was keyed on a
+`.note-on` ANCESTOR, which exists for a Properties row and a group and for
+nothing else, so the Effects library's ⓘ and this one stayed muted at the one
+moment they had something to say. **The ✨ also moved off the scrollbar**: it sat
+at `right: 0.4rem`, which is on top of the textarea's own bar the moment the
+prompt runs past three lines, and `scrollbar-gutter: stable` is the other half —
+without it the gutter only exists while the text overflows and the button would
+have to move as you type.
+⚠ **AND THE WAIT SHOWS ONE INDICATOR, NOT TWO** (fourth report, same day —
+"why you add two working bar … you remove one working status bar not need two bar
+view"). `.an-prop-progress` carries a `.spinner-inline` in front of its message
+everywhere else, and beside a sliding bar that is two marks saying the same
+thing; the bar stays, because it is the one that says "still going" rather than
+merely "busy". ⚠ **AND THE SPINNER WAS THE WORSE OF THE TWO HERE FOR A REASON
+THAT IS NOT TASTE**: `.spinner-inline` takes its moving edge from
+`--primary-ink`, which is near-black because nearly all of its ~50 uses sit
+INSIDE a gold button — on a dark panel that edge all but vanishes and the circle
+reads as a static grey ring, which is what was reported. ⚠ **RECOLOURING THE
+CLASS ITSELF IS NOT AVAILABLE** and must not be attempted: it would put a gold
+edge on gold in every one of those buttons. Two scoped selectors
+(`.an-status-export`, `.an-prop-progress`) give the spinner `--primary` where it
+sits on a dark panel and leave every button alone — which also fixes the same
+dull ring in the editor's status strip and beside the captions run.
+Files: `server/schemas.py`, `server/animatics.py`, `storyboard_pipeline.py`
+(`draw_loose_shot`), `script_breakdown.py` (`suggest_shot_between`,
+`tidy_shot_line`), `client/src/api.js`, `animatic/scene.js`, `animatic/ripple.js`,
+`components/Timeline.jsx`, `components/AnimaticEditor.jsx`, `components/Icon.jsx`
+(a drawn, stroked `sparkle` — not the emoji, which would inherit the text box's
+font), `styles/animatic.css`, `styles/animatic-editor.css`, `styles/properties.css`.
+**Verified:** new `tests/shot_infill_check.py` (74 checks — the routes, the play-order
+neighbours, the continuity passed down, and ⚠ that the board comes out with the
+same three panels and the same three indices) and new `tests/shot_insert_check.py`
+(25 node checks — the seam, a dragged row, the `keep` set, and every layer carried);
+`tests/timeline_ripple_check.py` updated for the fourth ripple site and passing;
+`npx vite build` clean; the related suites (veo ripple/attach, animate prompt/guard,
+picture tracks, board import, asset fields) all pass. ⚠ **NOT OPENED IN A REAL
+BROWSER** — no model was called in any of it, so the two things nobody has seen are
+what a drawn shot actually LOOKS like beside its neighbours and whether the ✨
+suggestion is any good. Top of Next Steps.
+
+**Previously:** 2026-08-21 — **SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY
 SO** (user-requested, with four Premiere screenshots for reference). Dragging a
 clip has snapped to cuts, the playhead, the marks and the beats for a long time,
 but the only sign of it was the clip moving in a jump — so "did it catch the cut
@@ -1552,6 +1719,8 @@ Pipeline stages (see `pipeline.py`):
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/videos` (multi-file) — upload video clips; each item comes back with a `duration_ms` **measured server-side by ffmpeg** (there is no ffprobe), because the exporter must work from the same number
   `POST /animatics/{id}/animate/estimate` — **free**; what animating these frames would cost. Takes the SAME body as the render below, so the price quoted is the price of what the button does · `POST /animatics/{id}/animate` — **SPENDS MONEY.** 202, renders off-request on the video pool (poll `GET /jobs/{id}`). Refuses promptless frames, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`. The finished clip lands as an ordinary video upload, so it is indistinguishable from a dropped file thereafter. **Render records live in the job's `result` (`veo_clips`), never `params`** — the autosave rewrites `params` wholesale and would otherwise erase a clip that was paid for
+  **One image from one sentence (the Media pane's ✨):** `GET /animatics/image-model` — **free**, and it takes no project: which image model a ✨ in this editor would call, so a dialog can name it before anything is spent. ⚠ Declared BEFORE `/{job_id}` (beside `/luts`) or the path is read as a project id · `POST /animatics/{id}/images/generate` — **SPENDS QUOTA**, one image, synchronous. ⚠ **Nothing about the storyboard is sent** — no style, no references, no bible, no neighbours: this draws whatever the sentence says (`gemini_client.generate_image`, the only image call here with no art direction), where the shot generator below draws a shot in a board's look. The aspect is sent through the SDK's `image_config` AND centre-cropped, so the shape asked for is the shape delivered. ⚠ **It answers with the same `AnimaticMediaItem` a file upload returns**, written to the same folder under the same id space, so the client places it exactly as it places a dropped picture — into the library and onto the overlay Images lane
+  **A shot that is NOT on the board:** `GET /animatics/{id}/frames/{frame_id}/neighbour?side=before|after` — **free**; what the "generate a shot beside this one" dialog opens on (the name to give it, the two shots it would sit between in PLAY order, the board's aspect, the image model, and `can_generate` + a reason) · `POST …/neighbour/suggest` — **SPENDS QUOTA**, a TEXT call: writes the missing beat from both neighbours and the film around them, with anything already typed as steering · `POST …/neighbour` — **SPENDS QUOTA**, one image, synchronous. ⚠ **The STORYBOARD IS NEVER EDITED** — `panels/insert` renumbers panels and an animatic frame references a panel BY INDEX, so the drawing lands as an ordinary animatic upload whose clip carries `src.storyboard_id` (which row it belongs on), `src.shot_id` (its identity as a shot, since it has no index — this is what a Veo take pairs with) and `src.prompt` (the wording, since there is no panel to read it back off). ⚠ **It RETURNS the clip and saves nothing**: where it goes in the cut is the client's decision, which is what lets the editor insert it beside the clip you right-clicked and ripple every layer in one undoable edit
   **Back to the board (Phase 7):** `GET/POST /animatics/{id}/frames/{frame_id}/panel` — the wording behind one clip / re-draw it. Synchronous (one image) and it answers with the **FRAME**, whose `url` carries a fresh `?v=<mtime>` — that is what the client re-fetches against · `GET/POST /animatics/{id}/frames/{frame_id}/sequence` — that shot's key poses / re-block it at a new length ("make this shot 2s longer"). ⚠ **The job returned is the STORYBOARD's**, because the drawings belong to the board — which is also why this animatic stays fully editable while it runs. It RESUMES, so 4s → 6s buys eight drawings, not twenty-four
   **Captions & voiceover:** `POST /animatics/{id}/captions/estimate` — **free** · `POST /animatics/{id}/captions` — **SPENDS QUOTA.** 202, transcribes ONE audio track into caption clips on a lane of their own · `GET /animatics/{id}/dialogue` — **free, and it calls no model**: the dialogue sheet the 🎙 dialog opens on — every spoken line, the shot it belongs to, its speaker, a **persona** guessed from the board's cast, and both pickers (the voice list lives in `tts.CAST`, never in the JSX) · `POST /animatics/{id}/voiceover/estimate` — **free**, and priced from the EDITED sheet in the body, so the quote is the price of the words on screen · `POST /animatics/{id}/voiceover` — **SPENDS QUOTA.** 202, one call per line. ⚠ **IT MOVES PICTURES**: with `fit_shots` (the default) the shot that owns a line is stretched to cover it and the shots after it are pushed clear, so the client must re-read `frames` as well as `texts` and `audio_tracks` when it finishes
   `POST /animatics/{id}/reframe/estimate` — **free** · `POST /animatics/{id}/reframe` — **SPENDS QUOTA.** 202, one vision call per shot on the video pool. Writes `scale`/`x`/`y` onto the frames server-side, so the client re-reads the project when it finishes. Back to QUEUED never FAILED, like the other two AI passes
@@ -1859,7 +2028,457 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY SO (user-requested, with four Premiere screenshots for reference)
+### 2026-08-22 (latest) — A GENERATED VOICEOVER IS A FILE THE LIBRARY HAS TO KNOW ABOUT (user-specified, with a screenshot of the editor: an audio layer holding `Voiceover.wav` and a Media pane listing 53 cards, none of them audio)
+
+> "i see in timeline i have audio layer with audio clip but why not audio clip
+>  show in media? this fuction already i ahve before please chacek and ficxt it"
+
+**It was there and it still is — for audio somebody UPLOADS.** `addAudioTrack`
+puts a card in the library as it goes (`assetFromAudio` → `addToLibrary`), and the
+Media pane has had an **Audio** section since the library was built. What had no
+card was audio the **SERVER** makes: the captions/voiceover pass writes
+`audio_tracks` into the saved project itself, and the poll that picks the result
+up re-read the document and pushed that list straight into state. One
+`setAudioTracks` with no `addToLibrary` beside it — the only add path in the editor
+with that shape, because it is the only one where the file is not chosen on this
+machine.
+
+⚠ **AND IT DID NOT HEAL ON RELOAD, WHICH IS WHY IT LOOKED PERMANENT.**
+`libraryFromProject` derives a library from the timeline, audio included — but
+only when `assets` is **`null`**, i.e. the project predates the library. A project
+that already has 53 cards is never re-derived, so a file that missed the library
+when it was added missed it for ever, every open.
+
+Two changes, both in `client/src/components/AnimaticEditor.jsx`:
+
+1. **The speech poll now files the recording.** After the ripple, every
+   `project.audio_tracks` entry with an `upload_id` goes through `assetFromAudio`
+   into `addToLibrary`, and `openGroup("media:audio")` opens the section that just
+   gained something — the same two lines `addAudioTrack` ends with. THE FILE, NOT
+   THE CLIP: `assetKey` keys audio as `audio:<upload_id>` and `mergeAssets` dedupes
+   on it, so a voiceover the server cut into four pieces still makes ONE card and a
+   music bed already listed does not gain a second. `addToLibrary` joins the
+   effect's deps.
+2. **A load-time repair for the projects already carrying one.** In
+   `onLoadedRef`, right after the `p.assets == null` derivation: any audio track
+   whose upload has no card gets one, `changed = true` so the autosave writes it
+   down once rather than re-deriving on every open.
+
+⚠ **WHY THE NARROW REPAIR IS SAFE, since re-deriving a library that exists is
+exactly the bug `== null` is written to avoid:** the ✕ takes the clips with it
+(`deleteAsset`), so a card CANNOT be deleted while a clip made from it still
+plays. A track on the timeline whose upload has no card is therefore always a gap
+and never a choice. ⚠ **AUDIO ONLY, deliberately** — the same sweep over `frames`
+would mint a junk card for every clip with an empty `src`, and no picture add path
+skips the library.
+
+Verified by reading every `setAudioTracks` call site (the speech poll is the only
+one that did not start from a card or a file) and by parsing the edited component
+with the repo's own esbuild. No browser suite was run.
+
+### 2026-08-22 — A SENTENCE BECOMES A PICTURE, AND THE PICTURE IS AN ORDINARY UPLOAD (user-specified, with a screenshot of the Media pane and one of the generate-a-shot dialog as the reference)
+
+> "i want add ai icon in + upload assets box panel in media panel so user click
+>  Ai icon so user get this popup see image 3 but you chnage popup text and
+>  accroding to any image generate like popup panel view so generate any type of
+>  image with text prompt fill and user click generate images buttun and gemini
+>  generate image an come back in media in image tab name under and in layer
+>  image layer come generated image"
+
+**THE MEDIA PANE COULD ONLY TAKE PICTURES YOU ALREADY HAD.** Its one control
+opens a file dialog; everything in the library got there by being uploaded,
+imported off a board, or paid for through Veo. There was no way to say "I need a
+title card" and have one. There is now: the ＋ card carries a ✨, and what it
+draws lands in **Media ▸ Images** with a name and on the **Images layer** as a
+clip.
+
+⚠ **IT IS NOT THE SHOT GENERATOR WITH THE BOARD LEFT OUT, AND MUST NEVER BE
+REFACTORED INTO IT.** The two look alike — a ✨, a card, a prompt box, Shape /
+Length / Model, a priced-looking footer — and they are different questions all
+the way down:
+
+| | Generate this shot | Generate an image |
+|---|---|---|
+| what it is | a SHOT, between two named shots | anything at all |
+| art direction | the board's style variant, its references, its bible, its world | **none** |
+| where it lands | the Storyboard images row, rippling the film | the overlay **Images** lane, over the cut |
+| identity | `src.storyboard_id` + `src.shot_id` | a plain upload |
+| the ✨ in the box | writes the missing beat from its neighbours | there is none — the sentence IS the brief |
+
+Folding them together would mean a prop for every row of that table and a prompt
+builder that has to choose which of two riders to send. The one that matters
+most is the art direction: `generate_storyboard_panel` opens with "A single
+full-bleed storyboard IMAGE: <style>" and closes with a family-friendly
+storyboard rider, so a shared path would quietly return "a rain-soaked neon
+alley" as a pencil thumbnail of one. **`gemini_client.generate_image` is
+therefore the only image call in this file that imposes no art direction**: the
+user's sentence goes in first and whole, and everything after it is the handful
+of constraints that keep the result usable AS A LAYER — full-bleed, no caption
+burnt in, no drawn frame.
+
+- ⚠ **THE ASPECT IS ASKED FOR *AND* CROPPED TO, and both halves are load-bearing.**
+  `types.ImageConfig(aspect_ratio=…)` on `GenerateContentConfig` is what actually
+  frames a 9:16 picture rather than handing back a 16:9 one with the subject in
+  the middle — but it is a recent field, so it is guarded the way
+  `_sampling_kwargs` guards its own (the prompt still asks in words on an older
+  SDK). The centre-crop afterwards is the guarantee: the shape the dialog
+  promised is the shape the client places, whatever the model rounded to.
+- ⚠ **IT IS UNSEEDED** (`variation=None`), which is the opposite of every panel
+  call. Those seed so that a board is reproducible; this is a button somebody
+  presses again when they do not like what came back, and a seeded call would
+  hand them the identical picture every press. Same reasoning as `regenerate_panel`'s.
+- ⚠ **THE RESPONSE IS THE SAME `AnimaticMediaItem` A FILE UPLOAD RETURNS**, written
+  into the same folder under the same id space. That is what lets a generated
+  picture list, drag, place, export and delete with no code path downstream
+  learning that it was generated — the ordinary `/media/{upload_id}` route serves
+  it, `assetOrigin` files it under Images, `belongsOnImageLane` puts it on the
+  overlay lane. It is RETURNED and not placed: where it goes is the client's
+  decision, the same contract the image, video and board imports follow.
+- **THE CARD IS NAMED AFTER THE WORDS THAT MADE IT** (`_image_name_from_prompt`) —
+  the opening of the prompt, cut at a word. A dropped file has a filename to fall
+  back on and this has nothing, and "Generated image 3" is a filing reference
+  where "A hand-painted title card…" is a name. Built server-side so it is built
+  once, the rule `AnimaticBoardImportResponse.name` already follows.
+- **`GET /animatics/image-model` IS FREE AND TAKES NO PROJECT** — the model comes
+  from the environment, so the dialog can name it before anything is spent. ⚠
+  **DECLARED BEFORE `/{job_id}`**, beside `/luts`, or "image-model" is read as a
+  project id and 404s. Still authed: it names infrastructure.
+- **The clip opens at 2 SECONDS, not the shot dialog's 8**, and that is
+  deliberate: it lands on the lane where every picture anyone has ever dropped in
+  arrives at 2s (`addOverlayFiles`). The first thing you compare it to is the clip
+  beside it, not a dialog you closed.
+- ⚠ **THE ✨ IS A SIBLING OF THE DROP CARD, NOT A CHILD.** That card is a
+  `<button>`, and a button inside a button does not render — so both sit in a
+  positioned wrapper with the star in the corner, which is the same arrangement
+  the prompt boxes use.
+- **The playhead is captured at OPEN**, not read at generate time: a drawing takes
+  a while, and a picture landing wherever the playhead had wandered to would be a
+  surprise.
+
+- ⚠ **AND TWO THINGS WERE WRONG THE MOMENT IT WAS FIRST DRIVEN** — same day:
+
+  > "first i scrol bar move so my +add seets with ai cione ox panle go up but i
+  >  want still not move like my older fuction you remove this check please /
+  >  and second when i genearte image and image come back so iamge not comback
+  >  and view full in program panel so i wnat when come iiamge so set full panel
+  >  in program not con and show samll"
+
+  - ⚠ **THE ＋ CARD STOPPED BEING PINNED, AND THIS IS THE INTERESTING HALF.** The
+    ✨ could not be a child of the card — the card is a `<button>` and a button
+    inside a button is not rendered — so it went in a positioned wrapper beside
+    it. **FOUR rules select that card as a DIRECT CHILD of `.an-media-body`**:
+    `:not(:has(> .an-asset-drop))` (which sets `--an-drop-h` to 0 for the Shapes
+    tab, the one with no card), `:has(> .an-asset-drop)` (which takes the pane's
+    top padding off), the sticky block itself, and `--an-drop-h` again as the
+    offset every section heading pins at. Making the card a GRANDCHILD stopped
+    all four matching at once, so the Media tab quietly became the Shapes tab:
+    the card scrolled away, the headings pinned to the very top, and the padding
+    came back. ⚠ **NO TEST COULD SEE IT** — the JSX was valid, the CSS was valid,
+    the build was clean, and the two files only disagree in a browser. All four
+    name the wrapper now, the wrapper carries the sticky and the fixed height,
+    and the card is filled to it (`height: 100%`).
+  - **A GENERATED PICTURE ARRIVES COVERING THE FRAME**, where an uploaded one
+    opens at 30% of it. That is not an inconsistency: they are two different
+    things arriving. A file you dropped in is usually an inset — a logo, a
+    cut-in — and starting it small is right because you are about to place it.
+    This one was drawn to order, at the shape the dialog asked for, so it is a
+    picture OF the film. ⚠ **FULL FRAME IS SAFE AT ANY SHAPE**: `draw_overlays`
+    and its twin in `gl/compositor.js` both fit a picture INSIDE its box
+    preserving aspect, so a 1:1 image asked for in a 16:9 film fills the height
+    and letterboxes rather than stretching. The notice changed with it — it used
+    to say "drag it to place it", which reads as the editor not knowing what it
+    just did.
+  - **`tests/image_generate_check.py` grew a source-read section for the first
+    fault.** It reads the JSX and the CSS together and fails if `.an-media-body >
+    .an-asset-drop` ever reappears, because the pair that drifted here is a
+    SELECTOR and a DOM SHAPE in two different files — which no route test and no
+    build can catch.
+
+**Verified:** new `tests/image_generate_check.py` — 52 checks, all passing: the
+free model read (and that it is not shadowed by `/{job_id}`, and that it is
+authed), the upload landing in the animatic's own media folder and being served
+by the ordinary route, the crop to both the project's shape and an explicit one,
+⚠ **nine checks that no style, cast, asset bible, world, story context,
+character, reference, anchor or board reaches the model**, the naming rules, that
+nothing is written to the project, and every refusal (blank prompt, a filtered
+response, a backend that throws, another account). `npx vite build` clean; the
+media-bin, image-lane-routing, asset-fields, shot-infill, shot-insert and
+timeline-ripple suites all still pass. ⚠ **NO MODEL WAS CALLED — the generator is
+stubbed throughout — AND NOTHING WAS OPENED IN A BROWSER.**
+
+### 2026-08-22 — A SHOT CAN BE DRAWN INTO THE GAP, AND THE STORYBOARD NEVER NOTICES (user-specified, with three screenshots of the timeline, the ✨ Animate dialog and the Media pane)
+
+> "i want when i rightclick on storyboard image so user get dropdwon popup and i
+>  want keep two fuction buttun first Generate befor shot and second Generate
+>  after shot image … so user get Animate this shot popup same as veo video
+>  gnerete time panle … and keep name like instead of shot 4 name After Shot 4
+>  and show blank prompt box in corner with ai icon so user genearte when click ai
+>  icon … so that time gemini ai work like suggest next shot looking through next
+>  shot and thing both shot in between prompt and better suggetion like story
+>  gobal arcitecture wise … and keep iamge aspect ratio so user change also but
+>  you keep default in other image ratio same to same we do in stroyborad add and
+>  lenth … keep default 8 and quality model also so user see which model genearte
+>  iamge … in simple word i wnat user add in between both before after shot image
+>  clip from gemini ai and generated video and come in same layer after same
+>  setected clip and move all clip of all layer."
+
+**THE BOARD IS A FIXED NUMBER OF SHOTS AND THE CUT IS NOT.** Everything the
+editor could add to the Storyboard images row came from the import; a beat that
+turned out to be missing between two shots meant going back to the storyboard,
+inserting a panel, re-drawing, and re-importing — which loses the edit. The
+timeline can draw it now: right-click a storyboard still, pick a side, and the
+missing shot is drawn in the board's own look and dropped straight into the cut.
+
+⚠ **THE STORYBOARD IS NEVER TOUCHED, AND EVERYTHING ELSE HERE FOLLOWS FROM IT.**
+`POST /storyboards/{id}/panels/insert` exists and is exactly the wrong tool: it
+renumbers panels so `index == position` stays true, and an animatic frame
+references a panel **by index**. One insert would silently re-point every frame
+after it — in this project, and in every other animatic built from that board —
+at the wrong picture. There is no way to insert a panel without that, so the
+drawing does not become a panel. It is stored as an ordinary animatic upload and
+the clip carries the board id anyway, which is what `clipRowKind` reads to put it
+on the Storyboard images row and what `frameOrigin` reads to keep it filed under
+Storyboard Frames in the Media pane. From that moment nothing downstream can tell
+it from a still that was dragged in — same trimming, same ✨ Animate, same export.
+
+⚠ **`src.shot_id` EXISTS BECAUSE `index` CANNOT BE BORROWED.** `shotKey`
+(scene.js) and `_shot_key` (animatics.py) pair a Veo take with the shot it was
+made from by (board, index) — it is how `spreadPanelsForRenders` knows which
+panel must grow to its take's length. A generated shot has no index, and giving
+it one would pair it with the real panel sitting at that index. It gets an id of
+its own instead and the key is `board:gen-<id>:`, which cannot collide with
+`board:<index>:<pose>`. **Both twins changed in the same pass** — one of them
+alone is a take that makes room for itself in the editor and not in the export.
+
+⚠ **`src.prompt` IS WHERE THE WORDING LIVES**, because there is no panel to read
+it back off. It is what the NEXT in-between shot is written between, and what
+✨ Animate drafts its motion prompt from — without it, animating a generated shot
+opens the paid dialog on "After Shot 4", which is a name and not a prompt.
+
+**THE DIALOG IS ✨ ANIMATE'S, AND DELIBERATELY SO** — same card, same
+name-over-box rhythm, same footer. What differs is what the two questions
+actually need:
+- **The box opens EMPTY.** There is nothing to draft from: the shot does not
+  exist yet. The ✨ in its corner is what fills it — a TEXT call, a fraction of
+  the price of a drawing, written from the two shots either side and the stretch
+  of film around them. ⚠ It is a **drawn icon**, not the ✨ emoji the Animate
+  buttons carry, because it sits INSIDE a text box as a control and an emoji
+  there inherits the box's font.
+- **It shows what the shot goes BETWEEN.** The only way to judge a shot that
+  does not exist is to read its neighbours, and either side is empty at the ends
+  of the row ("nothing — this would open the film").
+- **Shape** is the storyboard's list (`storyboardOptions.ASPECTS` — 21:9, 2:3),
+  not the video one, defaulting to the BOARD's ratio and adding it as an option
+  when the board is some shape nobody can pick.
+- **Length** defaults to **8 seconds**, because the next thing that usually
+  happens to a new shot is ✨ Animate and 8s is Veo's longest take. Opening on
+  the board's 2s hold would mean re-timing by hand after every render.
+- **Model** is shown, not chosen. There is one image model and it is set in the
+  environment; a picker over a list of one would be theatre.
+
+⚠ **THE SEAM IS A CLIP'S EDGE, NOT A DROP POINT** — `insertShotBeside` in
+`scene.js`, and it is **not** `insertPictures`. That one is anchored to a place
+you aimed at and finds the clip to go in front of with
+`on.find(s => s.index >= atIndex)`: a LIST-index test made against a
+START-ordered row. It holds until anything is dragged, because a drag re-times a
+clip without touching the list — after which "generate after this one" would
+place the shot on top of a different clip and shift the wrong half of the film.
+This asks the only question that survives a drag: where does the neighbour start
+and end.
+
+⚠ **AND `rippleFrames` TAKES A `keep` SET NOW.** Its board-wide skip is correct
+after `spreadPanelsForRenders`, which places the panels AND the takes over them —
+looking those up in a map written in OLD time would add their debt twice. This
+insert places ONE ROW, so the takes above it, and a second storyboard row, have
+NOT been moved and must be carried. Passing the placed row's ids says which is
+which; the default is unchanged, so the three existing callers behave exactly as
+they did.
+
+⚠ **THE SHIFT MAP IS BUILT FROM THE AFFECTED ROW ALONE.** `renderShifts` reads
+every `board_image` clip in the project, and a second storyboard row that did not
+move contributes a run of zero-shift points — `shiftAt` returns the LAST point at
+or before a moment, so one of those past the seam cancels the debt of every
+caption after it. Filtering both lists to the touched row is exact, because
+`frameSpans` lays a track out from that track's clips alone.
+
+**AND THEN THE WHOLE FILM MOVES**, which is the half of the ask that was stated
+twice: all five of `RIPPLED_LISTS` through live functional setters, the voiceover
+razored at the seam and only its tail moved, in ONE `setFrames` and therefore one
+press of Ctrl+Z. ⚠ **NO `coverGrownShots` HERE** — nothing GREW, a shot was
+ADDED, so every caption keeps its length and simply happens later.
+
+**Server:** three routes, in the order the dialog makes them —
+`GET  /animatics/{id}/frames/{frame_id}/neighbour?side=` (free: the name, the two
+neighbours, the board's aspect, the model, and `can_generate` + a reason),
+`POST …/neighbour/suggest` (the text call), `POST …/neighbour` (the drawing;
+returns a CLIP and saves nothing, the same contract the image, video and board
+imports follow). `draw_loose_shot` in `storyboard_pipeline.py` is
+`regenerate_panel` with the write taken off: same style variant, same aspect, same
+references, same bible, and the right-clicked clip as the look anchor. The
+neighbours' cast is passed as this shot's, because a shot invented between two
+others is almost always the same people in the same place.
+
+- ⚠ **THE NEIGHBOURS ARE READ IN PLAY ORDER, PER TRACK** (`_board_row_order`),
+  the same sort `_lay_out_speech` and `spreadPanelsForRenders` make. List order
+  is right until the first drag.
+- ⚠ **BOTH JOBS ARE OWNER-CHECKED SEPARATELY.** A board id is a user-supplied
+  string on a user-editable frame, so a crafted one must not draw with another
+  account's references — the same rule `_resolve_frame_path` follows.
+- `tidy_shot_line` was split out of `suggest_shot_between` so the regex that
+  strips "Shot 4:", bullets, numbers and quotes can be checked without spending
+  anything. A model handed "1." draws a numeral in the corner of the picture.
+
+- ⚠ **THE WAIT IS A MOVING BAR NOW, AND THE ✨ IS STROKED** — both reported the
+  same day, the moment the dialog was first driven:
+
+  > "when i click Ai icon see but while generating user not see any working bar
+  >  motion user understand easily ai genearte prompt / and add only ai icon
+  >  strock so view icon highlight type"
+
+  **THE ONLY SIGN A MODEL WAS RUNNING WAS ONE LINE OF GREY TEXT.** "Reading the
+  shots either side…" replaced the hint under the box in `muted`, which is the
+  same weight as the hint it replaced — so a two-second text call looked like
+  nothing at all had happened, and the obvious next move was to press ✨ again
+  and pay twice. Both waits in this dialog now draw **`.an-prop-progress`**: the
+  row the editor already uses for a server pass reported beside the button that
+  started it (the captions run in `AudioProperties`) — inline spinner, message,
+  bar. ⚠ **THE ROW IS REUSED, NOT REDRAWN**: two "something is running" rows in
+  one editor that looked different would read as two mechanisms.
+  - ⚠ **BUT THE BAR HAD TO GROW AN INDETERMINATE MODE.** `.an-status-bar` is
+    driven by a `width` percentage, and this has none to report: a captions run
+    at least has STAGES it can fake a percentage from (its own comment says so),
+    while one synchronous text call and one synchronous image call have neither.
+    A determinate bar sitting at 0% for the whole wait reads as a pass that has
+    stalled — worse than no bar. **`.an-status-bar.is-waiting > span`** gives the
+    fill a fixed 40% width and SLIDES it. ⚠ `transition: none` is part of it: the
+    base rule animates `width` and fights the slide on the first frame.
+    ⚠ **THE ANIMATION IS `skeleton-slide`, NOT A NEW ONE** — the keyframes
+    `.skeleton-bar-fill` has always used in `text-to-image.css`. Two indeterminate
+    bars in one app sliding at different speeds is the same mistake as two
+    different progress rows. It stops under `prefers-reduced-motion` and the bar
+    stays filled, so the row still reads as busy.
+  - **THE DRAWING GOT ONE TOO, THOUGH ONLY THE ✨ WAS REPORTED.** It is the
+    LONGER of the two waits by some way — a synchronous image call — and its
+    only sign of life was the button relabelling itself to "Drawing the shot…".
+    Fixing the reported half and leaving the worse half is how the same report
+    comes back.
+  - ⚠ **THE ✨ BUTTON KEEPS ITS COLOUR WHILE IT WORKS.** It stays `disabled` for
+    the duration — pressing it twice buys two suggestions — but the ordinary
+    disabled dim says "this button is off", which is the opposite of what is
+    happening. `.is-working` takes the dim back off and lights the outline.
+  - **AND THE STAR IS STROKED** (`Icon.jsx`), which reverses a decision made in
+    the same session. It was drawn SOLID, like `play` and `select`, on the
+    reasoning that a stroked star is a scribble at 1em — and in a text box at
+    17px it read as a small filled blob rather than as an icon. It is one
+    four-point star now, stroked with the file's own `STROKE`, drawn to the edges
+    of the 24-box: ⚠ the second small star went with the fill, because the pair
+    existed to stop a single star reading as a FAVOURITE, and that is the
+    five-point star ratings use — a four-point one is unmistakable alone, and the
+    small one only cost the big one the room it needed to be seen. ⚠ **STROKING
+    IT IS ALSO WHAT MAKES THE WORKING STATE POSSIBLE**: an outline lights, a
+    filled shape can only change colour.
+
+- ⚠ **AND THEN THE DIALOG WAS MADE TO MATCH THE ONE NEXT DOOR** — third report,
+  same day, with a crop of this dialog's Model row beside a crop of ✨ Animate's
+  Quality / Size / Length:
+
+  > "not show gemini-3.1-flash-image · vertex model name below box i want you
+  >  keep consistancy in popop image and video so you seet box in panel likw
+  >  quality box under keep name … and information text keep samll but
+  >  informative for user big text line capture many area in ui so or you want
+  >  older style like I icone so user see when click i icon / and Ai icone cover
+  >  Scrol bar move ai icon little"
+
+  - **MODEL IS IN A BOX NOW**, and the box is `.an-select`'s. It was the one row
+    in the card whose value was a bare `<span>` beside its label, so it sat on
+    the label's line while Shape and Length sat under theirs — the row read as a
+    different kind of thing from the three it is meant to match. ⚠ **`width:
+    100%` IS THE WHOLE MECHANISM, AND IT IS NOT A GUESS**: `theme.css` sets a
+    global `select { width: 100% }` — the one line the Work Log already blames
+    for more than one "why is this control full width" — and that is the only
+    reason the real selects in this dialog wrap their label above them. Matching
+    it is matching the cause. ⚠ **NOT A DISABLED `<select>`**, which is the
+    obvious way to get the box and the wrong one: `.an-select:disabled` dims the
+    row and says "this is off", when the truth is that there is one image model
+    and it is set in the environment. A static field looks live and simply is
+    not a control.
+  - **THE ✨'S HINT WENT BEHIND AN ⓘ.** Three lines of grey prose about a
+    control you understand after using it once took more of the card than the
+    two shots the new one goes between, which are the part you actually have to
+    read. ⚠ **THIS IS THE STANDING RULE FOR THIS EDITOR AND THIS DIALOG WAS THE
+    NEWEST PLACE IGNORING IT** — the Media pane's two libraries and the Effects
+    tree were each reported for the same fault, and each fixed the same way. One
+    line stays; the rest opens on ask. The intro paragraph lost the clause the
+    shot name under it already says ("After Shot 9" — it does not also need
+    "dropped into the cut after this one").
+  - ⚠ **AND `.an-note-i` NOW LIGHTS ON `aria-expanded="true"`.** Its "on" colour
+    was keyed on a `.note-on` ANCESTOR, which exists for `.an-row` and `.an-grp`
+    and for nothing else — so the Effects library's ⓘ (added later) and this one
+    stayed muted while their note was pinned open, which is the one moment the
+    icon has something to say. `InfoDot` already publishes `aria-expanded`, so
+    keying on that needs no wrapper class and is purely additive: where a
+    `.note-on` ancestor exists both selectors already match together.
+  - **THE ✨ MOVED OFF THE SCROLLBAR.** At `right: 0.4rem` it sat on top of the
+    textarea's own bar as soon as the prompt ran past three lines. ⚠ **THE
+    OFFSET ALONE WOULD NOT HAVE FIXED IT**: a scrollbar only exists while the
+    text overflows, so the button would have jumped sideways as you typed.
+    `scrollbar-gutter: stable` reserves the lane always and
+    `--shot-ai-gutter` holds the width once, because the button's `right` and
+    the textarea's `padding-right` both depend on it and drifting apart is how
+    the text ends up running under the star.
+
+- ⚠ **AND THE WAIT SHOWS ONE INDICATOR, NOT TWO** — fourth report, same day,
+  with crops of both progress rows:
+
+  > "circle working bar both when i generate prompt and image time change circle
+  >  color bule too golden or remove icon besause already text below working bar
+  >  running in see why you add two working bar / fix it beeter yopu remove one
+  >  working status bar not need two bar view"
+
+  **THE SPINNER AND THE BAR WERE THE SAME SENTENCE TWICE.** `.an-prop-progress`
+  is spinner + message + bar everywhere else it is used, and everywhere else the
+  bar is DETERMINATE — it is reporting a percentage, so the spinner is the part
+  that says "and it has not stalled". Here the bar is indeterminate and already
+  moving, so the spinner said nothing the bar was not saying an inch to its
+  right. The bar is what stayed: it is the wider mark, it reads from across the
+  pane, and a sliding fill says "still going" where a circle only says "busy".
+  - ⚠ **AND THE CIRCLE WAS THE WORSE HALF FOR A REASON THAT IS NOT TASTE, WHICH
+    IS WORTH KNOWING BEFORE ANYONE "FIXES" IT.** `.spinner-inline` takes its
+    moving edge from **`--primary-ink`** — near-black — and that is CORRECT for
+    nearly every one of its ~50 uses, because they sit INSIDE a gold button
+    ("Starting…", "Saving…", "Zipping…") where a gold edge on gold would be
+    invisible. On a dark panel the same edge all but vanishes the other way and
+    the circle reads as a static grey ring, which is exactly how it was
+    described. ⚠ **SO DO NOT CHANGE `.spinner-inline` ITSELF** — it would put
+    gold on gold in every one of those buttons.
+  - **The two places in this editor where it DOES sit on a dark panel get the
+    gold edge by selector**: `.an-status-export .spinner-inline` and
+    `.an-prop-progress .spinner-inline`. That is the status strip during a Veo
+    render and the captions run beside its own button — both carried the same
+    dull ring, and neither was reported, because nobody had looked at them since
+    the class was written for buttons.
+
+**Verified:** new `tests/shot_infill_check.py` — 74 checks, all passing: the
+context read, the play-order neighbours (one frame is stored out of order on
+purpose), the ends of the row, a clip with no board, a bad `side`, what the text
+and image calls are actually handed, the PNG on disk, `_shot_key` not colliding
+with a panel, both cross-account paths, and ⚠ **the board coming out with the
+same three panels and the same three indices**. New `tests/shot_insert_check.py`
+— 25 node checks: the seam either side, a row whose list order the clock
+disagrees with, a missing neighbour, a clip with no `start_ms`, the length clamp,
+the shift map, a take over a moved panel (and what the board-wide skip would have
+done to it), captions either side of the seam, the voiceover cut, and a second
+storyboard row not poisoning the map. `tests/timeline_ripple_check.py` updated for
+the fourth ripple site — the counts ARE the guard, so they were raised rather than
+loosened, and the new site's caption line is counted on its own. `npx vite build`
+clean; veo ripple/attach, animate prompt/guard, picture tracks, board import and
+asset fields all still pass. (`editor_lane_move_check` and
+`editor_media_row_routing_check` fail identically before and after this change —
+pre-existing, and already on Next Steps; `effects_parity_check` needs a native GL
+module this machine does not have.) ⚠ **NOT OPENED IN A REAL BROWSER AND NO MODEL
+WAS EVER CALLED** — every test stubs both. See Next Steps.
+
+### 2026-08-21 — SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY SO (user-requested, with four Premiere screenshots for reference)
 
 > "i want when i move clip in timeline and Snapping work that time so i want line
 >  and arrow icon like this not copy add diffrent type line when drag / add this
@@ -13440,6 +14059,64 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **DRAW A PICTURE FROM THE MEDIA PANE, IN THE REAL EDITOR.** The ✨ on the
+      ＋ card (2026-08-22) is covered by 52 checks and every one of them stubs the
+      generator, so nothing anyone has seen is an actual picture. Three things
+      want eyes. (1) **Does the freeform prompt come back looking like what was
+      asked for**, or does the "no caption, no border, full-bleed" rider still
+      read as storyboard-ish? It is the one prompt in the codebase with no style
+      at all, which is either exactly right or too little. (2) **Is the
+      `image_config` aspect actually honoured** by `gemini-3.1-flash-image`, or is
+      the centre-crop doing all the work — if it is, a portrait request is losing
+      the sides of a landscape picture and the prompt needs to carry more of the
+      framing. (3) **Does an overlay at 30% of the frame, dropped at the
+      playhead, read as "it arrived" or as "something small appeared"?** The
+      alternative is opening it full-frame and letting the user scale it down.
+      **(3) is answered — it arrives full-frame now**, reported the moment it
+      first landed; what is left of it is whether a full-frame overlay over a
+      storyboard shot reads as "my picture arrived" or as "the board just
+      vanished", since the Images lane composites OVER the cut.
+- [ ] **DRAW A SHOT INTO THE GAP, IN THE REAL EDITOR — NOTHING IN IT HAS EVER
+      CALLED A MODEL.** "Generate shot before / after" (2026-08-22) is covered by
+      99 checks and every one of them stubs both the text call and the image
+      call, so three things want eyes. (1) **Does the drawing sit beside its
+      neighbours?** It gets the board's style variant, its references, its bible
+      and the right-clicked clip as a look anchor, but nobody has seen one. If it
+      comes out off-model, the first thing to check is whether the neighbours'
+      cast was the right guess — a shot between a two-hander and a reaction is
+      handed BOTH sides' characters, which may be one face too many. (2) **Is the
+      ✨ suggestion any good?** It is a text call with its own temperature (0.9 —
+      pressing it twice must not give the same sentence) and it is written from
+      two neighbours plus a four-shot window; the window may want widening to the
+      whole row. (3) **Does the ripple read as helpful or as the timeline
+      jumping**, which is the same open question the Veo ripple has below.
+      (4) **The waiting bar and the stroked ✨ have not been seen either** — both
+      went in the same day off a screenshot, and both are pure appearance: the
+      bar slides under the box while either call runs, and the star is now an
+      outline drawn to the edges of the 24-box. If the outline is still too faint
+      in the box, the next lever is the BUTTON (a filled `--panel-2` chip), not a
+      heavier stroke — the icon set is stroked at 2 and this one must not be the
+      exception. (5) **The Model field borrows `.an-select`'s box without being a
+      `<select>`**, so its height is the padding and the font rather than the
+      browser's own control metrics — it should sit within a pixel of the two
+      selects above it, and if it does not, the fix is a `min-height` on
+      `.an-select-static`, not a second surface. (6) **`--shot-ai-gutter` is
+      15px, a measured guess at the platform scrollbar** — if the ✨ still touches
+      the bar, or now floats a visible distance from it, that number is the one
+      to change and it is in one place. (7) **The inline spinner now spins in
+      gold on the editor's dark panels** (the status strip during a Veo render,
+      the captions run) — two selectors, neither of which was reported, so both
+      want a glance that they read better rather than merely different.
+- [ ] **DECIDE WHETHER A GENERATED SHOT SHOULD EVER BECOME A REAL PANEL.** It is
+      deliberately NOT one — `panels/insert` renumbers, and animatic frames
+      reference panels by index — so a shot drawn into the cut cannot be
+      re-drawn from the Properties pane (`_board_behind` correctly says "this
+      clip is an image you uploaded"), does not appear in the board's PDF, and
+      does not come across if the animatic is rebuilt from the board. That is the
+      right default and it may not be the right ceiling. The honest fix is a
+      board that can hold a panel whose index is NOT its position — a bigger
+      change than this one, and worth pricing only if the user asks for the
+      drawn shot on the storyboard.
 - [ ] **WATCH THE PANELS MOVE, IN THE REAL EDITOR — AND DECIDE WHAT A SECOND TAKE
       OF THE SAME SHOT SHOULD DO.** `tests/veo_ripple_check.py` pins the arithmetic
       (2026-08-21), but two things want eyes and one wants a decision. Eyes: does

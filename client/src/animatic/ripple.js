@@ -170,13 +170,25 @@ export function rippleClips(clips, shifts, keep = null) {
  * where it was, plus its debt. A clip that owes nothing is left exactly as it is,
  * null and all, because writing a start onto it would change what the record
  * MEANS for the sake of a move of zero.
+ *
+ * `keep` is the set of clip ids the layout pass has ALREADY placed, and passing
+ * one REPLACES the board test above rather than adding to it. ⚠ WHICH CLIPS
+ * those are depends on which pass ran, which is why it is a parameter and not a
+ * rule: `spreadPanelsForRenders` places the panels AND the takes over them, so
+ * its caller passes nothing and gets the board-wide skip. `insertPictures`
+ * places ONE ROW — the row a shot was generated into — so the takes above it,
+ * and a second storyboard row, still owe their debt and must be carried. Same
+ * shape as `rippleClips`'s own `keep`, and for the same reason: a clip already
+ * standing at its new start would have its debt added twice.
  */
-export function rippleFrames(frames, shifts) {
+export function rippleFrames(frames, shifts, keep = null) {
   if (!shifts?.length || !frames?.length) return frames;
   const { spans } = frameSpans(frames);
+  const placed = (frame) =>
+    keep ? keep.has(frame?.id) : String(clipRowKind(frame)).startsWith("board_");
   let touched = false;
   const out = frames.map((frame, i) => {
-    if (String(clipRowKind(frame)).startsWith("board_")) return frame;
+    if (placed(frame)) return frame;
     const start = spans[i]?.start ?? 0;
     const shift = shiftAt(shifts, start);
     if (!shift) return frame;
