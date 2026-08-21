@@ -50,6 +50,7 @@ import {
   resolveLook,
   pictureTracks,
   sceneAt,
+  spreadPanelsForRenders,
   setLookValue,
   valueAt,
 } from "../animatic/scene.js";
@@ -5399,19 +5400,34 @@ export default function AnimaticEditor({
         // file is a clip that freezes on its last frame.
         out_ms: clip.duration_ms || null,
       };
-      // ⚠ A PLAIN APPEND, NOT `insertPictures`. The render's place is decided by
-      // `start_ms` above, and rippling would push whatever else is on that row
-      // out of step with the panels it is sitting over — which is the one thing
-      // this row must not do.
-      setFrames((list) => [...list, render]);
+      // ⚠ A PLAIN APPEND ON THE VIDEO ROW, NOT `insertPictures`. The render's
+      // place is decided by `start_ms` above, and rippling THIS row would push
+      // whatever else is on it out of step with the panels it is sitting over —
+      // which is the one thing this row must not do.
+      //
+      // ⚠ THE ROOM IT NEEDS COMES FROM THE ROW BELOW. A take is usually longer
+      // than the hold it was made from, so the panels after this one are pushed
+      // clear of its end — otherwise the next render, which starts where ITS
+      // panel starts, lands underneath this one and the two bars overlap. See
+      // `spreadPanelsForRenders`; it is forward-only and a no-op when the panels
+      // are already clear.
+      const appended = [...framesRef.current, render];
+      const next = spreadPanelsForRenders(appended);
+      setFrames(next);
       // ⚠ AND INTO THE LIBRARY, because a render is the one asset that CANNOT be
       // got back: an upload can be dropped in again and a panel is still on the
       // board, but re-making this costs money. Deleting the clip must never be
       // the thing that loses it.
       setAssets((list) => mergeAssets(list, [assetFromFrame(render, newId())]));
       // The ref too, so several clips attaching in one pass each see the ones
-      // before them — `already` below is asked against this list.
-      framesRef.current = [...framesRef.current, render];
+      // before them — `already` below is asked against this list, and the next
+      // render in a batch has to start from the panels this one just moved.
+      framesRef.current = next;
+      // ⚠ DID ANYTHING SHIFT? `spreadPanelsForRenders` hands back the SAME list
+      // when it moved nothing, so this is an identity test and not a diff. The
+      // notice reads it: a panel moving on its own has to be something the editor
+      // said out loud, not something that just happened.
+      return next !== appended;
     },
     [animaticId, setAssets]
   );
@@ -5434,6 +5450,9 @@ export default function AnimaticEditor({
       let attached = 0;
       let failure = "";
       let pending = 0;
+      // Whether making room for a take pushed any panel along — the notice says
+      // so, because a clip that moves on its own must never look like a glitch.
+      let shifted = false;
       // ⚠ RESOLVED LAZILY AND ONCE. Lazily because most passes attach nothing and
       // must not create a row for a batch that is still rendering; once because
       // every clip in a finished batch belongs on the SAME row.
@@ -5472,10 +5491,10 @@ export default function AnimaticEditor({
           (f) => f.src?.upload_id === clip.upload_id
         );
         if (already) continue;
-        attachVeoClip(clip, rowForRenders());
+        if (attachVeoClip(clip, rowForRenders())) shifted = true;
         attached += 1;
       }
-      return { attached, failure, pending };
+      return { attached, failure, pending, shifted };
     },
     [attachVeoClip, boardVideoTrack]
   );
@@ -5635,7 +5654,7 @@ export default function AnimaticEditor({
         const project = await api.getAnimatic(animaticId);
         if (!alive) return;
         setVeoClips(project.veo_clips || []);
-        const { attached, failure, pending } = reconcileVeoClips(
+        const { attached, failure, pending, shifted } = reconcileVeoClips(
           project.veo_clips || [],
           framesRef.current
         );
@@ -5652,7 +5671,17 @@ export default function AnimaticEditor({
         setAnimating(false);
         setAnimateProgress(null);
         if (failure) setError(failure);
-        else if (attached) setNotice("Clip ready — it's on the timeline.");
+        else if (attached) {
+          // ⚠ IF PANELS MOVED, SAY SO. The take is longer than the hold it was
+          // made from, so the shots after it slide along to keep the video row
+          // clear — and a clip that moves by itself with nothing said about it
+          // reads as the editor losing the user's cut.
+          setNotice(
+            shifted
+              ? "Clip ready — it's on the timeline, and the panels after it moved along to make room."
+              : "Clip ready — it's on the timeline."
+          );
+        }
       } catch (e) {
         if (!alive) return;
         setAnimating(false);

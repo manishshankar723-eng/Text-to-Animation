@@ -200,7 +200,25 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
+**Last updated:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
+PUSHES THE PANELS AFTER IT ALONG** (user-reported, with three screenshots). A Veo
+render is as long as Veo was ASKED for — 4s of footage over a 2s hold is the
+ordinary case — so the second render, which starts where ITS panel starts, used to
+land inside the first one's tail and the two bars overlapped on the Storyboard
+video row. ⚠ **THE ROOM COMES FROM THE ROW UNDERNEATH**: the animated panel stays
+put and the panels AFTER it are pushed clear of the take's end
+(`spreadPanelsForRenders` in `scene.js`, run by `attachVeoClip`) — sliding the
+renders instead would only move the collision. ⚠ **FORWARD ONLY, AND NEVER PAST
+WHERE A CLIP ALREADY IS** — this is not a re-lay of the row: a gap the user opened
+by hand survives, deleting a take leaves the spread it made, and a second pass over
+its own output is a no-op (which is also how the editor knows whether to say a
+panel moved). ⚠ **A RENDER MOVES BY ITS PANEL'S DELTA, NOT ONTO ITS PANEL'S
+START**, so a nudge the user gave it survives. ⚠ **PAIRED BY THE BOARD REFERENCE
+`attachVeoClip` COPIES OVER** (`storyboard_id` + `index` + `frame`) — not by
+`assetKey`, which keys a render by its upload. Covered by
+`tests/veo_ripple_check.py` — 20 checks, node + source, no browser.
+
+**Previously:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
 PLACES** (user-specified). A ⬇ on its Media card and **Download** in a
 right-click menu beside its bar on the timeline. ⚠ **THE ⬇ IS FIRST IN THE
 CARD'S TOOL ROW** (⬇ ＋ ✕) so ＋ and ✕ stay in the same columns on every card —
@@ -216,7 +234,7 @@ OTHER CLIP KEEPS THE BROWSER'S OWN MENU** — the guard returns before
 no headers, so a plain link is a 401). Covered by `tests/veo_download_check.py`
 — 20 checks, node + source, no browser.
 
-**Previously:** 2026-08-21 — **THE PROGRAM MONITOR GOES FULL SCREEN**
+**Before that:** 2026-08-21 — **THE PROGRAM MONITOR GOES FULL SCREEN**
 (user-specified, with a screenshot of a video player's control). A **Full screen**
 button sits at the empty right-hand end of the Program pane head, beside the
 aspect-ratio menu and the size read-out. ⚠ **IT IS THE PANE BODY THAT GOES FULL
@@ -1601,7 +1619,92 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — A VEO RENDER CAN BE SAVED TO DISK, FROM TWO PLACES (user-specified, with a screenshot of the Media card and the timeline)
+### 2026-08-21 (latest) — A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT PUSHES THE PANELS AFTER IT ALONG (user-reported, with three screenshots)
+
+> "when i generete image to veo video in timeline so shot 1 image so i get shot
+>  Veo video of Story..video layer in same place this is good but i again generate
+>  shot 2 image to veo video so see my second shot 2 video overlap on shot1 video
+>  so this fuction not good for user … Automatic my storyborad image clip move
+>  like this after shot 1 image like 2 shot image with all image move in time
+>  line … so my Video and image clear view so user not confuse waht happen in
+>  timeline"
+
+**A RENDER IS AS LONG AS VEO WAS ASKED FOR, AND THE HOLD IT CAME FROM IS NOT.**
+4 seconds of footage over a 2-second panel is the ordinary case, not an edge one.
+`attachVeoClip` starts a take where its panel starts — which is right, and was
+never the bug — so the SECOND take, one hold along, began inside the first one's
+tail and the two bars sat on top of each other on the Storyboard video row. The
+first animate looked perfect; the second made the row unreadable.
+
+    video   [ Shot 1 ····· ]                     <- before
+    video       [ Shot 2 ····· ]                    (Shot 2 buried in Shot 1)
+    image   [S1][S2][S3][S4]
+
+    video   [ Shot 1 ····· ][ Shot 2 ····· ]     <- after
+    image   [S1]            [S2]            [S3][S4]
+
+⚠ **THE ROOM COMES FROM THE ROW UNDERNEATH — THE PANEL MOVES, NOT THE RENDER.**
+A take's place IS its panel's place; making room by sliding takes along would only
+move the collision somewhere the user cannot explain, and it would break the one
+thing the Storyboard video row is for (a render sitting over the shot it was made
+from, so 👁 on that row shows the board again underneath). So the animated panel
+stays exactly where it is and the panels AFTER it are pushed clear of the take's
+end. That is `spreadPanelsForRenders` in `client/src/animatic/scene.js`, run by
+`attachVeoClip` in the same write that adds the clip — the same "everything after
+it moves too" ripple `insertPictures` performs, measured against the VIDEO row's
+lengths instead of the panels' own.
+
+⚠⚠ **FORWARD ONLY, AND NEVER PAST WHERE A CLIP ALREADY IS. DO NOT "TIDY" THIS
+INTO A RE-LAY OF THE ROW.** Every other clip on a picture track obeys one rule —
+it moves when you move it and at no other time (`frameSpans`) — and this ripple is
+the single deliberate exception, in ONE direction. A pass that also closed gaps
+would eat a gap the user opened by hand, and would yank every panel back the
+moment a take was deleted. So: `Math.max(currentStart, clock)`, and nothing else.
+The function hands back the SAME LIST when it moved nothing, which is both how a
+second pass is proved to be a no-op and how the editor knows whether to say a
+panel moved.
+
+⚠ **A RENDER MOVES BY ITS PANEL'S DELTA, NOT ONTO ITS PANEL'S START.** Snapping
+would silently undo a nudge the user gave a take; carrying the delta keeps the two
+aligned however they were placed. Whatever its offset, the take's END is what the
+next panel clears — animate shot 3 first and then shot 1, and take 3 travels along
+with panel 3 keeping its offset to the millisecond.
+
+⚠ **PAIRED BY THE BOARD REFERENCE `attachVeoClip` COPIES OVER**, i.e.
+`storyboard_id` + `index` + `frame` (`shotKey`). NOT by `assetKey` — that keys a
+render by its UPLOAD, because by then `src.kind` is "video", and the whole problem
+here is matching a take back to the still it was made from. `frame` is in the key
+because a key pose and its panel share a `storyboard_id` AND an `index`; without
+it a take of pose 7 is credited to the panel underneath it and shoves the pose
+itself out of the way. A render is also consumed ONCE, so a duplicated panel does
+not claim the original's take and drag it off the shot it belongs to.
+
+⚠ **PER BOARD TRACK.** An animatic may hold a second "Storyboard images" row; the
+clock is kept per track, exactly as `frameSpans` keeps its own, so one row's
+ripple never moves another row's panels.
+
+⚠ **AND THE EDITOR SAYS IT OUT LOUD** — "Clip ready — it's on the timeline, and
+the panels after it moved along to make room." A clip that moves on its own with
+nothing said about it reads as the editor losing the user's cut. The wording is
+used only when something actually moved (the identity test above), so it cannot
+become a line that is always there and therefore never read.
+
+**Files:** `client/src/animatic/scene.js` (`shotKey`, `spreadPanelsForRenders`),
+`client/src/components/AnimaticEditor.jsx` (`attachVeoClip` runs it and returns
+whether anything shifted; `reconcileVeoClips` aggregates that into the notice),
+`tests/veo_ripple_check.py` (new).
+
+**Verified:** `python tests/veo_ripple_check.py` — 20/20, and the two layouts it
+asserts are the user's second and third screenshots in milliseconds (0 / 4000 /
+6000 / 8000 … after one take; 0 / 4000 / 8000 / 10000 … with two). The pairing key
+and the consume-once rule were each mutation-tested on a COPY of `scene.js`: drop
+`frame` from the key and the pose case lands at 12000 instead of 6000; stop
+consuming a render and the take slides off its panel. `veo_download_check`,
+`picture_tracks_check`, `video_clip_check`, `asset_fields_check` and
+`selection_check` all still pass, and `npx vite build` is clean. **Not opened in a
+browser** — see Next Steps.
+
+### 2026-08-21 — A VEO RENDER CAN BE SAVED TO DISK, FROM TWO PLACES (user-specified, with a screenshot of the Media card and the timeline)
 
 > "i want you add download icon in media panel of only Veo video so user
 >  download video in local. because if user want delete project so user first
@@ -12252,6 +12355,20 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **WATCH THE PANELS MOVE, IN THE REAL EDITOR — AND DECIDE WHAT A SECOND TAKE
+      OF THE SAME SHOT SHOULD DO.** `tests/veo_ripple_check.py` pins the arithmetic
+      (2026-08-21), but two things want eyes and one wants a decision. Eyes: does
+      the ripple read as helpful or as the timeline jumping, when it happens while
+      you are looking at the other end of a 42-panel board — and is the notice
+      enough, or should the moved panels flash. The decision: **"Render again with
+      Veo" still attaches a SECOND take at the same start as the first**, so two
+      takes of one shot overlap each other on the video row (pre-existing; the
+      spread clears the panels past the longer of the two, so nothing is buried
+      that was not buried before). The options are (a) leave it — the newer take
+      wins in `stackAt` and the older one is one drag away, (b) put the new take
+      after the old one and ripple again, or (c) replace the old take, which throws
+      away something that was paid for. Ask the user; this pass deliberately only
+      fixed the overlap BETWEEN DIFFERENT SHOTS, which is what was reported.
 - [ ] **DECIDE WHERE A PLAIN IMAGE IMPORT LANDS, NOW THAT "Stills track" IS OFF
       THE MENU.** ＋ Add layer no longer offers a `stills` row (2026-08-21), but
       `addAssets` still auto-creates one for images when no row is named

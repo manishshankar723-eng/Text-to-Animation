@@ -810,6 +810,119 @@ export function pictureTracks(frames) {
   return [...seen].sort((a, b) => a - b);
 }
 
+/**
+ * WHICH BOARD SHOT A CLIP IS OF — the pair that survives ✨ Animate.
+ *
+ * ⚠ NOT `assetKey`. That one keys a render by its UPLOAD (its `src.kind` is
+ * "video" by then), which is the right answer for the library and the wrong one
+ * here: what this has to match is the render to the PANEL it was made from, and
+ * the only thing the two still share is the board reference `attachVeoClip`
+ * copies over. `frame` is in the key because a key pose and its panel share a
+ * `storyboard_id` and an `index` — without it a render of pose 7 would pair with
+ * the panel sitting under it.
+ */
+function shotKey(src) {
+  if (!src?.storyboard_id || src.index === null || src.index === undefined) return "";
+  return `${src.storyboard_id}:${src.index}:${src.frame ?? ""}`;
+}
+
+/**
+ * PUSH THE STORYBOARD PANELS ALONG SO THE RENDERS ABOVE THEM DON'T PILE UP.
+ *
+ * A Veo render starts where its panel starts (`attachVeoClip`) but is as long as
+ * Veo was ASKED for — 4s of footage over a 2s hold is the ordinary case, not an
+ * edge one. Left alone, the second render then begins under the first one's tail
+ * and the two bars overlap on the Storyboard video row:
+ *
+ *     video   [ Shot 1 ····· ]                     ⟵ before
+ *     video       [ Shot 2 ····· ]                    (Shot 2 buried in Shot 1)
+ *     image   [S1][S2][S3][S4]
+ *
+ *     video   [ Shot 1 ····· ][ Shot 2 ····· ]     ⟵ after
+ *     image   [S1]            [S2]            [S3][S4]
+ *
+ * Reported as "my second shot 2 video overlap on shot1 video so this fuction not
+ * good for user … automatic image all move like this so my Video and image clear
+ * view so user not confuse waht happen in timeline".
+ *
+ * ⚠ THE PANEL IS WHAT MOVES, NOT THE RENDER. The render's place is the panel's,
+ * so making room by sliding renders would only move the collision; the space a
+ * 4-second take needs has to come from the row underneath it. A panel with a
+ * render of its own therefore stays put and the ones AFTER it are pushed clear
+ * of that take's end — which is the same "everything after it moves too" ripple
+ * `insertPictures` performs, run against the video row's lengths instead of the
+ * panels' own.
+ *
+ * ⚠ FORWARD ONLY, AND NEVER PAST WHERE A CLIP ALREADY IS (`Math.max`). This is
+ * not a re-lay of the row: a panel that already sits clear of everything before
+ * it does not move, so a gap the user opened by hand survives, and deleting a
+ * render later leaves the spread it made rather than yanking every panel back
+ * under a bar that is no longer there. The rule the whole picture track keeps —
+ * a clip moves when you move it — is bent exactly once, for the ripple the user
+ * asked for, and in one direction.
+ *
+ * ⚠ A RENDER MOVES BY ITS PANEL'S DELTA, not to its panel's start. Snapping it
+ * would undo a nudge the user gave it; carrying the delta keeps a render lined
+ * up with the panel it belongs to however it was placed. Whatever the render's
+ * offset, its END is what the next panel clears.
+ *
+ * ⚠ PER BOARD TRACK. An animatic may hold a second "Storyboard images" row, and
+ * a row's ripple is its own — the clock is kept per track, exactly as
+ * `frameSpans` keeps its own.
+ *
+ * Returns a NEW list when anything moved and the SAME list when nothing did, so
+ * a caller can tell whether this was an edit worth saying out loud.
+ */
+export function spreadPanelsForRenders(frames) {
+  const list = frames || [];
+  const { spans } = frameSpans(list);
+
+  // Every render, by the shot it was made from, in list order — a panel that has
+  // been animated twice ("Render again with Veo") has two, and must clear both.
+  const rendersOf = new Map();
+  for (let i = 0; i < list.length; i++) {
+    if (!isVeoRender(list[i])) continue;
+    const key = shotKey(list[i].src);
+    if (!key) continue;
+    if (!rendersOf.has(key)) rendersOf.set(key, []);
+    rendersOf.get(key).push(i);
+  }
+  if (!rendersOf.size) return list;
+
+  // The panels in the order they PLAY, not the order they are stored: a drag on
+  // the timeline moves a clip without touching the list, so list order says
+  // nothing about which shot comes first.
+  const panels = [];
+  for (let i = 0; i < list.length; i++) {
+    if (clipRowKind(list[i]) === "board_image") panels.push(i);
+  }
+  panels.sort((a, b) => spans[a].start - spans[b].start || a - b);
+
+  const moved = new Map(); // frame index -> its new start
+  const paired = new Set(); // renders already spoken for
+  const clock = new Map(); // track -> the first moment free on it
+  for (const i of panels) {
+    const span = spans[i];
+    const start = Math.max(span.start, clock.get(span.track) || 0);
+    const delta = start - span.start;
+    if (delta) moved.set(i, start);
+    let free = start + (span.end - span.start);
+    // ⚠ ONLY THE FIRST UNPAIRED RENDER OF A SHOT PER PANEL. A duplicated panel
+    // shares its `src` with the original, and pairing by key alone would give the
+    // copy the same take — every panel after it pushed clear of a render that is
+    // not over it.
+    for (const j of rendersOf.get(shotKey(list[i].src)) || []) {
+      if (paired.has(j)) continue;
+      paired.add(j);
+      if (delta) moved.set(j, spans[j].start + delta);
+      free = Math.max(free, spans[j].start + delta + (spans[j].end - spans[j].start));
+    }
+    clock.set(span.track, free);
+  }
+  if (!moved.size) return list;
+  return list.map((f, i) => (moved.has(i) ? { ...f, start_ms: moved.get(i) } : f));
+}
+
 // A clip is on screen from its start UP TO BUT NOT INCLUDING its end. The same
 // half-open rule decides which frame is showing, so a cut lands on exactly one
 // picture and never on two.
