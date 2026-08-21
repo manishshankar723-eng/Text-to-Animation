@@ -33,6 +33,16 @@
 //   shift-click a clip            → in if it was out, out if it was in
 //   double-click a lane's label   → everything on that row, on screen or not
 //
+// ⚠ AND ALT-DRAG A CLIP TO DUPLICATE IT — the selection if it is in one, its
+// group if it is grouped, otherwise just it. It is the ordinary move drag with
+// alt held: same ghost, same snapping, same 0:00 wall — the only difference is
+// what happens on pointerup, where the clip it started on is left exactly where
+// it was and copies are made at the delta instead. A press that never travels is
+// an ordinary click and duplicates NOTHING, which is the whole reason it is a drag
+// and not a click: "when i hold ALT + left click and drag so then dulicate work
+// not one click duplicate". The copies arrive selected, so dragging them again is
+// the next gesture if the drop was not quite right.
+//
 // Every selectable thing carries `data-sel="kind:id"` and the band hit-tests
 // those nodes, so it needs no copy of each lane's geometry. Dragging any clip in
 // a selection moves the WHOLE selection by that clip's snapped delta.
@@ -356,6 +366,24 @@ export default function Timeline({
   onSelectMany,
   // (kind, id) — shift-click on one clip: in if it was out, out if it was in.
   onToggleSelect,
+  /**
+   * (kind, id, deltaMs) — AN ALT-DRAG FINISHED: copy this clip, that far along.
+   *
+   * `deltaMs` is the drag's SNAPPED travel, the same number `onMoveSelection`
+   * gets, so a copy lands exactly where its ghost was drawn.
+   *
+   * ⚠ THE CLIP THAT WAS PRESSED, AND NOTHING ABOUT HOW MANY. Whether that means
+   * one copy, a group's worth or the whole selection is the editor's question,
+   * because only the document knows what is selected and what is grouped with
+   * what — see `duplicateAt` in AnimaticEditor.jsx. Same division as
+   * `onMoveToLane` and `onDropAsset`: this file reports the gesture and the
+   * clip, and writes no ids of its own.
+   *
+   * ⚠ CALLED ON POINTERUP AND ONLY IF THE DRAG TRAVELLED. Without it alt does
+   * nothing at all and a drag is an ordinary move, which is what it was before
+   * this existed.
+   */
+  onDuplicateClip,
   // (deltaMs) — a whole selection dragged along the timeline at once. Sent on
   // pointerup only, so a forty-clip move is one write and one undo.
   onMoveSelection,
@@ -777,7 +805,11 @@ export default function Timeline({
   const picBox = (f) => {
     const base = savedSpanOf.get(f.id) || { start: 0, end: 0, track: 0 };
     const saved = { start: base.start, duration: base.end - base.start, track: base.track };
-    const d = clipDraft?.kind === "frames" ? clipDraft : null;
+    // ⚠ AN ALT-COPY DRAG DRAWS NOTHING HERE. The clip it started on is not the
+    // thing in flight — the copy is — so every original stays exactly where it is
+    // and the drag is drawn as a ghost instead (`laneGhost`). Showing the draft
+    // would move the original and then snap it back the moment the copy landed.
+    const d = clipDraft?.kind === "frames" && !clipDraft.copy ? clipDraft : null;
     if (!d) return saved;
     if (d.id === f.id) {
       return { start: d.startMs, duration: d.durationMs, track: d.toTrack ?? base.track };
@@ -810,6 +842,8 @@ export default function Timeline({
     audioDraft && audioDraft.id === clipId(a) ? audioDraft.lengthMs : trackPlayMs(a);
   const trackStart = (a) => {
     const id = clipId(a);
+    // A copy drag leaves every original where it is — see `picBox`.
+    if (audioDraft?.copy) return Math.max(0, a.start_ms || 0);
     if (audioDraft && audioDraft.id === id) return audioDraft.startMs;
     // Every other selected clip travels with the one being dragged, by the same
     // snapped delta — the picture-lane rule, applied to sound.
@@ -827,6 +861,8 @@ export default function Timeline({
   // its draft, every OTHER selected clip shows itself shifted by the same
   // delta, and everything else shows what is saved.
   const clipBox = (c, kind) => {
+    // A copy drag leaves every original where it is — see `picBox`.
+    if (clipDraft?.copy) return { start: c.start_ms, duration: c.duration_ms };
     if (clipDraft && clipDraft.id === c.id) {
       return { start: clipDraft.startMs, duration: clipDraft.durationMs };
     }
@@ -1566,6 +1602,24 @@ export default function Timeline({
   }
 
   /**
+   * WHICH ROW A DRAG'S GHOST BELONGS ON, or null when it has none.
+   *
+   * ⚠ TWO DRAGS DRAW ONE, FOR OPPOSITE REASONS. A cross-row move draws it on the
+   * row it is about to LAND on (`toKey`), because the bar cannot be re-parented
+   * mid-gesture. An ALT-COPY draws it on the row it STARTED from (`fromKey`),
+   * because there the bar has deliberately not moved at all — the original stays
+   * put under your pointer and the outline is the only thing saying where the copy
+   * will go, which is also what shows you the overlap before you let go.
+   *
+   * ⚠ IT IS NOT `laneIsTarget`, and the difference is deliberate: that one also
+   * lights the whole row (`.drop-lane`), which says "this row will take it" — true
+   * and worth saying about a row you are dragging ONTO, and noise about the row you
+   * are already on.
+   */
+  const ghostLaneKey = (draft) =>
+    !draft ? null : (draft.copy ? draft.fromKey : draft.toKey) || null;
+
+  /**
    * The clip's outline on the row it is about to land on.
    *
    * ⚠ THE BAR ITSELF STAYS WHERE IT IS. A clip is a CHILD of its own lane, so
@@ -1575,8 +1629,13 @@ export default function Timeline({
    * survives the gesture.
    */
   function laneGhost(lane) {
-    if (!laneIsTarget(lane)) return null;
-    const d = clipDraft?.toKey === lane.key ? clipDraft : audioDraft;
+    const d =
+      ghostLaneKey(clipDraft) === lane.key
+        ? clipDraft
+        : ghostLaneKey(audioDraft) === lane.key
+          ? audioDraft
+          : null;
+    if (!d) return null;
     const lengthMs = d.durationMs ?? d.lengthMs ?? 0;
     return (
       <span
@@ -1586,7 +1645,12 @@ export default function Timeline({
           width: Math.max(6, (lengthMs / 1000) * pxPerSec),
         }}
       >
-        <span className="tl-ghost-time">{formatTime(d.startMs)}</span>
+        {/* The + says which of the two ghosts this is: a copy being made, rather
+            than the clip you are holding about to land. Without it an alt-drag and
+            a plain one look identical while the pointer is down. */}
+        <span className="tl-ghost-time">
+          {d.copy ? `+ ${formatTime(d.startMs)}` : formatTime(d.startMs)}
+        </span>
       </span>
     );
   }
@@ -1655,6 +1719,21 @@ export default function Timeline({
     // which is what a press on anything has always done.
     const inSelection = isSel(selKind, clip.id);
     if (!inSelection) select(clip.id);
+    /**
+     * IS ALT HELD? — then this drag makes a COPY instead of moving anything.
+     *
+     * ⚠ NOTHING IS DUPLICATED ON THE PRESS. Alt-click used to duplicate outright
+     * and was reported straight back — "i wnat when i hold ALT + left click and
+     * drag so then dulicate work not one click duplicate" — because a modifier that
+     * fires on mousedown gives you a copy every time you alt-click to look at
+     * something. So this is a FLAG on the drag, read once at pointerup: travel and
+     * you get copies at the delta, let go without travelling and it was a click.
+     *
+     * ⚠ ON THE BODY ONLY. Both trim grips come through here too, and a grip is
+     * drawn for trimming: alt on one has to stay a trim, or the modifier would take
+     * away the gesture it is there for.
+     */
+    const copy = mode === "move" && e.altKey && Boolean(onDuplicateClip);
     // ⚠ A PICTURE'S START COMES FROM THE PLACEMENT, NOT OFF THE CLIP. `start_ms`
     // is allowed to be null on a picture and means "after the last clip on my
     // track" (see `frameSpans`), so the number to drag FROM is the one the bar is
@@ -1699,6 +1778,7 @@ export default function Timeline({
       startX: e.clientX,
       startMs,
       durationMs,
+      copy,
       // ⚠ THE CLIP ITSELF, not just its two numbers, because a head trim has to
       // read its KEYFRAMES to re-time them — and it reads them as they were when
       // the drag began, which is the only version that means anything here.
@@ -1718,6 +1798,10 @@ export default function Timeline({
       // The row it would land on, once the pointer has left its own. Null until
       // then, which is every drag that stays where it started.
       toKey: null,
+      // The row it started on. Only a COPY drag reads it — that is the row its
+      // ghost is drawn on, since the clip itself never leaves.
+      fromKey: lane.key,
+      copy,
       group: mode === "move" && inSelection && selection.length > 1,
     });
   }
@@ -1857,7 +1941,15 @@ export default function Timeline({
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
       // Both edges of the clip being dragged are excluded from the snap
       // targets, or it would stick to where it already is.
-      const own = [d.startMs, d.startMs + d.durationMs];
+      // ⚠ A COPY KEEPS THE ORIGINAL'S TAIL AS A TARGET, and only its START is
+      // excluded. Both edges are dropped on a MOVE so the clip cannot stick where
+      // it already is — but the commonest thing an alt-drag is for is putting a
+      // copy immediately after the clip it came from, and that lands on exactly the
+      // edge a move has to ignore. The start still goes, or the copy would snap
+      // back to zero travel and duplicate nothing.
+      const own = d.copy
+        ? [d.startMs]
+        : [d.startMs, d.startMs + d.durationMs];
       const end = d.startMs + d.durationMs;
       // ⚠ HOW FAR A HEAD TRIM MAY TRAVEL, and on a video clip it is not just the
       // clip's own edges. `sourceAt` reads `in_ms + t * speed`, so pulling the
@@ -1920,10 +2012,17 @@ export default function Timeline({
       // clip's own length, and a GROUP move can span kinds — "put these forty
       // things on that one row" is not an edit with a single meaning, so a
       // multi-clip drag stays on its rows and only travels in time.
+      // ⚠ AND A COPY DRAG HAS NO VERTICAL HALF EITHER. "Copy it onto that other
+      // row" would have to make the copies AND re-home them in one write, on lanes
+      // whose meaning differs per kind (`onMoveToLane` exists because of that) —
+      // so a copy travels in time, on its own row, and is dragged across
+      // afterwards like any other clip.
       next.toKey =
-        d.mode === "move" && !d.group
+        d.mode === "move" && !d.group && !d.copy
           ? laneMoveTarget(d.fromKey, e.clientY, d.kind === "frames" ? d.clip : null)
           : null;
+      next.copy = d.copy;
+      next.fromKey = d.fromKey;
       next.track = d.track;
       if (next.toKey) {
         const to = laneOfKey(next.toKey);
@@ -2006,6 +2105,16 @@ export default function Timeline({
         return;
       }
       if (moved) {
+        // ⚠ A COPY DRAG WRITES NOTHING TO THE CLIP IT STARTED ON, so it returns
+        // before every branch below — all of which move or trim that clip. The
+        // delta is the SNAPPED travel, the same number a group move is given, so a
+        // copy lands exactly where the ghost was drawn. How MANY copies is the
+        // editor's question (`duplicateAt`): this file knows which bar was pressed
+        // and nothing about what is selected.
+        if (d.copy) {
+          onDuplicateClip?.(SEL_KIND[d.kind], d.id, d.latest.deltaMs);
+          return;
+        }
         // A group move is ONE call, not one per clip: forty separate writes
         // would be forty renders and forty steps to undo through.
         if (d.latest.group) {
@@ -2106,6 +2215,7 @@ export default function Timeline({
     onFramesChange,
     onMoveSelection,
     onMoveToLane,
+    onDuplicateClip,
     lanes,
     frames,
   ]);
@@ -2291,6 +2401,10 @@ export default function Timeline({
     const state = {
       id,
       mode,
+      // Alt held: this drag makes a copy and leaves the clip it started on alone.
+      // Read at pointerup, so an alt-click that never travels is just a click —
+      // see the long note in `startClipDrag`.
+      copy: mode === "move" && e.altKey && Boolean(onDuplicateClip),
       // The row it started on, so a drag off it has something to compare
       // against — see `laneMoveTarget`. Null on the draft until it leaves.
       fromKey: lane?.key ?? null,
@@ -2329,7 +2443,9 @@ export default function Timeline({
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
       // The clip's own two edges are excluded from the snap targets, or it
       // would stick to where it already is — the rule every drag here follows.
-      const own = [d.startMs, d.startMs + d.lengthMs];
+      // ⚠ EXCEPT ON A COPY, which keeps the tail as a target — see the same note
+      // on the picture drag above.
+      const own = d.copy ? [d.startMs] : [d.startMs, d.startMs + d.lengthMs];
       let next;
       if (d.mode === "move") {
         next = {
@@ -2380,9 +2496,10 @@ export default function Timeline({
       // an audio clip could be slid along its own row and nowhere else, so a
       // piece cut out of one take could not be put on another row.
       next.toKey =
-        d.mode === "move" && !d.group && d.fromKey
+        d.mode === "move" && !d.group && !d.copy && d.fromKey
           ? laneMoveTarget(d.fromKey, e.clientY)
           : null;
+      next.copy = d.copy;
       d.latest = next;
       keepSnapIfLanded(next.startMs, next.startMs + next.lengthMs);
       publishSnapGuide();
@@ -2415,6 +2532,13 @@ export default function Timeline({
         }
         return;
       }
+      // ⚠ A COPY DRAG WRITES NOTHING TO THE CLIP IT STARTED ON — the same rule
+      // and the same reason as on a picture clip, and it returns before all three
+      // writes below.
+      if (d.copy) {
+        onDuplicateClip?.("audio", d.id, d.latest.deltaMs);
+        return;
+      }
       // Landed on another row. The editor is told WHICH ROW rather than a layer
       // id, because an audio row may be one grouped by FILE — which has no id to
       // write — and turning that into a real destination is the document's job.
@@ -2444,7 +2568,7 @@ export default function Timeline({
       window.removeEventListener("pointerup", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioDraft, pxPerSec, onTrackChange, onMoveToLane, lanes]);
+  }, [audioDraft, pxPerSec, onTrackChange, onMoveToLane, onDuplicateClip, lanes]);
 
   // --- Fades ---------------------------------------------------------------
   // A grip at each top corner of an audio clip, dragged inward. The wedge it
@@ -2854,7 +2978,8 @@ export default function Timeline({
                 "\nDrag it up or down onto another " +
                 (lane.kind === "image" ? "picture" : lane.kind) +
                 " layer to move it there." +
-                "\nShift-click to add it to the selection; drag the empty part of a lane to select several."
+                "\nShift-click to add it to the selection; drag the empty part of a lane to select several." +
+                "\nAlt-drag it to duplicate it — the copy lands where you let go."
               }
             >
               {body.render(item, w)}
@@ -3030,7 +3155,8 @@ export default function Timeline({
                   `for ${(ms / 1000).toFixed(1)}s` +
                   (clash ? " · OVERLAPPING its neighbour — only the later one shows" : "") +
                   "\nDrag it along to re-time it, or up and down onto another picture track." +
-                  "\nIts edges trim it; B ripples what follows, N rolls the cut."
+                  "\nIts edges trim it; B ripples what follows, N rolls the cut." +
+                  "\nAlt-drag it to duplicate it — the copy lands where you let go."
                 }
               >
                 <span className="tl-bar-label">{w > 34 ? f.label || index + 1 : ""}</span>
@@ -3210,7 +3336,7 @@ export default function Timeline({
                 audioDraft?.toKey && audioDraft.id === id ? "lifting" : "",
               ].join(" ")}
               style={{ left, width: clipW }}
-              title={`${track.filename} — ${(trackStart(track) / 1000).toFixed(1)}s for ${(lengthMs / 1000).toFixed(1)}s. Drag to move it along the timeline, or up and down onto another audio layer to move it there. The razor (C) cuts it where you click; shift-click adds it to the selection.`}
+              title={`${track.filename} — ${(trackStart(track) / 1000).toFixed(1)}s for ${(lengthMs / 1000).toFixed(1)}s. Drag to move it along the timeline, or up and down onto another audio layer to move it there. The razor (C) cuts it where you click; shift-click adds it to the selection, alt-drag makes a copy.`}
               onPointerDown={(e) => {
                 // ⚠ THE RAZOR BEATS THE DRAG, and it has to: with the tool
                 // selected, a press on a clip means "cut here", and starting a
@@ -3221,6 +3347,9 @@ export default function Timeline({
                 // Only the selection tool moves a clip. The others (hand, zoom)
                 // still mean what they mean everywhere else on the timeline.
                 if (tool !== "select" && tool !== "ripple" && tool !== "rolling") return;
+                // ⚠ ALT IS NOT HANDLED HERE. It makes the drag a COPY rather than a
+                // move, which is a decision `startAudioDrag` records and pointerup
+                // acts on — nothing happens on the press itself.
                 if (e.shiftKey || e.ctrlKey || e.metaKey) {
                   e.preventDefault();
                   e.stopPropagation();

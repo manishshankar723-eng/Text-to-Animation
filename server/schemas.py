@@ -1995,7 +1995,21 @@ class AnimaticVeoClip(BaseModel):
     # The frame this was generated FROM, so the editor can attach it to the right
     # clip. Not authoritative: the frame may since have been deleted, which costs
     # the attachment, not the clip.
+    #
+    # ⚠ EMPTY MEANS "THIS RENDER IS OF NOTHING ON THE TIMELINE" — the Media
+    # pane's ✨ Video, which renders from a prompt (and optionally one still you
+    # dropped in) rather than from a clip. That is the only difference between
+    # the two, which is why they share this record, one worker, one poll and one
+    # "a paid render must never be lost" self-heal. The editor attaches a
+    # frame-less render as an ordinary video clip on the Video row instead of
+    # over a panel — see `reconcileVeoClips`.
     frame_id: str = ""
+    # The still it was rendered FROM, for a frame-less render. "" is a
+    # text-to-video render, which Veo does from the prompt alone.
+    source_upload_id: str = ""
+    # What to call it in the Media library and on the timeline. Only a
+    # frame-less render needs one: a render OF a clip takes the clip's label.
+    label: str = ""
     # Where the finished MP4 lives — an ordinary video upload id, servable and
     # placeable exactly as a dropped file is.
     upload_id: str = ""
@@ -2009,6 +2023,25 @@ class AnimaticVeoClip(BaseModel):
     # charges rather than a re-estimate at today's settings.
     cost_usd: float = 0.0
     rendered_at: str = ""
+
+
+class AnimaticVideoGenerateRequest(BaseModel):
+    """Body for the two /videos/generate endpoints — estimate (free) and render.
+
+    Both take the SAME body, the rule every paid path here follows: the number
+    in the confirm dialog can then only be the price of what the button does.
+
+    ⚠ THIS IS THE MEDIA PANE'S ✨ VIDEO, not ✨ Animate. That one animates a clip
+    that is already on the timeline and lands over it; this one renders from a
+    sentence — with or without a starting still — and lands as an ordinary video
+    on the Video row, belonging to nothing.
+    """
+
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    # The still to start from, already uploaded through `POST /{id}/images`.
+    # "" is text-to-video: Veo renders from the prompt alone.
+    source_upload_id: str = Field("", max_length=64)
+    render: RenderSettings = Field(default_factory=RenderSettings)
 
 
 class AnimaticAnimateRequest(BaseModel):

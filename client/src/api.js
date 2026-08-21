@@ -936,6 +936,32 @@ export function generateAnimaticImage(id, { prompt, aspectRatio = "" } = {}) {
   });
 }
 
+// --- One video from one sentence (the Media pane's ✨, Video tab) ------------
+// ⚠ SPENDS MONEY, and follows the same two-step every paid path here does: the
+// estimate is free and takes the SAME body as the render, so the number in the
+// confirm dialog can only be the price of what the button then does.
+//
+// ⚠ NOT ✨ Animate. That animates a clip already on the timeline and lands over
+// it; this renders from a sentence — with or without a starting still — and
+// lands as an ordinary video on the Video row, belonging to nothing.
+
+// Free. What generating this video would cost.
+export function estimateGenerateVideo(id, { prompt, sourceUploadId = "", render } = {}) {
+  return request(`/animatics/${id}/videos/generate/estimate`, {
+    method: "POST",
+    body: { prompt, source_upload_id: sourceUploadId, render },
+  });
+}
+
+// SPENDS MONEY. 202 — the render happens off-request, so poll getJob(id) and
+// read the finished clip out of the job's `veo_clips` (it has no `frame_id`).
+export function generateAnimaticVideo(id, { prompt, sourceUploadId = "", render } = {}) {
+  return request(`/animatics/${id}/videos/generate`, {
+    method: "POST",
+    body: { prompt, source_upload_id: sourceUploadId, render },
+  });
+}
+
 // --- A shot that is NOT on the board ----------------------------------------
 // "Generate a shot before / after this one", from a storyboard clip's
 // right-click menu on the timeline. ⚠ THE BOARD IS NOT EDITED: the picture comes

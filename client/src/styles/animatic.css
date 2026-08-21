@@ -1015,6 +1015,163 @@
 .an-shot-note {
   margin: 0.35rem 0 0;
 }
+
+/* --- The Media ✨: one card, two tabs ------------------------------------ */
+/* ⚠ ONE SIZE WHICHEVER TAB IS SHOWING, AND NO NUMBER TO MAINTAIN. The Video
+   half is four rows taller than the Image half, so switching tabs resized the
+   card under the pointer and threw the footer up the screen — "both panel size
+   chnage when i click AI Image and AI Video keep same size panel please".
+   ⚠ THE FIRST ATTEMPT WAS A `min-height` WITH A MEASURED NUMBER IN IT, AND IT
+   WAS THE WRONG SHAPE OF FIX — reported a second time. A floor can only lift the
+   SHORTER tab; the taller one was already past it, so the two still differed, and
+   the number would have gone stale the first time a row was added to either half.
+   The panes share a grid cell instead (`.an-gen-pane`), which makes the cell the
+   height of the taller one by construction, for ever.
+   The flex column stays: it is what keeps the footer on the bottom edge. */
+.an-gen-modal {
+  display: flex;
+  flex-direction: column;
+}
+/* ⚠ ONE CELL, TWO PANES, STACKED. `grid-area: 1 / 1` puts both in the same cell,
+   and a grid row is as tall as its tallest item — so the card is always the
+   taller tab's height and neither tab can move it. */
+.an-gen-body {
+  display: grid;
+  flex: 1 1 auto;
+}
+.an-gen-pane {
+  grid-area: 1 / 1;
+}
+/* ⚠ `visibility`, NOT `display: none`. Hiding it properly would take its height
+   out of the cell, which is the entire mechanism above. `visibility: hidden`
+   keeps the box and its geometry while removing it from the page — and from the
+   tab order and the accessibility tree with it, so there is no way to type into
+   the half you cannot see. */
+.an-gen-pane[data-on="false"] {
+  visibility: hidden;
+}
+/* ⚠ IT MAY NOT SHRINK. A flex item defaults to `flex: 0 1 auto`, so on a short
+   viewport — where the body overflows the card — the buttons are the first thing
+   the layout would squeeze. Its `margin-top` is `.an-name-actions`'s already and
+   is deliberately not repeated. */
+.an-gen-actions {
+  flex: none;
+  /* ⚠ AND IT WRAPS, because of the floor below. On a phone the card is `92vw`,
+     and Cancel plus an 11.5rem primary is wider than that — without this the
+     footer would push out of the card rather than the primary dropping to a line
+     of its own. */
+  flex-wrap: wrap;
+}
+/* ⚠ THE PRIMARY IS THE SAME WIDTH ON BOTH TABS. Its LABEL differs, and has to —
+   "Generate the image" makes the picture, "See the price →" only asks what a
+   render would cost — so left to the text the button changed size when you
+   switched tabs, right next to a card that had just been made not to. A floor
+   wide enough for the longest of the four labels it can carry ("Generate the
+   image", "Drawing the image…", "See the price →", "Checking the price…") holds
+   all of them at one size; `text-align: center` is what keeps the shorter ones
+   from sitting against the left edge of their own button. */
+.an-gen-actions .btn.primary {
+  min-width: 11.5rem;
+  text-align: center;
+}
+
+/* --- The Media ✨'s two tabs: AI Image and AI Video ---------------------- */
+/* ⚠ IT IS `.an-tabs` FROM THE PANE HEADS, not a second tab style — see the
+   markup. All this adds is where the strip sits in the card and the rule under
+   it, which is what makes the two read as tabs rather than as two buttons. */
+/* ⚠ HALF AND HALF, EDGE TO EDGE — a GRID of two equal columns, not the flex row
+   `.an-tabs` is in a pane head. There the tabs sit at their text width because
+   they share the bar with a count and a view switch; here they are the only
+   thing on their line in a 28rem card, so the same treatment left two small
+   buttons against a card-width of nothing ("on panel i see nigetive area").
+   `1fr 1fr` is the literal reading of "divide in popup panel half half side" and
+   it stays half-and-half whatever the two labels say.
+   ⚠ `gap: 0` IS PART OF IT: with a gap the two underlines stop short of each
+   other and the strip reads as two buttons that happen to be near a line, rather
+   than as one bar split in two. */
+/* ⚠ `.an-tabs.an-gen-tabs`, DOUBLED ON PURPOSE — this is a CASCADE fix, not a
+   style. `.an-tabs { display: flex }` lives in `animatic-tools.css`, which
+   `index.css` imports AFTER `animatic.css`; the two selectors have identical
+   specificity (0,1,0), so source order decided and the flex row won. The grid
+   below simply never applied — the tabs stayed at their text width and the font
+   size was the only part of this block that landed, which is exactly what was
+   reported ("you only little size increase … i not wnat blane area side").
+   Qualifying with the class it is overriding takes it to (0,2,0) and settles it
+   wherever the file ends up in the import list. `index.css`'s own header says
+   moving an import can change the page without changing a declaration; this is
+   what that looks like from the other end. */
+.an-tabs.an-gen-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 0.9rem 0 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.an-tabs.an-gen-tabs .an-tab {
+  display: inline-flex;
+  align-items: center;
+  /* Centred in its own half, so the two read as a pair rather than as a line of
+     text that happens to be split. */
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.5rem 0.6rem;
+  font-size: 0.95rem;
+  /* Sits ON the strip's own rule rather than above it, so the active tab's gold
+     edge replaces the grey line instead of doubling it. */
+  margin-bottom: -1px;
+}
+
+/* THE STARTING FRAME FOR A VIDEO — optional, which is the whole difference
+   between this and ✨ Animate. Empty it is a small drop target; filled it is a
+   thumbnail, a name and a way out. */
+.an-vid-source {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0.2rem;
+  min-height: 2.6rem;
+}
+.an-vid-source-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.6rem;
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.an-vid-source-add:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.an-vid-source-add:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: progress;
+}
+.an-vid-source-thumb {
+  width: 3.6rem;
+  height: 2.4rem;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  flex: none;
+}
+.an-vid-source-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.78rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .an-name-input {
   width: 100%;
   box-sizing: border-box;

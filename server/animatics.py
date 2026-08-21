@@ -84,6 +84,7 @@ from .schemas import (
     AnimaticTransition,
     AnimaticUploadResponse,
     AnimaticVeoClip,
+    AnimaticVideoGenerateRequest,
     AnimaticVideoItem,
     AnimaticVideoUploadResponse,
     AnimaticVoiceoverRequest,
@@ -2015,37 +2016,67 @@ def render_frame_clip(
     if record is None:
         raise VideoGenerationError("This render is no longer part of the project.")
 
-    frame = next((f for f in _frames_of(job) if f.id == record.frame_id), None)
-    if frame is None:
-        raise VideoGenerationError(
-            "The frame this was going to animate has been deleted from the timeline."
-        )
-
-    # The picture Veo animates. `_resolve_frame_path` already answers this for
-    # every kind — a board panel, a key pose, an upload, or a video clip's
-    # poster — so animating a clip that is already video means "carry on from
-    # this frame", which is a real thing to want.
-    source = _resolve_frame_path(job, frame)
-    if not source or not os.path.isfile(source):
-        raise VideoGenerationError(
-            "This frame's picture is missing — the panel may have been deleted "
-            "from the board, or the upload removed."
-        )
-    with open(source, "rb") as fh:
-        image = fh.read()
+    # ⚠ TWO KINDS OF RECORD THROUGH ONE RENDERER. A record with a `frame_id` is
+    # ✨ Animate: it animates a clip on the timeline and lands over it. A record
+    # WITHOUT one is the Media pane's ✨ Video: it renders from a prompt and, at
+    # most, one still that was dropped into the dialog. Everything after this
+    # branch — the Veo call, the retry policy, the upload, the paid record — is
+    # identical, which is the whole reason they share a renderer rather than
+    # having one each to drift apart.
+    frame = None
+    label = record.label or "video"
+    image: bytes | None = None
+    if record.frame_id:
+        frame = next((f for f in _frames_of(job) if f.id == record.frame_id), None)
+        if frame is None:
+            raise VideoGenerationError(
+                "The frame this was going to animate has been deleted from the timeline."
+            )
+        label = frame.label or record.frame_id
+        # The picture Veo animates. `_resolve_frame_path` already answers this
+        # for every kind — a board panel, a key pose, an upload, or a video
+        # clip's poster — so animating a clip that is already video means "carry
+        # on from this frame", which is a real thing to want.
+        source = _resolve_frame_path(job, frame)
+        if not source or not os.path.isfile(source):
+            raise VideoGenerationError(
+                "This frame's picture is missing — the panel may have been deleted "
+                "from the board, or the upload removed."
+            )
+        with open(source, "rb") as fh:
+            image = fh.read()
+    elif record.source_upload_id:
+        # A still dropped into the ✨ Video dialog. ⚠ IT IS AN ERROR IF IT HAS
+        # GONE, never a silent fall-through to text-to-video: the user chose a
+        # starting picture, and rendering without it would bill them for
+        # something they did not ask for.
+        path = _image_path(job_id, record.source_upload_id)
+        if not path or not os.path.isfile(path):
+            raise VideoGenerationError(
+                "The starting picture for this render is missing — it may have "
+                "been removed from the project."
+            )
+        with open(path, "rb") as fh:
+            image = fh.read()
 
     _write_veo_clip(job_id, clip_id, status="rendering", error="")
 
     data = render_shot(
         image,
         record.prompt,
+        # ⚠ ASKED FOR ON PURPOSE, never inferred from `image` being None. The
+        # refusal in `render_shot` is what stops a still that failed to load
+        # turning into a paid text-to-video render of the motion notes; this
+        # says "there was never meant to be a picture", which is only true for a
+        # frame-less record that named no source.
+        text_only=not record.frame_id and not record.source_upload_id,
         tier=settings_render.tier,
         aspect_ratio=_settings_of(job).aspect_ratio,
         resolution=settings_render.resolution,
         duration_seconds=settings_render.duration_seconds,
         generate_audio=settings_render.generate_audio,
         negative_prompt=settings_render.negative_prompt or None,
-        label=frame.label or record.frame_id,
+        label=label,
         progress_cb=progress_cb,
         cancel_check=cancel_check,
     )
@@ -2204,6 +2235,129 @@ def animate_frames(
         character_name=job.character_name or "Project",
         message=f"Animating {len(targets)} frame(s) — estimated ${estimate.usd:.2f}.",
     )
+
+
+# ---------------------------------------------------------------------------
+# ONE VIDEO FROM ONE SENTENCE — the Media pane's ✨ Video
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME MONEY DISCIPLINE AS ✨ ANIMATE ABOVE, AND FOR THE SAME REASON.
+# Nothing here renders until a FREE estimate has been on screen and accepted;
+# both routes take the same body, so the number quoted can only be the price of
+# what the button then does. Veo is billed per second of OUTPUT — a text-to-video
+# clip costs exactly what animating a panel costs — so "it is only one clip" is
+# not a reason to skip the step.
+#
+# ⚠ AND IT IS THE SAME RECORD, THE SAME WORKER AND THE SAME POLL. A standalone
+# render is an `AnimaticVeoClip` with NO `frame_id`; `render_frame_clip` branches
+# once on that and everything after it is identical, so a paid clip is recovered
+# by the same self-heal whichever button bought it. See the note on
+# `AnimaticVeoClip.frame_id`.
+def _generate_video_source(job: Job, upload_id: str) -> str:
+    """Validate the starting still, or "" for text-to-video.
+
+    ⚠ A NAMED PICTURE THAT IS NOT THERE IS A 400, not a quiet fall-through to
+    text-to-video: the user chose a starting frame, and rendering without it
+    would bill them for something they did not ask for. The id is validated
+    against `_ID_RE` as well, because it is a user-supplied string that becomes
+    a filename.
+    """
+    upload_id = (upload_id or "").strip()
+    if not upload_id:
+        return ""
+    if not _ID_RE.match(upload_id):
+        raise HTTPException(status_code=400, detail="That isn't a picture in this project.")
+    path = _image_path(job.job_id, upload_id)
+    if not path or not os.path.isfile(path):
+        raise HTTPException(
+            status_code=400,
+            detail="That starting picture is no longer in this project — add it again.",
+        )
+    return upload_id
+
+
+@router.post("/{job_id}/videos/generate/estimate", response_model=CostEstimate)
+def estimate_generate_video(
+    job_id: str,
+    body: AnimaticVideoGenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """FREE. What generating this video would cost, before anything is spent."""
+    job = _get_owned_animatic(job_id, current)
+    _generate_video_source(job, body.source_upload_id)
+    return _estimate_animate(1, body.render)
+
+
+@router.post(
+    "/{job_id}/videos/generate", response_model=JobCreatedResponse, status_code=202
+)
+def generate_animatic_video(
+    job_id: str,
+    body: AnimaticVideoGenerateRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """SPENDS MONEY. Render one video from a prompt. Poll GET /jobs/{id}.
+
+    With `source_upload_id` it is image-to-video; without, Veo renders from the
+    prompt alone. Either way the finished clip lands as an ordinary video upload
+    and the editor puts it on the Video row and in the Media library.
+
+    The job goes RUNNING, which `save_animatic` already refuses to write
+    through — so for the life of the render the server is the only writer to
+    this job and an autosave cannot roll back a clip that has been paid for.
+    """
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(
+            status_code=409,
+            detail="This project is already busy — wait for it to finish, or stop it.",
+        )
+    prompt = body.prompt.strip()
+    if not prompt:
+        # ⚠ Veo bills for a refusal exactly as it bills for a success, so a
+        # promptless render is refused HERE rather than sent and charged for.
+        raise HTTPException(status_code=400, detail="Say what the video should show.")
+    source_upload_id = _generate_video_source(job, body.source_upload_id)
+
+    clip_id = uuid.uuid4().hex[:12]
+    _write_veo_clip(
+        job_id,
+        clip_id,
+        # ⚠ NO FRAME. That is the whole of what makes this a standalone render,
+        # and what tells the editor to land it on the Video row rather than over
+        # a panel.
+        frame_id="",
+        source_upload_id=source_upload_id,
+        label=_image_name_from_prompt(prompt),
+        prompt=prompt,
+        status="queued",
+        error="",
+        upload_id="",
+        duration_ms=0,
+        cost_usd=0.0,
+        rendered_at="",
+    )
+
+    estimate = _estimate_animate(1, body.render)
+    get_store().update(
+        job_id,
+        status=JobStatus.RUNNING,
+        error=None,
+        progress={"percent": 0, "stage": "rendering", "message": "Generating a video with Veo…"},
+    )
+    worker.submit_animatic_animate(job_id, [clip_id], body.render.model_dump())
+    logger.info(
+        "[animatic %s] video queued for Veo by %s (%s, est. $%.2f)",
+        job_id, current.email,
+        "image-to-video" if source_upload_id else "text-to-video", estimate.usd,
+    )
+    return JobCreatedResponse(
+        job_id=job_id,
+        status=JobStatus.RUNNING,
+        kind=JobKind.ANIMATIC,
+        character_name=job.character_name or "Project",
+        message=f"Generating a video — estimated ${estimate.usd:.2f}.",
+    )
+
 
 
 # ---------------------------------------------------------------------------

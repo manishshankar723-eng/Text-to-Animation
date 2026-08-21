@@ -200,7 +200,78 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-22 — **A GENERATED VOICEOVER IS A FILE THE LIBRARY
+**Last updated:** 2026-08-22 — **THE MEDIA ✨ HAS TWO TABS NOW, AND THE SECOND
+ONE SPENDS MONEY** (user-specified). **AI Image** is what was there; **AI Video**
+renders a clip from a sentence — with or without a starting still you drop into
+the dialog — and it lands in **Media ▸ Video** and on the **Video layer**.
+⚠ **IT IS AN `AnimaticVeoClip` WITH NO `frame_id`, AND THAT ONE FIELD IS THE
+WHOLE DIFFERENCE FROM ✨ ANIMATE.** `render_frame_clip` branches on it once and
+everything after — the Veo call, the retry policy, the upload, the paid record,
+and the self-heal that recovers a clip finished while the editor was closed — is
+shared. A second render path would be a second place for a paid clip to go
+missing. The editor tells the two apart by whether a frame was ever NAMED, not by
+whether one is findable: "this was never of a clip" and "the clip has since been
+deleted" are different events and only one is a loss.
+⚠ **AND IT IS PRICED FIRST, LIKE EVERY OTHER PAID PATH HERE.** Veo bills per
+second of OUTPUT, so a text-to-video clip costs exactly what animating a panel
+costs — "it is only one clip" is not a reason to skip the estimate. Both routes
+take the same body, so the number in the confirm can only be the price of what
+the button does.
+⚠ **`render_shot` TAKES `text_only` NOW, AND IT IS ASKED FOR, NEVER INFERRED.** A
+missing image is still an error by default, because for every other caller the
+picture IS the shot — a still that failed to load must never become a paid
+text-to-video render of the motion notes. The tabs are `.an-tabs`, the strip the
+pane heads already use. Files: `video_client.py`, `server/schemas.py`,
+`server/animatics.py`, `client/src/api.js`, `components/AnimaticEditor.jsx`,
+`styles/animatic.css`. The two tabs are a 1fr 1fr GRID filling the card, not the
+pane head's flex row — on their own line that left "nigetive area" either side —
+and the rule is `.an-tabs.an-gen-tabs`, doubled because `.an-tabs`'s flex wins on
+source order otherwise. The card is one size on both tabs because BOTH
+bodies are rendered stacked in one grid cell (a floor was tried first and was the
+wrong shape of fix — it can only lift the shorter tab), with ONE footer outside
+the switch.
+**Verified:** new `tests/video_generate_check.py` — 39
+checks, all passing, most of them about money: the free estimate, the RUNNING
+lock, the frame-less record, every refusal (blank prompt, a starting picture that
+has gone — refused by the ESTIMATE too so the price is never of a fiction, an
+upload id that is a path, another account), and that `text_only` cannot be fallen
+into. `npx vite build` clean; twelve related suites still pass. ⚠ **VEO WAS NEVER
+CALLED — the worker is stubbed — AND NOTHING WAS OPENED IN A BROWSER.**
+
+**Previously:** 2026-08-22 — **THE DUPLICATE IS AN ALT-DRAG, NOT AN ALT-CLICK**
+(user-specified, correcting the same day's earlier entry). Alt firing on mousedown
+gave you a copy every time you alt-clicked to look at something. Alt is now a FLAG ON
+THE DRAG, read once at pointerup: travel and copies are made at the snapped delta,
+let go without travelling and it was an ordinary click. It is the ordinary move drag
+with one thing changed — `up()` returns on `d.copy` before every branch that would
+move or trim the clip it started on — so the snapping, the 0:00 wall and the group
+delta are all the move's own. The ORIGINALS STAY PUT (`picBox` / `clipBox` /
+`trackStart` skip a copy draft) and the cross-row ghost is reused on the row the drag
+started from, labelled +, so it shows where the copy goes and what it will overlap
+before you let go. A copy keeps the original's TAIL as a snap target (only its start
+is excluded), because "put a copy right after this" is what the gesture is mostly
+for. No vertical half: a copy travels in time on its own row. Alt on a trim grip is
+still a trim. `onDuplicateClip` carries `deltaMs` now, and `duplicateMany(items,
+offsetMs)` falls back to the block's own length when there is no drag — which is
+where the Properties pane's Duplicate button puts a copy.
+
+**Previously:** **ALT-CLICK A CLIP AND YOU HAVE ANOTHER ONE**
+(user-specified). Alt-click on any clip BODY duplicates it, on every lane: the whole
+selection if the clip is one of several selected, the whole group if it is grouped,
+otherwise just it. It is a click and not a drag — the rule shift already followed on
+the same handler — and the copies arrive selected, ready to be dragged. The timeline
+reports only `onDuplicateClip(kind, id)`; `duplicateAt` / `duplicateMany` in the
+editor decide scope and write it as ONE `set…` per list with ONE offset for the lot,
+the block's own length, so copies land straight after the originals keeping their
+spacing (for a single clip that is its own duration — exactly where the Properties
+pane's Duplicate button puts one). A copy may overlap what is already there, which is
+chosen: an NLE copy is an overwrite, the clash is drawn, Ctrl+Z undoes it. Alt on a
+trim GRIP is still a trim. ⚠ On the way past, `itemLocked` was fixed: it read a
+`clip` field off arguments that only ever carry `{ kind, id }`, so every lock
+question was really being asked about picture track 0 — `deleteMany`'s guard
+included.
+
+**Previously:** **A GENERATED VOICEOVER IS A FILE THE LIBRARY
 HAS TO KNOW ABOUT** (user-specified). An audio layer held `Voiceover.wav` and the
 Media pane listed no audio at all. The library was never the problem: an UPLOAD
 has filed a card since the day the library existed (`addAudioTrack`). What had no
@@ -1719,6 +1790,7 @@ Pipeline stages (see `pipeline.py`):
   `POST /animatics/{id}/images` (multi-file) · `POST /animatics/{id}/audio` — uploads; images are stored but NOT sequenced (the client picks the order) · `GET /animatics/{id}/frame/{frame_id}` — ONE url shape for both source kinds · `GET /animatics/{id}/media/{upload_id}` — a just-uploaded image, before it's saved · `GET /animatics/{id}/audio`
   `POST /animatics/{id}/videos` (multi-file) — upload video clips; each item comes back with a `duration_ms` **measured server-side by ffmpeg** (there is no ffprobe), because the exporter must work from the same number
   `POST /animatics/{id}/animate/estimate` — **free**; what animating these frames would cost. Takes the SAME body as the render below, so the price quoted is the price of what the button does · `POST /animatics/{id}/animate` — **SPENDS MONEY.** 202, renders off-request on the video pool (poll `GET /jobs/{id}`). Refuses promptless frames, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`. The finished clip lands as an ordinary video upload, so it is indistinguishable from a dropped file thereafter. **Render records live in the job's `result` (`veo_clips`), never `params`** — the autosave rewrites `params` wholesale and would otherwise erase a clip that was paid for
+  **One video from one sentence (the Media pane's ✨, Video tab):** `POST /animatics/{id}/videos/generate/estimate` — **free**; what one render would cost · `POST /animatics/{id}/videos/generate` — **SPENDS MONEY.** 202, renders off-request on the video pool (poll `GET /jobs/{id}`). With `source_upload_id` it is image-to-video; without, Veo renders from the prompt alone. ⚠ **The record is an `AnimaticVeoClip` with NO `frame_id`** — that one empty field is the whole difference from ✨ Animate, and `render_frame_clip` branches on it once so the Veo call, the retries, the upload, the paid record and the self-heal are all shared. Refuses a blank prompt and a `source_upload_id` whose file has gone (the ESTIMATE refuses it too, so a price is never quoted for a render that cannot happen). The editor lands it on the plain Video row like a dropped MP4 — appended, never rippled: it has no panel to stay lined up with
   **One image from one sentence (the Media pane's ✨):** `GET /animatics/image-model` — **free**, and it takes no project: which image model a ✨ in this editor would call, so a dialog can name it before anything is spent. ⚠ Declared BEFORE `/{job_id}` (beside `/luts`) or the path is read as a project id · `POST /animatics/{id}/images/generate` — **SPENDS QUOTA**, one image, synchronous. ⚠ **Nothing about the storyboard is sent** — no style, no references, no bible, no neighbours: this draws whatever the sentence says (`gemini_client.generate_image`, the only image call here with no art direction), where the shot generator below draws a shot in a board's look. The aspect is sent through the SDK's `image_config` AND centre-cropped, so the shape asked for is the shape delivered. ⚠ **It answers with the same `AnimaticMediaItem` a file upload returns**, written to the same folder under the same id space, so the client places it exactly as it places a dropped picture — into the library and onto the overlay Images lane
   **A shot that is NOT on the board:** `GET /animatics/{id}/frames/{frame_id}/neighbour?side=before|after` — **free**; what the "generate a shot beside this one" dialog opens on (the name to give it, the two shots it would sit between in PLAY order, the board's aspect, the image model, and `can_generate` + a reason) · `POST …/neighbour/suggest` — **SPENDS QUOTA**, a TEXT call: writes the missing beat from both neighbours and the film around them, with anything already typed as steering · `POST …/neighbour` — **SPENDS QUOTA**, one image, synchronous. ⚠ **The STORYBOARD IS NEVER EDITED** — `panels/insert` renumbers panels and an animatic frame references a panel BY INDEX, so the drawing lands as an ordinary animatic upload whose clip carries `src.storyboard_id` (which row it belongs on), `src.shot_id` (its identity as a shot, since it has no index — this is what a Veo take pairs with) and `src.prompt` (the wording, since there is no panel to read it back off). ⚠ **It RETURNS the clip and saves nothing**: where it goes in the cut is the client's decision, which is what lets the editor insert it beside the clip you right-clicked and ripple every layer in one undoable edit
   **Back to the board (Phase 7):** `GET/POST /animatics/{id}/frames/{frame_id}/panel` — the wording behind one clip / re-draw it. Synchronous (one image) and it answers with the **FRAME**, whose `url` carries a fresh `?v=<mtime>` — that is what the client re-fetches against · `GET/POST /animatics/{id}/frames/{frame_id}/sequence` — that shot's key poses / re-block it at a new length ("make this shot 2s longer"). ⚠ **The job returned is the STORYBOARD's**, because the drawings belong to the board — which is also why this animatic stays fully editable while it runs. It RESUMES, so 4s → 6s buys eight drawings, not twenty-four
@@ -2028,7 +2100,300 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-22 (latest) — A GENERATED VOICEOVER IS A FILE THE LIBRARY HAS TO KNOW ABOUT (user-specified, with a screenshot of the editor: an audio layer holding `Voiceover.wav` and a Media pane listing 53 cards, none of them audio)
+### 2026-08-22 (latest) — THE MEDIA ✨ HAS TWO TABS, AND THE SECOND ONE SPENDS MONEY (user-specified, with the dialog and a browser's tab strip as the reference)
+
+> "i want same genearte any type of video from text prompt and user + upload amd
+>  drop image in prompt box and user generate both type video text and photo +
+>  text prompt fill and user click generate video buttun and gemini generate
+>  video an come back generated video in media under video and Video layer under
+>  in Timline / so i want you add two tab like fuction first AI Image and secon
+>  AI Video … so user get in popup image and video tab so user choose easily in
+>  one place"
+
+**ONE DIALOG, TWO THINGS IT CAN MAKE.** The Media pane's ✨ drew pictures; it
+films now as well. **AI Image** is unchanged. **AI Video** takes a sentence, an
+optional starting still dropped into it, and the ordinary Veo settings, and the
+finished clip lands in **Media ▸ Video** and on the **Video layer**.
+
+⚠ **THE SECOND TAB IS THE FIRST THING IN THIS DIALOG THAT SPENDS REAL MONEY, AND
+IT IS PRICED LIKE EVERYTHING ELSE THAT DOES.** Veo is billed per second of
+OUTPUT — a text-to-video clip costs exactly what animating a panel costs, roughly
+$0.24 to $3+ for eight seconds — so "it is only one clip" buys no discount from
+the rule: `POST …/videos/generate/estimate` is free, both routes take the SAME
+body so the quote can only be the price of what the button does, and the render
+button opens the confirm rather than rendering. A promptless render is refused on
+the server, because **Veo bills for a refusal exactly as it bills for a success**.
+
+⚠ **IT IS AN `AnimaticVeoClip` WITH NO `frame_id`, AND THAT ONE EMPTY FIELD IS
+THE ENTIRE DIFFERENCE FROM ✨ ANIMATE.** Everything else is shared on purpose:
+one record, one `_write_veo_clip`, one worker entry (`submit_animatic_animate`),
+one poll, one progress bar, and one self-heal that attaches a clip which finished
+while the editor was closed. `render_frame_clip` branches on the field ONCE — a
+frame gives it a picture through `_resolve_frame_path`, a `source_upload_id`
+gives it one off disk, neither means text-to-video — and everything past that
+line is identical. A second render path would be a second place for something
+that was paid for to go missing, which is the failure this codebase has spent the
+most comments on.
+
+- ⚠ **THE EDITOR TELLS THE TWO APART BY WHETHER A FRAME WAS EVER NAMED, NOT BY
+  WHETHER ONE IS FINDABLE.** `reconcileVeoClips` already had a branch for "the
+  frame it was generated from has gone", which drops the clip; a standalone
+  render would have fallen straight into it and been silently swallowed. "This
+  was never of a clip" and "the clip has since been deleted" are different
+  events and only one of them is a loss.
+- ⚠ **A STANDALONE RENDER APPENDS, IT DOES NOT RIPPLE.** `start_ms: null` —
+  "after the last clip on my track" — which is exactly what a dropped MP4 does.
+  The ✨ Animate path ripples because its clip has to stay lined up with the
+  panel underneath it; this one has no panel, and pushing the whole film along
+  for it would be an edit nobody asked for.
+- ⚠ **`render_shot` GAINED `text_only`, AND IT IS ASKED FOR RATHER THAN
+  INFERRED.** Veo will render from a prompt alone, but the refusal that was
+  there ("No source image for this shot") is load-bearing for every OTHER
+  caller: for them the picture IS the shot, and a still that failed to load
+  silently becoming a paid text-to-video render of the motion notes is the
+  expensive version of this bug. So the flag is passed only when nothing was
+  named — `not record.frame_id and not record.source_upload_id` — and a
+  `source_upload_id` whose file has gone is an error, not a fall-through.
+- ⚠ **THE STARTING PICTURE IS UPLOADED THE MOMENT IT IS CHOSEN**, through the
+  ordinary `POST /{id}/images`, so the render request carries an id and the
+  server can check the picture exists BEFORE it quotes a price for it. The
+  estimate refuses a missing one too — a quote for a render that cannot happen
+  is worse than no quote. Its thumbnail is an authed blob like every other
+  picture here; a bare `<img src="/animatics/…">` would 401.
+- **The shape is the project's and is not offered.** Veo is sent
+  `settings.aspect_ratio` server-side, the same value ✨ Animate sends, so a
+  generated clip cannot arrive a different shape from the film it goes into.
+- **The tabs are `.an-tabs`** — the strip Media / Shapes / Effects already use.
+  A second tab style in one editor reads as a second mechanism. ⚠ **BUT THEY ARE
+  A TWO-COLUMN GRID HERE, NOT THAT STRIP'S FLEX ROW** (reported the moment they
+  were first seen: "divide in popup panel halh half side on panel i see nigetive
+  area increse tab buutun size"). In a pane head the tabs sit at their text width
+  because they share the bar with a count and a view switch; on their own line in
+  a 28rem card that left two small buttons against a card-width of nothing.
+  `grid-template-columns: 1fr 1fr` is half-and-half whatever the labels say, and
+  `gap: 0` is part of it — with a gap the two underlines stop short of each other
+  and the strip reads as two buttons near a line rather than as one bar split in
+  two. The label went 0.82rem → 0.95rem with it; the ✨ is sized in `em` so it
+  followed on its own. ⚠ **AND THE GRID DID NOT APPLY ON THE FIRST ATTEMPT,
+  WHICH IS THE PART WORTH KNOWING.** `.an-gen-tabs` and `.an-tabs` have identical
+  specificity (0,1,0), and `index.css` imports `animatic-tools.css` — where
+  `.an-tabs { display: flex }` lives — AFTER `animatic.css`, so source order
+  decided and the flex row won. Only the `font-size`, which is set on the CHILD
+  at (0,2,0), landed: the tabs got bigger and stayed at their text width, which
+  is exactly how it was reported the second time. The rule is
+  `.an-tabs.an-gen-tabs` now — qualified with the class it overrides, so it
+  settles wherever the file ends up in the import list. `index.css`'s own header
+  warns that moving an import can change the page without changing a
+  declaration; this is what that looks like from the other end.
+- ⚠ **AND THE CARD IS ONE SIZE WHICHEVER TAB IS SHOWING** (same report). The
+  Video half is four rows taller than the Image half, so switching tabs resized
+  the card under the pointer and threw the footer up the screen.
+  `.an-gen-modal` is a flex column with a floor high enough for the taller half,
+  the tab body takes the slack, and **there is ONE footer now, outside the
+  switch** — two copies of Cancel is two things to drift, and a footer inside
+  each tab body cannot be pinned to the bottom, which is what stops the resize.
+  Only the primary button differs, and it differs in the way that matters: the
+  image half GENERATES, the video half only asks what it would cost.
+  ⚠ **AND THE FIRST GO AT THE SIZING WAS THE WRONG SHAPE OF FIX — reported a
+  SECOND time.** It was a `min-height` with a measured number in it, and a floor
+  can only lift the SHORTER tab: the Video half was already past it, so the two
+  still differed, and the number would have gone stale the first time a row was
+  added to either half. **Both tab bodies are RENDERED AND STACKED IN ONE GRID
+  CELL now** (`.an-gen-pane`, `grid-area: 1 / 1`), which makes the cell the
+  height of the taller pane by construction, for ever, with nothing to maintain.
+  ⚠ **THE HIDDEN PANE IS `visibility: hidden`, NEVER `display: none`** — hiding
+  it properly would take its height out of the cell, which is the entire
+  mechanism; `visibility` keeps the geometry while removing it from the page, the
+  tab order and the accessibility tree together.
+  ⚠ **AND NEITHER PROMPT BOX MAY CARRY `autoFocus` ANY MORE**: both are mounted
+  at once, and two `autoFocus` boxes in one tree hand the caret to whichever
+  mounted last — the tab you are not looking at. An effect focuses the live one
+  instead, which also lands the caret in the box you have just switched to.
+- **AND THE PRIMARY BUTTON IS ONE WIDTH ON BOTH TABS** (reported with the sizing).
+  Its LABEL differs and has to — "Generate the image" makes the picture, "See the
+  price →" only asks what a render would cost — so left to its text it resized
+  when you switched tabs, right beside a card that had just been made not to. A
+  `min-width` wide enough for the longest of the four labels it can carry (the
+  two above plus "Drawing the image…" and "Checking the price…") holds them all
+  at one size. ⚠ The footer WRAPS with it: on a phone the card is `92vw` and
+  Cancel plus an 11.5rem primary is wider than that, so without `flex-wrap` the
+  floor would push the buttons out of the card instead.
+- **The starting-picture control lost its sentence** — "Add a starting picture,
+  or drop one here — optional" was the widest line in the card for something the
+  ＋ says on its own. It is "Add or drop image" (shortened once more on sight);
+  that it is optional is said by the render button working without it.
+- **Both halves are reset on open**, whichever tab is opening: a prompt left in
+  the tab you cannot see is, on the Video tab, a prompt you could pay for.
+
+**Verified:** new `tests/video_generate_check.py` — 39 checks, all passing, and
+most of them are about money: the estimate is free and spends nothing and queues
+nothing, a dearer tier quotes more, the project goes RUNNING so an autosave
+cannot land on the record, a second render is refused while one is in flight, the
+record is frame-less and named, and every refusal reaches the queue with nothing
+in it (blank prompt, a starting picture that has gone — ⚠ **refused by the
+ESTIMATE as well**, an upload id that is a path, another account). Plus two that
+drive `render_shot` directly to prove `text_only` cannot be fallen into, and four
+source reads over `render_frame_clip` proving it still calls Veo exactly once.
+`npx vite build` clean; video-generate, image-generate, shot-infill, shot-insert,
+timeline-ripple, veo-ripple, veo-attach, animate-prompt, animate-guard,
+media-bin, image-lane-routing, asset-fields and video-clip all pass. ⚠ **VEO WAS
+NEVER CALLED — `submit_animatic_animate` is stubbed for the whole file — AND
+NOTHING WAS OPENED IN A BROWSER.**
+
+### 2026-08-22 — THE DUPLICATE IS AN ALT-DRAG, NOT AN ALT-CLICK (user-specified, correcting the entry below it)
+
+> "i check when i Atl + left-click so automatic duplicate clip so i wnat when i
+>  hold ALT + left click and drag so then dulicate work not one click duplicate"
+
+**Alt firing on mousedown meant a copy every time you alt-clicked to look at
+something.** So alt is no longer an action — it is a FLAG ON THE DRAG, recorded in
+`startClipDrag` / `startAudioDrag` and read once at pointerup:
+
+- travel, and copies are made at the drag's snapped delta;
+- let go without travelling, and it was an ordinary click. Nothing is duplicated.
+
+⚠ **IT IS THE ORDINARY MOVE DRAG WITH ONE THING CHANGED.** Same snapping, same
+0:00 wall, same group delta — the difference is entirely in `up()`, which returns on
+`d.copy` before every branch that would move or trim the clip it started on. That is
+also why the delta needs no maths of its own: `d.latest.deltaMs` is the same number
+`onMoveSelection` is given, so a copy lands exactly where the ghost was drawn.
+
+**THE ORIGINALS DO NOT MOVE, AND THE GHOST IS THE COPY.** `picBox`, `clipBox` and
+`trackStart` all skip the draft when it is a copy, so every original stays put under
+the pointer; the outline that already existed for cross-row moves is drawn on the
+row the drag STARTED from instead (`ghostLaneKey` — `fromKey` for a copy,
+`toKey` for a move) and labelled with a **+** so an alt-drag and a plain one do not
+look identical while the pointer is down. Two things fall out of that for free: the
+ghost shows the overlap before you let go — which is what `.tl-ghost`'s own comment
+says it is for — and dragging back to where you started abandons the copy.
+
+⚠ **A COPY KEEPS THE ORIGINAL'S TAIL AS A SNAP TARGET.** A move excludes both of
+the dragged clip's edges so it cannot stick where it already is; a copy excludes only
+its START. The commonest thing an alt-drag is for is putting a copy immediately after
+the clip it came from, and that lands on exactly the edge a move has to ignore —
+while the start still has to go, or the copy would snap back to zero travel and
+duplicate nothing.
+
+⚠ **NO VERTICAL HALF.** `toKey` is suppressed on a copy drag: "copy it onto that
+other row" would have to make the copies AND re-home them in one write, on lanes
+whose meaning differs per kind (which is why `onMoveToLane` exists at all). A copy
+travels in time on its own row and is dragged across afterwards like any other clip.
+
+⚠ **ALT ON A TRIM GRIP IS STILL A TRIM** (`mode === "move"` only) — unchanged from
+the first cut of this feature, and for the same reason: a grip is drawn for trimming.
+
+Editor side: `onDuplicateClip(kind, id, deltaMs)`, so `duplicateAt(kind, id, deltaMs)`
+→ `duplicateMany(items, offsetMs)`. A dragged offset is used as given (clamped only
+at 0:00 — a second lock on a door the timeline already locked); passed null it falls
+back to the block's own length, which is where the Properties pane's Duplicate button
+puts a copy, so a future menu or shortcut duplicate needs no new rule. The notice now
+names the time the copies landed at, because on a drag that is the one thing you
+cannot check at a glance.
+
+Files: `client/src/components/Timeline.jsx` (the `copy` flag on both drags, both
+`up()` branches, `ghostLaneKey` / `laneGhost`, `picBox` / `clipBox` / `trackStart`,
+the two snap-exclusion lists, `toKey`, the prop doc, three tooltips, the header),
+`client/src/components/AnimaticEditor.jsx` (`duplicateMany(items, offsetMs)`,
+`duplicateAt`, the notice, the tool hint) and
+`client/src/components/properties/SelectionProperties.jsx` (the ⓘ).
+
+Verified by parsing all three with the repo's esbuild, by re-running the four pure
+checks that touch this code (`selection`, `audio_razor`, `frame_save_fields`,
+`asset_fields` — all pass), and by tracing both drags press-to-release. No browser
+suite was run.
+
+### 2026-08-22 — ALT-CLICK A CLIP AND YOU HAVE ANOTHER ONE (user-specified) — ⚠ SUPERSEDED THE SAME DAY BY THE ALT-DRAG ENTRY ABOVE: the gesture is a DRAG now, not a click. Everything below about scope, the offset, groups, captions and transitions still stands; only what starts it changed.
+
+> "Add one fuction when i click Alt + left mouse in any clip of layer so
+>  duplicate single and more seleted of clip in timeline"
+
+**Alt-click on any clip body duplicates it — on every lane, and however many are
+selected.** Held alt, the press makes copies and starts no drag, which is the rule
+shift already followed on the same handler and for the same reason: a modifier that
+also moved would nudge every copy by however far the pointer drifted while you were
+aiming. The copies arrive SELECTED, so the drag that puts them where you want them
+is the next gesture rather than part of this one.
+
+**HOW MANY is the document's question, not the timeline's.** `Timeline.jsx` reports
+`onDuplicateClip(kind, id)` — the bar that was pressed, and nothing about scope —
+the same division `onMoveToLane` and `onDropAsset` draw. `duplicateAt` in
+`AnimaticEditor.jsx` answers it with one rule, "duplicate what a click here would
+act on": the whole selection if the clip is one of several selected; the whole
+GROUP if it is grouped (that is what clicking it selects — `expandGroup`);
+otherwise just it.
+
+**`duplicateMany` is one `set…` per list and ONE offset for the lot**, like
+`deleteMany` and `moveSelection` beside it — forty copies made one at a time would
+be forty renders and forty presses of Ctrl+Z, and forty separately-placed copies
+would not keep the shape of what was copied. The offset is the block's own length
+(last end minus first start), so copies land immediately after the originals with
+the spacing between them untouched; for ONE clip that is exactly its own duration,
+which is where `duplicateText` / `duplicateShape` / `duplicateOverlay` have always
+put a copy — so the pane's button and the gesture agree.
+
+Five things that are easy to get wrong and are each written into the code:
+
+- **A picture's start is not necessarily its `start_ms`** — a clip saved before
+  tracks begins where the one before it on its row ended, so the copy is placed off
+  `frameStartById`, the same trap `moveSelection` documents. **An audio clip's
+  length is not `duration_ms`** either: that is the FILE, while what it occupies is
+  its trim (`trackPlayMs`).
+- **An audio copy MUST carry an explicit `id`.** `clipId` falls back to the upload
+  for a clip older than the razor, so a copy without one answers to its original's
+  key. The audio CAP is untouched by design — `audioFileCount` counts uploads, and
+  a copy brings no new file.
+- **A copied group becomes a group of its own** (one fresh `group_id` per source
+  group). Not the original's — that would move and delete clips nobody pointed at —
+  but not loose either: alt-clicking a grouped clip copies the whole group, and
+  copies that arrived ungrouped would turn one group into a group and a pile.
+- **A copy of a GENERATED caption is a typed one**, free, because "generated" is an
+  id prefix (`isGeneratedCaption`) and a copy gets `newId()`. Duplicating one is how
+  you keep a line the machine wrote from being swept away by the next captions run.
+- **A transition follows its clip's copy only when the copy butts up against the
+  original** (`delta === length`). A transition is anchored to the clip it FOLLOWS,
+  so a copy landing at the original's end would otherwise dissolve between two
+  identical pictures — the reason `duplicateFrame` re-anchors. When the block is
+  longer than the clip the copy lands elsewhere, the original's cut is still a cut
+  between two different shots, and moving the transition off it would take away a
+  dissolve nobody touched.
+
+⚠ **A COPY MAY LAND ON TOP OF WHAT IS ALREADY THERE, and that is chosen.** Every
+NLE's copy is an overwrite; nothing is destroyed (the clash is drawn on the bar,
+`.tl-bar.clash`, and Ctrl+Z takes the copy away); and the alternative is a rule
+about which gap to hunt for, which is a different edit on every lane and impossible
+to predict from a click. "Another one, right after this one, drag it where you want
+it" is the promise that can be kept.
+
+⚠ **ALT ON A TRIM GRIP IS STILL A TRIM.** Both grips come through
+`startClipDrag` as well, and a grip is drawn for trimming — so the branch is
+`e.altKey && mode === "move"`, the body only.
+
+**And one bug fixed on the way past: `itemLocked` was never actually asking about
+the clip you clicked.** It destructured a `clip` off its argument while both callers
+pass `{ kind, id }`, so `clip` was always `undefined` and every question came out as
+"is picture track 0 locked" / "is the layer named '' locked" — meaning
+`deleteMany`'s lock guard was reading a row nobody had touched. It now resolves the
+record itself through a new `clipOfItem` (the one place that knows audio is keyed by
+CLIP id, not by upload), which is also what the new span maths needs. Consequence
+worth knowing: a marquee delete that spans a locked picture row now really does skip
+those clips and say so, which is what the guard always claimed to do.
+
+Discoverability, since a modifier nobody is told about is a feature nobody has: the
+gesture is in the Selection tool's tooltip, in the Selection pane's ⓘ, on the
+picture / caption / shape / overlay bar tooltips and on the audio clip's, and in
+`Timeline.jsx`'s header list of what the three selection gestures are.
+
+Files: `client/src/components/Timeline.jsx` (the `onDuplicateClip` prop, the alt
+branch in `startClipDrag`, the alt branch on the audio clip, three tooltips, the
+header), `client/src/components/AnimaticEditor.jsx` (`clipOfItem`, `itemLocked`,
+`duplicateMany`, `duplicateAt`, the prop, the tool hint) and
+`client/src/components/properties/SelectionProperties.jsx` (the ⓘ).
+
+Verified by parsing all three with the repo's own esbuild and by tracing each path
+against the handlers it calls. No browser suite was run — the gesture is a
+Playwright-shaped test (`editor_media_bin_check.py`'s harness) and none was added.
+
+### 2026-08-22 — A GENERATED VOICEOVER IS A FILE THE LIBRARY HAS TO KNOW ABOUT (user-specified, with a screenshot of the editor: an audio layer holding `Voiceover.wav` and a Media pane listing 53 cards, none of them audio)
 
 > "i see in timeline i have audio layer with audio clip but why not audio clip
 >  show in media? this fuction already i ahve before please chacek and ficxt it"
@@ -14059,6 +14424,19 @@ language — do NOT copy the Drawstory reference's look/colours.
 ---
 
 **Next steps** (pick the top unchecked item when told to "start next"):
+- [ ] **SPEND A REAL DOLLAR ON ✨ VIDEO, IN THE REAL EDITOR — NOTHING IN IT HAS
+      EVER CALLED VEO.** The Video tab (2026-08-22) is covered by 39 checks and
+      every one of them stubs the worker, so the render itself is unproven end to
+      end. Three things want a real run. (1) **Does a TEXT-ONLY render actually
+      come back?** `render_shot` now passes `image=None` to `generate_videos`,
+      which is documented Veo behaviour and has never been exercised here — if it
+      400s, the fix is a model id or a config field, not the plumbing. (2) **Does
+      the finished clip land on the Video row and in Media**, through the
+      frame-less branch in `reconcileVeoClips` — the poll is shared with ✨
+      Animate and this is the one path through it nobody has watched. (3) **Is
+      the estimate close?** It reuses `_estimate_animate`, so it inherits the
+      same list prices ✨ Animate quotes; a real invoice is the only way to know
+      how far off they drift.
 - [ ] **DRAW A PICTURE FROM THE MEDIA PANE, IN THE REAL EDITOR.** The ✨ on the
       ＋ card (2026-08-22) is covered by 52 checks and every one of them stubs the
       generator, so nothing anyone has seen is an actual picture. Three things

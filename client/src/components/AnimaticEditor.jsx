@@ -81,6 +81,7 @@ import {
   setKeyEase,
 } from "../animatic/keyframes.js";
 import { DEFAULT_TRANSITION_MS } from "../animatic/transitions.js";
+import { trackPlayMs, trackStartMs } from "../animatic/audio_mix.js";
 import {
   audioEndMs,
   clipAt,
@@ -110,6 +111,8 @@ import {
   expandGroup,
   expandSelection,
   GROUPABLE,
+  groupOf,
+  hasItem,
   selectionLabel,
   toggleItems,
   uniqueItems,
@@ -511,7 +514,8 @@ const TOOLS = [
     label: "Selection",
     hint:
       "Select and move clips · drag the empty part of a lane to select several · " +
-      "shift-click to add one · double-click a lane's name for the whole row",
+      "shift-click to add one · alt-drag to duplicate · " +
+      "double-click a lane's name for the whole row",
   },
   { id: "razor", key: "C", label: "Razor", hint: "Click a clip — a picture, a caption, a shape or audio — to split it there" },
   // ⚠ THESE TWO ARE NO LONGER "the only way a trim behaves" — they are the two
@@ -772,6 +776,39 @@ export default function AnimaticEditor({
   // depend on the project — it is `IMAGE_PROVIDER` in the environment — so it is
   // read on first open and never again.
   const [imageModel, setImageModel] = useState(null);
+  // WHICH TAB THE MEDIA ✨ IS ON — "image" | "video". One dialog, two things it
+  // can make, asked for as "add two tab like fuction first AI Image and secon AI
+  // Video … so user choose easily in one place". They share the card, the prompt
+  // box and the Model row and nothing else: an image is one synchronous call
+  // that costs a fraction of a cent, and a video is Veo — minutes long, billed
+  // per second, and therefore priced and confirmed before anything runs.
+  const [imgGenTab, setImgGenTab] = useState("image");
+  // --- the Video tab ------------------------------------------------------
+  const [vidGenPrompt, setVidGenPrompt] = useState("");
+  // The still it starts FROM, uploaded the moment it is chosen so the render
+  // request only has to carry an id. Null = text-to-video.
+  const [vidGenSource, setVidGenSource] = useState(null);
+  const [vidGenUploading, setVidGenUploading] = useState(false);
+  const [vidGenRender, setVidGenRender] = useState({
+    tier: "fast",
+    resolution: "720p",
+    duration_seconds: 8,
+    // Off by default, exactly as ✨ Animate's is: sound costs more per second,
+    // and an animatic usually already carries its own.
+    generate_audio: false,
+  });
+  // The priced confirm. ⚠ NOTHING SPENDS UNTIL THIS HAS BEEN ON SCREEN — the
+  // rule every paid path in this editor follows.
+  const [vidGenConfirm, setVidGenConfirm] = useState(null);
+  const [vidGenBusy, setVidGenBusy] = useState(false);
+  const vidGenInputRef = useRef(null);
+  // ⚠ THE TWO PROMPT BOXES BOTH EXIST AT ONCE NOW (see `.an-gen-pane`), so
+  // neither may carry `autoFocus`: two of them in one tree means the LAST one
+  // mounted wins, which is the tab you are not looking at. Focus is put on the
+  // live one by hand instead, which also means switching tabs lands the caret in
+  // the box you just switched to.
+  const imgGenBoxRef = useRef(null);
+  const vidGenBoxRef = useRef(null);
   // Which (frame, side) the in-flight context read was started for. ⚠ Same
   // guard as `animatePanelReq`: open a second menu while the first read is in
   // the air and the late answer would describe the wrong gap.
@@ -1219,6 +1256,27 @@ export default function AnimaticEditor({
   );
 
   /**
+   * THE RECORD BEHIND ONE SELECTION ITEM — `{ kind, id }` back to the clip.
+   *
+   * A selection carries ids and nothing else (see `animatic/selection.js`), which
+   * is right for a list that spans five lanes — but every question worth asking
+   * about a selected clip ("how long is it", "which row is it on") is a question
+   * about the RECORD. This is the one lookup, so there is one place that knows
+   * `audio` is keyed by CLIP id rather than by upload.
+   */
+  const clipOfItem = useCallback(
+    (item) => {
+      if (!item) return null;
+      if (item.kind === "frame") return frames.find((f) => f.id === item.id) || null;
+      if (item.kind === "audio") {
+        return audioTracks.find((a) => clipId(a) === item.id) || null;
+      }
+      return (groupPools[item.kind] || []).find((c) => c.id === item.id) || null;
+    },
+    [frames, audioTracks, groupPools]
+  );
+
+  /**
    * IS THE ROW THIS SELECTED ITEM SITS ON LOCKED? — for the KEYBOARD paths.
    *
    * ⚠ THE MOUSE IS ALREADY HANDLED, IN THE TIMELINE. Every press on a clip goes
@@ -1228,6 +1286,14 @@ export default function AnimaticEditor({
    * on a selection that may predate the lock, or that a double-click on the
    * gutter made. This is the guard for those.
    *
+   * ⚠ IT TAKES A SELECTION ITEM AND LOOKS THE CLIP UP ITSELF, which it did not
+   * used to: it destructured a `clip` off the item, and every caller passes
+   * `{ kind, id }` — so `clip` was always `undefined` and every question came out
+   * as "is track 0 locked" for a picture and "is the layer called '' locked" for a
+   * caption. `deleteMany`'s guard was therefore reading a row nobody had clicked.
+   * Resolving here rather than at the two call sites is what stops that being
+   * true again the next time one is added.
+   *
    * ⚠ AUDIO IS ALWAYS UNLOCKED, and honestly so: `laneToken` gives an audio row
    * no token, so there is nothing to store a lock against — a loose audio row is
    * keyed by the FILE it holds, which changes as clips are dragged in and out.
@@ -1236,13 +1302,15 @@ export default function AnimaticEditor({
   const itemLocked = useCallback(
     (item) => {
       if (!item) return false;
-      const { kind, clip } = item;
+      const kind = item.kind;
+      const clip = clipOfItem(item);
+      if (!clip) return false;
       if (kind === "frame") return frameLocked(clip);
       const laneKind = kind === "overlay" ? "image" : kind;
       if (laneKind !== "text" && laneKind !== "shape") return false;
-      return laneIsLocked({ kind: laneKind, layerId: clip?.layer_id || "" });
+      return laneIsLocked({ kind: laneKind, layerId: clip.layer_id || "" });
     },
-    [frameLocked, laneIsLocked]
+    [clipOfItem, frameLocked, laneIsLocked]
   );
 
   const toggleLaneHidden = (lane) => {
@@ -2390,6 +2458,264 @@ export default function AnimaticEditor({
       `Deleted ${selectionLabel(items)}.${
         locked.length ? ` ${locked.length} left alone — locked row.` : ""
       }`
+    );
+  }
+
+  /**
+   * DUPLICATE EVERY SELECTED CLIP — alt-click's whole implementation.
+   *
+   * ⚠ ONE `set…` PER LIST AND ONE OFFSET FOR THE LOT, which is the same rule
+   * `deleteMany` and `moveSelection` follow and for the same two reasons: forty
+   * copies made one at a time would be forty renders and forty presses of Ctrl+Z,
+   * and forty separately-placed copies would not keep the shape of what was
+   * copied.
+   *
+   * ⚠ `offsetMs` IS WHERE THE COPIES GO, AND IT COMES FROM THE DRAG. An alt-drag
+   * hands over its snapped travel, so the copies land exactly where the ghost was
+   * drawn — which is the whole gesture: you decide where they go while you can see
+   * it. Passed as null (no drag — a menu, a button, a future shortcut) it falls
+   * back to the BLOCK'S OWN LENGTH, its last end minus its first start, so the
+   * copies sit immediately after the originals. For one clip that is exactly its
+   * own duration, which is what `duplicateText` / `duplicateShape` /
+   * `duplicateOverlay` have always done — so a keyboard or menu duplicate and the
+   * pane's button put a copy in the same place.
+   *
+   * ⚠ EITHER WAY THE OFFSET IS ONE NUMBER FOR THE WHOLE SET, never one per clip.
+   * That is what keeps the shape of what was copied: forty clips re-placed
+   * individually would arrive as a pile.
+   *
+   * ⚠ A COPY MAY LAND ON TOP OF WHAT IS ALREADY THERE, and that is chosen rather
+   * than worked around — more so now that the drop point is the user's. Every NLE's
+   * copy is an overwrite; nothing is destroyed here (the clash is drawn on the bar
+   * — `.tl-bar.clash` — and Ctrl+Z takes the copy away); and the ghost shows the
+   * overlap before you let go, which is the moment to see it.
+   */
+  function duplicateMany(items, offsetMs = null) {
+    if (!items.length) return;
+    // Locked rows are dropped, not the whole press — `deleteMany` says why.
+    const locked = items.filter(itemLocked);
+    const live = locked.length ? items.filter((i) => !itemLocked(i)) : items;
+    if (!live.length) {
+      setNotice(
+        `Nothing duplicated — ${
+          locked.length === 1 ? "that clip is" : `all ${locked.length} are`
+        } on a locked row.`
+      );
+      return;
+    }
+
+    /**
+     * WHERE ONE ITEM SITS AND FOR HOW LONG, in timeline ms.
+     *
+     * ⚠ A PICTURE'S START IS NOT NECESSARILY ITS `start_ms` — the same trap
+     * `moveSelection` documents. A clip saved before tracks has none and begins
+     * where the one before it on its row ended, so the evaluated start
+     * (`frameStartById`) is the only number that means anything. ⚠ And an AUDIO
+     * clip's length is not `duration_ms` either: that is the FILE's length, while
+     * what it occupies is its trim (`trackPlayMs`).
+     */
+    const spanOf = (item) => {
+      const clip = clipOfItem(item);
+      if (!clip) return null;
+      if (item.kind === "frame") {
+        return {
+          start: frameStartById.get(item.id) ?? 0,
+          length: Math.max(100, Number(clip.duration_ms) || 2000),
+        };
+      }
+      if (item.kind === "audio") {
+        return { start: trackStartMs(clip), length: trackPlayMs(clip) };
+      }
+      return {
+        start: Math.max(0, Math.round(clip.start_ms || 0)),
+        length: Math.max(0, Math.round(clip.duration_ms || 0)),
+      };
+    };
+    let blockStart = Infinity;
+    let blockEnd = 0;
+    for (const item of live) {
+      const span = spanOf(item);
+      if (!span) continue;
+      blockStart = Math.min(blockStart, span.start);
+      blockEnd = Math.max(blockEnd, span.start + span.length);
+    }
+    if (blockStart === Infinity) return;
+    // ⚠ A DRAGGED OFFSET IS TAKEN AS GIVEN, CLAMPED ONLY AT THE FRONT OF THE VIDEO.
+    // The timeline has already clamped and SNAPPED it against the same floor
+    // (`selectionFloorMs`), so this is a second lock on the same door rather than a
+    // correction — but it is the door that matters: a negative start is not a place
+    // on the timeline. Without a drag, the fallback is the block's own length.
+    const dragged = Number.isFinite(offsetMs) && Math.round(offsetMs) !== 0;
+    const delta = dragged
+      ? Math.max(-blockStart, Math.round(offsetMs))
+      : // The floor is there for a clip with no measured length — a copy landing
+        // exactly on top of its original is a copy you cannot see or grab.
+        Math.max(MIN_CLIP_MS, blockEnd - blockStart);
+
+    /**
+     * A COPIED GROUP BECOMES A GROUP OF ITS OWN.
+     *
+     * ⚠ NOT THE ORIGINAL'S GROUP — that part is the same rule the single-clip
+     * Duplicate buttons state: a copy that joined the original's group would move
+     * and delete with clips the user never pointed at. But it does not follow that
+     * a copy is UNGROUPED, and here it matters more than it does there: clicking
+     * one member of a group selects them all (`expandGroup`), so alt-clicking a
+     * grouped clip duplicates the whole group — and copies that arrived loose
+     * would turn one group into a group and a pile. One fresh id per source group,
+     * so the shape survives and the two groups stay strangers.
+     */
+    const groupCopies = new Map();
+    const regroup = (clip) => {
+      const from = groupOf(clip);
+      if (!from) return "";
+      if (!groupCopies.has(from)) groupCopies.set(from, newId());
+      return groupCopies.get(from);
+    };
+
+    // What to select when this is over — the copies, which is what you want to
+    // drag next. Filled by each branch below.
+    const made = [];
+
+    const frameIds = idsOf(live, "frame");
+    if (frameIds.size) {
+      // ⚠ EACH COPY GOES IN RIGHT AFTER ITS SOURCE, not at the end of the list.
+      // A picture's list position is its place in the SEQUENCE — it is what the
+      // strip numbers and what `stackAt` breaks a tie on — so a copy appended to
+      // the end would sit mid-timeline and be listed last.
+      const next = [];
+      // Which transition (if any) has to follow its clip's copy instead. Built
+      // here, applied once below.
+      const reanchor = new Map();
+      for (const f of frames) {
+        next.push(f);
+        if (!frameIds.has(f.id)) continue;
+        const start = frameStartById.get(f.id) ?? 0;
+        const length = Math.max(100, Number(f.duration_ms) || 2000);
+        const copyId = newId();
+        // The picture is identical, so the copy points at the same source — its
+        // blob is fetched from the same URL and nothing is uploaded twice. Its
+        // effects and keyframes come too: those are timed relative to the clip,
+        // so they mean the same thing wherever it sits.
+        next.push({ ...f, id: copyId, start_ms: Math.max(0, start + delta) });
+        made.push({ kind: "frame", id: copyId });
+        // ⚠ A TRANSITION MOVES TO THE COPY ONLY WHEN THE COPY BUTTS UP AGAINST
+        // THE ORIGINAL. A transition is anchored to the clip it FOLLOWS, so when
+        // the copy lands exactly at the original's end the transition would
+        // otherwise dissolve between two identical pictures and be invisible —
+        // the reason `duplicateFrame` re-anchors too. When the block is longer
+        // than this clip the copy lands somewhere else entirely, the original's
+        // cut is still a cut between two different shots, and moving the
+        // transition off it would take away a dissolve nobody touched.
+        if (delta === length) reanchor.set(f.id, copyId);
+      }
+      setFrames(next);
+      if (reanchor.size) {
+        setTransitions((list) =>
+          list.map((t) =>
+            reanchor.has(t.after_frame_id)
+              ? { ...t, after_frame_id: reanchor.get(t.after_frame_id) }
+              : t
+          )
+        );
+      }
+    }
+
+    // A caption, a shape and an overlay picture are the same three fields here,
+    // so they are one function rather than three that drift.
+    //
+    // ⚠ AND A COPY OF A GENERATED CAPTION IS A TYPED ONE, which falls out of
+    // `newId()` and is worth saying out loud because it is load-bearing: a caption
+    // counts as generated by its ID PREFIX (`isGeneratedCaption`), and the next
+    // captions or voiceover run replaces every clip that has it. A copy that kept
+    // the prefix would be swept away by a pass the user had no reason to connect
+    // to it. Duplicating one is how you keep a line the machine wrote.
+    const copyTimed = (list, kind) => {
+      const ids = idsOf(live, kind);
+      if (!ids.size) return null;
+      const copies = list
+        .filter((c) => ids.has(c.id))
+        .map((c) => ({
+          ...c,
+          id: newId(),
+          group_id: regroup(c),
+          start_ms: Math.max(0, Math.round(c.start_ms || 0)) + delta,
+        }));
+      for (const c of copies) made.push({ kind, id: c.id });
+      return [...list, ...copies];
+    };
+    const nextTexts = copyTimed(texts, "text");
+    if (nextTexts) setTexts(nextTexts);
+    const nextShapes = copyTimed(shapes, "shape");
+    if (nextShapes) setShapes(nextShapes);
+    const nextOverlays = copyTimed(overlays, "overlay");
+    if (nextOverlays) setOverlays(nextOverlays);
+
+    const audioIds = idsOf(live, "audio");
+    if (audioIds.size) {
+      const copies = audioTracks
+        .filter((a) => audioIds.has(clipId(a)))
+        .map((a) => ({
+          ...a,
+          // ⚠ AN EXPLICIT `id` IS NOT OPTIONAL HERE. `clipId` falls back to the
+          // UPLOAD for a clip that has no id of its own (a project older than the
+          // razor), so a copy without one would answer to the same key as the
+          // thing it was copied from — select one and you have both, cut one and
+          // the razor picks whichever it found last.
+          id: newId(),
+          group_id: regroup(a),
+          start_ms: Math.max(0, trackStartMs(a) + delta),
+        }));
+      for (const a of copies) made.push({ kind: "audio", id: a.id });
+      // ⚠ THE AUDIO CAP IS NOT IN THE WAY, and it should not be: `audioFileCount`
+      // counts distinct UPLOADS, and a copy plays the file the original already
+      // brought in. Duplicating a clip adds no file, exactly as razoring one
+      // does not — same reasoning, same place.
+      setAudioTracks([...audioTracks, ...copies]);
+    }
+
+    if (!made.length) return;
+    selectMany(made);
+    // ⚠ AFTER `selectMany`, WHICH WRITES A NOTICE OF ITS OWN. "3 clips selected"
+    // is true and is not the news; what just happened is that they were made.
+    // ⚠ AND IT SAYS WHERE THEY WENT, because on a drag that is the one thing the
+    // user cannot check at a glance: the copies are selected and the originals are
+    // not, so if the drop was off by a second the notice names the second.
+    setNotice(
+      `Duplicated ${selectionLabel(live)} — the cop${
+        made.length === 1 ? "y is" : "ies are"
+      } ${
+        dragged
+          ? `at ${formatTime(Math.max(0, blockStart + delta))}`
+          : `right after the original${live.length === 1 ? "" : "s"}`
+      } and selected, so dragging again moves ${made.length === 1 ? "it" : "them"}.${
+        locked.length ? ` ${locked.length} left alone — locked row.` : ""
+      }`
+    );
+  }
+
+  /**
+   * AN ALT-DRAG ON A CLIP FINISHED — the timeline's report, turned into copies.
+   *
+   * `deltaMs` is how far the drag travelled, snapped; it is where the copies go.
+   *
+   * ⚠ THE SELECTION DECIDES HOW MUCH, and the timeline cannot: it knows which bar
+   * was pressed, the document knows what is selected and what is grouped WITH it.
+   * Three cases, one rule — "duplicate what a drag here would have moved":
+   *
+   *   · the clip is one of several selected → the whole selection, so alt-dragging
+   *     any member of a marquee copies the lot, exactly as dragging it moves the lot;
+   *   · the clip is grouped → the whole group, because that is what clicking it
+   *     selects (`expandGroup`) and a gesture that copied half a group would be
+   *     the one place in the editor where a group is not one thing;
+   *   · otherwise → just it.
+   */
+  function duplicateAt(kind, id, deltaMs = null) {
+    const inSelection = hasItem(liveSelection, kind, id);
+    duplicateMany(
+      inSelection && liveSelection.length > 1
+        ? liveSelection
+        : expandGroup({ kind, id }, groupPools),
+      deltaMs
     );
   }
 
@@ -4580,6 +4906,16 @@ export default function AnimaticEditor({
     if (selectedTextId) textAreaRef.current?.focus();
   }, [selectedTextId]);
 
+  // The ✨ dialog's live prompt box — on open, and again on every tab switch.
+  // ⚠ IT REPLACES `autoFocus`, which cannot be used here: both tab bodies are
+  // mounted together so the card can size itself to the taller one, and two
+  // `autoFocus` boxes in one tree hand the caret to whichever mounted last.
+  useEffect(() => {
+    if (!imgGen) return;
+    const box = imgGenTab === "image" ? imgGenBoxRef.current : vidGenBoxRef.current;
+    box?.focus({ preventScroll: true });
+  }, [imgGen, imgGenTab]);
+
   // ⚠ `track` IS A PARAMETER on all three of these, not a ref they reach for.
   // See `pendingPictureTrack` for what reaching for it cost.
   //
@@ -5518,6 +5854,102 @@ export default function AnimaticEditor({
   }
 
 
+
+  /**
+   * The still a video render starts from — uploaded the moment it is chosen.
+   *
+   * ⚠ UPLOADED NOW, NOT AT RENDER TIME, so the render request carries an id
+   * rather than a file and the server can check the picture exists BEFORE it
+   * quotes a price for it. It is an ordinary animatic image upload, which also
+   * means it survives in the project if the user closes the dialog and comes
+   * back.
+   */
+  async function pickVideoSource(fileList) {
+    const file = Array.from(fileList || []).find((f) => kindOf(f) === "image");
+    if (!file) {
+      setNotice("A starting frame has to be a picture — that file isn't one.");
+      return;
+    }
+    setVidGenUploading(true);
+    setError("");
+    try {
+      const res = await api.uploadAnimaticImages(animaticId, [file]);
+      const item = (res.items || [])[0];
+      if (!item?.upload_id) throw new Error(res.rejected?.[0] || "That picture could not be read.");
+      const path = `/animatics/${animaticId}/media/${item.upload_id}`;
+      // A small proxy, not the full-size picture: this is a 3rem thumbnail and
+      // the original may be 4K. Same `maxEdge` the Media library's cards use.
+      let blob = "";
+      try {
+        blob = await api.fetchAnimaticMedia(path, LIBRARY_MAX_EDGE);
+      } catch {
+        /* No thumbnail is a cosmetic loss — the render still has its picture. */
+      }
+      setVidGenSource((was) => {
+        // ⚠ RETIRE THE ONE IT REPLACES. Picking a second starting frame without
+        // this leaks an object URL per pick, for the life of the tab.
+        if (was?.blob) retireBlob(was.blob);
+        return {
+          upload_id: item.upload_id,
+          name: item.filename || "starting frame",
+          url: path,
+          blob,
+        };
+      });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setVidGenUploading(false);
+    }
+  }
+
+  /**
+   * Ask what the video would cost. FREE — this is the call that fills the
+   * confirm dialog, and no button in this editor renders anything directly.
+   */
+  async function askToGenerateVideo() {
+    if (!vidGenPrompt.trim() || vidGenBusy) return;
+    setVidGenBusy(true);
+    setError("");
+    try {
+      const estimate = await api.estimateGenerateVideo(animaticId, {
+        prompt: vidGenPrompt.trim(),
+        sourceUploadId: vidGenSource?.upload_id || "",
+        render: vidGenRender,
+      });
+      setVidGenConfirm({ estimate });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setVidGenBusy(false);
+    }
+  }
+
+  /** The only place the ✨ Video spends. Reached solely from the confirm. */
+  async function doGenerateVideo() {
+    if (!vidGenConfirm) return;
+    setVidGenBusy(true);
+    setVidGenConfirm(null);
+    try {
+      await api.generateAnimaticVideo(animaticId, {
+        prompt: vidGenPrompt.trim(),
+        sourceUploadId: vidGenSource?.upload_id || "",
+        render: vidGenRender,
+      });
+      setImgGen(null);
+      // ⚠ THE SAME `animating` FLAG THE ✨ ANIMATE PATH USES, which is what puts
+      // this render on the SAME poll and the same self-heal. A second mechanism
+      // for "a Veo render is in flight" is a second thing that can lose one.
+      setAnimating(true);
+      setAnimateProgress({ percent: 0, message: "Starting…" });
+      setNotice("Generating a video with Veo — this takes a couple of minutes.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setVidGenBusy(false);
+    }
+  }
+
   // --------------------------------------- generate a shot beside another one
   // ⚠ THE SECOND PATH IN THIS EDITOR THAT CALLS A MODEL FROM THE TIMELINE, and
   // unlike ✨ Animate it is not metered per second, so it does not go through a
@@ -5740,9 +6172,16 @@ export default function AnimaticEditor({
    * brief is the sentence about to be typed. The only read is "which model", and
    * it is cached for the session because it cannot change under us.
    */
-  function openImageGen() {
+  function openImageGen(tab = "image") {
     setImgGen({ at: timeRef.current });
+    setImgGenTab(tab === "video" ? "video" : "image");
     setImgGenPrompt("");
+    // ⚠ THE VIDEO HALF IS RESET TOO, WHATEVER TAB IS OPENING. Both live in one
+    // dialog, so a prompt left in the tab you did not open is a prompt you
+    // cannot see — and on the Video tab that is a prompt you could pay for.
+    setVidGenPrompt("");
+    setVidGenSource(null);
+    setVidGenConfirm(null);
     // The project's own shape is the sensible default for a picture going into
     // this film; the picker offers the rest.
     setImgGenAspect(settings.aspect_ratio || "16:9");
@@ -6034,6 +6473,92 @@ export default function AnimaticEditor({
     [animaticId, setAssets, setFrames, setTexts, setShapes, setOverlays, setAudioTracks]
   );
 
+
+  /**
+   * A RENDER THAT WAS NEVER OF A CLIP GOES ON THE PLAIN VIDEO ROW.
+   *
+   * The Media pane's ✨ Video renders from a sentence, so there is no panel for
+   * it to sit over and no shot for it to be a take OF. What it IS, from the
+   * moment it lands, is a video file in this project — so it is placed exactly
+   * as a dropped MP4 is: `newVideoClip`, appended to the end of the Video row,
+   * and a library card beside it.
+   *
+   * ⚠ APPENDED, NOT RIPPLED. `start_ms: null` means "after the last clip on my
+   * track" (see `frameSpans`), which is what a file dropped on that row already
+   * does. Nothing else on the timeline moves: this clip is not part of the
+   * board's cut and pushing the film along for it would be an edit nobody asked
+   * for — the whole reason the ✨ Animate path ripples is that its clip has to
+   * stay lined up with the panel underneath it, and this one has no panel.
+   *
+   * ⚠ AND IT IS `newVideoClip`, NOT A HAND-WRITTEN RECORD. Writing one out by
+   * hand has cost this project a missing `url` twice (see that function's own
+   * note) — a paid render that sat on its loading spinner in Media for ever.
+   */
+  const attachGeneratedVideo = useCallback(
+    (clip) => {
+      if (!clip?.upload_id) return;
+      const rows = layersRef.current || [];
+      const existing = rows.find((l) => rowKindOrLegacy(l.kind) === "video");
+      let track = existing ? Number(existing.track) || 0 : null;
+      if (track === null) {
+        // No plain Video row yet — make one, the same way an upload does. ⚠ The
+        // ref is written as well as the state so a second clip landing in the
+        // same tick finds this row instead of making another.
+        const used = [
+          ...pictureTracks(framesRef.current),
+          ...rows.filter((l) => ROW_KIND[l.kind]).map((l) => Number(l.track) || 0),
+        ];
+        const next = Math.max(...used) + 1;
+        if (next > MAX_PICTURE_TRACK) {
+          // ⚠ SAY THE RENDER IS SAFE. It is paid for and sitting on the server
+          // as an ordinary upload; what failed is finding it a row.
+          setNotice(
+            `The video is safe in Media, but there is no room for another picture row — ` +
+              `a project can hold ${MAX_PICTURE_TRACK + 1}.`
+          );
+          setAssets((list) =>
+            mergeAssets(list, [
+              assetFromFrame(
+                {
+                  kind: "video",
+                  src: { kind: "video", upload_id: clip.upload_id },
+                  label: clip.label || "",
+                  duration_ms: clip.duration_ms || 0,
+                  out_ms: clip.duration_ms || null,
+                },
+                newId()
+              ),
+            ])
+          );
+          return;
+        }
+        track = next;
+        const record = {
+          id: newId(),
+          kind: "video",
+          name: rowKindName("video", videoTracks.length),
+          track,
+        };
+        layersRef.current = [...rows, record];
+        setLayers((list) => [...list, record]);
+      }
+
+      const made = {
+        ...newVideoClip(clip.upload_id, clip.duration_ms, clip.label || "", animaticId),
+        track,
+        // Null, not a number: "after the last clip on this row". See the note
+        // above on why this appends rather than ripples.
+        start_ms: null,
+      };
+      const next = [...framesRef.current, made];
+      framesRef.current = next;
+      setFrames(next);
+      addToLibrary([assetFromFrame(made, newId())]);
+      setSelectedId(made.id);
+    },
+    [animaticId, addToLibrary, setAssets, setFrames, setLayers, videoTracks.length]
+  );
+
   /**
    * Put every finished render where it belongs, and say whether any is still going.
    *
@@ -6075,6 +6600,23 @@ export default function AnimaticEditor({
           continue;
         }
         if (clip.status !== "ready" || !clip.upload_id) continue;
+        // ⚠ A RENDER THAT WAS NEVER OF A CLIP. The Media pane's ✨ Video renders
+        // from a sentence, so its record carries no `frame_id` at all — it is
+        // not a take of anything on the timeline and has no panel to sit over.
+        // It lands on the plain Video row like a dropped file, which is what it
+        // is from this point on. Told apart from "the frame has since been
+        // deleted" by asking whether one was ever NAMED, not by whether one is
+        // findable: those are different events and only one of them is a loss.
+        if (!clip.frame_id) {
+          veoHandledRef.current.add(clip.id);
+          const already = (framesRef.current || currentFrames || []).some(
+            (f) => f.src?.upload_id === clip.upload_id
+          );
+          if (already) continue;
+          attachGeneratedVideo(clip);
+          attached += 1;
+          continue;
+        }
         const frame = (currentFrames || []).find((f) => f.id === clip.frame_id);
         if (!frame) {
           // The frame it was generated from has gone. The clip is not lost —
@@ -6098,7 +6640,7 @@ export default function AnimaticEditor({
       }
       return { attached, failure, pending, shifted };
     },
-    [attachVeoClip, boardVideoTrack]
+    [attachVeoClip, attachGeneratedVideo, boardVideoTrack]
   );
 
   /**
@@ -7568,9 +8110,13 @@ export default function AnimaticEditor({
                 type="button"
                 className="an-asset-ai"
                 disabled={uploading || imgGenBusy}
-                onClick={openImageGen}
-                title="Describe a picture and have Gemini draw it — it lands in Media and on the Images layer"
-                aria-label="Generate an image with AI"
+                /* ⚠ CALLED WITH A TAB, NOT HANDED THE EVENT. `onClick={openImageGen}`
+                   passes a MouseEvent as the tab name — harmless, because it
+                   falls through to "image", and exactly the kind of accident
+                   that stops being harmless the day a third tab is added. */
+                onClick={() => openImageGen("image")}
+                title="Describe a picture or a shot and have AI make it — an image lands on the Images layer, a video on the Video layer"
+                aria-label="Generate an image or a video with AI"
               >
                 <Icon name="sparkle" size="1.15em" />
               </button>
@@ -8459,6 +9005,9 @@ export default function AnimaticEditor({
             selection={liveSelection}
             onSelectMany={selectMany}
             onToggleSelect={toggleSelect}
+            /* An alt-DRAG on a clip makes copies at the delta it travelled. How
+               MANY is decided here and not there — see `duplicateAt`. */
+            onDuplicateClip={duplicateAt}
             onMoveSelection={moveSelection}
             onMoveToLane={moveClipToLane}
             selectionFloorMs={selectionFloorMs}
@@ -9053,11 +9602,67 @@ export default function AnimaticEditor({
           is exactly why this is not the same component with five props. */}
       {imgGen && (
         <div className="modal-overlay" onClick={() => setImgGen(null)}>
-          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+          {/* ⚠ ONE SIZE FOR BOTH TABS. The Video half is the taller of the two
+              by four rows, so switching tabs resized the card under the pointer
+              — reported as "both panel size chnage when i click AI Image and AI
+              Video keep same size panel". `.an-gen-modal` is a flex column with
+              a floor high enough for the taller half; the body takes the slack
+              and the footer sits on the bottom edge in both. */}
+          <div
+            className="card an-name-modal an-gen-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button className="modal-close" onClick={() => setImgGen(null)}>
               ✕
             </button>
-            <h2>Generate an image</h2>
+            <h2>Generate with AI</h2>
+
+            {/* ⚠ TWO TABS, ONE PLACE — "so user choose easily in one place".
+                They share the card and the Model row and very little else,
+                because they are not two settings of one thing: an image is one
+                synchronous call costing a fraction of a cent, and a video is Veo
+                — minutes long, billed per second of output, and therefore priced
+                and confirmed before a single frame is rendered.
+                ⚠ IT IS `.an-tabs`, THE SAME STRIP AS Media / Shapes / Effects at
+                the top of the Media pane. A second tab style in the same editor
+                would read as a different mechanism. */}
+            <div className="an-tabs an-gen-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={imgGenTab === "image"}
+                className={`an-tab ${imgGenTab === "image" ? "on" : ""}`}
+                onClick={() => setImgGenTab("image")}
+              >
+                <Icon name="sparkle" /> AI Image
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={imgGenTab === "video"}
+                className={`an-tab ${imgGenTab === "video" ? "on" : ""}`}
+                onClick={() => setImgGenTab("video")}
+              >
+                <Icon name="sparkle" /> AI Video
+              </button>
+            </div>
+
+            {/* ⚠ BOTH BODIES ARE RENDERED, STACKED IN ONE GRID CELL, and that
+                is what makes the card ONE SIZE on both tabs. It was a
+                `min-height` with a measured number in it, which is the obvious
+                fix and the wrong one: the floor lifted the shorter tab but could
+                not shrink the taller, so the two still differed — reported twice
+                — and any row added to either half would have silently put them
+                out of step again. Sharing a grid cell makes the cell the height
+                of the TALLER pane, for ever, with no number to maintain.
+                ⚠ THE HIDDEN ONE IS `visibility: hidden`, NOT `display: none`.
+                Hiding it properly would take its height out of the cell, which
+                is the whole mechanism; `visibility` keeps the box and its
+                geometry while removing it from the page — and, importantly, from
+                the tab order and the accessibility tree, so there is no way to
+                type into the half you cannot see. */}
+            <div className="an-gen-body">
+            <div className="an-gen-pane" data-on={imgGenTab === "image"} aria-hidden={imgGenTab !== "image"}>
             <p className="muted">
               Describe any picture and Gemini draws it. It lands in Media and on
               the Images layer.
@@ -9065,7 +9670,7 @@ export default function AnimaticEditor({
 
             <textarea
               className="an-tp-text"
-              autoFocus
+              ref={imgGenBoxRef}
               rows={3}
               value={imgGenPrompt}
               placeholder="e.g. a hand-painted title card, cracked gold lettering on deep navy — or a rain-soaked neon alley at night"
@@ -9142,17 +9747,257 @@ export default function AnimaticEditor({
               </div>
             )}
 
-            <div className="an-name-actions">
+            </div>
+
+            <div className="an-gen-pane" data-on={imgGenTab === "video"} aria-hidden={imgGenTab !== "video"}>
+                {/* ⚠ THE ONE TAB IN THIS DIALOG THAT SPENDS REAL MONEY. Veo is
+                    billed per second of OUTPUT — roughly $0.24 to $3+ for eight
+                    seconds — so this half follows the discipline every paid path
+                    in this editor follows: the button below asks the server what
+                    it would cost, and nothing is submitted until that number has
+                    been on screen and accepted. */}
+                <p className="muted">
+                  Describe a shot and Veo films it. Add a starting picture and it
+                  moves that instead. It lands in Media and on the Video layer.
+                </p>
+
+                <textarea
+                  className="an-tp-text"
+                  ref={vidGenBoxRef}
+                  rows={3}
+                  value={vidGenPrompt}
+                  placeholder="e.g. a slow dolly along a rain-soaked street at night, neon reflections sliding over the wet tarmac"
+                  maxLength={2000}
+                  onChange={(e) => setVidGenPrompt(e.target.value)}
+                />
+
+                {/* THE STARTING FRAME — optional, which is the whole difference
+                    between this and ✨ Animate. With one it is image-to-video and
+                    the picture is what moves; without one Veo renders from the
+                    words alone. ⚠ IT IS UPLOADED THE MOMENT IT IS CHOSEN, so the
+                    server can check it exists before it quotes a price for it. */}
+                <div className="an-vid-source">
+                  {vidGenSource ? (
+                    <>
+                      {/* ⚠ AN AUTHED BLOB, NOT A BARE PATH. Every picture in
+                          this app is fetched with the bearer token and shown as
+                          an object URL — an `<img src="/animatics/…">` would
+                          simply 401. `pickVideoSource` fetches it once, right
+                          after the upload, and hands it over on the record. */}
+                      {vidGenSource.blob && (
+                        <img
+                          className="an-vid-source-thumb"
+                          src={vidGenSource.blob}
+                          alt=""
+                        />
+                      )}
+                      <span className="an-vid-source-name">{vidGenSource.name}</span>
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        onClick={() => {
+                          retireBlob(vidGenSource.blob);
+                          setVidGenSource(null);
+                        }}
+                        title="Render from the words alone instead"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="an-vid-source-add"
+                      disabled={vidGenUploading}
+                      onClick={() => vidGenInputRef.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        if (e.dataTransfer?.files?.length) {
+                          e.preventDefault();
+                          pickVideoSource(e.dataTransfer.files);
+                        }
+                      }}
+                    >
+                      <span className="an-asset-plus">＋</span>
+                      {/* ⚠ SHORT. It read "Add a starting picture, or drop one
+                          here — optional", which is a sentence in a control and
+                          the widest line in the card. What it does is legible
+                          from the ＋ and four words; that it is optional is said
+                          by the fact that the button below works without it. */}
+                      {vidGenUploading ? "Adding the picture…" : "Add or drop image"}
+                    </button>
+                  )}
+                  <input
+                    ref={vidGenInputRef}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={(e) => {
+                      pickVideoSource(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Quality</span>
+                  <select
+                    className="an-select"
+                    value={vidGenRender.tier}
+                    onChange={(e) =>
+                      setVidGenRender((r) => ({ ...r, tier: e.target.value }))
+                    }
+                  >
+                    <option value="lite">Lite — cheapest</option>
+                    <option value="fast">Fast — the usual choice</option>
+                    <option value="standard">Standard — dearest</option>
+                  </select>
+                </div>
+
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Size</span>
+                  <select
+                    className="an-select"
+                    value={vidGenRender.resolution}
+                    onChange={(e) =>
+                      setVidGenRender((r) => ({ ...r, resolution: e.target.value }))
+                    }
+                  >
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                  </select>
+                </div>
+
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Length</span>
+                  <select
+                    className="an-select"
+                    value={vidGenRender.duration_seconds}
+                    onChange={(e) =>
+                      setVidGenRender((r) => ({
+                        ...r,
+                        duration_seconds: Number(e.target.value),
+                      }))
+                    }
+                  >
+                    <option value={4}>4 seconds</option>
+                    <option value={6}>6 seconds</option>
+                    <option value={8}>8 seconds</option>
+                  </select>
+                </div>
+
+                {/* ⚠ THE SHAPE IS THE PROJECT'S AND IS NOT OFFERED. Veo is asked
+                    for `settings.aspect_ratio` server-side, the same value
+                    ✨ Animate sends, so a generated clip cannot arrive a
+                    different shape from the film it is going into. */}
+                <div className="an-prop-row">
+                  <span className="an-prop-label">Shape</span>
+                  <span className="an-select an-select-static">
+                    {settings.aspect_ratio}
+                    <span className="an-shot-provider"> · the project's</span>
+                  </span>
+                </div>
+
+                <label className="an-check">
+                  <input
+                    type="checkbox"
+                    checked={vidGenRender.generate_audio}
+                    onChange={(e) =>
+                      setVidGenRender((r) => ({ ...r, generate_audio: e.target.checked }))
+                    }
+                  />
+                  Let Veo generate sound too (costs more)
+                </label>
+
+            </div>
+            </div>
+
+            {/* ⚠ ONE FOOTER, OUTSIDE THE TABS. Cancel is the same button in both
+                halves, and two copies of it is two places for it to drift; more
+                to the point, a footer INSIDE each tab body cannot be pinned to
+                the bottom of the card, which is what stops the card resizing.
+                Only the primary button differs — and it differs in the way that
+                matters: the image half GENERATES, the video half only asks what
+                it would cost. */}
+            <div className="an-name-actions an-gen-actions">
               <button type="button" className="btn ghost" onClick={() => setImgGen(null)}>
+                Cancel
+              </button>
+              {imgGenTab === "image" ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!imgGenPrompt.trim() || imgGenBusy}
+                  onClick={doGenerateImage}
+                >
+                  {imgGenBusy ? "Drawing the image…" : "Generate the image"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!vidGenPrompt.trim() || vidGenBusy || vidGenUploading}
+                  onClick={askToGenerateVideo}
+                >
+                  {vidGenBusy ? "Checking the price…" : "See the price →"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- The ✨ Video confirm: the last thing before money moves ------- */}
+      {/* Same shape as ✨ Animate's, deliberately — this is the one screen in
+          the app where a familiar layout is worth more than a novel one. */}
+      {vidGenConfirm && (
+        <div className="modal-overlay" onClick={() => setVidGenConfirm(null)}>
+          <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setVidGenConfirm(null)}
+            >
+              ✕
+            </button>
+            <h2>Generate this video?</h2>
+
+            <div className="fv-confirm-price">
+              <span className="fv-confirm-usd">
+                ~${vidGenConfirm.estimate.usd.toFixed(2)}
+              </span>
+              <span className="tiny muted">estimated</span>
+            </div>
+
+            <p className="muted">
+              {vidGenConfirm.estimate.seconds}s of video at {vidGenRender.tier} /{" "}
+              {vidGenRender.resolution}
+              {vidGenRender.generate_audio ? " with sound" : ", silent"},{" "}
+              {vidGenSource ? "starting from your picture" : "from your words alone"}.
+            </p>
+            <p className="tiny muted">
+              An estimate from list prices, not a quote. Google bills the actual
+              amount, and you are only charged for renders that succeed.
+            </p>
+
+            <div className="an-name-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setVidGenConfirm(null)}
+              >
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn primary"
-                disabled={!imgGenPrompt.trim() || imgGenBusy}
-                onClick={doGenerateImage}
+                disabled={vidGenBusy}
+                onClick={doGenerateVideo}
               >
-                {imgGenBusy ? "Drawing the image…" : "Generate the image"}
+                <Icon name="play" />{" "}
+                {vidGenBusy
+                  ? "Starting…"
+                  : `Generate — ~$${vidGenConfirm.estimate.usd.toFixed(2)}`}
               </button>
             </div>
           </div>

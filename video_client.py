@@ -342,9 +342,10 @@ def _extract_bytes(client, operation) -> bytes:
 
 
 def render_shot(
-    image_bytes: bytes,
+    image_bytes: bytes | None,
     prompt: str,
     *,
+    text_only: bool = False,
     provider: str | None = None,
     tier: str = "fast",
     aspect_ratio: str = "16:9",
@@ -359,13 +360,21 @@ def render_shot(
     progress_cb=None,
     cancel_check=None,
 ) -> bytes:
-    """Turn ONE picture + a motion prompt into an MP4, and return its bytes.
+    """Turn a picture + a motion prompt into an MP4, and return its bytes.
+
+    With `text_only=True` and no picture it renders from the prompt alone —
+    the same call, the same poll, the same price per second.
 
     Blocks for the whole render (typically 1–3 minutes). Call it from a worker
     thread, never from a request handler.
 
     Args:
         image_bytes: the starting frame — a storyboard panel or final-art still.
+                     May be None WITH `text_only=True`, which is Veo rendering
+                     from the prompt alone (the Media pane's ✨ Video).
+        text_only: say so on purpose when there is no starting frame. Without it
+                   a missing image is an error, so a still that failed to load
+                   can never turn into a paid text-to-video render by accident.
         prompt: what should MOVE. Describe motion and camera, not the picture:
                 the picture is already there.
         provider: "vertex" or "gemini". Defaults to VIDEO_PROVIDER (or "vertex").
@@ -395,7 +404,13 @@ def render_shot(
         raise VideoGenerationError(
             f"Resolution must be one of {ALLOWED_RESOLUTIONS}; got {resolution!r}."
         )
-    if not image_bytes:
+    # ⚠ THE MISSING IMAGE IS STILL AN ERROR UNLESS THE CALLER SAID SO. Veo will
+    # happily render from a prompt alone, and that is a real feature (the Media
+    # pane's ✨ Video with no starting still) — but for every other caller here
+    # the picture is the whole point, and a still that failed to load must never
+    # become a paid text-to-video render of the motion notes. So text-only is
+    # something a caller ASKS for, never something it falls into.
+    if not image_bytes and not text_only:
         raise VideoGenerationError("No source image for this shot.")
     if not (prompt or "").strip():
         raise VideoGenerationError("This shot has no motion prompt — say what should move.")

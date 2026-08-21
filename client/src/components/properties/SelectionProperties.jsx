@@ -78,7 +78,7 @@ export default function SelectionProperties({
         title="What's selected"
         /* The rows here are a generated tally, so there is no one property this
            belongs to — it is about the selection itself. */
-        info="Drag any one of them to move them all. Shift-click a clip to add it or take it out; drag a box over the empty part of a lane to select more."
+        info="Drag any one of them to move them all. Shift-click a clip to add it or take it out; drag a box over the empty part of a lane to select more. Alt-drag any one of them to duplicate the whole selection — the copies land where you let go, keeping the spacing."
       >
         {KINDS.filter((kind) => counts[kind]).map((kind) => (
           <PropRow key={kind} label={ROWS[kind].icon}>
