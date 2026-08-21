@@ -543,28 +543,34 @@ def main():
             # -----------------------------------------------------------------
             # A CLIP ONLY MOVES TO A ROW OF ITS OWN KIND
             # -----------------------------------------------------------------
-            # ⚠ THIS CHECK USED TO EXPECT THE OPPOSITE, and the change is
-            # deliberate rather than a regression. It asserted that "a still
-            # dragged up onto the footage track goes there", which was true while
-            # any picture row took any picture clip. The rows are STRICT now — the
-            # split above left `frames:0` holding stills and `frames:1` holding
-            # footage, and each row only accepts its own kind (`clipRowKind` /
-            # `ROW_TAKES`). Asked for directly: "i only move each same layer clip
-            # like image move in only image layer and video move video any layer".
+            # ⚠ THIS CHECK HAS NOW SWUNG BACK, and the swing is the change rather
+            # than a regression. It first asserted "a still dragged up onto the
+            # footage track goes there"; then, when the picture rows became
+            # STRICT, that a still and footage each stayed on the row of their own
+            # kind. What made those two rows different KINDS was the `stills` row
+            # — and the `stills` row is gone: a picture you upload goes to the
+            # overlay "Images" lane now ("remove still layer … image shoul come in
+            # image layer not sitll layer"), so every row left in the CUT that is
+            # not the storyboard's is one kind, `video`, holding footage and
+            # full-frame stills alike.
             #
-            # Both directions are checked, because a rule that only holds one way
-            # round is not the rule — and a refused drag must leave the timeline
-            # exactly as it was rather than half-moving anything.
-            print("\nA picture only moves to a row of its own kind")
+            # ⚠ SO THE STRICT-ROWS RULE IS NOT WEAKER, IT MOVED. "Image moves only
+            # in image layers" is true of the Images LANE now, whose clips are
+            # overlays and cannot reach a picture row at all (`laneMoveTarget`
+            # refuses a lane of another `kind` before it ever looks at `rowKind`),
+            # and of the two board rows, which `clipRowKind` still pins their clips
+            # to. What is left here is two rows of ONE kind, which a clip may cross
+            # — and crossing must re-time nothing.
+            print("\nThe two picture rows are one kind, so a clip may cross")
             before = page.evaluate("() => window.__probe.bars()")
             drag(page, '[data-sel="frame:p3"]', 0, dy=-40, lane_key="frames:1")
             after = page.evaluate("() => window.__probe.bars()")
             check(
-                "a still dragged onto the footage row is refused",
-                after["p3"]["lane"] == "frames:0",
+                "a still dragged onto the other picture row lands on it",
+                after["p3"]["lane"] == "frames:1",
                 f'landed on {after["p3"]["lane"]}',
             )
-            check("…and nothing moved on the way",
+            check("…and nothing was re-timed on the way",
                   moved(before, after) == [] and resized(before, after) == [],
                   f"moved {moved(before, after)}, resized {resized(before, after)}")
 
@@ -572,11 +578,11 @@ def main():
             drag(page, '[data-sel="frame:vid"]', 0, dy=40, lane_key="frames:0")
             after = page.evaluate("() => window.__probe.bars()")
             check(
-                "and footage dragged onto the stills row is refused too",
-                after["vid"]["lane"] == "frames:1",
+                "and footage dragged the other way lands too",
+                after["vid"]["lane"] == "frames:0",
                 f'landed on {after["vid"]["lane"]}',
             )
-            check("…and nothing moved on the way either",
+            check("…and nothing was re-timed on the way either",
                   moved(before, after) == [] and resized(before, after) == [],
                   f"moved {moved(before, after)}, resized {resized(before, after)}")
 

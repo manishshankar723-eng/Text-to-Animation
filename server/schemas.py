@@ -1148,14 +1148,18 @@ class AnimaticLayer(BaseModel):
     kind: str = Field(
         ...,
         description=(
-            "A PICTURE TRACK: 'board_image' | 'board_video' | 'stills' | 'video'. "
+            "A PICTURE TRACK: 'board_image' | 'board_video' | 'video'. "
             "Or an overlay/timed row: 'image' | 'text' | 'shape' | 'audio'. "
-            "'image' is pictures composited OVER the cut; the four picture kinds "
-            "are IN it."
+            "'image' is pictures composited OVER the cut; the three picture kinds "
+            "are IN it. ⚠ 'stills' is a RETIRED fourth picture kind — an uploaded "
+            "picture goes to an 'image' lane now — and it is still accepted here "
+            "because saved projects carry it; the editor reads one as 'video', "
+            "which is the row its clips already play on (`rowKindOrLegacy` in "
+            "client/src/animatic/scene.js)."
         ),
     )
     name: str = ""
-    # WHICH picture track this row is — the four picture kinds only, None
+    # WHICH picture track this row is — the picture kinds only, None
     # everywhere else. Not an id, because `AnimaticFrame.track` is a number and
     # the two have to agree; this is the record for that number, not a second way
     # of naming it.

@@ -200,7 +200,35 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
+**Last updated:** 2026-08-21 — **AN UPLOADED PICTURE GOES TO THE **Images**
+LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD
+BUTTON** (user-reported, with two screenshots of the gutter). A Stills row was
+made FOR you the first time you uploaded a photo — and picture rows stack
+highest-draws-first, so it landed ABOVE the storyboard rows and one photo blanked
+out the opening seconds of the board. ⚠ **`stills` IS OUT OF `ROW_KINDS`**
+(`scene.js`), so the three rows left in the cut are the board's two and **Video**,
+and every door into "add a picture" — the Media pane's ＋, its drop card, a
+library card's ＋, a double-click on one — routes through ONE new rule,
+`belongsOnImageLane`, onto the default **Images** lane as an overlay.
+⚠ **A PICTURE CAN STILL BE PUT IN THE CUT ON PURPOSE**: the Video row takes
+footage and full-frame stills alike (`ROW_TAKES.video`), which is what the ＋ Add
+layer menu has always claimed — what went is the row that appeared unasked.
+⚠ **AND NOTHING SAVED CHANGES**: `rowKindOrLegacy` reads a stored
+`kind: "stills"` record as the plain video row its clips already play on, and
+`clipRowKind` answers `"video"` for a plain picture, so old projects keep their
+photos, their timing and their export byte-for-byte — only the gutter label
+changes. ⚠ **THE SECOND ASK IS AN ABSENCE**: the empty band of a lane used to BE
+an add button (a full-width invisible control that opened a file dialog);
+`emptyBand` renders nothing now, so the blank part of a row scrubs and marquees
+like the rest of it and the only two ways in are the Media pane and the row's ＋
+in the gutter — "only keep media and layer ＋ icon". Covered by
+`tests/image_lane_routing_check.py` — 26 checks, node + source, no browser.
+⚠ **`tests/editor_picture_tracks_check.py` WAS UPDATED AND NOT RUN** — its
+"a clip only moves to a row of its own kind" pair asserted the Stills/Video split
+that no longer exists and now asserts the one-kind rule; the Playwright suites are
+run on request in this project, so that change is unverified.
+
+**Previously:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
 PUSHES THE PANELS AFTER IT ALONG** (user-reported, with three screenshots). A Veo
 render is as long as Veo was ASKED for — 4s of footage over a 2s hold is the
 ordinary case — so the second render, which starts where ITS panel starts, used to
@@ -218,7 +246,7 @@ START**, so a nudge the user gave it survives. ⚠ **PAIRED BY THE BOARD REFEREN
 `assetKey`, which keys a render by its upload. Covered by
 `tests/veo_ripple_check.py` — 20 checks, node + source, no browser.
 
-**Previously:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
+**Before that:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
 PLACES** (user-specified). A ⬇ on its Media card and **Download** in a
 right-click menu beside its bar on the timeline. ⚠ **THE ⬇ IS FIRST IN THE
 CARD'S TOOL ROW** (⬇ ＋ ✕) so ＋ and ✕ stay in the same columns on every card —
@@ -1619,7 +1647,97 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT PUSHES THE PANELS AFTER IT ALONG (user-reported, with three screenshots)
+### 2026-08-21 (latest) — AN UPLOADED PICTURE GOES TO THE **Images** LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD BUTTON (user-reported, with two screenshots of the gutter)
+
+> "see when upload image in media so in timline image show Still layer and when i
+>  upload through image layer so i see this good but i wnat same in same like
+>  image layer only not need still layer remove still layer when user uplaod
+>  media or layer so image shoul come in image layer not sitll layer
+>
+>  and i wnat second things i lony upload media and layer + icon not in
+>  Background panel of clip remove this in time blank box layer only keep media
+>  and layer + icon"
+
+Two asks about the same gutter: **where an upload lands**, and **which controls
+may start one**.
+
+#### 1. The Stills row was not just a name — it was in the wrong place
+
+A `stills` picture row was created FOR the user the first time they uploaded a
+photo. Picture rows stack **highest draws first**, and that new row went in above
+the storyboard rows — so one dropped photo covered the opening seconds of the
+board. Uploading the same picture through the **Images** layer composites it OVER
+the cut at a third of the frame instead, which is the behaviour the report calls
+"good".
+
+- **`stills` is out of `ROW_KINDS`** (`client/src/animatic/scene.js`). The three
+  rows left in the cut are `board_image`, `board_video`, `video`. `ROW_KIND` in
+  `AnimaticEditor.jsx` lost its entry to match, and `LANE_HUE` in `Timeline.jsx`
+  lost its colour.
+- **One routing rule, `belongsOnImageLane(kind, fromBoard)`**, new in `scene.js`
+  beside the row kinds. Every door into "add a picture" asks it: the Media pane's
+  ＋ and the drop card beside it (`addAssets` with no row named), a library card's
+  ＋ and a double-click on one (`placeAsset`). A board panel and a **colour card**
+  are deliberately NOT overlays — the panel belongs to the storyboard rows, and a
+  colour card is full-frame and takes up time in the cut.
+- **A picture can still be put in the cut on purpose.** `ROW_TAKES.video` is
+  `["video", "image"]`, so aiming a file at the **Video** row — its ＋, or a drag
+  onto it — still makes a full-frame still there. That is what the ＋ Add layer
+  menu has always claimed the Video row is for; what went is the row that
+  appeared unasked. `addFiles` therefore stays alive and unchanged.
+- **The Media drop card's note now says where each kind goes** ("Video for the
+  video track · images for the Images layer · an MP3 for the audio") — the one
+  sentence on screen that could contradict where the clip appears.
+
+#### 2. Nothing saved changes — the migration is a READ, not a rewrite
+
+- **`rowKindOrLegacy`** (`scene.js`) reads a stored `kind: "stills"` layer record
+  as the plain video row its clips already sit on; `videoTracks` in the editor
+  goes through it and blanks the stored name ("Stills" names a kind that no
+  longer exists), so the row renumbers as "Video"/"Video 2".
+- **`cardRowKind` answers `"video"` for a plain picture.** A clip whose row kind
+  no longer existed would be unnameable by `dominantRowKind` and unmovable by
+  `laneMoveTarget`. The export reads a clip's `track` NUMBER and nothing else, so
+  every photo of every project made before this keeps its timing and its pixels.
+- `server/schemas.py` documents `stills` as a RETIRED fourth picture kind that is
+  still accepted, and says where it is read.
+- ⚠ **Consequence, recorded honestly:** the two picture rows a `▶⇧` split leaves
+  behind are now the SAME kind, so a still and a piece of footage may be dragged
+  between them. "Image moves only in image layers" is now carried by the Images
+  LANE (overlays cannot reach a picture row at all — `laneMoveTarget` refuses a
+  lane of another `kind`) and by the two board rows.
+
+#### 3. A blank lane is no longer a button
+
+The empty band of every row WAS its add control: a full-width, invisible button
+that opened a file dialog when clicked, and that swallowed `pointerdown` so an
+empty row could not be scrubbed or marqueed. `emptyBand` in `Timeline.jsx` renders
+`null` now. The two ways in are the Media pane and the row's own ＋ in the gutter
+— "only keep media and layer ＋ icon" — and the blank part of a row behaves like
+the rest of it. `.tl-track-add` in `animatic-text.css` is kept, unreferenced, with
+a note saying so.
+
+#### Files
+
+`client/src/animatic/scene.js`, `client/src/components/AnimaticEditor.jsx`,
+`client/src/components/Timeline.jsx`, `client/src/styles/animatic-text.css`,
+`server/schemas.py`, `tests/image_lane_routing_check.py` (new),
+`tests/editor_picture_tracks_check.py`.
+
+#### Verified
+
+- `python tests/image_lane_routing_check.py` — **26 checks, all pass** (node +
+  source, no browser).
+- `python tests/veo_download_check.py` and `python tests/veo_ripple_check.py` —
+  pass unchanged (both lean on `cardRowKind`).
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the Playwright suites. `tests/editor_picture_tracks_check.py`
+  was EDITED here — its "a clip only moves to a row of its own kind" pair
+  asserted the Stills/Video split that no longer exists and now asserts the
+  one-kind rule — and that edit is unverified. Browser tests are run on request
+  in this project.
+
+### 2026-08-21 — A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT PUSHES THE PANELS AFTER IT ALONG (user-reported, with three screenshots)
 
 > "when i generete image to veo video in timeline so shot 1 image so i get shot
 >  Veo video of Story..video layer in same place this is good but i again generate

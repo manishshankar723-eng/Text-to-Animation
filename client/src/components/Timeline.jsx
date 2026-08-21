@@ -145,13 +145,15 @@ const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overla
 // copy of "board_video means purple" is one copy too many — a Storyboard-video
 // head stroked orange over a row of purple renders is worse than no stroke.
 //
-// ⚠ `stills` AND `board_image` ARE BOTH PINK, for the reason `.tl-bar.is-still`
-// gives: the timeline's question is "is this moving?", and where a still came
-// from is the Media pane's filing rather than a third hue.
+// ⚠ `board_image` IS PINK AND SO IS THE OVERLAY `image` LANE, for the reason
+// `.tl-bar.is-still` gives: the timeline's question is "is this moving?", and
+// where a still came from is the Media pane's filing rather than a third hue.
+// ⚠ THERE IS NO `stills` ENTRY, because there is no Stills row — a picture you
+// upload goes to the overlay Images lane (`ROW_KINDS` in scene.js). A legacy
+// record naming one is read as a plain video row before it ever reaches here.
 const LANE_HUE = {
   board_image: "image",
   board_video: "veo",
-  stills: "image",
   video: "video",
 };
 const laneHue = (lane) => {
@@ -2792,7 +2794,7 @@ export default function Timeline({
   }
 
   /**
-   * The clickable band of a row with nothing on it.
+   * The band of a row with nothing on it — WHICH IS NOTHING AT ALL NOW.
    *
    * ⚠ IT IS BLANK, AND THAT IS THE POINT. Every empty row used to carry a line
    * of prose — "T No text yet — click to caption the shot at the playhead",
@@ -2801,24 +2803,22 @@ export default function Timeline({
    * directly: "remove information text look in blanck layer". An empty row is
    * now an empty row, which is also what it looks like in every NLE.
    *
-   * ⚠ NOTHING WAS LOST WITH THE TEXT. The whole band is still the row's add
-   * button, it still lights on hover, and what it does is on its `title` — the
-   * SAME string the row's ＋ carries in the gutter, so there is one sentence per
-   * lane instead of two that could drift apart.
+   * ⚠ AND IT IS NO LONGER A BUTTON EITHER. The whole band used to be the row's
+   * add control — a third door into "put something here", beside the Media pane
+   * and the row's own ＋ in the gutter — and it was invisible: a blank stretch of
+   * lane that opened a file dialog when you clicked it. Asked for by name: "i
+   * only upload media and layer ＋ icon, not in background panel of clip …
+   * only keep media and layer ＋ icon". Two doors, both of them things you can
+   * see.
+   *
+   * ⚠ WHAT THE EMPTY LANE DOES INSTEAD IS WHAT EVERY OTHER PART OF A LANE DOES.
+   * The button swallowed `pointerdown`, so on an empty row a click did not
+   * scrub and a drag did not start a marquee; with it gone the lane's own
+   * handlers see the press, which is the behaviour the occupied part of the same
+   * row has always had.
    */
-  function emptyBand(lane, count) {
-    if (count) return null;
-    const what = lane.add || LANE_ADD[lane.kind];
-    return (
-      <button
-        type="button"
-        className="tl-track-empty tl-track-add"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={() => onAddToLane(lane)}
-        title={what}
-        aria-label={what}
-      />
-    );
+  function emptyBand() {
+    return null;
   }
 
   function renderLane(lane) {

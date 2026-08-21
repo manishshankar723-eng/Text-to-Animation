@@ -35,11 +35,13 @@ import {
   LOOK_KINDS,
   TEXT_DEFAULTS,
   defaultFor,
+  belongsOnImageLane,
   cardRowKind,
   clipRowKind,
   dominantRowKind,
   isBoardRow,
   isVeoRender,
+  rowKindOrLegacy,
   ROW_TAKES,
   frameOrigin,
   frameSpans,
@@ -202,9 +204,15 @@ const MAX_PICTURE_TRACK = 15;
 // timeline, the editor and the exporter cannot disagree about which row a clip
 // belongs on.
 //
-// ⚠ THE FOUR ARE STRICT: a clip may only be dragged, dropped or imported onto a
+// ⚠ THE THREE ARE STRICT: a clip may only be dragged, dropped or imported onto a
 // row of its own kind. Asked for directly — "i only move each same layer clip
 // like image move in only image layer and video move video any layer".
+//
+// ⚠ AND THERE IS NO `stills` KIND ANY MORE — an uploaded picture goes to the
+// overlay "Images" lane, never onto a row in the cut. See `ROW_KINDS` and
+// `belongsOnImageLane` in scene.js for the whole of that decision; a legacy
+// `stills` record is read as a plain video row (`rowKindOrLegacy`), which is
+// what its clips already play as.
 //
 // ⚠ NEITHER BOARD ROW TAKES FILES (`takes: []`), and that is the point of them
 // being separate. They are filled by the storyboard import and by ✨ Animate;
@@ -236,19 +244,12 @@ const ROW_KIND = {
     hint: "Veo renders of your panels — each drawn OVER the panel it came from",
     add: "Animate a panel with ✨ to fill this row",
   },
-  stills: {
-    name: "Stills",
-    short: "Stills",
-    takes: ROW_TAKES.stills,
-    hint: "Full-frame photos in the cut, each placed on its own",
-    add: "Add images to the end of this row",
-  },
   video: {
     name: "Video",
     short: "Video",
     takes: ROW_TAKES.video,
-    hint: "Footage in the cut, each clip placed on its own",
-    add: "Add video to the end of this row",
+    hint: "Footage and full-frame stills in the cut, each placed on its own",
+    add: "Add video or full-frame images to the end of this row",
   },
 };
 
@@ -1711,7 +1712,13 @@ export default function AnimaticEditor({
   const videoTracks = useMemo(() => {
     const byTrack = new Map();
     for (const l of layers) {
-      if (!ROW_KIND[l.kind]) continue;
+      // ⚠ THROUGH `rowKindOrLegacy`, NOT A BARE LOOKUP. A project saved while
+      // Stills rows existed still carries `kind: "stills"` records, and dropping
+      // them here would make the row vanish from the gutter while its clips went
+      // on playing — a row you can neither empty nor delete. Read as the plain
+      // video row its clips already sit on instead. See `ROW_KINDS` in scene.js.
+      const rowKind = rowKindOrLegacy(l.kind);
+      if (!rowKind) continue;
       const track = Number(l.track);
       // A record with no usable track number describes no row. Dropped rather
       // than folded to 0, which would silently pile it onto the base track.
@@ -1719,15 +1726,17 @@ export default function AnimaticEditor({
       if (!byTrack.has(track)) {
         // ⚠ A BOARD ROW IS CALLED AFTER ITS KIND, NEVER AFTER THE BOARD. The
         // import used to name the row after the storyboard it came from, so the
-        // gutter read "TTBB_E…" and nothing on screen said which of the four
+        // gutter read "TTBB_E…" and nothing on screen said which of the three
         // kinds that row was — reported as "i see my storyborad namke come and
         // show in layer but this not happen i want you keep Story..Image". There
         // is no rename in the UI, so a stored name on one of these two rows is
         // never something the user typed: it is either that board title or an
         // older build's long label, and both are better read as the canonical
         // one. Blanking it here hands it to the numbering pass below.
-        const name = isBoardRow(l.kind) ? "" : l.name;
-        byTrack.set(track, { track, rowKind: l.kind, name, layerId: l.id });
+        // ⚠ AND A MIGRATED STILLS ROW IS RENAMED FOR THE SAME REASON: its stored
+        // name is "Stills", which is a row kind that no longer exists.
+        const name = isBoardRow(rowKind) || rowKind !== l.kind ? "" : l.name;
+        byTrack.set(track, { track, rowKind, name, layerId: l.id });
       }
     }
     // `pictureTracks` always includes 0, so the base row exists in an empty
@@ -3643,13 +3652,31 @@ export default function AnimaticEditor({
    * be completed. This lands it on the first row that will TAKE it, at the
    * playhead, and says which row that was.
    */
-  function placeAsset(asset) {
+  async function placeAsset(asset) {
     if (!asset?.id) return;
     const at = Math.round(timeRef.current || 0);
     if ((asset.kind || "image") === "audio") {
       setNotice(
         "Drag a sound onto an audio row — which row it goes on decides what it is mixed with."
       );
+      return;
+    }
+    // ⚠ A PICTURE GOES TO THE IMAGES LANE, and it is the first question asked
+    // because it is the one that no longer has anything to do with picture ROWS.
+    // The ＋ on a card used to find-or-create a Stills row for it; the routing
+    // rule is `belongsOnImageLane` now and it is shared with `addAssets` and with
+    // `dropAsset`, so the four doors into "add this picture" cannot disagree.
+    // A card can still be DRAGGED onto the Video row to put it in the cut — that
+    // is aiming at a row, which is a different act from pressing ＋ on the card.
+    if (belongsOnImageLane(asset.kind || "image", assetOrigin(asset) === "board")) {
+      const lane = lanes.find((l) => l.kind === "image" && !l.layerId);
+      if (!lane) return;
+      if (laneIsLocked(lane)) {
+        setNotice(`${lane.name} is locked — unlock it to add to it.`);
+        return;
+      }
+      const card = assets.find((a) => a.id === asset.id) || asset;
+      await overlayFromFrame(clipFromAsset(card, { id: newId(), animaticId }), lane, at);
       return;
     }
     // The row this kind belongs on: one of its own kind if there is one, else a
@@ -4641,19 +4668,28 @@ export default function AnimaticEditor({
     audioInputRef.current?.click();
   }
 
-  // ONE way in for everything. Images become frames, an audio file becomes the
-  // track — the user shouldn't have to pick the right button first, and used to
-  // face three of them for the same job.
+  // ONE way in for everything. An image becomes an overlay on the Images lane,
+  // footage becomes a clip in the cut, an audio file becomes a track — the user
+  // shouldn't have to pick the right button first, and used to face three of
+  // them for the same job.
   /**
    * @param rowKind which kind of picture row this landed on, or "" for "no
    *                particular row" — the Media pane's own button and the drop
    *                target beside it, where the file's own type picks the row.
    *
    * ⚠ A FILE ONLY EVER LANDS ON A ROW OF ITS OWN KIND. With `rowKind` given, a
-   * file the row does not take is REFUSED and named; without one, images go to a
-   * Stills row and footage to a Video row — creating that row if the project has
-   * none. That is what makes "image moves only in image layers, video moves only
-   * in video layers" true of importing as well as of dragging.
+   * file the row does not take is REFUSED and named; without one, footage goes to
+   * a Video row — creating that row if the project has none. That is what makes
+   * "image moves only in image layers, video moves only in video layers" true of
+   * importing as well as of dragging.
+   *
+   * ⚠ AN IMAGE WITH NO ROW NAMED GOES TO THE "Images" LANE, as an OVERLAY —
+   * asked for as "when user uplaod media or layer so image shoul come in image
+   * layer not sitll layer". It used to find-or-CREATE a Stills row, which sat
+   * ABOVE the storyboard rows, so one photo blanked out the opening seconds of
+   * the board. ⚠ WITH A ROW NAMED IT STILL GOES IN THE CUT: the Video row takes
+   * footage and full-frame stills alike (`ROW_TAKES.video`), and pressing ITS ＋
+   * is aiming at that row rather than asking the editor to choose.
    */
   async function addAssets(fileList, insertAt, track = 0, atMs = null, rowKind = "") {
     const files = Array.from(fileList || []);
@@ -4668,10 +4704,18 @@ export default function AnimaticEditor({
     // Audio never came through here needing a row, so it is untouched below.
     let imageTrack = track;
     let videoTrack = track;
+    // The pictures that go to the overlay lane instead of into the cut. Split
+    // out of `images` rather than handled where they are found, so the counted-up
+    // notice at the bottom of this function still speaks for every file that
+    // came in.
+    let overlayImages = [];
     const refused = [];
     if (rowKind) {
       // A row was named, so anything it does not take is refused rather than
-      // quietly redirected: you pressed ＋ on THAT row.
+      // quietly redirected: you pressed ＋ on THAT row. ⚠ AND A PICTURE STILL HAS
+      // A ROW THAT TAKES IT — the plain Video row, which has always held footage
+      // and full-frame stills alike (see `ROW_TAKES` and the ＋ Add layer menu).
+      // What went is the row that got made FOR you behind your back.
       if (images.length && !rowTakesFile(rowKind, "image")) {
         refused.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
         images = [];
@@ -4681,16 +4725,19 @@ export default function AnimaticEditor({
         videos = [];
       }
     } else {
-      // No row named: each kind finds (or is given) a row of its own. ⚠ THE ROW IS
-      // MADE BEFORE THE UPLOAD so its track number is known here — `addPictureTrack`
-      // hands the number back precisely because `videoTracks` will not have
-      // rebuilt yet.
-      if (images.length) {
-        const row = rowOfKind("stills");
-        imageTrack = row ? row.track : addPictureTrack("stills", { quiet: true });
-        if (imageTrack === null) images = [];
-      }
+      // ⚠ NO ROW NAMED MEANS THE IMAGES ARE OVERLAYS. This is the Media pane's
+      // own ＋ and the drop card beside it, and it used to find-or-CREATE a Stills
+      // row for them — a row that sat above the storyboard rows, so one photo
+      // blanked out the opening seconds of the board. They go to the default
+      // "Images" lane now, which composites them over the cut: "when user uplaod
+      // media or layer so image shoul come in image layer not sitll layer".
+      overlayImages = images;
+      images = [];
       if (videos.length) {
+        // Footage still finds (or is given) a row of its own. ⚠ THE ROW IS MADE
+        // BEFORE THE UPLOAD so its track number is known here — `addPictureTrack`
+        // hands the number back precisely because `videoTracks` will not have
+        // rebuilt yet.
         const row = rowOfKind("video");
         videoTrack = row ? row.track : addPictureTrack("video", { quiet: true });
         if (videoTrack === null) videos = [];
@@ -4704,6 +4751,13 @@ export default function AnimaticEditor({
       );
     }
 
+    // ⚠ ON THE DEFAULT IMAGES LANE (`layerId: ""`), never on a numbered one. A
+    // file dropped ON an image layer does not come through here at all — that is
+    // `dropAsset`, which knows which lane it landed on and calls
+    // `addOverlayFiles` with it.
+    if (overlayImages.length) {
+      await addOverlayFiles(overlayImages, "", atMs === null ? undefined : atMs);
+    }
     const addedImages = images.length ? await addFiles(images, insertAt, imageTrack, atMs) : 0;
     // A video file becomes a CLIP on the video track, alongside the stills —
     // one timeline, three kinds of clip, which is the whole point of the phase.
@@ -4739,6 +4793,13 @@ export default function AnimaticEditor({
 
     const said = [];
     if (images.length) said.push(`${images.length} image${images.length === 1 ? "" : "s"}`);
+    // ⚠ NAMED, NOT JUST COUNTED. An overlay lands on a DIFFERENT row from the one
+    // the press was on and a third of the frame wide, so a notice that only said
+    // "Added 3 images" would leave the reader looking at the row they aimed at.
+    if (overlayImages.length)
+      said.push(
+        `${overlayImages.length} image${overlayImages.length === 1 ? "" : "s"} to Images`
+      );
     if (addedVideos) said.push(`${addedVideos} video clip${addedVideos === 1 ? "" : "s"}`);
     if (taking.length)
       said.push(
@@ -4772,8 +4833,10 @@ export default function AnimaticEditor({
     // ⚠ THE SECTION THE KIND LANDS IN, not "the frames one" — images and video
     // are two sections now (`pictureTrack`), and opening the wrong one would be
     // the same bug wearing a fix.
-    if (images.length || addedVideos) setMediaTab("media");
-    if (images.length) openGroup("media:images");
+    if (images.length || overlayImages.length || addedVideos) setMediaTab("media");
+    // An overlay's upload lists beside a still's — `addOverlayFiles` puts one
+    // card in the library per picture — so both open the same section.
+    if (images.length || overlayImages.length) openGroup("media:images");
     if (addedVideos) openGroup("media:video");
     // (`addAudioTrack` opens the Audio section itself, for every way in.)
     if (taking.length) setMediaTab("media");
@@ -6740,8 +6803,13 @@ export default function AnimaticEditor({
               <span className="an-asset-text">
                 {uploading ? "Uploading…" : "Add assets or drop them here"}
               </span>
+              {/* ⚠ IT NAMES THE ROW EACH KIND LANDS ON, and the picture half of
+                  that changed: an image goes to the Images layer now, never onto
+                  a row in the cut. A note that still said "for the video track"
+                  would be the one sentence on screen contradicting where the clip
+                  actually appears — see `addAssets`. */}
               <span className="an-asset-note">
-                Video and images for the video track · an MP3 for the audio
+                Video for the video track · images for the Images layer · an MP3 for the audio
               </span>
             </button>
 

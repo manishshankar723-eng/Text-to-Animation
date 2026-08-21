@@ -455,23 +455,45 @@ export function frameOrigin(frame) {
 }
 
 /**
- * THE FOUR KINDS OF ROW A CLIP CAN LIVE ON, in compositing order bottom-first.
+ * THE THREE KINDS OF ROW A CLIP CAN LIVE ON, in compositing order bottom-first.
  *
  * ⚠ THIS IS THE `kind` ON A PICTURE ROW'S `AnimaticLayer` RECORD, and the reason
- * there are four rather than one is that the user asked for the storyboard to
+ * there are three rather than one is that the user asked for the storyboard to
  * keep its own rows: "i want you add Storybord Layer seprately … and user then
  * next user want genearte shortyborad image to video footage from VEO 3 model in
  * editor then video genarte and come in Storyboad video layer Sepratlty".
+ *
+ * ⚠ THERE IS NO `stills` ROW ANY MORE. An uploaded picture is an OVERLAY on the
+ * "Images" lane now, not a full-frame card in the cut — asked for directly:
+ * "remove still layer … when user uplaod media or layer so image shoul come in
+ * image layer not sitll layer". A Stills row sat ABOVE the storyboard rows, so
+ * dropping one photo in blanked out the first seconds of the board; the Images
+ * lane composites it over the cut instead, which is what "i see this good" was
+ * about. `belongsOnImageLane` is the one place that decision is written down.
  *
  * ⚠ THE ORDER MATTERS — it is the order a freshly built stack is laid out in, so
  * a Veo render draws OVER the panel it was made from (which is what lets 👁 on
  * the render row show the board again underneath) and footage you dropped in
  * draws over both.
  */
-export const ROW_KINDS = ["board_image", "board_video", "stills", "video"];
+export const ROW_KINDS = ["board_image", "board_video", "video"];
 
 /** Is this a row that holds clips from `frames` — as opposed to text/shape/audio? */
 export const isCutRow = (kind) => ROW_KINDS.includes(kind);
+
+/**
+ * A ROW KIND OFF AN OLD PROJECT, READ AS ONE OF THE THREE THAT ARE LEFT.
+ *
+ * ⚠ THE ONLY MIGRATION `stills` NEEDS, and it is deliberately a read-time one
+ * rather than a rewrite: an animatic saved while Stills rows existed still has
+ * `kind: "stills"` layer records and still has its photos in the cut, and both
+ * must go on playing and exporting EXACTLY as they did. A plain video row is
+ * what those clips already sit on as far as the exporter is concerned (it reads
+ * `track`, a number, and nothing else), so reading the record as one changes the
+ * label in the gutter and nothing else at all.
+ */
+export const rowKindOrLegacy = (kind) =>
+  isCutRow(kind) ? kind : kind === "stills" ? "video" : "";
 
 /**
  * WHICH KINDS OF FILE EACH ROW ACCEPTS, in `kindOf` / `laneTakes` words.
@@ -485,12 +507,18 @@ export const isCutRow = (kind) => ROW_KINDS.includes(kind);
  * ⚠ THE TWO BOARD ROWS TAKE NOTHING, and that is deliberate rather than an
  * omission. A storyboard row is filled by the import and a Veo row by ✨ Animate;
  * an uploaded file on either is the mixing the strict rows exist to stop.
+ *
+ * ⚠ THE VIDEO ROW TAKES BOTH, AND IT IS THE ONLY ROW THAT TAKES A PICTURE — it
+ * has always held footage and full-frame stills alike, which is exactly why the
+ * ＋ Add layer menu offers no "Stills" beside it. What went with the Stills row
+ * is the row that got CREATED for you behind your back: an upload with no row
+ * named goes to the overlay "Images" lane now (`belongsOnImageLane`), and a
+ * picture only enters the cut when you aim it at this row yourself.
  */
 export const ROW_TAKES = {
   board_image: [],
   board_video: [],
-  stills: ["image"],
-  video: ["video"],
+  video: ["video", "image"],
 };
 
 /**
@@ -499,7 +527,7 @@ export const ROW_TAKES = {
  * ⚠ IT IS DERIVED, NOT STORED, and that is deliberate: every part of the answer
  * is already on the clip. A board reference (`src.storyboard_id`) says the clip
  * came from a storyboard and `clipKind` says whether it is footage yet, so the
- * four rows fall out of two questions and there is no fifth field that can
+ * three rows fall out of two questions and there is no fourth field that can
  * disagree with them. It also means `attachVeoClip` moving a render onto its own
  * row needs no migration: an animated panel KEEPS its `storyboard_id` (see the
  * note in `attachVeoClip`), so it reads as `board_video` the moment it is video.
@@ -541,8 +569,36 @@ export function clipRowKind(frame) {
 export function cardRowKind(kind, fromBoard) {
   const video = clipKind({ kind }) === "video";
   if (fromBoard) return video ? "board_video" : "board_image";
-  return video ? "video" : "stills";
+  // ⚠ A PLAIN PICTURE ANSWERS "video" NOW, and that is not a mistake: this
+  // question is "which row in the CUT does this clip sit on", and since the
+  // Stills row went there is only one row left that is neither the board's nor
+  // the renders'. It is asked of clips that are ALREADY in the cut — every photo
+  // of every animatic saved before this change — and answering with a row kind
+  // that no longer exists would strand them: unnameable by `dominantRowKind` and
+  // unmovable by `laneMoveTarget`, which compares this against the row's kind.
+  // Where a NEW picture goes is a different question, and `belongsOnImageLane`
+  // is the one that answers it.
+  return "video";
 }
+
+/**
+ * DOES A PICTURE YOU ARE ADDING BELONG ON THE OVERLAY "Images" LANE?
+ *
+ * ⚠ THE ROUTING RULE FOR EVERY WAY IN — the Media pane's ＋ and its drop card, a
+ * card's own ＋, a double-click on a card — so the four cannot come to disagree
+ * about where an upload lands. Asked for as "when user uplaod media or layer so
+ * image shoul come in image layer not sitll layer".
+ *
+ * ⚠ A BOARD PANEL IS NOT ONE, however much of a picture it is: it belongs to the
+ * storyboard rows, which is the whole point of them being separate. Nor is a
+ * COLOUR CARD — it has no file, it is full-frame, and it takes up time in the
+ * cut, which is the opposite of what an overlay does.
+ *
+ * @param kind      a clip/asset kind — "image" | "video" | "color"
+ * @param fromBoard did this come out of a storyboard?
+ */
+export const belongsOnImageLane = (kind, fromBoard) =>
+  !fromBoard && (kind || "image") === "image";
 
 /** Is this one of the two rows the storyboard owns? */
 export const isBoardRow = (rowKind) =>

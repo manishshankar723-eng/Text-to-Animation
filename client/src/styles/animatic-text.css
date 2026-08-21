@@ -359,11 +359,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The empty band of a layer IS its add button — the obvious thing to click.
-   ⚠ AND IT IS BLANK NOW, so the hover below is the whole of the affordance:
-   there is no longer a line of prose saying what the row would do. That is
-   deliberate (`emptyBand` in Timeline.jsx has the report), and it is why the
-   hover tint is worth keeping strong enough to notice. */
+/* ⚠ NOTHING WEARS THIS CLASS ANY MORE, AND THAT IS THE POINT. The empty band
+   of a layer used to BE its add button: a blank stretch of lane that opened a
+   file dialog when you clicked it, which is a control you cannot see. Asked to
+   go by name — "i only upload media and layer ＋ icon, not in background panel
+   of clip … only keep media and layer ＋ icon" — so `emptyBand` in Timeline.jsx
+   renders nothing at all and the empty part of a row scrubs and marquees like
+   the rest of it. The rules are kept, unreferenced, only so that reviving the
+   band is a one-line change rather than a re-derivation; delete them with it if
+   the answer turns out to be no for good. */
 .tl-track-add {
   display: block;
   width: 100%;
