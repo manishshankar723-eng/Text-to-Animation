@@ -173,6 +173,13 @@
   --tl-panel: #1c2237;
   --tl-panel-2: #262f4a;
   --tl-border: #333d60;
+  /* The snap guide (`.tl-snapline`). ⚠ NOT GOLD, and that is the whole point:
+     gold is the playhead, and a drag that put a second gold vertical on the
+     timeline would be showing you two lines you cannot tell apart. Cyan is the
+     furthest thing from the pane's navy and the brand's gold that still reads on
+     both. */
+  --tl-snap: #5fd8ef;
+  --tl-snap-ink: #05222b;
 }
 
 /* Light theme. The gold BUTTON gradients stay exactly as they are — that's the
@@ -275,6 +282,10 @@
   --tl-panel: #f1f4fb;
   --tl-panel-2: #e2e8f6;
   --tl-border: #ccd5ea;
+  /* Same hue several shades deeper: the dark theme's cyan on blue-tinted paper
+     is a pale wash, and a guide you have to look for is not a guide. */
+  --tl-snap: #0b7c99;
+  --tl-snap-ink: #ffffff;
 }
 
 /* A handful of tints were written as translucent white or pale gold/blue, which

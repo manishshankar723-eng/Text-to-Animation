@@ -124,14 +124,14 @@
 .tl-inner.tool-rolling .tl-handle,
 .tl-inner.tool-ripple .tl-handle {
   background: transparent;
-  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--primary);
+  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--grip-ink);
 }
 /* The head grip, mirrored — same stripe on the other side of the box. Must come
    AFTER the rule above: `.tl-handle-l` also carries `.tl-handle`, so the two
    selectors weigh the same and order is what decides which shadow lands. */
 .tl-inner.tool-rolling .tl-handle-l,
 .tl-inner.tool-ripple .tl-handle-l {
-  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--primary);
+  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--grip-ink);
 }
 /* ⚠ NO HOVER RULE HERE ANY MORE, AND THAT IS THE POINT. `.tl-handle:hover` in
    `animatic.css` now paints the same stripe one step wider, for every tool — so

@@ -97,6 +97,40 @@
      it silently re-anchors the popover to whatever is positioned further up. */
   position: relative;
 }
+/* THE SEAM BETWEEN THE TWO COLUMNS — "add line in between layer and clip layer so
+   look like close each other", asked for with four Premiere screenshots. The
+   labels and the lanes were two stacks with half a centimetre of bare pane
+   between them and nothing saying they are one grid read across; every editor
+   that does this draws the divider.
+   ⚠ IT IS DRAWN DOWN THE MIDDLE OF THE EXISTING GAP, NOT AS A BORDER ON EITHER
+   COLUMN. A `border-right` on `.tl-gutter` lands hard against the label cards and
+   leaves the whole 0.5rem on the tracks' side — a line belonging to the labels
+   rather than a line between the columns. Half the gap each side is what reads as
+   one seam, and it costs no layout: a pseudo-element in a gap that was already
+   there moves nothing.
+   ⚠ AND THE GAP ITSELF MUST STAY 0.5rem. `.tl-headbar` repeats the number so
+   ＋ Add layer sits over the column it adds to; closing this gap here would slide
+   the tracks out from under the buttons above them.
+   ⚠ IT SPANS THE COLUMNS ROW AND NOTHING ELSE. `.tl-cols` starts at the ruler and
+   stops above the horizontal scrollbar — exactly the height of what is being
+   divided. Running it on up through the head bar would put a line between two
+   buttons, which is a toolbar with a crack in it, not a column.
+   ⚠ NEVER CATCHES THE POINTER. The gutter width is fixed, so there is nothing to
+   drag here, and a 1px strip that swallowed presses beside the lanes' left edge is
+   a bug you would feel for weeks before you saw it. */
+.tl-cols::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--tl-gutter-w) + 0.25rem);
+  width: 1px;
+  /* The same token the ruler's underline and the lane strokes use, which is what
+     makes it read as part of the frame rather than as a mark on it — and inside
+     the timeline pane it is already the navy `--tl-border`. */
+  background: var(--border);
+  pointer-events: none;
+}
 .tl-gutter {
   /* ⚠ ONE width, `--tl-gutter-w` on `.tl-wrap`, because two things are this
      wide: the labels and the ＋ Add layer head above them (`.tl-head`). Written

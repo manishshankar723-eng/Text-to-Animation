@@ -200,7 +200,43 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR,
+**Last updated:** 2026-08-21 — **SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY
+SO** (user-requested, with four Premiere screenshots for reference). Dragging a
+clip has snapped to cuts, the playhead, the marks and the beats for a long time,
+but the only sign of it was the clip moving in a jump — so "did it catch the cut
+or is it two frames off" was a question you answered by zooming in. There is a
+**snap guide** now: a dashed cyan vertical line at the point it locked to, and
+**that is the whole of it** — it was built with arrowheads at both ends and a label
+naming the target ("Cut 0:08"), and both were seen in the browser and asked to go
+("i want keep snap guide blue line only view in the timeline not view arrowhead",
+then "i don't wantt view label i wnat only line"). Neither goes back; the names
+went with the label rather than sitting unread in the targets, so `snapTargets` is
+plain numbers again. ⚠ **`snapGuide` IS A TIME AND `null` IS THE ONLY "NOTHING"** —
+0 is a real snap (a clip on the front of the film), so it is tested with `!== null`
+and never for truthiness. ⚠ **`snapMs` MUST NOT
+TOUCH STATE**: it is a plain function called several times per pointer move, so it
+records into `snapHitRef` and each drag's move handler publishes once
+(`beginSnapWatch` at the top, `publishSnapGuide` at the bottom, `setSnapGuide(null)`
+on pointerup). ⚠ **A CLAMPED DRAG IS NOT A SNAP** — `keepSnapIfLanded` drops the
+guide unless an edge the drag actually landed on IS the point, or a clip stopped by
+0:00 / `MIN_MS` / the end of its footage would draw a line at a cut it never
+reached. ⚠ **AND IT IS DELIBERATELY NOT THE PLAYHEAD'S LINE**: the playhead is a
+solid 2px gold stripe, so this is a marching dashed **cyan** one (`--tl-snap`, its
+own token in both themes) — two near-identical gold verticals mid-drag is the
+failure this avoids. **Then, same day: a SEAM between the two columns**
+("add line in between layer and clip layer so look like close each other") —
+`.tl-cols::before`, a 1px divider down the MIDDLE of the 0.5rem gap that was
+already there, so the labels and the lanes read as one grid instead of two
+floating stacks. ⚠ **NOT A `border-right` ON `.tl-gutter`** (that lands against
+the label cards and leaves the whole gap on the tracks' side), ⚠ **THE 0.5rem GAP
+ITSELF MUST STAY** (`.tl-headbar` repeats it so ＋ Add layer sits over its own
+column), and ⚠ **IT SPANS THE COLUMNS ROW ONLY** — up through the head bar it
+would be a line between two buttons. Files: `Timeline.jsx`, `animatic.css`,
+`theme.css`, `animatic-text.css`. Verified: `npm run build` passes.
+⚠ **NOT DRIVEN IN A REAL BROWSER** — these are two lines and a label, so both are
+worth a glance: one while dragging a clip onto a cut, one at rest.
+
+**Previously:** 2026-08-21 — **A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR,
 AND THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH** (user-reported, with three
 screenshots). CSS only — `animatic-tools.css`, `animatic-editor.css`, `theme.css`.
 ⚠ **THE TRIM GRIP IS 8px SO IT CAN BE HIT, NOT SO IT CAN BE SEEN.** With the
@@ -218,8 +254,11 @@ paper rather than the navy. ⚠ **AND THE MARK IS ONE MARK NOW** (second report,
 same day): the fat grip was `.tl-handle:hover` in `animatic.css`, not the tool
 rule, so thinning only the tool-armed state left Selection hovering a gold block.
 `--tl-grip-mark` is declared once on `.tl-handle` and widened by the base hover —
-the tool-scoped hover rule is deleted and must not come back. Verified: `npm run
-build` passes. ⚠ **NOT LOOKED AT IN A REAL BROWSER** — this is a colour and a
+the tool-scoped hover rule is deleted and must not come back. ⚠ **AND IT GOES
+DARK ON A SELECTED CLIP** (third report, same day): a gold mark on a gold fill is
+no mark, so `--grip-ink` flips to `--gold-ink` on `.tl-bar.sel` / `.tl-text.sel`,
+the two kinds that fill — the selection gold itself is untouched. Verified: `npm
+run build` passes. ⚠ **NOT LOOKED AT IN A REAL BROWSER** — this is a colour and a
 stripe width, so it is worth a glance.
 
 **Previously:** 2026-08-21 — **OPENING A PROJECT WAS SLOW, AND THE SPINNER
@@ -1820,7 +1859,156 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR, AND THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH (user-reported, with three screenshots)
+### 2026-08-21 (latest) — SNAPPING HAPPENED AND THE TIMELINE DID NOT SAY SO (user-requested, with four Premiere screenshots for reference)
+
+> "i want when i move clip in timeline and Snapping work that time so i want line
+>  and arrow icon like this not copy add diffrent type line when drag / add this
+>  type of fuction view for user look line amd understand"
+
+Snapping itself is old: `snapMs` has pulled a dragged edge onto the nearest cut,
+the playhead, a mark, a beat or the head of a sound since the timeline was built.
+What it never did was SAY so. The only sign was the clip moving in a small jump,
+which is indistinguishable from a slow hand — so "did it catch the cut, or is it
+two frames short" was a question you answered by zooming in and squinting, on
+every drag.
+
+#### What was added
+
+A **snap guide** in `Timeline.jsx`, drawn inside `.tl-inner` beside the playhead:
+
+- a **vertical marching-dashed line** at the point the drag locked to — and, as
+  of the two follow-ups below, nothing else.
+
+It is up on every drag that snaps: pictures, captions, shapes, overlays, audio
+clips (move and both trims), keyframe diamonds, and an asset being dragged in from
+the Media pane. With the snap toggle OFF it never appears, because `snapMs` then
+only rounds to the 100ms grid and there is nothing to report.
+
+#### ⚠ `snapMs` must not touch state
+
+It is a plain function called **several times per pointer move** — a trim snaps
+one edge, a group move snaps the dragged clip, a drop snaps the pointer. So the
+guide is two halves:
+
+- `snapHitRef` — written by `snapMs` when it locks on. No render.
+- `snapGuide` — the state, published **once per move** by the handler that did the
+  snapping: `beginSnapWatch()` at the top of the move, `publishSnapGuide()` at the
+  bottom, `setSnapGuide(null)` in the matching `up()`.
+- ⚠ **IT IS A TIME, AND `null` IS THE ONLY "NOTHING".** 0 is a real snap — a clip
+  pushed onto the front of the film — so `if (snapGuide)` would silently skip
+  drawing the line at precisely the most ordinary snap there is. Everything tests
+  `!== null`.
+- ⚠ **THE REF IS EMPTIED AT THE TOP OF EVERY MOVE.** Without that, a line drawn at
+  one pointer position stays up for the rest of the drag — saying "locked on"
+  about a clip that came off the cut long ago.
+- A plain time in, a plain time out: React bails out of an identical value by
+  itself, so holding an edge on a cut costs no renders however many pointer moves
+  it takes. (While the guide was an OBJECT this needed an explicit `prev` compare,
+  the trick `setDropAt` plays — that is gone with the label.)
+
+#### ⚠ A clamped drag is not a snap
+
+Every drag here has walls: 0:00, `MIN_MS`, how much footage a video has left,
+where the earliest clip in a selection would hit the front. If a wall overrode
+what `snapMs` picked, the edge is somewhere else entirely and a line at that point
+would be pointing at a cut the clip never reached. **`keepSnapIfLanded(...edges)`**
+drops the guide unless one of the edges the drag ACTUALLY landed on is the point
+it locked to — called with `(startMs, startMs + durationMs)` for a clip,
+`(startMs, startMs + lengthMs)` for audio, `(clipStartMs + next)` for a keyframe.
+
+#### ⚠ It is deliberately not the playhead's line
+
+The playhead is a solid 2px gold stripe. A second gold vertical during a drag is
+one gold vertical too many — "this is where you are" and "this is what you caught"
+have to be tellable apart at a glance, which is also what the user asked for
+("not copy add diffrent type line"). So:
+
+- **`--tl-snap` / `--tl-snap-ink`**, a new token pair in `theme.css`, cyan in dark
+  and several shades deeper in light (the dark cyan is a pale wash on the light
+  theme's blue-tinted paper, and a guide you have to look for is not a guide).
+- **A marching dash, not a solid stripe**: a repeating gradient scrolled by
+  `tl-snap-march`. The movement is what reads as live; a static dash at a glance
+  is just another guide. Dropped under `prefers-reduced-motion` — the dashes, the
+  arrowheads and the label all still say it without the march.
+- **The top arrowhead starts below the ruler** (`var(--tl-ruler-h)`) and the label
+  sits under it, on the first lane, so neither covers a timecode.
+- `pointer-events: none`, `z-index: 9` — over the pinned ruler like the playhead,
+  and never in the way of the scrub grip underneath.
+
+Files: `client/src/components/Timeline.jsx`, `client/src/styles/animatic.css`,
+`client/src/styles/theme.css`. Verified: `npm run build` passes.
+⚠ **NOT DRIVEN IN A REAL BROWSER** — it is a line and a label, so it is worth a
+glance while dragging a clip onto a cut.
+
+#### Follow-up the same day: and a line between the two columns
+
+> "i want like this ui view add line in between layer and clip layer so look like
+>  close each other"
+
+Four more Premiere screenshots, all of them showing the same thing: a hard
+vertical divider between the track-header column and the timeline. Ours had
+`gap: 0.5rem` of bare pane there and nothing else, so the labels and the lanes
+read as two stacks that happen to be side by side rather than one grid you read
+across. **`.tl-cols::before`** — a 1px line, top to bottom of the columns row.
+
+- ⚠ **DOWN THE MIDDLE OF THE GAP, NOT AS A BORDER ON EITHER COLUMN.** A
+  `border-right` on `.tl-gutter` lands hard against the label cards and leaves the
+  full 0.5rem on the tracks' side: a line that belongs to the labels instead of a
+  line between the columns. Half the gap each side is what reads as a seam.
+- ⚠ **THE GAP ITSELF MUST STAY 0.5rem.** `.tl-headbar` repeats that number so
+  ＋ Add layer sits over the column it adds to; closing it here would slide the
+  tracks out from under the buttons above them. A pseudo-element in a gap that
+  already existed costs no layout at all — nothing moved.
+- ⚠ **THE COLUMNS ROW AND NOTHING ELSE.** `.tl-cols` starts at the ruler and
+  stops above the horizontal scrollbar, which is exactly the height of what is
+  being divided. Running it on up through the head bar would put a line between
+  two buttons — a toolbar with a crack in it, not a column.
+- ⚠ **`pointer-events: none`.** The gutter width is fixed, so there is nothing to
+  drag here, and a 1px strip that swallowed presses beside the lanes' left edge is
+  a bug you would feel for weeks before you saw it.
+- The colour is `var(--border)` — the token the ruler's underline and the lane
+  strokes already use, which inside the timeline pane is the navy `--tl-border`.
+  It follows both themes for free and reads as part of the frame.
+
+Both breakpoints work off `--tl-gutter-w`, so the 9.5rem phone gutter needs no
+rule of its own. Files: `client/src/styles/animatic-text.css`. Verified:
+`npm run build` passes, and the rule is in the built CSS.
+⚠ **NOT DRIVEN IN A REAL BROWSER.**
+
+#### Follow-up the same day: the arrowheads are gone
+
+> "i want keep snap guide blue line only view in the timeline not view arrowhead"
+
+Seen in the browser (a screenshot of a drag locked onto a cut) and the verdict was
+the line and the label, without the two triangles. ⚠ **`.tl-snap-arrow` IS DELETED
+AND MUST NOT COME BACK** — top and bottom, markup and CSS. They were the "these
+met here" mark, and on a real timeline they said nothing the line does not already
+say. The label moves up to `calc(var(--tl-ruler-h) + 3px)` to take the room the top
+triangle was holding; it still starts BELOW the ruler, which is the one row that is
+already a label and must not be covered. `npm run build` passes.
+
+#### Follow-up the same day: and the label too — the guide is a line, full stop
+
+> "my question is when i move clip so how work and above a label saying what it
+>  snapped... text i don't wantt view label i wnat only line so only when i move
+>  clip in timline right-left, so i wnat view line so iff neccssery to view label
+>  of user?"
+
+Answered (the drag compares the edge against every target and takes one within
+`SNAP_PX` = 8 **screen** pixels, so the catch is the same size at any zoom) and
+then done. ⚠ **`.tl-snap-tag` IS DELETED, LIKE THE ARROWHEADS BEFORE IT.** The line
+already says it locked on and where; the label only ever added *which of two
+targets a few pixels apart* it caught, which is a nicety and not the job.
+⚠ **AND THE NAMES WENT WITH IT** rather than sitting in every target unread:
+`snapTargets` is a list of plain numbers again, `snapHitRef` / `snapGuide` hold a
+plain ms, and `publishSnapGuide` is a one-liner because React de-dupes an identical
+number on its own. ⚠ **THE ONE TRAP THAT CAME WITH THAT: 0 IS A REAL SNAP.** A clip
+pushed onto the front of the film locks at 0, so the render tests `snapGuide !==
+null` — `if (snapGuide)` would skip the line at exactly the most ordinary snap
+there is. Verified: `npm run build` passes, `tests/timeline_ripple_check.py` still
+green, and no `tl-snap-tag` / `tl-snap-arrow` anywhere in the built CSS.
+
+### 2026-08-21 — A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR, AND THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH (user-reported, with three screenshots)
 
 > "i want ripple icon size in clip view in timline i want you keep little thin
 >  and change color blue of my timeline panel see color image 3 for ref i want
@@ -1880,7 +2068,25 @@ inset stripe, so ONE mark serves every tool. ⚠ **THE TOOL-SCOPED HOVER RULE IS
 GONE ON PURPOSE** — do not add it back; a second hover rule for two tools is the
 bug. The blue was left exactly as it is ("not need to chnage now blue okay").
 
-Verified: `npm run build` passes (163 kB CSS, no warnings from these files).
+#### Second follow-up: gold on gold, so the SELECTED clip had no mark
+
+Reported with two screenshots — the one clip you are working on was the one whose
+grips could not be seen, because `.tl-bar.sel` / `.tl-text.sel` fill with
+`--gold-grad` and the mark is `--primary`. ⚠ **THE SELECTION COLOUR DID NOT MOVE**
+(the ask allowed either): gold means selected on every lane and in every panel of
+this app, and repainting that to fix a 2px stripe is the tail wagging the dog.
+Instead the mark's colour is a token, **`--grip-ink`** (default `--primary`,
+declared on `.tl-handle`), and `.tl-bar.sel .tl-handle` / `.tl-text.sel .tl-handle`
+flip it to `--gold-ink` — ⚠ **EXACTLY WHAT THAT CLIP'S LABEL ALREADY DOES**
+(`.tl-bar.sel .tl-bar-label`), so this is the existing rule applied to one more
+thing rather than a new idea. ⚠ **ONLY THOSE TWO KINDS FILL GOLD.** Shapes,
+overlays and audio mark selection with a gold BORDER over their own colour, so
+they keep the gold mark — flipping it there would be the same bug mirrored.
+⚠ **THE OVERRIDE IS SCOPED TO THE HANDLE, NOT DECLARED ON THE CLIP**: `--grip-ink`
+is declared on `.tl-handle` itself, and a value inherited from the clip would lose
+to it.
+
+Verified: `npm run build` passes (164 kB CSS, no warnings from these files).
 ⚠ **NOT LOOKED AT IN A REAL BROWSER** — a colour and a stripe width both want a
 glance before this is called finished.
 

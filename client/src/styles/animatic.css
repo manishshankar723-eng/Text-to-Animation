@@ -628,6 +628,14 @@
   width: 8px;
   height: 100%;
   --tl-grip-mark: 2px;
+  /* ⚠ THE MARK'S COLOUR IS A TOKEN BECAUSE A SELECTED CLIP IS GOLD TOO. Gold on
+     gold is no mark at all: with a shot selected, its own trim grips vanished
+     into the fill and the ripple edge could not be found on the one clip you
+     were working on (user-reported — "clip selection color is golden and ripple
+     color is also golden so user not understand easily"). Overridden per clip
+     kind below; the two grip rules and the ripple/rolling rules in
+     `animatic-tools.css` all paint with this and nothing else. */
+  --grip-ink: var(--primary);
   cursor: col-resize;
   background: linear-gradient(90deg, transparent, var(--border));
 }
@@ -651,13 +659,29 @@
 .tl-handle-l:hover {
   --tl-grip-mark: 3px;
   background: transparent;
-  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--primary);
+  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--grip-ink);
 }
 /* The head grip, mirrored. ⚠ MUST STAY AFTER the rule above: a head grip carries
    `.tl-handle` too, so both selectors weigh the same and source order is the
    only thing deciding which side the stripe lands on. */
 .tl-handle-l:hover {
-  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--primary);
+  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--grip-ink);
+}
+/* ⚠ ON A GOLD-FILLED CLIP THE MARK GOES DARK, exactly as that clip's LABEL
+   already does (`.tl-bar.sel .tl-bar-label` below, `.tl-text.sel .tl-text-label`
+   in `animatic-text.css`) — same problem, same answer, and the selection
+   language is left alone: gold still means selected everywhere in the app, which
+   is the half of this that must not move.
+   ⚠ ONLY THESE TWO KINDS FILL. Shapes, overlays and audio mark selection with a
+   gold BORDER over their own colour, so a gold grip still reads on them and
+   flipping it there would be the same bug the other way round.
+   ⚠ IT IS SCOPED `.tl-bar.sel .tl-handle` AND NOT DECLARED ON THE CLIP, because
+   `--grip-ink` is declared on `.tl-handle` itself — an inherited value from the
+   clip would lose to it. Whatever else changes here, this selector has to stay
+   more specific than that one. */
+.tl-bar.sel .tl-handle,
+.tl-text.sel .tl-handle {
+  --grip-ink: var(--gold-ink);
 }
 
 .tl-audio {
@@ -698,6 +722,50 @@
   background: var(--primary);
   pointer-events: auto;
   cursor: ew-resize;
+}
+
+/* --- The snap guide ------------------------------------------------------- */
+/* Up only while a drag is actually LOCKED ONTO something — a cut, the playhead,
+   a beat, a mark, the head of a sound. See `snapGuide` in Timeline.jsx, which
+   decides WHEN; everything here is only what it looks like.
+   ⚠ IT MUST NOT LOOK LIKE THE PLAYHEAD. That is a solid 2px gold stripe, so this
+   is a MARCHING dashed cyan one — the movement is what says "live", and a static
+   dash at a glance is just another guide. Same z-index as the playhead so it
+   clears the pinned ruler (z-index 8), and never interactive: the scrub grip
+   underneath has to stay grabbable.
+   ⚠ A LINE AND NOTHING ELSE, AND THAT IS THE FINISHED SHAPE. It had CSS-triangle
+   arrowheads at both ends (`.tl-snap-arrow`) and then a label naming the target
+   with its timecode (`.tl-snap-tag`); both were asked for and both were asked to
+   go — "i don't wantt view label i wnat only line". Neither goes back: the line
+   already says it locked on and where, which is what a drag needs to know, and it
+   is the only mark here that cannot be mistaken for the playhead. */
+.tl-snapline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--tl-snap) 0 6px,
+    transparent 6px 12px
+  );
+  background-size: 100% 12px;
+  animation: tl-snap-march 0.6s linear infinite;
+  pointer-events: none;
+  z-index: 9;
+}
+@keyframes tl-snap-march {
+  to {
+    background-position: 0 12px;
+  }
+}
+/* The march is the one thing here that can be dropped without losing the
+   meaning — the dashes, the arrowheads and the label all still say it. */
+@media (prefers-reduced-motion: reduce) {
+  .tl-snapline {
+    animation: none;
+  }
 }
 
 .an-set-chips {

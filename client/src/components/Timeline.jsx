@@ -826,17 +826,54 @@ export default function Timeline({
   // and both ends. Within SNAP_PX of one, the edge takes it exactly — which is
   // the whole point, since "roughly on the cut" is what you were trying to avoid.
   const SNAP_PX = 8;
+  // WHEN the last snap caught something, so a drag can draw a line at it. Just
+  // the time: this carried the NAME of the target too ("Cut", "Beat", "Playhead")
+  // for a label beside the line, and the label was asked for and then asked to go
+  // ("i don't wantt view label i wnat only line"). The names went with it rather
+  // than sitting in the targets unread.
+  // Two halves on purpose —
+  //   • `snapHitRef` is written by `snapMs`, which is a plain function called
+  //     several times per pointer move (a trim snaps one edge, a group move
+  //     snaps one clip), so it must not touch state;
+  //   • `snapGuide` is the state, published ONCE per move by the handler that
+  //     did the snapping and cleared when the pointer comes up.
+  // ⚠ THE REF IS EMPTIED AT THE TOP OF EVERY MOVE (`beginSnapWatch`), or a line
+  // drawn at one pointer position would stay up for the rest of the drag —
+  // saying "locked on" about a clip that came off the cut long ago.
+  // ⚠ AND `null` IS THE ONLY "NOTHING" — 0 IS A REAL SNAP. Snapping a clip to
+  // the front of the film is the most ordinary snap there is, and `if (snapGuide)`
+  // would silently skip drawing precisely there. Everything here tests against
+  // `null` explicitly.
+  const snapHitRef = useRef(null);
+  const [snapGuide, setSnapGuide] = useState(null);
+  const beginSnapWatch = () => {
+    snapHitRef.current = null;
+  };
+  // ⚠ A CLAMPED DRAG IS NOT A SNAP. Every drag here has walls — 0:00, MIN_MS,
+  // how much footage a video has left — and a wall that overrode what `snapMs`
+  // picked leaves the edge somewhere else entirely. The guide is kept only when
+  // an edge the drag ACTUALLY landed on is the point it locked to; otherwise the
+  // line would be pointing at a cut the clip never reached.
+  const keepSnapIfLanded = (...edges) => {
+    const hit = snapHitRef.current;
+    if (hit !== null && !edges.includes(hit)) snapHitRef.current = null;
+  };
+  // A plain time in, a plain time out — React bails out of an identical value on
+  // its own, so holding an edge on a cut costs no renders however many pointer
+  // moves it takes.
+  const publishSnapGuide = () => setSnapGuide(snapHitRef.current);
   const snapTargets = () => {
     const points = [0, span, timeMs];
     // Every picture's two edges, on every track — read from the same placement
     // the bars are drawn at, so an edge snaps to the cut you can SEE rather than
     // to where a running total thinks it is.
-    for (const f of draftedFrames) {
-      points.push(f.start_ms, f.start_ms + f.duration_ms);
-    }
-    for (const c of texts) points.push(c.start_ms, c.start_ms + c.duration_ms);
-    for (const s of shapes) points.push(s.start_ms, s.start_ms + s.duration_ms);
-    for (const o of overlays) points.push(o.start_ms, o.start_ms + o.duration_ms);
+    const edgesOf = (list) => {
+      for (const c of list) points.push(c.start_ms, c.start_ms + c.duration_ms);
+    };
+    edgesOf(draftedFrames);
+    edgesOf(texts);
+    edgesOf(shapes);
+    edgesOf(overlays);
     if (markIn !== null) points.push(markIn);
     if (markOut !== null) points.push(markOut);
     // And every beat that has been found under the timeline. Drawing the ticks
@@ -878,7 +915,10 @@ export default function Timeline({
         bestGap = gap;
       }
     }
-    return best === null ? grid : Math.round(best);
+    if (best === null) return grid;
+    // Where the edge LANDED is the target itself, which is where the line goes.
+    snapHitRef.current = Math.round(best);
+    return Math.round(best);
   }
 
   // --- Seeking ------------------------------------------------------------
@@ -1059,7 +1099,11 @@ export default function Timeline({
       // arrives as "all", so the answer is read off the drag rather than
       // guessed per lane.
       if (e.dataTransfer) e.dataTransfer.dropEffect = ok ? allowedEffect(e) : "none";
+      beginSnapWatch();
       const ms = snapMs(msFromEvent(e));
+      // A dropped asset lands where the line says with nothing to clamp it, so
+      // the guide goes up as-is — the drop line says WHERE, the guide says WHAT.
+      publishSnapGuide();
       // Both fx kinds land on a CLIP rather than at a moment, so both light the
       // bar up instead of drawing the drop line — see `dropOnto`.
       const fx = kind === "fx" || kind === "afx";
@@ -1077,10 +1121,12 @@ export default function Timeline({
         // only a pointer that has actually left it should clear the marker.
         if (e.currentTarget.contains(e.relatedTarget)) return;
         setDropAt((d) => (d && d.key === lane.key ? null : d));
+        setSnapGuide(null);
       },
       onDrop: (e) => {
         const kind = dragKind(e);
         setDropAt(null);
+        setSnapGuide(null);
         if (!laneTakes(lane, kind, dragFromBoard(e))) return;
         e.preventDefault();
         let asset = null;
@@ -1701,6 +1747,7 @@ export default function Timeline({
     function move(e) {
       const d = dragRef.current;
       if (!d?.key) return;
+      beginSnapWatch();
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
       // Snapping is done in TIMELINE time and converted back, so a key snaps to
       // cuts, the playhead and the marks like everything else — then stored
@@ -1708,12 +1755,15 @@ export default function Timeline({
       const absolute = snapMs(d.clipStartMs + d.from + deltaMs, d.own);
       const next = Math.round(absolute - d.clipStartMs);
       d.latest = next;
+      keepSnapIfLanded(d.clipStartMs + next);
+      publishSnapGuide();
       setKeyDraft({ kind: d.kind, id: d.id, prop: d.prop, from: d.from, to: next });
     }
     function up() {
       const d = dragRef.current;
       dragRef.current = null;
       setKeyDraft(null);
+      setSnapGuide(null);
       if (!d?.key) return;
       const moved = d.latest !== undefined && Math.abs(d.latest - d.from) > 3;
       if (moved) onKeyMove?.(d.kind, d.id, d.from, d.latest, d.prop, d.all);
@@ -1785,6 +1835,7 @@ export default function Timeline({
     function move(e) {
       const d = dragRef.current;
       if (!d) return;
+      beginSnapWatch();
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
       // Both edges of the clip being dragged are excluded from the snap
       // targets, or it would stick to where it already is.
@@ -1902,12 +1953,15 @@ export default function Timeline({
         next.rippleFromMs = d.startMs + d.durationMs;
       }
       d.latest = next;
+      keepSnapIfLanded(next.startMs, next.startMs + next.durationMs);
+      publishSnapGuide();
       setClipDraft(next);
     }
     function up() {
       const d = dragRef.current;
       dragRef.current = null;
       setClipDraft(null);
+      setSnapGuide(null);
       // ⚠ CHANGING ROW COUNTS AS HAVING MOVED even when the time did not. Drag a
       // caption straight up onto the next text row and every number about it is
       // the one it had; without this the gesture would be read as a click and
@@ -2253,6 +2307,7 @@ export default function Timeline({
     function move(e) {
       const d = dragRef.current;
       if (!d?.audio) return;
+      beginSnapWatch();
       const deltaMs = ((e.clientX - d.startX) / pxPerSec) * 1000;
       // The clip's own two edges are excluded from the snap targets, or it
       // would stick to where it already is — the rule every drag here follows.
@@ -2311,12 +2366,15 @@ export default function Timeline({
           ? laneMoveTarget(d.fromKey, e.clientY)
           : null;
       d.latest = next;
+      keepSnapIfLanded(next.startMs, next.startMs + next.lengthMs);
+      publishSnapGuide();
       setAudioDraft(next);
     }
     function up() {
       const d = dragRef.current;
       dragRef.current = null;
       setAudioDraft(null);
+      setSnapGuide(null);
       if (!d?.audio) return;
       // Changing row counts as having moved even when the time did not — drag a
       // clip straight up onto the row above and every number about it is the one
@@ -3680,6 +3738,32 @@ export default function Timeline({
               >
                 <span className="tl-marquee-count">{marquee.keys.size}</span>
               </div>
+            )}
+
+            {/* THE SNAP GUIDE. It is up only while a drag is actually LOCKED
+                ONTO something — a cut, the playhead, a beat, a mark, the head of
+                a sound — which until now you could only infer from the clip
+                moving in a jump.
+                ⚠ DELIBERATELY NOT THE PLAYHEAD'S LINE: dashed and in its own
+                colour. Two solid gold verticals would be one gold vertical too
+                many — the line saying "this is where you are" and the line
+                saying "this is what you caught" have to be tellable apart at a
+                glance.
+                ⚠ A LINE AND NOTHING ELSE, AND THAT IS THE FINISHED SHAPE. It had
+                arrowheads at both ends and then a label naming what it caught
+                ("Cut 0:08"); both were asked for and both were asked to go —
+                "i don't wantt view label i wnat only line". Don't add either
+                back: the line already says it locked on and where, which is what
+                a drag needs to know.
+                ⚠ `!== null`, NOT TRUTHINESS: a clip snapped to the front of the
+                film is at 0, which is the most ordinary snap there is.
+                Never catches the pointer: it is a picture of the drag, not part
+                of it. */}
+            {snapGuide !== null && (
+              <div
+                className="tl-snapline"
+                style={{ left: (snapGuide / 1000) * pxPerSec }}
+              />
             )}
 
             <div className="tl-playhead" style={{ left: playheadX }}>
