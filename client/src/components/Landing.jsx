@@ -85,7 +85,7 @@ const STAGES = [
     n: "4",
     icon: "🎬",
     title: "Ship it",
-    body: "An animatic MP4, a rendered final cut, a PDF board or a ZIP of assets.",
+    body: "A project MP4, a rendered final cut, a PDF board or a ZIP of assets.",
   },
 ];
 
@@ -272,7 +272,7 @@ export default function Landing({ onGetStarted }) {
       <footer className="landing-footer">
         <span className="brand small">🎭 Character Asset Studio</span>
         <span className="tiny muted">
-          AI planning · character assets · storyboards · animatics · video
+          AI planning · character assets · storyboards · projects · video
         </span>
       </footer>
     </div>

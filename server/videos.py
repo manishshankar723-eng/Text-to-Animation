@@ -522,16 +522,16 @@ def create_final_video(
     if animatic_id:
         source_animatic = get_owned_job(animatic_id, current)
         if source_animatic.kind != JobKind.ANIMATIC:
-            raise HTTPException(status_code=400, detail="That isn't an animatic.")
+            raise HTTPException(status_code=400, detail="That isn't a video-editor project.")
         if not shots:
             shots = _shots_from_animatic(source_animatic)
             if not shots:
                 raise HTTPException(
                     status_code=409,
-                    detail="That animatic has no frames yet — add some first.",
+                    detail="That project has no frames yet — add some first.",
                 )
         if not title:
-            title = f"{source_animatic.character_name or 'Animatic'} — final video"
+            title = f"{source_animatic.character_name or 'Project'} — final video"
         if body.settings is None:
             aspect = (source_animatic.params or {}).get("settings", {}).get("aspect_ratio")
             # Veo renders 16:9 and 9:16 only, so a square animatic still has to

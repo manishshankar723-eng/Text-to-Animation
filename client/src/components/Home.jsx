@@ -181,7 +181,7 @@ export default function Home({
       label: "Video Editor",
       items: animatics.map((a) => ({
         key: a.job_id,
-        title: a.title || "Animatic",
+        title: a.title || "Project",
         status: a.status,
         // Same shape of hint as the others: how much is in it.
         meta: a.frame_count ? `${a.frame_count} frames` : "",

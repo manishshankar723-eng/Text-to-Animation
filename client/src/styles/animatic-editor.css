@@ -714,6 +714,24 @@
   flex-shrink: 0;
 }
 
+/* ITS BLUE, AND IT IS THE WHOLE PANE — not just the head strip the other three
+   tint. Asked for by name ("change color blue of my timeline panel ... same
+   color but little dark"), with a swatch to match.
+   ⚠ THIS IS A TOKEN REMAP, NOT A BACKGROUND. Everything inside the timeline
+   paints itself out of `--panel` / `--panel-2` / `--border` — the head, the
+   ruler, the lane heads, the tracks, the audio clips, the toolbar buttons. Set
+   the pane's own `background` instead and all of those stay grey ON the blue,
+   which is the one result that looks broken rather than restyled. Overriding
+   the three tokens HERE means the pane hands the new values down to every rule
+   that already asked for them, and nothing outside this pane sees them.
+   The values (and why they are a step darker than the reference) are
+   `--tl-*` in `theme.css`, which also carries the light-theme pair. */
+.an-pane-timeline {
+  --panel: var(--tl-panel);
+  --panel-2: var(--tl-panel-2);
+  --border: var(--tl-border);
+}
+
 /* --- The seams between the panes ----------------------------------------- */
 /* The gap IS the handle. Nothing was moved to fit these in: they occupy exactly
    the `--an-seam` that used to be a grid gap, so the workspace looks unchanged

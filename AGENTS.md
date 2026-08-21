@@ -200,7 +200,150 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A
+**Last updated:** 2026-08-21 — **A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR,
+AND THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH** (user-reported, with three
+screenshots). CSS only — `animatic-tools.css`, `animatic-editor.css`, `theme.css`.
+⚠ **THE TRIM GRIP IS 8px SO IT CAN BE HIT, NOT SO IT CAN BE SEEN.** With the
+ripple (or rolling) tool armed it was filled solid `--primary` edge to edge, so on
+a picture row of butted-up shots every cut carried 16px of gold and the lane read
+as bars with clips between them. It is a **2px inset shadow** now (3px on hover),
+hard against the outer edge of the SAME 8px box — narrowing `width` would have
+made the grip harder to grab, which is the worse bug. ⚠ **THE PANE'S BLUE IS A
+TOKEN REMAP, NOT A `background`**: `.an-pane-timeline` re-points `--panel` /
+`--panel-2` / `--border` at new `--tl-*` tokens, so the head, ruler, lane heads,
+tracks and toolbar all turn together instead of staying grey on top of blue. The
+navy is a step DARKER than the swatch that was sent, as asked, which also keeps
+the `--clip-*-tint` alphas readable on the track; light theme gets a blue-tinted
+paper rather than the navy. ⚠ **AND THE MARK IS ONE MARK NOW** (second report,
+same day): the fat grip was `.tl-handle:hover` in `animatic.css`, not the tool
+rule, so thinning only the tool-armed state left Selection hovering a gold block.
+`--tl-grip-mark` is declared once on `.tl-handle` and widened by the base hover —
+the tool-scoped hover rule is deleted and must not come back. Verified: `npm run
+build` passes. ⚠ **NOT LOOKED AT IN A REAL BROWSER** — this is a colour and a
+stripe width, so it is worth a glance.
+
+**Previously:** 2026-08-21 — **OPENING A PROJECT WAS SLOW, AND THE SPINNER
+STILL SAID "ANIMATIC"** (user-reported, with a screenshot). The spinner blocks on
+ONE request, so the cost was everything that request and the hundred media
+requests behind it paid over and over: **`get_current_user` did a remote Atlas
+lookup PER REQUEST** (now cached 30 s on the bearer token — successes only, and
+dropped immediately when an account is deleted), `_asset_url` re-fetched a board
+per library card, `get_frame_image` parsed every frame to serve one, and
+`content_hash` read a whole video off disk even on a cache HIT (now memoised on
+the stat triple — the key still means "sha1 of these bytes"). Added
+**`GZipJSONOnlyMiddleware`** — ⚠ *not* a bare `GZipMiddleware`, which would gzip
+100 MB MP4s — and `Cache-Control` on media, but ⚠ **only where the URL cannot
+change meaning**: an immutable upload id, or a picture route that was actually
+sent its `?v=` stamp. Client-side, video/audio/overlay blobs no longer download
+one at a time (**`runPooled`**, a sliding window at 2/3/5). Then finished the
+rename: `Opening your project…` and ~70 more user-visible strings across client
+and server. ⚠ **`LEGACY_UNTITLED = ["Untitled animatic"]` IS A MIGRATION
+SENTINEL, NOT DISPLAY TEXT** — left alone. Verified: client builds, 35/35
+non-browser checks pass (the 2 failures are pre-existing and unrelated), plus
+ad-hoc checks for the auth cache, the gzip routing, the hash memo and `runPooled`.
+⚠ **NOT DRIVEN IN A REAL BROWSER** — the open-timing numbers are still unmeasured.
+
+**Previously:** 2026-08-21 — **A CAPTION COVERS ITS SHOT, THE WAY THE PICTURE
+ALREADY DOES** (user-reported, with a screenshot). The captions move now; what
+they did not do is GROW, so a take turning a 4-second hold into 8 seconds of
+footage left the subtitle stopping a quarter of the way through the shot.
+⚠ **THIS REVERSES A RULE `ripple.js` WROTE DOWN DELIBERATELY** ("a caption of two
+words, not a rubber band") — that reasoning holds for a subtitle under a picture
+that merely got longer, and not here, where the ask across four reports has been
+*the shot and everything over it agree about how long the shot is*.
+**`grownSpans(before, after)`** reports the new span of every panel whose HOLD
+grew (a panel that only MOVED is not in it), and **`coverGrownShots`** extends a
+generated caption's END to the end of the shot it sits in. ⚠ **THE END MOVES,
+NEVER THE START** — the words are still spoken when they were spoken, so scaling a
+caption into the shot's new span would slide every subtitle off the line it
+transcribes; holding the start keeps it on the voice and leaves it up for the rest
+of the shot, which is exactly the trade being asked for. ⚠ **NEVER PAST THE NEXT
+CAPTION**, or a shot with two lines has the first stretched over the second — two
+subtitles at once, the thing `tidy_lines` exists to prevent. ⚠ **GENERATED
+CAPTIONS ONLY (`cap…`) AND THE PREDICATE IS HARD-CODED**: text the user typed and
+placed is theirs, and a caller passing a different predicate would have this pass
+silently resizing their titles. ⚠ **IT ONLY EVER GROWS**, and it runs AFTER the
+carry at both sites (`coverGrownShots(rippleClips(list, shifts), grown)`) because a
+caption is matched to its shot by where it now STARTS. Covered by
+`tests/timeline_ripple_check.py` — 42 checks, node + source, no browser.
+⚠ **STILL NOT DRIVEN IN A REAL BROWSER.**
+
+**Previously:** 2026-08-21 — **THE RIPPLE READ THE DOCUMENT OUT OF A REF, AND A
+REF IS EMPTY AT LOAD AND STALE IN A POLL** (user-reported, third pass on the same
+edit). The layout, the shift map and `rippleClips` were all right — what was wrong
+is where the five lists came from. `attachVeoClip` read the captions, shapes,
+overlays and audio out of a `docRef` filled by a `useEffect`: **EMPTY** straight
+out of the load promise (`onLoadedRef` runs before React has rendered anything) and
+**STALE** inside the Veo poll (deliberately keyed on `animating` alone).
+⚠ **RIPPLING AN EMPTY LIST IS A SILENT NO-OP THAT LOOKS EXACTLY LIKE "NOTHING
+NEEDED TO MOVE"** — no error, and the identity check says "unchanged" perfectly
+truthfully, which is why this took three passes to pin down. ⚠ **THE FIX IS TO
+STOP READING THE DOCUMENT AT ALL**: every ripple now goes through React's own
+functional setters (`setTexts((list) => rippleClips(list, shifts))`), which are
+handed the LIVE list at commit time. It works at load precisely BECAUSE it is an
+updater — the loader has already queued `setTexts(p.texts)` and the updater is
+handed that pending list. ⚠ **`docRef` IS GONE AND MUST NOT COME BACK** —
+`tests/timeline_ripple_check.py` asserts `"docRef" not in editor`. `rippleDocument`
+is replaced by **`RIPPLED_LISTS`**, the five names in one place, and the test
+counts the calls at each of the three sites so a forgotten list fails loudly.
+Verified by modelling React's setter semantics in node over the real modules: a 6s
+take over a 2s shot grows the panel, moves the next one, moves the caption, and
+cuts the voiceover — **caption and audio landing on the same millisecond**.
+⚠ **STILL NOT DRIVEN IN A REAL BROWSER.**
+
+**Before that:** 2026-08-21 — **…AND IT ONLY RAN ON THE ATTACH, SO EVERY TAKE
+ALREADY ON A TIMELINE STAYED WRONG** (user-reported, with two screenshots). The
+rule below was right; **when** it ran was not, in two places. ⚠ **THE LAYOUT ONLY
+EVER RAN FROM `attachVeoClip`**, and `reconcileVeoClips` skips a clip already on
+the timeline — so a render that landed before the stretch existed kept a 2-second
+still under 4 seconds of footage for ever, with no gesture that re-runs it. **The
+load now runs it once** (`onLoadedRef`), after the Veo recovery, and ⚠ **COSTS
+NOTHING ON A BOARD THAT IS ALREADY RIGHT** — both passes are idempotent and hand
+back the SAME arrays, so a correct project is an identity test and no edit, which
+is what stops this dirtying every animatic on open. It runs before `resetHistory`
+and sets `changed`, so the autosave persists it and the first Ctrl+Z cannot undo
+into a half-healed row, and there is a NOTICE, because clips moving by themselves
+the instant a project opens is the most alarming thing this editor can do
+silently. ⚠ **AND `docRef` WAS EMPTY FOR A CLIP RECOVERED AT LOAD** — it is filled
+by an effect, and `onLoadedRef` is called straight out of the load promise before
+React has rendered anything, so a paid clip recovered there rippled an EMPTY
+document: pictures moved, sound left behind, on every reload. Seeded from `p` in
+the same breath as `framesRef`, which was already seeded there for that reason.
+Covered by `tests/timeline_ripple_check.py` — 30 checks, node + source, no browser.
+⚠ **A NOTE FOR THE NEXT REPORT:** if a symptom matches the code as it was BEFORE a
+change, check the bundle under test contains the change before hunting a second
+bug — the screenshots here were of a board whose takes landed under the old rule.
+
+**And before that:** 2026-08-21 — **A SHOT GROWS TO ITS TAKE, AND THE WHOLE FILM
+MOVES WITH IT** (user-reported, with three screenshots). Two halves of one edit.
+⚠ **THE PANEL TAKES THE TAKE'S LENGTH** (`spreadPanelsForRenders`, `scene.js`): a
+2-second still under 4 seconds of footage is a shot whose two halves disagree
+about how long it is, and one that collapses back to 2s the moment the take is
+deleted. It keeps its START and grows to the take's end, only ever GROWS (a
+shorter take leaves it alone — shrinking a hold somebody set by hand is
+discarding an edit), and is clamped at `MAX_FRAME_MS`. ⚠ **AND EVERYTHING ELSE ON
+THE TIMELINE TRAVELS WITH THE PICTURES** — the captions, the voiceover, typed
+text, shapes, overlays, the Video row — which is the new **`ripple.js`**. There is
+no single number to move things by (shot 7 grows by 2s and shot 24 by 9s), so
+**`renderShifts`** turns what the layout pass did into a STEP FUNCTION over OLD
+time — two points per panel, its start AND its end, matched by frame id — and
+**`rippleDocument`** moves all five lists in one call. ⚠ **A CLIP IS LOOKED UP BY
+ITS OWN START AND IS NOT STRETCHED**: a caption inside the grown shot stays under
+it, one a millisecond past its old end owes the whole debt. ⚠ **THE VOICEOVER IS
+CUT AT THE EDIT, NOT DRAGGED WHOLE** — it is one clip laid from 0:00, so its start
+owes nothing (the bug) and shifting it by a later shot's debt would drag the lines
+before that shot too (a different bug); `rippleAudio` razors it with the razor's
+own `splitClip` and moves only the tail. ⚠ **EVERY CLIP THAT CAME OFF A BOARD IS
+SKIPPED BY `rippleFrames`** — panels AND takes: the layout pass already placed
+both and the map is in OLD time, so looking a moved take up at its NEW start adds
+its debt twice and slides it off its own shot. Run by **`attachVeoClip`** and by
+**the voiceover poll** (against `speechFramesRef`, with `keep` for the captions
+and voiceover the server just re-timed). Covered by
+`tests/timeline_ripple_check.py` — 25 checks, node + source, no browser.
+⚠ **NOT DRIVEN IN A REAL BROWSER** — in particular the razored voiceover has not
+been listened to across the cut; browser tests are run on request in this project.
+
+**Earlier:** 2026-08-21 — **A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A
 SCRIPT YOU CAN EDIT BEFORE IT IS READ** (user-reported, with four screenshots). A
 line was laid at the start of its shot and nothing moved the picture, so a
 ten-second line over a two-second hold — and the caption built from it — ran
@@ -228,7 +371,7 @@ the estimate prices the words on screen. Covered by
 ⚠ **NOT OPENED IN A REAL BROWSER** — the sheet's layout at forty lines is
 unverified by eye; browser tests are run on request in this project.
 
-**Previously:** 2026-08-21 — **AN UPLOADED PICTURE GOES TO THE **Images**
+**Earlier still:** 2026-08-21 — **AN UPLOADED PICTURE GOES TO THE **Images**
 LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD
 BUTTON** (user-reported, with two screenshots of the gutter). A Stills row was
 made FOR you the first time you uploaded a photo — and picture rows stack
@@ -256,7 +399,7 @@ in the gutter — "only keep media and layer ＋ icon". Covered by
 that no longer exists and now asserts the one-kind rule; the Playwright suites are
 run on request in this project, so that change is unverified.
 
-**Before that:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
+**Older:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
 PUSHES THE PANELS AFTER IT ALONG** (user-reported, with three screenshots). A Veo
 render is as long as Veo was ASKED for — 4s of footage over a 2s hold is the
 ordinary case — so the second render, which starts where ITS panel starts, used to
@@ -274,7 +417,7 @@ START**, so a nudge the user gave it survives. ⚠ **PAIRED BY THE BOARD REFEREN
 `assetKey`, which keys a render by its upload. Covered by
 `tests/veo_ripple_check.py` — 20 checks, node + source, no browser.
 
-**And before that:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
+**Older still:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
 PLACES** (user-specified). A ⬇ on its Media card and **Download** in a
 right-click menu beside its bar on the timeline. ⚠ **THE ⬇ IS FIRST IN THE
 CARD'S TOOL ROW** (⬇ ＋ ✕) so ＋ and ✕ stay in the same columns on every card —
@@ -1334,6 +1477,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/animatic/audio_clips.js` | **An audio track is a CLIP, and this is what you can do to one** — find the one under a click, cut it in two, trim its head, group a lane. ⚠ **EDITOR-SIDE ONLY, no Python twin and none needed**: the server renders a mix, it never edits one (the same split as `keyframes.js`). ⚠ **`clipId(track)` is the identity, NOT `upload_id`** — after a cut several clips share one upload, so the upload answers "which sound" and never "which clip"; a clip saved before the razor has no `id` and `_audio_tracks_of` backfills it with the upload. `splitClip` sets **`start_ms` AND `offset_ms`** on the second half by the same amount — one without the other and the audio jumps at the cut. Checked by `tests/audio_razor_check.py` under node. Also owns **the crossfade** (`crossfadePatch` / `crossfadeTarget`), which unlike a picture transition really does overlap its two clips — it eats the media handles either side of the cut, **spending the outgoing clip's TAIL before the incoming clip's HEAD** so that laying one moves nothing. ⚠ Everything there works in FILE time and takes no `totalMs`: `trim_ms` is written from a play length, so the video's clamp would get baked into any clip hanging past the last frame. Checked by `tests/audio_crossfade_check.py`. |
 | `client/src/animatic/selection.js` | **What "the selection" is, now that more than one thing can be in it** — a LIST of `{kind, id}`, the shift-click toggle, group expansion, and the rubber band's box maths. ⚠ **EDITOR-SIDE ONLY** (a selection is not part of the project) except `group_id`, which is saved on the clips. ⚠ **A group is a shared string on its members, not a container**: nothing has to be kept in step, so it cannot go stale — delete a member and the group is what is left. `MOVABLE`/`GROUPABLE` exclude `frame` because the picture sequence is a flow, not free-floating clips. Checked by `tests/selection_check.py` under node. |
 | `client/src/animatic/captions.js` | **Which clips this app WROTE, and which lane they live on** — three strings and two predicates. **⚠ TWIN of `captions.py`** (`CAPTION_LAYER_ID` / `CAPTION_LAYER_NAME` / `CAPTION_ID_PREFIX`), compared by running this file under node in `tests/captions_check.py`. The SERVER writes generated captions, so this is the whole contract that lets the browser find the lane, name it, and keep it at the top of the timeline. Get it wrong and the captions are invisible on the timeline while still burning into the export. |
+| `client/src/animatic/ripple.js` | **When the board's pictures move, the REST OF THE FILM moves with them.** ⚠ EDITOR-SIDE ONLY, no Python twin (the same split as `razor.js`). `spreadPanelsForRenders` moves PICTURES; this carries the captions, the voiceover, typed text, shapes, overlays and the Video row along behind them. ⚠ **THERE IS NO SINGLE NUMBER TO MOVE THINGS BY** — shot 7 grows by 2s and shot 24 by 9s — so `renderShifts(before, after)` builds a STEP FUNCTION over OLD time (two points per panel, its start AND its end, matched by frame id) and every other clip is moved by looking its own start up in it. ⚠ **A CLIP IS NOT STRETCHED BY THE CARRY** — a caption is moved by its own start, never scaled. Growing one is a SEPARATE pass, `coverGrownShots`: a generated caption's END is extended to the end of the shot it sits in (never past the next caption, never a clip the user typed, only ever longer), because the words are still spoken when they were spoken. ⚠ **THE VOICEOVER IS CUT AT THE EDIT** — one clip laid from 0:00 owes nothing at its start (the bug) and cannot be shifted whole (a different bug), so `rippleAudio` razors it with `splitClip` and moves the tail. ⚠ **EVERY BOARD CLIP IS SKIPPED BY `rippleFrames`**, panels and takes alike: the layout pass placed them already and the map is in OLD time, so a moved take looked up at its NEW start is moved twice. Run by `attachVeoClip`, by the LOAD (so a take attached before the rule existed is put right) and by the voiceover poll. ⚠ **NO CALLER READS THE DOCUMENT** — every list is rippled through React's own functional setter, because a ref is empty at load and stale in a poll and rippling an empty list is a SILENT no-op; `RIPPLED_LISTS` names the five so none is forgotten. Checked by `tests/timeline_ripple_check.py` under node. |
 | `client/src/animatic/beat_cut.js` | **Pulling every cut onto the nearest beat.** ⚠ EDITOR-SIDE ONLY, no Python twin (the same split as `selection.js`). Three rules, each a check in `tests/autoframe_check.py` under node: **a cut is not a thing you can move** — the sequence is a FLOW, so moving one rewrites the durations either side; **beats cluster and cuts must not** — the nearest beat to two consecutive cuts is often the same one, and without the running floor that is a zero-length clip, a picture that never appears; and a cut further than `REACH_MS` from a beat is LEFT ALONE, or this tightens nothing and rewrites the edit. The last cut is never moved — it is the end of the video, not an edit point. |
 | `client/src/components/RegeneratePanelInline.jsx` | **Redraw the shot you are looking at, and run it longer** — the two Properties groups that reach back to the BOARD (`RelengthShotInline` is the second, exported from here). Renders NOTHING unless the clip's picture is a board panel, so an animatic of uploaded stills is unchanged. Follows the 2026-08-09 three rules: it really redraws (no resume flag lives here), the server's answer carries a new `?v=` that `onRedrawn` hands to the editor, and `.is-redrawing` + `.redraw-veil` blur the OLD picture so you can see which one is being replaced. ⚠ Says out loud that the panel is SHARED — the redraw changes every animatic built from that board. |
 | `client/src/animatic/beats.js` | **Where the beats are, and the one decode everything reads from.** Energy-envelope onset detection: no library, no FFT, no server round-trip. The pure half (`energyEnvelope`, `onsetsFromEnvelope`) takes plain arrays and touches no browser API, which is what lets the test run it under node against a click track at a known BPM. Beat times are in FILE time, like `offset_ms`. |
@@ -1676,7 +1820,490 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A SCRIPT YOU CAN EDIT BEFORE IT IS READ (user-reported, with four screenshots)
+### 2026-08-21 (latest) — A RIPPLE GRIP PER CUT ADDED UP TO A GOLD BAR, AND THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH (user-reported, with three screenshots)
+
+> "i want ripple icon size in clip view in timline i want you keep little thin
+>  and change color blue of my timeline panel see color image 3 for ref i want
+>  same color but ltiile dark"
+
+Two visual asks, CSS only. No JS touched, no behaviour changed.
+
+#### The trim grip was as wide as its hit area
+
+`.tl-handle` is 8px because that is what can be grabbed without precision aiming,
+and `.tl-inner.tool-ripple .tl-handle` filled the whole of it with `--primary` to
+say "this is what the pointer is for". ⚠ **ON THE PICTURE ROWS THAT ADDS UP.**
+Every clip carries a grip at each end, so butted-up shots put 16px of solid gold
+on every cut — the screenshot is a Story…Image lane where the gold is the thing
+you see and the clip labels and content tints are what you have to hunt for.
+
+- **A 2px inset shadow instead of a fill** (`--tl-grip-mark`, 3px on hover),
+  drawn hard against the grip's outer edge so it sits ON the cut it trims.
+- ⚠ **THE 8px BOX IS UNTOUCHED.** An inset shadow paints inside it without
+  resizing it; narrowing `width` would have made the grip harder to grab, which
+  is a worse bug than a fat marker.
+- The mirrored rule for `.tl-handle-l` must stay AFTER the general one — a head
+  grip carries both classes, so the two selectors weigh the same and source
+  order is what decides which shadow lands.
+
+#### The timeline pane is blue, and that means every surface in it
+
+The four pane heads share one soft blue (`--pane-*`); the ask was for the
+TIMELINE pane itself to carry the colour, a shade darker than the swatch sent.
+
+- ⚠ **NOT `background` ON THE PANE.** Everything inside the timeline paints
+  itself out of `--panel` / `--panel-2` / `--border` — head strip, ruler, lane
+  heads, tracks, audio clips, toolbar buttons. Colouring the pane alone leaves
+  all of those grey ON the blue, which is the one result that looks broken
+  rather than restyled. `.an-pane-timeline` **re-points those three tokens** at
+  `--tl-panel` / `--tl-panel-2` / `--tl-border`, so the pane hands the new
+  values down to every rule that already asked for them and nothing outside it
+  sees them.
+- ⚠ **DARKER, WHICH IS ALSO WHY IT WORKS.** The clip colours are ALPHAS
+  (`--clip-*-tint`); a lighter navy washes them out. `--tl-panel` is what a lane
+  sits on and `--tl-panel-2` is the lane — keep the two steps apart or the
+  timeline is one flat blue slab with no rows in it.
+- ⚠ **LIGHT THEME IS NOT THE NAVY.** A near-black timeline under three white
+  panes is a hole in the page, so light mode gets the same hue as a blue-tinted
+  paper, one step down from `--panel`.
+
+#### Follow-up the same day: it was thin under B and fat under V
+
+Reported with two screenshots: the ripple mark was thin with the tool armed, and
+"older size" when hovering a grip in Selection. ⚠ **THE FAT GRIP WAS NEVER THE
+TOOL RULE — IT WAS `.tl-handle:hover` IN `animatic.css`**, `background:
+var(--primary)` across all 8px, under every tool. The first pass only thinned the
+tool-armed rest state and then added its OWN hover rule beside it, which is
+precisely how the two drifted apart. Now: **`--tl-grip-mark` is declared once on
+`.tl-handle`** (2px) and the base hover re-declares it (3px) and paints the same
+inset stripe, so ONE mark serves every tool. ⚠ **THE TOOL-SCOPED HOVER RULE IS
+GONE ON PURPOSE** — do not add it back; a second hover rule for two tools is the
+bug. The blue was left exactly as it is ("not need to chnage now blue okay").
+
+Verified: `npm run build` passes (163 kB CSS, no warnings from these files).
+⚠ **NOT LOOKED AT IN A REAL BROWSER** — a colour and a stripe width both want a
+glance before this is called finished.
+
+### 2026-08-21 — OPENING A PROJECT WAS SLOW, AND THE SPINNER STILL SAID "ANIMATIC" (user-reported, with a screenshot)
+
+> "see when open project so take time so you chcek and how i fix it give me idea
+>  so user open quickly … and see in image Opening your Animatics show but i
+>  chnage name animatics to Project"
+
+Two things in one report. The screenshot is the full-screen loading card reading
+**"Opening your animatic…"** — a string the rename had missed — and the
+complaint is that the card is up too long.
+
+#### Where the time actually went
+
+The spinner blocks on ONE request (`GET /animatics/{id}`), so the fix was never
+"make the editor render sooner". It was that that request, and every one of the
+hundred-odd media requests behind it, was paying for the same things over again.
+
+- ⚠ **`get_current_user` did a remote Atlas `find_one` PER REQUEST.** This was by
+  far the biggest cost. A sixty-panel project is one project fetch, sixty
+  thumbnails and a blob per clip and track — every one of them a round trip to
+  Mongo Atlas to re-learn the same unchanged fact. **`server/auth.py` now caches
+  the resolved user for 30 s, keyed on the raw bearer token.** SUCCESSES ONLY, so
+  a bad or expired token is re-validated every time and can never come out of the
+  cache; `forget_cached_email` is called from `DELETE /auth/me` so a deleted
+  account's tokens stop working immediately rather than at the end of the TTL.
+  The TTL is the staleness budget for exactly one fact, `disabled`.
+- **`_asset_url` was a live N+1.** It asked `_frame_version` for a stamp with
+  `boards=None`, so a panel-backed library card re-fetched the board record the
+  frame loop had already fetched — once per card. `_project_of` now passes its
+  own `boards` dict through.
+- **`get_frame_image` parsed every frame to serve one.** Sixty thumbnail requests
+  meant sixty full Pydantic parses of sixty frames. **`_frame_by_id`** scans the
+  raw rows and validates only the match, falling back to `_frames_of` when the
+  scan finds nothing.
+- ⚠ **A CACHE HIT STILL READ THE WHOLE FILE.** `video_frames.content_hash` is the
+  extraction cache's KEY and it is a sha1 of the bytes, so it ran on the way in
+  even when the stills were already on disk — three 80 MB clips read half a
+  gigabyte to answer questions already answered. **Memoised on
+  `(abspath, mtime_ns, size)`** — the same stat triple `proxies.cache_key` uses.
+  The KEY STILL MEANS WHAT IT MEANT: same bytes, same digest, so the dedupe of
+  one clip across two projects is untouched, and a file rewritten in place
+  changes mtime and re-hashes.
+- **No compression anywhere.** `server/main.py` had CORS and nothing else, and the
+  project JSON — every field of every frame, defaults included — went out raw.
+  ⚠ **NOT A BARE `GZipMiddleware`**: that also compresses every `FileResponse`,
+  i.e. PNG panels and whole MP4s, spending real CPU to save nothing and delaying
+  the first byte of a file the browser wants to play. **`GZipJSONOnlyMiddleware`**
+  hands `/frame/`, `/panel/`, `/media/`, `/video`, `/download` and `/image`
+  straight through and gzips the rest.
+- **Nothing survived a reload.** `FileResponse` sent no `Cache-Control`.
+  ⚠ **ONLY WHERE THE URL CANNOT CHANGE MEANING** — `/media/{upload_id}` (every
+  upload id is a fresh uuid, so the bytes are written once) and the picture
+  routes WHEN `?v=` was actually sent. `v` is now a declared param on both for
+  that reason. Without a stamp there is nothing to invalidate, and a redrawn
+  panel served from a week-old cache is the exact bug `_frame_version` exists to
+  prevent, so the header is withheld in that case. `/audio` stays uncacheable.
+- **Video, audio and overlay blobs downloaded ONE AT A TIME.** Three 80 MB clips
+  went back to back before the last could be scrubbed. **`runPooled`** — a
+  sliding window, not `Promise.all` over fixed batches, so one slow file does not
+  stall the rest — at 2 for video, 3 for audio, 5 for overlays. Two, not five,
+  for video: the old comment's point about five parallel 100 MB fetches being a
+  worse first impression still stands.
+
+**Deliberately not done** (agreed with the user, quick wins only): Range
+streaming for `<video>` (it needs a non-header auth path), `React.lazy` on the
+editor bundle, and reworking the 5-at-a-time thumbnail batching into a window.
+
+#### The rename
+
+`Opening your animatic…` → `Opening your project…`, plus every other
+user-visible string: ~22 more in `AnimaticEditor.jsx` (back-button tooltips,
+`Save project as…`, the export placeholder and default filename, the delete
+confirm, the row/track limit toasts), 8 in `AnimaticLibrary.jsx` (`Your
+Projects`, `Recent Projects`, `All Projects`), and ~40 server `detail=` strings
+and job titles in `server/animatics.py`, `server/videos.py`, `animatic.py` and
+`export_presets.py`. Article changes were done by hand (`an animatic` → `a
+project`).
+
+- ⚠ **`LEGACY_UNTITLED = ["Untitled animatic"]` IN `AnimaticLibrary.jsx:30` IS NOT
+  DISPLAY TEXT** and was left alone. It is compared against titles already in the
+  database; renaming it breaks `isUntitled()` for every pre-rename project and
+  permanently suppresses the "Save as…" prompt.
+- Identifiers, routes, JSON keys, CSS classes, filenames, log lines and comments
+  were NOT touched. `Image to Animatic Image` is a separate feature name and was
+  left alone, confirmed with the user.
+- ⚠ The server title fallbacks (`character_name or "Project"`) only affect NEW
+  projects. Rows already in the database keep the titles they were given.
+
+#### Verified
+
+`client` builds. All 35 non-browser `tests/*_check.py` pass. Two failures are not
+this work: `effects_parity_check.py` needs a native GL module that is not
+installed, and `profile_check.py` asserts the shared users collection holds
+exactly one account when it holds ~40 — it fails identically with these changes
+stashed. Ad-hoc checks written and run for the three risky pieces: the auth cache
+(one lookup for three requests; bad tokens and disabled accounts never cached;
+TTL expiry re-validates; `forget_cached_email` is per-account; the cap holds),
+the gzip routing (JSON compressed, `/frame/` `/media/` `/panel/` untouched and
+byte-intact), the `content_hash` memo (read once, re-read after a rewrite, digest
+still equals a plain sha1 of the bytes) and `runPooled` (completeness, the
+concurrency ceiling, a slow item not blocking others, empty input).
+⚠ **NOT DRIVEN IN A REAL BROWSER** — the timings in the plan's verification
+section are still to be measured against a real project.
+
+### 2026-08-21 — A CAPTION COVERS ITS SHOT, THE WAY THE PICTURE ALREADY DOES (user-reported, with a screenshot)
+
+> "see when i generate veo video and video come in layer and caption and text
+>  move but see caption length only 4sec but my video is 8 sec so i want caption
+>  goes 8 sec so match video length. like you already do in image"
+
+The captions move now. What they do not do is GROW: a take that turns a 4-second
+hold into 8 seconds of footage leaves the subtitle written for that shot stopping
+a quarter of the way through it.
+
+⚠ **THIS REVERSES A RULE WRITTEN DOWN DELIBERATELY.** `ripple.js` said "a clip is
+looked up by its own start and is NOT stretched — it is a caption of two words,
+not a rubber band". That reasoning holds for a subtitle under a picture that
+merely got longer; it does not hold here, where the user's whole ask across four
+reports has been **the shot and everything over it agree about how long the shot
+is**. Asked for explicitly, so it is the ask that wins.
+
+#### The rule
+
+**`grownSpans(before, after)`** — the new span of every board panel whose HOLD
+grew. A different question from `renderShifts`: that one says how far each moment
+slid, this one says which stretches of film are now longer than what is written
+over them. A panel that only MOVED is not in it.
+
+**`coverGrownShots(clips, spans)`** — a generated caption's END is extended to the
+end of the shot it sits in.
+
+- ⚠ **THE END MOVES, NEVER THE START.** The words are still spoken when they were
+  spoken — a voiceover is a recording and does not stretch — so scaling a caption
+  into the shot's new span would slide every subtitle off the line it transcribes.
+  Holding the start keeps it on the voice and simply leaves it up for the rest of
+  the shot, which IS the trade being asked for: the subtitle now stays on screen
+  after the line has finished.
+- ⚠ **NEVER PAST THE NEXT CAPTION.** A shot with two spoken lines in it would
+  otherwise have the first stretched over the second — two subtitles on screen at
+  once, the one thing `captions.tidy_lines` exists to prevent.
+- ⚠ **GENERATED CAPTIONS ONLY (`cap…`), AND THE PREDICATE IS HARD-CODED.** That
+  prefix marks a clip this app wrote to match a spoken line, so making it agree
+  with its shot is finishing our own work. Text the user typed and placed is
+  theirs; a caller passing a different predicate would have this pass silently
+  resizing their titles.
+- ⚠ **IT ONLY EVER GROWS**, like the panel stretch it mirrors.
+- ⚠ **MOVED FIRST, THEN STRETCHED** at both call sites
+  (`coverGrownShots(rippleClips(list, shifts), grown)`) — a caption is matched to
+  its shot by where it now STARTS, so clips that have not been carried yet match
+  against the wrong shot.
+
+#### Files
+
+`client/src/animatic/ripple.js` (`grownSpans`, `coverGrownShots`),
+`client/src/components/AnimaticEditor.jsx` (the attach and the load heal),
+`tests/timeline_ripple_check.py`, `tests/veo_ripple_check.py`.
+
+#### Verified
+
+- `python tests/timeline_ripple_check.py` — **42 checks, all pass**, including the
+  two-lines-in-one-shot case, "text the user typed is never resized", "a shot that
+  only moved does not stretch anything" and "a caption longer than its shot is
+  left alone".
+- Driven under node over the real modules with React's setter semantics modelled:
+  a 4s shot with one line and a 4s shot with two, each given an 8s take. The
+  single caption goes 3.8s → 8s and ends exactly on the shot; the two-line shot's
+  first caption stops on the second's start and the second runs to the shot's end;
+  a typed title inside the same shot is untouched.
+- `veo_ripple_check` (23), `voiceover_fit_check` (51), `captions_check`,
+  `veo_download_check`, `image_lane_routing_check` — pass.
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the Playwright suites, and still not driven in a real browser.
+
+### 2026-08-21 — THE RIPPLE READ THE DOCUMENT OUT OF A REF, AND A REF IS EMPTY AT LOAD AND STALE IN A POLL (user-reported)
+
+> "now all good audio and image but Caption not move while come veo video
+>  see and fix it"
+
+Third report on the same edit. The layout was right, the shift map was right, and
+`rippleClips` moves captions correctly when driven directly — all of that was
+checked under node against the real modules. What was wrong is **where the five
+lists came from**.
+
+#### The shape of the fault
+
+`attachVeoClip` read the captions, shapes, overlays and audio out of a `docRef`
+filled by a `useEffect`. That ref is:
+
+- **EMPTY** straight out of the load promise — `onLoadedRef` is called before
+  React has rendered anything, so no effect has run; and
+- **STALE** inside the Veo poll, which is deliberately keyed on `animating` alone
+  so it cannot cancel its own in-flight fetch.
+
+⚠ **AND RIPPLING AN EMPTY LIST IS A SILENT NO-OP THAT LOOKS EXACTLY LIKE "NOTHING
+NEEDED TO MOVE".** There is no error, no warning, and the identity check
+(`carried.texts !== docRef.current.texts`) says "unchanged" perfectly truthfully.
+That is why this took three passes to pin down: every fix made the pictures and
+the sound move, and the captions kept failing in a way that produced no evidence.
+
+#### The fix is to stop reading the document at all
+
+Every ripple now goes through **React's own functional setters**, which are handed
+the LIVE list at commit time:
+
+    setTexts((list) => rippleClips(list, shifts));
+    setShapes((list) => rippleClips(list, shifts));
+    setOverlays((list) => rippleClips(list, shifts));
+    setAudioTracks((list) => rippleAudio(list, shifts, newId));
+
+- ⚠ **`docRef` IS GONE AND MUST NOT COME BACK** — `tests/timeline_ripple_check.py`
+  asserts `"docRef" not in editor`. The whole class of fault was one copy of the
+  document too many.
+- ⚠ **IT WORKS AT LOAD TIME PRECISELY BECAUSE IT IS AN UPDATER.** The loader has
+  already queued `setTexts(p.texts)`; an updater is handed that pending list, so
+  the heal ripples the project that is arriving without ever holding a copy of it.
+  The hand-written seed added in the entry below is deleted — it was patching one
+  symptom of the design fault.
+- **`rippleDocument` is gone**, replaced by **`RIPPLED_LISTS`** — the five names in
+  one place. What is left to get wrong is forgetting one, and the test counts the
+  calls at each of the three sites (attach, load-heal, voiceover poll) so a
+  forgotten list fails loudly instead of silently.
+- The **voiceover poll** still ripples the server's own texts and audio as VALUES,
+  because the server rewrote those two — with `keep`, so the captions and the
+  voiceover it just re-timed are not moved twice.
+
+#### Files
+
+`client/src/animatic/ripple.js` (`rippleDocument` → `RIPPLED_LISTS`),
+`client/src/components/AnimaticEditor.jsx` (all three sites; `docRef` and its
+effect removed), `tests/timeline_ripple_check.py`, `tests/veo_ripple_check.py`,
+`tests/voiceover_fit_check.py`.
+
+#### Verified
+
+- `python tests/timeline_ripple_check.py` — **33 checks, all pass**, including
+  "NOTHING READS THE DOCUMENT OUT OF A REF" and a per-list count at every site.
+- **React's setter semantics were modelled in node over the real modules** — a
+  toy state cell whose setter takes a value or an updater, driving `attachVeoClip`
+  verbatim. A 6s take over a 2s shot: the panel grows to 6s, the next panel moves
+  to 10s, the caption at 9s moves to 13s, and the voiceover is cut at 6s with its
+  tail laid at 10s reading from 6s — **so the caption and the audio under it land
+  on the same millisecond**, which is the thing that was actually broken.
+- `veo_ripple_check` (23), `voiceover_fit_check` (51), `captions_check` — pass.
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the Playwright suites, and still not driven in a real browser.
+
+### 2026-08-21 — …AND IT ONLY RAN ON THE ATTACH, SO EVERY TAKE ALREADY ON A TIMELINE STAYED WRONG (user-reported, with two screenshots)
+
+> "see i check when i generate shot 18 so image not capture video lenth only
+>  video come but image still not extend/ripple video 4 sec time lenght
+>
+>  and see you when Veo video come in layer so image move but caption and audio
+>  not move same place so not solved i think please fext it"
+
+The rule shipped in the entry below was correct — driven through the editor's own
+sequence under node, a 4s take grows its panel to 4s, the shots after it move, the
+captions move and the voiceover is cut at the edit. What was wrong was **WHEN it
+runs**, in two places, and the symptom of both is exactly what a board that never
+got the fix looks like.
+
+#### 1. The layout only ever ran on the ATTACH
+
+`spreadPanelsForRenders` is called from `attachVeoClip` and nowhere else, and
+`reconcileVeoClips` skips a clip already on the timeline (`already`). So a render
+that landed **before** the stretch existed keeps a 2-second still under 4 seconds
+of footage **for ever** — there is no gesture that re-runs it, and paying to render
+the shot again just to straighten the row is not a fix.
+
+- **The load runs it once** (`onLoadedRef`), after the Veo recovery: the same
+  `spreadPanelsForRenders` → `renderShifts` → `rippleDocument` the attach runs.
+- ⚠ **IT COSTS NOTHING ON A BOARD THAT IS ALREADY RIGHT.** Both passes are
+  idempotent and hand back the SAME arrays when they change nothing, so a correct
+  project is an identity test and no edit — which is what stops this dirtying
+  every animatic on open. Checked, because a load-time pass that is not an
+  identity test writes to the server on every single load.
+- ⚠ **AND IT SAYS SO.** Clips moving by themselves the instant a project opens is
+  the most alarming thing this editor can do silently, so there is a notice.
+- It runs before `resetHistory`, like the `start_ms` normalisation beside it, so
+  the first Ctrl+Z cannot undo into a half-healed row; and it sets `changed`, so
+  the load is not adopted as the saved baseline and the autosave persists it.
+
+#### 2. `docRef` was EMPTY for a clip recovered at load
+
+`docRef` (the captions, shapes, overlays and audio the ripple carries) is filled
+by an effect. `onLoadedRef` is called **straight out of the load promise**, before
+React has rendered anything, so no effect has run — a paid clip recovered there
+rippled an empty document. The pictures moved and the sound stayed exactly where
+it was, on every reload. ⚠ **Seeded from `p` in the same breath as `framesRef`**,
+which was already being seeded there for precisely this reason.
+
+#### Files
+
+`client/src/components/AnimaticEditor.jsx` (`onLoadedRef`),
+`tests/timeline_ripple_check.py`.
+
+#### Verified
+
+- `python tests/timeline_ripple_check.py` — **30 checks, all pass**. The new logic
+  case is a board saved BEFORE the stretch existed — take already attached, panel
+  still short — and it asserts both that it is put right and that a second pass
+  over the result is an identity test.
+- The editor's own attach sequence was driven under node against the real modules
+  (25 shots, animate 7 then 18, with captions and a one-clip voiceover): panels
+  grow to 4s, later shots move, captions shift, the voiceover is razored twice and
+  each piece reads on from where the last stopped.
+- `veo_ripple_check`, `voiceover_fit_check`, `captions_check`, `veo_download_check`,
+  `image_lane_routing_check`, `editor_board_import_check` — pass unchanged.
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the Playwright suites, and none of this has been driven in a real
+  browser. ⚠ **AND A NOTE FOR WHOEVER READS THE NEXT REPORT:** if a symptom
+  matches the behaviour of the code as it was BEFORE a change, check that the
+  bundle being tested contains the change before looking for a second bug — the
+  screenshots here were of a board whose takes had landed under the old rule, and
+  the two defects above are what stopped it healing.
+
+### 2026-08-21 — A SHOT GROWS TO ITS TAKE, AND THE WHOLE FILM MOVES WITH IT (user-reported, with three screenshots)
+
+> "see image 3 when i generate Veo video from image shot 7 so first fixt it my
+>  video lengh is 4 sec but image sitll in 2 sec so image also extend 4 second
+>  when com veo video that time like when i generte voice over so image capture
+>  time frame of voiceover and caption
+>
+>  and second when i generte veo video so time timeline all layer clip go move but
+>  my audio not move so see problem my caption and voiver over not move so both
+>  still . so get this type of problem. So i want when i generate veo video an dit
+>  come in Story..video layer so iamge clip move already but move also caption,
+>  voicerover audio, if image, video ,text layer clip so those also move that time
+>  so user not get this type of problem"
+
+Two halves of one edit: **how long the shot becomes**, and **what else moves when
+it does**.
+
+#### 1. The panel takes the take's length
+
+`spreadPanelsForRenders` kept a panel at its own hold and pushed the panels AFTER
+it clear of the take. So a 2-second still sat under 4 seconds of footage — a shot
+whose two halves disagree about how long it is, and one that collapses back to 2s
+the moment the take is deleted.
+
+- **The panel keeps its START and grows to the take's end** (`scene.js`). Same
+  rule the voiceover already follows (`_lay_out_speech`): a shot is as long as the
+  thing laid over it.
+- ⚠ **IT ONLY EVER GROWS.** A take shorter than its panel leaves the panel alone —
+  shrinking a hold somebody set by hand is not making room, it is discarding an
+  edit. Clamped at `MAX_FRAME_MS` (`AnimaticFrame.duration_ms`'s own `le=600_000`),
+  because a length computed here that the wire rejects is a lost project.
+- Everything else about the pass is unchanged: forward only, never past where a
+  clip already is, a take travelling with its panel by the panel's delta, a second
+  run over its own output a no-op.
+
+#### 2. `ripple.js` — the rest of the film travels with the pictures
+
+The pass moves PICTURES, because that is the collision it was written for.
+Captions, voiceover, typed text, shapes, overlays and the Video row all stayed
+put, so one grown shot put the whole soundtrack out for the rest of the film.
+
+- ⚠ **THERE IS NO SINGLE NUMBER TO MOVE THINGS BY.** Shot 7 grows by 2s and shot
+  24 by 9s. **`renderShifts(before, after)`** turns what the layout pass did into a
+  STEP FUNCTION over OLD time — two points per panel, its start AND its end,
+  because a shot that grew *without moving* owes nothing at its head and the whole
+  of its growth at its tail. Matched by frame ID, never by index.
+- **`rippleDocument`** carries `frames` / `texts` / `shapes` / `overlays` /
+  `audioTracks` in one call, so a caller cannot move four lists and forget the
+  fifth. Every list is handed back by IDENTITY when nothing moved.
+- ⚠ **A CLIP IS LOOKED UP BY ITS OWN START AND IS NOT STRETCHED.** A caption that
+  sat inside the grown shot stays inside it; one a millisecond past its old end
+  owes the whole debt. That boundary is what `tests/timeline_ripple_check.py` is
+  really guarding — off by one clip and the subtitles are a shot out for the
+  entire second half of a board.
+- ⚠ **THE VOICEOVER IS CUT AT THE EDIT, NOT DRAGGED WHOLE.** It is ONE clip laid
+  from 0:00 across the film: its start is 0 so the map owes it nothing (the bug),
+  and shifting it by a later shot's debt would drag the lines BEFORE that shot
+  along too (a different bug). `rippleAudio` razors it at the step with the
+  razor's own **`splitClip`** and moves only the tail — two ordinary clips reading
+  two windows of one file, which nothing downstream has to learn about.
+- ⚠ **EVERY CLIP THAT CAME OFF A BOARD IS SKIPPED** by `rippleFrames` — panels AND
+  takes. The layout pass has already placed both, and the map is in OLD time, so
+  looking a moved take up at its NEW start adds its debt twice and slides it off
+  the shot it is a take of. Shipped correct only because the test that catches it
+  was written first; it is checked by identity (`v3 === p3`).
+
+#### 3. Both passes run it
+
+- **`attachVeoClip`** runs `renderShifts` + `rippleDocument` in the same write
+  that makes room, with the editor's own `newId` as the id minter (ids are the
+  editor's to hand out, not a pure module's). ⚠ **The carried lists go back into
+  `docRef`**, because a batch of four renders attaches in one tick and the second
+  must not ripple a document the first already rippled.
+- **The voiceover poll** does the same against the row the server re-laid —
+  `speechFramesRef` is the picture row as it stood when the run was submitted, and
+  is the only record of where those shots were. ⚠ **`keep` is not optional**: the
+  generated captions and the new voiceover track are already timed against the NEW
+  layout, and shifting them by the same map would be this bug committed by its own
+  fix.
+
+#### Files
+
+`client/src/animatic/ripple.js` (new), `client/src/animatic/scene.js`
+(`MAX_FRAME_MS`, the panel stretch), `client/src/components/AnimaticEditor.jsx`
+(`docRef`, `speechFramesRef`, `speechAudioRef`, both call sites, the notice),
+`tests/timeline_ripple_check.py` (new), `tests/veo_ripple_check.py`,
+`tests/voiceover_fit_check.py`.
+
+#### Verified
+
+- `python tests/timeline_ripple_check.py` — **25 checks, all pass** (node +
+  source, no browser). The double-move guard was confirmed to FAIL against the
+  previous rule before the fix was kept.
+- `python tests/veo_ripple_check.py` — **23 checks, all pass**; its two expected
+  layouts were rewritten for the stretch and a "a take SHORTER than its panel does
+  not shrink it" case added.
+- `python tests/voiceover_fit_check.py` — **51 checks, all pass**.
+- `captions_check`, `veo_download_check`, `image_lane_routing_check`,
+  `audio_razor_check`, `audio_mix_check`, `picture_tracks_check`, `razor_check` —
+  pass unchanged.
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the Playwright suites, and **none of this has been driven in a
+  real browser** — in particular the razored voiceover has not been LISTENED to
+  across the cut. Browser tests are run on request in this project.
+
+### 2026-08-21 — A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A SCRIPT YOU CAN EDIT BEFORE IT IS READ (user-reported, with four screenshots)
 
 > "when i generate voiceover of my Story..image layer in timline Voicerover
 >  buttun so Geneate perfectly voiceover and caption and placement Starting is

@@ -1032,7 +1032,7 @@ export async function downloadAnimaticVideo(id, filename) {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename || "animatic.mp4";
+  a.download = filename || "project.mp4";
   document.body.appendChild(a);
   a.click();
   a.remove();

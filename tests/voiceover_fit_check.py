@@ -376,8 +376,22 @@ check("...it comes from the sheet the server sent",
 # autosave then writes that back over the one the server just worked out, and
 # every line is over the wrong shot again with nothing on screen to explain it.
 check("the poll re-reads the FRAMES, not just the texts and the audio",
-      "setFrames(project.frames || []);" in editor
-      and "setAudioTracks(project.audio_tracks || []);" in editor)
+      "const laid = project.frames || [];" in editor
+      and "setFrames(rippleFrames(laid, shifts));" in editor)
+# ⚠ AND CARRIES EVERYTHING THE SERVER DIDN'T RE-TIME. The run re-lays the board's
+# row and writes its own captions and its own voiceover; typed text, shapes,
+# overlays, the Video row and a music bed are left where they were, and one shot
+# growing puts all of them out for the rest of the film. Same `ripple.js` the Veo
+# attach uses — see `tests/timeline_ripple_check.py`.
+check("…and carries the rest of the timeline along with them",
+      "renderShifts(speechFramesRef.current, laid)" in editor
+      and "setShapes((list) => rippleClips(list, shifts));" in editor)
+# ⚠ `keep` IS NOT OPTIONAL. The generated captions and the new voiceover are
+# already laid against the NEW layout; shifting them by the same map would move
+# them twice, which is this very bug committed by its own fix.
+check("…without moving the captions and voiceover it just wrote a second time",
+      "filter(isGeneratedCaption)" in editor
+      and "rippleClips(project.texts || [], shifts, keep)" in editor)
 
 print()
 if failures:

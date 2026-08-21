@@ -2294,7 +2294,7 @@ def build_animatic(
     Returns a summary dict; `stopped` is True if the user cancelled.
     """
     if not frames:
-        raise AnimaticError("This animatic has no frames yet — add some images first.")
+        raise AnimaticError("This project has no frames yet — add some images first.")
 
     container = export_presets.normalise_container(container)
     # A PNG never reaches ffmpeg — Pillow already has the finished frame, and
@@ -2376,7 +2376,7 @@ def build_animatic(
         if distinct > MAX_RENDERED_STILLS:
             shutil.rmtree(build_dir, ignore_errors=True)
             raise AnimaticError(
-                f"This animatic would need {distinct:,} rendered frames, which is more "
+                f"This project would need {distinct:,} rendered frames, which is more "
                 f"than the {MAX_RENDERED_STILLS:,} an export can hold. Lower the frame "
                 "rate, shorten the timeline, or remove some of the animation."
             )

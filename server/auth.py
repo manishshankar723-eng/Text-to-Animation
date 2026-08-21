@@ -10,6 +10,8 @@ Protect any endpoint by adding `user = Depends(get_current_user)`.
 """
 
 import logging
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -23,6 +25,83 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Bearer scheme — clients send: Authorization: Bearer <token>
 _bearer = HTTPBearer(auto_error=True)
+
+# ---------------------------------------------------------------------------
+# The resolved-user cache
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS: `get_current_user` runs on EVERY request, and its user lookup
+# is a remote Mongo Atlas `find_one`. Opening a sixty-panel animatic fires one
+# project request plus a thumbnail request per frame plus a blob per video and
+# audio track — a hundred-odd requests, each previously paying its own Atlas
+# round trip just to learn the same unchanged fact. The burst is what made
+# opening a project feel slow; collapsing it to one lookup is the single largest
+# win available without changing the auth model.
+#
+# ⚠ SUCCESSES ONLY, AND KEYED ON THE RAW TOKEN. A rejected token is never
+# cached, so an expired or forged one is re-validated every time and can never
+# be served from here. The token string is the key rather than the email so that
+# a token which stops decoding stops being found, full stop.
+#
+# The TTL is the staleness budget for exactly one fact: `disabled`. Thirty
+# seconds means a disabled account is locked out within half a minute, which is
+# the same order as the tab's own polling, while still folding an entire
+# project-open burst into a single lookup.
+_USER_CACHE_TTL_S = 30.0
+_USER_CACHE_MAX = 512
+_user_cache: dict[str, tuple[float, "CurrentUser"]] = {}
+_user_cache_lock = threading.Lock()
+
+
+def _cached_user(token: str) -> "CurrentUser | None":
+    """The user this token resolved to recently, or None to go and look."""
+    now = time.monotonic()
+    with _user_cache_lock:
+        hit = _user_cache.get(token)
+        if hit is None:
+            return None
+        expires_at, user = hit
+        if expires_at <= now:
+            # Drop it here rather than leaving it for the prune: an expired
+            # entry that stays readable is a lock-out that never lands.
+            _user_cache.pop(token, None)
+            return None
+        return user
+
+
+def _remember_user(token: str, user: "CurrentUser") -> None:
+    """Cache a SUCCESSFUL resolution, pruning expired entries on the way."""
+    now = time.monotonic()
+    with _user_cache_lock:
+        if len(_user_cache) >= _USER_CACHE_MAX:
+            for key in [k for k, (exp, _) in _user_cache.items() if exp <= now]:
+                _user_cache.pop(key, None)
+            # Still full means every entry is live — a genuinely busy server,
+            # not a leak. Clearing beats growing without bound; the cost is one
+            # extra lookup per token, which is where we started.
+            if len(_user_cache) >= _USER_CACHE_MAX:
+                _user_cache.clear()
+        _user_cache[token] = (now + _USER_CACHE_TTL_S, user)
+
+
+def forget_cached_email(email: str) -> None:
+    """Drop every cached token belonging to one account, immediately.
+
+    ⚠ CALL THIS WHENEVER AN ACCOUNT STOPS BEING VALID. The cache is keyed by
+    token, so a deleted account's tokens would otherwise go on being accepted
+    for the rest of the TTL — the account is gone from the store and the API
+    still answers to it. The scan is over at most `_USER_CACHE_MAX` entries and
+    happens on a path that already writes to the database.
+    """
+    with _user_cache_lock:
+        for key in [k for k, (_, u) in _user_cache.items() if u.email == email]:
+            _user_cache.pop(key, None)
+
+
+def forget_cached_users() -> None:
+    """Drop every cached resolution. For tests, and for any future admin path
+    that disables an account and wants the lock-out to be immediate."""
+    with _user_cache_lock:
+        _user_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +211,9 @@ def get_current_user(
 
     Defined as a sync `def` so FastAPI runs it (and its blocking Mongo lookup)
     in a worker thread rather than on the event loop.
+
+    A successful resolution is cached for `_USER_CACHE_TTL_S` — see the cache
+    block above for why, and for what that costs.
     """
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -139,8 +221,13 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    token = creds.credentials
+    cached = _cached_user(token)
+    if cached is not None:
+        return cached
+
     try:
-        payload = security.decode_access_token(creds.credentials)
+        payload = security.decode_access_token(token)
     except security.TokenError:
         raise unauthorized
 
@@ -156,7 +243,9 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled."
         )
 
-    return CurrentUser(email=user["email"])
+    current = CurrentUser(email=user["email"])
+    _remember_user(token, current)
+    return current
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +360,9 @@ def delete_me(current: CurrentUser = Depends(get_current_user)):
     deleted = users.delete_user(current.email)
     if not deleted:
         raise HTTPException(status_code=404, detail="User not found.")
+    # The account is gone from the store; its tokens must stop working NOW, not
+    # when the resolved-user cache happens to expire.
+    forget_cached_email(current.email)
     logger.info("Deleted user account: %s", current.email)
     return None
 

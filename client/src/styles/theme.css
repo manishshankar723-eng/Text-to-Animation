@@ -157,6 +157,22 @@
   --pane-ink: #8ab4f8; /* soft blue */
   --pane-tint: rgba(138, 180, 248, 0.12);
   --pane-edge: rgba(138, 180, 248, 0.32);
+  /* --- THE TIMELINE PANE IS BLUE ALL THE WAY THROUGH ----------------------
+     Only that pane, and only these three tokens: `.an-pane-timeline` in
+     `animatic-editor.css` re-points `--panel` / `--panel-2` / `--border` at
+     them, so every surface inside it — the head strip, the ruler, the lane
+     heads, the tracks, the toolbar buttons — turns navy together without one
+     rule per element.
+     ⚠ IT IS A SHADE DARKER THAN THE BLUE IT WAS PICKED FROM, asked for in those
+     words ("same color but little dark"). Going darker rather than lighter also
+     keeps the clip pastels (`--clip-*-tint`, which are ALPHAS) readable on the
+     track — a lighter navy washes them out.
+     ⚠ KEEP THE TWO STEPS APART. `--tl-panel` is what a lane sits ON and
+     `--tl-panel-2` is the lane itself; collapse them and the timeline reads as
+     one flat blue slab with no rows in it. */
+  --tl-panel: #1c2237;
+  --tl-panel-2: #262f4a;
+  --tl-border: #333d60;
 }
 
 /* Light theme. The gold BUTTON gradients stay exactly as they are — that's the
@@ -252,6 +268,13 @@
   --pane-ink: #2f62b3;
   --pane-tint: rgba(47, 98, 179, 0.09);
   --pane-edge: rgba(47, 98, 179, 0.28);
+  /* The same pane, light theme. ⚠ NOT the dark navy: a near-black timeline
+     under three white panes is not "the panel is blue", it is a hole in the
+     page. Same hue, taken the other way — a blue-TINTED paper, one step down
+     from `--panel` so the rows still separate. */
+  --tl-panel: #f1f4fb;
+  --tl-panel-2: #e2e8f6;
+  --tl-border: #ccd5ea;
 }
 
 /* A handful of tints were written as translucent white or pale gold/blue, which

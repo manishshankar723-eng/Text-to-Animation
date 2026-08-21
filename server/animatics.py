@@ -143,6 +143,33 @@ def _exported_file(job_id: str, container: str = "mp4") -> tuple[str, str] | Non
     return None
 
 
+# ---------------------------------------------------------------------------
+# HTTP caching for media
+# ---------------------------------------------------------------------------
+# A week, immutable. Every picture and clip in this app is fetched with an
+# `Authorization` header and turned into an object URL, and `FileResponse` sent
+# no `Cache-Control` at all — so a reload re-downloaded every thumbnail and
+# every video the project holds, however little had changed.
+#
+# ⚠ ONLY FOR A URL THAT CANNOT CHANGE MEANING, and there are exactly two shapes:
+#
+#   1. An upload id. Every one is a fresh `uuid.uuid4().hex[:12]`, so the bytes
+#      behind `/media/{upload_id}` are written once and never rewritten.
+#   2. A `?v=` stamp. `_frame_version` changes when the picture behind the frame
+#      changes, which is what makes the new URL a different cache entry. WITHOUT
+#      the stamp there is nothing to invalidate, so the routes below emit this
+#      header only when `v` was actually sent — a redrawn panel served from a
+#      week-old cache is precisely the bug `_frame_version` exists to prevent.
+#
+# `private` because the response is one user's: shared caches must not hold it.
+_IMMUTABLE_MEDIA = {"Cache-Control": "private, max-age=604800, immutable"}
+
+
+def _media_headers(versioned: bool = True) -> dict[str, str] | None:
+    """Cache headers for a media response, or None to leave it uncacheable."""
+    return dict(_IMMUTABLE_MEDIA) if versioned else None
+
+
 def _image_path(job_id: str, upload_id: str) -> str | None:
     """Local path of an uploaded frame image, or None if the id is bogus."""
     if not upload_id or not _ID_RE.match(upload_id):
@@ -274,7 +301,7 @@ def _video_thumb(job_id: str, frame: AnimaticFrame) -> str | None:
 def _get_owned_animatic(job_id: str, current: CurrentUser) -> Job:
     job = get_owned_job(job_id, current)
     if job.kind != JobKind.ANIMATIC:
-        raise HTTPException(status_code=400, detail="Not an animatic.")
+        raise HTTPException(status_code=400, detail="Not a project.")
     return job
 
 
@@ -287,6 +314,30 @@ def _frames_of(job: Job) -> list[AnimaticFrame]:
         except Exception:  # noqa: BLE001 — one corrupt frame must not 500 the project
             logger.warning("[animatic %s] dropping unreadable frame %r", job.job_id, item)
     return out
+
+
+def _frame_by_id(job: Job, frame_id: str) -> AnimaticFrame | None:
+    """One frame, without validating the other fifty-nine.
+
+    ⚠ THIS IS THE THUMBNAIL PATH. `/frame/{id}` is requested once per frame when
+    the editor opens, and each of those requests used to run `_frames_of` — a
+    full Pydantic parse of every frame in the project — to pick one row out of
+    it. Sixty frames therefore cost sixty full parses of sixty frames.
+
+    Scans the raw rows for the id and validates only the match, falling back to
+    `_frames_of` when the scan finds nothing so a project whose params are
+    shaped unexpectedly behaves exactly as it did before.
+    """
+    for item in (job.params or {}).get("frames") or []:
+        if isinstance(item, dict) and item.get("id") == frame_id:
+            try:
+                return AnimaticFrame(**item)
+            except Exception:  # noqa: BLE001 — a corrupt row is a missing frame
+                logger.warning(
+                    "[animatic %s] unreadable frame %r", job.job_id, frame_id
+                )
+                return None
+    return next((f for f in _frames_of(job) if f.id == frame_id), None)
 
 
 def _texts_of(job: Job) -> list[AnimaticTextClip]:
@@ -331,7 +382,7 @@ def _assets_of(job: Job) -> list[AnimaticAsset] | None:
     return out
 
 
-def _asset_url(job: Job, asset: AnimaticAsset) -> str | None:
+def _asset_url(job: Job, asset: AnimaticAsset, boards: dict | None = None) -> str | None:
     """Serve path for one library card's picture, or None if it has none.
 
     ⚠ EVERY SHAPE HERE IS RESOLVABLE WITHOUT THE ASSET BEING ON THE SAVED
@@ -340,6 +391,12 @@ def _asset_url(job: Job, asset: AnimaticAsset) -> str | None:
     imported library has pictures before the autosave has run. Contrast
     `AnimaticFrame.url`, which resolves an id through the saved frame list and
     therefore 404s until a save lands — the bug `doBoardImport` is written around.
+
+    `boards` is the caller's per-request board cache, shared with `_frames_of`.
+    Pass it: a panel-backed card asks `_frame_version` for a stamp, and without
+    the cache that is one job-store round trip PER CARD for boards the frame
+    loop has already fetched. Defaults to None so any other caller behaves as
+    it always did.
     """
     src = asset.src
     if asset.kind == "audio":
@@ -359,7 +416,7 @@ def _asset_url(job: Job, asset: AnimaticAsset) -> str | None:
         # ⚠ VERSIONED, so re-drawing the panel on the board changes the library
         # card too. The client caches one blob per path and never re-fetches a
         # path it already holds — see `_frame_version` and `urlSrcRef`.
-        stamp = _frame_version(job, AnimaticFrame(id="_asset", src=src.model_dump()))
+        stamp = _frame_version(job, AnimaticFrame(id="_asset", src=src.model_dump()), boards)
         pose = f"&frame={int(src.frame)}" if src.kind == "pose" and src.frame is not None else ""
         return (
             f"/animatics/{job.job_id}/panel/{src.storyboard_id}/{int(src.index)}"
@@ -545,7 +602,9 @@ def _project_of(job: Job) -> AnimaticProject:
         overlay.url = f"/animatics/{job.job_id}/media/{overlay.upload_id}"
     assets = _assets_of(job)
     for asset in assets or []:
-        asset.url = _asset_url(job, asset)
+        # Same `boards` dict the frame loop filled: a library of panel cards is
+        # normally the SAME board the frames came from, so this is free now.
+        asset.url = _asset_url(job, asset, boards)
     tracks = _audio_tracks_of(job)
     for track in tracks:
         # By upload id, not the project-level /audio route: straight after an
@@ -555,7 +614,7 @@ def _project_of(job: Job) -> AnimaticProject:
     return AnimaticProject(
         job_id=job.job_id,
         veo_clips=_veo_clips_of(job),
-        title=job.character_name or "Animatic",
+        title=job.character_name or "Project",
         status=job.status,
         source_storyboard_id=(job.params or {}).get("source_storyboard_id"),
         settings=_settings_of(job),
@@ -579,7 +638,7 @@ def _summarise(job: Job) -> AnimaticSummary:
     frames = _frames_of(job)
     return AnimaticSummary(
         job_id=job.job_id,
-        title=job.character_name or "Animatic",
+        title=job.character_name or "Project",
         status=job.status,
         aspect_ratio=_settings_of(job).aspect_ratio,
         frame_count=len(frames),
@@ -852,7 +911,7 @@ def create_animatic(
                 )
                 frames = _panel_frames_only(board, body.default_duration_ms)
         if not title:
-            title = f"{board.character_name or 'Storyboard'} — animatic"
+            title = f"{board.character_name or 'Storyboard'} — project"
         # Inherit the board's frame shape so panels aren't letterboxed by default.
         if body.settings is None:
             settings.aspect_ratio = (board.params or {}).get("aspect_ratio") or settings.aspect_ratio
@@ -860,7 +919,7 @@ def create_animatic(
     if len(frames) > config.MAX_ANIMATIC_FRAMES:
         raise HTTPException(
             status_code=413,
-            detail=f"An animatic can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
+            detail=f"A project can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
         )
 
     # ⚠ THE SAME PLACEHOLDER THE CLIENT USES — `UNTITLED` in
@@ -961,7 +1020,7 @@ def save_animatic(
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is exporting — wait for it to finish, or stop it first.",
+            detail="This project is exporting — wait for it to finish, or stop it first.",
         )
 
     params = dict(job.params or {})
@@ -980,7 +1039,7 @@ def save_animatic(
         if len(body.frames) > config.MAX_ANIMATIC_FRAMES:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_FRAMES} frames.",
             )
         params["frames"] = [f.model_dump(exclude={"url"}) for f in body.frames]
 
@@ -988,7 +1047,7 @@ def save_animatic(
         if len(body.texts) > config.MAX_ANIMATIC_TEXTS:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_TEXTS} text clips.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_TEXTS} text clips.",
             )
         params["texts"] = [t.model_dump() for t in body.texts]
 
@@ -996,7 +1055,7 @@ def save_animatic(
         if len(body.shapes) > config.MAX_ANIMATIC_SHAPES:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_SHAPES} shapes.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_SHAPES} shapes.",
             )
         params["shapes"] = [s.model_dump() for s in body.shapes]
 
@@ -1004,7 +1063,7 @@ def save_animatic(
         if len(body.layers) > config.MAX_ANIMATIC_LAYERS:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_LAYERS} layers.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_LAYERS} layers.",
             )
         params["layers"] = [layer.model_dump() for layer in body.layers]
 
@@ -1023,7 +1082,7 @@ def save_animatic(
         if len(body.overlays) > config.MAX_ANIMATIC_SHAPES:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_SHAPES} overlays.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_SHAPES} overlays.",
             )
         # `url` is filled on read, so it is never stored — see AnimaticOverlay.
         params["overlays"] = [o.model_dump(exclude={"url"}) for o in body.overlays]
@@ -1032,7 +1091,7 @@ def save_animatic(
         if len(body.transitions) > config.MAX_ANIMATIC_TRANSITIONS:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_TRANSITIONS} transitions.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_TRANSITIONS} transitions.",
             )
         params["transitions"] = [t.model_dump() for t in body.transitions]
 
@@ -1046,13 +1105,13 @@ def save_animatic(
         if len(files) > config.MAX_ANIMATIC_AUDIO_TRACKS:
             raise HTTPException(
                 status_code=413,
-                detail=f"An animatic can hold at most {config.MAX_ANIMATIC_AUDIO_TRACKS} audio tracks.",
+                detail=f"A project can hold at most {config.MAX_ANIMATIC_AUDIO_TRACKS} audio tracks.",
             )
         if len(body.audio_tracks) > config.MAX_ANIMATIC_AUDIO_CLIPS:
             raise HTTPException(
                 status_code=413,
                 detail=(
-                    f"An animatic can hold at most {config.MAX_ANIMATIC_AUDIO_CLIPS} "
+                    f"A project can hold at most {config.MAX_ANIMATIC_AUDIO_CLIPS} "
                     "audio clips — that is the razor's limit, not the number of files."
                 ),
             )
@@ -1080,7 +1139,7 @@ def save_animatic(
 
     updated = get_store().update(job_id, **fields)
     if updated is None:
-        raise HTTPException(status_code=404, detail=f"Animatic '{job_id}' not found.")
+        raise HTTPException(status_code=404, detail=f"Project '{job_id}' not found.")
     return _project_of(updated)
 
 
@@ -1094,7 +1153,7 @@ def delete_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is still exporting — wait for it to finish first.",
+            detail="This project is still exporting — wait for it to finish first.",
         )
     folder = _animatic_dir(job_id)
     if os.path.isdir(folder):
@@ -1126,7 +1185,7 @@ async def upload_images(
 
     job = _get_owned_animatic(job_id, current)
     if job.status == JobStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="This animatic is exporting.")
+        raise HTTPException(status_code=409, detail="This project is exporting.")
 
     media = _media_dir(job_id)
     os.makedirs(media, exist_ok=True)
@@ -1213,7 +1272,7 @@ def import_storyboard(
         raise HTTPException(
             status_code=413,
             detail=(
-                f"That board needs {len(frames)} frames and this animatic already has "
+                f"That board needs {len(frames)} frames and this project already has "
                 f"{existing}, over the limit of {config.MAX_ANIMATIC_FRAMES}."
             ),
         )
@@ -1255,7 +1314,7 @@ async def upload_videos(
 
     job = _get_owned_animatic(job_id, current)
     if job.status == JobStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="This animatic is exporting.")
+        raise HTTPException(status_code=409, detail="This project is exporting.")
 
     media = _media_dir(job_id)
     os.makedirs(media, exist_ok=True)
@@ -1333,7 +1392,7 @@ async def upload_audio(
     """
     job = _get_owned_animatic(job_id, current)
     if job.status == JobStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="This animatic is exporting.")
+        raise HTTPException(status_code=409, detail="This project is exporting.")
 
     name = file.filename or "audio.mp3"
     ext = os.path.splitext(name)[1].lower()
@@ -1375,6 +1434,7 @@ def get_frame_image(
     job_id: str,
     frame_id: str,
     w: int = 0,
+    v: str = "",
     current: CurrentUser = Depends(get_current_user),
 ):
     """Serve one frame's picture — board panel or upload, same URL either way.
@@ -1385,13 +1445,18 @@ def get_frame_image(
     draw a monitor 600px wide. Omitted — which is what every other caller does,
     including anything that predates this — the source file is served untouched.
 
+    `v` is `_frame_version`'s stamp. It is not read — the path is resolved fresh
+    every time regardless — but its PRESENCE is what makes the response safe to
+    cache in the browser, so it is declared here rather than swallowed as an
+    unknown query param. See `_media_headers`.
+
     ⚠ THE EXPORT DOES NOT COME THROUGH HERE. `build_animatic` opens the sources
     directly, so no proxy can ever reach the encoder; see rule 2 in `proxies.py`.
     """
     import proxies
 
     job = _get_owned_animatic(job_id, current)
-    frame = next((f for f in _frames_of(job) if f.id == frame_id), None)
+    frame = _frame_by_id(job, frame_id)
     if frame is None:
         raise HTTPException(status_code=404, detail="Frame not found.")
     path = _resolve_frame_path(job, frame)
@@ -1401,7 +1466,7 @@ def get_frame_image(
         # Falls back to `path` itself for every reason a proxy can't be made, so
         # the worst case here is exactly what this route did before.
         path = proxies.proxy_for(path, _proxy_dir(job_id), w)
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=_media_headers(bool(v)))
 
 
 @router.get("/{job_id}/panel/{storyboard_id}/{index}")
@@ -1411,6 +1476,7 @@ def get_board_panel(
     index: int,
     frame: int = -1,
     w: int = 0,
+    v: str = "",
     current: CurrentUser = Depends(get_current_user),
 ):
     """Serve one BOARD PANEL by (board, index) — for the media library.
@@ -1423,7 +1489,8 @@ def get_board_panel(
     added and stays servable after its last clip is deleted.
 
     `frame` asks for one KEY POSE of that panel's sequence instead of the panel
-    itself; `w` proxies the picture down exactly as the frame route does.
+    itself; `w` proxies the picture down exactly as the frame route does; `v` is
+    the version stamp that makes the answer cacheable, exactly as it is there.
 
     ⚠ BOTH JOBS ARE OWNERSHIP-CHECKED. The animatic here, and the BOARD inside
     `_resolve_frame_path` — a board id is a user-supplied string, so without the
@@ -1450,7 +1517,7 @@ def get_board_panel(
         raise HTTPException(status_code=404, detail="That panel's image is missing.")
     if w:
         path = proxies.proxy_for(path, _proxy_dir(job_id), w)
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=_media_headers(bool(v)))
 
 
 @router.get("/{job_id}/media/{upload_id}")
@@ -1474,12 +1541,16 @@ def get_upload(
     is not yet ON the project. Serving by upload id has no such dependency.
     (The audio case was a real bug: the waveform 404'd and never drew until the
     page was reloaded. Browser-tested — don't route audio through /audio here.)
+
+    Every answer here is browser-cacheable without a version stamp: an upload id
+    is a fresh uuid per upload, so nothing is ever written over one. See
+    `_media_headers`.
     """
     _get_owned_animatic(job_id, current)
 
     image = _image_path(job_id, upload_id)
     if image and os.path.isfile(image):
-        return FileResponse(image, media_type="image/png")
+        return FileResponse(image, media_type="image/png", headers=_media_headers())
 
     # Served as a whole file rather than a byte range. The Program monitor's
     # <video> is fed an object URL built from a fetched blob (the same authed
@@ -1498,12 +1569,12 @@ def get_upload(
                 import proxies
 
                 still = proxies.proxy_for(still, _proxy_dir(job_id), w)
-            return FileResponse(still, media_type="image/png")
-        return FileResponse(video)
+            return FileResponse(still, media_type="image/png", headers=_media_headers())
+        return FileResponse(video, headers=_media_headers())
 
     audio = _audio_file(job_id, upload_id)
     if audio and os.path.isfile(audio):
-        return FileResponse(audio)
+        return FileResponse(audio, headers=_media_headers())
 
     raise HTTPException(status_code=404, detail="Upload not found.")
 
@@ -1515,7 +1586,7 @@ def get_audio(job_id: str, current: CurrentUser = Depends(get_current_user)):
     tracks = _audio_tracks_of(job)
     path = _audio_file(job_id, tracks[0].upload_id) if tracks else None
     if not path or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="No audio on this animatic.")
+        raise HTTPException(status_code=404, detail="No audio on this project.")
     return FileResponse(path)
 
 
@@ -1532,7 +1603,7 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     """
     job = _get_owned_animatic(job_id, current)
     if job.status == JobStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="This animatic is already exporting.")
+        raise HTTPException(status_code=409, detail="This project is already exporting.")
 
     frames = _frames_of(job)
     if not frames:
@@ -1712,8 +1783,8 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
         job_id=job_id,
         status=JobStatus.RUNNING,
         kind=JobKind.ANIMATIC,
-        character_name=job.character_name or "Animatic",
-        message=f"Exporting your animatic. Poll GET /jobs/{job_id}.",
+        character_name=job.character_name or "Project",
+        message=f"Exporting your project. Poll GET /jobs/{job_id}.",
     )
 
 
@@ -1722,7 +1793,7 @@ def stop_export(job_id: str, current: CurrentUser = Depends(get_current_user)):
     """Stop an export in progress. ffmpeg is terminated; no video is written."""
     job = _get_owned_animatic(job_id, current)
     if job.status != JobStatus.RUNNING:
-        raise HTTPException(status_code=409, detail="This animatic isn't exporting.")
+        raise HTTPException(status_code=409, detail="This project isn't exporting.")
 
     from cancel import request_cancel
 
@@ -1740,13 +1811,13 @@ def download_video(job_id: str, current: CurrentUser = Depends(get_current_user)
     found = _exported_file(job_id, _settings_of(job).container)
     if not found:
         raise HTTPException(
-            status_code=404, detail="No video yet — export this animatic first."
+            status_code=404, detail="No video yet — export this project first."
         )
     path, container = found
     safe = "".join(
-        c if c.isalnum() or c in "-_ " else " " for c in (job.character_name or "animatic")
+        c if c.isalnum() or c in "-_ " else " " for c in (job.character_name or "project")
     )
-    safe = " ".join(safe.split()).strip(" -_") or "animatic"
+    safe = " ".join(safe.split()).strip(" -_") or "project"
     return FileResponse(
         path,
         media_type=export_presets.CONTAINER_MIME[container],
@@ -1813,7 +1884,7 @@ def render_frame_clip(
     settings_render = RenderSettings(**(render or {}))
     job = get_store().get(job_id)
     if job is None:
-        raise VideoGenerationError("This animatic no longer exists.")
+        raise VideoGenerationError("This project no longer exists.")
 
     record = next((c for c in _veo_clips_of(job) if c.id == clip_id), None)
     if record is None:
@@ -1944,7 +2015,7 @@ def animate_frames(
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is already busy — wait for it to finish, or stop it.",
+            detail="This project is already busy — wait for it to finish, or stop it.",
         )
 
     targets = _animate_targets(job, body)
@@ -2005,7 +2076,7 @@ def animate_frames(
         job_id=job_id,
         status=JobStatus.RUNNING,
         kind=JobKind.ANIMATIC,
-        character_name=job.character_name or "Animatic",
+        character_name=job.character_name or "Project",
         message=f"Animating {len(targets)} frame(s) — estimated ${estimate.usd:.2f}.",
     )
 
@@ -2148,7 +2219,7 @@ def _captioned_clips(job: Job, upload_id: str) -> list[AnimaticAudio]:
     clips = [t for t in _audio_tracks_of(job) if t.upload_id == upload_id]
     if not clips:
         raise HTTPException(
-            status_code=404, detail="That audio track isn't on this animatic any more."
+            status_code=404, detail="That audio track isn't on this project any more."
         )
     return sorted(clips, key=lambda t: (t.start_ms or 0, t.offset_ms or 0))
 
@@ -2552,7 +2623,7 @@ def caption_animatic(
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is already busy — wait for it to finish, or stop it.",
+            detail="This project is already busy — wait for it to finish, or stop it.",
         )
     track = _captioned_clips(job, body.upload_id)[0]
     if not _audio_file(job_id, track.upload_id):
@@ -2566,7 +2637,7 @@ def caption_animatic(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"This animatic already has {config.MAX_ANIMATIC_LAYERS} layers, so "
+                f"This project already has {config.MAX_ANIMATIC_LAYERS} layers, so "
                 "there is no room for the Captions lane the words go on. Remove a "
                 "layer you aren't using and try again."
             ),
@@ -2597,7 +2668,7 @@ def caption_animatic(
         job_id=job_id,
         status=JobStatus.RUNNING,
         kind=JobKind.ANIMATIC,
-        character_name=job.character_name or "Animatic",
+        character_name=job.character_name or "Project",
         message=f"Writing captions from that track — estimated ${quote['usd']:.4f}.",
     )
 
@@ -2625,7 +2696,7 @@ def run_captions(job_id: str, body: dict, progress_cb=None) -> None:
     request = AnimaticCaptionsRequest(**(body or {}))
     job = get_store().get(job_id)
     if job is None:
-        raise captions_mod.CaptionError("This animatic no longer exists.")
+        raise captions_mod.CaptionError("This project no longer exists.")
 
     # ⚠ EVERY CLIP OF THAT FILE, not the first one. See `_captioned_clips`.
     clips_of_file = [t for t in _audio_tracks_of(job) if t.upload_id == request.upload_id]
@@ -2768,7 +2839,7 @@ def voice_animatic(
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is already busy — wait for it to finish, or stop it.",
+            detail="This project is already busy — wait for it to finish, or stop it.",
         )
     lines = _requested_lines(job, body)
     if not lines:
@@ -2776,7 +2847,7 @@ def voice_animatic(
             status_code=409,
             detail=(
                 "There is no dialogue to read. A voiceover comes from the "
-                "storyboard this animatic was made from, so the shots on the "
+                "storyboard this project was made from, so the shots on the "
                 "timeline need spoken lines on the board."
             ),
         )
@@ -2796,7 +2867,7 @@ def voice_animatic(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"This animatic already has {config.MAX_ANIMATIC_AUDIO_TRACKS} audio "
+                f"This project already has {config.MAX_ANIMATIC_AUDIO_TRACKS} audio "
                 "tracks. Remove one before adding a voiceover."
             ),
         )
@@ -2816,7 +2887,7 @@ def voice_animatic(
         job_id=job_id,
         status=JobStatus.RUNNING,
         kind=JobKind.ANIMATIC,
-        character_name=job.character_name or "Animatic",
+        character_name=job.character_name or "Project",
         message=f"Reading {quote['lines']} line(s) — estimated ${quote['usd']:.4f}.",
     )
 
@@ -2844,7 +2915,7 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
     request = AnimaticVoiceoverRequest(**(body or {}))
     job = get_store().get(job_id)
     if job is None:
-        raise tts_mod.VoiceoverError("This animatic no longer exists.")
+        raise tts_mod.VoiceoverError("This project no longer exists.")
 
     lines = _requested_lines(job, request)
     if not lines:
@@ -2937,9 +3008,9 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
 #      that survives a redraw is a picture that never updates.
 # ---------------------------------------------------------------------------
 def _frame_or_404(job: Job, frame_id: str) -> AnimaticFrame:
-    frame = next((f for f in _frames_of(job) if f.id == frame_id), None)
+    frame = _frame_by_id(job, frame_id)
     if frame is None:
-        raise HTTPException(status_code=404, detail="That clip is no longer on this animatic.")
+        raise HTTPException(status_code=404, detail="That clip is no longer on this project.")
     return frame
 
 
@@ -3216,7 +3287,7 @@ def reframe_animatic(
     if job.status == JobStatus.RUNNING:
         raise HTTPException(
             status_code=409,
-            detail="This animatic is already busy — wait for it to finish, or stop it.",
+            detail="This project is already busy — wait for it to finish, or stop it.",
         )
     frames = _reframable(job, body.frame_ids)
     if not frames:
@@ -3254,7 +3325,7 @@ def reframe_animatic(
         job_id=job_id,
         status=JobStatus.RUNNING,
         kind=JobKind.ANIMATIC,
-        character_name=job.character_name or "Animatic",
+        character_name=job.character_name or "Project",
         message=(
             f"Re-framing {quote['frames']} shot(s) for {target} — "
             f"estimated ${quote['usd']:.4f}."
@@ -3302,7 +3373,7 @@ def run_reframe(job_id: str, body: dict, progress_cb=None) -> None:
     request = AnimaticReframeRequest(**(body or {}))
     job = get_store().get(job_id)
     if job is None:
-        raise autoframe.AutoframeError("This animatic no longer exists.")
+        raise autoframe.AutoframeError("This project no longer exists.")
 
     settings = _settings_of(job)
     target = _reframe_target(job, request.aspect_ratio)
@@ -3319,7 +3390,7 @@ def run_reframe(job_id: str, body: dict, progress_cb=None) -> None:
         # document. Reading it once at the top would write a stale list back.
         job = get_store().get(job_id)
         if job is None:
-            raise autoframe.AutoframeError("This animatic no longer exists.")
+            raise autoframe.AutoframeError("This project no longer exists.")
         frames = _frames_of(job)
         frame = next((f for f in frames if f.id == frame_id), None)
         if frame is None:

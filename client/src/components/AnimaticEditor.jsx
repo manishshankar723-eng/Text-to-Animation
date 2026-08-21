@@ -56,6 +56,16 @@ import {
   setLookValue,
   valueAt,
 } from "../animatic/scene.js";
+// Making room for a take moves PICTURES; these two carry the rest of the film
+// along with them — the captions, the voiceover, the text, the Video row.
+import {
+  coverGrownShots,
+  grownSpans,
+  renderShifts,
+  rippleAudio,
+  rippleClips,
+  rippleFrames,
+} from "../animatic/ripple.js";
 import { DEFAULT_FONT, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
 import {
   disableProp,
@@ -81,7 +91,11 @@ import {
   MIN_CLIP_MS,
   splitClip,
 } from "../animatic/audio_clips.js";
-import { CAPTION_LAYER_ID, CAPTION_LAYER_NAME } from "../animatic/captions.js";
+import {
+  CAPTION_LAYER_ID,
+  CAPTION_LAYER_NAME,
+  isGeneratedCaption,
+} from "../animatic/captions.js";
 import { MIN_SPLIT_MS, splitTimedClip } from "../animatic/razor.js";
 import {
   PRESETS as EXPORT_PRESETS,
@@ -305,6 +319,30 @@ const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toStrin
 const retireBlob = (url) => {
   if (url) setTimeout(() => URL.revokeObjectURL(url), 2000);
 };
+
+// Run `work` over `items` with at most `limit` in flight at once.
+//
+// ⚠ A SLIDING WINDOW, NOT FIXED BATCHES. `Promise.all` over slices of five —
+// which is what the thumbnail loader does — makes every request in a batch wait
+// for the slowest one before the next batch starts, so a single file that needs
+// its proxy generating stalls four idle sockets behind it. Here a worker takes
+// the next item the moment its own finishes, so the window stays full.
+//
+// `work` is expected to swallow its own failures: one file that won't load is a
+// tile without a picture, never a rejected run that abandons the rest.
+async function runPooled(items, limit, work) {
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      await work(items[i]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker)
+  );
+}
 
 // A new caption. Defaults to a scrim so it stays readable over a grey
 // storyboard thumbnail, which is what most of these frames are.
@@ -686,6 +724,12 @@ export default function AnimaticEditor({
   const veoHandledRef = useRef(new Set());
   const framesRef = useRef([]);
   const layersRef = useRef([]);
+  // The picture row and the audio as they stood when a voiceover run was
+  // submitted. That pass moves shots on the SERVER, so this is the only record of
+  // where they were — and without it there is nothing to measure the shift
+  // against when the run comes back. See `doSpeech`.
+  const speechFramesRef = useRef([]);
+  const speechAudioRef = useRef([]);
 
   // --- Captions and voiceover (the other two things here that spend quota) ---
   // Same two-step discipline as ✨ Animate, deliberately: a panel that spends
@@ -1506,7 +1550,11 @@ export default function AnimaticEditor({
       return undefined;
     }
     (async () => {
-      for (const uploadId of missing) {
+      // Five at a time — overlays are logos and title cards, the smallest files
+      // on the project, and fetching them one after another made a board full of
+      // them the slowest thing left on the open.
+      await runPooled(missing, 5, async (uploadId) => {
+        if (!alive) return;
         try {
           const url = await api.fetchAnimaticMedia(
             `/animatics/${animaticId}/media/${uploadId}`
@@ -1520,7 +1568,7 @@ export default function AnimaticEditor({
         } catch {
           /* a picture that won't load shows as an empty box, not a banner */
         }
-      }
+      });
     })();
     return () => {
       alive = false;
@@ -1555,9 +1603,14 @@ export default function AnimaticEditor({
       return undefined;
     }
     (async () => {
-      // One at a time: these are the biggest files in the project, and five
-      // parallel 100MB fetches is a worse first impression than a slower one.
-      for (const uploadId of missing) {
+      // TWO at a time. These are the biggest files in the project, so five
+      // parallel 100MB fetches is a worse first impression than a slower one —
+      // but strictly one at a time meant three clips downloaded back to back
+      // before the last one could be scrubbed, and the link sat half idle the
+      // whole time. Two keeps the pipe busy without the editor spending its
+      // entire budget on video while the thumbnails are still arriving.
+      await runPooled(missing, 2, async (uploadId) => {
+        if (!alive) return;
         try {
           const url = await api.fetchAnimaticMedia(
             `/animatics/${animaticId}/media/${uploadId}`
@@ -1566,12 +1619,14 @@ export default function AnimaticEditor({
             URL.revokeObjectURL(url);
             return;
           }
+          // Committed as each one lands, not at the end: a clip is playable the
+          // moment its own bytes are here, whatever the others are doing.
           videoUrlsRef.current[uploadId] = url;
           setVideoUrls({ ...videoUrlsRef.current });
         } catch {
           /* a clip that won't load shows its thumbnail, not an error banner */
         }
-      }
+      });
     })();
     return () => {
       alive = false;
@@ -1601,7 +1656,11 @@ export default function AnimaticEditor({
     }
 
     (async () => {
-      for (const track of missing) {
+      // Three at a time — the cap is MAX_AUDIO_TRACKS, and audio files are a
+      // fraction of a video's size, so this is very nearly "all of them" while
+      // still not competing with the clips for the whole link.
+      await runPooled(missing, 3, async (track) => {
+        if (!alive) return;
         try {
           // Fetched by UPLOAD ID, not the project's /audio route: the save is
           // debounced, so straight after an upload the file is on disk but not
@@ -1619,7 +1678,7 @@ export default function AnimaticEditor({
         } catch {
           /* a track that won't load shows no waveform; it isn't an error banner */
         }
-      }
+      });
     })();
 
     return () => {
@@ -3163,7 +3222,7 @@ export default function AnimaticEditor({
     const kind = ROW_KIND[rowKind] ? rowKind : "video";
     const next = Math.max(...pictureTracks(frames), ...videoTracks.map((r) => r.track)) + 1;
     if (next > MAX_PICTURE_TRACK) {
-      setNotice(`That's the limit — an animatic can hold ${MAX_PICTURE_TRACK + 1} picture rows.`);
+      setNotice(`That's the limit — a project can hold ${MAX_PICTURE_TRACK + 1} picture rows.`);
       return null;
     }
     // Numbered among the rows of ITS OWN kind, so the second storyboard row is
@@ -3200,7 +3259,7 @@ export default function AnimaticEditor({
     }
     const to = Math.max(...pictureTracks(frames), ...videoTracks.map((r) => r.track)) + 1;
     if (to > MAX_PICTURE_TRACK) {
-      setNotice(`That's the limit — an animatic can hold ${MAX_PICTURE_TRACK + 1} video rows.`);
+      setNotice(`That's the limit — a project can hold ${MAX_PICTURE_TRACK + 1} video rows.`);
       return;
     }
     const spans = new Map(pictureSpans.spans.map((s) => [frames[s.index].id, s.start]));
@@ -3766,7 +3825,7 @@ export default function AnimaticEditor({
         return;
       }
       if (audioFileCount() >= MAX_AUDIO_TRACKS) {
-        setNotice(`That's the limit — an animatic can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
+        setNotice(`That's the limit — a project can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
         return;
       }
       pendingAudioLane.current = lane.layerId || "";
@@ -4667,7 +4726,7 @@ export default function AnimaticEditor({
           res.title || "storyboard"
         }”.${
           res.panels_only
-            ? " Its key poses would have overflowed this animatic, so one frame per shot came across."
+            ? " Its key poses would have overflowed this project, so one frame per shot came across."
             : ""
         }`
       );
@@ -4930,7 +4989,7 @@ export default function AnimaticEditor({
   async function pickAudio(file) {
     if (!file) return;
     if (audioFileCount() >= MAX_AUDIO_TRACKS) {
-      setNotice(`That's the limit — an animatic can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
+      setNotice(`That's the limit — a project can hold ${MAX_AUDIO_TRACKS} audio tracks.`);
       return;
     }
     await addAudioTrack(file);
@@ -5187,6 +5246,17 @@ export default function AnimaticEditor({
     layersRef.current = layers;
   }, [layers]);
 
+  // ⚠ THERE IS DELIBERATELY NO REF FOR THE REST OF THE DOCUMENT. There was one,
+  // filled by an effect, and `attachVeoClip` read the captions, the shapes, the
+  // overlays and the audio out of it to carry them along when a take makes room.
+  // It could be EMPTY (a project straight out of the load promise — no effect
+  // has run) or several renders stale (the Veo poll is keyed on `animating`
+  // alone), and rippling an empty list is a SILENT no-op that looks exactly like
+  // "nothing needed to move". Reported twice; the second time as "now all good
+  // audio and image but Caption not move". Every ripple now goes through React's
+  // own functional setters, which are handed the live list at commit time — see
+  // `RIPPLED_LISTS` in `ripple.js`.
+
   /**
    * The board's own words for one shot, as the first draft of its motion prompt.
    *
@@ -5424,7 +5494,7 @@ export default function AnimaticEditor({
       // ordinary upload; what failed is finding it a row.
       setNotice(
         `The render is safe, but there is no room for a ${ROW_KIND.board_video.name} row — ` +
-          `an animatic can hold ${MAX_PICTURE_TRACK + 1} picture rows.`
+          `a project can hold ${MAX_PICTURE_TRACK + 1} picture rows.`
       );
       return null;
     }
@@ -5495,7 +5565,44 @@ export default function AnimaticEditor({
       // are already clear.
       const appended = [...framesRef.current, render];
       const next = spreadPanelsForRenders(appended);
-      setFrames(next);
+
+      // ⚠ AND THE REST OF THE FILM GOES WITH THEM. The pass above moves PICTURES
+      // — that was the collision it was written for — so the voiceover, the
+      // captions, the typed text and the clips on the Video row used to stay
+      // exactly where they were and come out of sync the moment one shot grew:
+      // "my caption and voiver over not move so both still". `renderShifts` turns
+      // what just happened into a step map; the five setters below carry
+      // everything else along it. All of them are no-ops when nothing moved.
+      const shifts = renderShifts(appended, next);
+      // WHICH SHOTS GOT LONGER, for the captions over them. A take that turns a
+      // 4-second hold into 8 seconds of footage leaves its subtitle stopping
+      // half way through the shot — "caption length only 4sec but my video is 8
+      // sec so i want caption goes 8 sec so match video length".
+      const grown = grownSpans(appended, next);
+      const settled = rippleFrames(next, shifts);
+      setFrames(settled);
+      if (shifts.length) {
+        // ⚠ FUNCTIONAL SETTERS, NEVER A REF. These lists used to be read out of a
+        // ref filled by an effect, and that ref could be EMPTY (a project that
+        // has only just loaded — no effect has run) or several renders stale (a
+        // Veo poll is deliberately keyed on `animating` alone). Rippling an empty
+        // list is a silent no-op that looks exactly like "nothing needed to
+        // move", which is precisely how the captions came to be reported twice as
+        // not moving while the pictures and the sound did. React hands an updater
+        // the LIVE list at commit time; there is nothing here that can be stale.
+        //
+        // ⚠ ALL FIVE OF `RIPPLED_LISTS`, and the only thing left to get wrong is
+        // forgetting one — which `tests/timeline_ripple_check.py` checks for.
+        // ⚠ MOVED FIRST, THEN STRETCHED, and the order is the whole of it:
+        // `coverGrownShots` matches a caption to its shot by where it now
+        // STARTS, so it has to be handed clips that have already been carried.
+        setTexts((list) => coverGrownShots(rippleClips(list, shifts), grown));
+        setShapes((list) => rippleClips(list, shifts));
+        setOverlays((list) => rippleClips(list, shifts));
+        // ⚠ `newId` FROM HERE, because cutting the voiceover at a step mints a
+        // clip — ids are the editor's to hand out, not a pure module's.
+        setAudioTracks((list) => rippleAudio(list, shifts, newId));
+      }
       // ⚠ AND INTO THE LIBRARY, because a render is the one asset that CANNOT be
       // got back: an upload can be dropped in again and a panel is still on the
       // board, but re-making this costs money. Deleting the clip must never be
@@ -5504,14 +5611,14 @@ export default function AnimaticEditor({
       // The ref too, so several clips attaching in one pass each see the ones
       // before them — `already` below is asked against this list, and the next
       // render in a batch has to start from the panels this one just moved.
-      framesRef.current = next;
-      // ⚠ DID ANYTHING SHIFT? `spreadPanelsForRenders` hands back the SAME list
-      // when it moved nothing, so this is an identity test and not a diff. The
-      // notice reads it: a panel moving on its own has to be something the editor
-      // said out loud, not something that just happened.
-      return next !== appended;
+      framesRef.current = settled;
+      // ⚠ DID ANYTHING SHIFT? Both passes hand back the SAME list when they moved
+      // nothing, so this is an identity test and not a diff. The notice reads it:
+      // a clip moving on its own has to be something the editor said out loud,
+      // not something that just happened.
+      return next !== appended || shifts.length > 0;
     },
-    [animaticId, setAssets]
+    [animaticId, setAssets, setFrames, setTexts, setShapes, setOverlays, setAudioTracks]
   );
 
   /**
@@ -5703,12 +5810,53 @@ export default function AnimaticEditor({
     // run off the frames just loaded, not off state that hasn't settled yet.
     framesRef.current = p.frames || [];
     const { attached, pending } = reconcileVeoClips(p.veo_clips || [], p.frames || []);
+
+    // ⚠ AND A TAKE THAT WAS ATTACHED BEFORE THIS RULE EXISTED IS PUT RIGHT NOW.
+    // The layout only ever ran on the ATTACH, so a project whose renders landed
+    // earlier keeps a 2-second still under 4 seconds of footage for ever — there
+    // is no gesture that re-runs it, and the user cannot pay to render the shot
+    // again just to straighten the row. Reported as "i check when i generate shot
+    // 18 so image not capture video lenth … image still not extend/ripple".
+    //
+    // ⚠ COSTS NOTHING ON A PROJECT THAT IS ALREADY RIGHT. Both passes are
+    // idempotent and hand back the SAME arrays when they change nothing, so a
+    // correct board is an identity test and no edit at all — which is also what
+    // stops this dirtying every project on open.
+    const settled = spreadPanelsForRenders(framesRef.current);
+    let healed = false;
+    if (settled !== framesRef.current) {
+      const shifts = renderShifts(framesRef.current, settled);
+      const grown = grownSpans(framesRef.current, settled);
+      const placed = rippleFrames(settled, shifts);
+      setFrames(placed);
+      // ⚠ FUNCTIONAL SETTERS HERE ABOVE ALL, because this runs straight out of
+      // the load promise: no effect has run, so anything read from a ref would be
+      // empty and every one of these would be a silent no-op. The loader has
+      // already queued `setTexts(p.texts)` and friends, and an updater is handed
+      // that pending list — so these ripple the project that is arriving, without
+      // this handler ever having to hold a copy of it.
+      setTexts((list) => coverGrownShots(rippleClips(list, shifts), grown));
+      setShapes((list) => rippleClips(list, shifts));
+      setOverlays((list) => rippleClips(list, shifts));
+      setAudioTracks((list) => rippleAudio(list, shifts, newId));
+      framesRef.current = placed;
+      healed = true;
+      changed = true;
+    }
+
     if (pending > 0) setAnimating(true);
     else if (attached) {
       setNotice(
         attached === 1
           ? "A clip you'd already rendered was waiting — it's on the timeline."
           : `${attached} rendered clips were waiting — they're on the timeline.`
+      );
+    } else if (healed) {
+      // ⚠ SAID OUT LOUD. Clips moving by themselves the moment a project opens
+      // is the single most alarming thing this editor can do silently.
+      setNotice(
+        "Some shots were shorter than the takes over them — they now match, and " +
+          "the rest of the timeline moved along with them."
       );
     }
     // This is also where UNDO history begins. Anything recorded before this
@@ -5754,13 +5902,14 @@ export default function AnimaticEditor({
         setAnimateProgress(null);
         if (failure) setError(failure);
         else if (attached) {
-          // ⚠ IF PANELS MOVED, SAY SO. The take is longer than the hold it was
-          // made from, so the shots after it slide along to keep the video row
-          // clear — and a clip that moves by itself with nothing said about it
-          // reads as the editor losing the user's cut.
+          // ⚠ IF ANYTHING MOVED, SAY SO. The take is longer than the hold it was
+          // made from, so the shot grows to match and everything after it slides
+          // along — pictures, captions, sound and all. A clip that moves by
+          // itself with nothing said about it reads as the editor losing the
+          // user's cut.
           setNotice(
             shifted
-              ? "Clip ready — it's on the timeline, and the panels after it moved along to make room."
+              ? "Clip ready — the shot now matches its length, and everything after it moved along to make room."
               : "Clip ready — it's on the timeline."
           );
         }
@@ -5868,7 +6017,7 @@ export default function AnimaticEditor({
         // says all three things that could be true rather than just the first.
         setSpeechError(
           "There is no dialogue to read. The lines come from the storyboard " +
-            "this animatic was made from — so either these frames aren't from " +
+            "this project was made from — so either these frames aren't from " +
             "a board, or the board's shots have no spoken lines on them."
         );
         return;
@@ -5887,6 +6036,14 @@ export default function AnimaticEditor({
     const pass = speechFor;
     setSpeechBusy(true);
     setSpeechConfirm(null);
+    // ⚠ THE PICTURE ROW AS IT STANDS, KEPT FOR THE POLL. A voiceover run STRETCHES
+    // the shots it reads over and pushes the ones after them along, server-side —
+    // so when it finishes, the only way to know how far each moment of the film
+    // slid is to compare the row it started from with the row that comes back.
+    // Nothing else on the timeline moves without that comparison, which is the
+    // "my caption and voiver over not move" bug in its other form.
+    speechFramesRef.current = framesRef.current;
+    speechAudioRef.current = audioTracks;
     try {
       if (pass === "captions") {
         await api.captionAnimatic(animaticId, {
@@ -5944,14 +6101,16 @@ export default function AnimaticEditor({
         // path where the server, not the editor, wrote the project's content.
         const project = await api.getAnimatic(animaticId);
         if (!alive) return;
-        setTexts(project.texts || []);
+        // ⚠ THE CAPTIONS ARE SET BELOW, NOT HERE. A voiceover run may have moved
+        // the shots the typed ones sit over, so what goes into state is the list
+        // AFTER it has been carried along — writing the server's copy first and
+        // the carried one a moment later is two renders of two different films.
         // ⚠ THE LAYERS TOO, and this is not optional. A captions run writes a
         // LANE as well as clips (`captions.CAPTION_LAYER_ID`), and taking the
         // clips without the lane they sit on leaves the editor holding captions
         // whose row it doesn't know about — the next autosave would then write
         // that missing row back and delete it from the project.
         setLayers(project.layers || []);
-        setAudioTracks(project.audio_tracks || []);
         // ⚠ AND THE FRAMES, which is what makes a voiceover different from a
         // captions run: reading a line aloud STRETCHES the shot that owns it and
         // pushes the shots after it along (`_lay_out_speech`, server side), so
@@ -5959,7 +6118,36 @@ export default function AnimaticEditor({
         // the audio without the pictures would leave the editor holding the old
         // layout — and its next autosave would write that back over the one the
         // server just worked out, putting every line back over the wrong shot.
-        setFrames(project.frames || []);
+        const laid = project.frames || [];
+
+        // ⚠ AND THE REST OF THE FILM GOES WITH THEM, exactly as it does when a
+        // Veo take makes room (`attachVeoClip`). The server re-laid the board's
+        // picture row and wrote its own captions and its own voiceover at the
+        // right times — and left every OTHER clip where it was: typed text,
+        // shapes, overlays, the Video row, a music bed. One shot growing put all
+        // of them out for the rest of the film.
+        //
+        // ⚠ `keep` IS THE HALF THE SERVER ALREADY TIMED, and it is not optional.
+        // The generated captions and the new voiceover track are laid against the
+        // NEW layout; shifting them by the same map would move them a second
+        // time, which is the bug this call is fixing, applied twice.
+        const shifts = renderShifts(speechFramesRef.current, laid);
+        const known = new Set(speechAudioRef.current.map((t) => t.upload_id));
+        const keep = new Set([
+          ...(project.texts || []).filter(isGeneratedCaption).map((t) => t.id),
+          ...(project.audio_tracks || [])
+            .filter((t) => !known.has(t.upload_id))
+            .map((t) => t.id),
+        ]);
+        // ⚠ THE SERVER'S OWN LISTS ARE AUTHORITATIVE FOR THE TWO IT REWROTE —
+        // the texts (it replaced the generated captions) and the audio (it added
+        // a track) — so those two are rippled as VALUES. The two it never touched
+        // are rippled through their setters, live, like everywhere else here.
+        setFrames(rippleFrames(laid, shifts));
+        setTexts(rippleClips(project.texts || [], shifts, keep));
+        setAudioTracks(rippleAudio(project.audio_tracks || [], shifts, newId, keep));
+        setShapes((list) => rippleClips(list, shifts));
+        setOverlays((list) => rippleClips(list, shifts));
         setSpeechRunning(false);
         setSpeechProgress(null);
         if (job.error) setError(job.error);
@@ -5976,7 +6164,16 @@ export default function AnimaticEditor({
       alive = false;
       clearTimeout(timer);
     };
-  }, [speechRunning, animaticId, setTexts, setLayers, setAudioTracks, setFrames]);
+  }, [
+    speechRunning,
+    animaticId,
+    setTexts,
+    setLayers,
+    setAudioTracks,
+    setFrames,
+    setShapes,
+    setOverlays,
+  ]);
 
   // -------------------------------------------- Phase 7: back to the board
   //
@@ -6359,7 +6556,7 @@ export default function AnimaticEditor({
     return (
       <div className="workflow-head-wrap">
         <div className="card placeholder">
-          <span className="spinner-inline" /> Opening your animatic…
+          <span className="spinner-inline" /> Opening your project…
         </div>
       </div>
     );
@@ -6374,8 +6571,8 @@ export default function AnimaticEditor({
             type="button"
             className="btn back-btn"
             onClick={onBack}
-            title="Your Animatics"
-            aria-label="Your Animatics"
+            title="Your Projects"
+            aria-label="Your Projects"
           >
             ←
           </button>
@@ -6525,8 +6722,8 @@ export default function AnimaticEditor({
           type="button"
           className="btn small back-btn"
           onClick={handleBack}
-          title="Your Animatics"
-          aria-label="Your Animatics"
+          title="Your Projects"
+          aria-label="Your Projects"
         >
           ←
         </button>
@@ -6587,7 +6784,7 @@ export default function AnimaticEditor({
             onClick={() =>
               api.downloadAnimaticVideo(
                 animaticId,
-                `${exportName || title || "animatic"}.${containerExt(video.container)}`
+                `${exportName || title || "project"}.${containerExt(video.container)}`
               )
             }
             title={
@@ -6643,7 +6840,7 @@ export default function AnimaticEditor({
             className="btn primary an-export"
             disabled={!frames.length}
             onClick={() => {
-              setExportName((n) => n || title || "animatic");
+              setExportName((n) => n || title || "project");
               // ⚠ THE PLAYHEAD IS CAPTURED HERE, on the way in, and NOT when
               // Export is pressed. A still is a picture of a moment, and the
               // moment it is a picture of has to be settled and shown before
@@ -6679,7 +6876,7 @@ export default function AnimaticEditor({
             the button you actually came here to press. */}
         {confirmDelete ? (
           <span className="an-del-confirm">
-            <span className="tiny">Delete this animatic?</span>
+            <span className="tiny">Delete this project?</span>
             <button type="button" className="btn small danger-btn" onClick={handleDelete}>
               Yes, delete
             </button>
@@ -6696,7 +6893,7 @@ export default function AnimaticEditor({
             type="button"
             className="btn small an-del-btn"
             onClick={() => setConfirmDelete(true)}
-            title="Delete this animatic — the storyboard it came from is untouched"
+            title="Delete this project — the storyboard it came from is untouched"
           >
             <Icon name="trash" />
           </button>
@@ -6808,7 +7005,7 @@ export default function AnimaticEditor({
               </PropGroup>
 
               {shapes.length > 0 && (
-                <PropGroup id="media:shapes" title="In this animatic" count={shapes.length}>
+                <PropGroup id="media:shapes" title="In this project" count={shapes.length}>
                   {shapes.map((s, i) => (
                     <button
                       type="button"
@@ -7074,7 +7271,7 @@ export default function AnimaticEditor({
                     ? "This browser can't show the preview — it has no WebGL. The export is unaffected."
                     : frames.length
                       ? "Loading…"
-                      : "Add images or video to start your animatic"}
+                      : "Add images or video to start your project"}
                 </div>
               )}
 
@@ -8018,7 +8215,7 @@ export default function AnimaticEditor({
                   id="exp-name"
                   className="an-prop-input"
                   value={exportName}
-                  placeholder="animatic"
+                  placeholder="project"
                   onChange={(e) => setExportName(e.target.value)}
                 />
                 <span className="tiny muted">.mp4</span>
@@ -8147,7 +8344,7 @@ export default function AnimaticEditor({
                   ? `A ${exportContainer.toUpperCase()} carries no sound`
                   : audioTracks.length
                     ? `Include ${audioTracks.length} track${audioTracks.length === 1 ? "" : "s"}`
-                    : "No audio on this animatic"}
+                    : "No audio on this project"}
               </label>
             </div>
 
@@ -9042,10 +9239,10 @@ export default function AnimaticEditor({
             <button className="modal-close" onClick={() => setSaveAsName(null)}>
               ✕
             </button>
-            <h2>Save animatic as…</h2>
+            <h2>Save project as…</h2>
             <p className="muted">
-              This animatic hasn't got a name yet. Give it one and it'll show up
-              in Your Animatics under that title.
+              This project hasn't got a name yet. Give it one and it'll show up
+              in Your Projects under that title.
             </p>
             <input
               className="an-name-input"

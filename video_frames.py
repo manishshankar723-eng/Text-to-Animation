@@ -39,6 +39,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 
 from animatic import AnimaticError, ffmpeg_exe, run_ffmpeg
 
@@ -125,18 +126,63 @@ def probe_duration(path: str) -> int:
 # ---------------------------------------------------------------------------
 # The cache key
 # ---------------------------------------------------------------------------
+# The digest memo. Keyed on the stat triple `proxies.cache_key` uses — the
+# absolute path, mtime and byte length — mapping to the digest that triple last
+# produced.
+#
+# ⚠ THIS DOES NOT CHANGE WHAT THE KEY MEANS. `content_hash` still answers "what
+# is the sha1 of these bytes", and the same bytes still produce the same digest,
+# so the cross-animatic dedupe below is untouched. A file rewritten in place
+# changes its mtime and length, misses the memo, and is re-hashed.
+#
+# WHY: the digest is the extraction cache's KEY, so it is computed on the way in
+# even when the extraction is already on disk — a cache HIT still read the whole
+# file. The editor asks for a video thumbnail once per clip and again per library
+# card, so opening a project with three 80MB clips read half a gigabyte off disk
+# to answer questions it had already answered.
+_HASH_MEMO_MAX = 256
+_hash_memo: dict[tuple[str, int, int], str] = {}
+_hash_memo_lock = threading.Lock()
+
+
 def content_hash(path: str) -> str:
     """sha1 of the file's bytes, read in chunks.
 
     By CONTENT, not by name or mtime: the same clip dropped into two animatics,
     or re-uploaded under a new id, is the same extraction and should not be paid
     for twice. Hashing 50MB costs a fraction of a second next to decoding it.
+
+    Memoised per (path, mtime, size) so a repeat question is free — see above.
     """
+    try:
+        stat = os.stat(path)
+        memo_key = (os.path.abspath(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        # Unreadable: fall through to the open() below, which raises the real
+        # error for the caller rather than this module inventing one.
+        memo_key = None
+
+    if memo_key is not None:
+        with _hash_memo_lock:
+            hit = _hash_memo.get(memo_key)
+        if hit is not None:
+            return hit
+
     digest = hashlib.sha1()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    hexdigest = digest.hexdigest()
+
+    if memo_key is not None:
+        with _hash_memo_lock:
+            # A flat cap and a clear, not an LRU: the entries are tiny, the
+            # working set is "the clips in the project someone has open", and a
+            # miss costs exactly what this function cost before the memo.
+            if len(_hash_memo) >= _HASH_MEMO_MAX:
+                _hash_memo.clear()
+            _hash_memo[memo_key] = hexdigest
+    return hexdigest
 
 
 def _cache_name(digest: str, fps: int, start_ms: int, span_ms: int) -> str:

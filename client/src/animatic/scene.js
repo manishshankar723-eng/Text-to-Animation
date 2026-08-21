@@ -416,6 +416,11 @@ export const CLIP_KINDS = ["image", "video", "color"];
 export const DEFAULT_CLIP_COLOR = "#000000";
 export const DEFAULT_SPEED = 1;
 
+/** The longest a picture clip may hold, in ms. ⚠ `AnimaticFrame.duration_ms`'s
+ *  own `le=600_000` on the wire — a length computed here that exceeds it is a
+ *  422 on the next autosave, which is a lost project rather than a long shot. */
+export const MAX_FRAME_MS = 600_000;
+
 /**
  * What this clip is made of.
  *
@@ -895,7 +900,15 @@ function shotKey(src) {
  *     image   [S1][S2][S3][S4]
  *
  *     video   [ Shot 1 ····· ][ Shot 2 ····· ]     ⟵ after
- *     image   [S1]            [S2]            [S3][S4]
+ *     image   [ Shot 1 ····· ][ Shot 2 ····· ][S3][S4]
+ *
+ * ⚠ THE PANEL TAKES THE TAKE'S LENGTH, which is the second half of the same ask:
+ * "my video lengh is 4 sec but image sitll in 2 sec so image also extend 4
+ * second when com veo video". A 2-second still under 4 seconds of footage is a
+ * shot whose two halves disagree about how long it is — delete the take and the
+ * cut collapses back to 2s. It only ever GROWS: a take shorter than its panel
+ * leaves the panel alone, because shrinking a hold somebody set by hand is not
+ * making room, it is discarding an edit.
  *
  * Reported as "my second shot 2 video overlap on shot1 video so this fuction not
  * good for user … automatic image all move like this so my Video and image clear
@@ -904,10 +917,16 @@ function shotKey(src) {
  * ⚠ THE PANEL IS WHAT MOVES, NOT THE RENDER. The render's place is the panel's,
  * so making room by sliding renders would only move the collision; the space a
  * 4-second take needs has to come from the row underneath it. A panel with a
- * render of its own therefore stays put and the ones AFTER it are pushed clear
- * of that take's end — which is the same "everything after it moves too" ripple
- * `insertPictures` performs, run against the video row's lengths instead of the
- * panels' own.
+ * render of its own therefore keeps its START and grows to the take's length,
+ * and the ones AFTER it are pushed clear of its new end — which is the same
+ * "everything after it moves too" ripple `insertPictures` performs, run against
+ * the video row's lengths instead of the panels' own.
+ *
+ * ⚠ THIS MOVES PICTURES ONLY. Everything ELSE that has to move with them — the
+ * captions, the voiceover, typed text, shapes, overlays, the clips on the Video
+ * row — is `rippleDocument` in `ripple.js`, driven by the shifts this pass
+ * produced. Two passes because they are two questions: this one decides where
+ * the board's pictures go, that one carries the rest of the film along with them.
  *
  * ⚠ FORWARD ONLY, AND NEVER PAST WHERE A CLIP ALREADY IS (`Math.max`). This is
  * not a re-lay of the row: a panel that already sits clear of everything before
@@ -954,29 +973,54 @@ export function spreadPanelsForRenders(frames) {
   }
   panels.sort((a, b) => spans[a].start - spans[b].start || a - b);
 
-  const moved = new Map(); // frame index -> its new start
+  const moved = new Map(); // frame index -> the fields that changed
   const paired = new Set(); // renders already spoken for
   const clock = new Map(); // track -> the first moment free on it
   for (const i of panels) {
     const span = spans[i];
     const start = Math.max(span.start, clock.get(span.track) || 0);
     const delta = start - span.start;
-    if (delta) moved.set(i, start);
-    let free = start + (span.end - span.start);
+    let hold = span.end - span.start;
+
     // ⚠ ONLY THE FIRST UNPAIRED RENDER OF A SHOT PER PANEL. A duplicated panel
     // shares its `src` with the original, and pairing by key alone would give the
     // copy the same take — every panel after it pushed clear of a render that is
     // not over it.
+    const takes = [];
+    let cover = 0;
     for (const j of rendersOf.get(shotKey(list[i].src)) || []) {
       if (paired.has(j)) continue;
       paired.add(j);
-      if (delta) moved.set(j, spans[j].start + delta);
-      free = Math.max(free, spans[j].start + delta + (spans[j].end - spans[j].start));
+      takes.push(j);
+      // How far past the panel's new start this take reaches.
+      cover = Math.max(cover, spans[j].start + delta + (spans[j].end - spans[j].start) - start);
+    }
+
+    // ⚠ THE PANEL TAKES THE TAKE'S LENGTH. Veo is asked for 4 seconds over a
+    // 2-second hold, and leaving the still at 2s left a picture half as long as
+    // the footage made from it — "my video lengh is 4 sec but image sitll in 2
+    // sec so image also extend 4 second when com veo video". Same rule the
+    // voiceover follows (`_lay_out_speech`): a shot is as long as the thing laid
+    // over it. ⚠ IT ONLY EVER GROWS — a take shorter than its panel leaves the
+    // panel alone, because shrinking a hold somebody set by hand is not making
+    // room, it is discarding an edit.
+    if (cover > hold) hold = Math.min(cover, MAX_FRAME_MS);
+    if (delta || hold !== span.end - span.start) {
+      moved.set(i, { start_ms: start, duration_ms: hold });
+    }
+    let free = start + hold;
+    for (const j of takes) {
+      const length = spans[j].end - spans[j].start;
+      if (delta) moved.set(j, { start_ms: spans[j].start + delta, duration_ms: length });
+      // Still a `max`: `hold` is capped at `MAX_FRAME_MS`, so on an absurdly long
+      // take the panel cannot quite cover it and the next one must clear the
+      // take rather than the panel.
+      free = Math.max(free, spans[j].start + delta + length);
     }
     clock.set(span.track, free);
   }
   if (!moved.size) return list;
-  return list.map((f, i) => (moved.has(i) ? { ...f, start_ms: moved.get(i) } : f));
+  return list.map((f, i) => (moved.has(i) ? { ...f, ...moved.get(i) } : f));
 }
 
 // A clip is on screen from its start UP TO BUT NOT INCLUDING its end. The same

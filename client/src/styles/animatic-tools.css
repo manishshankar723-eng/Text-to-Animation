@@ -108,11 +108,36 @@
   cursor: zoom-in;
 }
 /* With an edit tool armed, the grab strip is the thing you want, so make it
-   obvious it is what the pointer is for. */
+   obvious it is what the pointer is for.
+   ⚠ A THIN MARK, NOT A FILLED STRIP. This used to be `background: var(--primary)`
+   across the whole 8px grip, and 8px is the size it is so it can be HIT without
+   precision aiming — not the size the marker should be. On the picture rows,
+   where clips butt up against each other, a filled grip each side of every cut
+   put 16px of solid gold between neighbouring shots: at any real zoom the lane
+   read as gold bars with slivers of clip between them, and the clip's own label
+   and content tint were the part you had to hunt for ("i want ripple icon size
+   in clip view in timline i want you keep little thin").
+   ⚠ SO THE HIT AREA IS UNTOUCHED. The stripe is an inset shadow, which paints
+   INSIDE the same 8px box without resizing it — narrowing `width` here would
+   have made the grip harder to grab, which is a worse bug than a fat marker.
+   Drawn hard against the outer edge so it sits ON the cut it trims. */
 .tl-inner.tool-rolling .tl-handle,
 .tl-inner.tool-ripple .tl-handle {
-  background: var(--primary);
+  background: transparent;
+  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--primary);
 }
+/* The head grip, mirrored — same stripe on the other side of the box. Must come
+   AFTER the rule above: `.tl-handle-l` also carries `.tl-handle`, so the two
+   selectors weigh the same and order is what decides which shadow lands. */
+.tl-inner.tool-rolling .tl-handle-l,
+.tl-inner.tool-ripple .tl-handle-l {
+  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--primary);
+}
+/* ⚠ NO HOVER RULE HERE ANY MORE, AND THAT IS THE POINT. `.tl-handle:hover` in
+   `animatic.css` now paints the same stripe one step wider, for every tool — so
+   the mark under B and the mark under V are the same mark, which is what was
+   asked for. A second hover rule scoped to these two tools is how they drifted
+   apart the first time. `--tl-grip-mark` is declared on `.tl-handle` there. */
 
 /* The marked range (I / O). Sits UNDER the tick labels — it marks time, and
    the numbers have to stay readable over it. */

@@ -272,7 +272,7 @@ export default function FinalVideoRenderStep({
 
         {project.shots.length === 0 && (
           <p className="muted fv-empty">
-            No shots yet — start a project from an animatic to fill them in.
+            No shots yet — start one from the Video Editor to fill them in.
           </p>
         )}
 

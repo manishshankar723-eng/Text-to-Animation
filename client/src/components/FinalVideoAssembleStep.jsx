@@ -346,7 +346,7 @@ export default function FinalVideoAssembleStep({
             <span className="tiny">
               Delete “{project.title}”? Its {ready.length} rendered clip
               {ready.length === 1 ? "" : "s"} go for good — including what you
-              paid to render. The animatic it came from is untouched.
+              paid to render. The project it came from is untouched.
             </span>
             <div className="lib-confirm-btns">
               <button

@@ -311,7 +311,7 @@ export default function StoryboardBoard({
                 <span className="spinner-inline" /> Opening…
               </>
             ) : (
-              "🎬 Make animatic"
+              "🎬 Make project"
             )}
           </button>
         )}

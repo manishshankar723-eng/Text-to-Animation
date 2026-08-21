@@ -613,13 +613,21 @@
   padding-right: 0.35rem;
 }
 /* The grab strip for dragging a hold longer or shorter. Deliberately 8px wide
-   so it can be hit without precision aiming. */
+   so it can be hit without precision aiming.
+   ⚠ `--tl-grip-mark` IS THE WIDTH OF THE GOLD, AND IT IS NOT THIS 8px. The box
+   is the HIT area; the mark is a thin stripe painted inside it (see the hover
+   rules below, and the ripple/rolling rules in `animatic-tools.css` that show
+   the same stripe at rest). It lives here so there is ONE value for both — a
+   grip that looked thin under the B tool and went back to a fat gold block on
+   hover under V was reported as exactly that, "fixt it please both place same".
+   Every rule that widens it does so by re-declaring this on the grip. */
 .tl-handle {
   position: absolute;
   top: 0;
   right: 0;
   width: 8px;
   height: 100%;
+  --tl-grip-mark: 2px;
   cursor: col-resize;
   background: linear-gradient(90deg, transparent, var(--border));
 }
@@ -633,9 +641,23 @@
   left: 0;
   background: linear-gradient(270deg, transparent, var(--border));
 }
+/* Hovered: the same thin stripe the edit tools show at rest, one step wider.
+   ⚠ IT USED TO BE `background: var(--primary)` — the whole 8px filled, on every
+   clip, under every tool. That is the fat grip the thin ripple mark was measured
+   against, and the two have to be the same mark or the pointer looks like it
+   changed what it is about to do. Drawn hard against the OUTER edge, so it sits
+   on the cut it trims rather than floating inside the clip. */
 .tl-handle:hover,
 .tl-handle-l:hover {
-  background: var(--primary);
+  --tl-grip-mark: 3px;
+  background: transparent;
+  box-shadow: inset calc(-1 * var(--tl-grip-mark)) 0 0 0 var(--primary);
+}
+/* The head grip, mirrored. ⚠ MUST STAY AFTER the rule above: a head grip carries
+   `.tl-handle` too, so both selectors weigh the same and source order is the
+   only thing deciding which side the stripe lands on. */
+.tl-handle-l:hover {
+  box-shadow: inset var(--tl-grip-mark) 0 0 0 var(--primary);
 }
 
 .tl-audio {

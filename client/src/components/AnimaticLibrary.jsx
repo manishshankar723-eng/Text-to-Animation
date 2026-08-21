@@ -211,7 +211,7 @@ export default function AnimaticLibrary({ onOpen }) {
     setBusyId(item.job_id);
     setError("");
     try {
-      await api.downloadAnimaticVideo(item.job_id, `${item.title || "animatic"}.mp4`);
+      await api.downloadAnimaticVideo(item.job_id, `${item.title || "project"}.mp4`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -234,7 +234,7 @@ export default function AnimaticLibrary({ onOpen }) {
         <div
           className="lib-cover"
           onClick={() => onOpen(a.job_id)}
-          title="Open this animatic"
+          title="Open this project"
         >
           {covers[a.job_id] ? (
             <img src={covers[a.job_id]} alt={a.title} />
@@ -316,7 +316,7 @@ export default function AnimaticLibrary({ onOpen }) {
                 type="button"
                 className="lib-icon"
                 disabled={busy}
-                title="Rename this animatic"
+                title="Rename this project"
                 onClick={() => {
                   setRenameValue(a.title);
                   setRenamingId(uid);
@@ -328,7 +328,7 @@ export default function AnimaticLibrary({ onOpen }) {
                 type="button"
                 className="lib-icon danger"
                 disabled={busy}
-                title="Delete this animatic"
+                title="Delete this project"
                 onClick={() => setConfirmId(uid)}
               >
                 <Icon name="trash" />
@@ -420,7 +420,7 @@ export default function AnimaticLibrary({ onOpen }) {
       <div className="workflow-header">
         <span className="wf-icon">🎬</span>
         <div>
-          <h1 className="wf-title">Your Animatics</h1>
+          <h1 className="wf-title">Your Projects</h1>
           <p className="muted">
             Time your frames, lay audio and text under them, and watch the cut.
             No AI credits are used here.
@@ -466,13 +466,13 @@ export default function AnimaticLibrary({ onOpen }) {
 
       {renderSection(
         "recent",
-        "Recent Animatics",
-        recent.length > 0 ? "Your latest animatic" : "",
+        "Recent Projects",
+        recent.length > 0 ? "Your latest project" : "",
         recent
       )}
       {renderSection(
         "all",
-        "All Animatics",
+        "All Projects",
         items.length > 0 ? `${items.length} in total` : "",
         items
       )}

@@ -195,4 +195,4 @@ def normalise_container(value: str | None) -> str:
 
 def output_name(container: str | None) -> str:
     """The file one export is written as, inside its own job directory."""
-    return f"animatic.{CONTAINER_EXT[normalise_container(container)]}"
+    return f"project.{CONTAINER_EXT[normalise_container(container)]}"

@@ -248,7 +248,7 @@ export default function FinalVideoArtStep({
 
         {project.shots.length === 0 ? (
           <p className="muted fv-empty">
-            This project has no shots yet. Start one from an animatic to fill
+            This project has no shots yet. Start one from the Video Editor to fill
             them in automatically.
           </p>
         ) : (

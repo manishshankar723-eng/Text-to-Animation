@@ -175,6 +175,17 @@ const posed = [
 ];
 out.pose = layout(spreadPanelsForRenders(posed));
 
+// --- a take SHORTER than its panel leaves the panel alone -------------------
+// Shrinking a hold somebody set by hand is not making room, it is discarding an
+// edit. Panel 1 is stretched to 8s and given a 4s take.
+out.shorter = layout(
+  spreadPanelsForRenders([
+    { ...panel(1, 0), duration_ms: 8000 },
+    panel(2, 8000),
+    take(1, 0),
+  ])
+);
+
 // --- a duplicated panel does not claim the same take -----------------------
 // The copy shares its `src` with the original; pairing by that alone would push
 // everything after the COPY clear of a take that is nowhere near it.
@@ -233,10 +244,10 @@ def run_node():
         shutil.rmtree(work, ignore_errors=True)
 
 
-# ⚠ THE USER'S SECOND SCREENSHOT, IN MILLISECONDS. Shot 1 keeps its place under
-# its own take; every panel after it clears 4s.
+# ⚠ THE USER'S SECOND SCREENSHOT, IN MILLISECONDS. Shot 1 keeps its START under
+# its own take and GROWS to the take's length; every panel after it clears 4s.
 AFTER_ONE = {
-    "p1": [0, 2000, 0],
+    "p1": [0, 4000, 0],
     "p2": [4000, 6000, 0],
     "p3": [6000, 8000, 0],
     "p4": [8000, 10000, 0],
@@ -246,8 +257,8 @@ AFTER_ONE = {
 }
 # ⚠ AND THE THIRD. Two takes butt-jointed at 4s, with nothing under panel 2's tail.
 AFTER_TWO = {
-    "p1": [0, 2000, 0],
-    "p2": [4000, 6000, 0],
+    "p1": [0, 4000, 0],
+    "p2": [4000, 8000, 0],
     "p3": [8000, 10000, 0],
     "p4": [10000, 12000, 0],
     "p5": [12000, 14000, 0],
@@ -257,7 +268,7 @@ AFTER_TWO = {
 }
 
 LOGIC = [
-    "the take goes where its panel is, and the panel stays there",
+    "the take goes where its panel is, and THE PANEL GROWS TO MATCH IT",
     "the panels after it are pushed clear of the take's end",
     "…and they stay butt-jointed to each other",
     "a second take does not land inside the first",
@@ -270,6 +281,7 @@ LOGIC = [
     "…and travels with its panel when that panel moves",
     "a take of a key pose is not a take of the panel under it",
     "a duplicated panel does not claim the original's take",
+    "a take SHORTER than its panel does not shrink it",
     "a second storyboard row ripples on its own track",
     "nothing in, nothing thrown",
 ]
@@ -282,9 +294,13 @@ if got is None:
         skip(label, "node not available")
 else:
     one, two = got["afterOne"], got["afterTwo"]
+    # ⚠ THE SECOND HALF OF THE ASK: "my video lengh is 4 sec but image sitll in 2
+    # sec so image also extend 4 second when com veo video". The panel keeps its
+    # start and ends where the take ends — a still half as long as the footage
+    # made from it is a shot whose two halves disagree about its length.
     check(
-        "the take goes where its panel is, and the panel stays there",
-        one["v1"] == AFTER_ONE["v1"] and one["p1"] == AFTER_ONE["p1"],
+        "the take goes where its panel is, and THE PANEL GROWS TO MATCH IT",
+        one["v1"] == AFTER_ONE["v1"] and one["p1"] == one["v1"][:2] + [0],
         f"p1={one['p1']} v1={one['v1']}",
     )
     check(
@@ -362,10 +378,22 @@ else:
     check(
         "a duplicated panel does not claim the original's take",
         dupe["v1"] == [0, 4000, 1]
-        and dupe["p1"] == [0, 2000, 0]
-        and dupe["p1copy"][0] == 4000
+        and dupe["p1"] == [0, 4000, 0]
+        # ⚠ THE COPY IS NOT STRETCHED. It has no take of its own, so it keeps
+        # the 2s hold it was given — growing it would be this pass inventing a
+        # length for a shot nobody animated.
+        and dupe["p1copy"] == [4000, 6000, 0]
         and dupe["p2"][0] == 6000,
         json.dumps(dupe),
+    )
+    # ⚠ ONE DIRECTION ONLY. The stretch is `Math.max`, so a panel already
+    # longer than its take keeps every millisecond of the hold it was given —
+    # and nothing after it moves, because nothing needed room.
+    shorter = got["shorter"]
+    check(
+        "a take SHORTER than its panel does not shrink it",
+        shorter["p1"] == [0, 8000, 0] and shorter["p2"] == [8000, 10000, 0],
+        json.dumps(shorter),
     )
     tracks = got["tracks"]
     check(
@@ -399,7 +427,7 @@ check(
 # every take in the batch would be laid out against the pre-batch row.
 check(
     "…and the moved panels go back into the ref for the next take in the batch",
-    "framesRef.current = next;" in editor,
+    "framesRef.current = settled;" in editor,
     "a second render in the same batch would be placed against a stale row",
 )
 check(
@@ -409,8 +437,24 @@ check(
 )
 check(
     "…and only when they actually did",
-    "shifted" in editor and "return next !== appended;" in editor,
+    "shifted" in editor and "return next !== appended || shifts.length > 0;" in editor,
     "the identity test is what makes the notice honest",
+)
+
+# ⚠ THE OTHER HALF OF THE REPORT, and the half that is invisible from the layout
+# above: "my caption and voiver over not move so both still". This pass moves
+# PICTURES; carrying the rest of the film along is `ripple.js`, and the attach has
+# to run both or the sound comes adrift the moment a shot grows.
+check(
+    "the attach carries the rest of the timeline along too",
+    "renderShifts(appended, next)" in editor
+    and "setTexts((list) => coverGrownShots(rippleClips(list, shifts), grown));" in editor,
+    "the captions, the voiceover and the Video row would stay where they were",
+)
+check(
+    "…and cuts a voiceover that spans the edit, with the editor's own id minter",
+    "setAudioTracks((list) => rippleAudio(list, shifts, newId));" in editor,
+    "one clip laid from 0:00 cannot be rippled by moving its start",
 )
 
 print()

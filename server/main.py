@@ -30,6 +30,7 @@ import yaml
 import panel_sequence
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
 from . import config
@@ -109,6 +110,42 @@ app.add_middleware(
     # "storyboard.pdf" (and browsers deduped that to "storyboard (7).pdf").
     expose_headers=["Content-Disposition"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Compression — JSON only, never media
+# ---------------------------------------------------------------------------
+# An animatic project is the biggest JSON this API sends: every frame serialises
+# every field it has, defaults included (`effects`, `mask`, `blend`, `keyframes`
+# per frame), and a sixty-panel board is hundreds of kilobytes of it. That one
+# response is what the editor's loading spinner waits on, and it went out raw.
+#
+# ⚠ NOT A BARE `GZipMiddleware`. That would also compress every `FileResponse`
+# this API serves — PNG panels and, worse, whole MP4s, which are already
+# compressed and can be a hundred megabytes each. Gzipping those spends real CPU
+# to save nothing and delays the first byte of a file the browser wants to start
+# playing. So media paths are handed straight through, and everything else gets
+# the standard middleware.
+_MEDIA_PATH_MARKERS = ("/frame/", "/panel/", "/media/", "/video", "/download", "/image")
+
+
+class GZipJSONOnlyMiddleware:
+    """`GZipMiddleware` for everything except the media routes."""
+
+    def __init__(self, app, minimum_size: int = 1024):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=minimum_size)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path") or ""
+        if any(marker in path for marker in _MEDIA_PATH_MARKERS):
+            return await self.app(scope, receive, send)
+        return await self.gzip(scope, receive, send)
+
+
+app.add_middleware(GZipJSONOnlyMiddleware, minimum_size=1024)
 
 # Mount authentication routes (/auth/register, /auth/login, /auth/me).
 app.include_router(auth_router)
