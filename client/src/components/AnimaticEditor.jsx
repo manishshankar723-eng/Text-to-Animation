@@ -701,6 +701,25 @@ export default function AnimaticEditor({
   const [speechCaptions, setSpeechCaptions] = useState(true);
   const [speechConfirm, setSpeechConfirm] = useState(null);
   const [speechBusy, setSpeechBusy] = useState(false);
+  // --- THE DIALOGUE SHEET (voiceover only) ---------------------------------
+  // ⚠ WHAT IS ABOUT TO BE SAID, ON SCREEN, BEFORE IT IS PAID FOR. The dialog
+  // used to offer a voice and a price and nothing else: what would actually be
+  // read was whatever the board happened to hold, unseen. Asked for as "i want i
+  // see my Storyborad Dialouge in here … so user look if user want chnage so
+  // user change/edit Dialouge", which is the same second look ✨ Animate gives
+  // you at its prompt.
+  //
+  // `speechSheet` is the free GET's answer — the pickers and whether these clips
+  // came off a board at all. `speechLines` is the EDITABLE copy, and it is what
+  // both the estimate and the run send: the price has to be the price of the
+  // words on screen.
+  const [speechSheet, setSpeechSheet] = useState(null);
+  const [speechLines, setSpeechLines] = useState([]);
+  const [speechSheetBusy, setSpeechSheetBusy] = useState(false);
+  // Stretch each shot to cover its own line and push the shots after it along —
+  // the same ripple animating a shot performs. On by default: a 2-second picture
+  // under a 10-second line was the reported bug, not a preference.
+  const [speechFit, setSpeechFit] = useState(true);
   // ⚠ ITS OWN ERROR, not the editor's banner. The banner renders in the status
   // bar at the top of the page, which is BEHIND the modal overlay — so a failed
   // "See the price" wrote its reason somewhere the user could not possibly see
@@ -5780,7 +5799,45 @@ export default function AnimaticEditor({
     setSpeechFor("voiceover");
     setSpeechConfirm(null);
     setSpeechError("");
+    setSpeechSheet(null);
+    setSpeechLines([]);
+    setSpeechSheetBusy(true);
+    // ⚠ THE SAVED PROJECT IS WHAT THE SERVER READS, so the sheet has to be
+    // fetched behind a flush — a line is anchored to the clip it is spoken
+    // over, and a clip dragged since the last autosave isn't where the server
+    // thinks it is. Same reason `askForSpeech` flushes before pricing.
+    //
+    // ⚠ AND IT SPENDS NOTHING. This is a read of the board plus a keyword guess
+    // at who each speaker is; a dialog that costs money to OPEN is a dialog
+    // nobody opens twice.
+    flush()
+      .then(() => api.getAnimaticDialogue(animaticId))
+      .then((sheet) => {
+        setSpeechSheet(sheet);
+        setSpeechLines(sheet.lines || []);
+      })
+      .catch((e) => setSpeechError(e.message))
+      .finally(() => setSpeechSheetBusy(false));
   }
+
+  /** Edit one line of the sheet. The sheet is the script — nothing here is
+   *  written back to the storyboard, exactly as ✨ Animate's prompt isn't. */
+  function patchSpeechLine(i, patch) {
+    setSpeechLines((lines) =>
+      lines.map((line, n) => (n === i ? { ...line, ...patch } : line))
+    );
+  }
+
+  /** WHICH VOICE WILL READ THIS LINE, worked out the same way the server does
+   *  it (`tts.voice_for`): the line's own pick, then its persona's casting, then
+   *  the voice chosen at the top of the dialog. Shown rather than left implicit
+   *  because "why is my grandfather being read by Kore" is otherwise unanswerable
+   *  from anything on screen. */
+  const voiceForLine = (line) => {
+    if (line?.voice) return line.voice;
+    const persona = (speechSheet?.personas || []).find((p) => p.key === (line?.persona || ""));
+    return persona && persona.key ? persona.voice : speechVoice;
+  };
 
   // Ask what it would cost. FREE — this is the call that fills the dialog.
   async function askForSpeech() {
@@ -5799,6 +5856,10 @@ export default function AnimaticEditor({
             })
           : await api.estimateVoiceover(animaticId, {
               voice: speechVoice,
+              // ⚠ THE SHEET AS EDITED. Pricing the board instead would quote a
+              // different set of words from the ones the button then reads.
+              lines: speechLines,
+              fitShots: speechFit,
               addCaptions: speechCaptions,
               replace: speechReplace,
             });
@@ -5836,6 +5897,8 @@ export default function AnimaticEditor({
       } else {
         await api.voiceAnimatic(animaticId, {
           voice: speechVoice,
+          lines: speechLines,
+          fitShots: speechFit,
           addCaptions: speechCaptions,
           replace: speechReplace,
         });
@@ -5889,6 +5952,14 @@ export default function AnimaticEditor({
         // that missing row back and delete it from the project.
         setLayers(project.layers || []);
         setAudioTracks(project.audio_tracks || []);
+        // ⚠ AND THE FRAMES, which is what makes a voiceover different from a
+        // captions run: reading a line aloud STRETCHES the shot that owns it and
+        // pushes the shots after it along (`_lay_out_speech`, server side), so
+        // the picture rows on screen are stale the moment the run ends. Taking
+        // the audio without the pictures would leave the editor holding the old
+        // layout — and its next autosave would write that back over the one the
+        // server just worked out, putting every line back over the wrong shot.
+        setFrames(project.frames || []);
         setSpeechRunning(false);
         setSpeechProgress(null);
         if (job.error) setError(job.error);
@@ -5905,7 +5976,7 @@ export default function AnimaticEditor({
       alive = false;
       clearTimeout(timer);
     };
-  }, [speechRunning, animaticId, setTexts, setLayers, setAudioTracks]);
+  }, [speechRunning, animaticId, setTexts, setLayers, setAudioTracks, setFrames]);
 
   // -------------------------------------------- Phase 7: back to the board
   //
@@ -8499,7 +8570,13 @@ export default function AnimaticEditor({
           what that would cost and hands over to the confirm dialog below. */}
       {speechFor !== null && !speechConfirm && (
         <div className="modal-overlay" onClick={() => setSpeechFor(null)}>
-          <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
+          {/* ⚠ WIDER FOR THE VOICEOVER, because it now carries a script. The
+              captions panel is two controls and stays the 28rem every other
+              dialog here is. */}
+          <div
+            className={`card an-name-modal ${speechFor === "voiceover" ? "an-vo-modal" : ""}`}
+            onClick={(e) => e.stopPropagation()}
+          >
             <button className="modal-close" onClick={() => setSpeechFor(null)}>
               ✕
             </button>
@@ -8558,23 +8635,131 @@ export default function AnimaticEditor({
                 <h2>Read the dialogue aloud</h2>
                 <p className="muted">
                   Every spoken line on the storyboard, read in order and laid
-                  under the shot it belongs to. A line longer than its shot
-                  pushes the next one later rather than talking over it.
+                  under the shot it belongs to. Change any line here before it is
+                  read — nothing you type is written back to the storyboard.
                 </p>
+
+                {/* ⚠ THE DEFAULT, NOT THE VOICE. Every line below can be cast on
+                    its own, and this is only what reads the ones that aren't —
+                    the label used to say "Voice" when it was the only choice
+                    there was. */}
                 <div className="an-prop-row">
-                  <span className="an-prop-label">Voice</span>
+                  <span className="an-prop-label">Default voice</span>
                   <select
                     className="an-select"
                     value={speechVoice}
                     onChange={(e) => setSpeechVoice(e.target.value)}
                   >
-                    {["Kore", "Puck", "Charon", "Zephyr", "Fenrir", "Aoede"].map((v) => (
-                      <option key={v} value={v}>
-                        {v}
+                    {(speechSheet?.voices || []).map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name}
+                        {v.tone ? ` — ${v.tone}` : ""}
                       </option>
                     ))}
+                    {/* Before the sheet lands there is nothing to list, and an
+                        empty picker that then changes under the cursor is worse
+                        than one that says it is still reading. */}
+                    {!speechSheet && <option value={speechVoice}>{speechVoice}</option>}
                   </select>
                 </div>
+
+                {/* --- THE DIALOGUE SHEET ---------------------------------- */}
+                {speechSheetBusy && (
+                  <p className="tiny muted">Reading the storyboard…</p>
+                )}
+                {!speechSheetBusy && speechSheet && !speechLines.length && (
+                  <p className="an-prop-warn">
+                    ⚠{" "}
+                    {speechSheet.from_board
+                      ? "These shots came from a storyboard, but none of them have spoken lines on it."
+                      : "These clips aren't storyboard shots, so there is no dialogue to read."}
+                  </p>
+                )}
+                {speechLines.length > 0 && (
+                  <div className="an-vo-sheet">
+                    {speechLines.map((line, i) => {
+                      const persona = (speechSheet?.personas || []).find(
+                        (p) => p.key === (line.persona || "")
+                      );
+                      return (
+                        <div className="an-vo-line" key={`${line.frame_id}-${i}`}>
+                          <div className="an-vo-head">
+                            {/* WHICH SHOT, first and in the accent colour — the
+                                same rhythm ✨ Animate names its shot in. */}
+                            <span className="an-vo-shot">{line.shot || "This shot"}</span>
+                            <span className="an-vo-who">{line.character || "A voice"}</span>
+                            <span className="an-vo-at">{formatTime(line.start_ms || 0)}</span>
+                          </div>
+                          <textarea
+                            className="an-tp-text an-vo-text"
+                            rows={2}
+                            maxLength={2000}
+                            value={line.text}
+                            onChange={(e) => patchSpeechLine(i, { text: e.target.value })}
+                          />
+                          <div className="an-vo-picks">
+                            <label className="an-tp-field">
+                              <span>Who is speaking</span>
+                              <select
+                                className="an-select"
+                                value={line.persona || ""}
+                                // ⚠ RE-CASTS THE VOICE TOO, by clearing the
+                                // override. Picking "Grandfather" and still
+                                // hearing the young woman you set two clicks ago
+                                // is the kind of stuck state nobody finds their
+                                // way out of.
+                                onChange={(e) =>
+                                  patchSpeechLine(i, { persona: e.target.value, voice: "" })
+                                }
+                              >
+                                {(speechSheet?.personas || []).map((p) => (
+                                  <option key={p.key} value={p.key}>
+                                    {p.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="an-tp-field">
+                              <span>Voice</span>
+                              <select
+                                className="an-select"
+                                value={line.voice || ""}
+                                onChange={(e) => patchSpeechLine(i, { voice: e.target.value })}
+                              >
+                                <option value="">{voiceForLine(line)} (cast)</option>
+                                {(speechSheet?.voices || []).map((v) => (
+                                  <option key={v.name} value={v.name}>
+                                    {v.name}
+                                    {v.tone ? ` — ${v.tone}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          {/* ⚠ THE ONLY VISIBLE SIGN THAT AN AGE AND A SEX
+                              REACHED THE MODEL AT ALL. A voice name is a timbre;
+                              this sentence is what actually gets sent with the
+                              line, so it is worth reading before paying. */}
+                          {persona?.direction && (
+                            <p className="tiny muted an-vo-note">
+                              Read as {persona.direction}.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <label className="an-check">
+                  <input
+                    type="checkbox"
+                    checked={speechFit}
+                    onChange={(e) => setSpeechFit(e.target.checked)}
+                  />
+                  Make each shot hold its own line (a long line stretches its
+                  picture and pushes the shots after it along)
+                </label>
                 <label className="an-check">
                   <input
                     type="checkbox"
@@ -8609,7 +8794,16 @@ export default function AnimaticEditor({
               <button
                 type="button"
                 className="btn primary"
-                disabled={speechBusy || (speechFor === "captions" && !speechTrack)}
+                disabled={
+                  speechBusy ||
+                  (speechFor === "captions" && !speechTrack) ||
+                  // ⚠ NOT WHILE THE SHEET IS STILL COMING, and not when it came
+                  // back empty: both would price a request the server is going
+                  // to refuse, in a dialog that already knows better.
+                  (speechFor === "voiceover" &&
+                    (speechSheetBusy ||
+                      !speechLines.some((l) => (l.text || "").trim())))
+                }
                 onClick={askForSpeech}
               >
                 {speechBusy ? "Checking the price…" : "See the price →"}
@@ -8641,8 +8835,21 @@ export default function AnimaticEditor({
             <p className="muted">
               {speechFor === "captions"
                 ? `${Math.round(speechConfirm.estimate.seconds)}s of audio, transcribed by ${speechConfirm.estimate.model}.`
-                : `${speechConfirm.estimate.lines} line(s), ${speechConfirm.estimate.characters} characters, read by ${speechVoice}.`}
+                : // ⚠ NAMES THE CAST, NOT "read by Kore". Lines can now be voiced
+                  // one at a time, and a confirm dialog naming one voice over a
+                  // sheet that shows four is the kind of small lie that makes a
+                  // price look made up.
+                  `${speechConfirm.estimate.lines} line(s), ${speechConfirm.estimate.characters} characters, read by ${
+                    [...new Set(speechLines.map((l) => voiceForLine(l)))].join(", ") ||
+                    speechVoice
+                  }.`}
             </p>
+            {speechFor === "voiceover" && speechFit && (
+              <p className="tiny muted">
+                Any shot shorter than its line is stretched to cover it, and the
+                shots after it move along — the same as animating one does.
+              </p>
+            )}
             {speechConfirm.estimate.over_limit && (
               <p className="an-prop-warn">
                 ⚠ That is over the limit for one run ({speechConfirm.estimate.limit}).

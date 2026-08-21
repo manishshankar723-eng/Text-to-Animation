@@ -816,31 +816,54 @@ export function captionAnimatic(id, { uploadId, language, replace } = {}) {
   });
 }
 
+// Free, and calls no model. THE DIALOGUE SHEET: every spoken line on this
+// timeline, the shot it belongs to, a persona guessed from the board's cast, and
+// the two pickers (`voices`, `personas`) — which come from the server because
+// `tts.CAST` is the only place a voice exists.
+export function getAnimaticDialogue(id) {
+  return request(`/animatics/${id}/dialogue`);
+}
+
+// The sheet, on its way back up. ⚠ SENT ON BOTH CALLS, so the price quoted is
+// the price of the words on screen: an edited line is cheaper or dearer than the
+// board's, and a quote for something else is a quote that looks made up.
+function voiceoverBody({ voice, frameIds, lines, fitShots, addCaptions, replace }) {
+  return {
+    voice: voice || "Kore",
+    frame_ids: frameIds || [],
+    lines: (lines || []).map((l) => ({
+      frame_id: l.frame_id || "",
+      character: l.character || "",
+      persona: l.persona || "",
+      voice: l.voice || "",
+      text: l.text || "",
+    })),
+    fit_shots: fitShots !== false,
+    add_captions: addCaptions !== false,
+    replace: replace !== false,
+  };
+}
+
 // Free. What reading the board's dialogue aloud would cost.
-export function estimateVoiceover(id, { voice, frameIds, addCaptions, replace } = {}) {
+export function estimateVoiceover(id, opts = {}) {
   return request(`/animatics/${id}/voiceover/estimate`, {
     method: "POST",
-    body: {
-      voice: voice || "Kore",
-      frame_ids: frameIds || [],
-      add_captions: addCaptions !== false,
-      replace: replace !== false,
-    },
+    body: voiceoverBody(opts),
   });
 }
 
 // SPENDS QUOTA. Reads the dialogue aloud onto the audio layer, async — same
 // polling as the captions call. The spoken lines come back as captions too,
 // timed to when they were ACTUALLY read rather than when they were asked for.
-export function voiceAnimatic(id, { voice, frameIds, addCaptions, replace } = {}) {
+//
+// ⚠ IT ALSO MOVES PICTURES when `fitShots` is on (the default): the shot that
+// owns a line is stretched to cover it and the shots after it are pushed along,
+// exactly as animating one does. So the caller must re-read the project's
+// FRAMES when the job finishes, not only its texts and audio.
+export function voiceAnimatic(id, opts = {}) {
   return request(`/animatics/${id}/voiceover`, {
     method: "POST",
-    body: {
-      voice: voice || "Kore",
-      frame_ids: frameIds || [],
-      add_captions: addCaptions !== false,
-      replace: replace !== false,
-    },
+    body: voiceoverBody(opts),
   });
 }
 

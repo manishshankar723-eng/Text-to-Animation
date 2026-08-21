@@ -200,7 +200,35 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-21 — **AN UPLOADED PICTURE GOES TO THE **Images**
+**Last updated:** 2026-08-21 — **A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A
+SCRIPT YOU CAN EDIT BEFORE IT IS READ** (user-reported, with four screenshots). A
+line was laid at the start of its shot and nothing moved the picture, so a
+ten-second line over a two-second hold — and the caption built from it — ran
+straight over the four shots after it. ⚠ **THERE WERE TWO CLOCKS**: `tts`
+advanced its own by `line + gap` while the picture row was never touched, and two
+clocks agree right up until a shot holds LONGER than its line. `synthesise_timed`
+is gone; `tts` now speaks, measures and lays blobs where it is told
+(`speak_lines` / `assemble`) and the ONE clock lives with the frames in
+**`_lay_out_speech`** (`server/animatics.py`). ⚠ **THE ROOM COMES FROM THE ROW
+ITSELF**, exactly as it does for a Veo take: the shot that owns the line is
+stretched to cover it (line + `GAP_MS`) and the shots after it are pushed clear —
+forward only, never past where a clip already is, a Veo take travelling with its
+panel by the panel's delta. A second run over its own output moves nothing.
+⚠ **THE EDITOR MUST RE-READ THE FRAMES** when the run ends (`setFrames`), or its
+next autosave writes the old layout back over the one the server just worked out.
+⚠ **AND THE DIALOG SHOWS THE SCRIPT NOW**: free `GET /animatics/{id}/dialogue`
+returns every line with its shot, its speaker and a **persona** guessed from the
+board's cast sheet (`tts.persona_from` — keyword-only, free, and it declines to
+guess a sex the board never gave). ⚠ **THE PERSONA IS THE ONLY THING THAT CARRIES
+AN AGE AND A SEX TO THE MODEL** — a voice name is a timbre, so the persona writes
+the stage direction the line is read with AND casts the voice; the direction never
+reaches the captions. The edited sheet wins entirely and is sent on BOTH calls, so
+the estimate prices the words on screen. Covered by
+`tests/voiceover_fit_check.py` — 49 checks, no model call, no browser.
+⚠ **NOT OPENED IN A REAL BROWSER** — the sheet's layout at forty lines is
+unverified by eye; browser tests are run on request in this project.
+
+**Previously:** 2026-08-21 — **AN UPLOADED PICTURE GOES TO THE **Images**
 LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD
 BUTTON** (user-reported, with two screenshots of the gutter). A Stills row was
 made FOR you the first time you uploaded a photo — and picture rows stack
@@ -228,7 +256,7 @@ in the gutter — "only keep media and layer ＋ icon". Covered by
 that no longer exists and now asserts the one-kind rule; the Playwright suites are
 run on request in this project, so that change is unverified.
 
-**Previously:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
+**Before that:** 2026-08-21 — **A TAKE MAKES ROOM FOR ITSELF: ANIMATING A SHOT
 PUSHES THE PANELS AFTER IT ALONG** (user-reported, with three screenshots). A Veo
 render is as long as Veo was ASKED for — 4s of footage over a 2s hold is the
 ordinary case — so the second render, which starts where ITS panel starts, used to
@@ -246,7 +274,7 @@ START**, so a nudge the user gave it survives. ⚠ **PAIRED BY THE BOARD REFEREN
 `assetKey`, which keys a render by its upload. Covered by
 `tests/veo_ripple_check.py` — 20 checks, node + source, no browser.
 
-**Before that:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
+**And before that:** 2026-08-21 — **A VEO RENDER CAN BE SAVED TO DISK, FROM TWO
 PLACES** (user-specified). A ⬇ on its Media card and **Download** in a
 right-click menu beside its bar on the timeline. ⚠ **THE ⬇ IS FIRST IN THE
 CARD'S TOOL ROW** (⬇ ＋ ✕) so ＋ and ✕ stay in the same columns on every card —
@@ -1243,7 +1271,7 @@ Pipeline stages (see `pipeline.py`):
 | `animatic_fonts.py` | **The caption fonts, server side** — the bundled list and the path to each `.ttf` in `client/public/fonts/`. **⚠ TWIN of `client/src/animatic/fonts.js`**, element for element, checked by `tests/captions_check.py`. Exists because a font resolved by NAME resolves differently on a laptop and a server, so the caption in the monitor is not the caption in the MP4. Never asks the machine it is running on. |
 | `client/public/fonts/*.ttf` | The six OFL faces themselves, served to the browser at `/fonts/` and opened off disk by the exporter — ONE file for both sides, which is the whole design. Licences in that folder's `OFL.txt` and `README.md`. |
 | `captions.py` | **Audio → timed caption clips.** ⚠ SPENDS QUOTA, in one call. Three parts on purpose, and only the first costs anything: `transcribe()` is the model call; **`clip_lines()` walks the transcript THROUGH THE RAZOR** — the model heard the FILE, the timeline holds CLIPS cut out of it, so this moves each line onto the timeline where it is actually heard, splits a sentence a cut went through by character count, and drops what was cut out; `tidy_lines()` is the drawing rules (order, never overlap, long enough to read, inside the video). The free two are where every "the subtitles are on top of each other" / "the captions don't match the audio" bug lives, and a failure there must not mean paying to listen again. A generated caption is marked ONLY by its `cap…` id prefix and lives on the reserved `CAPTION_LAYER_ID` lane — **⚠ TWIN of `client/src/animatic/captions.js`**. |
-| `tts.py` | **Dialogue → a spoken voiceover, timed to the shots.** ⚠ SPENDS QUOTA, one call PER LINE. Returns the timings that HAPPENED, not the ones asked for — an overrunning line pushes the next later rather than talking over it — and those become the captions. **The one place here that knows a sound's length without being told**: raw PCM at a known rate, so the byte count IS the duration and no ffprobe is needed. |
+| `tts.py` | **Dialogue → a spoken voiceover, and the CASTING for it.** ⚠ SPENDS QUOTA, one call PER LINE. Holds `CAST` (the voices) and `PERSONAS` — a persona writes the stage direction a line is read with, which is the only way an age and a sex reach the model, AND casts the voice; `persona_from` guesses one off the board's cast sheet for free. ⚠ **WHERE a line goes is NOT decided here** — `speak_lines` reads one shot's lines and `assemble` lays finished blobs where it is told; the one clock over the pictures and the sound is `_lay_out_speech` in `server/animatics.py`. **The one place here that knows a sound's length without being told**: raw PCM at a known rate, so the byte count IS the duration and no ffprobe is needed. |
 | `luts/*.cube` | The built-in colour looks, as FILES — read by `Color3DLUT` for the export and fetched by the browser for the monitor, so there is one copy of the numbers. Regenerate with `python luts/generate_luts.py`. |
 | `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
 | `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
@@ -1342,6 +1370,7 @@ Pipeline stages (see `pipeline.py`):
   `POST /animatics/{id}/videos` (multi-file) — upload video clips; each item comes back with a `duration_ms` **measured server-side by ffmpeg** (there is no ffprobe), because the exporter must work from the same number
   `POST /animatics/{id}/animate/estimate` — **free**; what animating these frames would cost. Takes the SAME body as the render below, so the price quoted is the price of what the button does · `POST /animatics/{id}/animate` — **SPENDS MONEY.** 202, renders off-request on the video pool (poll `GET /jobs/{id}`). Refuses promptless frames, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`. The finished clip lands as an ordinary video upload, so it is indistinguishable from a dropped file thereafter. **Render records live in the job's `result` (`veo_clips`), never `params`** — the autosave rewrites `params` wholesale and would otherwise erase a clip that was paid for
   **Back to the board (Phase 7):** `GET/POST /animatics/{id}/frames/{frame_id}/panel` — the wording behind one clip / re-draw it. Synchronous (one image) and it answers with the **FRAME**, whose `url` carries a fresh `?v=<mtime>` — that is what the client re-fetches against · `GET/POST /animatics/{id}/frames/{frame_id}/sequence` — that shot's key poses / re-block it at a new length ("make this shot 2s longer"). ⚠ **The job returned is the STORYBOARD's**, because the drawings belong to the board — which is also why this animatic stays fully editable while it runs. It RESUMES, so 4s → 6s buys eight drawings, not twenty-four
+  **Captions & voiceover:** `POST /animatics/{id}/captions/estimate` — **free** · `POST /animatics/{id}/captions` — **SPENDS QUOTA.** 202, transcribes ONE audio track into caption clips on a lane of their own · `GET /animatics/{id}/dialogue` — **free, and it calls no model**: the dialogue sheet the 🎙 dialog opens on — every spoken line, the shot it belongs to, its speaker, a **persona** guessed from the board's cast, and both pickers (the voice list lives in `tts.CAST`, never in the JSX) · `POST /animatics/{id}/voiceover/estimate` — **free**, and priced from the EDITED sheet in the body, so the quote is the price of the words on screen · `POST /animatics/{id}/voiceover` — **SPENDS QUOTA.** 202, one call per line. ⚠ **IT MOVES PICTURES**: with `fit_shots` (the default) the shot that owns a line is stretched to cover it and the shots after it are pushed clear, so the client must re-read `frames` as well as `texts` and `audio_tracks` when it finishes
   `POST /animatics/{id}/reframe/estimate` — **free** · `POST /animatics/{id}/reframe` — **SPENDS QUOTA.** 202, one vision call per shot on the video pool. Writes `scale`/`x`/`y` onto the frames server-side, so the client re-reads the project when it finishes. Back to QUEUED never FAILED, like the other two AI passes
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
 - **Animatics → Final Video (`server/videos.py`, kind `final_video`):**
@@ -1647,7 +1676,112 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-21 (latest) — AN UPLOADED PICTURE GOES TO THE **Images** LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD BUTTON (user-reported, with two screenshots of the gutter)
+### 2026-08-21 (latest) — A SHOT HOLDS ITS OWN LINE, AND THE DIALOGUE IS A SCRIPT YOU CAN EDIT BEFORE IT IS READ (user-reported, with four screenshots)
+
+> "when i generate voiceover of my Story..image layer in timline Voicerover
+>  buttun so Geneate perfectly voiceover and caption and placement Starting is
+>  good ony but caption and voicerover goes overlap other image shots see image 1
+>  but i want like this look image 4 … so my shot 9 image cover voiceover lenght
+>  and set like image 4 and other voicer and capyion arrange like this
+>
+>  Second i want i see my Storyborad Dialouge in here (read the dialogue aloude)
+>  in pop-up so user see what dialouge generte so user look if user want chnage so
+>  user change/edit Dialouge … like animate with veo pop up view shot with prompt
+>  … and if posible so add character name like so user understand what charater
+>  voicerover and with gender men/women, boy/girl, child and grand father"
+
+Two asks about one dialog: **where the sound lands**, and **what you can see and
+change before paying for it**.
+
+#### 1. The overlap was built in — there were TWO clocks
+
+A line is laid at the start of the shot it belongs to. The shot holds for two
+seconds and the line takes ten, and nothing moved the picture — so the line and
+the caption built from it ran straight over the four shots after it.
+
+    image   [S9][S10][S11][S12][S13]                          <- before
+    audio   |========= S9's line =========|
+
+    image   [ S9 ..................... ][S10][S11][S12][S13]  <- after
+    audio   |========= S9's line =========|
+
+- **The room comes from the row itself**, exactly as it does for a Veo take.
+  `_lay_out_speech` (`server/animatics.py`) stretches the shot that owns a line to
+  cover it (line + `GAP_MS`, so the next picture starts on the breath and not on
+  the last syllable) and pushes the shots after it clear — the same forward-only
+  ripple as `spreadPanelsForRenders`, which it deliberately mirrors: **a Veo take
+  travels with its panel by the panel's delta**, and the next panel clears the
+  TAKE's end, not just the panel's.
+- ⚠ **`tts.synthesise_timed` IS GONE, AND THAT IS THE FIX.** It advanced its own
+  clock by `line + gap` while the picture row was never touched at all. Two clocks
+  agree right up until a shot holds LONGER than its line — from there the audio
+  runs ahead of the pictures and every line after it is early. `tts` now speaks,
+  measures and lays blobs where it is told (`speak_lines` / `assemble`); the one
+  clock lives with the frames.
+- ⚠ **FORWARD ONLY, AND NEVER PAST WHERE A CLIP ALREADY IS.** A second run over
+  its own output moves nothing, a gap the user opened by hand survives, and
+  `_write_frames` is skipped entirely when nothing had to move.
+- ⚠ **THE EDITOR MUST RE-READ THE FRAMES.** This pass now moves pictures, so the
+  speech poll in `AnimaticEditor.jsx` calls `setFrames(project.frames)` alongside
+  the texts and audio. Without it the browser holds the old layout and its next
+  autosave writes that back over the one the server just worked out.
+- **`fit_shots: false`** is the escape hatch: not one picture moves, not even to
+  clear a take, and a long line pushes the next LINE later instead — the
+  behaviour this pass had before it could stretch anything.
+
+#### 2. The dialog shows the script now, and says who is speaking
+
+The dialog offered a voice and a price. What would actually be said was whatever
+the board happened to hold, unseen and uneditable — the same gap ✨ Animate closed
+when it started showing its prompt.
+
+- **`GET /animatics/{id}/dialogue`** — FREE, calls no model. Every spoken line,
+  the shot it belongs to (`Shot 9`), its speaker, and both pickers. ⚠ **The voice
+  list comes from the SERVER** (`tts.CAST`): six names were typed into the JSX,
+  which is a second source of truth for something the model call has to agree with.
+- **A line carries a PERSONA** — `boy`, `girl`, `child`, `young man/woman`,
+  `man`, `woman`, `grandfather`, `grandmother`, `narrator`. ⚠ **THE PERSONA IS THE
+  ONLY THING THAT CARRIES AN AGE AND A SEX TO THE MODEL**: a voice name is a
+  timbre, so the persona writes a stage direction (`Read this line as an elderly
+  man, gravelly and unhurried:\n"…"`) AND casts the default voice. The direction is
+  shown in the dialog and never reaches the captions.
+- **`tts.persona_from`** guesses it from the board's own cast sheet — free,
+  keyword-only, and always overridable. ⚠ **It declines to guess a sex the board
+  never gave** ("" reads plainly); an age in years beats an adjective.
+- **The edited sheet WINS ENTIRELY** and is sent on BOTH calls, so the estimate
+  prices the words on screen. `AnimaticVoiceoverRequest.lines`; a `frame_id` that
+  is not on the timeline is dropped rather than placed at zero. ⚠ **A persona is
+  part of the price** — `tts.estimate` counts `prompt_for`, not the bare line.
+- Voice resolution is one order in both halves (`tts.voice_for` / `voiceForLine`):
+  the line's own pick, then its persona's casting, then the dialog's default.
+
+#### Files
+
+`tts.py` (cast table, personas, `persona_from`, `prompt_for`, `speak_lines`,
+`assemble`; `synthesise_timed` removed), `server/animatics.py`
+(`_dialogue_sheet`, `_requested_lines`, `_lay_out_speech`, `GET /dialogue`),
+`server/schemas.py` (`VoiceoverLine`, `VoiceOption`, `PersonaOption`,
+`AnimaticDialogueLine`, `AnimaticDialogueSheet`, two new request fields),
+`client/src/api.js`, `client/src/components/AnimaticEditor.jsx`,
+`client/src/styles/animatic-text.css`, `tests/voiceover_fit_check.py` (new),
+`tests/captions_check.py`.
+
+#### Verified
+
+- `python tests/voiceover_fit_check.py` — **49 checks, all pass**. No model call:
+  `tts.speak` is stubbed with silence of a known length, which is what makes the
+  layout arithmetic checkable. Covers the ripple, the take pairing, the second
+  run being a no-op, `fit_shots: false`, the edited sheet, and the browser wiring.
+- `python tests/captions_check.py` — pass (its voiceover section was rewritten for
+  the new `tts` API and gained the casting checks).
+- `python tests/animate_prompt_draft_check.py`, `tests/editor_veo_attach_check.py`,
+  `tests/frame_save_fields_check.py`, `tests/hidden_lane_check.py` — pass unchanged.
+- `npx vite build` in `client/` — clean.
+- ⚠ **NOT RUN:** the rest of the Playwright suites, and **the dialog has not been
+  opened in a real browser** — the sheet's layout at forty lines is unverified by
+  eye. Browser tests are run on request in this project.
+
+### 2026-08-21 — AN UPLOADED PICTURE GOES TO THE **Images** LAYER, THE **Stills** ROW IS GONE, AND A BLANK LANE IS NO LONGER AN UPLOAD BUTTON (user-reported, with two screenshots of the gutter)
 
 > "see when upload image in media so in timline image show Still layer and when i
 >  upload through image layer so i see this good but i wnat same in same like

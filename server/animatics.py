@@ -53,6 +53,8 @@ from .schemas import (
     AnimaticBoardImportResponse,
     AnimaticCaptionsRequest,
     AnimaticCreateRequest,
+    AnimaticDialogueLine,
+    AnimaticDialogueSheet,
     AnimaticFrame,
     AnimaticAsset,
     AnimaticLayer,
@@ -82,8 +84,10 @@ from .schemas import (
     JobKind,
     JobStatus,
     PanelSequenceInfo,
+    PersonaOption,
     ReframeCostEstimate,
     RenderSettings,
+    VoiceOption,
 )
 
 logger = logging.getLogger(__name__)
@@ -2174,8 +2178,8 @@ def _clip_windows(clips: list[AnimaticAudio]) -> list[dict]:
     ]
 
 
-def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
-    """Every spoken line in this animatic, with the time its shot starts.
+def _dialogue_sheet(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
+    """THE DIALOGUE SHEET: every spoken line, in the order it will be read.
 
     ⚠ THIS IS THE WHOLE TRICK OF THE VOICEOVER, and the reason it belongs inside
     this editor rather than in a text box beside it: the board already knows who
@@ -2183,11 +2187,24 @@ def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
     screen. A line's target time is therefore data we hold, not something to be
     dragged into place afterwards.
 
+    ⚠ AND IT IS SHOWN BEFORE ANYTHING IS SPENT. It used to be invisible — the
+    dialog offered a voice and a price, and what would actually be said was
+    whatever the board happened to hold. Asked for as "i want i see my Storyborad
+    Dialouge in here … so user look if user want chnage so user change/edit
+    Dialouge", the same two-step ✨ Animate follows with its prompt.
+
+    Each line carries a PERSONA guessed from the board's cast sheet
+    (`tts.persona_from`) — free, keyword-only, and the first thing the user can
+    override. It is what tells the model an age and a sex; the voice it casts is
+    a consequence of it, not the other way round.
+
     A shot broken into KEY POSES is many frames referencing one panel. Its
     dialogue is taken from the FIRST of them only — otherwise a four-second shot
     with sixteen poses would have its line read sixteen times, and be billed for
     each one.
     """
+    import tts as tts_mod
+
     frames = _frames_of(job)
     wanted = set(frame_ids or [])
     chosen = [f for f in frames if f.id in wanted] if wanted else list(frames)
@@ -2196,9 +2213,10 @@ def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
     # use — not a second sum written here, which is how a caption ends up one
     # cut out of step with the picture.
     spans, _total = animatic_render.frame_spans([f.model_dump() for f in frames])
-    start_of = {f.id: spans[i]["start"] for i, f in enumerate(frames) if i < len(spans)}
+    span_of = {f.id: spans[i] for i, f in enumerate(frames) if i < len(spans)}
 
     boards: dict[str, Job | None] = {}
+    casts: dict[str, dict[str, str]] = {}
     seen: set[tuple[str, int]] = set()
     lines: list[dict] = []
     for frame in chosen:
@@ -2216,6 +2234,13 @@ def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
             if board is None or board.owner != job.owner or board.kind != JobKind.STORYBOARD:
                 board = None
             boards[board_id] = board
+            # The cast sheet, once per board: name → the description the
+            # breakdown wrote, which is where an age and a sex come from.
+            casts[board_id] = {
+                str((c or {}).get("name") or "").strip().lower():
+                    str((c or {}).get("description") or "")
+                for c in ((board.result or {}).get("characters") or [])
+            } if board is not None else {}
         board = boards[board_id]
         if board is None:
             continue
@@ -2229,18 +2254,264 @@ def _dialogue_lines(job: Job, frame_ids: list[str] | None = None) -> list[dict]:
         panels = variants[active].get("panels") or []
         if int(src.index) >= len(panels):
             continue
+        span = span_of.get(frame.id) or {"start": 0, "end": 0}
         for spoken in (panels[int(src.index)] or {}).get("dialogue") or []:
             line = str((spoken or {}).get("line") or "").strip()
             if not line:
                 continue
+            who = str((spoken or {}).get("character") or "").strip()
             lines.append({
                 "text": line,
-                "character": str((spoken or {}).get("character") or "").strip(),
-                "start_ms": int(start_of.get(frame.id, 0)),
+                "character": who,
+                "persona": tts_mod.persona_from(who, casts[board_id].get(who.lower(), "")),
+                # "" — the persona casts it, and the run's own picker is the
+                # fallback under that. Filled in only when the user overrides.
+                "voice": "",
                 "frame_id": frame.id,
+                "shot": frame.label or "",
+                "start_ms": int(span["start"]),
+                "hold_ms": int(span["end"] - span["start"]),
             })
     lines.sort(key=lambda line: line["start_ms"])
     return lines
+
+
+def _requested_lines(job: Job, request: AnimaticVoiceoverRequest) -> list[dict]:
+    """WHAT THIS RUN WILL READ — the edited sheet, or the board as it stands.
+
+    ⚠ AN EDITED SHEET WINS ENTIRELY. If the browser sent lines, those are the
+    lines: the words on the confirm dialog have to be the words that get read,
+    and a merge with the board would mean neither. What the server still owns is
+    WHERE each line goes — `frame_id` is looked up against the timeline here, so
+    a stale or crafted one is dropped rather than placed at zero.
+
+    ⚠ AND IT IS DROPPED HERE, IN THE ONE FUNCTION BOTH THE ESTIMATE AND THE RUN
+    GO THROUGH, which is what keeps "quoted" and "read" the same set of lines. A
+    line the layout would skip — one whose clip is not a storyboard shot, so
+    there is nothing to stretch and nothing to ripple — must not survive as far
+    as the price, or the user is billed for silence.
+    """
+    if not request.lines:
+        return _dialogue_sheet(job, request.frame_ids)
+
+    frames = _frames_of(job)
+    spans, _total = animatic_render.frame_spans([f.model_dump() for f in frames])
+    span_of = {f.id: spans[i] for i, f in enumerate(frames) if i < len(spans)}
+    label_of = {f.id: f.label or "" for f in frames}
+    shots = {f.id for f in frames if _is_board_panel(f)}
+
+    out: list[dict] = []
+    for sent in request.lines:
+        text = (sent.text or "").strip()
+        span = span_of.get(sent.frame_id)
+        if not text or span is None or sent.frame_id not in shots:
+            continue
+        out.append({
+            "text": text,
+            "character": (sent.character or "").strip(),
+            "persona": sent.persona or "",
+            "voice": sent.voice or "",
+            "frame_id": sent.frame_id,
+            "shot": label_of.get(sent.frame_id, ""),
+            "start_ms": int(span["start"]),
+            "hold_ms": int(span["end"] - span["start"]),
+        })
+    out.sort(key=lambda line: line["start_ms"])
+    return out
+
+
+# --- A shot holds its own line ----------------------------------------------
+# ⚠ ONE CLOCK OVER THE PICTURES AND THE SOUND, AND THAT IS THE WHOLE OF THIS
+# SECTION. There used to be two: `tts` advanced its own by `line + gap`, the
+# picture row was never touched at all, and a 2-second panel under a 10-second
+# line meant the line — and the caption built from it — ran over the four shots
+# after it. Reported with two screenshots as "caption and voicerover goes overlap
+# other image shots … so my shot 9 image cover voiceover lenght".
+#
+# The fix is the one this editor already makes for a Veo take: THE ROOM COMES
+# FROM THE ROW ITSELF. The shot that owns the line is STRETCHED to cover it, the
+# shots after it are pushed clear, and the line is laid at the shot's new start.
+# Because one loop decides both, they cannot disagree — which two clocks always
+# eventually do, and silently.
+#
+# ⚠ FORWARD ONLY, AND NEVER PAST WHERE A CLIP ALREADY IS, exactly as
+# `spreadPanelsForRenders` in `scene.js` — read that function's header, this is
+# the same ripple with the speech included in what a panel has to clear. A panel
+# already sitting clear of everything before it does not move, so a gap the user
+# opened by hand survives.
+#
+# ⚠ AND A VEO RENDER MOVES WITH ITS PANEL, by the panel's delta and not onto its
+# start, for the reason written out over there: snapping it would undo a nudge
+# the user gave it, and leaving it behind would decouple a take from the shot it
+# is a take OF.
+def _clip_kind(frame: AnimaticFrame) -> str:
+    """"image" | "video" | "color", folded down. ⚠ Twin of `clipKind` (scene.js)."""
+    kind = (frame.kind or "image").strip().lower()
+    return kind if kind in ("image", "video", "color") else "image"
+
+
+def _is_board_panel(frame: AnimaticFrame) -> bool:
+    """Is this a drawn shot off the storyboard — the row the ripple acts on?
+
+    ⚠ Twin of `cardRowKind(kind, fromBoard) === "board_image"`.
+    """
+    return bool(frame.src and frame.src.storyboard_id) and _clip_kind(frame) != "video"
+
+
+def _is_veo_render(frame: AnimaticFrame) -> bool:
+    """Is this a paid take of a board shot? ⚠ Twin of `isVeoRender` (scene.js)."""
+    return bool(frame.src and frame.src.storyboard_id) and _clip_kind(frame) == "video"
+
+
+def _shot_key(src) -> str:
+    """WHICH BOARD SHOT a clip is of — the pair that survives ✨ Animate.
+
+    ⚠ Twin of `shotKey` in `scene.js`, down to the empty third field: a key pose
+    and its panel share a board and an index, and without `frame` a render of
+    pose 7 would pair with the panel sitting under it.
+    """
+    if not src or not src.storyboard_id or src.index is None:
+        return ""
+    return f"{src.storyboard_id}:{src.index}:{'' if src.frame is None else src.frame}"
+
+
+def _lay_out_speech(
+    job: Job,
+    lines: list[dict],
+    *,
+    voice: str | None = None,
+    fit_shots: bool = True,
+    progress_cb=None,
+) -> dict:
+    """SPENDS QUOTA. Read every line, and lay the shots out so each holds its own.
+
+    Returns `{"wav", "timings", "frames", "moved", "duration_ms"}` — `frames` is
+    None when nothing had to move, which is what lets the caller skip the write
+    and say so honestly.
+
+    `timings` are TIMELINE ms and describe the audio that was actually made, so
+    the captions built from them match what is heard rather than what was planned.
+    """
+    import tts as tts_mod
+
+    frames = _frames_of(job)
+    raw = [f.model_dump(exclude={"url"}) for f in frames]
+    spans, _total = animatic_render.frame_spans(raw)
+
+    said_in: dict[str, list[dict]] = {}
+    for line in lines:
+        said_in.setdefault(line["frame_id"], []).append(line)
+
+    # Every take, by the shot it was made from, in list order — a panel animated
+    # twice ("Render again with Veo") has two, and must clear both.
+    renders_of: dict[str, list[int]] = {}
+    for i, frame in enumerate(frames):
+        if not _is_veo_render(frame):
+            continue
+        key = _shot_key(frame.src)
+        if key:
+            renders_of.setdefault(key, []).append(i)
+
+    # The panels in the order they PLAY, not the order they are stored: a drag on
+    # the timeline moves a clip without touching the list.
+    panels = [i for i, f in enumerate(frames) if _is_board_panel(f)]
+    panels.sort(key=lambda i: (spans[i]["start"], i))
+
+    moved: dict[int, dict] = {}      # frame index → the fields that changed
+    pieces: list[tuple[int, bytes]] = []
+    timings: list[dict] = []
+    clock: dict[int, int] = {}       # track → the first moment free on it
+    # ⚠ AND ONE FOR THE SOUND, which is not the same clock and must not be
+    # confused with it. With `fit_shots` on the two are identical by
+    # construction — a shot always ends after its own line, so speech never runs
+    # into the next shot — and this one costs nothing. With `fit_shots` OFF the
+    # pictures are left exactly where the user put them, and it is the AUDIO
+    # that has to give way: a line longer than its shot pushes the next LINE
+    # later rather than being spoken over the top of it. That is the behaviour
+    # this pass had before it could stretch anything, kept as the escape hatch.
+    said_clock = 0
+    paired: set[int] = set()
+    done = 0
+    spoken_total = sum(len(v) for v in said_in.values())
+    for i in panels:
+        frame = frames[i]
+        span = spans[i]
+        track = animatic_render.frame_track(raw[i])
+        # ⚠ WITH `fit_shots` OFF THIS PASS TOUCHES NO PICTURE AT ALL — not even
+        # to clear a Veo take. Tidying the row is what ✨ Animate's own ripple is
+        # for; doing it as a side effect of reading dialogue aloud would move
+        # clips the user did not ask to move, in a dialog that never mentioned
+        # them.
+        start = max(span["start"], clock.get(track, 0)) if fit_shots else span["start"]
+        hold = span["end"] - span["start"]
+
+        speech = 0
+        said = said_in.get(frame.id) or []
+        if said:
+            def _tick(line):
+                nonlocal done
+                if progress_cb:
+                    progress_cb(done, spoken_total, line.get("text") or "")
+                done += 1
+
+            pcm, rel = tts_mod.speak_lines(said, voice=voice, progress_cb=_tick)
+            if pcm:
+                at = max(start, said_clock)
+                pieces.append((at, pcm))
+                for window in rel:
+                    timings.append({
+                        "start_ms": at + window["start_ms"],
+                        "end_ms": at + window["end_ms"],
+                        "text": window["text"],
+                    })
+                # ⚠ THE BREATH AFTER THE LINE IS PART OF WHAT THE SHOT HOLDS.
+                # Without it the next shot starts on the last syllable and the
+                # picture cuts a beat early on every line in the film; with it
+                # the panel ends exactly where the next one begins, so there is
+                # no hole in the row either.
+                speech = tts_mod.pcm_duration_ms(pcm) + tts_mod.GAP_MS
+                said_clock = at + speech
+
+        if fit_shots and speech > hold:
+            # `duration_ms` is capped by the schema; a line longer than the cap
+            # is not something to 422 a paid run over.
+            hold = min(speech, 600_000)
+        if not fit_shots:
+            continue
+
+        delta = start - span["start"]
+        if delta or hold != span["end"] - span["start"]:
+            moved[i] = {"start_ms": start, "duration_ms": hold}
+        free = start + hold
+
+        # ⚠ ONLY THE FIRST UNPAIRED RENDER OF A SHOT PER PANEL. A duplicated
+        # panel shares its `src` with the original, and pairing by key alone
+        # would give the copy the same take.
+        for j in renders_of.get(_shot_key(frame.src), []):
+            if j in paired:
+                continue
+            paired.add(j)
+            length = spans[j]["end"] - spans[j]["start"]
+            if delta:
+                moved[j] = {"start_ms": spans[j]["start"] + delta, "duration_ms": length}
+            free = max(free, spans[j]["start"] + delta + length)
+        clock[track] = free
+
+    if not pieces:
+        raise tts_mod.VoiceoverError("None of those lines have anything to say.")
+
+    wav = tts_mod.assemble(pieces)
+    timings.sort(key=lambda t: t["start_ms"])
+    out = None
+    if moved:
+        out = [{**r, **moved[i]} if i in moved else r for i, r in enumerate(raw)]
+    return {
+        "wav": wav,
+        "timings": timings,
+        "frames": out,
+        "moved": len(moved),
+        "duration_ms": timings[-1]["end_ms"] if timings else 0,
+    }
 
 
 # --- Captions ---------------------------------------------------------------
@@ -2423,17 +2694,57 @@ def run_captions(job_id: str, body: dict, progress_cb=None) -> None:
 
 
 # --- Voiceover --------------------------------------------------------------
+@router.get("/{job_id}/dialogue", response_model=AnimaticDialogueSheet)
+def get_dialogue(job_id: str, current: CurrentUser = Depends(get_current_user)):
+    """FREE. The board's dialogue for this timeline, ready to be edited and read.
+
+    ⚠ SPENDS NOTHING AND CALLS NO MODEL — it is a read of the board plus a
+    keyword guess at who each speaker is (`tts.persona_from`). That matters: this
+    is what fills the dialog the moment 🎙 Voiceover is clicked, and a dialog
+    that costs money to open is a dialog nobody opens twice.
+
+    The two pickers come down with it. `tts.CAST` is the only place a voice
+    exists — the browser used to carry its own list of six names, which is a
+    second source of truth for something the model call has to agree with.
+    """
+    import tts as tts_mod
+
+    job = _get_owned_animatic(job_id, current)
+    frames = _frames_of(job)
+    return AnimaticDialogueSheet(
+        lines=[AnimaticDialogueLine(**line) for line in _dialogue_sheet(job)],
+        voices=[
+            VoiceOption(name=v["name"], tone=v["tone"], persona=v["persona"])
+            for v in tts_mod.CAST
+        ],
+        personas=[
+            PersonaOption(
+                key=key, label=p["label"], voice=p["voice"], direction=p["direction"]
+            )
+            for key, p in tts_mod.PERSONAS.items()
+        ],
+        # "No dialogue" and "these clips aren't from a board" are different
+        # problems with different answers, and the dialog says which.
+        from_board=any(f.src and f.src.storyboard_id for f in frames),
+    )
+
+
 @router.post("/{job_id}/voiceover/estimate", response_model=AudioCostEstimate)
 def estimate_voiceover(
     job_id: str,
     body: AnimaticVoiceoverRequest,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """FREE. What reading this animatic's dialogue aloud would cost."""
+    """FREE. What reading this animatic's dialogue aloud would cost.
+
+    ⚠ PRICED FROM THE SHEET THE USER IS LOOKING AT, not from the board: `body`
+    carries the edited lines, and a quote for words nobody is going to hear is a
+    price that looks made up the moment a line is shortened.
+    """
     import tts as tts_mod
 
     job = _get_owned_animatic(job_id, current)
-    quote = tts_mod.estimate(_dialogue_lines(job, body.frame_ids))
+    quote = tts_mod.estimate(_requested_lines(job, body))
     return AudioCostEstimate(
         lines=quote["lines"],
         characters=quote["characters"],
@@ -2459,7 +2770,7 @@ def voice_animatic(
             status_code=409,
             detail="This animatic is already busy — wait for it to finish, or stop it.",
         )
-    lines = _dialogue_lines(job, body.frame_ids)
+    lines = _requested_lines(job, body)
     if not lines:
         raise HTTPException(
             status_code=409,
@@ -2511,13 +2822,22 @@ def voice_animatic(
 
 
 def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
-    """Read the dialogue, store the WAV, add the track. Raises on failure.
+    """Read the dialogue, store the WAV, move the shots, add the track.
+
+    Raises on failure.
 
     ⚠ THE TIMINGS THAT COME BACK ARE THE ONES THAT HAPPENED, not the ones asked
-    for — a line longer than its shot pushes the next one later rather than
-    being spoken over the top of it (see `tts.synthesise_timed`). The captions
-    are built from those, so what is on screen matches what is heard even where
-    the plan could not be honoured.
+    for. The captions are built from those, so what is on screen matches what is
+    heard — and since `_lay_out_speech` stretched each shot to cover its own
+    line, what is heard now matches what is SEEN as well. Read that function's
+    header: it is one clock over the pictures and the sound, and the reason this
+    one is not two calls.
+
+    ⚠ THE ORDER OF THE THREE WRITES IS DELIBERATE — audio, then the shots, then
+    the captions. Each is a read-modify-write of one key, so they cannot clobber
+    each other, but a run interrupted between them should leave the most useful
+    partial state: the recording exists on the timeline before anything is moved
+    to fit it.
     """
     import tts as tts_mod
 
@@ -2526,15 +2846,20 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
     if job is None:
         raise tts_mod.VoiceoverError("This animatic no longer exists.")
 
-    lines = _dialogue_lines(job, request.frame_ids)
+    lines = _requested_lines(job, request)
     if not lines:
         raise tts_mod.VoiceoverError(
             "The shots this was going to read have been removed from the timeline."
         )
 
-    wav, timings = tts_mod.synthesise_timed(
-        lines, voice=request.voice, progress_cb=progress_cb
+    laid = _lay_out_speech(
+        job,
+        lines,
+        voice=request.voice,
+        fit_shots=request.fit_shots,
+        progress_cb=progress_cb,
     )
+    wav, timings = laid["wav"], laid["timings"]
 
     # It lands as an ordinary audio upload, under the same `audio_` prefix a
     # dropped file uses — from here on nothing downstream can tell the two apart.
@@ -2548,7 +2873,7 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
     # no ffprobe on this install and every other audio duration here is supplied
     # by the browser; generated speech is the one case the server can answer for
     # itself, exactly, because it made the samples.
-    duration_ms = timings[-1]["end_ms"] if timings else 0
+    duration_ms = laid["duration_ms"]
     _add_audio_track(job_id, {
         # One clip, so its identity is its upload — the same value the backfill
         # in `_audio_tracks_of` would give it.
@@ -2563,6 +2888,13 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
         "volume": 1.0,
         "muted": False,
     })
+
+    # THE SHOTS THAT HAD TO MOVE. None when the dialogue fitted inside the
+    # pictures as they stood, which is the ordinary case for a board of long
+    # holds and short lines — and a write of nothing is how the log below can
+    # say honestly whether anything was rearranged.
+    if laid["frames"] is not None:
+        _write_frames(job_id, laid["frames"])
 
     if request.add_captions:
         import captions as captions_mod
@@ -2582,8 +2914,8 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
         _write_texts(job_id, kept + clips, layers=_with_caption_layer(job))
 
     logger.info(
-        "[animatic %s] voiceover written (%d line(s), %.1fs).",
-        job_id, len(timings), duration_ms / 1000,
+        "[animatic %s] voiceover written (%d line(s), %.1fs, %d clip(s) moved to fit).",
+        job_id, len(timings), duration_ms / 1000, laid["moved"],
     )
 
 
@@ -2666,7 +2998,7 @@ def get_frame_panel(
         location=str(panel.get("location") or ""),
         # The shot's spoken lines, for ✨ Animate — see `AnimaticPanelSource`.
         # ⚠ A LINE WITH NO WORDS IS NOT DIALOGUE and is dropped here rather than
-        # in the UI, the same rule `_dialogue_lines` follows for the voiceover:
+        # in the UI, the same rule `_dialogue_sheet` follows for the voiceover:
         # an empty line would be an empty quotation in a Veo prompt.
         dialogue=[
             DialogueLine(

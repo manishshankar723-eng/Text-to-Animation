@@ -550,6 +550,104 @@
   width: 11rem;
 }
 
+/* --- The dialogue sheet ------------------------------------------------- */
+/* WHAT IS ABOUT TO BE SAID, before it is paid for. The voiceover dialog used to
+   be a voice picker and a price; it now carries the board's own lines, editable,
+   with the speaker each one is cast as. Reported as "i want i see my Storyborad
+   Dialouge in here … so user look if user want chnage so user change/edit
+   Dialouge". */
+/* ⚠ WIDER THAN THE 28rem EVERY OTHER DIALOG HERE IS, and only for this one: a
+   script squeezed into a column of that width wraps every line into four, which
+   is precisely the thing the sheet exists to make readable. */
+.an-vo-modal {
+  max-width: 40rem;
+}
+/* ⚠ THE SHEET SCROLLS, NOT THE CARD. `.an-name-modal` already scrolls itself
+   (the overlay does not), but a forty-shot board would push Cancel and the
+   priced button a screen and a half down — and the footer is the whole point of
+   a two-step dialog. So the script gets its own window and the buttons stay put. */
+.an-vo-sheet {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin: 0.8rem 0 0.2rem;
+  padding-right: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.an-vo-line {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.55rem 0.6rem 0.5rem;
+}
+/* Shot, speaker, time — in that order, because the shot is what locates the line
+   and the same order ✨ Animate names its shot in. */
+.an-vo-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.an-vo-shot {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.an-vo-who {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Where the shot currently sits. Pushed to the end and quiet: it identifies the
+   line, it is not a control — the run recomputes it anyway. */
+.an-vo-at {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.an-vo-text {
+  font-size: 0.86rem;
+}
+.an-vo-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.45rem;
+}
+/* ⚠ THE TWO PICKERS SHARE THE ROW AND WRAP TOGETHER. `.an-tp-field select` is
+   sized for an inspector column; in here it has room, and a speaker named
+   "Grandmother" must not be an ellipsis. */
+.an-vo-picks .an-tp-field select {
+  min-width: 8.5rem;
+}
+/* The stage direction the line will actually be sent with — the only visible
+   sign that an age and a sex reached the model at all. */
+.an-vo-note {
+  margin: 0.4rem 0 0;
+  font-style: italic;
+}
+
+@media (max-width: 640px) {
+  /* The picks stack rather than squeezing: a <select> narrower than its longest
+     option is a control you have to open to read. */
+  .an-vo-picks {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .an-vo-picks .an-tp-field {
+    justify-content: space-between;
+  }
+  .an-vo-sheet {
+    max-height: 40vh;
+  }
+}
+
 /* --- Add-text button ---------------------------------------------------- */
 /* The two "make a clip out of nothing" buttons, now in the timeline's own head
    row beside ＋ Add layer (`.tl-add-tools`). They are a pair and must read as

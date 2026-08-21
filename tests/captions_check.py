@@ -884,9 +884,9 @@ check("both sides know a generated caption by the same prefix",
 
 
 # ---------------------------------------------------------------------------
-# 5. Voiceover timing — driven through a stub `speak`
+# 5. Voiceover speech and casting — driven through a stub `speak`
 # ---------------------------------------------------------------------------
-print("\nVoiceover timing — tts.synthesise_timed\n")
+print("\nVoiceover speech — tts.speak_lines / assemble, through a stub `speak`\n")
 
 # 60ms of speech per character, so a line's length is predictable and a
 # deliberately long line can be made to overrun its shot.
@@ -912,45 +912,96 @@ def wav_duration_ms(data: bytes) -> int:
 check("a WAV really contains the samples it says it does",
       wav_duration_ms(tts.wav_bytes(tts.silence(2500))) == 2500)
 
-LINES = [
-    {"text": "Short one.", "start_ms": 0},
-    # 120 characters at 60ms is 7.2 seconds, into a shot that is 2s long: this
-    # line CANNOT have the start time the next one wants, and the next one must
-    # move rather than be spoken over the top of it.
-    {"text": "A very much longer speech that will comfortably outrun the shot "
-             "it belongs to, which is the whole point of this line.", "start_ms": 2000},
-    {"text": "And finally.", "start_ms": 4000},
+# ⚠ WHERE A LINE GOES IS NOT DECIDED IN THIS MODULE ANY MORE. The shot that owns
+# a line is stretched to cover it and the shots after it are pushed along, which
+# is one clock over the pictures and the sound together — `_lay_out_speech` in
+# `server/animatics.py`, checked by `tests/voiceover_fit_check.py`. What is left
+# here is what `tts` still owns alone: reading a shot's lines in order, measuring
+# them exactly, and laying finished blobs where it is told.
+SHOT_LINES = [
+    {"text": "Short one.", "character": "RAVI"},
+    {"text": "And the answer.", "character": "MAYA"},
 ]
-
-wav, timings = tts.synthesise_timed(LINES)
-check("every line is read", len(timings) == len(LINES))
-check("a line that fits gets exactly the time it asked for",
-      timings[0]["start_ms"] == 0)
-check("a line still gets its slot when the one before it fits",
-      timings[1]["start_ms"] == 2000)
+pcm, spans = tts.speak_lines(SHOT_LINES)
+check("every line in the shot is read", len(spans) == len(SHOT_LINES))
+check("the first line starts at the top of the shot", spans[0]["start_ms"] == 0)
 check("A LINE IS NEVER SPOKEN OVER THE ONE BEFORE IT",
-      all(a["end_ms"] <= b["start_ms"] for a, b in zip(timings, timings[1:])),
-      f"\n    {[(t['start_ms'], t['end_ms']) for t in timings]}")
-check("an overrunning line pushes the next one later rather than being cut",
-      timings[2]["start_ms"] > 4000,
-      f"(asked for 4000, got {timings[2]['start_ms']})")
-check("the returned timings describe the audio that was actually made",
-      wav_duration_ms(wav) >= timings[-1]["end_ms"],
-      f"(wav {wav_duration_ms(wav)}ms, last line ends {timings[-1]['end_ms']}ms)")
+      all(a["end_ms"] <= b["start_ms"] for a, b in zip(spans, spans[1:])),
+      f"\n    {[(s['start_ms'], s['end_ms']) for s in spans]}")
+check("there is a breath between them, and it is GAP_MS",
+      spans[1]["start_ms"] - spans[0]["end_ms"] == tts.GAP_MS)
 check("each line's length matches what was spoken",
-      timings[0]["end_ms"] - timings[0]["start_ms"] == len(LINES[0]["text"]) * MS_PER_CHAR)
+      spans[0]["end_ms"] - spans[0]["start_ms"] == len(SHOT_LINES[0]["text"]) * MS_PER_CHAR)
+check("NO TRAILING GAP — the breath after the last line is the caller's to add",
+      tts.pcm_duration_ms(pcm) == spans[-1]["end_ms"])
+check("the speaker rides along, for the sheet to show",
+      [s["character"] for s in spans] == ["RAVI", "MAYA"])
 
-# Those timings become the captions, and they must survive the same rules.
-vo_lines = captions.tidy_lines(timings)
+# The blobs are then laid at the moments the caller worked out.
+laid = tts.assemble([(0, pcm), (30_000, tts.silence(1000))])
+check("assemble pads with silence up to each blob's own moment",
+      wav_duration_ms(laid) == 31_000)
+check("a piece is never mixed into the one before it — it is pushed past it",
+      wav_duration_ms(tts.assemble([(0, tts.silence(5000)), (1000, tts.silence(1000))]))
+      == 6000)
+
+# Those spans become the captions, and they must survive the same rules.
+vo_lines = captions.tidy_lines([dict(s) for s in spans])
 check("voiceover timings make captions that never overlap",
       all(a["end_ms"] <= b["start_ms"] for a, b in zip(vo_lines, vo_lines[1:])))
+
+print("\nVoiceover casting — who reads a line, and what they are told\n")
 
 check("an unknown voice folds down to the default rather than failing a paid run",
       tts.resolve_voice("Gandalf") == tts.DEFAULT_VOICE)
 check("a known voice is matched case-insensitively", tts.resolve_voice("kore") == "Kore")
+check("every voice the cast table offers is a voice `resolve_voice` accepts",
+      all(tts.resolve_voice(v) == v for v in tts.VOICES))
+check("every persona casts a voice that exists",
+      all(p["voice"] in tts.VOICES for p in tts.PERSONAS.values()))
+check("an unknown persona folds down to 'as it comes', not to a wrong voice",
+      tts.resolve_persona("wizard") == "")
+check("a persona written the way a dropdown writes it still resolves",
+      tts.resolve_persona("Young Man") == "young_man")
+
+check("THE LINE'S OWN VOICE WINS — the user picked it",
+      tts.voice_for({"voice": "Puck", "persona": "grandmother"}, "Kore") == "Puck")
+check("...then the persona's casting",
+      tts.voice_for({"persona": "grandmother"}, "Kore") == tts.PERSONAS["grandmother"]["voice"])
+check("...and a line with NO persona keeps the dialog's own choice",
+      tts.voice_for({}, "Puck") == "Puck")
+
+check("A PERSONA IS WHAT CARRIES AN AGE AND A SEX TO THE MODEL",
+      "elderly man" in tts.prompt_for({"text": "Sit down.", "persona": "grandfather"}))
+check("...and the words themselves are quoted, so the direction is not read out",
+      tts.prompt_for({"text": "Sit down.", "persona": "grandfather"}).endswith('"Sit down."'))
+check("no persona means no direction — the line is sent as it is",
+      tts.prompt_for({"text": "Sit down."}) == "Sit down.")
+check("an empty line sends nothing at all", tts.prompt_for({"text": "   "}) == "")
+
+check("an elderly man on the cast sheet is cast as a grandfather",
+      tts.persona_from("Dadaji", "an elderly Brahmin priest, age 72") == "grandfather")
+check("a nine-year-old girl as a girl",
+      tts.persona_from("Priya", "a girl, 9 years old") == "girl")
+check("AN AGE IN YEARS BEATS AN ADJECTIVE — the sheet says both, often",
+      tts.persona_from("Ravi", "a young man, aged 68") == "grandfather")
+check("a narrator is named by the part, not by a description",
+      tts.persona_from("NARRATOR", "") == "narrator")
+check("AND IT DECLINES TO GUESS A SEX THE BOARD NEVER GAVE",
+      tts.persona_from("Kabir", "a lean hunter from the hills") == "")
+check("'woman' is not read as 'man'", tts.persona_from("Asha", "a woman of forty") == "woman")
+
+LINES = [{"text": t, "persona": p} for t, p in (
+    ("Short one.", ""),
+    ("A very much longer speech that will comfortably outrun the shot "
+     "it belongs to, which is the whole point of this line.", "man"),
+    ("And finally.", ""),
+)]
 vo_quote = tts.estimate(LINES)
-check("the voiceover estimate counts the characters it will send",
-      vo_quote["characters"] == sum(len(l["text"]) for l in LINES) and vo_quote["usd"] > 0)
+check("THE ESTIMATE PRICES THE PROMPTS, NOT THE BARE LINES — a direction is sent too",
+      vo_quote["characters"] == sum(len(tts.prompt_for(l)) for l in LINES)
+      and vo_quote["characters"] > sum(len(l["text"]) for l in LINES))
+check("...and it is priced at something", vo_quote["usd"] > 0)
 check("too much dialogue is flagged rather than quietly accepted",
       tts.estimate([{"text": "x" * (tts.MAX_CHARACTERS + 1)}])["over_limit"])
 check("an empty line list is priced at nothing",

@@ -2007,6 +2007,86 @@ class AnimaticCaptionsRequest(BaseModel):
     replace: bool = True
 
 
+class VoiceoverLine(BaseModel):
+    """ONE LINE AS IT WILL BE READ — who says it, how, and in which shot.
+
+    ⚠ THIS IS BOTH HALVES OF THE DIALOGUE SHEET. The free `GET /dialogue` fills
+    it in from the board and the run takes it back, edited, so what the user saw
+    in the dialog is exactly what gets read. The alternative — the browser
+    sending only "which shots", the server re-reading the board — meant the words
+    on screen were a preview of something else, and an edit had nowhere to go.
+
+    `frame_id` is what anchors a line to a moment: the clip it belongs to already
+    sits somewhere on the timeline, so a line's place is a lookup and never a
+    number the browser has to compute.
+    """
+
+    frame_id: str = Field("", description="The clip this line is spoken over.")
+    # Who is speaking. Shown in the sheet and prepended to nothing — it exists so
+    # the user can tell two lines apart, and so `persona` has something to be
+    # guessed from when the sheet is first built.
+    character: str = ""
+    # WHO THEY SOUND LIKE — a `tts.PERSONAS` key ("boy", "grandmother", …). This
+    # is the field that carries an age and a sex to the model at all: it writes
+    # the stage direction the line is read with AND casts the default voice. ""
+    # means "as it comes", which is the honest answer for an unattributed line.
+    persona: str = ""
+    # Override the persona's casting for this one line. "" = let the persona
+    # choose, then the run's own `voice`.
+    voice: str = ""
+    text: str = ""
+
+
+class VoiceOption(BaseModel):
+    """One entry in the voice picker: the name, its tone, who it is cast for."""
+
+    name: str
+    tone: str = ""
+    persona: str = ""
+
+
+class PersonaOption(BaseModel):
+    """One entry in the "who is speaking" picker, and what it does to a line."""
+
+    key: str
+    label: str
+    voice: str
+    # The stage direction this persona prepends. Shown in the dialog as the
+    # reason a line will sound the way it does — it is the only visible sign
+    # that an age and a sex reached the model at all.
+    direction: str = ""
+
+
+class AnimaticDialogueLine(VoiceoverLine):
+    """A sheet line, with the read-only facts the dialog shows beside it."""
+
+    # The clip's label — "Shot 9". What makes the sheet legible as a script
+    # rather than as a list of sentences.
+    shot: str = ""
+    # Where that shot currently starts and how long it currently holds. Both are
+    # display-only: the run recomputes them, because reading the line is what
+    # decides how long the shot has to hold for.
+    start_ms: int = 0
+    hold_ms: int = 0
+
+
+class AnimaticDialogueSheet(BaseModel):
+    """FREE. Everything the "Read the dialogue aloud" dialog needs to open.
+
+    ⚠ THE PICKERS COME FROM THE SERVER, and that is not ceremony: the voice list
+    used to be six names typed into the JSX, so adding a voice meant editing the
+    browser and the model call and hoping they agreed. `tts.CAST` is the one
+    place a voice exists now.
+    """
+
+    lines: list[AnimaticDialogueLine] = Field(default_factory=list)
+    voices: list[VoiceOption] = Field(default_factory=list)
+    personas: list[PersonaOption] = Field(default_factory=list)
+    # True when this animatic's clips come from a board at all — what the dialog
+    # says instead of showing an empty sheet.
+    from_board: bool = False
+
+
 class AnimaticVoiceoverRequest(BaseModel):
     """Body for the two /voiceover endpoints — estimate (free) and run (paid).
 
@@ -2020,9 +2100,22 @@ class AnimaticVoiceoverRequest(BaseModel):
     voice: str = Field("Kore", description="Prebuilt voice name — see tts.VOICES.")
     # Restrict to some shots. Empty = every frame that has dialogue.
     frame_ids: list[str] = Field(default_factory=list)
+    # ⚠ THE EDITED SHEET, AND IT WINS OVER THE BOARD ENTIRELY when it is sent.
+    # The dialog shows the board's own dialogue, the user rewrites a line or
+    # re-casts a speaker, and this is what comes back — so the estimate prices
+    # the words on screen and the run reads them. Empty = read the board as it
+    # stands, which is what every request written before the sheet existed does.
+    lines: list[VoiceoverLine] = Field(default_factory=list)
+    # MAKE EACH SHOT HOLD ITS OWN LINE. A picture that holds for 2s under a 10s
+    # line is the reported bug ("caption and voicerover goes overlap other image
+    # shots"): the shot is stretched to cover what is said over it and the shots
+    # after it are pushed along, exactly as animating one does. Off leaves every
+    # picture where it is and lets a long line run over the next shot.
+    fit_shots: bool = True
     # Lay the spoken lines down as captions too, at the times they were ACTUALLY
     # read at (which is not always the time they were asked for — see
-    # `tts.synthesise_timed`). Free: the timings come back with the audio.
+    # `_lay_out_speech` in `server/animatics.py`). Free: the timings come back
+    # with the audio.
     add_captions: bool = True
     replace: bool = True
 
