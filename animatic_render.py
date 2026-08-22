@@ -664,6 +664,144 @@ def frame_track(frame: dict) -> int:
     return n if n > 0 else 0
 
 
+# ---------------------------------------------------------------------------
+# WHAT DRAWS OVER WHAT — one z-scale for every visual row.
+# ⚠ TWIN of `client/src/animatic/lane_order.js`. The monitor reads the same order
+# this does or the preview lies about the film; pinned name for name in
+# `tests/lane_reorder_check.py`.
+# ---------------------------------------------------------------------------
+# ⚠ THESE FOUR NUMBERS ARE THE OLD HARD-CODED ORDER, WRITTEN DOWN AS DATA. The
+# renderers used to draw pictures, then shapes, then overlay pictures, then text,
+# and nothing could reach that sequence — so a row could be restacked among its
+# own kind and nowhere else. A picture row's rank is its TRACK NUMBER (0…15, which
+# is why the cap matters: a picture row must never out-rank a shape row), then
+# shapes at 100, overlays at 200, text at 300. Change one and you change what
+# every animatic saved before `lane_order` looks like.
+PICTURE_RANK_CAP = 15  # `AnimaticFrame.track`'s own cap — a track's rank IS its number
+_FALLBACK_RANK = {"shape": 100, "image": 200, "text": 300}
+
+
+def clip_lane_token(kind: str, clip: dict) -> str:
+    """The row one clip sits on, as a token. Mirrors `clipLaneToken` in scene.js.
+
+    ⚠ "overlay" IS THE SCENE'S WORD AND "image" IS THE ROW'S — one is the clip
+    kind the renderers branch on, the other is the lane kind `lane_order`,
+    `hidden_lanes` and `locked_lanes` all use. Folding them here is what stops a
+    second spelling of one row appearing in any of those lists.
+    """
+    if kind in ("picture", "frame", "frames"):
+        return f"frames:{frame_track(clip or {})}"
+    lane = "image" if kind == "overlay" else kind
+    return f"{lane}:{(clip or {}).get('layer_id') or ''}"
+
+
+def default_lane_rank(token: str) -> int:
+    """Where a row sits when the saved order has never heard of it."""
+    if not isinstance(token, str) or not token:
+        return _FALLBACK_RANK["text"]
+    if token.startswith("frames:"):
+        try:
+            n = int(float(token[len("frames:"):]))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(PICTURE_RANK_CAP, n))
+    kind = token.split(":", 1)[0]
+    # ⚠ AN UNKNOWN KIND RANKS AS TEXT, i.e. on top — the same rule an unknown
+    # transition, effect or shape kind follows here. A row a newer client invented
+    # draws over the film instead of vanishing under it, which is the failure you
+    # can see and therefore report.
+    return _FALLBACK_RANK.get(kind, _FALLBACK_RANK["text"])
+
+
+def lane_rank(token: str, order: list[str] | None) -> int:
+    """A row's rank — higher draws later, i.e. over. Mirrors `laneRank`.
+
+    ⚠ AN EMPTY `order` REPRODUCES THE OLD SEQUENCE EXACTLY, and that is the whole
+    migration: every animatic saved before the restack gesture existed has no
+    saved order, falls through to `default_lane_rank`, and sorts into pictures →
+    shapes → overlays → text.
+
+    ⚠ UNLISTED MEANS ON TOP. A row added after a restack is not in the list, and
+    the only rules simple enough to be identical in three renderers are "above
+    everything listed" and "below everything listed" — below would hide a new row
+    behind the pictures. It is also why the CAPTIONS row needs no special case
+    anywhere: it is never written into the list (it cannot be dragged), so it is
+    always unlisted, so it is always on top.
+    """
+    list_ = order or []
+    try:
+        i = list_.index(token)
+    except ValueError:
+        return len(list_) + default_lane_rank(token)
+    return len(list_) - 1 - i
+
+
+def stack_key(order: list[str] | None) -> str:
+    """Is this project restacked at all? Mirrors `stackKey`. "" when it is not."""
+    list_ = order or []
+    return "|".join(list_) if list_ else ""
+
+
+def ordered_layers(
+    project: dict,
+    pictures: list[dict],
+    shapes: list[dict],
+    overlays: list[dict],
+    texts: list[dict],
+) -> list[dict]:
+    """The draw order of one moment, bottom first. Mirrors `orderedLayers`.
+
+    `{"kind", "index", "z"}` per visible clip, where `index` points into the
+    scene's list of that kind. Pointers rather than copies: two copies of one clip
+    in one scene is two things to keep in step.
+
+    ⚠ ONE ENTRY PER CLIP, NOT PER ROW, and that is what makes the migration exact.
+    Clips of one kind on one row tie on `z`, the sort is stable, and the tie-break
+    is the clip's place in its own array — so with no saved order this comes out as
+    the four old sequences, one after another, each in its original array order.
+    Grouping by ROW would have reordered clips WITHIN a kind whenever two rows'
+    clips interleave in the array: a silent restack of a project nobody touched.
+    """
+    order = ((project.get("settings") or {}).get("lane_order")) or []
+    rows: list[tuple[int, int, str, int]] = []
+    for kind, clips in (
+        ("picture", pictures),
+        ("shape", shapes),
+        ("overlay", overlays),
+        ("text", texts),
+    ):
+        for index, clip in enumerate(clips or []):
+            z = lane_rank(clip_lane_token(kind, clip), order)
+            rows.append((z, len(rows), kind, index))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return [{"kind": kind, "index": index, "z": z} for z, _seq, kind, index in rows]
+
+
+def layer_runs(layers: list[dict]) -> list[dict]:
+    """The draw order as RUNS — adjacent entries of one kind folded together.
+
+    Mirrors `layerRuns` in scene.js. `[{"kind", "indices"}]`, bottom first.
+
+    ⚠ RUNS, NOT KINDS. `draw_texts` measures every caption sharing a zone and
+    stacks them down it, so it needs them in ONE call or two subtitles land on
+    each other — but only captions that are actually ADJACENT in the stack may be
+    grouped, because a text row with a picture row above it is behind that picture
+    and cannot be painted in the same pass as a text row in front of it. With no
+    saved order every text row is adjacent, so this yields one text run and the
+    single call the exporter always made.
+
+    ⚠ A PICTURE IS ALWAYS ITS OWN RUN — two tracks are two composites with their
+    own transitions, effects and blends.
+    """
+    runs: list[dict] = []
+    for item in layers or []:
+        if runs and runs[-1]["kind"] == item["kind"] and item["kind"] != "picture":
+            runs[-1]["indices"].append(item["index"])
+        else:
+            runs.append({"kind": item["kind"], "indices": [item["index"]]})
+    return runs
+
+
 def frame_spans(frames: list[dict], end_ms: int | None = None) -> tuple[list[dict], int]:
     """Where each frame sits — ONE SPAN PER FRAME, IN LIST ORDER.
 
@@ -891,10 +1029,15 @@ def _picture_at(frames: list[dict], spans: list[dict], index: int, t: float) -> 
 def scene_at(project: dict, t_ms: float, end_ms: int | None = None) -> dict:
     """What the viewer sees at `t_ms`. The twin of `sceneAt` in scene.js.
 
-    Returns resolved clips — every animatable property already interpolated —
-    in the order they are composited, bottom to top:
+    Returns resolved clips — every animatable property already interpolated.
 
-        picture (× 2 during a transition) → shapes → overlay pictures → text
+    ⚠ `layers` IS THE DRAW ORDER AND THE ONLY THING A RENDERER MAY WALK. It used
+    to be a sentence here instead — "picture (× 2 during a transition) → shapes →
+    overlay pictures → text" — hard-coded three times over (here, in `sceneAt`, in
+    `render_frame`), which is why a row could only be restacked among its own kind.
+    Every visual row has a RANK now (`settings.lane_order`, read by `lane_rank`)
+    and this list is the result of sorting by it, bottom of the stack first.
+    ⚠ WITH NO SAVED ORDER IT IS THAT OLD SENTENCE, clip for clip.
 
     ⚠ `pictures` IS THE PICTURE, AND IT IS A STACK — one entry per picture track
     that has something on it at `t`, BOTTOM TRACK FIRST. Every renderer must walk
@@ -993,8 +1136,16 @@ def scene_at(project: dict, t_ms: float, end_ms: int | None = None) -> dict:
     return {
         "t_ms": t,
         "total_ms": total_ms,
-        # ⚠ THE PICTURE, bottom track first. Renderers walk this; `frame` below is
-        # the topmost entry and answers a different question. See the docstring.
+        # ⚠ THE DRAW ORDER, BOTTOM FIRST — the one thing a renderer may walk. See
+        # `ordered_layers`; the four lists below still hold the clips, and every
+        # entry of this one points into one of them.
+        "layers": ordered_layers(project, pictures, shapes, overlays, texts),
+        # Empty unless this project has been restacked — see `stack_key`. It rides
+        # on the scene because `scene_signature` is the render cache key and cannot
+        # see the project.
+        "stack_key": stack_key(((project.get("settings") or {}).get("lane_order"))),
+        # ⚠ THE PICTURE, bottom track first. Renderers walk `layers`; `frame` below
+        # is the topmost entry and answers a different question. See the docstring.
         "pictures": pictures,
         "frame": frame,
         # The transition, flattened onto the scene: the second picture, how far
@@ -1206,6 +1357,17 @@ def scene_signature(scene: dict) -> str:
     for c in scene["texts"]:
         extra = f":{n(c['x'])}:{n(c['y'])}" if c.get("place") == "free" else ""
         parts.append(f"t{c.get('id')}:{n(c['opacity'])}{extra}")
+    # ⚠ WHICH ORDER THE ROWS ARE STACKED IN MUST BE IN THE KEY, for the fifth time
+    # and the same reason as `mix`, `source_ms`, the look and a moving caption —
+    # with one difference that makes it worse. This key is compared ACROSS exports,
+    # so a restack that did not change it would come back as the PREVIOUS export's
+    # stills in the PREVIOUS order: the one edit you made would be the one thing
+    # missing from the file, with nothing on screen to suggest why.
+    #
+    # Empty for a project with no saved order — every animatic that predates the
+    # gesture — so those sign byte-for-byte what they always signed.
+    if scene.get("stack_key"):
+        parts.append(f"z{scene['stack_key']}")
     return "|".join(parts)
 
 

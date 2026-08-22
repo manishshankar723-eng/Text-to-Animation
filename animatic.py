@@ -66,6 +66,10 @@ from animatic_render import (
     FRAME_DEFAULTS,
     frame_spans,
     is_animated,
+    # WHAT DRAWS OVER WHAT — one z-scale for every visual row, so a row can be
+    # dragged up or down the timeline. ⚠ TWIN of client/src/animatic/lane_order.js.
+    layer_runs,
+    ordered_layers,
     place_picture,
     resolve_look,
     scene_at,
@@ -1655,6 +1659,7 @@ def render_frame(
     look_b: dict | None = None,
     transition_params: dict | None = None,
     pictures: list[dict] | None = None,
+    layers: list[dict] | None = None,
 ) -> Image.Image:
     """One video frame: THE STACK OF PICTURE TRACKS plus every layer over it.
 
@@ -1673,9 +1678,20 @@ def render_frame(
     `look` / `look_b` are the resolved effects, mask and blend mode. Absent —
     which is every animatic written before them — nothing is graded.
 
-    Shapes, overlays and text are drawn ON TOP of the finished stack, not into it
-    — a caption spanning a cut stays legible all the way through rather than
-    dissolving with the picture underneath it.
+    ⚠ `layers` IS THE DRAW ORDER, and it is the reason a row can be dragged up and
+    down the timeline at all. It is `scene_at`'s list — `{"kind", "index"}` per
+    visible clip, bottom of the stack first, indexing `pictures` / `shapes` /
+    `overlays` / `texts`. Passing None means the order this function had written
+    into it before rows could be restacked: every picture, then the shapes, then
+    the overlays, then the text. That is also exactly what `ordered_layers`
+    produces for a project with no saved order, so the two paths agree — the
+    fallback is there for the keyword-form callers and the goldens, not as a
+    second opinion.
+
+    ⚠ A CAPTION IS NO LONGER GUARANTEED TO BE ON TOP, and that is the point of the
+    feature: text is a row like any other and can be dropped under a picture, in
+    which case the picture covers it. What IS still guaranteed to be last is the
+    shot LABEL — it is chrome, not part of the film.
     """
     if pictures is None:
         pictures = (
@@ -1696,24 +1712,48 @@ def render_frame(
             ]
         )
     canvas = _ground(size, background)
-    for picture in pictures:
-        canvas = _draw_track(canvas, picture, size, fit, background)
-    # Stacking order, bottom to top: picture → shapes → overlay images → text.
-    # Shapes sit under the overlays because a shape is usually a highlight or a
-    # mask ON the art, while an overlay is a picture element (a logo, an inset)
-    # that belongs above it. Text is last so a caption is always readable.
-    if shapes:
-        draw_shapes(canvas, shapes)
-    if overlays:
-        # ⚠ REBOUND, not drawn in place. An overlay with a blend mode cannot be
-        # pasted — the mode is a function of the pixels underneath it — so the
-        # composite comes back as a new image. Every other layer is still drawn
-        # in place, which is why only this one is an assignment.
-        canvas = draw_overlays(canvas, overlays)
-    # Text goes on before the shot label, so the label always stays legible in
-    # its corner even if a caption is placed at the bottom too.
-    if texts:
-        draw_texts(canvas, texts)
+    # ⚠ ONE WALK, IN THE ORDER THE STACK SAYS. This used to be four fixed
+    # sections — every picture, then the shapes, then the overlays, then the text
+    # — and that sequence being written HERE is precisely what made a row
+    # unmovable outside its own kind. `layer_runs` folds neighbouring clips of one
+    # kind back into a single call, which matters for text: `draw_texts` measures
+    # every caption sharing a zone and stacks them down it, so handing it one at a
+    # time would pile two subtitles on top of each other.
+    runs = layer_runs(layers) if layers is not None else None
+    if runs is None:
+        runs = (
+            [{"kind": "picture", "indices": [i]} for i in range(len(pictures))]
+            + ([{"kind": "shape", "indices": list(range(len(shapes or [])))}] if shapes else [])
+            + ([{"kind": "overlay", "indices": list(range(len(overlays or [])))}] if overlays else [])
+            + ([{"kind": "text", "indices": list(range(len(texts or [])))}] if texts else [])
+        )
+    for run in runs:
+        kind = run["kind"]
+        picked = run["indices"]
+        if kind == "picture":
+            for i in picked:
+                if 0 <= i < len(pictures):
+                    canvas = _draw_track(canvas, pictures[i], size, fit, background)
+        elif kind == "shape":
+            group = [(shapes or [])[i] for i in picked if 0 <= i < len(shapes or [])]
+            if group:
+                draw_shapes(canvas, group)
+        elif kind == "overlay":
+            group = [(overlays or [])[i] for i in picked if 0 <= i < len(overlays or [])]
+            if group:
+                # ⚠ REBOUND, not drawn in place. An overlay with a blend mode
+                # cannot be pasted — the mode is a function of the pixels
+                # underneath it — so the composite comes back as a new image.
+                # Every other layer is still drawn in place, which is why only
+                # this one is an assignment.
+                canvas = draw_overlays(canvas, group)
+        elif kind == "text":
+            group = [(texts or [])[i] for i in picked if 0 <= i < len(texts or [])]
+            if group:
+                draw_texts(canvas, group)
+    # The shot label goes on LAST, always, whatever the stack says: it is the
+    # editor's own annotation rather than part of the film, and a label hidden
+    # under a picture would read as a bug in the export.
     if label:
         _draw_label(canvas, label)
     return canvas
@@ -1728,6 +1768,7 @@ def plan_segments(
     end_ms: int | None = None,
     shapes: list[dict] | None = None,
     overlays: list[dict] | None = None,
+    lane_order: list[str] | None = None,
 ) -> tuple[list[dict], int]:
     """Cut the timeline into stretches where the picture, text AND shapes hold still.
 
@@ -1811,17 +1852,39 @@ def plan_segments(
     for a, b in zip(ordered, ordered[1:]):
         if b - a <= 0:
             continue
+        stack = _stack_at(spans, a)
+        seg_texts = [clip for (s, e, clip) in clips if s <= a < e]
+        seg_shapes = [shape for (s, e, shape) in figures if s <= a < e]
+        seg_overlays = [pic for (s, e, pic) in pictures if s <= a < e]
         segments.append(
             {
                 # The stack at this instant, bottom track first — the same
                 # evaluator `scene_at` uses, so the fast path and the sampling
                 # path cannot disagree about which pictures are up.
-                "pictures": [{"frame": s["index"]} for s in _stack_at(spans, a)],
+                "pictures": [{"frame": s["index"]} for s in stack],
                 "start_ms": a,
                 "duration_ms": b - a,
-                "texts": [clip for (s, e, clip) in clips if s <= a < e],
-                "shapes": [shape for (s, e, shape) in figures if s <= a < e],
-                "overlays": [pic for (s, e, pic) in pictures if s <= a < e],
+                "texts": seg_texts,
+                "shapes": seg_shapes,
+                "overlays": seg_overlays,
+                # ⚠ WHAT DRAWS OVER WHAT, worked out by the SAME function
+                # `scene_at` uses, from the same four lists in the same indexing.
+                # The fast path never builds a scene, so it has to ask directly —
+                # and asking here rather than in the renderer is what keeps the two
+                # planners' segments the same shape.
+                #
+                # ⚠ THE PICTURES ARE HANDED OVER AS `{"track"}` ONLY, because a
+                # track number is the whole of what a picture contributes to the
+                # ORDER (its rank is that number when nothing has been restacked).
+                # The segment's own `pictures` carry a frame index instead, and the
+                # indices line up because both are built from `stack`.
+                "layers": ordered_layers(
+                    {"settings": {"lane_order": lane_order or []}},
+                    [{"track": sp["track"]} for sp in stack],
+                    seg_shapes,
+                    seg_overlays,
+                    seg_texts,
+                ),
             }
         )
 
@@ -1852,6 +1915,7 @@ def plan_animated_segments(
     overlays: list[dict] | None = None,
     fps: int = 24,
     transitions: list[dict] | None = None,
+    lane_order: list[str] | None = None,
 ) -> tuple[list[dict], int]:
     """`plan_segments`, for a project where something MOVES.
 
@@ -1881,6 +1945,12 @@ def plan_animated_segments(
         "shapes": shapes or [],
         "overlays": overlays or [],
         "transitions": transitions or [],
+        # ⚠ `settings` IS IN HERE FOR ONE FIELD: `lane_order`, which is what
+        # `scene_at` needs to rank the rows. It was absent entirely before, which
+        # was harmless while the draw order was hard-coded and is not any more —
+        # a scene built without it would export the default stack while the
+        # monitor drew the restacked one.
+        "settings": {"lane_order": lane_order or []},
     }
     _spans, total_ms = frame_spans(frames, end_ms)
     if total_ms <= 0:
@@ -1944,6 +2014,11 @@ def plan_animated_segments(
                 "texts": scene["texts"],
                 "shapes": scene["shapes"],
                 "overlays": scene["overlays"],
+                # Straight off the scene: this planner HAS one, so there is
+                # nothing to work out a second time. ⚠ The order is inside
+                # `signature` too (as `stack_key`), or a re-export after a restack
+                # would come back as the previous export's stills.
+                "layers": scene["layers"],
                 "signature": scene_signature(scene),
             }
         )
@@ -2724,6 +2799,12 @@ def build_animatic(
     container: str = "mp4",
     still_ms: int = 0,
     output_dir: str = "output",
+    # WHAT ORDER THE TIMELINE'S ROWS ARE STACKED IN, top of the stack first —
+    # `AnimaticSettings.lane_order`. ⚠ EMPTY MEANS THE ORDER THIS EXPORTER ALWAYS
+    # USED (pictures by track, then shapes, then overlay pictures, then text), so
+    # every project that predates the restack gesture encodes byte for byte what it
+    # did before. See `lane_rank` in animatic_render.py.
+    lane_order: list[str] | None = None,
     progress_cb=None,
     cancel_check=None,
 ) -> dict:
@@ -2856,7 +2937,7 @@ def build_animatic(
     if animated:
         segments, total_ms = plan_animated_segments(
             usable, texts or [], end_ms, shapes or [], overlays or [], fps,
-            transitions or [],
+            transitions or [], lane_order or [],
         )
         distinct = len({s["signature"] for s in segments})
         if distinct > MAX_RENDERED_STILLS:
@@ -2872,7 +2953,7 @@ def build_animatic(
         )
     else:
         segments, total_ms = plan_segments(
-            usable, texts or [], end_ms, shapes or [], overlays or []
+            usable, texts or [], end_ms, shapes or [], overlays or [], lane_order or []
         )
 
     # --- 1a. A still is ONE segment ----------------------------------------
@@ -3015,6 +3096,11 @@ def build_animatic(
                         "texts": segment["texts"],
                         "shapes": segment.get("shapes") or [],
                         "overlays": segment.get("overlays") or [],
+                        # ⚠ THE DRAW ORDER TRAVELS WITH THE FRAME. Both planners
+                        # put it on the segment and it indexes the four lists
+                        # above, so the worker draws the stack the monitor drew
+                        # without knowing anything about rows or ranks.
+                        "layers": segment.get("layers"),
                     },
                 }
             )

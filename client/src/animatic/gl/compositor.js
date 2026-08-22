@@ -128,10 +128,26 @@ export function placePicture(sourceW, sourceH, frameW, frameH, fit, scale, x, y)
 }
 
 export class Compositor {
-  constructor(canvas) {
+  /**
+   * `opaque` — is this canvas the BOTTOM of the monitor's stack?
+   *
+   * ⚠ THE MONITOR CAN BE MORE THAN ONE CANVAS NOW, and this is the only thing
+   * about that the compositor needs to know. Captions are DOM, not GL (see
+   * `ProgramCanvas`), so a text row dragged UNDER a picture row cannot be drawn
+   * in the same pass as the rows above it: the picture is split into BANDS, one
+   * canvas each, with the captions in between as ordinary DOM siblings. Every
+   * band above the first has to let the ones below show through, which an
+   * `alpha: false` drawing buffer cannot do at all.
+   *
+   * The bottom band keeps `alpha: false` — the default, and what the monitor
+   * always had — so a project whose captions are on top (every project that has
+   * never been restacked) draws through exactly the code it always did.
+   */
+  constructor(canvas, { opaque = true } = {}) {
     this.canvas = canvas;
+    this.opaque = !!opaque;
     const options = {
-      alpha: false,
+      alpha: !opaque,
       antialias: false, // it would only apply to the default framebuffer anyway
       depth: false,
       stencil: false,
@@ -526,15 +542,24 @@ export class Compositor {
     this.front = 1 - this.front;
   }
 
-  /** Start a frame: everything cleared to the bar colour. */
+  /**
+   * Start a frame: everything cleared to the bar colour.
+   *
+   * ⚠ A BAND THAT IS NOT THE BOTTOM ONE CLEARS TO NOTHING AT ALL, not to the bar
+   * colour — it is a sheet of glass over the bands below it, and filling it with
+   * the letterbox black would paint out the picture and the captions underneath.
+   * That is the whole difference between the two, and it follows from `opaque`
+   * rather than being a second thing a caller has to remember.
+   */
   begin(background) {
     const gl = this.gl;
-    const [r, g, b] = parseColour(background);
+    const [r, g, b] = this.opaque ? parseColour(background) : [0, 0, 0];
+    const a = this.opaque ? 1 : 0;
     this.front = 0;
     for (const target of this.targets) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, this.size[0], this.size[1]);
-      gl.clearColor(r, g, b, 1);
+      gl.clearColor(r, g, b, a);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
   }

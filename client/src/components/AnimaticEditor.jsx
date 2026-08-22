@@ -102,6 +102,16 @@ import {
   isGeneratedCaption,
 } from "../animatic/captions.js";
 import { MIN_SPLIT_MS, splitTimedClip } from "../animatic/razor.js";
+// Dragging a row up or down the gutter — and therefore WHAT DRAWS OVER WHAT. The
+// maths is out there and pure so it can be driven from node (see
+// `tests/lane_reorder_check.py`) and so the exporter's Python twin has something
+// to be a twin OF: this order decides the film, not just the look of the gutter.
+import {
+  laneMovable,
+  laneRank,
+  laneTokenFor,
+  restack,
+} from "../animatic/lane_order.js";
 import {
   PRESETS as EXPORT_PRESETS,
   applyPreset,
@@ -192,7 +202,7 @@ import {
 // media-only collapsible would be the same control drawn twice — same twist,
 // same count pill, one of them subtly different — and the two panes sit side by
 // side. One component means Frames collapses exactly the way Motion does.
-import { InfoDot, PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
+import { ScrubGesture, InfoDot, PropGroup, PropRow, openGroup } from "./properties/PropGroup.jsx";
 // THE MEDIA LIBRARY — what has been added to this animatic, as opposed to where
 // it plays. See the note at the top of `animatic/assets.js` for why the pane and
 // the timeline are two lists now.
@@ -1300,12 +1310,11 @@ export default function AnimaticEditor({
     [settings.hidden_lanes]
   );
 
-  // The token for one lane — the ONE place the encoding is written on the client.
-  const laneToken = (lane) => {
-    if (lane.kind === "audio") return "";
-    if (lane.kind === "frames") return `frames:${lane.track || 0}`;
-    return `${lane.kind}:${lane.layerId || ""}`;
-  };
+  // The token for one lane. ⚠ THE ENCODING ITSELF LIVES IN `lane_order.js` now,
+  // because THREE lists speak it (`hidden_lanes`, `locked_lanes`, `lane_order`)
+  // and the last of those is read by the Python exporter too — a second spelling
+  // on this side would be a row the export ranked differently from the monitor.
+  const laneToken = (lane) => laneTokenFor(lane.kind, lane.layerId, lane.track);
 
   // ⚠ THE SAME TOKENS AS `hiddenLanes`, A DIFFERENT MEANING. Hidden takes a row
   // out of the VIDEO; locked takes it out of REACH and changes nothing about the
@@ -1472,7 +1481,21 @@ export default function AnimaticEditor({
   // ⚠ TWINNED IN `server/animatics.py`, clip for clip, or the monitor and the MP4
   // would disagree about a row you had switched off.
   const shown = useMemo(() => {
-    const doc = { frames, texts, shapes, overlays, transitions };
+    // ⚠ `settings` IS IN HERE FOR ONE FIELD, AND IT IS NOT OPTIONAL: `lane_order`
+    // is what `sceneAt` ranks the stack by. This object used to carry the five
+    // clip lists and nothing else — harmless while the draw order was hard-coded
+    // in the renderers, and silently wrong the moment it wasn't: the monitor drew
+    // the DEFAULT stack while the timeline, the saved project and the export all
+    // used the dragged one. A preview that disagrees with the file is the one
+    // failure this editor must never ship, and it looked exactly like "the drag
+    // does nothing".
+    // ⚠ ONLY THE ORDER, not the whole of `settings` — this memo must not rebuild
+    // on every fps or aspect-ratio change, and nothing else in the scene model
+    // reads a setting.
+    const doc = {
+      frames, texts, shapes, overlays, transitions,
+      settings: { lane_order: settings.lane_order || [] },
+    };
     if (!hiddenLanes.size) return doc;
     const kept = (kind) => (clip) => !hiddenLanes.has(`${kind}:${clip.layer_id || ""}`);
     const hiddenTrack = (f) => hiddenLanes.has(`frames:${frameTrack(f)}`);
@@ -1489,7 +1512,10 @@ export default function AnimaticEditor({
       shapes: shapes.filter(kept("shape")),
       overlays: overlays.filter(kept("image")),
     };
-  }, [frames, texts, shapes, overlays, transitions, hiddenLanes, settings.background]);
+  }, [
+    frames, texts, shapes, overlays, transitions, hiddenLanes,
+    settings.background, settings.lane_order,
+  ]);
 
   const scene = useMemo(
     () => sceneAt(shown, Math.min(timeMs, Math.max(0, spanMs - 1)), spanMs),
@@ -1571,7 +1597,11 @@ export default function AnimaticEditor({
     );
   }, []);
 
-  const activeTexts = scene.texts;
+  // ⚠ NO `activeTexts` HERE ANY MORE. The captions used to be read off the scene
+  // and drawn as one block at the top of the monitor; the monitor now asks for
+  // one BAND of them at a time (`renderCaptions`), because a text row can be
+  // under a picture row. These two are still whole-scene lists: they are the
+  // HANDLES, which are chrome and always sit over the picture.
   const activeShapes = scene.shapes;
   const activeOverlays = scene.overlays;
 
@@ -1600,6 +1630,65 @@ export default function AnimaticEditor({
       `al-${c.align || "center"}`,
       selectedTextId === c.id ? "sel" : "",
     ].join(" ");
+
+  /**
+   * THE CAPTIONS OF ONE BAND OF THE STACK, as DOM.
+   *
+   * Handed to <ProgramCanvas> as `renderTexts` and called once per run of text
+   * rows: for a project nobody has restacked that is once, over the whole
+   * picture, which is exactly the single `.an-text-layer` this used to be. Put a
+   * picture row above a text row and it is called twice, and the monitor puts a
+   * canvas between the two calls.
+   *
+   * ⚠ THE ZONES ARE PER BAND, AND THAT IS A REAL CONSEQUENCE OF THE FEATURE, not
+   * an oversight. Captions sharing a zone STACK down it (`draw_texts` measures
+   * them together), and only captions drawn in the same pass can be stacked
+   * against each other — so two text rows with a picture row BETWEEN them can
+   * overlap where before they could not. They are on either side of a picture at
+   * that point, which is what the user asked the stack to mean. Rows that are
+   * still neighbours still stack, because they are still one band.
+   *
+   * Sized in `cqh` (a fraction of the screen box's own height) using the SAME
+   * divisors the exporter uses, so the preview and the MP4 agree by construction
+   * rather than by two numbers kept in step by hand.
+   */
+  const renderCaptions = (clips) => (
+    <>
+      {["top", "middle", "bottom"].map((zone) => {
+        const zoneClips = clips.filter(
+          (c) => (c.place || "flow") !== "free" && (c.position || "bottom") === zone
+        );
+        if (!zoneClips.length) return null;
+        return (
+          <div key={zone} className={`an-text-zone an-text-${zone}`}>
+            {zoneClips.map((c) => (
+              <span key={c.id} className={captionClass(c)} style={captionStyle(c, true)}>
+                {c.text}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+      {/* Free-placed captions sit at their own x/y rather than in a zone — the
+          same fractions `draw_texts` centres the block on in the exported frame,
+          so dragging one here puts it there in the MP4 at any resolution. */}
+      {clips
+        .filter((c) => (c.place || "flow") === "free")
+        .map((c) => (
+          <span
+            key={c.id}
+            className={`${captionClass(c)} an-text-free`}
+            style={{
+              ...captionStyle(c),
+              left: `${(c.x ?? 0.5) * 100}%`,
+              top: `${(c.y ?? 0.85) * 100}%`,
+            }}
+          >
+            {c.text}
+          </span>
+        ))}
+    </>
+  );
 
   // Nothing in it and never named — i.e. you opened it and did nothing. Leaving
   // such an animatic throws it away instead of leaving an empty "Untitled" on
@@ -2127,6 +2216,17 @@ export default function AnimaticEditor({
     const of = (kind) =>
       layers.filter((l) => l.kind === kind && l.id !== CAPTION_LAYER_ID);
     const out = [];
+    // ⚠ EVERY ROW THAT DRAWS GOES IN HERE FIRST, AND IS RANKED AS ONE SET. The
+    // four kinds used to be pushed straight onto `out` in a fixed sequence and
+    // sorted only WITHIN themselves, which is precisely the complaint: "i check
+    // shapes layer move only other shapes layer, text layer only move other texts
+    // layer". They are one stack now, ordered by `laneRank`, and `out` is that
+    // stack with the audio rows appended under it.
+    //
+    // ⚠ THE ORDER THEY ARE PUSHED IN IS ONLY THE TIE-BREAK. It is the DERIVED
+    // order — what the gutter shows a project nobody has dragged anything in —
+    // and rows that tie on rank come out in it. Rank decides everything else.
+    const visual = [];
     // ⚠ SHOWN WHENEVER THERE ARE CAPTION CLIPS, even if the layer record is
     // missing. A clip whose lane doesn't exist is filtered out of every lane
     // there is — it would be invisible on the timeline while still drawing in
@@ -2135,7 +2235,7 @@ export default function AnimaticEditor({
     // and something later dropped.
     const captionLayer = layers.find((l) => l.id === CAPTION_LAYER_ID);
     if (captionLayer || hasCaptionClips) {
-      out.push({
+      visual.push({
         key: CAPTION_LAYER_ID,
         kind: "text",
         name: captionLayer?.name || CAPTION_LAYER_NAME,
@@ -2149,14 +2249,39 @@ export default function AnimaticEditor({
         add: "Add a caption to this row by hand",
       });
     }
-    out.push({ key: "text:", kind: "text", name: "Text", layerId: "", removable: false });
-    for (const l of of("text")) {
-      out.push({ key: l.id, kind: "text", name: l.name, layerId: l.id, removable: true });
-    }
-    out.push({ key: "shape:", kind: "shape", name: "Shapes", layerId: "", removable: false });
-    for (const l of of("shape")) {
-      out.push({ key: l.id, kind: "shape", name: l.name, layerId: l.id, removable: true });
-    }
+    /**
+     * ONE OVERLAY GROUP — the default row, then the ones the user added, THEN
+     * PUT IN THE ORDER THE USER DRAGGED THEM INTO.
+     *
+     * ⚠ THE DEFAULT ROW IS NO LONGER PINNED FIRST, and that is the whole reason
+     * this is a function rather than the two pushes it replaced. "Text" and
+     * "Text 2" are two rows of the same kind and either may be the one on top;
+     * before this, the row with no `layer_id` was always first because it was
+     * written out first, so the only rows that could be restacked were the ones
+     * the user had added — which for a project with one row of each kind (the
+     * one in the report) is no rows at all.
+     *
+     * ⚠ THE SAVED ORDER IS A LIST OF LANE TOKENS, NOT INDICES, and it is the
+     * SAME vocabulary as `hidden_lanes` and `locked_lanes` (`laneToken`). A
+     * stored index would go stale the moment a row was deleted — exactly the way
+     * a stored row NUMBER would (see the gutter's note on why the number is the
+     * map index). A row the list does not mention keeps its derived place at the
+     * end of the stack — above everything the list names — which is what makes an
+     * empty `lane_order` mean "the order this editor has always produced". See
+     * `laneRank`.
+     */
+    const group = (kind, name) => [
+      { key: `${kind}:`, kind, name, layerId: "", removable: false },
+      ...of(kind).map((l) => ({
+        key: l.id,
+        kind,
+        name: l.name,
+        layerId: l.id,
+        removable: true,
+      })),
+    ];
+    visual.push(...group("text", "Text"));
+    visual.push(...group("shape", "Shapes"));
     // Pictures composited OVER the sequence sit directly above it: they are the
     // last thing drawn before the frame itself.
     //
@@ -2171,10 +2296,7 @@ export default function AnimaticEditor({
     // `addToLane` already used for the default Text and Shapes rows.
     // ⚠ AND IT IS `removable: false` — its ✕ EMPTIES it rather than deleting it,
     // because it is the row a layerless overlay falls back to.
-    out.push({ key: "image:", kind: "image", name: "Images", layerId: "", removable: false });
-    for (const l of of("image")) {
-      out.push({ key: l.id, kind: "image", name: l.name, layerId: l.id, removable: true });
-    }
+    visual.push(...group("image", "Images"));
     // The picture tracks, HIGHEST FIRST — the same rule the rest of this list
     // follows, since a higher track is drawn over a lower one. Track 0 always
     // exists (`pictureTracks`), so a project with no pictures still has a row to
@@ -2191,7 +2313,7 @@ export default function AnimaticEditor({
     // ⚠ EVERY TRACK IN USE, UNION EVERY TRACK WITH A RECORD — see `videoTracks`.
     for (const row of videoTracks) {
       const { track } = row;
-      out.push({
+      visual.push({
         key: `frames:${track}`,
         kind: "frames",
         track,
@@ -2232,6 +2354,34 @@ export default function AnimaticEditor({
         add: ROW_KIND[row.rowKind].add,
       });
     }
+    /**
+     * THE STACK, TOP FIRST — sorted by the rank every renderer sorts by.
+     *
+     * ⚠ THIS IS THE ONE LINE THAT MAKES THE GUTTER AND THE FILM THE SAME THING.
+     * `laneRank` is the function `sceneAt` and `render_frame` use to decide what
+     * draws over what, so a row's place in this column IS its place in the
+     * picture — drag Video over Images and the video covers the logo, in the
+     * monitor and in the MP4.
+     *
+     * ⚠ IT ALSO CORRECTS A DISAGREEMENT THAT WAS ALWAYS THERE. This gutter used
+     * to show Shapes above Images while the renderers drew overlays above shapes,
+     * so the column and the picture said opposite things about those two rows.
+     * There is only one answer now and it is the renderers': Images sits above
+     * Shapes until someone drags it somewhere else.
+     *
+     * ⚠ TIES KEEP THE DERIVED ORDER, which is what makes an empty `lane_order`
+     * mean "exactly what this editor has always shown". Sorted by hand rather
+     * than by `sortByRank` because this list wants TOP first and that one hands
+     * back bottom first — reversing it would reverse the ties as well, and "Text"
+     * would open below "Text 2".
+     */
+    out.push(
+      ...visual
+        .map((lane, i) => ({ lane, i, r: laneRank(laneToken(lane), settings.lane_order) }))
+        .sort((a, b) => (a.r === b.r ? a.i - b.i : b.r - a.r))
+        .map((d) => d.lane)
+    );
+
     // Audio: a track saved before layers owns its own lane (that is how it has
     // always been drawn); a track added to a layer sits on that layer's lane,
     // which exists even while it is still empty.
@@ -2285,6 +2435,10 @@ export default function AnimaticEditor({
     // ⚠ HOW MUCH IS ON A ROW IS NOT COMPUTED HERE. That would mean depending on
     // `texts`, and this list must not rebuild on every keystroke in a caption —
     // the timeline already holds the clips and counts them itself.
+    //
+    // ⚠ AND WHETHER THE ROW CAN BE DRAGGED UP OR DOWN — one question, answered
+    // once, here. `laneMovable` is the policy (which kinds move at all).
+    const movableCount = out.filter(laneMovable).length;
     return out.map((lane) => {
       const vis = laneToken(lane);
       return {
@@ -2297,6 +2451,18 @@ export default function AnimaticEditor({
         // needs a stable per-row token, and a loose audio row is keyed by the
         // FILE it holds, which changes when a clip is dragged in from elsewhere.
         locked: !!vis && lockedLanes.has(vis),
+        // CAN THIS ROW BE DRAGGED UP OR DOWN? The timeline reads it to decide
+        // what may be picked up and where it may be dropped, and `moveLane` reads
+        // the same answer to decide what a drop MEANS — so a drop the gutter
+        // offered can never be one the editor then refuses.
+        //
+        // ⚠ THE COUNT IS THE OTHER HALF. One movable row has nowhere to go, and a
+        // row that offers a grab cursor and then refuses every drop is worse than
+        // one that never offered. ⚠ AND IT IS COUNTED ACROSS THE WHOLE STACK, not
+        // within a kind: a project with one Text row and one Video row has two
+        // movable rows and they can trade places, which is the entire point of
+        // the change.
+        movable: laneMovable(lane) && movableCount > 1,
       };
     });
     // ⚠ `hasCaptionClips`, not `texts`, for the reason above — this list only
@@ -2304,7 +2470,89 @@ export default function AnimaticEditor({
     // question too: WHICH TRACKS EXIST, which decides how many picture rows there
     // are. That does mean the list rebuilds when a picture is added or moved
     // across tracks, which is exactly when the rows change.
-  }, [layers, audioTracks, hasCaptionClips, frames, hiddenLanes, lockedLanes, videoTracks]);
+  }, [
+    layers,
+    audioTracks,
+    hasCaptionClips,
+    frames,
+    hiddenLanes,
+    lockedLanes,
+    videoTracks,
+    settings.lane_order,
+  ]);
+
+  /**
+   * RESTACK THE ROWS — one row dragged onto another's place in the gutter.
+   *
+   * Asked for twice, the second time to correct what the first version did:
+   *
+   *     "i want move layer up - down in timline only those layer: Text, shapes,
+   *      Image, Video, Story..images, and Story..video  audio and Caption not
+   *      move okay"
+   *     "i check shapes layer move only other shapes layer, text layer only move
+   *      other texts layer … i want these all layer move up down each other …
+   *      because i want video layer move up Image and shapes and shapes down
+   *      video lie this all move"
+   *
+   * ⚠ IT IS ONE SETTINGS WRITE, AND NOTHING ELSE IS TOUCHED. That is worth
+   * pausing on, because the version this replaced was three edits behind one
+   * gesture: it RENUMBERED every picture clip's `track`, it REORDERED the `texts`
+   * / `shapes` / `overlays` arrays, and it rewrote the eye's and the padlock's
+   * tokens to follow the renumbering. All of that existed because the draw order
+   * was hard-coded in the renderers and the only way to reach it was to move the
+   * data underneath it — which is also why a row could only ever be dragged among
+   * its own kind. The renderers read `lane_order` now (`laneRank`, and its twin
+   * in animatic_render.py), so the gesture writes that one list and every clip,
+   * every track number and both token lists stay exactly as they are.
+   *
+   * ⚠ THE WHOLE STACK IS WRITTEN, NOT THE TWO ROWS THAT MOVED. A row the list
+   * does not name ranks ABOVE everything it does (see `laneRank`), so a partial
+   * list would send every unnamed row to the top — the drag would look like it
+   * had moved everything else. `restack` takes the stack as the gutter currently
+   * shows it, which already accounts for both the saved order and the rows the
+   * saved order has never heard of.
+   *
+   * ⚠ NOTHING IS RE-TIMED. A clip keeps `start_ms` and a picture clip keeps its
+   * `track`, so the film plays at exactly the same moments; the only thing that
+   * changes is what is drawn over what.
+   *
+   * ⚠ A LOCKED ROW IS NOT MOVED AND IS NOT MOVED PAST. "A locked row plays and
+   * exports exactly as it did" is the promise the padlock makes, and its place in
+   * the stack is part of what it plays as — so any drag that would change a
+   * locked row's position is refused, naming the row, rather than silently
+   * dropped.
+   */
+  function moveLane(lane, toKey) {
+    const src = lanes.find((l) => l.key === lane?.key);
+    const dst = lanes.find((l) => l.key === toKey);
+    if (!src || !dst || src.key === dst.key) return;
+    // A row that does not move at all cannot have been picked up — the gutter
+    // gives it no grab cursor and `startLaneDrag` refuses it — so this is a
+    // guard rather than a case: there is no gesture here to explain.
+    if (!laneMovable(src) || !laneMovable(dst)) return;
+
+    // The movable stack as it stands and as it would be. Gutter order, top of
+    // the stack first, exactly as `lanes` is.
+    const rows = lanes.filter(laneMovable);
+    const from = rows.findIndex((l) => l.key === src.key);
+    const to = rows.findIndex((l) => l.key === dst.key);
+    const order = restack(rows.map(laneToken), laneToken(src), laneToken(dst));
+    // ⚠ CHECKED ON THE ROWS, NOT ON THE TOKENS, because the message has to name
+    // the row a person can see. `order` is the same length and the same set, so
+    // comparing it position by position with the rows it came from is exactly
+    // "which rows would end up somewhere else".
+    const stuck = rows.find((l, i) => l.locked && order[i] !== laneToken(l));
+    if (stuck) {
+      setNotice(`${stuck.name} is locked — unlock it to restack the rows around it.`);
+      return;
+    }
+
+    setSettings((sett) => ({ ...sett, lane_order: order }));
+    setNotice(
+      `${src.name} moved — it now draws ${to < from ? "over" : "under"} ${dst.name}. ` +
+        "Nothing was re-timed."
+    );
+  }
 
   // ------------------------------------------------------------ undo / redo
   // One stack for the whole document — see `useUndoStack`. `gestureProps` is
@@ -8577,6 +8825,14 @@ export default function AnimaticEditor({
                 settings={settings}
                 videoElsRef={videoElsRef}
                 onUnavailable={onGlUnavailable}
+                /* ⚠ THE CAPTIONS ARE DRAWN HERE AND PLACED THERE. They are DOM
+                   rather than canvas — that is what keeps them real text, with
+                   the eleven type controls and the same CSS the export's fonts
+                   are matched against — but WHERE they sit in the stack stopped
+                   being "on top of everything" the moment a text row could be
+                   dragged under a picture row. The monitor cuts the picture into
+                   bands at each caption row and calls this once per band. */
+                renderTexts={renderCaptions}
               />
               {(!shownFrame || glFailed) && (
                 <div className="an-screen-empty">
@@ -8667,53 +8923,12 @@ export default function AnimaticEditor({
                 </div>
               )}
 
-              {/* The text layer, over the picture. Sized in `cqh` (a fraction
-                  of this box's own height) using the SAME divisors the exporter
-                  uses, so the preview and the MP4 agree by construction rather
-                  than by two numbers kept in step by hand. */}
-              {activeTexts.length > 0 && (
-                <div className="an-text-layer">
-                  {["top", "middle", "bottom"].map((zone) => {
-                    const zoneClips = activeTexts.filter(
-                      (c) => (c.place || "flow") !== "free"
-                        && (c.position || "bottom") === zone
-                    );
-                    if (!zoneClips.length) return null;
-                    return (
-                      <div key={zone} className={`an-text-zone an-text-${zone}`}>
-                        {zoneClips.map((c) => (
-                          <span
-                            key={c.id}
-                            className={captionClass(c)}
-                            style={captionStyle(c, true)}
-                          >
-                            {c.text}
-                          </span>
-                        ))}
-                      </div>
-                    );
-                  })}
-                  {/* Free-placed captions sit at their own x/y rather than in a
-                      zone — the same fractions `draw_texts` centres the block on
-                      in the exported frame, so dragging one here puts it there
-                      in the MP4 at any resolution. */}
-                  {activeTexts
-                    .filter((c) => (c.place || "flow") === "free")
-                    .map((c) => (
-                      <span
-                        key={c.id}
-                        className={`${captionClass(c)} an-text-free`}
-                        style={{
-                          ...captionStyle(c),
-                          left: `${(c.x ?? 0.5) * 100}%`,
-                          top: `${(c.y ?? 0.85) * 100}%`,
-                        }}
-                      >
-                        {c.text}
-                      </span>
-                    ))}
-                </div>
-              )}
+              {/* ⚠ THE CAPTIONS ARE NOT HERE ANY MORE — see `renderCaptions` and
+                  the `renderTexts` prop on <ProgramCanvas> above. They used to be
+                  the last thing in this box, which is another way of saying they
+                  were always on top of the picture; a text row that can be dragged
+                  under a picture row cannot be. The monitor owns WHERE they go now,
+                  and this file still owns what a caption LOOKS like. */}
 
               {settings.show_labels && currentFrame?.label && (
                 <span className="an-screen-label">{currentFrame.label}</span>
@@ -8822,6 +9037,15 @@ export default function AnimaticEditor({
               </button>
             )}
           </div>
+          {/* ⚠ ONE PROVIDER FOR EVERY NUMBER IN EVERY PANE. Each row's box and
+              each row's label is a drag handle (see the SCRUBBING block in
+              `PropGroup.jsx`), and a drag has to coalesce into ONE undo entry
+              the way a slider already does. Passing `gestureProps` down through
+              forty `NumField` call sites would be forty chances to miss one, and
+              the rows that were missed would flood the history silently. The
+              panes go on taking `gesture` as a prop for their sliders — this is
+              the same object, reaching the parts props cannot. */}
+          <ScrubGesture.Provider value={gestureProps}>
           <div className="an-pane-body">
             {/* ⚠ THE SET COMES FIRST. With forty clips lit up on the timeline,
                 showing the first one's colour picker would let you edit one
@@ -8982,6 +9206,7 @@ export default function AnimaticEditor({
               />
             )}
           </div>
+          </ScrubGesture.Provider>
         </section>
       </div>
 
@@ -9409,6 +9634,12 @@ export default function AnimaticEditor({
             onClearLane={clearLane}
             onToggleHidden={toggleLaneHidden}
             onToggleLocked={toggleLaneLocked}
+            /* A row dragged up or down the gutter: `(lane, toKey)`. The timeline
+               owns the GESTURE (which row was picked up, which row's place it was
+               dropped on) and this file owns what that MEANS — a picture row
+               trades track numbers, an overlay row rewrites the saved order and
+               its clips' draw order. See `moveLane`. */
+            onMoveLane={moveLane}
             /* The timeline's refusals used to all be visible ones — a target that
                never lit up, a bar that did not move. A locked row is the first
                that looks like nothing happening, so it needs the status strip. */

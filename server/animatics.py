@@ -1897,6 +1897,17 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
             "fit": settings.fit,
             "background": settings.background,
             "show_labels": settings.show_labels,
+            # ⚠ WHAT DRAWS OVER WHAT. The encoder needs the row order or it
+            # exports the DEFAULT stack while the monitor draws the one the user
+            # dragged — the one divergence that is invisible until the file comes
+            # back. Empty on every project that has never been restacked, which is
+            # what makes those export exactly as they always did.
+            #
+            # ⚠ IT IS NOT FILTERED BY `hidden`, unlike the three lists above. A
+            # hidden row's CLIPS are gone by here, so naming it in the order costs
+            # nothing — and stripping it would renumber the ranks of every row
+            # below it, which is a restack nobody asked for.
+            "lane_order": list(settings.lane_order or []),
             # What file to write, and — for a still — which moment of it. Both
             # default to exactly what every export did before presets existed;
             # see `export_presets.py`.

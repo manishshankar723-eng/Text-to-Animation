@@ -56,6 +56,29 @@ export default function ShapeProperties({
   // `FrameProperties`: a property left animated is not back where it started,
   // whatever the number under the playhead says.
   const keyed = (prop) => (shape.keyframes?.[prop] || []).length > 0;
+  // The Scale row, read and written through `w`/`h` — see the block above it.
+  // Measured on the WIDTH alone and applied to both, so a box that has been
+  // stretched keeps the proportion it was stretched to instead of snapping back
+  // to square the first time it is scaled.
+  const scalePct = Math.round(((shape.w ?? geo.w) / geo.w) * 100);
+  const setScale = (value) => {
+    const fromW = shape.w ?? geo.w;
+    const fromH = shape.h ?? geo.h;
+    // ⚠ THE **FACTOR** IS WHAT GETS CLAMPED, NOT `w` AND `h` SEPARATELY — and
+    // that is the whole of why this row keeps a box's proportion. Clamping the
+    // two sides independently means a 2:1 box scaled down far enough has its
+    // height pinned at the 2% floor while its width is still shrinking, and it
+    // comes back up SQUARE. One number applied to both cannot do that: either
+    // the pair moves or it does not. (Found by `tests/editor_scrub_check.py`
+    // scaling an 80×40 box back to 100% and getting 25×25.)
+    const wantedFactor = fromW > 0 ? (geo.w * ((parseFloat(value) || 0) / 100)) / fromW : 1;
+    const factor = clamp(
+      wantedFactor,
+      Math.max(0.02 / fromW, 0.02 / fromH),
+      Math.min(4 / fromW, 4 / fromH)
+    );
+    onChange(shape.id, { w: fromW * factor, h: fromH * factor });
+  };
   const resetProp = (prop, value) => {
     const keys = { ...(shape.keyframes || {}) };
     delete keys[prop];
@@ -214,6 +237,47 @@ export default function ShapeProperties({
             onChange={(e) => setPct("y", e.target.value, -0.5, 1.5)}
           />
           {kf && <KeyframeControls {...kf} prop="y" />}
+        </PropRow>
+        {/* --- SCALE -------------------------------------------------------
+            ⚠ NOT A STORED FIELD, AND IT MUST NOT BECOME ONE without the
+            renderers changing too. `w`/`h` ARE this box's size — there is no
+            "natural size" underneath them the way a picture has one — so a
+            second multiplier would be a number both `shapeFan` and `draw_shapes`
+            had to learn, on both sides, for no capability the two rows below do
+            not already have.
+
+            What it is instead: RESIZE BOTH TOGETHER, KEEPING THE ASPECT. It
+            reads as a percentage of the size this kind of clip is CREATED at
+            (25% of the frame for a shape, 30% for a picture — `geo` above),
+            which is the same thing a frame's Scale means by 100%: "the size it
+            came at". So a fresh clip reads 100%, and a clip stretched to 80%
+            wide reads 320% because it is indeed 3.2× the size it was made.
+
+            ⚠ NO ⏱ ON THIS ROW, deliberately. It writes `w` and `h`, and those
+            two have their own — keyframe them. A ⏱ here would have to key two
+            properties from one control, which is exactly the thing rule 1 in
+            `PropGroup.jsx` forbids, and the timeline has no row to draw it on.
+            It sits directly above the two rows it drives so that is legible. */}
+        <PropRow
+          label="Scale"
+          title="Resize width and height together. 100% is the size it was created at."
+          reset={() => {
+            const keys = { ...(shape.keyframes || {}) };
+            delete keys.w;
+            delete keys.h;
+            onChange(shape.id, { w: geo.w, h: geo.h, keyframes: keys });
+          }}
+          changed={shape.w !== geo.w || shape.h !== geo.h || keyed("w") || keyed("h")}
+          resetTo="100%"
+          info="A shortcut for the two rows below, not a property of its own — it scales Width and Height together and keeps their proportion. To animate a scale, keyframe Width and Height."
+        >
+          <NumField
+            unit="%"
+            step="5"
+            min="1"
+            value={scalePct}
+            onChange={(e) => setScale(e.target.value)}
+          />
         </PropRow>
         <PropRow
           label="Width"

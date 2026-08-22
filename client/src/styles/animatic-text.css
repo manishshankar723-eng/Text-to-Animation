@@ -172,6 +172,13 @@
   padding: 0 0.4rem;
   overflow: hidden;
   white-space: nowrap;
+  /* ⚠ A TRACK HEAD IS A CONTROL, NOT PROSE. Every row is press-and-drag now
+     (drag it up or down to restack it — see `startLaneDrag`), and without this a
+     drag down the column leaves a trail of blue-highlighted layer names behind
+     it. It is here rather than on the dragged row alone because a selection
+     started on one row EXTENDS across the others. Same reason `.tl-lanes` takes
+     the marquee's `preventDefault`. */
+  user-select: none;
 }
 /* Explicit classes, NOT :nth-of-type. The ruler spacer above these is a <div>
    too, so nth-of-type counted it and handed every label the NEXT track's

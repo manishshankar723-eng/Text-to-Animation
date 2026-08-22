@@ -168,6 +168,34 @@
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* --- SCRUBBING ----------------------------------------------------------
+   A number you can DRAG sideways, and its label with it. The whole mechanism is
+   in `PropGroup.jsx`; this is the part you can see.
+   ⚠ THE CURSOR IS THE ONLY ADVERTISEMENT THERE IS. A number box looks exactly
+   like a number box, so without `ew-resize` under the pointer nobody would ever
+   discover the gesture — it is the affordance, not decoration. It goes on the
+   label too, which otherwise reads as inert text. */
+.an-row-label.an-scrub,
+.an-num input.an-scrub {
+  cursor: ew-resize;
+}
+/* ⚠ AND THE LABEL MUST NOT BE SELECTABLE ONCE IT IS A HANDLE. Dragging a word
+   selects it; the drag then leaves "Rotation" highlighted in blue behind a value
+   that changed correctly, which reads as the control having gone wrong. The BOX
+   keeps its selection, because selecting the number to retype it is what it was
+   for before it was a handle. */
+.an-row-label.an-scrub {
+  user-select: none;
+}
+/* While a drag is live, on `<body>` — so the cursor stays ew-resize wherever the
+   pointer has wandered to, and nothing highlights on the way. Both need the
+   `!important`: the pointer is over some other element by now, and that element
+   has its own cursor and its own idea about selection. */
+body.an-scrubbing,
+body.an-scrubbing * {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
 .an-row-ctl {
   display: flex;
   align-items: center;

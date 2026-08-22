@@ -23,6 +23,11 @@
  */
 
 import { TRANSITION_PARAMS, transitionAt } from "./transitions.js";
+// WHAT DRAWS OVER WHAT. ⚠ The order used to be written INTO this file — pictures,
+// then shapes, then overlays, then text — and is now data: every visual row has a
+// rank and `sceneAt` sorts by it. With no saved order the ranks reproduce that
+// old sequence exactly, so nothing about an existing project changes.
+import { clipLaneToken, laneRank, stackKey } from "./lane_order.js";
 
 // Rounding is part of the contract. Two languages doing the same float maths
 // drift in the last bits; the parity test would then fail on noise rather than
@@ -161,6 +166,37 @@ export function textBackdrop(clip) {
 export function backdropHasFill(clip) {
   const backdrop = textBackdrop(clip);
   return backdrop === "scrim" || backdrop === "box";
+}
+
+/**
+ * WHAT CHOOSING A BACKDROP WRITES — which for one of the four is more than the
+ * backdrop.
+ *
+ * ⚠ "plain" CLEARS THE OUTLINE AND THE SHADOW TOO, and it has to, or it does not
+ * mean what it says. Reported as a bug the day it shipped: the caption was
+ * switched to "Just the letters", still showed a dark edge round every glyph,
+ * and that read as the control failing. It was not — it was a `shadow` of 0.06
+ * already on the clip, which at caption size reads as an outline rather than as
+ * a shadow. THREE separate fields can put dark furniture round a caption
+ * (`backdrop`, `stroke_px`, `shadow`), so "nothing at all" has to turn off all
+ * three; turning off one and leaving two is indistinguishable from a bug.
+ *
+ * ⚠ IT WRITES THE FIELDS RATHER THAN OVERRIDING AT DRAW TIME. The Outline and
+ * Shadow rows go to 0 where you can SEE them, one undo puts them back, and
+ * setting either again afterwards still works — this is a starting point, not a
+ * mode, the same rule the in/out presets follow. A draw-time override would
+ * leave the pane reading 0.06 while the picture showed none, which is the worse
+ * bug of the two.
+ *
+ * Here rather than in `TextProperties.jsx` because it is a rule about what a
+ * caption IS, not about how a pane is laid out — and because a .jsx file cannot
+ * be imported by the node harness that checks it.
+ */
+export function backdropPatch(id) {
+  const backdrop = TEXT_BACKDROPS.includes(id) ? id : "scrim";
+  return backdrop === "plain"
+    ? { backdrop, stroke_px: 0, shadow: 0 }
+    : { backdrop };
 }
 
 // Which table a kind's fallbacks come from. A `kind` that isn't listed uses the
@@ -1160,17 +1196,100 @@ function pictureAt(frames, spans, index, t) {
 }
 
 /**
+ * THE DRAW ORDER OF ONE MOMENT — every visible clip, bottom of the stack first.
+ *
+ * Returns a flat list of `{ kind, index, z }`, where `kind` is
+ * "picture" | "shape" | "overlay" | "text" and `index` points into the scene's
+ * list of that kind. Pointers rather than copies: the clips are big, they are
+ * already in the scene, and two copies of one clip in one scene is two things to
+ * keep in step.
+ *
+ * ⚠ ONE ENTRY PER CLIP, NOT PER ROW, and that is what makes the migration exact.
+ * Every clip of one kind on one row ties on `z`, the sort is stable, and the
+ * tie-break is the clip's place in its own array — so with no saved order the
+ * list comes out as pictures (by track) → shapes → overlays → text, each group in
+ * its original array order, which is precisely the four sequences the renderers
+ * used to run one after another. Grouping by ROW instead would have reordered
+ * clips WITHIN a kind whenever two rows' clips interleave in the array, which is
+ * a silent restack of a project nobody dragged anything in.
+ *
+ * ⚠ RENDERERS MUST MERGE ADJACENT RUNS OF ONE KIND — see `layerRuns`. `draw_texts`
+ * measures every caption sharing a zone and stacks them down it, so handing it one
+ * caption at a time would pile two subtitles on top of each other.
+ */
+export function orderedLayers(project, pictures, shapes, overlays, texts) {
+  const order = project?.settings?.lane_order || [];
+  const out = [];
+  const push = (kind, list) => {
+    (list || []).forEach((clip, index) => {
+      out.push({
+        kind,
+        index,
+        // A picture entry carries its `track`, every other clip its `layer_id` —
+        // `clipLaneToken` is the one place that difference is written down.
+        z: laneRank(clipLaneToken(kind, clip), order),
+        // The tie-break, carried rather than trusted to the engine's sort — see
+        // `sortByRank` for why it is written out by hand.
+        seq: out.length,
+      });
+    });
+  };
+  push("picture", pictures);
+  push("shape", shapes);
+  push("overlay", overlays);
+  push("text", texts);
+  out.sort((a, b) => (a.z === b.z ? a.seq - b.seq : a.z - b.z));
+  // `seq` was scaffolding for the sort; it is not part of the scene's shape.
+  return out.map(({ kind, index, z }) => ({ kind, index, z }));
+}
+
+/**
+ * THE DRAW ORDER AS RUNS — adjacent entries of one kind folded together, which is
+ * the shape every renderer actually wants.
+ *
+ * Returns `[{ kind, indices: [...] }]`, bottom first. A renderer walks it and
+ * calls its own painter for each run: one `draw_shapes` per run of shapes, one
+ * `draw_texts` per run of captions, one picture composite per picture.
+ *
+ * ⚠ RUNS, NOT KINDS. `draw_texts` needs every caption that shares a zone in ONE
+ * call or two subtitles land on each other — but only the ones that are actually
+ * adjacent in the stack may be grouped, because a text row with a picture row
+ * above it is genuinely behind that picture and cannot be painted in the same
+ * pass as a text row in front of it. With no saved order every text row is
+ * adjacent, so this yields exactly one text run and the old single call.
+ *
+ * ⚠ A PICTURE IS ALWAYS ITS OWN RUN. Two picture tracks are two composites with
+ * their own transitions, effects and blends; folding them into one run would
+ * suggest they can be drawn in one pass, and they cannot.
+ */
+export function layerRuns(layers) {
+  const runs = [];
+  for (const item of layers || []) {
+    const last = runs[runs.length - 1];
+    if (last && last.kind === item.kind && item.kind !== "picture") {
+      last.indices.push(item.index);
+    } else {
+      runs.push({ kind: item.kind, indices: [item.index] });
+    }
+  }
+  return runs;
+}
+
+/**
  * What the viewer sees at `tMs`.
  *
  * `project` is the saved shape: { frames, texts, shapes, overlays, transitions,
  * settings }. Returns resolved clips — every animatable property already
- * interpolated — in the order they are composited, bottom to top:
+ * interpolated.
  *
- *     picture (× 2 during a transition) → shapes → overlay pictures → text
- *
- * A shape sits under the overlays because a shape is usually a highlight ON the
- * art, while an overlay is a picture element that belongs above it; text is last
- * so a caption is always readable. `render_frame` stacks them the same way.
+ * ⚠ `layers` IS THE DRAW ORDER AND THE ONLY THING A RENDERER MAY WALK. It used to
+ * be a sentence in this docstring instead — "picture (× 2 during a transition) →
+ * shapes → overlay pictures → text" — hard-coded three times over (here, in
+ * `ProgramCanvas.jsx`, in `render_frame`), which meant a row could only ever be
+ * restacked among its own kind. Every visual row has a RANK now
+ * (`settings.lane_order`, read by `laneRank`) and this list is the result of
+ * sorting by it, bottom of the stack first. ⚠ WITH NO SAVED ORDER IT IS THAT OLD
+ * SENTENCE, clip for clip — see `orderedLayers`.
  *
  * ⚠ `pictures` IS THE PICTURE, AND IT IS A STACK — one entry per picture track
  * that has something on it at `t`, BOTTOM TRACK FIRST. Every renderer must walk
@@ -1258,6 +1377,15 @@ export function sceneAt(project, tMs, endMs = null) {
   return {
     t_ms: t,
     total_ms: totalMs,
+    // ⚠ THE DRAW ORDER, BOTTOM FIRST — the one thing a renderer must walk. See
+    // `orderedLayers`; `pictures` / `shapes` / `overlays` / `texts` below are
+    // still here and still hold the clips, and every entry of this list points
+    // into one of them.
+    layers: orderedLayers(project, pictures, shapes, overlays, texts),
+    // Empty unless this project has been restacked — see `stackKey`. It is in the
+    // scene because `sceneSignature` is the export's render cache key and cannot
+    // see the project.
+    stack_key: stackKey(project.settings?.lane_order),
     // ⚠ THE PICTURE, bottom track first. Renderers walk this; `frame` below is
     // the topmost entry and answers a different question. See the docstring.
     pictures,
@@ -1466,5 +1594,16 @@ export function sceneSignature(scene) {
     const extra = c.place === "free" ? `:${n(c.x)}:${n(c.y)}` : "";
     parts.push(`t${c.id}:${n(c.opacity)}${extra}`);
   }
+  // ⚠ WHICH ORDER THE ROWS ARE STACKED IN MUST BE IN THE KEY, for the fifth time
+  // and the same reason as `mix`, `source_ms`, the look and a moving caption —
+  // with one difference that makes it worse. This key is compared ACROSS exports,
+  // so a restack that did not change it would come back as the PREVIOUS export's
+  // stills in the PREVIOUS order: the one edit you made would be the one thing
+  // missing from the file, and nothing on screen would suggest why.
+  //
+  // Empty for a project with no saved order — every animatic that predates the
+  // gesture — so those sign byte-for-byte what they always signed. `stack_key` is
+  // put on the scene by `sceneAt` because this function cannot see the project.
+  if (scene.stack_key) parts.push(`z${scene.stack_key}`);
   return parts.join("|");
 }

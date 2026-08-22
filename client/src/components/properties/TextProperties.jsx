@@ -9,7 +9,7 @@ import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
 import { FONTS } from "../../animatic/fonts.js";
 import { TEXT_PRESETS, applyTextPreset } from "../../animatic/text_presets.js";
-import { backdropHasFill, textBackdrop } from "../../animatic/scene.js";
+import { backdropHasFill, backdropPatch, textBackdrop } from "../../animatic/scene.js";
 import { PropGroup, PropRow, NumField, PropSlider, PropNote } from "./PropGroup.jsx";
 
 const TEXT_PLACES = [
@@ -46,7 +46,9 @@ const TEXT_BACKDROPS = [
   {
     id: "plain",
     label: "Just the letters",
-    hint: "Nothing at all — no bar, no outline. Check it against pale shots.",
+    hint:
+      "Nothing at all — no bar, no outline, no shadow. Choosing this clears "
+      + "the Outline and Shadow below.",
   },
 ];
 // ⚠ TWIN of `_TEXT_CASES` in animatic.py, and of `CAPTION_TRANSFORM` in
@@ -527,7 +529,7 @@ export default function TextProperties({
             className="an-select"
             value={backdrop}
             title={TEXT_BACKDROPS.find((b) => b.id === backdrop)?.hint}
-            onChange={(e) => onChange(clip.id, { backdrop: e.target.value })}
+            onChange={(e) => onChange(clip.id, backdropPatch(e.target.value))}
           >
             {TEXT_BACKDROPS.map((b) => (
               <option key={b.id} value={b.id} title={b.hint}>
@@ -536,18 +538,6 @@ export default function TextProperties({
             ))}
           </select>
         </PropRow>
-        {/* ⚠ SHOWN, NOT HIDDEN BEHIND AN ⓘ. "Just the letters" is the one
-            setting in this pane that can leave a caption you cannot read, and
-            over a pale storyboard thumbnail it will — white on white. That is
-            the reason it exists, so it is not a warning that stops you; it is
-            the fact you must not be able to miss. See `PropNote`'s docstring on
-            which of the two kinds of prose this is. */}
-        {backdrop === "plain" && (
-          <PropNote tone="warn">
-            Nothing behind the text and no outline — check this caption against
-            the pale shots, not just this one.
-          </PropNote>
-        )}
         {/* The backdrop's own look, and only for the kinds that HAVE one —
             "Outline only" draws no box, so a fill colour on it would be four
             controls that change nothing. */}

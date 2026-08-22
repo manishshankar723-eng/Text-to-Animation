@@ -119,6 +119,15 @@ const DEFAULT_TRACK_H = 2.6;
 const MIN_TRACK_H = 1.5;
 const MAX_TRACK_H = 6;
 
+// How far a press on a gutter row has to TRAVEL before it is a restack rather
+// than a click. Every row is already a click target (select something on it) and
+// a double-click target (select all of it), so a drag that claimed the press
+// immediately would take both away. Four pixels is under the distance a hand
+// wobbles on a click and well under the distance an intentional drag covers in
+// its first frame. ⚠ VERTICAL ONLY: sideways is not a gesture in this column, and
+// measuring the diagonal would make a horizontal twitch start a restack.
+const LANE_DRAG_SLOP = 4;
+
 // A lane kind → the name that kind goes by in the scene model, so a lane can
 // ask which properties it is allowed to animate. Only the spelling differs.
 const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overlay" };
@@ -516,6 +525,23 @@ export default function Timeline({
   // stops GESTURES, and the gestures live in this file. See `laneLocked`.
   onToggleLocked,
   /**
+   * A ROW WAS DRAGGED UP OR DOWN THE GUTTER — `(lane, toKey) => void`, where
+   * `toKey` is the row whose PLACE it was dropped on.
+   *
+   * ⚠ THE GESTURE IS THIS FILE'S, WHAT IT MEANS IS THE EDITOR'S — the same
+   * division as `onMoveToLane`. A restack is one write to the project's saved row
+   * order, which is the list all three renderers rank the stack by; the timeline
+   * has no business knowing that. See `moveLane` in AnimaticEditor.jsx.
+   *
+   * ⚠ WHICH ROWS MAY BE PICKED UP IS NOT DECIDED HERE EITHER: a lane arrives
+   * carrying `movable` (see `laneMovable`), so the rows the gutter offers a grab
+   * cursor on are exactly the rows the editor will accept — a second copy of that
+   * rule here is how the two come to disagree.
+   *
+   * Optional: without it no row can be dragged and the gutter is what it was.
+   */
+  onMoveLane,
+  /**
    * "PUT THE FOOTAGE ON ITS OWN TRACK" — offered on a picture row that is
    * carrying both, and on no other row.
    *
@@ -580,6 +606,7 @@ export default function Timeline({
   const colsRef = useRef(null); // the two columns — what the confirm is placed in
   const confirmRef = useRef(null); // the ✕'s popover, positioned beside its row
   const clipMenuRef = useRef(null); // a clip's right-click menu, positioned beside its bar
+  const laneDropRef = useRef(null); // the line showing where a dragged ROW would land
   // While an edge or a clip is being dragged we show a DRAFT, so things move
   // with the pointer without writing to the project on every mouse event.
   // ONE DRAFT FOR EVERY CLIP ON THE BAR — a picture, a caption, a shape, an
@@ -1004,6 +1031,12 @@ export default function Timeline({
   // BY CONSTRUCTION, exactly like `confirmKey` above: it holds an id rather than a
   // flag per bar, so opening a second menu closes the first.
   const [clipMenuId, setClipMenuId] = useState(null);
+  // A ROW being dragged up or down the stack: `{ key, overKey }` — the row that
+  // was picked up, and the row whose place it would take (null while the pointer
+  // is over somewhere it cannot land). ⚠ IT IS SET ONLY ONCE THE PRESS HAS
+  // TRAVELLED — see `startLaneDrag` — so a plain click on a row still selects it
+  // and a double-click still selects the whole row.
+  const [laneDrag, setLaneDrag] = useState(null);
   // ⚠ "fx" AND "afx" ARE TWO KINDS, because the rows that take one do not take
   // the other: an effect or a video transition belongs to the picture, a
   // crossfade to the audio. One shared marker would light every row up for every
@@ -1560,6 +1593,97 @@ export default function Timeline({
     }
     return null;
   }
+
+  /**
+   * PICK A ROW UP AND PUT IT SOMEWHERE ELSE IN THE STACK.
+   *
+   * ⚠ IT DOES NOT BECOME A DRAG UNTIL THE PRESS HAS TRAVELLED `LANE_DRAG_SLOP`.
+   * Every row in this gutter is already a click target (it selects a clip on the
+   * row) and a double-click target (it selects the whole row), and both have to
+   * survive — so the press is watched rather than claimed, and a press that never
+   * moves is left entirely alone. This is also why nothing here calls
+   * `preventDefault` on the pointerdown: that suppresses the mouse events the
+   * click is synthesised from, which would take the row's own two gestures away
+   * to pay for a third.
+   *
+   * ⚠ THE DESTINATION IS RE-ASKED ON EVERY MOVE FROM `laneAtPoint`, which reads
+   * the rows out of the DOM. The alternative — dividing the pointer's offset by a
+   * row height — is a second copy of the timeline's vertical geometry, and it is
+   * wrong for the whole of a vertical zoom (`trackH`) and wronger still while the
+   * lanes are scrolled. Same rule the ✕'s confirm and the clip menu follow.
+   *
+   * ⚠ ANY MOVABLE ROW MAY LAND ON ANY OTHER MOVABLE ROW. There used to be a
+   * `group` on the lane as well, and a drop was legal only within one kind —
+   * Text among Text rows, pictures among picture rows. That was a limit of the
+   * RENDERERS, not of this gesture, and it is gone: the stack is one z-scale now
+   * (`laneRank`), so a picture row can be dropped over an Images row and a Shapes
+   * row under a Video row, which is what was asked for. What still cannot be
+   * picked up or landed on is a row with `movable` false — audio (which is mixed,
+   * not stacked) and the captions row.
+   *
+   * ⚠ THE DROP LINE IS DRAWN FOR A LEGAL DESTINATION ONLY, BUT THE RELEASE IS
+   * REPORTED WHEREVER IT LANDED. Those are two different questions: a drag that
+   * ends over the audio row having shown no line is a puzzle if nothing then says
+   * why, so the row the pointer was over goes to the editor either way and the
+   * editor accepts it or says out loud what it refuses. Same division as
+   * `onMoveToLane`: the gesture is reported here, its meaning is decided there.
+   *
+   * ⚠ A LOCKED ROW IS NEITHER PICKED UP NOR LANDED ON, and that is enforced HERE
+   * rather than in the editor for the reason `laneLocked` gives: a lock stops
+   * GESTURES and the gestures live in this file. A locked row's place in the stack
+   * is part of "it plays and exports exactly as it did".
+   * ⚠ THE EDITOR STILL CHECKS, AND IT CHECKS MORE. Dragging across a locked row
+   * that is neither end of the drag would move it too, and working out which rows
+   * a drop shifts means knowing the whole stack's order — so that case is refused
+   * there, by name, in the status strip. This half is the one worth catching early
+   * because it is the common one: a line that appears over a row and is then
+   * refused is worse than a line that never appears.
+   */
+  function startLaneDrag(e, lane) {
+    if (e.button !== 0 || !onMoveLane || !lane.movable || lane.locked) return;
+    // A press on the row's own eye / padlock / ＋ / ✕ belongs to that control.
+    // Those stop the CLICK from reaching the row, not the pointerdown.
+    if (e.target.closest?.("button")) return;
+    const startY = e.clientY;
+    let live = false;
+    let landed = null; // the row under the pointer, legal or not
+    let shown = null; // the row the drop LINE is currently drawn at
+    function move(ev) {
+      if (!live) {
+        if (Math.abs(ev.clientY - startY) < LANE_DRAG_SLOP) return;
+        live = true;
+        // ⚠ THE HELD ROW IS MARKED HERE AND NOT ON THE POINTERDOWN. Marking it
+        // at the press would fade the row under every ordinary CLICK on it — a
+        // flicker on a gesture that is not a drag at all.
+        setLaneDrag({ key: lane.key, overKey: null });
+      }
+      const to = laneAtPoint(ev.clientY);
+      landed = to && to.key !== lane.key ? to.key : null;
+      const legal =
+        to && to.key !== lane.key && to.movable && !to.locked ? to.key : null;
+      // ⚠ ONLY WHEN THE ANSWER CHANGES. A pointermove arrives every frame and
+      // this state re-renders the whole bar; setting it to the value it already
+      // holds would re-render the timeline sixty times a second for a line that
+      // has not moved.
+      if (legal !== shown) {
+        shown = legal;
+        setLaneDrag({ key: lane.key, overKey: legal });
+      }
+    }
+    function up() {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setLaneDrag(null);
+      // ⚠ ON POINTERUP AND ONLY IF IT TRAVELLED — one write and one press of
+      // Ctrl+Z, never one per pointermove.
+      if (live && landed) onMoveLane(lane, landed);
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  /** Is this the row that is currently being dragged up or down the stack? */
+  const laneIsDragging = (lane) => laneDrag?.key === lane.key;
 
   /**
    * Which row a clip dragged off `fromKey` would land on, as a lane KEY — null
@@ -2802,6 +2926,42 @@ export default function Timeline({
   });
 
   /**
+   * WHERE A DRAGGED ROW WOULD LAND — one line, across both columns, measured off
+   * the row it would land on.
+   *
+   * ⚠ IT IS DRAWN AT THE SEAM THE ROW WOULD BE INSERTED AT, which is the TOP of
+   * the target row when the drag is going up and its BOTTOM when it is going
+   * down. That is not a detail: the drop is "take this row's place" (see
+   * `moveInList`), so a line always drawn above the target would promise the
+   * wrong seam for half of every drag — drag row 2 down onto row 4 and it lands
+   * BELOW row 4, because row 4 has already slid up into the gap row 2 left.
+   *
+   * ⚠ A CHILD OF `.tl-cols`, like the ✕'s confirm and the clip menu, for the
+   * same reason: it is the only ancestor that spans the labels AND the tracks and
+   * clips neither. A line inside the gutter would stop at the seam between the
+   * columns, which is exactly where the eye needs it to continue.
+   *
+   * ⚠ AND IT RUNS ON EVERY RENDER, WITH NO DEPENDENCY LIST — the rows move under
+   * it (the pointer is dragging, the lanes may be scrolling), so the seam is
+   * re-measured rather than remembered.
+   */
+  useLayoutEffect(() => {
+    const el = laneDropRef.current;
+    const cols = colsRef.current;
+    if (!laneDrag?.overKey || !el || !cols) return;
+    const row = gutterRef.current?.querySelector(
+      `[data-lane-row="${laneDrag.overKey}"]`
+    );
+    if (!row) return;
+    const from = lanes.findIndex((l) => l.key === laneDrag.key);
+    const to = lanes.findIndex((l) => l.key === laneDrag.overKey);
+    const colsBox = cols.getBoundingClientRect();
+    const rowBox = row.getBoundingClientRect();
+    const seam = to < from ? rowBox.top : rowBox.bottom;
+    el.style.top = `${Math.max(0, Math.min(seam - colsBox.top, colsBox.height))}px`;
+  });
+
+  /**
    * THE CLIP MENU SITS BESIDE ITS BAR — measured, for the same reasons the
    * confirm above is, plus one more.
    *
@@ -3512,6 +3672,11 @@ export default function Timeline({
               // able to disagree about what is about to be deleted.
               const { clips, ids, count, deletable } = laneDelete(lane);
               const muted = clips.length > 0 && clips.every((t) => t.muted);
+              // CAN THIS ROW BE DRAGGED UP OR DOWN? One answer, used by the
+              // cursor, the tooltip and the press — three places that must not be
+              // able to disagree about it. A LOCKED row is out: its place in the
+              // stack is part of what the padlock promises will not change.
+              const canMove = !!onMoveLane && !!lane.movable && !lane.locked;
               const selected = ids.includes(selectedTrackId);
               return (
                 <div
@@ -3526,11 +3691,20 @@ export default function Timeline({
                     lane
                   )} ${selected ? "sel" : ""} ${lane.hidden ? "off" : ""} ${
                     lane.locked ? "locked" : ""
+                  } ${canMove ? "movable" : ""} ${
+                    laneIsDragging(lane) ? "dragging" : ""
                   }`}
                   title={
                     (lane.hint || LANE_HINT[lane.kind]) +
-                    "\nDouble-click to select everything on this row."
+                    "\nDouble-click to select everything on this row." +
+                    /* ⚠ SAID ONLY ON THE ROWS THAT REALLY MOVE. `movable` is
+                       false for audio and for the captions row, and false for a
+                       row that is the only one of its kind — there is nowhere for
+                       it to go — and `canMove` also rules out a locked row, so
+                       this never promises a gesture that then does nothing. */
+                    (canMove ? "\nDrag it up or down to restack it." : "")
                   }
+                  onPointerDown={(e) => startLaneDrag(e, lane)}
                   onClick={() => ids.length && onSelectTrack(ids[0])}
                   /* ⚠ THE SHORTEST WAY TO "SELECT ALL OF THESE AND DELETE THEM",
                      which is what a row of forty auto-captions needs. A marquee
@@ -3739,6 +3913,15 @@ export default function Timeline({
             </div>
           </div>
         </div>
+
+        {/* WHERE A DRAGGED ROW WOULD LAND — a line at the seam, across the labels
+            AND the tracks, because the stack it is reordering is both columns.
+            Rendered only while a drag is actually over somewhere it can go, so
+            its absence is the "no" of a drop onto another kind of row. Its `top`
+            is measured off that row — see the layout effect above. */}
+        {laneDrag?.overKey && (
+          <div className="tl-lane-drop" ref={laneDropRef} aria-hidden="true" />
+        )}
 
         {/* ⚠ THE ✕'S CONFIRM, BESIDE THE ROW IT IS ABOUT — one popover, here,
             rather than one per row inside the gutter. It hung BELOW its row

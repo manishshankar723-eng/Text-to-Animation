@@ -1417,6 +1417,48 @@
   color: var(--primary);
 }
 
+/* --- Restacking: a row dragged up or down the gutter ---------------------- */
+/* ⚠ THE GRAB CURSOR IS THE WHOLE AFFORDANCE, so it must appear on exactly the
+   rows that move and on no others. The class comes from `canMove` in
+   Timeline.jsx — the one answer the cursor, the tooltip and the press all read —
+   so audio, the captions row, a LOCKED row, and a row that is the only one of its
+   kind never offer it: a hand that opens on a row nothing can be done to is worse
+   than no hand at all. There is no ▲▼ pair in the action cluster on purpose: that
+   grid is four fixed columns at a 13rem gutter (9.5rem on a narrow screen), and
+   two more buttons would have to come out of the layer NAME, which is already
+   where the ellipsis bites. */
+.tl-gutter-row.movable {
+  cursor: grab;
+}
+/* The row you are holding. Faded rather than lifted or outlined: the LINE says
+   where it is going (`.tl-lane-drop`), and a second moving mark competing with it
+   is what makes a reorder feel imprecise. `grabbing` is set on the row itself
+   because the pointer is captured by the window listeners, not by the row. */
+.tl-gutter-row.movable.dragging {
+  cursor: grabbing;
+  opacity: 0.5;
+}
+/* WHERE IT WOULD LAND — one line, at the seam, across the labels AND the tracks.
+   ⚠ `translateY(-50%)` so it straddles the seam rather than sitting under it:
+   the measured `top` IS the boundary between two rows, and a 2px bar drawn from
+   there would read as belonging to the row below it. */
+.tl-lane-drop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--primary);
+  border-radius: 2px;
+  /* It is a mark on the timeline, not a part of it: the pointer is mid-drag and
+     must go on reaching the rows underneath to keep answering "which row now?". */
+  pointer-events: none;
+  /* Above the clips and the playhead, below the ✕'s confirm and a clip menu
+     (both 40) — nothing that opens a popover can be mid-drag anyway, and the
+     ordering is written down here rather than discovered later. */
+  z-index: 30;
+}
+
 /* --- A row that is switched off ------------------------------------------ */
 /* ⚠ IT MUST STILL BE READABLE. A hidden row is one you are coming back to —
    that is the whole difference between the eye and the ✕ — so this says "not in

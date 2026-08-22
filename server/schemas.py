@@ -1543,6 +1543,43 @@ class AnimaticSettings(BaseModel):
     # selected or deleted. So this list is read by the EDITOR and deliberately
     # ignored by `animatic_render.py` and by the exporter.
     locked_lanes: list[str] = Field(default_factory=list)
+    # WHAT ORDER THE USER PUT THE ROWS IN — the timeline's gutter, top of the
+    # stack first, in the SAME token vocabulary as the two lists above ("text:" is
+    # the default text row, "shape:<id>" one the user added, "frames:<n>" picture
+    # track n).
+    #
+    # ⚠ THIS IS THE COMPOSITING ORDER OF THE WHOLE VISUAL STACK, and it is read by
+    # the EXPORTER as well as the editor — which is the opposite of what this field
+    # was when it was introduced. It used to name only the overlay rows, and what
+    # drew over what was decided elsewhere: by `AnimaticFrame.track` for the
+    # picture rows, and by a sequence hard-coded three times over (in `sceneAt`, in
+    # `ProgramCanvas` and in `render_frame`) for the four kinds. That is exactly why
+    # a row could only be restacked among its own kind — reported as "i check
+    # shapes layer move only other shapes layer … i want these all layer move up
+    # down each other". Every visual row is on one z-scale now; see `lane_rank` in
+    # animatic_render.py and its twin in client/src/animatic/lane_order.js.
+    #
+    # ⚠ A PICTURE ROW'S `track` IS NO LONGER ITS Z. It is which ROW a clip is on
+    # and nothing more. Dragging a picture row therefore rewrites THIS list and
+    # touches no clip at all, where it used to renumber every clip on both rows.
+    #
+    # ⚠ AUDIO AND THE CAPTIONS ROW ARE NEVER IN HERE. Audio rows are mixed rather
+    # than stacked, so no order of them makes a different film; captions are pinned
+    # to the top, and being absent from this list is WHAT PINS THEM — an unlisted
+    # row ranks above every listed one.
+    #
+    # ⚠ A ROW THIS LIST DOES NOT MENTION KEEPS ITS DERIVED PLACE, ABOVE EVERYTHING
+    # THE LIST NAMES — which is what makes an empty list mean "the order this
+    # editor has always produced": with nothing listed, every row falls back to the
+    # old hard-coded sequence (pictures by track, then shapes, then overlay
+    # pictures, then text). So every animatic saved before this opens, previews and
+    # exports exactly as it did, and there is no migration pass.
+    #
+    # ⚠ IT IS NOT FILTERED BY `hidden_lanes` ANYWHERE. A hidden row's clips are
+    # dropped before the encoder sees them, so naming it here costs nothing —
+    # whereas stripping it would renumber the ranks of every row below it, which is
+    # a restack nobody asked for.
+    lane_order: list[str] = Field(default_factory=list)
 
 
 class AnimaticProject(BaseModel):

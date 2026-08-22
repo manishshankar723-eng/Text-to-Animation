@@ -413,6 +413,68 @@ check("...and both sides fold it the same way",
       and animatic_render.text_backdrop({"backdrop": "plain"}) == "plain"
       and animatic_render.text_backdrop({}) == "scrim")
 
+# CHOOSING "Just the letters" TURNS OFF ALL THREE PIECES OF FURNITURE, not one.
+# The regression this guards is a real report: the backdrop was switched off,
+# the clip still carried `shadow: 0.06`, and the dark edge that leaves round
+# every glyph reads as an outline — i.e. as the control not working. Run through
+# node against the REAL scene.js, because the rule lives there precisely so it
+# can be checked rather than only read.
+BACKDROP_HARNESS = """
+import { backdropPatch, textBackdrop, backdropHasFill, TEXT_BACKDROPS } from %(mod)s;
+process.stdout.write(JSON.stringify({
+  kinds: TEXT_BACKDROPS,
+  plain: backdropPatch("plain"),
+  scrim: backdropPatch("scrim"),
+  none: backdropPatch("none"),
+  junk: backdropPatch("hologram"),
+  folds: TEXT_BACKDROPS.concat(["hologram", ""]).map((b) => textBackdrop({ backdrop: b })),
+  fills: TEXT_BACKDROPS.map((b) => backdropHasFill({ backdrop: b })),
+}));
+"""
+SCENE_JS = os.path.join(ROOT, "client", "src", "animatic", "scene.js")
+
+
+def read_js_backdrops() -> dict:
+    if not shutil.which("node"):
+        print("  node is not on PATH — the pane's backdrop rule was NOT checked.")
+        return {}
+    tmp = tempfile.mkdtemp(prefix="backdrop_")
+    try:
+        path = os.path.join(tmp, "harness.mjs")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(BACKDROP_HARNESS % {"mod": json.dumps(_file_url(SCENE_JS))})
+        proc = subprocess.run(
+            ["node", path], capture_output=True, text=True, encoding="utf-8", timeout=60
+        )
+        if proc.returncode != 0:
+            print(proc.stderr.strip()[:2000])
+            return {}
+        return json.loads(proc.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+js_bd = read_js_backdrops()
+if js_bd:
+    check("the browser knows the same four backdrop kinds the exporter does",
+          js_bd["kinds"] == list(animatic_render.TEXT_BACKDROPS),
+          f"(js {js_bd['kinds']}, py {list(animatic_render.TEXT_BACKDROPS)})")
+    check("...and folds every one of them, plus junk, the same way",
+          js_bd["folds"] == [animatic_render.text_backdrop({"backdrop": b})
+                             for b in list(animatic_render.TEXT_BACKDROPS) + ["hologram", ""]],
+          f"(js {js_bd['folds']})")
+    check("only 'scrim' and 'box' paint a fill",
+          js_bd["fills"] == [True, True, False, False], f"({js_bd['fills']})")
+    check("CHOOSING 'Just the letters' ALSO CLEARS THE OUTLINE AND THE SHADOW",
+          js_bd["plain"] == {"backdrop": "plain", "stroke_px": 0, "shadow": 0},
+          f"(wrote {js_bd['plain']} — three fields draw dark furniture, "
+          f"so 'nothing at all' has to turn off all three)")
+    check("...and choosing any other kind touches nothing but the backdrop",
+          js_bd["scrim"] == {"backdrop": "scrim"} and js_bd["none"] == {"backdrop": "none"},
+          f"(scrim {js_bd['scrim']}, none {js_bd['none']})")
+    check("...and an unknown kind is written as a scrim, not stored as junk",
+          js_bd["junk"] == {"backdrop": "scrim"}, f"({js_bd['junk']})")
+
 # --- The shadow's ink and direction ---
 check("a shadow at 0% strength is not drawn",
       ink(render(shadow=0.15, shadow_opacity=0.0))[0] == base_box)

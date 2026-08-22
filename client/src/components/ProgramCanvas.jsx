@@ -6,11 +6,32 @@
 // clip against the pixels beneath it. See `animatic/gl/compositor.js` for the
 // design, and for why the SHAPES had to move into the canvas as well.
 //
-// WHAT STAYED IN THE DOM, and is passed in as `children`: the captions, the
-// shot label, and the selection outlines and resize handles. Hit-testing and
-// drag handles are most of what a canvas editor costs and exactly the part
-// WebGL adds nothing to. They are positioned in the same fractions the
-// compositor draws at, so a shape and its handle cannot separate.
+// WHAT STAYED IN THE DOM: the captions, the shot label, and the selection
+// outlines and resize handles. Hit-testing and drag handles are most of what a
+// canvas editor costs and exactly the part WebGL adds nothing to. They are
+// positioned in the same fractions the compositor draws at, so a shape and its
+// handle cannot separate.
+//
+// ⚠ AND THAT IS WHY THE PICTURE IS DRAWN IN *BANDS*. A caption is DOM and every
+// other layer is GL, so once a text row could be dragged UNDER a picture row
+// ("i want video layer move up Image and shapes and shapes down video") one
+// canvas could no longer express the stack: a single element has a single place
+// in the DOM, so text either covers all of the picture or none of it. The stack
+// is therefore cut at every text row, each run of GL layers gets its own canvas,
+// and the captions sit between them as ordinary siblings — `.an-screen-gl` and
+// `.an-text-layer` are both `position: absolute; inset: 0`, so DOM order IS the
+// stacking order and no z-index arithmetic is involved.
+//
+// ⚠ A PROJECT THAT HAS NOT BEEN RESTACKED IS ONE BAND, which is one canvas with
+// the captions over it — exactly what this file was before bands existed. The
+// second canvas only appears when someone has actually put a row on top of text.
+//
+// ⚠ THE ONE THING BANDS COST: a blend mode cannot see through a band boundary.
+// An overlay set to "screen" samples what is beneath it, and what is beneath it
+// in the band below belongs to a different drawing buffer. It reads black there.
+// Captions were always on top before this, so no blend could ever see one — this
+// is a new corner rather than a regression, and it is the price of keeping
+// captions as real text instead of rasterising them into the canvas.
 //
 // The media elements are HIDDEN, not absent. A <video> has to be in the
 // document to decode, and `useMonitorVideo` drives them through `videoElsRef`
@@ -28,6 +49,9 @@ import {
   shapeFan,
 } from "../animatic/gl/compositor.js";
 import { loadLut, lutNamesIn } from "../animatic/gl/lut.js";
+// WHAT DRAWS OVER WHAT — `scene.layers`, folded into runs of one kind.
+// ⚠ The monitor no longer knows the order; it walks the one the scene resolved.
+import { layerRuns } from "../animatic/scene.js";
 import { transitionMatte } from "../animatic/transitions.js";
 
 // The canvas is drawn at the device's real pixel density, up to a point. Past
@@ -60,9 +84,18 @@ export default function ProgramCanvas({
   settings,
   videoElsRef,
   onUnavailable,
+  // The captions of one band, as DOM. ⚠ THE EDITOR DRAWS THEM AND THIS FILE
+  // PLACES THEM: `captionStyle` and the eleven type controls behind it are the
+  // editor's business, where the clip is in the stack is this one's. Called once
+  // per text band, which for an un-restacked project is once, over the picture.
+  renderTexts,
 }) {
-  const canvasRef = useRef(null);
-  const compositorRef = useRef(null);
+  // ⚠ ONE ENTRY PER BAND, KEYED BY ITS PLACE IN THE STACK — not one canvas and
+  // one compositor. See the note at the top of the file: the band count is 1 for
+  // every project nobody has restacked, so these two maps hold exactly one thing
+  // each and behave as the two plain refs they replaced.
+  const canvasRefs = useRef(new Map()); // band index → <canvas>
+  const compositorsRef = useRef(new Map()); // band index → Compositor
   const mediaRef = useRef(new Map()); // url → the <img> / <video> element
   const [ready, setReady] = useState(0); // bumped when a picture finishes loading
   const [luts, setLuts] = useState(() => new Map());
@@ -90,6 +123,43 @@ export default function ProgramCanvas({
     }
     return out;
   }, [scene.pictures]);
+
+  // --- The BANDS: how many canvases this stack needs -----------------------
+  /**
+   * The stack cut at every run of captions — `[{ kind: "gl", runs }, { kind:
+   * "text", indices }, …]`, bottom first.
+   *
+   * ⚠ A "gl" BAND IS ONE CANVAS AND A "text" BAND IS ONE `.an-text-layer`, and
+   * they are rendered as siblings in this order. Text is the only kind that
+   * splits the picture, because text is the only kind drawn as DOM.
+   *
+   * ⚠ IT ALWAYS STARTS WITH A GL BAND, even an empty one. The bottom of the
+   * monitor has to be the canvas that clears itself to the letterbox colour
+   * (`opaque`), or a project whose lowest row is a caption would show the page
+   * behind it through the frame.
+   */
+  const bands = useMemo(() => {
+    const out = [{ kind: "gl", runs: [] }];
+    for (const run of layerRuns(scene.layers)) {
+      if (run.kind === "text") {
+        out.push({ kind: "text", indices: run.indices });
+        continue;
+      }
+      const last = out[out.length - 1];
+      if (last.kind === "gl") last.runs.push(run);
+      else out.push({ kind: "gl", runs: [run] });
+    }
+    return out;
+  }, [scene.layers]);
+
+  // How many canvases there are, and where each sits in `bands`. The context
+  // effect below keys its compositors on these, so a restack that changes the
+  // shape of the stack rebuilds exactly the contexts it has to.
+  const glBands = useMemo(
+    () => bands.map((band, i) => (band.kind === "gl" ? i : -1)).filter((i) => i >= 0),
+    [bands]
+  );
+  const glBandKey = glBands.join(",");
 
   // --- What has to be in the document for this moment ----------------------
   // Only what is ON SCREEN NOW, never the whole project: an animatic is often
@@ -163,22 +233,35 @@ export default function ProgramCanvas({
   // black monitor rather than a leak nobody would have noticed.
   const unavailableRef = useRef(onUnavailable);
   unavailableRef.current = onUnavailable;
+  // ⚠ KEYED ON THE BAND LIST, NOT `[]`. One context per band, and the list only
+  // changes when a row is dragged across a caption row — so for every project
+  // that has never been restacked this runs once, builds one context, and is the
+  // effect it always was. A band that goes away has its context DISPOSED here:
+  // WebGL contexts are a capped resource (a browser drops the oldest once you
+  // pass its limit, which would blank a canvas that is still on screen), so
+  // leaking one per restack is not an option.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return undefined;
-    try {
-      compositorRef.current = new Compositor(canvas);
-    } catch (e) {
-      console.error("[monitor] WebGL is unavailable — the preview cannot draw.", e);
-      unavailableRef.current?.(e);
-      return undefined;
+    const made = [];
+    for (const index of glBandKey ? glBandKey.split(",").map(Number) : []) {
+      const canvas = canvasRefs.current.get(index);
+      if (!canvas) continue;
+      try {
+        // ⚠ ONLY THE BOTTOM BAND IS OPAQUE. Every band above it is a sheet of
+        // glass over the captions and pictures below — see `Compositor`.
+        const compositor = new Compositor(canvas, { opaque: index === 0 });
+        compositorsRef.current.set(index, compositor);
+        made.push(compositor);
+      } catch (e) {
+        console.error("[monitor] WebGL is unavailable — the preview cannot draw.", e);
+        unavailableRef.current?.(e);
+        return undefined;
+      }
     }
-    const compositor = compositorRef.current;
     return () => {
-      compositor.dispose();
-      compositorRef.current = null;
+      for (const compositor of made) compositor.dispose();
+      compositorsRef.current.clear();
     };
-  }, []);
+  }, [glBandKey]);
 
   // --- The box -------------------------------------------------------------
   // Watches the canvas itself rather than listening for the things that resize
@@ -191,7 +274,9 @@ export default function ProgramCanvas({
   // redrawing — and a size that rounds to the same whole pixels returns the
   // SAME state object, so React bails out and nothing redraws at all.
   useEffect(() => {
-    const canvas = canvasRef.current;
+    // The BOTTOM band's canvas. Every band is `inset: 0` inside the same screen
+    // box, so they are all the same size and one observer answers for the lot.
+    const canvas = canvasRefs.current.get(0);
     if (!canvas) return undefined;
     const measure = () => {
       const rect = canvas.getBoundingClientRect();
@@ -226,15 +311,21 @@ export default function ProgramCanvas({
   // each time (`animated: true`), which is what stops a playing clip freezing
   // on its first frame.
   useEffect(() => {
-    const compositor = compositorRef.current;
-    const canvas = canvasRef.current;
-    if (!compositor || !canvas || compositor.lost) return;
-
-    const box = canvas.getBoundingClientRect();
+    const bottom = canvasRefs.current.get(0);
+    if (!bottom) return;
+    const box = bottom.getBoundingClientRect();
     if (!box.width || !box.height) return;
     const density = Math.min(window.devicePixelRatio || 1, MAX_BACKING_PX / box.width);
     const width = Math.max(1, Math.round(box.width * Math.max(1, density)));
     const height = Math.max(1, Math.round(box.height * Math.max(1, density)));
+
+    // ⚠ ONE PASS PER BAND, BOTTOM FIRST. Everything from here to `compositor.end()`
+    // is what this effect always did for the whole frame; it is now what it does
+    // for ONE canvas, and the loop at the bottom runs it for each. With nothing
+    // restacked there is one band, so it runs exactly once and draws exactly what
+    // it drew before.
+    const drawBand = (compositor, band) => {
+    if (!compositor || compositor.lost) return;
     compositor.resize(width, height);
 
     const lutTextures = new Map();
@@ -387,49 +478,68 @@ export default function ProgramCanvas({
     }
     };
 
-    for (const layer of scene.pictures || []) drawTrack(layer);
-
-    // Bottom to top: picture → shapes → overlay pictures. Text is DOM, above
-    // all of it. `render_frame` stacks them the same way, which is the whole
-    // reason the shapes are in here rather than left in the DOM.
-    for (const shape of scene.shapes || []) {
-      const fan = shapeFan(shape);
-      compositor.layer({
-        vertices: fan.vertices,
-        count: fan.count,
-        mode: compositor.gl.TRIANGLE_FAN,
-        source: { color: hexToRgb(shape.color || "#c2185b") },
-        opacity: shape.opacity ?? 1,
-        useAlpha: false,
-        look: null,
-        luts: lutTextures,
-      });
-    }
-
-    for (const overlay of scene.overlays || []) {
-      const element = elementFor(`ov:${overlay.id}`);
-      if (!element) continue;
-      const sourceW = element.naturalWidth || 0;
-      const sourceH = element.naturalHeight || 0;
-      const entry = compositor.texture(textureKey(`ov:${overlay.id}`), element);
-      if (!entry || !sourceW || !sourceH) continue;
-      const { w, h } = overlayRect(overlay, sourceW, sourceH, width, height);
-      if (!(w > 0) || !(h > 0)) continue;
-      compositor.layer({
-        vertices: rotatedQuad(overlay.x, overlay.y, w, h, overlay.rotation),
-        count: 6,
-        mode: compositor.gl.TRIANGLES,
-        source: entry,
-        opacity: overlay.opacity ?? 1,
-        // An overlay KEEPS its own alpha — a cut-out PNG logo is the ordinary
-        // case here, and the opposite of a frame.
-        useAlpha: true,
-        look: { effects: overlay.effects, mask: overlay.mask, blend: overlay.blend },
-        luts: lutTextures,
-      });
+    // ⚠ THE ORDER COMES OFF THE SCENE, IT IS NOT WRITTEN HERE. This used to be
+    // three loops one after another — every picture track, then every shape, then
+    // every overlay — and that hard-coded sequence is exactly what made a row
+    // impossible to drag out of its own kind. `render_frame` walks the same list
+    // in the same order, which is what keeps the monitor and the MP4 agreeing.
+    for (const run of band.runs) {
+      if (run.kind === "picture") {
+        for (const i of run.indices) {
+          const layer = (scene.pictures || [])[i];
+          if (layer) drawTrack(layer);
+        }
+      } else if (run.kind === "shape") {
+        for (const i of run.indices) {
+          const shape = (scene.shapes || [])[i];
+          if (!shape) continue;
+          const fan = shapeFan(shape);
+          compositor.layer({
+            vertices: fan.vertices,
+            count: fan.count,
+            mode: compositor.gl.TRIANGLE_FAN,
+            source: { color: hexToRgb(shape.color || "#c2185b") },
+            opacity: shape.opacity ?? 1,
+            useAlpha: false,
+            look: null,
+            luts: lutTextures,
+          });
+        }
+      } else if (run.kind === "overlay") {
+        for (const i of run.indices) {
+          const overlay = (scene.overlays || [])[i];
+          if (!overlay) continue;
+          const element = elementFor(`ov:${overlay.id}`);
+          if (!element) continue;
+          const sourceW = element.naturalWidth || 0;
+          const sourceH = element.naturalHeight || 0;
+          const entry = compositor.texture(textureKey(`ov:${overlay.id}`), element);
+          if (!entry || !sourceW || !sourceH) continue;
+          const { w, h } = overlayRect(overlay, sourceW, sourceH, width, height);
+          if (!(w > 0) || !(h > 0)) continue;
+          compositor.layer({
+            vertices: rotatedQuad(overlay.x, overlay.y, w, h, overlay.rotation),
+            count: 6,
+            mode: compositor.gl.TRIANGLES,
+            source: entry,
+            opacity: overlay.opacity ?? 1,
+            // An overlay KEEPS its own alpha — a cut-out PNG logo is the ordinary
+            // case here, and the opposite of a frame.
+            useAlpha: true,
+            look: { effects: overlay.effects, mask: overlay.mask, blend: overlay.blend },
+            luts: lutTextures,
+          });
+        }
+      }
     }
 
     compositor.end();
+    };
+
+    for (const [index, band] of bands.entries()) {
+      if (band.kind !== "gl") continue;
+      drawBand(compositorsRef.current.get(index), band);
+    }
     // ⚠ `settings.aspect_ratio` is in here even though nothing above reads it,
     // and `canvasBox` is not enough on its own: the observer reports a frame
     // LATER, so on it alone every change of shape would paint the old picture
@@ -438,6 +548,7 @@ export default function ProgramCanvas({
     // unrelated edit, which is what it used to be.
   }, [
     scene,
+    bands,
     frames,
     settings.fit,
     settings.background,
@@ -450,7 +561,37 @@ export default function ProgramCanvas({
 
   return (
     <>
-      <canvas className="an-screen-gl" ref={canvasRef} />
+      {/* ⚠ THE STACK, AS SIBLINGS, BOTTOM FIRST — canvases and caption layers
+          interleaved. `.an-screen-gl` and `.an-text-layer` are both
+          `position: absolute; inset: 0`, so DOM ORDER IS THE STACKING ORDER and
+          there is no z-index to keep in step with the ranks.
+
+          ⚠ A CANVAS IS KEYED BY ITS BAND INDEX, so React keeps the element (and
+          therefore the WebGL context and every texture in it) as long as the
+          shape of the stack holds. Keying by anything that changes per frame
+          would rebuild the context on every playhead tick. */}
+      {bands.map((band, index) =>
+        band.kind === "gl" ? (
+          <canvas
+            key={`gl:${index}`}
+            className="an-screen-gl"
+            ref={(el) => {
+              if (el) canvasRefs.current.set(index, el);
+              else canvasRefs.current.delete(index);
+            }}
+          />
+        ) : (
+          // The captions of this band, drawn by the editor — it owns
+          // `captionStyle` and the type controls behind it. This file only says
+          // WHERE in the stack they go.
+          <div className="an-text-layer" key={`text:${index}`}>
+            {renderTexts?.(
+              band.indices.map((i) => (scene.texts || [])[i]).filter(Boolean),
+              index
+            )}
+          </div>
+        )
+      )}
       {/* Hidden, not absent: a <video> has to be in the document to decode, and
           `useMonitorVideo` drives these through `videoElsRef` exactly as it did
           when they WERE the picture. `aria-hidden` because they are the
