@@ -1942,3 +1942,110 @@
 .fs-bin-card:active {
   cursor: grabbing;
 }
+
+/* --- A Media card's name, typed ------------------------------------------ */
+/* THE SAME BOX AS `.fs-label`, WITH A BORDER ROUND IT. Renaming must not change
+   the shape of the card — a field that is taller than the caption it replaces
+   makes the whole column jump on a double-click, and in the grid view it would
+   re-flow the row. So the metrics are the label's and only the chrome is new,
+   borrowed from `.fs-dur-input` because the two are the same act (type over what
+   is printed) in the same foot. */
+.fs-name-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.15rem;
+  background: var(--panel);
+  border: 1px solid var(--primary);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.05rem 0.25rem;
+}
+.fs-name-input:focus {
+  outline: none;
+}
+/* In list view the name is the card's headline rather than its caption, so the
+   field follows it — same rule, same place, one size up. */
+.fs-vertical.fs-view-list .fs-name-input {
+  margin-top: 0;
+  font-size: 0.74rem;
+}
+/* ⚠ A HINT AND NOT AN INVITATION. The name is editable on a double-click, and
+   the only mark of that is the text cursor and a colour on hover — a bordered
+   box round every caption would make a library of forty cards look like a form.
+   Same reasoning as the timeline's typed hold, which is also only a caret until
+   you touch it. */
+.fs-label-edit {
+  cursor: text;
+}
+.fs-label-edit:hover {
+  color: var(--text);
+}
+/* Which card the open menu belongs to. The menu opens at the POINTER and can be
+   flipped or clamped away from the card, so without this there are moments when
+   nothing on screen says what it is about. */
+.fs-bin-card.menu-open {
+  border-color: var(--primary);
+}
+
+/* --- A Media card's right-click menu ------------------------------------- */
+/* ⚠ IT IS `position: fixed`, AND THAT IS FORCED RATHER THAN CHOSEN. The Media
+   pane scrolls and clips, so a menu rendered inside a card would be cut off at
+   the pane's edge and a card low in a long library would open one that is mostly
+   not there. The timeline's clip menu solves the same problem by measuring into
+   `.tl-cols` — the one ancestor there that clips nothing — and this pane has no
+   such ancestor, so the viewport is it. `top` / `left` are set in JS from the
+   pointer; see the layout effect in MediaBin.jsx.
+
+   ⚠ AND IT MUST RESTATE ITS WIDTH. It borrows `.tl-layer-menu`'s surface, whose
+   `min-width: 100%` is sized against the layer column it hangs under — for a
+   FIXED box that percentage resolves against the VIEWPORT, so inheriting it
+   would open a menu the full width of the window. Same trap `.an-settings-menu`
+   documents beside it. */
+.fs-card-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  min-width: 11.5rem;
+  max-width: 17rem;
+}
+/* Removing a source takes its clips with it, so the line that does it is marked
+   the way the card's ✕ is. Scoped, because `.tl-layer-menu-opt` is shared with
+   three other menus that have no destructive line. */
+.fs-card-menu .tl-layer-menu-opt.danger:hover:not(:disabled) {
+  color: var(--fail);
+}
+.fs-card-menu .tl-layer-menu-opt.danger:hover:not(:disabled) .tl-layer-menu-ico {
+  color: var(--fail);
+}
+/* WHAT THIS SOURCE IS — the Properties view, which replaces the commands in the
+   same box rather than opening a dialog (see the note in MediaBin.jsx). Label
+   left, value right, wrapping only where it must: a file id is one long token
+   and `anywhere` is the only break that will touch it. */
+.fs-card-props {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0.1rem 0.45rem 0.35rem;
+}
+.fs-card-prop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.7rem;
+}
+.fs-card-prop dt {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.fs-card-prop dd {
+  margin: 0;
+  color: var(--text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}

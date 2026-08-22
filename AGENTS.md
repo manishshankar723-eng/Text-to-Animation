@@ -201,7 +201,36 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-22 — **FORTY-ONE SHAPES, IN FIVE FOLDERS**
+**Last updated:** 2026-08-22 — **A MEDIA CARD HAS A NAME YOU CAN CHANGE, AND A
+RIGHT-CLICK MENU** (user-specified, with three screenshots of the Media pane and
+Premiere's clip context menu as the reference).
+⚠ **A LIBRARY CARD RENAMES ON BOTH GESTURES** — double-click its NAME, or
+right-click → Rename — and they are ONE handler (`renameAsset` in
+`AnimaticEditor.jsx`), not two paths. ⚠ **AND A RENAME CROSSES THE SEAM THE MEDIA
+PANE EXISTS TO DEFEND**: the pane draws `asset.label`, the timeline draws
+`frame.label`, so it renames **the clips that still carry the old name and only
+those** — a clip the user named by hand keeps its name. An AUDIO clip is named by
+`filename`, not `label`; write the other one and the bar never updates.
+⚠ **THE RIGHT-CLICK MENU OPENS ON EVERY CARD**, which is the opposite of the
+timeline's rule (`clipMenuOffers` returns null and lets the browser's menu stand
+for a bar with nothing to offer). Every card has Rename, ＋, Properties and ✕, so
+an empty menu is unreachable. Download is still gated on `isVeoRender`; Remove
+from Media still does not confirm.
+⚠ **IT IS `position: fixed` AND ANCHORED TO ITS CARD BY AN OFFSET, NOT TO THE
+POINTER'S PLACE ON SCREEN.** Fixed is forced (the pane scrolls and clips). The
+first version stored screen coordinates and closed on any scroll — and focusing
+the menu's first line makes the pane emit a scroll, so it shut in the frame it
+opened. `placeMenu` re-reads the card's box on every render and every scroll and
+follows it; only a resize, or the card leaving the window, closes it.
+Files: `client/src/components/MediaBin.jsx`,
+`client/src/components/AnimaticEditor.jsx`,
+`client/src/styles/animatic-editor.css`, `tests/editor_media_bin_check.py`.
+**Verified:** `python tests/editor_media_bin_check.py` — **65 checks, all pass**
+(30 new); `asset_fields_check`, `selection_check`, `keyframe_ops_check` and
+`npm run build` clean. The menu, the Properties view and the rename field were
+screenshotted in real Chromium and eyeballed in BOTH the icon and list views.
+
+**Previously:** 2026-08-22 — **FORTY-ONE SHAPES, IN FIVE FOLDERS**
 (user-specified, with two reference sheets of geometric shapes and three
 screenshots of the Media pane's tabs).
 ⚠ **THE SHAPE LIBRARY IS 41 KINDS NOW, NOT 4**, and the picker is a TREE rather
@@ -2299,7 +2328,91 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-22 (latest) — FORTY-ONE SHAPES, IN FIVE FOLDERS (user-specified, with two reference sheets of geometric shapes and three screenshots of the Media pane's Media / Shapes / Effects tabs)
+### 2026-08-22 (latest) — A MEDIA CARD HAS A NAME YOU CAN CHANGE, AND A RIGHT-CLICK MENU (user-specified, with three screenshots: the Media pane's card list, its four collapsed sections, and Premiere's own clip context menu as the reference)
+
+> "i want rename ifuction add in media panel show clips like mage, video, audio,
+> Storyboard frames and if add any in media panel buy user and generted image and
+> video so user go and double click on clip text so uver get rename option like
+> this or user right click of moue on clip so user get dropdown panel so rename of
+> each clip in media kepp both fuction and add in drop down like more option see
+> iamge 3 some improtent fuction in clip when user click on clip in media"
+
+**A library card can be renamed on BOTH gestures, because both were asked for**:
+double-click the card's NAME, or right-click the card and press Rename. They are
+one handler (`onRename` → `renameAsset`), not two code paths.
+
+⚠ **A RENAME CROSSES THE SEAM THE MEDIA PANE EXISTS TO DEFEND, AND THAT IS THE
+WHOLE OF THE DESIGN.** The library and the timeline are two lists on purpose
+(`animatic/assets.js`) — but the pane draws `asset.label` and the timeline draws
+`frame.label`, so writing only the card leaves a source renamed to "Chase wide"
+whose four bars still read `shot_04.mp4`: a rename that visibly did not take. So
+`renameAsset` **also renames the clips that still carry the OLD name, and only
+those**. A clip whose label has diverged is something the user named by hand; that
+is an edit, not an inheritance, and it is left alone. (There is no per-clip rename
+in the UI yet. When there is, this rule already covers it.)
+
+⚠ **AN AUDIO CLIP IS NAMED BY `filename`, NOT `label`.** That is the field the
+timeline prints and the field `assetFromAudio` reads back to build the card. Write
+the other one and the bar keeps the upload's name for ever while the card beside
+it shows the new one.
+
+⚠ **NO REQUEST OF ITS OWN, AND NONE IS MISSING.** `assetForSave` already carries
+`label`, so the ordinary autosave takes it and the undo stack snapshots the whole
+document — one write, undoable, like every other edit in the editor.
+
+**The right-click menu is six lines, and it is `.tl-layer-menu`'s surface**
+(Rename · ＋ Add to timeline · Select its N clips · Download · Properties ·
+Remove from Media). ⚠ **IT OPENS ON EVERY CARD, which is the OPPOSITE of the
+timeline's rule** — `clipMenuOffers` returns null for a bar with nothing to offer
+and lets the browser's own menu stand, because a box of greyed-out lines is worse
+than no menu. Every card here has Rename, ＋, Properties and ✕, so an empty menu
+is not reachable. **Download is still gated on `isVeoRender`** — the same gate as
+the card's ⬇, because every other source is already on the user's machine or still
+on the board. **Remove from Media still does not confirm** ("no dropdwon delete and
+cancel option not need here"); the clip count is in the title, before the press.
+
+⚠ **THE MENU IS `position: fixed` AND ANCHORED TO ITS CARD BY AN OFFSET, NOT TO
+THE POINTER'S PLACE ON SCREEN — and getting that wrong was a real bug, found by
+this session's own test.** Fixed is forced: the Media pane scrolls and clips, so a
+box rendered inside a card is cut off at the pane's edge (the timeline's clip menu
+measures into `.tl-cols`, and this pane has no ancestor that clips nothing). The
+first version stored viewport coordinates and **closed on any scroll** — and
+focusing the menu's first line makes the pane emit a scroll of its own, so the
+menu shut in the same frame it opened. It now stores the pointer's offset INSIDE
+the card, re-reads the card's box on every render and every scroll (`placeMenu`),
+follows it, and closes only when the card leaves the window. A resize still closes
+it: the grid re-flows and no offset can track that.
+
+**Properties replaces the menu's own contents rather than opening a dialog** —
+five short lines (Kind · Section · Length · In the cut · File id) with a ‹ Back
+that returns to the commands. There is deliberately **no width, height or codec**:
+nothing in the client knows them (the server does not measure them and an
+`imageio-ffmpeg` install ships no `ffprobe`), and a row reading "—" on every card
+is furniture.
+
+Smaller things the rename needed: the card **stops being `draggable` while its
+name is being typed** (a draggable ancestor eats a text selection, so the field
+could otherwise only be edited from the end); the field uses
+**`focus({preventScroll: true}) + select()`, never `autoFocus`** (the scrolling
+ancestor is the Media pane, so plain autofocus jumps the list under the pointer);
+and **an empty name is a CANCEL, not a blank name** — a label-less card captions
+itself "Untitled", so writing "" looks exactly like the rename having failed.
+
+Files: `client/src/components/MediaBin.jsx`,
+`client/src/components/AnimaticEditor.jsx` (new `renameAsset`,
+`selectAssetClips`), `client/src/styles/animatic-editor.css`,
+`tests/editor_media_bin_check.py`.
+**Verified:** `python tests/editor_media_bin_check.py` — **65 checks, all pass**,
+including 30 new ones in two new sections. The scroll-follow check squeezes the
+viewport first on purpose: four cards do not overflow a 1200px pane, so without
+that it would pass without exercising anything. Also `asset_fields_check`,
+`selection_check`, `keyframe_ops_check` and `npm run build` — all clean.
+⚠ **AND IT WAS LOOKED AT**: the menu, the Properties view and the rename field
+were screenshotted out of the same harness in real Chromium and eyeballed, in the
+icon view AND the list view — the field sits exactly where the label was, so the
+card does not change height and the grid does not re-flow on a double-click.
+
+### 2026-08-22 — FORTY-ONE SHAPES, IN FIVE FOLDERS (user-specified, with two reference sheets of geometric shapes and three screenshots of the Media pane's Media / Shapes / Effects tabs)
 
 > "i want you add more shapes in media panel
 >  and cetegory like folder so user uderstand shapes."
@@ -15783,6 +15896,24 @@ language — do NOT copy the Drawstory reference's look/colours.
       file remains the STRONGER check (a whole frame with ramps, edges and a
       green block, rather than a flat colour) and its thirteen new point-wise
       cases have never been run, so it is still worth a machine that can build it.
+- [ ] **A PICTURE ON THE IMAGES LANE IS INVISIBLE TO THE MEDIA LIBRARY
+      (found 2026-08-22, pre-existing).** An image placed there is an OVERLAY, and
+      an overlay carries no `src` — so `assetKey` cannot match one and **all three**
+      of `assetUsedCount` (the ×N badge), `deleteAsset` (which takes a source's
+      clips with it) and the new `selectAssetClips` miss it. A card can therefore
+      read "–" while a picture made from it is on screen, and its ✕ leaves that
+      picture playing from a source no longer listed anywhere. The three were left
+      consistent with each other on purpose — widening one alone would make the
+      card's own count disagree with its menu — so whatever the fix is, it has to
+      widen all three together, with `editor_media_bin_check.py` extended to place
+      an image on the Images lane first.
+      ⚠ **IT IS NOT AS SIMPLE AS COPYING `src` ACROSS.** `AnimaticOverlay` has no
+      `src` field at all (only `upload_id`), so matching on `upload_id` is the
+      cheap half — and it only works for a card that WAS an upload. A storyboard
+      panel dropped on the Images lane is re-uploaded by `overlayFromFrame` and
+      gets a NEW `upload_id`, so the link back to the panel card is genuinely gone
+      and no amount of matching recovers it. That half needs a schema field, and
+      therefore a decision, not just a wider filter.
 - [ ] **Render a SECOND shot, and watch it land on the timeline.** The first one
       proved Veo and the extraction; what has still never been seen working is
       the fixed attach path — clip finishes → frame becomes `kind: "video"` →

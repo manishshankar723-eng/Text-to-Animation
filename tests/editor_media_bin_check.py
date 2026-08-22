@@ -1,6 +1,6 @@
-"""THE MEDIA PANE IS A LIBRARY, A ROW CAN BE LOCKED, AND ITS ✕ ASKS FIRST.
+"""THE MEDIA PANE IS A LIBRARY — ITS CARDS RENAME, A ROW LOCKS, AND ✕ ASKS FIRST.
 
-Three things, one report:
+Three reports, and one of them arrived later. The first three sections answer:
 
     "i see when i upload/generate Veo video and then i delete in time so i see in
      media panel also delete … i want when user delete video, storboard image,
@@ -17,6 +17,21 @@ Three things, one report:
 They are checked together because they are three answers to one question — "what
 happens when I press a delete" — and each one's fix is the other two's regression
 risk.
+
+The FOURTH section is a later report about the same pane:
+
+    "i want rename ifuction add in media panel … if add any in media panel buy
+     user and generted image and video so user go and double click on clip text
+     so uver get rename option like this or user right click of moue on clip so
+     user get dropdown panel so rename of each clip in media kepp both fuction
+     and add in drop down like more option see iamge 3 some improtent fuction in
+     clip when user click on clip in media"
+
+⚠ IT BELONGS IN THIS FILE AND NOT A NEW ONE, because a rename is the edit that
+crosses the seam the first three sections exist to defend: the pane draws
+`asset.label` and the timeline draws `frame.label`, so "the card outlives the
+clip" and "the name reaches both lists" are two halves of the same invariant and
+each is the other's regression risk. See `renameAsset` in AnimaticEditor.jsx.
 
 ---------------------------------------------------------------------------
 ⚠ THE LIBRARY CHECK IS "IS IT STILL THERE?", ASKED AFTER A DELETE
@@ -318,6 +333,150 @@ probe.cardSel = (label) => {
   return '[data-probe="card"]';
 };
 
+/**
+ * The same, but under a name of the caller's choosing.
+ *
+ * ⚠ `cardSel` REUSES ONE ATTRIBUTE VALUE, so a second call leaves TWO cards
+ * carrying `data-probe="card"` and `querySelector` then returns whichever is
+ * first in the DOM — not the one just asked for. That is survivable for the
+ * drags above (they assert that nothing moved), and it is not survivable for a
+ * rename, which must name the card it actually renamed.
+ */
+probe.tag = (label, name) => {
+  const cards = Array.from(document.querySelectorAll(".fs-bin-card"));
+  const card = cards.find(
+    (c) => (c.querySelector(".fs-label") || {}).textContent === label
+  );
+  if (!card) return "";
+  card.setAttribute("data-tag", name);
+  return '[data-tag="' + name + '"]';
+};
+
+/** What a clip is CALLED on the timeline — the half a rename has to reach. */
+probe.barLabels = () => {
+  const out = {};
+  for (const el of document.querySelectorAll('[data-sel^="frame:"]')) {
+    out[el.dataset.sel.slice("frame:".length)] =
+      (el.querySelector(".tl-bar-label") || {}).textContent || "";
+  }
+  return out;
+};
+
+/** Is a card's name a FIELD right now, and what is in it? */
+probe.naming = () => {
+  const el = document.querySelector(".fs-name-input");
+  if (!el) return null;
+  return {
+    value: el.value,
+    focused: document.activeElement === el,
+    // The card must not be draggable while its name is being typed, or the
+    // pointer cannot select the text — see the note on `draggable` in MediaBin.
+    cardDraggable: el.closest(".fs-bin-card")?.getAttribute("draggable") !== "false",
+  };
+};
+
+/**
+ * ONE MENU LINE'S WORDS, without its icon.
+ *
+ * ⚠ `textContent` IS NOT THE LABEL. A `.tl-layer-menu-ico` holds an <svg> on most
+ * lines — which contributes nothing — but a plain GLYPH on two of them (＋ and
+ * ‹), so reading the button whole gives "＋Add to timeline" and a match on the
+ * words a user can see fails on exactly those two.
+ */
+const optLabel = (btn) => {
+  const ico = (btn.querySelector(".tl-layer-menu-ico") || {}).textContent || "";
+  const all = (btn.textContent || "").trim();
+  return (ico && all.startsWith(ico) ? all.slice(ico.length) : all).trim();
+};
+
+/**
+ * The open card menu — what it offers, and whether it is on screen.
+ *
+ * ⚠ THE GEOMETRY IS PART OF THE ASSERTION. The menu is `position: fixed` and
+ * placed from the pointer, so "it opened" is not the same claim as "you can see
+ * it": a card near the bottom of the pane is exactly where a menu that does not
+ * flip runs off the window.
+ */
+probe.menu = () => {
+  const el = document.querySelector(".fs-card-menu");
+  if (!el) return null;
+  const box = el.getBoundingClientRect();
+  return {
+    of: (el.querySelector(".tl-clip-menu-of") || {}).textContent || "",
+    items: Array.from(el.querySelectorAll(".tl-layer-menu-opt")).map((b) => ({
+      text: optLabel(b),
+      disabled: Boolean(b.disabled),
+    })),
+    props: Array.from(el.querySelectorAll(".fs-card-prop")).map((r) => [
+      (r.querySelector("dt") || {}).textContent || "",
+      (r.querySelector("dd") || {}).textContent || "",
+    ]),
+    onScreen:
+      box.left >= 0 && box.top >= 0 &&
+      box.right <= window.innerWidth && box.bottom <= window.innerHeight,
+    fixed: getComputedStyle(el).position === "fixed",
+  };
+};
+
+/** Press a line in the open card menu, matched on the start of its text. */
+probe.menuClick = (text) => {
+  const el = document.querySelector(".fs-card-menu");
+  if (!el) return "no menu is open";
+  const btn = Array.from(el.querySelectorAll(".tl-layer-menu-opt")).find((b) =>
+    optLabel(b).startsWith(text)
+  );
+  if (!btn) return "no line starting " + text;
+  if (btn.disabled) return text + " is disabled";
+  btn.click();
+  return "";
+};
+
+/** How many clips are selected — what "Select its clips" has to change. */
+probe.selCount = () => document.querySelectorAll(".tl-bar.sel").length;
+
+/**
+ * Where the open menu sits RELATIVE TO ITS CARD.
+ *
+ * ⚠ THE CARD IS FOUND BY `.menu-open`, not by the tag the caller set, so this
+ * also asserts that the pane marks which card the menu belongs to — the menu is
+ * `position: fixed` and can be flipped away from the card it names.
+ */
+probe.menuGap = () => {
+  const m = document.querySelector(".fs-card-menu");
+  const c = document.querySelector(".fs-bin-card.menu-open");
+  if (!m || !c) return null;
+  const mb = m.getBoundingClientRect();
+  const cb = c.getBoundingClientRect();
+  return { dx: Math.round(mb.left - cb.left), dy: Math.round(mb.top - cb.top) };
+};
+
+/** Scroll the Media pane, and say how far it really moved. */
+probe.scrollMedia = (dy) => {
+  const el = document.querySelector(".an-media-body");
+  if (!el) return null;
+  const was = el.scrollTop;
+  el.scrollTop = was + dy;
+  return el.scrollTop - was;
+};
+
+/**
+ * A SCROLL EVENT ON THE MEDIA PANE, with nothing actually moving.
+ *
+ * ⚠ THIS IS THE REGRESSION, NOT A SIMULATION OF ONE. Focusing the menu's first
+ * line makes the pane emit a scroll of its own — seen in this very harness — and
+ * the first version of the menu closed on any scroll, so it shut in the frame it
+ * opened. Dispatching the bare event is the smallest thing that reproduces it,
+ * and it does not depend on the fixture's library being tall enough to scroll.
+ * (`scroll` does not bubble; the menu listens in the CAPTURE phase, which is what
+ * makes an event targeted at the pane reachable from `window`.)
+ */
+probe.fakeScroll = () => {
+  const el = document.querySelector(".an-media-body");
+  if (!el) return "no .an-media-body";
+  el.dispatchEvent(new Event("scroll"));
+  return "";
+};
+
 probe.ready = true;
 """
 
@@ -462,6 +621,192 @@ def main():
                       json.dumps(shelf))
 
             # -----------------------------------------------------------------
+            # A CARD CAN BE RENAMED — on its NAME, and from its menu
+            # -----------------------------------------------------------------
+            # ⚠ THE ASSERTION IS THAT THE NAME REACHES BOTH LISTS. The library and
+            # the timeline are two lists on purpose, and a rename is the one edit
+            # that has to cross between them: the pane draws `asset.label`, the
+            # timeline draws `frame.label`, and a source renamed whose bars still
+            # read the old name is a rename that visibly did not take. So every
+            # check below reads the card AND the bar.
+            print("\nRenaming a source, by double-clicking its name")
+            sel = page.evaluate("() => window.__probe.tag('TTBB_EP_1', 'ren')")
+            check("the card to rename can be found", bool(sel), "no card labelled TTBB_EP_1")
+            if sel:
+                was = page.evaluate("() => window.__probe.barLabels()")
+                page.dblclick(f"{sel} .fs-label")
+                page.wait_for_timeout(300)
+                naming = page.evaluate("() => window.__probe.naming()")
+                check("double-clicking the NAME opens a field",
+                      naming is not None, "no .fs-name-input appeared")
+                check("…with the old name in it, to be typed over",
+                      bool(naming) and naming["value"] == "TTBB_EP_1", json.dumps(naming))
+                check("…already focused, so no second click is needed",
+                      bool(naming) and naming["focused"], json.dumps(naming))
+                # ⚠ A DRAGGABLE ANCESTOR EATS A TEXT SELECTION — the drag wins the
+                # gesture — so the card has to stop being draggable for exactly as
+                # long as the field is open, or the name can only be edited from
+                # the end.
+                check("…and the card stops being draggable while it is open",
+                      bool(naming) and not naming["cardDraggable"], json.dumps(naming))
+
+                page.keyboard.type("Chase wide")
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(500)
+                shelf = page.evaluate("() => window.__probe.bin()")
+                check("↵ takes the new name",
+                      "Chase wide" in labels(shelf), json.dumps(labels(shelf)))
+                check("…without growing a second card for the same source",
+                      len(shelf) == 4, json.dumps(labels(shelf)))
+                now = page.evaluate("() => window.__probe.barLabels()")
+                renamed = [k for k in now if now[k] == "Chase wide"]
+                check("the clip cut from it takes the new name too",
+                      len(renamed) == 1, f"{was} -> {now}")
+                check("…and no other clip on the timeline was touched",
+                      all(now[k] == was.get(k) for k in now if k not in renamed),
+                      f"{was} -> {now}")
+
+                # Escape throws the typing away — the field is a draft until ↵.
+                page.dblclick(f"{sel} .fs-label")
+                page.wait_for_timeout(250)
+                page.keyboard.type("scrap")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(400)
+                shelf = page.evaluate("() => window.__probe.bin()")
+                check("Escape throws the typing away",
+                      "Chase wide" in labels(shelf) and "scrap" not in labels(shelf),
+                      json.dumps(labels(shelf)))
+
+                # ⚠ AN EMPTY NAME IS A CANCEL, NOT A BLANK NAME. A card with no
+                # label captions itself "Untitled", so writing "" would look
+                # exactly like the rename having failed.
+                page.dblclick(f"{sel} .fs-label")
+                page.wait_for_timeout(250)
+                page.keyboard.press("Control+a")
+                page.keyboard.press("Backspace")
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(400)
+                shelf = page.evaluate("() => window.__probe.bin()")
+                check("an empty name is a cancel, not a blank card",
+                      "Chase wide" in labels(shelf), json.dumps(labels(shelf)))
+
+            # -----------------------------------------------------------------
+            # …AND THE SAME CARD HAS A RIGHT-CLICK MENU
+            # -----------------------------------------------------------------
+            print("\nRight-clicking a card opens its own menu")
+            sel = page.evaluate("() => window.__probe.tag('Chase wide', 'menu')")
+            check("the renamed card can be found again", bool(sel), "no card labelled Chase wide")
+            if sel:
+                page.click(sel, button="right")
+                page.wait_for_timeout(350)
+                menu = page.evaluate("() => window.__probe.menu()")
+                check("a menu opens", menu is not None, "no .fs-card-menu appeared")
+                texts = [i["text"] for i in (menu or {}).get("items", [])]
+                check("…naming the card it is about",
+                      bool(menu) and menu["of"] == "Chase wide",
+                      json.dumps(menu and menu["of"]))
+                for want in ("Rename", "Add to timeline", "Select its",
+                             "Properties", "Remove from Media"):
+                    check(f"…and it offers {want}",
+                          any(t.startswith(want) for t in texts), json.dumps(texts))
+                # ⚠ DOWNLOAD IS A VEO RENDER'S LINE AND NOTHING ELSE'S. This card
+                # is an ordinary upload, which is already on the user's machine.
+                check("…but NOT Download, which only a Veo render offers",
+                      not any(t.startswith("Download") for t in texts), json.dumps(texts))
+                # ⚠ THE GEOMETRY IS PART OF THE CLAIM: the Media pane scrolls and
+                # clips, so a menu that were a child of the card would be cut off
+                # at the pane's edge rather than merely mispositioned.
+                check("it is pinned to the viewport, so the scrolling pane cannot clip it",
+                      bool(menu) and menu["fixed"] and menu["onScreen"], json.dumps(menu))
+
+                # ⚠ A SCROLL MUST NOT CLOSE IT. Focusing the first line makes the
+                # pane emit a scroll of its own, so a menu that closed on one shut
+                # in the frame it opened — that was a real bug, found here.
+                gap = page.evaluate("() => window.__probe.menuGap()")
+                check("the pane marks WHICH card the menu belongs to",
+                      gap is not None, "no .fs-bin-card.menu-open beside the menu")
+                page.evaluate("() => window.__probe.fakeScroll()")
+                page.wait_for_timeout(250)
+                check("a scroll of the pane does not close it",
+                      page.evaluate("() => window.__probe.menu()") is not None,
+                      "the menu closed on a scroll event")
+                # ⚠ THE WINDOW IS SQUEEZED FIRST, and that is what makes the next
+                # check a check at all: four cards do not overflow a 1200px pane,
+                # so there is no real scroll to follow and the assertion would
+                # pass without ever exercising anything. (A resize closes the menu
+                # on purpose — the grid re-flows and no offset can track that — so
+                # it is re-opened after.)
+                page.set_viewport_size({"width": 1700, "height": 820})
+                page.wait_for_timeout(600)
+                page.click(sel, button="right")
+                page.wait_for_timeout(350)
+                gap = page.evaluate("() => window.__probe.menuGap()")
+                # Whichever way the pane has room — `page.click` has just scrolled
+                # the card into view, so which end it is against is not knowable.
+                moved = (page.evaluate("() => window.__probe.scrollMedia(60)")
+                         or page.evaluate("() => window.__probe.scrollMedia(-60)"))
+                page.wait_for_timeout(300)
+                after = page.evaluate("() => window.__probe.menuGap()")
+                check("…and a real scroll moves it WITH its card, not away from it",
+                      bool(moved) and bool(gap) and bool(after)
+                      and abs(after["dx"] - gap["dx"]) <= 2
+                      and abs(after["dy"] - gap["dy"]) <= 2,
+                      f"moved {moved}px: {gap} -> {after}")
+                page.set_viewport_size({"width": 1700, "height": 1200})
+                page.wait_for_timeout(600)
+                page.click(sel, button="right")
+                page.wait_for_timeout(350)
+
+                why = page.evaluate("() => window.__probe.menuClick('Properties')")
+                page.wait_for_timeout(300)
+                rows = dict((page.evaluate("() => window.__probe.menu()") or {}).get("props", []))
+                check("Properties says what the source is",
+                      not why and rows.get("Kind") == "Video file", why or json.dumps(rows))
+                check("…which section it is listed under",
+                      rows.get("Section") == "Video", json.dumps(rows))
+                check("…how long the SOURCE runs, not the clip cut from it",
+                      rows.get("Length") == "54.4s", json.dumps(rows))
+                check("…and how much of the cut uses it",
+                      rows.get("In the cut") == "1 clip", json.dumps(rows))
+                why = page.evaluate("() => window.__probe.menuClick('Back')")
+                page.wait_for_timeout(250)
+                back = [i["text"] for i in (page.evaluate("() => window.__probe.menu()") or {}).get("items", [])]
+                check("‹ Back returns to the commands",
+                      not why and any(t.startswith("Rename") for t in back),
+                      why or json.dumps(back))
+
+                # WHERE IS IT IN THE CUT? The question the ×1 badge poses and
+                # nothing else could answer.
+                page.click(sel, button="right")
+                page.wait_for_timeout(300)
+                why = page.evaluate("() => window.__probe.menuClick('Select its')")
+                page.wait_for_timeout(450)
+                check("Select its clips selects them on the timeline",
+                      not why and page.evaluate("() => window.__probe.selCount()") == 1,
+                      why or str(page.evaluate("() => window.__probe.selCount()")))
+                check("…and the menu closed behind it",
+                      page.evaluate("() => window.__probe.menu()") is None, "menu stayed open")
+
+                # The menu's Rename is the double-click's own path, not a second one.
+                page.click(sel, button="right")
+                page.wait_for_timeout(300)
+                why = page.evaluate("() => window.__probe.menuClick('Rename')")
+                page.wait_for_timeout(350)
+                naming = page.evaluate("() => window.__probe.naming()")
+                check("the menu's Rename opens the same field the double-click does",
+                      not why and naming is not None and naming["value"] == "Chase wide",
+                      why or json.dumps(naming))
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(250)
+
+                page.click(sel, button="right")
+                page.wait_for_timeout(300)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(250)
+                check("Escape closes the menu",
+                      page.evaluate("() => window.__probe.menu()") is None, "menu stayed open")
+
+            # -----------------------------------------------------------------
             # THE PADLOCK
             # -----------------------------------------------------------------
             print("\n🔒 A locked row refuses every edit, and still plays")
@@ -567,6 +912,13 @@ def main():
             print("\nWhat reached the server")
             check("the library was saved with the project", "assets" in SAVED,
                   f"PUT body had: {sorted(SAVED)}")
+            # ⚠ A RENAME MAKES NO REQUEST OF ITS OWN — `assetForSave` carries
+            # `label`, so the ordinary autosave is what has to carry it. If this
+            # line fails, the name is a thing that survives until reload and no
+            # further.
+            check("…carrying the name the user typed",
+                  any(a.get("label") == "Chase wide" for a in (SAVED.get("assets") or [])),
+                  json.dumps([a.get("label") for a in (SAVED.get("assets") or [])]))
             check("…and so was the lock", "settings" in SAVED
                   and "locked_lanes" in (SAVED.get("settings") or {}),
                   json.dumps(SAVED.get("settings"))[:200])
@@ -593,7 +945,10 @@ def main():
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("Media keeps the source, a locked row keeps its edit, and ✕ asks first.")
+    print(
+        "Media keeps the source, a card renames in both lists, a locked row keeps "
+        "its edit, and ✕ asks first."
+    )
     return 0
 
 

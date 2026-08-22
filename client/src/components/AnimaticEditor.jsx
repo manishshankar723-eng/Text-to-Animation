@@ -4177,6 +4177,104 @@ export default function AnimaticEditor({
   }
 
   /**
+   * NAME A LIBRARY CARD — the double-click on its name, and its menu's Rename.
+   *
+   * ⚠ IT RENAMES THE CLIPS THAT STILL CARRY THE OLD NAME, AND ONLY THOSE. The
+   * library and the timeline are two lists on purpose (`animatic/assets.js`), so
+   * this could have written the card alone — but the timeline prints `label` on
+   * every bar, and a source renamed to "Chase — wide" whose four bars still read
+   * "shot_04.mp4" is a rename that visibly did not take. Renaming a clip the user
+   * has ALREADY named by hand would be the worse mistake in the other direction:
+   * that name is an edit, not something inherited, so a clip whose label has
+   * diverged from the source's is left exactly as it is.
+   *
+   * ⚠ AN AUDIO CLIP IS NAMED BY `filename`, NOT `label` — that is the field the
+   * timeline prints and the field `assetFromAudio` reads back to build the card.
+   * Write the other one and the bar keeps the upload's name for ever while the
+   * card beside it shows the new one.
+   *
+   * ⚠ NO REQUEST OF ITS OWN, and none is missing. `assetForSave` carries `label`
+   * so the autosave takes it, and the undo stack snapshots the whole document —
+   * one write, undoable, like every other edit in this file.
+   */
+  function renameAsset(asset, name) {
+    if (!asset?.id) return;
+    const next = String(name || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    const was = asset.label || "";
+    // An empty name is a cancel, not a blank name — MediaBin has already filtered
+    // one out, and this is the second door (a paste of spaces, say).
+    if (!next || next === was) return;
+
+    setAssets((list) => list.map((a) => (a.id === asset.id ? { ...a, label: next } : a)));
+
+    // ⚠ WORKED OUT FROM THE CURRENT LISTS, NEVER INSIDE THE UPDATER. Counting in
+    // a state updater is a side effect and React is free to run one twice — the
+    // same reason `deleteAsset` above builds its lists first and sets afterwards.
+    const key = assetKey(asset);
+    const picIds = new Set(
+      frames
+        .filter((f) => assetKey(assetFromFrame(f)) === key && (f.label || "") === was)
+        .map((f) => f.id)
+    );
+    const audIds = new Set(
+      audioTracks
+        .filter((a) => assetKey(assetFromAudio(a)) === key && (a.filename || "") === was)
+        .map((a) => clipId(a))
+    );
+    if (picIds.size) {
+      setFrames((list) => list.map((f) => (picIds.has(f.id) ? { ...f, label: next } : f)));
+    }
+    if (audIds.size) {
+      setAudioTracks((list) =>
+        list.map((a) => (audIds.has(clipId(a)) ? { ...a, filename: next } : a))
+      );
+    }
+    const moved = picIds.size + audIds.size;
+    setNotice(
+      moved
+        ? `Renamed to “${next}” — ${moved} clip${
+            moved === 1 ? "" : "s"
+          } on the timeline took the new name too.`
+        : `Renamed to “${next}”.`
+    );
+  }
+
+  /**
+   * SELECT EVERY CLIP CUT FROM ONE SOURCE — the card menu's "Select its clips".
+   *
+   * ⚠ IT ANSWERS THE QUESTION THE ×2 BADGE POSES AND NOTHING ELSE COULD. A card
+   * says how many clips use it; until now nothing said WHERE they are, and on a
+   * long timeline the only way to find out was to scroll every row looking for the
+   * same thumbnail.
+   *
+   * ⚠ THE SAME TWO LISTS `deleteAsset` AND `assetUsedCount` LOOK AT, deliberately.
+   * A picture on the Images lane is an OVERLAY and carries no `src`, so `assetKey`
+   * cannot match one and the badge does not count one either — widening this
+   * without widening those two would make the menu offer a selection the card's
+   * own count disagrees with.
+   *
+   * `selectMany` is the rubber band's own path, so what lands here is a selection
+   * like any other: Delete removes them, Ctrl+G groups them, and it says how many.
+   */
+  function selectAssetClips(asset) {
+    if (!asset?.id) return;
+    const key = assetKey(asset);
+    const items = [
+      ...frames
+        .filter((f) => assetKey(assetFromFrame(f)) === key)
+        .map((f) => ({ kind: "frame", id: f.id })),
+      ...audioTracks
+        .filter((a) => assetKey(assetFromAudio(a)) === key)
+        .map((a) => ({ kind: "audio", id: clipId(a) })),
+    ];
+    if (!items.length) {
+      setNotice(`Nothing on the timeline uses “${asset.label || "that source"}” yet.`);
+      return;
+    }
+    selectMany(items);
+  }
+
+  /**
    * SAVE A VEO RENDER TO DISK — the Media card's ⬇ and the timeline clip's
    * right-click menu, which are one function because they are one promise.
    *
@@ -8339,6 +8437,10 @@ export default function AnimaticEditor({
                     onPlace={placeAsset}
                     onDelete={deleteAsset}
                     onDownload={downloadVeoClip}
+                    /* Double-click the NAME, or right-click the card — one
+                       handler for both, because they are one promise. */
+                    onRename={renameAsset}
+                    onSelectClips={selectAssetClips}
                   />
                 </PropGroup>
               ))}
