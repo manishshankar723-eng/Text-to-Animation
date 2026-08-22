@@ -7,7 +7,7 @@
 
 import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
-import { DEFAULT_SHAPE_COLOR, SHAPE_KINDS, ShapeSwatch } from "../Shapes.jsx";
+import { DEFAULT_SHAPE_COLOR, SHAPE_CATEGORIES, ShapeSwatch } from "../Shapes.jsx";
 import { PropGroup, PropRow, NumField, PropSlider, PropNote } from "./PropGroup.jsx";
 import { clamp } from "../../animatic/util.js";
 
@@ -82,18 +82,37 @@ export default function ShapeProperties({
 
       {!isPicture && (
         <PropGroup id="shape:kind" title="Shape">
+          {/* ⚠ STILL SWATCHES, NOW IN A SCROLLING BLOCK WITH ITS GROUPS NAMED.
+              The shape IS its own label — forty-one names in a row of buttons is
+              unreadable at this width, which is why this was never a `<select>`
+              — but forty-one unlabelled swatches in one wrap is a bag of
+              confetti. The captions are the SAME five groups the Shapes tab's
+              folders are (`SHAPE_CATEGORIES`), in the same order, so "it was in
+              Stars & bursts" is a true sentence in both places. Capped in height
+              rather than collapsed: changing a shape's kind is a small
+              adjustment, and a picker that has to be opened first is a worse
+              trade than a picker you scroll. */}
           <PropRow label="Kind" title="What is drawn">
-            <span className="an-tp-group">
-              {SHAPE_KINDS.map((k) => (
-                <button
-                  key={k.id}
-                  type="button"
-                  className={`an-tp-btn an-shape-pick ${shape.kind === k.id ? "on" : ""}`}
-                  title={k.label}
-                  onClick={() => onChange(shape.id, { kind: k.id })}
-                >
-                  <ShapeSwatch kind={k.id} />
-                </button>
+            <span className="an-shape-picker">
+              {SHAPE_CATEGORIES.map((group) => (
+                <span className="an-shape-picker-group" key={group.id}>
+                  <span className="an-shape-picker-cap" title={group.note}>
+                    {group.label}
+                  </span>
+                  <span className="an-tp-group">
+                    {group.kinds.map((k) => (
+                      <button
+                        key={k.id}
+                        type="button"
+                        className={`an-tp-btn an-shape-pick ${shape.kind === k.id ? "on" : ""}`}
+                        title={k.label}
+                        onClick={() => onChange(shape.id, { kind: k.id })}
+                      >
+                        <ShapeSwatch kind={k.id} />
+                      </button>
+                    ))}
+                  </span>
+                </span>
               ))}
             </span>
           </PropRow>

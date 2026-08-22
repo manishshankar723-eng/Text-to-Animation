@@ -218,27 +218,59 @@
   color: var(--primary);
   border-bottom-color: var(--primary);
 }
+/* --- The Shapes tab in the Media pane ------------------------------------- */
+/* FOLDERS OF TILES. The folder row is the Effects tree's own component
+   (`LibraryFolder`), so it is the `.fx-*` rules above that draw it — same twist,
+   same count pill, same row height. What differs is what is INSIDE a folder: an
+   effect is a word, a shape is a picture, so this one holds a grid of swatches
+   rather than a list of rows.
+
+   ⚠ THE GROUPING IS THE POINT. Four tiles were a glance; forty-one in one wrap
+   is a wall, and a wall is a library people stop reading (asked for as "cetegory
+   like folder so user uderstand shapes"). */
+.shape-lib {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
 .shape-gallery {
   display: grid;
   /* Fluid, so the pane can narrow to one column on a phone without a shape
-     tile ever forcing a horizontal scroll. */
-  grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr));
-  gap: 0.5rem;
+     tile ever forcing a horizontal scroll. A hair narrower than it was, because
+     the grid now sits inside a folder body and pays for that indent. */
+  grid-template-columns: repeat(auto-fill, minmax(3.9rem, 1fr));
+  gap: 0.35rem;
+  padding: 0.3rem 0.1rem 0.45rem;
 }
 .shape-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.55rem 0.3rem 0.4rem;
+  padding: 0.5rem 0.25rem 0.35rem;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 9px;
-  cursor: pointer;
+  cursor: grab;
   color: var(--text);
+}
+.shape-tile:active:not(:disabled) {
+  cursor: grabbing;
 }
 .shape-tile:hover:not(:disabled) {
   border-color: var(--primary);
+}
+/* TWO LINES, THEN AN ELLIPSIS. "Eight-petal flower" cannot fit one line at this
+   width, and truncating it to "Eight-pe…" beside a tile that is already a
+   picture of a flower throws away the only part that distinguishes it from the
+   six-petal one. The clamp keeps every tile in a row the same height. */
+.shape-tile-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.15;
+  text-align: center;
 }
 .shape-swatch {
   display: block;
@@ -434,8 +466,40 @@
   padding-left: 0.5rem;
   font-size: 0.68rem;
 }
-/* The kind picker in Properties: swatches, not words — four names in a row of
-   buttons is unreadable at this width, and the shape IS the label. */
+/* The kind picker in Properties: swatches, not words — forty-one names in a row
+   of buttons is unreadable at this width, and the shape IS the label.
+
+   ⚠ IT SCROLLS AND ITS GROUPS ARE NAMED, which is what forty-one swatches cost.
+   Capped in height rather than collapsed behind a disclosure: changing a kind is
+   a small adjustment, and a picker you have to open first is a worse trade than
+   one you scroll. The captions are the SAME five groups as the Shapes tab's
+   folders, in the same order, so "it was in Stars & bursts" is true in both. */
+.an-shape-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 11rem;
+  overflow-y: auto;
+  padding: 0.1rem;
+}
+.an-shape-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.an-shape-picker-cap {
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* ⚠ WRAPPING, unlike every other `.an-tp-group` in the pane — those hold three
+   or four choices and are meant to stay one row; a group of nine swatches has to
+   fold or it pushes the whole Properties pane sideways. */
+.an-shape-picker .an-tp-group {
+  display: flex;
+  flex-wrap: wrap;
+}
 .an-shape-pick {
   display: inline-flex;
   align-items: center;

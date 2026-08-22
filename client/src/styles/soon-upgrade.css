@@ -82,24 +82,10 @@
   padding: 1rem;
   animation: lightbox-fade-in 0.2s ease;
 }
-.account-modal {
-  position: relative;
-  max-width: 380px;
-  text-align: center;
-  border-color: var(--border-gold);
-}
-.account-modal h2 {
-  font-size: 1.05rem;
-  word-break: break-all;
-  margin-top: 0.3rem;
-}
-.account-modal .btn.primary {
-  width: 100%;
-}
-.account-modal-cancel {
-  display: block;
-  margin: 0.7rem auto 0;
-}
+/* ⚠ `.account-modal` IS GONE, AND SO IS THE CARD IT DRESSED. The sidebar's
+   account button opened a dimmed dialog asking "are you sure you want to log
+   out?"; it opens the shared dropdown now (`.sb-account-menu`, AccountMenu.jsx).
+   `.modal-overlay` and `.modal-close` below are still used by other dialogs. */
 .modal-close {
   position: absolute;
   top: 0.8rem;

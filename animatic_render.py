@@ -103,6 +103,39 @@ def text_place(clip: dict) -> str:
     place = (clip or {}).get("place") or "flow"
     return place if place in TEXT_PLACES else "flow"
 
+
+# HOW a caption is kept readable over the art. Four kinds, and the last two are
+# NOT the same thing — which is the whole reason "plain" exists:
+#
+#   "scrim" — a translucent bar behind the block. The default, and what a
+#             caption dropped on a busy storyboard thumbnail needs.
+#   "box"   — the same bar, nearly solid.
+#   "none"  — no bar, but the glyphs get an AUTOMATIC dark outline, because
+#             white text with nothing behind it is invisible on pale art. This
+#             is the "Outline only" the picker has always offered.
+#   "plain" — nothing whatsoever: no bar, no outline, just the letters in the
+#             colour they are set in. ⚠ It is the one setting here that can make
+#             a caption genuinely unreadable, and that is the point — a title
+#             over a dark shot wants no furniture at all, and until this the
+#             only way to get it was an outline you could see.
+#
+# Not animatable: half way between a box and no box is not a picture.
+# ⚠ TWIN of `TEXT_BACKDROPS` in `client/src/animatic/scene.js`.
+TEXT_BACKDROPS = ("scrim", "box", "none", "plain")
+
+
+def text_backdrop(clip: dict) -> str:
+    """How this caption is kept readable. Mirrors `textBackdrop` in scene.js.
+
+    An unrecognised value folds down to "scrim" HERE rather than in each
+    renderer, for the same reason `text_place` folds here — the preview and the
+    export must not fold differently. It folds to the BACKDROP, never to
+    "plain": a value nobody understands should leave the caption readable.
+    """
+    backdrop = (clip or {}).get("backdrop") or "scrim"
+    return backdrop if backdrop in TEXT_BACKDROPS else "scrim"
+
+
 # --- The LOOK: effects, mask, blend -----------------------------------------
 # ⚠ Mirrors the same block in scene.js, and the pixel maths is a THIRD file:
 # `animatic_effects.py` on this side, `client/src/animatic/gl/shaders/` on the

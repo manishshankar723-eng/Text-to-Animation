@@ -68,11 +68,65 @@
    Same font size as the rest — the other buttons carry emoji too, so bumping
    this one made it the odd one out. */
 .an-topbar .an-del-btn,
+.an-topbar .an-settings-btn,
 .an-topbar .back-btn {
   width: 2.3rem;
   min-width: 2.3rem;
   height: 2.3rem;
   padding: 0;
+}
+/* --- The ⚙ menu in the corner -------------------------------------------- */
+/* ⚠ THE WRAPPER IS WHAT THE DROPDOWN HANGS OFF. `.an-topbar` is not positioned
+   (and must not become so — it's a wrapping flex row and the panes below assume
+   nothing about it), so without this span the menu would anchor to whatever
+   ancestor happens to be positioned and drift halfway across the editor. */
+.an-settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.an-settings-btn {
+  color: var(--muted);
+}
+/* ⚠ BIGGER THAN THE DEFAULT 1.05em, ON PURPOSE. The top bar's font is 0.84rem,
+   so an icon at the usual size lands about 14px inside a 37px button and reads
+   as a speck in a lot of white ("keep icon size little big please looin small in
+   buttun"). The gear is also the only ICON-ONLY button here with no text beside
+   it to give it weight — Back is an arrow glyph, not an `.icon` — so it has to
+   carry the button on its own. */
+.an-topbar .an-settings-btn .icon {
+  width: 1.55em;
+  height: 1.55em;
+}
+.an-settings-btn:hover:not(:disabled),
+.an-settings-btn[aria-expanded="true"] {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+/* Surface, rows and icons are `.tl-layer-menu`'s — see the note beside it in
+   animatic-editor.css. Only the anchoring changes: this hangs off the LAST
+   button in the bar, so it opens leftward from the right edge.
+   ⚠ THE CLASS IS DOUBLED, AND IT HAS TO BE. `animatic.css` is imported BEFORE
+   `animatic-editor.css` (index.css, lines 27 and 29), so at equal specificity
+   `.tl-layer-menu`'s `left: 0` wins on source order and the menu opens RIGHTWARD
+   off the edge of the screen with its labels cut in half — which is exactly what
+   a single `.an-settings-menu` did. Same trap, same fix as `.an-tabs.an-gen-tabs`.
+   ⚠ AND IT NEEDS ITS OWN max-width: `.tl-layer-menu`'s 14rem is sized for one
+   or two words ("Storyboard images"), not "Help / Contact us". */
+.tl-layer-menu.an-settings-menu {
+  left: auto;
+  right: 0;
+  min-width: 12rem;
+  max-width: 18rem;
+  z-index: 30;
+}
+/* Delete and Log out. Muted until you're on them — they're the two rows you
+   don't want to hit by accident, so they only shout once the pointer commits. */
+.an-settings-menu .tl-layer-menu-opt.danger:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--fail);
+}
+.an-settings-menu .tl-layer-menu-opt.danger:hover:not(:disabled) .tl-layer-menu-ico {
+  color: var(--fail);
 }
 .an-del-btn {
   color: var(--muted);

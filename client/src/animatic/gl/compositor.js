@@ -34,6 +34,7 @@
  */
 
 import { DEFAULT_MASK, EFFECT_PARAMS, MASK_KINDS } from "../scene.js";
+import { shapeOutline } from "../shape_points.js";
 import { buildLutPixels } from "./cube.js";
 import {
   COPY_FRAGMENT,
@@ -47,41 +48,18 @@ import {
   matteIndex,
 } from "./shaders/layer.js";
 
-// ⚠ THE SAME POLYGONS AS `POINTS` in Shapes.jsx and `_SHAPE_POINTS` in
-// animatic.py. This is now the THIRD copy, which is exactly the drift the
-// project already regrets — but a CSS clip-path, a Pillow polygon and a vertex
-// buffer genuinely cannot share one representation. `shapeOutline` below is the
-// single place this file reads them, so there is one line to change.
-const POINTS = {
-  rect: [[0, 0], [1, 0], [1, 1], [0, 1]],
-  pentagon: [[0.5, 0], [1, 0.38], [0.82, 1], [0.18, 1], [0, 0.38]],
-  star: [
-    [0.5, 0], [0.61, 0.35], [0.98, 0.35], [0.68, 0.57],
-    [0.79, 0.91], [0.5, 0.7], [0.21, 0.91], [0.32, 0.57],
-    [0.02, 0.35], [0.39, 0.35],
-  ],
-};
-// Pillow draws a true ellipse; a fan can only approximate one. 96 segments is
-// under a third of a pixel of error on a 1080-tall frame, which is well inside
-// what `tests/effects_parity_check.py` allows and far below what an eye finds.
-const ELLIPSE_SEGMENTS = 96;
+// ⚠ THE POLYGONS ARE NOT IN THIS FILE ANY MORE. They used to be copied here
+// from `Shapes.jsx`, each copy carrying a comment apologising for the other; both
+// read `../shape_points.js` now, and `shapeOutline` there is the one place a kind
+// becomes points — including the ellipse, which is sampled for the fan and drawn
+// as a true one everywhere else. The three renderers still disagree in
+// REPRESENTATION (a clip-path, a vertex buffer, a Pillow polygon); they no longer
+// disagree about what a shape IS.
 
 // How many uploaded pictures to keep. Two frames and a handful of overlays are
 // all that can be on screen at once; the rest is scrub history, and keeping it
 // unbounded is how a long animatic ends up holding every panel in VRAM.
 const MAX_TEXTURES = 12;
-
-function shapeOutline(kind) {
-  if (kind === "ellipse") {
-    const points = [];
-    for (let i = 0; i < ELLIPSE_SEGMENTS; i++) {
-      const a = (i / ELLIPSE_SEGMENTS) * Math.PI * 2;
-      points.push([0.5 + Math.cos(a) / 2, 0.5 + Math.sin(a) / 2]);
-    }
-    return points;
-  }
-  return POINTS[kind] || POINTS.rect;
-}
 
 function parseColour(value, fallback = [0, 0, 0]) {
   let s = String(value || "").trim().replace(/^#/, "");
@@ -653,8 +631,10 @@ export function rotatedQuad(cx, cy, w, h, rotation) {
  * ⚠ THE FAN IS ANCHORED AT THE CENTRE, not at the first point. A star is
  * CONCAVE: fanning from one of its own tips puts triangles outside the outline
  * and draws a mess that still looks vaguely star-shaped, which is the worst
- * kind of wrong. Every shape here is star-shaped about its centre, so a centre
- * fan triangulates all four correctly — and the loop is closed by repeating the
+ * kind of wrong. EVERY shape in `shape_points.js` is star-shaped about its
+ * centre — that is a rule of that file, not a happy accident, and
+ * `tests/shape_points_check.py` proves it for all forty-one — so a centre fan
+ * triangulates every one of them correctly. The loop is closed by repeating the
  * first point.
  *
  * ⚠ ROTATION IS CLOCKWISE, like CSS and like the editor's handles — which is

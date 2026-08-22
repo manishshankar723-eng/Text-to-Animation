@@ -82,8 +82,9 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   // The text layer. Timed independently of the frames, which is why it isn't
   // just a field on a frame.
   const [texts, setTexts] = useState([]);
-  // The shape layer — boxes, circles, pentagons and stars drawn over the
-  // picture. Timed like the text layer, and like it, independent of the frames.
+  // The shape layer — the vector shapes drawn over the picture (see
+  // `shape_points.js` for the library). Timed like the text layer, and like it,
+  // independent of the frames.
   const [shapes, setShapes] = useState([]);
   // Lanes the USER added. "+ Add layer" creates one of these and nothing else —
   // it is a blank row, filled afterwards by that row's own ＋. Every kind also

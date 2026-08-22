@@ -21,76 +21,14 @@
 import { useState } from "react";
 
 import { FX_LIBRARY, fxMarkerType, fxPayload } from "../animatic/fx_library.js";
+import LibraryFolder from "./LibraryFolder.jsx";
 import { InfoDot } from "./properties/PropGroup.jsx";
 
-// Open/closed, remembered for the life of the tab and shared by every mount —
-// the same trick `PropGroup` uses, and for the same reason: switching to Media
-// and back must not fold up the folder you were working out of. Module level
-// rather than lifted into the editor because it is a view preference, not
-// project state, and nothing outside this file has any use for it.
-const OPEN = new Map();
-
-// The top-level folders start open and the sections inside them start shut: one
-// screen that shows you what KINDS of thing exist, rather than a wall of every
-// entry, which is the shape a tree is for.
-function initiallyOpen(id, depth) {
-  if (OPEN.has(id)) return OPEN.get(id);
-  return depth === 0;
-}
-
-function Twist({ open }) {
-  // The same ▸ as every collapsible section in the Properties pane, rotated by
-  // CSS — a second disclosure idiom on one screen is a second thing to learn.
-  return (
-    <span className={`fx-twist ${open ? "on" : ""}`} aria-hidden="true">
-      ▸
-    </span>
-  );
-}
-
-function Folder({ id, label, note, count, depth, children }) {
-  const [open, setOpen] = useState(() => initiallyOpen(id, depth));
-  const toggle = () => {
-    const next = !open;
-    OPEN.set(id, next);
-    setOpen(next);
-  };
-  return (
-    <div className={`fx-folder ${open ? "open" : ""}`} data-depth={depth}>
-      <button
-        type="button"
-        className="fx-row fx-folder-row"
-        onClick={toggle}
-        aria-expanded={open}
-        title={note || (open ? `Hide ${label}` : `Show ${label}`)}
-      >
-        <Twist open={open} />
-        <span className="fx-folder-ico" aria-hidden="true">
-          {/* A folder, drawn rather than iconised: this is the one place in the
-              editor with a tree, so a shared <Icon> entry would have exactly
-              one caller. */}
-          <svg viewBox="0 0 16 16" width="13" height="13">
-            <path
-              d="M1.5 3.5h4l1.2 1.6h7.8v7.4H1.5z"
-              fill="currentColor"
-              opacity="0.35"
-            />
-            <path
-              d="M1.5 3.5h4l1.2 1.6h7.8v7.4H1.5z"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-        <span className="fx-row-name">{label}</span>
-        {count != null && <span className="fx-count">{count}</span>}
-      </button>
-      {open && <div className="fx-folder-body">{children}</div>}
-    </div>
-  );
-}
+// ⚠ THE FOLDER ROW ITSELF LIVES IN `LibraryFolder.jsx` NOW, shared with the
+// Shapes tab beside this one. It moved the day shapes got categories: two copies
+// of a disclosure row is two folders that resemble each other, and the pane has
+// to read as ONE tree idiom whichever tab you are on. What is left in this file
+// is what only an effect needs — the drag payload, the direction glyph and the ⓘ.
 
 /**
  * One draggable entry.
@@ -164,7 +102,7 @@ export default function EffectsLibrary({ onAdd }) {
   return (
     <div className="fx-lib">
       {FX_LIBRARY.map((shelf) => (
-        <Folder
+        <LibraryFolder
           key={shelf.id}
           id={shelf.id}
           label={shelf.label}
@@ -173,7 +111,7 @@ export default function EffectsLibrary({ onAdd }) {
           depth={0}
         >
           {shelf.sections.map((section) => (
-            <Folder
+            <LibraryFolder
               key={section.id}
               id={section.id}
               label={section.label}
@@ -183,9 +121,9 @@ export default function EffectsLibrary({ onAdd }) {
               {section.items.map((entry) => (
                 <Entry key={`${entry.type}:${entry.id}`} entry={entry} onAdd={onAdd} />
               ))}
-            </Folder>
+            </LibraryFolder>
           ))}
-        </Folder>
+        </LibraryFolder>
       ))}
     </div>
   );

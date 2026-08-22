@@ -70,6 +70,7 @@ from animatic_render import (
     resolve_look,
     scene_at,
     scene_signature,
+    text_backdrop,
     text_place,
     transition_matte,
     value_at,
@@ -229,6 +230,24 @@ def _parse_colour(value: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def _clamp(value, low: float, high: float, fallback: float) -> float:
+    """A caption's number, or `fallback` when the clip hasn't got one.
+
+    ⚠ MISSING AND UNREADABLE BOTH FALL BACK, and that is the whole point: every
+    field added to a caption after it shipped is absent from every animatic
+    saved before, so "not there" has to mean "the number this code used to
+    hard-code" — not 0, which for a line height or a wrap width is not a
+    picture. Pydantic already validates the range on the way in; this is the
+    same guard for the export path, which is also fed raw dicts by the tests.
+    """
+    if value is None:
+        return fallback
+    try:
+        return max(low, min(high, float(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _label_font(height: int):
     size = max(16, height // 32)
     for name in _LABEL_FONTS:
@@ -271,6 +290,12 @@ _TEXT_DIVISOR = {"small": 30, "medium": 21, "large": 14}
 # Text never runs edge to edge — this is the usable width, as a fraction.
 _TEXT_WIDTH = 0.86
 _LINE_SPACING = 1.28
+# ⚠ BOTH ARE DEFAULTS NOW, not constants: a caption carries its own `wrap` and
+# `line_height`, and these are what a clip that hasn't got one is drawn at —
+# i.e. every caption saved before those fields existed. `_LINE_SPACING`
+# multiplies (ascent + descent); the browser's `line-height` multiplies the FONT
+# SIZE, which is a different number, and `line_ratio` on the font list is what
+# converts between them. See `animatic_fonts.py`.
 # The frame height every "…px" measurement on a caption is quoted at. A stroke
 # is given in pixels because that is how thick an outline is thought about, but
 # the same project exports at 720p and at 4K, so the number is scaled by the
@@ -283,18 +308,50 @@ _TEXT_REFERENCE_HEIGHT = 1080
 _SHADOW_ALPHA = 140
 
 
-def _text_px(height: int, size_name: str) -> int:
+def _text_px(height: int, size_name: str, size_px: float = 0.0) -> int:
     """The font size, in pixels, a caption of this size gets on this frame.
 
-    Its own function because `stroke_px`, `shadow` and `letter_spacing` are all
-    quoted as fractions of it — and because the browser computes the same number
-    as `calc(100cqh / <divisor>)`, so there must be exactly one formula here to
-    match against.
+    Its own function because `stroke_px`, `shadow`, `letter_spacing` and the
+    backdrop's corners and padding are all quoted as fractions of it — and
+    because the browser computes the same number as `calc(100cqh / <divisor>)`,
+    so there must be exactly one formula here to match against.
+
+    `size_px` OVERRIDES the S/M/L preset when it is set. It is quoted at 1080p
+    and scaled by the real frame height, exactly like `stroke_px`, so a title
+    set at 120 is the same fraction of the frame at 720p and at 4K. 0 means "use
+    the preset", which is every caption written before the field existed.
     """
+    if size_px and size_px > 0:
+        return max(8, int(round(size_px * height / _TEXT_REFERENCE_HEIGHT)))
     return max(14, int(height / _TEXT_DIVISOR.get(size_name, _TEXT_DIVISOR["medium"])))
 
 
-def _text_font(height: int, size_name: str, font_id: str | None = None):
+# The cases a caption can be set in. ⚠ TWIN of `TEXT_CASES` in
+# `TextProperties.jsx`, and each entry is the CSS `text-transform` it has to
+# match: "upper" is `uppercase`, "title" is `capitalize`. Applied BEFORE the
+# text is wrapped, because the browser wraps the transformed glyphs too — do it
+# after and a line that fits here breaks there.
+_TEXT_CASES = ("none", "upper", "lower", "title")
+
+
+def _apply_case(text: str, case: str | None) -> str:
+    """`text` in the case this caption is set in. Mirrors `text-transform`.
+
+    "title" is CSS `capitalize`, which upper-cases the first letter of every
+    word and LEAVES THE REST ALONE — deliberately not `str.title()`, which also
+    lower-cases the rest and would turn "NASA" into "Nasa" in the MP4 while the
+    monitor kept it shouting.
+    """
+    if case == "upper":
+        return text.upper()
+    if case == "lower":
+        return text.lower()
+    if case == "title":
+        return re.sub(r"(^|\s)(\S)", lambda m: m.group(1) + m.group(2).upper(), text)
+    return text
+
+
+def _text_font(height: int, size_name: str, font_id: str | None = None, size_px: float = 0.0):
     """The face a caption is drawn in, at the right size for this frame.
 
     ⚠ LOADED FROM A BUNDLED FILE, never resolved by name. Both this and the
@@ -307,7 +364,7 @@ def _text_font(height: int, size_name: str, font_id: str | None = None):
     the bundled files have gone missing: an ugly caption still beats an export
     that dies over a font.
     """
-    px = _text_px(height, size_name)
+    px = _text_px(height, size_name, size_px)
     path = animatic_fonts.font_path(font_id)
     if path:
         try:
@@ -397,7 +454,6 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
         return
     width, height = canvas.size
     draw = ImageDraw.Draw(canvas, "RGBA")
-    max_width = width * _TEXT_WIDTH
     margin = height * 0.055
 
     # Measure everything first: a zone's block can only be placed once the total
@@ -409,19 +465,33 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
         text = (clip.get("text") or "").strip()
         if not text:
             continue
+        # The case is applied HERE, before the wrap — see `_apply_case`. Every
+        # measurement below is therefore made on the glyphs that get drawn.
+        text = _apply_case(text, clip.get("text_case"))
         size_name = clip.get("size", "medium")
-        font = _text_font(height, size_name, clip.get("font"))
-        # Letter spacing and the shadow offset are fractions of the FONT SIZE,
-        # so they scale with the frame like everything else here and `em` in the
-        # browser is the same number with no conversion. Taken from `_text_px`
-        # rather than off the font object, because the last-resort bitmap face
-        # has no size to read.
-        px = _text_px(height, size_name)
+        size_px = float(clip.get("size_px") or 0.0)
+        font = _text_font(height, size_name, clip.get("font"), size_px)
+        # Letter spacing, the shadow offset and the backdrop's corners and
+        # padding are fractions of the FONT SIZE, so they scale with the frame
+        # like everything else here and `em` in the browser is the same number
+        # with no conversion. Taken from `_text_px` rather than off the font
+        # object, because the last-resort bitmap face has no size to read.
+        px = _text_px(height, size_name, size_px)
         spacing = float(clip.get("letter_spacing") or 0.0) * px
+        # How wide this caption may get before it wraps, as a fraction of the
+        # frame. Per-clip now rather than the one `_TEXT_WIDTH` for everything,
+        # which is still what an untouched caption asks for.
+        max_width = width * _clamp(clip.get("wrap"), 0.1, 1.0, _TEXT_WIDTH)
         lines = _wrap_text(draw, text, font, max_width, spacing)
         ascent, descent = font.getmetrics()
-        line_h = int((ascent + descent) * _LINE_SPACING)
-        pad = max(6, int(line_h * 0.28))
+        line_h = int((ascent + descent) * _clamp(clip.get("line_height"), 0.6, 3.0, _LINE_SPACING))
+        # ⚠ THE 6px FLOOR SCALES WITH THE MULTIPLIER. It is there so a tiny
+        # caption still gets a backdrop you can see; left as a hard floor it
+        # would also mean "padding: 0" quietly wasn't, on exactly the small text
+        # someone asks for it on. At the default 1.0 this is the original
+        # `max(6, line_h * 0.28)`.
+        pad_mult = _clamp(clip.get("backdrop_pad"), 0.0, 4.0, 1.0)
+        pad = int(max(6 * min(pad_mult, 1.0), line_h * 0.28 * pad_mult))
         widest = max((_line_width(draw, ln, font, spacing) for ln in lines), default=0)
         place = text_place(clip)
         position = clip.get("position", "bottom")
@@ -435,6 +505,14 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
                 "spacing": spacing,
                 "lines": lines,
                 "line_h": line_h,
+                # The automatic outline the "none" backdrop draws, measured at
+                # the DEFAULT leading. ⚠ It used to be `line_h // 14`, which was
+                # the same thing until leading became a setting — after that,
+                # opening up the line spacing quietly thickened the outline, and
+                # an outline is a property of the FACE, not of the gap between
+                # lines. (The browser has always agreed: `.bd-none` is a flat
+                # 0.055em of the font size.)
+                "auto_stroke": max(2, int((ascent + descent) * _LINE_SPACING) // 14),
                 "pad": pad,
                 "text_w": widest,
                 "height": line_h * len(lines) + pad * 2,
@@ -498,7 +576,10 @@ def _draw_text_block(
     spacing = block["spacing"]
     align = clip.get("align", "center")
     ink = _parse_colour(clip.get("color", "#ffffff"))
-    backdrop = clip.get("backdrop", "scrim")
+    # ⚠ FOLDED, not read raw — see `text_backdrop`. A kind this build doesn't
+    # know becomes a scrim on BOTH sides rather than silently drawing nothing
+    # here and something in the monitor.
+    backdrop = text_backdrop(clip)
     # Resolved by `scene_at` when the clip is keyframed, otherwise the clip's
     # own value, otherwise fully opaque — which is every caption written before
     # fades existed.
@@ -515,12 +596,16 @@ def _draw_text_block(
         float(clip.get("stroke_px") or 0.0) * height / _TEXT_REFERENCE_HEIGHT
     ))
     stroke_ink = _parse_colour(clip.get("stroke_color", "#000000"))
-    # With no backdrop the text sits straight on the art, which for a pale
+    # "Outline only" puts the text straight on the art, which for a pale
     # storyboard thumbnail can be white-on-white — so it always gets a dark
     # outline in that mode. An explicit stroke overrides it rather than adding
     # to it: two outlines is one outline.
+    # ⚠ "plain" IS NOT "none" AND MUST NOT GET THIS. It is the setting for
+    # exactly the caption that wants no furniture at all — no bar, no outline,
+    # just the letters — and an automatic outline is furniture. It falls through
+    # to the `else` and draws bare glyphs, unreadable art and all.
     if backdrop == "none" and stroke <= 0:
-        stroke, stroke_ink = max(2, line_h // 14), (0, 0, 0)
+        stroke, stroke_ink = block["auto_stroke"], (0, 0, 0)
         stroke_alpha = 210
     else:
         stroke_alpha = 255
@@ -532,14 +617,48 @@ def _draw_text_block(
     # A hard-edged drop shadow, offset by a fraction of the font size. Hard
     # rather than blurred so the `text-shadow` in the browser can be the same
     # picture with a blur radius of 0 — see _SHADOW_ALPHA.
-    shadow = float(clip.get("shadow") or 0.0) * block["px"]
+    #
+    # ⚠ THE √2 IS WHAT MAKES THE ANGLE FREE WITHOUT MOVING OLD CAPTIONS. Before
+    # there was an angle the offset was (shadow, shadow) — one `shadow` down AND
+    # one right — so the DISTANCE it was cast at was always `shadow · √2`. That
+    # distance is what the angle now rotates, which means 45° (the default, and
+    # what every caption saved before this carries) lands back on exactly
+    # (shadow, shadow), and every other angle throws it just as far.
+    shadow_dist = float(clip.get("shadow") or 0.0) * block["px"] * math.sqrt(2)
+    shadow_rad = math.radians(_clamp(clip.get("shadow_angle"), 0.0, 360.0, 45.0))
+    shadow_dx = shadow_dist * math.cos(shadow_rad)
+    shadow_dy = shadow_dist * math.sin(shadow_rad)
+    shadow_ink = _parse_colour(clip.get("shadow_color", "#000000"))
+    shadow_alpha = int(round(_clamp(clip.get("shadow_opacity"), 0.0, 1.0, _SHADOW_ALPHA / 255) * 255))
 
     if backdrop in ("scrim", "box"):
-        alpha = 140 if backdrop == "scrim" else 225
+        # The KIND still chooses the strength unless the clip names one — a
+        # scrim is a bar you read through, a box is one you don't.
+        default_alpha = 140 if backdrop == "scrim" else 225
+        explicit = clip.get("backdrop_opacity")
+        alpha = (
+            default_alpha
+            if explicit is None
+            else int(round(_clamp(explicit, 0.0, 1.0, 1.0) * 255))
+        )
+        fill = _parse_colour(clip.get("backdrop_color", "#000000"))
+        # ⚠ THE CORNER IS IN `em` ON BOTH SIDES NOW. It used to be `pad * 0.6`
+        # here and a flat `0.25em` in the stylesheet, which at 1080p is 10px
+        # against 13 — a caption whose corners were visibly rounder in the
+        # monitor than in the MP4. One number, one meaning: a quarter of the
+        # font size, which is what the browser was already drawing.
+        # ⚠ CLAMPED TO HALF THE SHORTER SIDE. Pillow refuses a radius bigger
+        # than that ("radius should be less than or equal to half the smallest
+        # side"), and 2em on a one-line caption is bigger than that — an export
+        # must not die because someone dragged the corners all the way round.
+        # A fully-clamped radius is a stadium, which is what "as round as it
+        # goes" should look like anyway.
+        radius = _clamp(clip.get("backdrop_radius"), 0.0, 2.0, 0.25) * block["px"]
+        radius = max(0, int(min(radius, box_w / 2, block["height"] / 2)))
         draw.rounded_rectangle(
             [box_x, top, box_x + box_w, top + block["height"]],
-            radius=max(4, int(pad * 0.6)),
-            fill=(0, 0, 0, _a(alpha)),
+            radius=radius,
+            fill=(*fill, _a(alpha)),
         )
 
     ty = top + pad
@@ -551,12 +670,12 @@ def _draw_text_block(
             tx = box_x + box_w - pad - line_w
         else:
             tx = box_x + (box_w - line_w) / 2
-        if shadow > 0:
+        if shadow_dist > 0 and shadow_alpha > 0:
             # Cast from the OUTLINED glyph, not the bare one, or a stroked
             # caption's shadow reads as a second, thinner caption behind it.
             _draw_line(
-                draw, (tx + shadow, ty + shadow), line, font, spacing,
-                fill=(0, 0, 0, _a(_SHADOW_ALPHA)), **stroke_kwargs,
+                draw, (tx + shadow_dx, ty + shadow_dy), line, font, spacing,
+                fill=(*shadow_ink, _a(shadow_alpha)), **stroke_kwargs,
             )
         _draw_line(
             draw, (tx, ty), line, font, spacing, fill=(*ink, _a(255)), **stroke_kwargs
@@ -565,20 +684,387 @@ def _draw_text_block(
 
 
 # --- Shapes -----------------------------------------------------------------
-# Each shape is defined as points on the UNIT SQUARE (0–1), scaled into its box.
-# ⚠ The SAME polygons are in client/src/components/Shapes.jsx as CSS clip-paths —
-# that is what makes the preview and the exported frame agree. Change one, change
-# the other. 'ellipse' has no point list: it is drawn as an ellipse.
-_SHAPE_POINTS: dict[str, tuple[tuple[float, float], ...]] = {
-    "rect": ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
-    "pentagon": ((0.5, 0.0), (1.0, 0.38), (0.82, 1.0), (0.18, 1.0), (0.0, 0.38)),
-    "star": (
+# Each shape is points on the UNIT SQUARE (0–1), scaled into its box — so one
+# list draws at 25% of a 720p frame and at 25% of a 4K one.
+#
+# ⚠ THIS IS THE EXPORTER'S COPY OF A TABLE THE BROWSER ALSO HOLDS, in
+# `client/src/animatic/shape_points.js` — the preview clips a div with these
+# points and the monitor fans triangles from them. The duplication is forced (the
+# exporter runs with no JS at all), but it is no longer unguarded:
+# `tests/shape_points_check.py` loads the JS module under node and compares every
+# point of every shape against this file. The builders below are that module's
+# functions, mirrored line for line; change one, change both, and let the test
+# say whether you got it right.
+#
+# ⚠ EVERY SHAPE IS STAR-SHAPED ABOUT ITS CENTRE, and that is a requirement rather
+# than a coincidence: the Program monitor triangulates with a fan anchored at
+# (0.5, 0.5), so an outline the centre cannot see all of draws correctly HERE and
+# wrongly THERE. The same test proves it for every entry. It is also why there is
+# no ring and no crescent — a hole cannot be one fan.
+#
+# 'ellipse' has no point list: Pillow draws a true one (see `draw_shapes`).
+_TAU = math.pi * 2
+
+
+def _r6(v: float) -> float:
+    """Round to six decimals — the SAME expression the JS side uses.
+
+    ⚠ NOT `round(v, 6)`. Python rounds halves to even and JavaScript's
+    `Math.round` rounds them up, and this table is compared across the two
+    languages point by point. `floor(v * 1e6 + 0.5)` means one thing in both.
+    """
+    return math.floor(v * 1_000_000 + 0.5) / 1_000_000
+
+
+def _dedupe(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Drop repeated points, including a last one that repeats the first.
+
+    Arcs that meet land on the same coordinate twice, and a zero-length edge is a
+    degenerate triangle in the monitor's fan and a wasted point in a clip-path.
+    """
+    out: list[tuple[float, float]] = []
+    for p in points:
+        if not out or abs(p[0] - out[-1][0]) > 1e-9 or abs(p[1] - out[-1][1]) > 1e-9:
+            out.append(p)
+    if len(out) > 1 and abs(out[0][0] - out[-1][0]) < 1e-9 and abs(out[0][1] - out[-1][1]) < 1e-9:
+        out.pop()
+    return out
+
+
+def _fit(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Stretch a point list so its bounding box IS the unit square."""
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    sx = 1.0 / (x1 - x0) if x1 > x0 else 1.0
+    sy = 1.0 / (y1 - y0) if y1 > y0 else 1.0
+    return _dedupe([(_r6((x - x0) * sx), _r6((y - y0) * sy)) for x, y in points])
+
+
+def _fit_centred(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Scale about the CENTRE instead, keeping (0.5, 0.5) where it is.
+
+    ⚠ THE FAN-SAFE FIT, and the concave shapes need it. A five-petal flower is not
+    symmetric top-to-bottom, so stretching its BOX to the square slides the middle
+    of the flower off centre — and for a shape with deep valleys, a centre that
+    has drifted into a valley wall is exactly the fan that draws wrong.
+    """
+    ex = max(abs(x - 0.5) for x, _ in points)
+    ey = max(abs(y - 0.5) for _, y in points)
+    sx = 0.5 / ex if ex > 0 else 1.0
+    sy = 0.5 / ey if ey > 0 else 1.0
+    return _dedupe([(_r6(0.5 + (x - 0.5) * sx), _r6(0.5 + (y - 0.5) * sy)) for x, y in points])
+
+
+def _polar(steps, radius, phase=-math.pi / 2):
+    """`steps` points around the centre, at whatever `radius(t, i)` returns.
+
+    `t` runs 0→1 once round and `i` is the step, because a star wants the INDEX
+    (odd steps are its inner points) while a flower wants the angle. Radius is a
+    fraction of half the box, so 1 touches the edge; the phase starts at the TOP,
+    like the pentagon that was here first.
+    """
+    out = []
+    for i in range(steps):
+        t = i / steps
+        a = phase + t * _TAU
+        r = radius(t, i)
+        out.append((0.5 + math.cos(a) * 0.5 * r, 0.5 + math.sin(a) * 0.5 * r))
+    return out
+
+
+def _poly(n, phase=-math.pi / 2):
+    """A regular n-gon. Convex, so the plain box fit is safe."""
+    return _fit(_polar(n, lambda t, i: 1.0, phase))
+
+
+def _star_poly(n, inner, phase=-math.pi / 2):
+    """n tips at the edge, n valleys at `inner`. Concave → centred fit."""
+    return _fit_centred(_polar(n * 2, lambda t, i: 1.0 if i % 2 == 0 else inner, phase))
+
+
+def _flower(n, inner, sharp=0.55, per=24):
+    """n petals: `inner` is how deep the valleys cut, `sharp` how pointed."""
+    return _fit_centred(
+        _polar(n * per, lambda t, i: inner + (1 - inner) * abs(math.cos(math.pi * n * t)) ** sharp)
+    )
+
+
+def _scallop(n, depth=0.12, per=16):
+    """A circle with a bitten edge — n shallow scallops."""
+    return _fit_centred(
+        _polar(n * per, lambda t, i: 1 - depth * (1 - abs(math.cos(math.pi * n * t))))
+    )
+
+
+def _cog(teeth, inner=0.72, duty=0.55):
+    """A gear: square teeth rather than points, so it reads as machined.
+
+    ⚠ ITS TOOTH FLANKS ARE RADIAL, so the monitor's fan triangle on those edges is
+    DEGENERATE — zero area, drawn as nothing, correct on purpose. It is the one
+    shape whose fan-safety margin is zero rather than positive.
+    """
+    out = []
+    step = 1.0 / teeth
+    for i in range(teeth):
+        base = i * step
+        for t, r in (
+            (base, 1.0),
+            (base + step * duty, 1.0),
+            (base + step * duty, inner),
+            (base + step, inner),
+        ):
+            a = -math.pi / 2 + t * _TAU
+            out.append((0.5 + math.cos(a) * 0.5 * r, 0.5 + math.sin(a) * 0.5 * r))
+    return _fit_centred(out)
+
+
+def _blob():
+    """A soft pebble. Whole harmonics only, or the loop would not close."""
+    def radius(t, i):
+        a = t * _TAU
+        return (
+            1
+            - 0.1 * math.sin(a * 3 + 0.7)
+            - 0.06 * math.sin(a * 5 + 2.1)
+            - 0.03 * math.sin(a * 2)
+        )
+
+    return _fit_centred(_polar(96, radius))
+
+
+def _arc(cx, cy, rx, ry, a0, a1, steps):
+    """`steps` segments of an ellipse arc, endpoints included."""
+    out = []
+    for i in range(steps + 1):
+        a = a0 + (a1 - a0) * i / steps
+        out.append((cx + math.cos(a) * rx, cy + math.sin(a) * ry))
+    return out
+
+
+def _quad(p0, p1, p2, steps):
+    """A quadratic curve, sampled — the heart's and the shield's flanks."""
+    out = []
+    for i in range(steps + 1):
+        t = i / steps
+        u = 1 - t
+        out.append((
+            u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+            u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1],
+        ))
+    return out
+
+
+def _rounded(r, steps=8):
+    """A box with corners of radius `r`, as a fraction of the box."""
+    k = min(r, 0.5)
+    pts = list(_arc(k, k, k, k, math.pi, math.pi * 1.5, steps))
+    pts += _arc(1 - k, k, k, k, math.pi * 1.5, _TAU, steps)
+    pts += _arc(1 - k, 1 - k, k, k, 0, math.pi / 2, steps)
+    pts += _arc(k, 1 - k, k, k, math.pi / 2, math.pi, steps)
+    return _fit(pts)
+
+
+def _arch(steps=16):
+    """A doorway: semicircular top, straight sides, flat foot."""
+    return _fit(list(_arc(0.5, 0.5, 0.5, 0.5, math.pi, _TAU, steps)) + [(1.0, 1.0), (0.0, 1.0)])
+
+
+def _half_circle(steps=32):
+    """A dome — the top half of the box's ellipse, flat side down."""
+    return _fit(list(_arc(0.5, 1.0, 0.5, 1.0, math.pi, _TAU, steps)) + [(1.0, 1.0)])
+
+
+def _quarter_circle(steps=24):
+    """A quarter round, its corner at bottom-left."""
+    return _fit([(0.0, 1.0)] + list(_arc(0.0, 1.0, 1.0, 1.0, -math.pi / 2, 0, steps)))
+
+
+def _pac(steps=40, mouth=50.0):
+    """A disc with a wedge taken out of it.
+
+    ⚠ ITS APEX IS THE FAN'S CENTRE — the one shape whose outline touches (0.5,
+    0.5) rather than surrounding it. Still star-shaped (the apex sees
+    everything), which is why a mouth is possible here and a ring is not.
+    """
+    a0 = math.radians(mouth / 2)
+    return _fit([(0.5, 0.5)] + list(_arc(0.5, 0.5, 0.5, 0.5, a0, _TAU - a0, steps)))
+
+
+def _heart(steps=14):
+    """Two lobes and two flanks meeting at a point.
+
+    Built from where the lobes INTERSECT rather than from a formula, so the notch
+    is a real vertex at a known height instead of wherever a polar curve happened
+    to dip — which is what decides whether the centre can see it.
+    """
+    r, cy, flank = 0.32, 0.30, 0.62
+    rx = 1.0 - r
+    dx = rx - 0.5
+    dy = math.sqrt(max(r * r - dx * dx, 0.0))
+    notch = math.atan2(-dy, -dx)
+    foot = (rx + math.cos(flank) * r, cy + math.sin(flank) * r)
+    pts = list(_arc(rx, cy, r, r, notch, flank, steps))
+    pts += _quad(foot, (0.86, 0.80), (0.5, 1.0), steps)
+    pts += _quad((0.5, 1.0), (0.14, 0.80), (1 - foot[0], foot[1]), steps)
+    pts += _arc(1 - rx, cy, r, r, math.pi - flank, _TAU + math.atan2(-dy, dx), steps)
+    return _fit(pts)
+
+
+def _drop(steps=32):
+    """A teardrop: point up, weight at the bottom."""
+    return _fit(
+        [(0.5, 0.0)] + list(_arc(0.5, 0.66, 0.5, 0.34, -math.pi * 0.36, math.pi * 1.36, steps))
+    )
+
+
+def _leaf(steps=18):
+    """Two curves meeting at opposite corners of the box."""
+    pts = list(_quad((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), steps))
+    pts += _quad((1.0, 1.0), (0.0, 1.0), (0.0, 0.0), steps)
+    return _fit(pts)
+
+
+def _shield(steps=14):
+    """Flat shoulders, flanks that fall to a point."""
+    pts = [(0.0, 0.0), (1.0, 0.0), (1.0, 0.42)]
+    pts += _quad((1.0, 0.42), (0.96, 0.88), (0.5, 1.0), steps)
+    pts += _quad((0.5, 1.0), (0.04, 0.88), (0.0, 0.42), steps)
+    return _fit(pts)
+
+
+def _plus(arm=0.32):
+    """A plus. `arm` is the bar's thickness as a fraction of the box."""
+    a, b = arm, 1 - arm
+    return [
+        (a, 0.0), (b, 0.0), (b, a), (1.0, a), (1.0, b), (b, b),
+        (b, 1.0), (a, 1.0), (a, b), (0.0, b), (0.0, a), (a, a),
+    ]
+
+
+def _cross(arm=0.3):
+    """The same plus, turned 45° and re-fitted — an ✕ rather than a ✚."""
+    c = math.cos(math.pi / 4)
+    s = math.sin(math.pi / 4)
+    return _fit([
+        (0.5 + (x - 0.5) * c - (y - 0.5) * s, 0.5 + (x - 0.5) * s + (y - 0.5) * c)
+        for x, y in _plus(arm)
+    ])
+
+
+def _arrow(head=0.58, stem=0.22):
+    """An arrow, pointing up.
+
+    ⚠ THE HEAD REACHES PAST THE MIDDLE ON PURPOSE. With a shallow head the box's
+    centre sits in the STEM, and from there the barb tips are hidden behind the
+    head's underside — not star-shaped, and a monitor that draws the barbs filled
+    in. A head that contains the centre makes the whole outline visible from it.
+    """
+    a, b = 0.5 - stem, 0.5 + stem
+    return [(0.5, 0.0), (1.0, head), (b, head), (b, 1.0), (a, 1.0), (a, head), (0.0, head)]
+
+
+def _bubble(r=0.22, steps=8):
+    """A speech bubble: rounded box, tail bottom-left."""
+    box = 0.78  # the body's foot; the tail lives below it
+    pts = list(_arc(r, r, r, r, math.pi, math.pi * 1.5, steps))
+    pts += _arc(1 - r, r, r, r, math.pi * 1.5, _TAU, steps)
+    pts += _arc(1 - r, box - r, r, r, 0, math.pi / 2, steps)
+    pts += [(0.46, box), (0.30, 1.0), (0.30, box)]
+    pts += _arc(r, box - r, r, r, math.pi / 2, math.pi, steps)
+    return _fit(pts)
+
+
+def _trapezoid(inset=0.22):
+    return [(inset, 0.0), (1 - inset, 0.0), (1.0, 1.0), (0.0, 1.0)]
+
+
+def _parallelogram(slant=0.24):
+    return [(slant, 0.0), (1.0, 0.0), (1 - slant, 1.0), (0.0, 1.0)]
+
+
+def _kite():
+    return [(0.5, 0.0), (1.0, 0.36), (0.5, 1.0), (0.0, 0.36)]
+
+
+# ⚠ THE FIRST FOUR SHAPES ARE FROZEN, and written out rather than built. Every
+# project saved before the library grew stores `kind: "pentagon"` or `"star"`, and
+# a pentagon that changed shape on load would silently redraw somebody's finished
+# animatic. The builders above would give a slightly different (better-centred)
+# pentagon — so the old one stays exactly as it was and only the new shapes get
+# the fit.
+_LEGACY_SHAPES: dict[str, list[tuple[float, float]]] = {
+    "rect": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+    "pentagon": [(0.5, 0.0), (1.0, 0.38), (0.82, 1.0), (0.18, 1.0), (0.0, 0.38)],
+    "star": [
         (0.5, 0.0), (0.61, 0.35), (0.98, 0.35), (0.68, 0.57),
         (0.79, 0.91), (0.5, 0.7), (0.21, 0.91), (0.32, 0.57),
         (0.02, 0.35), (0.39, 0.35),
-    ),
+    ],
 }
-SHAPE_KINDS = ("rect", "ellipse", "pentagon", "star")
+
+# ⚠ IDS ARE STORED IN SAVED PROJECTS. Renaming one is a data migration, not a
+# rename — a clip whose kind no longer resolves falls back to a plain box.
+_SHAPE_POINTS: dict[str, list[tuple[float, float]]] = {
+    **_LEGACY_SHAPES,
+    # Basic
+    "round_rect": _rounded(0.22),
+    "triangle": _poly(3),
+    "diamond": _poly(4),
+    "half_circle": _half_circle(),
+    "quarter_circle": _quarter_circle(),
+    "arch": _arch(),
+    # Polygons
+    "hexagon": _poly(6, 0.0),
+    "heptagon": _poly(7),
+    "octagon": _poly(8, math.pi / 8),
+    "decagon": _poly(10),
+    "trapezoid": _trapezoid(),
+    "parallelogram": _parallelogram(),
+    "kite": _kite(),
+    # Stars & bursts
+    "star4": _star_poly(4, 0.28),
+    "star6": _star_poly(6, 0.55),
+    "star8": _star_poly(8, 0.6),
+    "burst12": _star_poly(12, 0.62),
+    "starburst": _star_poly(16, 0.4),
+    "sunburst": _star_poly(24, 0.72),
+    "seal": _star_poly(20, 0.86),
+    # Flowers & blobs
+    "flower5": _flower(5, 0.3),
+    "flower6": _flower(6, 0.32),
+    "flower8": _flower(8, 0.38),
+    "clover": _flower(4, 0.18, 0.75),
+    "quatrefoil": _flower(4, 0.66, 1),
+    "blob": _blob(),
+    "scallop": _scallop(12, 0.12),
+    "cog": _cog(10),
+    # Symbols
+    "heart": _heart(),
+    "drop": _drop(),
+    "leaf": _leaf(),
+    "shield": _shield(),
+    "plus": _plus(),
+    "cross": _cross(),
+    "arrow": _arrow(),
+    "pac": _pac(),
+    "bubble": _bubble(),
+}
+
+# EVERY KIND THE EDITOR CAN SEND, in the picker's own order — ⚠ the same order as
+# `SHAPE_KINDS` in `client/src/animatic/shape_points.js`, which is what
+# `tests/shape_points_check.py` compares. 'ellipse' is in this list and NOT in the
+# table above: Pillow draws a true ellipse for it.
+SHAPE_KINDS = (
+    "rect", "round_rect", "ellipse", "triangle", "diamond",
+    "half_circle", "quarter_circle", "arch",
+    "pentagon", "hexagon", "heptagon", "octagon", "decagon",
+    "trapezoid", "parallelogram", "kite",
+    "star", "star4", "star6", "star8", "burst12", "starburst", "sunburst", "seal",
+    "flower5", "flower6", "flower8", "clover", "quatrefoil", "blob", "scallop", "cog",
+    "heart", "drop", "leaf", "shield", "plus", "cross", "arrow", "pac", "bubble",
+)
 
 
 def draw_shapes(canvas: Image.Image, shapes: list[dict]) -> None:

@@ -15,24 +15,121 @@
  * exists to prevent.
  */
 
-/** ⚠ ELEMENT FOR ELEMENT the same as FONTS in `animatic_fonts.py`. */
+/**
+ * ⚠ ELEMENT FOR ELEMENT the same as FONTS in `animatic_fonts.py`.
+ *
+ * `line_ratio` is (ascent + descent) ÷ font size for the file — read that
+ * module for why it is on the list and what it fixes. In one line: the exporter
+ * steps its baselines by `(ascent + descent) × line_height` and CSS
+ * `line-height` is a multiple of the FONT SIZE, so `lineHeight` in the browser
+ * has to be multiplied by this to be the same distance. `captionStyle` is the
+ * only caller.
+ */
 export const FONTS = [
-  { id: "inter", label: "Inter", file: "Inter-SemiBold.ttf", family: "AnimaticInter" },
-  { id: "anton", label: "Anton", file: "Anton-Regular.ttf", family: "AnimaticAnton" },
-  { id: "bebas", label: "Bebas Neue", file: "BebasNeue-Regular.ttf", family: "AnimaticBebas" },
+  // --- Sans, for a caption you are meant to READ rather than look at ------
+  // ⚠ INTER IS FIRST AND HAS TO STAY FIRST — `fontEntry` falls back to
+  // `FONTS[0]`, and `DEFAULT_FONT` below names the same one.
+  {
+    id: "inter",
+    label: "Inter",
+    file: "Inter-SemiBold.ttf",
+    family: "AnimaticInter",
+    line_ratio: 1.22,
+  },
+  {
+    id: "montserrat",
+    label: "Montserrat",
+    file: "Montserrat-SemiBold.ttf",
+    family: "AnimaticMontserrat",
+    line_ratio: 1.23,
+  },
+  {
+    id: "poppins",
+    label: "Poppins",
+    file: "Poppins-SemiBold.ttf",
+    family: "AnimaticPoppins",
+    line_ratio: 1.4,
+  },
+  {
+    id: "nunito",
+    label: "Nunito",
+    file: "Nunito-Bold.ttf",
+    family: "AnimaticNunito",
+    line_ratio: 1.38,
+  },
+  // --- Condensed and heavy, for a title card or a lower third -------------
+  {
+    id: "anton",
+    label: "Anton",
+    file: "Anton-Regular.ttf",
+    family: "AnimaticAnton",
+    line_ratio: 1.51,
+  },
+  {
+    id: "bebas",
+    label: "Bebas Neue",
+    file: "BebasNeue-Regular.ttf",
+    family: "AnimaticBebas",
+    line_ratio: 1.2,
+  },
+  {
+    id: "oswald",
+    label: "Oswald",
+    file: "Oswald-Medium.ttf",
+    family: "AnimaticOswald",
+    line_ratio: 1.49,
+  },
+  {
+    id: "archivo",
+    label: "Archivo Black",
+    file: "ArchivoBlack-Regular.ttf",
+    family: "AnimaticArchivo",
+    line_ratio: 1.09,
+  },
+  // --- Serif --------------------------------------------------------------
   {
     id: "playfair",
     label: "Playfair Display",
     file: "PlayfairDisplay-SemiBold.ttf",
     family: "AnimaticPlayfair",
+    line_ratio: 1.35,
+  },
+  {
+    id: "merriweather",
+    label: "Merriweather",
+    file: "Merriweather-Bold.ttf",
+    family: "AnimaticMerriweather",
+    line_ratio: 1.27,
+  },
+  // --- Faces with a voice of their own ------------------------------------
+  {
+    id: "bangers",
+    label: "Bangers",
+    file: "Bangers-Regular.ttf",
+    family: "AnimaticBangers",
+    line_ratio: 1.08,
+  },
+  {
+    id: "lobster",
+    label: "Lobster",
+    file: "Lobster-Regular.ttf",
+    family: "AnimaticLobster",
+    line_ratio: 1.25,
+  },
+  {
+    id: "caveat",
+    label: "Caveat",
+    file: "Caveat-SemiBold.ttf",
+    family: "AnimaticCaveat",
+    line_ratio: 1.26,
   },
   {
     id: "courier",
     label: "Courier Prime",
     file: "CourierPrime-Regular.ttf",
     family: "AnimaticCourier",
+    line_ratio: 1.14,
   },
-  { id: "caveat", label: "Caveat", file: "Caveat-SemiBold.ttf", family: "AnimaticCaveat" },
 ];
 
 export const FONT_IDS = FONTS.map((f) => f.id);
@@ -53,12 +150,21 @@ export function fontFamily(id) {
 }
 
 /**
+ * CSS `line-height` for a caption set in `id` at `lineHeight` — the number the
+ * exporter multiplies (ascent + descent) by. See `line_ratio` above.
+ */
+export function cssLineHeight(id, lineHeight = 1.28) {
+  return (lineHeight || 1.28) * (fontEntry(id).line_ratio || 1.22);
+}
+
+/**
  * Register every bundled font with the browser. Idempotent; call it once.
  *
  * ⚠ THE @font-face RULES ARE GENERATED, NOT WRITTEN IN A .css FILE. A third
  * hand-maintained copy of the list is exactly the failure this whole module is
- * built to avoid — `_SHAPE_POINTS` / `POINTS` is what that looks like after a
- * year. The list above is the only place a font is named.
+ * built to avoid — the shape polygons are what that looks like after a year, and
+ * they needed a test (`tests/shape_points_check.py`) to be safe to touch. The
+ * list above is the only place a font is named.
  *
  * `font-display: block` rather than `swap` on purpose: swapping means the
  * monitor draws one frame of a fallback face at a different width, which for a

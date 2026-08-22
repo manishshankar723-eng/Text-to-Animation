@@ -6,7 +6,6 @@ import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
 import Profile from "./components/Profile.jsx";
-import Avatar from "./components/Avatar.jsx";
 import PlanAndScript from "./components/PlanAndScript.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
 import StoryboardToAnimatics from "./components/StoryboardToAnimatics.jsx";
@@ -67,7 +66,16 @@ export default function App() {
   // the animatics workflow opens straight into its editor instead of the library.
   const [pendingAnimaticId, setPendingAnimaticId] = useState(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
+  // Every account whose token this browser is holding, for the switcher in the
+  // sidebar's menu. Kept in state rather than read straight from `api` on each
+  // render because adding, switching and logging out all have to REDRAW it.
+  const [accounts, setAccounts] = useState(api.listAccounts);
+  // The "Add another account" dialog: the ordinary sign-in form, in a modal,
+  // over the app you are already signed in to.
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
+  // ⚠ NO `accountOpen` ANY MORE. The sidebar's account button used to dim the
+  // app and put up a card ("are you sure you want to log out?"); it opens the
+  // shared dropdown now and keeps that flag itself — see Sidebar.jsx.
   // main.jsx already applied the stored theme before the first paint; this only
   // has to re-stamp <html> when the user flips the switch.
   const [theme, setTheme] = useState(getTheme);
@@ -114,7 +122,16 @@ export default function App() {
     api
       .me()
       .then((p) => {
-        if (!cancelled) setDisplayName(p?.display_name || p?.full_name || "");
+        if (cancelled) return;
+        const name = p?.display_name || p?.full_name || "";
+        setDisplayName(name);
+        // Cached against the account so the switcher can name it later, when it
+        // is one of the OTHER entries and `me()` is answering for someone else.
+        const mine = api.getEmail();
+        if (mine) {
+          api.rememberAccountName(mine, name);
+          setAccounts(api.listAccounts());
+        }
       })
       .catch(() => {
         // Cosmetic only — the sidebar falls back to the email.
@@ -139,12 +156,44 @@ export default function App() {
 
   function logout() {
     api.clearSession();
+    setAccounts(api.listAccounts());
     setAuthed(false);
     setEmail(null);
     setSelectedId(null);
     setNav("home");
     setAuthView("landing");
-    setAccountOpen(false);
+  }
+
+  // ⚠ SWITCHING IS A FULL RESET, NOT A RE-LABEL. Every workflow holds the
+  // PREVIOUS account's work in local state - a job id, an open board, a
+  // half-filled form - and none of it belongs to the person now signed in. The
+  // shell's own pointers are cleared and `navResetKey` remounts the page, which
+  // is exactly what clicking the current workflow in the rail already does.
+  function switchAccount(next) {
+    if (!next || next === email) return;
+    const now = api.switchAccount(next);
+    if (!now) return;
+    setEmail(now);
+    setDisplayName("");
+    setAccounts(api.listAccounts());
+    setSelectedId(null);
+    setPendingAnimaticId(null);
+    setNav("home");
+    setNavResetKey((k) => k + 1);
+  }
+
+  // The sign-in dialog succeeded: `Login` has already written the new session,
+  // so this only has to catch the app up. Same reset as a switch, for the same
+  // reason - it IS a switch, to an account that was not held a moment ago.
+  function accountAdded(mail) {
+    setAddAccountOpen(false);
+    setEmail(mail);
+    setDisplayName("");
+    setAccounts(api.listAccounts());
+    setSelectedId(null);
+    setPendingAnimaticId(null);
+    setNav("home");
+    setNavResetKey((k) => k + 1);
   }
 
   // Sidebar clicks. Selecting a DIFFERENT entry navigates; selecting the one
@@ -210,7 +259,25 @@ export default function App() {
       />
     );
   } else if (nav === "profile") {
-    content = <Profile email={email} onLogout={logout} />;
+    content = (
+      <Profile
+        email={email}
+        onLogout={logout}
+        /* "Manage accounts" in the switcher comes here, so the managing has to
+           be here: the list, a switch, and a way to drop one. */
+        accounts={accounts}
+        onSwitchAccount={switchAccount}
+        onAddAccount={() => setAddAccountOpen(true)}
+        onForgetAccount={(mail) => {
+          api.forgetAccount(mail);
+          setAccounts(api.listAccounts());
+          // Forgetting the LIVE account signs you out of it - `api` drops the
+          // session with it, so the shell has to follow or it would sit on a
+          // page it no longer has a token for.
+          if (mail === email) logout();
+        }}
+      />
+    );
   } else if (nav === "plan-and-script") {
     content = <PlanAndScript />;
   } else if (nav === "text-to-image") {
@@ -285,8 +352,14 @@ export default function App() {
         displayName={displayName}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        /* `onUpgrade` is the Upgrade button AND the menu's "Pricing and plan"
+           — one modal, two ways in. */
         onUpgrade={() => setUpgradeOpen(true)}
-        onProfileClick={() => setAccountOpen(true)}
+        onOpenAccount={() => setNav("profile")}
+        onLogout={logout}
+        accounts={accounts}
+        onSwitchAccount={switchAccount}
+        onAddAccount={() => setAddAccountOpen(true)}
         collapsed={navCollapsed}
         onToggleCollapse={() => setNavCollapsed((c) => !c)}
       />
@@ -296,39 +369,27 @@ export default function App() {
         {content}
       </main>
 
-      {accountOpen && (
-        <div className="modal-overlay" onClick={() => setAccountOpen(false)}>
-          <div className="card account-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setAccountOpen(false)}>
+      {/* ⚠ THE ORDINARY SIGN-IN FORM, IN A MODAL - not a second login screen.
+          `Login` already knows how to log in, register, show and hide the
+          password and report a bad one; a copy of it here would be a copy of
+          all four. Only the frame is different, and that is CSS. */}
+      {addAccountOpen && (
+        <div className="modal-overlay" onClick={() => setAddAccountOpen(false)}>
+          <div className="add-account-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="modal-close"
+              onClick={() => setAddAccountOpen(false)}
+              aria-label="Close"
+            >
               ✕
             </button>
-            <Avatar
-              size={64}
-              initial={(displayName || email || "").trim().charAt(0).toUpperCase()}
-            />
-            <h2>{displayName || email}</h2>
-            {displayName && <p className="muted tiny">{email}</p>}
-            {/* The sidebar avatar is where people look for account settings, so
-                offer the profile here rather than only from Home. */}
-            <button
-              className="btn"
-              onClick={() => {
-                setAccountOpen(false);
-                setNav("profile");
-              }}
-            >
-              👤 Your profile
-            </button>
-            <p className="muted">Are you sure you want to log out of your account?</p>
-            <button className="btn primary" onClick={logout}>
-              ⎋ Log out
-            </button>
-            <button
-              className="btn ghost small account-modal-cancel"
-              onClick={() => setAccountOpen(false)}
-            >
-              Cancel
-            </button>
+            {/* ⚠ SIGNING IN HERE DOES NOT SIGN THE OTHER ACCOUNT OUT. Its token
+                stays in the store, so the switcher lists both afterwards - which
+                is the whole point of "add another". */}
+            <p className="muted tiny add-account-note">
+              Signing in here keeps {email} — you can switch back from this menu.
+            </p>
+            <Login onAuthed={accountAdded} />
           </div>
         </div>
       )}

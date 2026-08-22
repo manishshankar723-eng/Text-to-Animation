@@ -1279,8 +1279,14 @@ class AnimaticTextClip(BaseModel):
     size: str = Field("medium", description="'small' | 'medium' | 'large'.")
     color: str = Field("#ffffff", description="Text colour, #rrggbb.")
     # How the text is kept readable over busy art: a translucent bar behind it
-    # ("scrim"), a solid box, or an outline only ("none").
-    backdrop: str = Field("scrim", description="'scrim' | 'box' | 'none'.")
+    # ("scrim"), a solid box, an outline only ("none"), or nothing whatsoever
+    # ("plain"). ⚠ "none" and "plain" ARE NOT THE SAME. "none" draws no bar but
+    # gives the glyphs an automatic dark outline, which is what every caption
+    # saved with that value has always drawn; "plain" draws neither, so the
+    # letters sit bare on the art. Read `text_backdrop` in `animatic_render.py`
+    # — the fold lives there so the preview and the export cannot disagree, and
+    # an unrecognised value becomes a scrim rather than nothing.
+    backdrop: str = Field("scrim", description="'scrim' | 'box' | 'none' | 'plain'.")
     # Fades the caption — its backdrop, ink and outline together. Keyframe it
     # and a caption arrives instead of appearing.
     opacity: float = Field(1.0, ge=0.0, le=1.0)
@@ -1326,6 +1332,49 @@ class AnimaticTextClip(BaseModel):
     # code takes its original per-line path in that case, so an untouched
     # caption is rendered by exactly the code that rendered it before.
     letter_spacing: float = Field(0.0, ge=-0.2, le=1.0)
+    # --- The TYPE, part two -------------------------------------------------
+    # Same rule as the block above and for the same reason: every field here is
+    # optional and its default is the number the drawing code already used, so
+    # an animatic saved before these existed opens, plays and exports as the
+    # picture it was. `tests/captions_check.py` asserts that byte for byte.
+    #
+    # AN EXPLICIT FONT SIZE, in pixels at 1080p, scaled by the real frame height
+    # like `stroke_px`. 0 means "use the `size` preset", which is every caption
+    # written before this — S/M/L are `height / 30 | 21 | 14`, i.e. 36 / 51 / 77
+    # at 1080p, and this is the escape hatch for the title that wants 120.
+    size_px: float = Field(0.0, ge=0.0, le=400.0)
+    # LEADING — the distance between baselines, as a multiple of the face's own
+    # (ascent + descent). 1.28 is what every caption before this was set at, and
+    # it is CSS `line-height` on the other side with no conversion.
+    line_height: float = Field(1.28, ge=0.6, le=3.0)
+    # CASE, applied before the text is wrapped — so the wrap is measured on the
+    # glyphs that get drawn, which is the only order that can agree with CSS
+    # `text-transform`. "none" leaves the typed text alone.
+    text_case: str = Field("none", description="'none' | 'upper' | 'lower' | 'title'.")
+    # How wide the block may get before it wraps, as a fraction of the FRAME —
+    # 0.86 is what `_TEXT_WIDTH` has always been. Narrow it for a title that
+    # should break after three words instead of running the width of the shot.
+    wrap: float = Field(0.86, ge=0.1, le=1.0)
+    # --- The backdrop, in detail --------------------------------------------
+    # `backdrop` above still chooses the KIND (bar / box / none); these describe
+    # the one it chose. The colour and the padding default to what the drawing
+    # code hard-coded, and `backdrop_opacity` is None for "whatever the kind is
+    # worth" — 0.55 for a scrim, 0.88 for a box. A number overrides both, which
+    # is the only way to say "a box, but at 40%".
+    backdrop_color: str = Field("#000000", description="Backdrop fill, #rrggbb.")
+    backdrop_opacity: float | None = Field(None, ge=0.0, le=1.0)
+    # Corner radius and padding, as multiples of the font size (CSS `em`), so
+    # they scale with the frame like everything else on a caption.
+    backdrop_radius: float = Field(0.25, ge=0.0, le=2.0)
+    backdrop_pad: float = Field(1.0, ge=0.0, le=4.0)
+    # --- The shadow, in detail ----------------------------------------------
+    # `shadow` above is the DISTANCE (in em); these are its colour, its strength
+    # and its direction in degrees clockwise from "right". 45 is down-and-right,
+    # which is the offset every caption before this cast, and 0.55 is the alpha
+    # it cast it at.
+    shadow_color: str = Field("#000000", description="Shadow ink, #rrggbb.")
+    shadow_opacity: float = Field(0.55, ge=0.0, le=1.0)
+    shadow_angle: float = Field(45.0, ge=0.0, le=360.0)
     keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES
 
     @property
@@ -1347,7 +1396,12 @@ class AnimaticShape(BaseModel):
     # Selected, moved and deleted with whatever shares it — see the field's
     # canonical comment on `AnimaticTextClip`.
     group_id: str = ""
-    kind: str = Field("rect", description="'rect' | 'ellipse' | 'pentagon' | 'star'.")
+    # ⚠ A NAME FROM `SHAPE_KINDS` in `animatic.py` — forty-one of them, grouped for
+    # the picker in `client/src/animatic/shape_points.js`. NOT validated against
+    # that list on purpose: an id this build has never heard of draws as a plain
+    # box in all three renderers, which is a shape somebody can still see and
+    # move, where a 422 on load would be a project that will not open at all.
+    kind: str = Field("rect", description="A shape name: 'rect', 'ellipse', 'star6', 'heart', …")
     # Where it sits on the timeline, in video time — same as a text clip.
     start_ms: int = Field(0, ge=0)
     duration_ms: int = Field(2000, ge=100, le=600_000)
@@ -1504,8 +1558,9 @@ class AnimaticProject(BaseModel):
     # The text layer. Independent of the frames — a clip can start mid-frame and
     # run across a cut.
     texts: list[AnimaticTextClip] = Field(default_factory=list)
-    # The shape layer — rectangles, ellipses, pentagons and stars drawn over the
-    # picture. Timed like the text layer and, like it, independent of the frames.
+    # The shape layer — the vector shapes drawn over the picture, from a plain box
+    # to a forty-one-strong library of polygons, stars, flowers and symbols. Timed
+    # like the text layer and, like it, independent of the frames.
     shapes: list[AnimaticShape] = Field(default_factory=list)
     # Lanes the user added. Empty on every project that predates layers, which
     # then shows exactly the default lanes it always did.

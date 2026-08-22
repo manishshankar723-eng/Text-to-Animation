@@ -183,6 +183,233 @@
   color: var(--muted);
 }
 
+/* ---- The account dropdown, opened by the button above ------------------- */
+/* ⚠ IT REPLACED A MODAL. This button used to dim the whole app for a card that
+   asked "are you sure you want to log out?" — a dialog for a four-item menu.
+   The menu itself is `AccountMenu.jsx`, the SAME component the editor's ⚙
+   opens; only the anchoring is here.
+   ⚠ AND IT OPENS UPWARD. The button lives at the bottom of a full-height rail,
+   so `top: 100%` — what `.tl-layer-menu` gives it — would drop the list off the
+   bottom of the screen. Doubled class for the same reason `.an-settings-menu`
+   is doubled: shell.css loads BEFORE animatic-editor.css (index.css, lines 19
+   and 29), so at equal specificity `.tl-layer-menu` wins on source order. */
+.sb-account-wrap {
+  position: relative;
+  display: block;
+}
+.tl-layer-menu.sb-account-menu {
+  top: auto;
+  bottom: calc(100% + 0.3rem);
+  left: 0;
+  right: auto;
+  min-width: 100%;
+  max-width: 18rem;
+  z-index: 40;
+}
+/* The rail narrows to 68px; the menu must not. It hangs off a button that is
+   then an avatar-sized square, so it opens rightward from its left edge and
+   keeps a readable width of its own. */
+.sidebar.collapsed .tl-layer-menu.sb-account-menu {
+  min-width: 12rem;
+}
+/* Log out — muted until you're on it. Same treatment as the editor's copy. */
+.sb-account-menu .tl-layer-menu-opt.danger:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--fail);
+}
+.sb-account-menu .tl-layer-menu-opt.danger:hover:not(:disabled) .tl-layer-menu-ico {
+  color: var(--fail);
+}
+
+/* ---- "Your account" -> the account switcher, opened BESIDE the menu -------- */
+/* ⚠ IT IS A FLYOUT, NOT A SECOND DROPDOWN UNDER THE FIRST. The rail is on the
+   left, so the room is to the RIGHT — and a submenu that opens where the parent
+   already is would cover the row you pressed. Reference: a browser's profile
+   switcher, which is where people have already learned this shape.
+   Everything visual is `.tl-layer-menu`'s, as the parent menu's is: same panel,
+   same rows, same icon chips, so the two read as one control opening twice. */
+.am-sub-wrap {
+  position: relative;
+  display: block;
+}
+/* The parent row. The caret is pushed to the far edge — it points at where the
+   panel comes out, and it is the only thing that says this row behaves
+   differently before you press it. */
+.tl-layer-menu-opt.am-has-sub {
+  justify-content: flex-start;
+}
+.am-sub-caret {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+}
+/* Held open, so it is obvious which row the panel belongs to. */
+.tl-layer-menu-opt.am-has-sub.on {
+  background: var(--panel-2);
+  color: var(--primary);
+}
+.tl-layer-menu-opt.am-has-sub.on .tl-layer-menu-ico,
+.tl-layer-menu-opt.am-has-sub.on .am-sub-caret {
+  color: var(--primary);
+}
+/* ⚠ TOP-ALIGNED TO ITS ROW, NOT TO THE MENU. `-0.25rem` is the parent's own
+   padding, so the panel's first row lines up with the row that opened it.
+   Doubled class for the usual reason — shell.css loads before
+   animatic-editor.css, so `.tl-layer-menu`'s `top`/`left` win on source order. */
+.tl-layer-menu.am-switch {
+  top: -0.25rem;
+  bottom: auto;
+  left: calc(100% + 0.35rem);
+  right: auto;
+  min-width: 15rem;
+  max-width: 19rem;
+  z-index: 41;
+  /* Several accounts must not run off the bottom of the screen: the panel is
+     top-aligned to its row, so it grows downward from near the foot of a
+     full-height rail. */
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.am-switch-head {
+  padding: 0.35rem 0.45rem 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* One account. Taller than an ordinary row because it carries a face and two
+   lines of text — it is a person, not a command. */
+.tl-layer-menu-opt.am-acct {
+  gap: 0.55rem;
+  padding: 0.4rem 0.45rem;
+}
+.am-acct-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.am-acct-name {
+  font-weight: 600;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-acct-mail {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-acct-tick {
+  margin-left: auto;
+  padding-left: 0.4rem;
+  color: var(--primary);
+  font-weight: 700;
+}
+/* ⚠ THE ACTIVE ACCOUNT IS `disabled`, AND MUST NOT LOOK BROKEN. The shared rule
+   fades a disabled row to `--disabled-opacity`, which on the row wearing the
+   tick reads as "this one is unavailable" — the opposite of what the tick says.
+   Full strength, ordinary cursor, no hover. */
+.tl-layer-menu-opt.am-acct.on:disabled {
+  opacity: 1;
+  cursor: default;
+  color: var(--text);
+}
+.am-switch-rule {
+  display: block;
+  height: 1px;
+  margin: 0.3rem 0.15rem;
+  background: var(--border);
+}
+
+/* ---- "Add another account": the ordinary sign-in form, in a modal --------- */
+/* `Login` brings its own `.auth-wrap`, which is a full-height centred grid with
+   its own background — right for a page, wrong inside a card. Undone here, so
+   the form inside keeps every one of its own styles. */
+.add-account-modal {
+  position: relative;
+  width: min(100%, 430px);
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-gold);
+  box-shadow: var(--shadow);
+}
+.add-account-modal .auth-wrap {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  display: block;
+}
+.add-account-modal .auth-card {
+  max-width: none;
+  border: 0;
+  box-shadow: none;
+  margin: 0;
+}
+/* ⚠ THE SIDE PADDING CLEARS THE ✕, which is absolutely positioned in the
+   modal's top-right corner. At 1.4rem the note wrapped straight underneath it
+   and the close button sat on top of the address. */
+.add-account-note {
+  padding: 1rem 3rem 0;
+  margin: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Profile > Accounts -------------------------------------------------- */
+.acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.9rem 0;
+}
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.acct-row.on {
+  border-color: var(--border-gold);
+}
+.acct-who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Takes the slack so the buttons sit against the right edge, however long
+     the address is. */
+  flex: 1;
+}
+.acct-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-live {
+  font-size: 0.75rem;
+  color: var(--ok);
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  /* The two buttons wrap under the name rather than squeezing it to nothing. */
+  .acct-row {
+    flex-wrap: wrap;
+  }
+  .acct-who {
+    flex: 1 1 60%;
+  }
+}
+
 .sb-nav {
   display: flex;
   flex-direction: column;

@@ -1319,7 +1319,8 @@
 /* Icon-only buttons: centre the glyph and let it inherit the button colour. */
 .lib-icon,
 .fs-tool,
-.an-topbar .an-del-btn {
+.an-topbar .an-del-btn,
+.an-topbar .an-settings-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;

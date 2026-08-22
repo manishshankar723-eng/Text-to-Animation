@@ -55,6 +55,8 @@ import {
   sceneAt,
   spreadPanelsForRenders,
   setLookValue,
+  textBackdrop,
+  backdropHasFill,
   valueAt,
 } from "../animatic/scene.js";
 // Making room for a take moves PICTURES; these two carry the rest of the film
@@ -68,7 +70,7 @@ import {
   rippleFrames,
 } from "../animatic/ripple.js";
 import { ASPECTS as BOARD_ASPECTS } from "../storyboardOptions.js";
-import { DEFAULT_FONT, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
+import { DEFAULT_FONT, cssLineHeight, ensureFontsLoaded, fontFamily } from "../animatic/fonts.js";
 import {
   disableProp,
   enableProp,
@@ -154,6 +156,9 @@ import { sortFiles } from "./FrameStrip.jsx";
 import { UNTITLED, isUntitled } from "./AnimaticLibrary.jsx";
 import Timeline, { formatTime } from "./Timeline.jsx";
 import Icon from "./Icon.jsx";
+// The account dropdown, shared with the sidebar — see AccountMenu.jsx for why
+// it is one component and not two lists that agree until somebody edits one.
+import AccountMenu, { useMenuDismiss } from "./AccountMenu.jsx";
 import PaneSplitter from "./PaneSplitter.jsx";
 import MediaBin from "./MediaBin.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
@@ -161,6 +166,7 @@ import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
   SHAPE_KINDS,
   ShapeSwatch,
+  shapeLabel,
 } from "./Shapes.jsx";
 import EffectsPanel from "./EffectsPanel.jsx";
 import EffectsLibrary from "./EffectsLibrary.jsx";
@@ -206,6 +212,11 @@ import {
 // them around, and rounding that to the nearest power of two would make the
 // gesture lie about what it was going to show you. The ＋/− buttons and the
 // Zoom tool still move in steps — `ZOOM_STEP` — which is what a click wants.
+// The ⚙ menu and its trigger, for the outside-press close. ⚠ THE GEAR IS IN IT:
+// closing on the button's own `pointerdown` would let the `click` that follows
+// reopen what the press just shut, which reads as a dead button.
+const MENU_DISMISS = ".an-settings-menu, .an-settings-btn";
+
 const MIN_PPS = 2;
 const MAX_PPS = 600;
 const DEFAULT_PPS = 32;
@@ -392,7 +403,39 @@ const newTextClip = (startMs, durationMs) => ({
   stroke_color: "#000000",
   shadow: 0,
   letter_spacing: 0,
+  // The second half of the type, at the values that reproduce what a caption
+  // drew before they existed — see `AnimaticTextClip` for what each one means.
+  size_px: 0,
+  line_height: 1.28,
+  text_case: "none",
+  wrap: 0.86,
+  backdrop_color: "#000000",
+  backdrop_opacity: null,
+  backdrop_radius: 0.25,
+  backdrop_pad: 1,
+  shadow_color: "#000000",
+  shadow_opacity: 0.55,
+  shadow_angle: 45,
 });
+
+// '#rrggbb' + alpha → 'rgba(r, g, b, a)'. Unreadable ink is black, the same
+// forgiveness `_parse_colour` gives the exporter.
+function rgba(hex, alpha) {
+  let s = String(hex || "").trim().replace("#", "");
+  if (s.length === 3) s = s.split("").map((c) => c + c).join("");
+  const n = /^[0-9a-fA-F]{6}$/.test(s) ? parseInt(s, 16) : 0;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+// CSS `text-transform` for a caption's case. ⚠ The same three mappings
+// `_apply_case` implements in Pillow — "title" is `capitalize`, which upper-
+// cases first letters and leaves the rest alone.
+const CAPTION_TRANSFORM = { upper: "uppercase", lower: "lowercase", title: "capitalize" };
+
+// What a backdrop is worth when the clip hasn't said: a scrim is a bar you read
+// through, a box is one you don't. ⚠ 140/255 and 225/255 — the two alphas
+// `_draw_text_block` fills with.
+const BACKDROP_ALPHA = { scrim: 0.55, box: 0.88 };
 
 /**
  * The inline style that makes a caption in the monitor the caption in the MP4.
@@ -406,24 +449,74 @@ const newTextClip = (startMs, durationMs) => ({
  *     trick the sz-* font sizes already use);
  *   · `shadow` and `letter_spacing` are fractions of the font size, i.e. `em`,
  *     which is the same number on both sides with no conversion at all;
- *   · the shadow's blur is ZERO and its ink is rgba(0,0,0,.55) because Pillow
- *     draws a hard shadow at alpha 140. A blurred one here would be prettier
- *     and would be a preview that lies.
+ *   · the shadow's blur is ZERO because Pillow draws a hard-edged one, and its
+ *     default ink is rgba(0,0,0,.55) because Pillow's is alpha 140. A blurred
+ *     shadow here would be prettier and would be a preview that lies;
+ *   · `size_px` is pixels at 1080p like `stroke_px`, and `backdrop_radius`,
+ *     `backdrop_pad` and `wrap` are the same fractions `_draw_text_block`
+ *     scales — so they too are one number with no conversion;
+ *   · `line_height` is the ONE number that is NOT the same on both sides. CSS
+ *     multiplies the FONT SIZE and Pillow multiplies (ascent + descent), so it
+ *     goes through `cssLineHeight`, which carries the font's own ratio.
  */
-function captionStyle(c) {
+function captionStyle(c, inZone = false) {
   const style = {
     color: c.color || "#ffffff",
     opacity: c.opacity ?? 1,
     fontFamily: fontFamily(c.font),
+    // ⚠ NOT `c.line_height` STRAIGHT IN. CSS `line-height` is a multiple of the
+    // FONT SIZE; the exporter steps its baselines by `(ascent + descent) ×
+    // line_height`, which for Inter is 22% more and for Anton 51% more. The
+    // ratio is on the font list — see `cssLineHeight`.
+    lineHeight: cssLineHeight(c.font, c.line_height),
   };
+  // An explicit size overrides the S/M/L class, and is quoted at 1080p for the
+  // same reason `stroke_px` is: `100cqh` is this frame's height, so the caption
+  // is the same fraction of it whatever the monitor or the export is.
+  if (c.size_px > 0) style.fontSize = `calc(100cqh * ${c.size_px} / 1080)`;
+  if (c.text_case && CAPTION_TRANSFORM[c.text_case]) {
+    style.textTransform = CAPTION_TRANSFORM[c.text_case];
+  }
+  // ⚠ THE WRAP WIDTH IS A FRACTION OF THE FRAME ON BOTH SIDES, but the two
+  // kinds of caption measure `%` against different boxes: a zone clip sits
+  // inside `.an-text-zone`, which is already inset 7% each side (i.e. 86% of
+  // the frame — `_TEXT_WIDTH`), while a free one is a child of the full-frame
+  // layer. Divide by that inset for the first and the fraction of the FRAME
+  // comes out the same, which is what `max_width = width * wrap` gives Pillow.
+  const wrap = c.wrap ?? 0.86;
+  if (wrap !== 0.86) style.maxWidth = `${(inZone ? wrap / 0.86 : wrap) * 100}%`;
   if (c.letter_spacing) style.letterSpacing = `${c.letter_spacing}em`;
+  // Padding and corners in `em`, which is what the exporter multiplies the font
+  // size by — see `pad` in `draw_texts` and `radius` in `_draw_text_block`.
+  const padMult = c.backdrop_pad ?? 1;
+  if (padMult !== 1) style.padding = `${0.28 * padMult}em ${0.5 * padMult}em`;
+  if ((c.backdrop_radius ?? 0.25) !== 0.25) style.borderRadius = `${c.backdrop_radius}em`;
+  // The backdrop's own ink. Only for the kinds that HAVE one — "Outline only"
+  // and "Just the letters" must stay transparent, or the colour picker would
+  // quietly give them a box. `backdropHasFill` is the shared answer, so the
+  // preview and `_draw_text_block` cannot disagree about which kinds paint.
+  if (backdropHasFill(c)) {
+    style.background = rgba(c.backdrop_color || "#000000",
+                            c.backdrop_opacity ?? BACKDROP_ALPHA[textBackdrop(c)] ?? 0.55);
+  }
   if (c.stroke_px) {
     style.WebkitTextStrokeWidth = `calc(100cqh * ${c.stroke_px} / 1080)`;
     style.WebkitTextStrokeColor = c.stroke_color || "#000000";
     style.paintOrder = "stroke fill";
   }
   if (c.shadow) {
-    style.textShadow = `${c.shadow}em ${c.shadow}em 0 rgba(0, 0, 0, 0.55)`;
+    // ⚠ THE SAME √2 THE EXPORTER USES. `shadow` is the offset it always was —
+    // one down and one right — so the DISTANCE is `shadow · √2`, and that is
+    // what the angle rotates. At the default 45° this comes back out as
+    // `shadow em, shadow em`, which is the picture every old caption cast.
+    const dist = c.shadow * Math.SQRT2;
+    const rad = ((c.shadow_angle ?? 45) * Math.PI) / 180;
+    const dx = (dist * Math.cos(rad)).toFixed(4);
+    const dy = (dist * Math.sin(rad)).toFixed(4);
+    style.textShadow = `${dx}em ${dy}em 0 ${rgba(
+      c.shadow_color || "#000000",
+      c.shadow_opacity ?? 0.55
+    )}`;
   }
   return style;
 }
@@ -565,6 +658,9 @@ export default function AnimaticEditor({
   onBack,
   onDeleted,
   onMakeFinalVideo,
+  // ⚠ NO ACCOUNT PROPS. The ⚙ menu carried Your account / Pricing / Help / Log
+  // out for a day and they were taken back out — that is the SIDEBAR's menu's
+  // job. This one is project settings, so it needs nothing from the shell.
 }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -666,6 +762,11 @@ export default function AnimaticEditor({
   // True while the final-video project is being created and navigated to.
   const [makingVideo, setMakingVideo] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The ⚙ dropdown in the top bar (account, plan, help, delete, log out).
+  const [settingsMenu, setSettingsMenu] = useState(false);
+  // Stable, because `useMenuDismiss` lists it in its deps — a fresh function
+  // every render would tear the listeners down and put them back on each one.
+  const closeSettingsMenu = useCallback(() => setSettingsMenu(false), []);
   // The "name this animatic" panel. Null = closed; a string is the typed name.
   const [saveAsName, setSaveAsName] = useState(null);
   // A file is being dragged over the Media pane.
@@ -1493,7 +1594,9 @@ export default function AnimaticEditor({
     [
       "an-text-clip",
       `sz-${c.size || "medium"}`,
-      `bd-${c.backdrop || "scrim"}`,
+      // ⚠ FOLDED, not read raw. A backdrop kind this build doesn't know has to
+      // become the same thing here as in the exporter — see `textBackdrop`.
+      `bd-${textBackdrop(c)}`,
       `al-${c.align || "center"}`,
       selectedTextId === c.id ? "sel" : "",
     ].join(" ");
@@ -4901,6 +5004,11 @@ export default function AnimaticEditor({
     };
   }, [layerMenu]);
 
+  // The ⚙ dropdown closes the same two ways, and for the same reasons — the
+  // gear itself is exempt from the outside press because it toggles. Shared
+  // with the sidebar's copy of this menu, so both close alike.
+  useMenuDismiss(settingsMenu, closeSettingsMenu, MENU_DISMISS);
+
   // Typing in the caption box should focus it as soon as a clip is picked.
   useEffect(() => {
     if (selectedTextId) textAreaRef.current?.focus();
@@ -6218,6 +6326,16 @@ export default function AnimaticEditor({
     if (!target || !imgGenPrompt.trim() || imgGenBusy) return;
     setImgGenBusy(true);
     setError("");
+    // ⚠ THE DIALOG GOES NOW, NOT WHEN THE PICTURE LANDS, and that is the whole
+    // of "keep one method user waiting". This editor has exactly one way of
+    // showing a wait — the status strip at the foot, which the export, the Veo
+    // renders, the captions, the voiceover and the re-block all report through —
+    // and until now the image draw was the only thing in it that made you sit
+    // inside a modal instead. The ✨ Video half already closed and reported in
+    // the strip, so the two halves of one dialog behaved differently; this is
+    // the image half joining the convention rather than the video half leaving
+    // it. Everything this function still needs is captured above.
+    setImgGen(null);
     try {
       const res = await api.generateAnimaticImage(animaticId, {
         prompt: imgGenPrompt.trim(),
@@ -6277,7 +6395,6 @@ export default function AnimaticEditor({
         ),
       ]);
       selectOnly({ overlay: overlay.id });
-      setImgGen(null);
       setNotice(
         // ⚠ IT NO LONGER SAYS "drag it to place it". It arrives covering the
         // frame now, so the next thing to do is not placement — and a notice
@@ -6287,6 +6404,15 @@ export default function AnimaticEditor({
       );
     } catch (e) {
       setError(e.message);
+      // ⚠ A FAILED DRAW GIVES THE DIALOG BACK, WITH THE WORDS STILL IN IT.
+      // Closing before the wait is what puts this draw in the status strip with
+      // everything else — but it also means a refusal would otherwise take the
+      // user's prompt away with it, and asking someone to retype a sentence
+      // because the model was busy is the worst moment to do it. Nothing was
+      // cleared on the way out (only `openImageGen` resets these), so putting
+      // the dialog back is enough to restore the prompt, the shape and the
+      // length exactly as they were.
+      setImgGen(target);
     } finally {
       setImgGenBusy(false);
     }
@@ -7887,8 +8013,13 @@ export default function AnimaticEditor({
           </button>
         )}
 
-        {/* Sits last, past Export: destructive, so it's the furthest thing from
-            the button you actually came here to press. */}
+        {/* Sits last, past Export: everything in here is either about YOU
+            rather than this project, or it's destructive. ⚠ THE CORNER IS A
+            GEAR, NOT A BIN — Delete used to be the bare 🗑 in this slot, one
+            press from the button beside Export, and it is now a row inside this
+            menu like the rest. Same reasoning as ＋ Add layer: a short list of
+            choices belongs in a dropdown hung off the button that asked, not
+            spread across the bar. */}
         {confirmDelete ? (
           <span className="an-del-confirm">
             <span className="tiny">Delete this project?</span>
@@ -7904,14 +8035,52 @@ export default function AnimaticEditor({
             </button>
           </span>
         ) : (
-          <button
-            type="button"
-            className="btn small an-del-btn"
-            onClick={() => setConfirmDelete(true)}
-            title="Delete this project — the storyboard it came from is untouched"
-          >
-            <Icon name="trash" />
-          </button>
+          <span className="an-settings-wrap">
+            <button
+              type="button"
+              className="btn small an-settings-btn"
+              onClick={() => setSettingsMenu((open) => !open)}
+              title="Project settings"
+              aria-label="Settings"
+              aria-haspopup="menu"
+              aria-expanded={settingsMenu}
+            >
+              <Icon name="settings" />
+            </button>
+
+            {/* ⚠ THIS MENU IS ABOUT THE PROJECT, NOT ABOUT YOU. Your account,
+                Pricing and plan, Help and Log out were all here and are GONE
+                (user-reported: "not need to show in editor setting") — they are
+                account business, they live on the sidebar's copy of this menu,
+                and repeating them beside Export only put four ways to leave the
+                editor next to the button you came here to press.
+                ⚠ THE ROWS ARE LEFT OUT, NOT HIDDEN BY CSS. No handler is passed
+                for the three account rows, which is what makes `AccountMenu`
+                drop them; `help={false}` drops the fourth, whose handler is
+                built in. So the list is `extra` and nothing else — and that is
+                also the hook for the next EDITOR setting, which is why the gear
+                stays a menu rather than going back to a bare bin. */}
+            {settingsMenu && (
+              <AccountMenu
+                className="an-settings-menu"
+                label="Project settings"
+                onPick={() => setSettingsMenu(false)}
+                help={false}
+                extra={[
+                  {
+                    id: "delete",
+                    ico: "🗑",
+                    label: "Delete project",
+                    note: "Delete this project — the storyboard it came from is untouched",
+                    // Doesn't delete: it opens the same inline confirm the bin
+                    // always did, which then replaces this button in the bar.
+                    on: () => setConfirmDelete(true),
+                    danger: true,
+                  },
+                ]}
+              />
+            )}
+          </span>
         )}
       </header>
 
@@ -8009,7 +8178,8 @@ export default function AnimaticEditor({
               <PropGroup
                 id="media:shape-library"
                 title="Add a shape"
-                info="A shape lands on the frame at the playhead, then moves and re-times like any other clip. Drag it on the picture to place it — or drag a tile straight onto a shape row on the timeline to drop it there instead."
+                count={SHAPE_KINDS.length}
+                info="Open a folder and pick a tile. A shape lands on the frame at the playhead, then moves and re-times like any other clip. Drag it on the picture to place it — or drag a tile straight onto a shape row on the timeline to drop it there instead."
               >
                 <ShapeGallery
                   onAdd={(kind) => {
@@ -8045,7 +8215,7 @@ export default function AnimaticEditor({
                     >
                       <ShapeSwatch kind={s.kind} color={s.color} className="an-media-ico" />
                       <span className="an-media-name">
-                        {SHAPE_KINDS.find((k) => k.id === s.kind)?.label || s.kind} {i + 1}
+                        {shapeLabel(s.kind)} {i + 1}
                       </span>
                       <span className="tiny muted">{formatTime(s.start_ms)}</span>
                     </button>
@@ -8413,7 +8583,7 @@ export default function AnimaticEditor({
                           <span
                             key={c.id}
                             className={captionClass(c)}
-                            style={captionStyle(c)}
+                            style={captionStyle(c, true)}
                           >
                             {c.text}
                           </span>
@@ -9085,7 +9255,7 @@ export default function AnimaticEditor({
                       kind: "shape",
                       ico: "◆",
                       label: "Shape",
-                      note: "Another row for boxes, circles, pentagons and stars",
+                      note: "Another row for the vector shapes — boxes, stars, arrows",
                     },
                     {
                       kind: "audio",
@@ -9175,7 +9345,7 @@ export default function AnimaticEditor({
           the Long workspace's flex column; the Reel workspace places it by name
           (`stat`), so its grid template moved it too. */}
       {(error || notice || exporting || animating || speechRunning ||
-        reframeRunning || reblockJob) && (
+        reframeRunning || reblockJob || imgGenBusy) && (
         <div className="an-statusbar">
           {error && <span className="an-status-error">{error}</span>}
           {!error && notice && <span className="an-status-note">{notice}</span>}
@@ -9225,6 +9395,24 @@ export default function AnimaticEditor({
                 <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
               </span>
               {reframeProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* ⚠ THE ONE ROW HERE WITH NO PERCENTAGE. Drawing a picture is a
+              SINGLE synchronous call — there are no stages to report and nothing
+              to ask how far through it is — so the bar slides rather than
+              filling (`is-waiting`) and there is no number after it. Every other
+              row above has real progress to show and shows it.
+              ⚠ AND IT IS NOT GUARDED AGAINST THE OTHERS. The rows above are
+              mutually exclusive because they are all the SERVER writing this
+              project and only one can run; a draw writes nothing to the project
+              and can honestly sit beside a Veo render that is still going. */}
+          {imgGenBusy && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              Drawing your image…
+              <span className="an-status-bar is-waiting">
+                <span />
+              </span>
             </span>
           )}
           {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
@@ -9737,15 +9925,6 @@ export default function AnimaticEditor({
                 )}
               </span>
             </div>
-
-            {imgGenBusy && (
-              <div className="an-prop-progress an-shot-thinking" role="status">
-                <span className="an-prop-progress-msg">Drawing your image…</span>
-                <span className="an-status-bar is-waiting">
-                  <span />
-                </span>
-              </div>
-            )}
 
             </div>
 

@@ -46,6 +46,7 @@ from PIL import Image
 
 import animatic
 import animatic_fonts
+import animatic_render
 import captions
 import tts
 from server.schemas import AnimaticTextClip
@@ -120,6 +121,21 @@ check("no font is registered under its own family name",
       all(f["family"] != f["label"] for f in animatic_fonts.FONTS))
 check("an unknown font id folds down to the default rather than failing",
       animatic_fonts.font_entry("no-such-font")["id"] == animatic_fonts.DEFAULT_FONT)
+# `line_ratio` is the ONE number on the list that is a fact about the .ttf
+# rather than a name for it, so it is the one that can go stale — swap a font
+# file for a differently-proportioned cut and the browser goes on spacing lines
+# by the old face's metrics. Re-measured here rather than trusted.
+from PIL import ImageFont  # noqa: E402  (only this check needs it)
+
+drift = [
+    (f["id"], f["line_ratio"], sum(ImageFont.truetype(animatic_fonts.font_path(f["id"]), 100).getmetrics()) / 100)
+    for f in animatic_fonts.FONTS
+    if animatic_fonts.font_path(f["id"])
+]
+check("every font's line_ratio is what its file actually measures",
+      all(abs(declared - measured) <= 0.02 for _, declared, measured in drift),
+      "".join(f"\n    {i}: list says {d}, file says {m}" for i, d, m in drift
+              if abs(d - m) > 0.02))
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +283,158 @@ check("two captions sharing a zone stack instead of overlapping",
 
 
 # ---------------------------------------------------------------------------
+# 2b. The type, part two — size, leading, case, wrap, and the two inks
+# ---------------------------------------------------------------------------
+print("\nThe text engine — exact size, leading, case, wrap, backdrop and shadow ink\n")
+
+# --- An exact font size ---
+# Quoted at 1080p and scaled by the frame, exactly like `stroke_px` — so this is
+# the same three assertions the stroke gets.
+big_box, _ = ink(render(size_px=100))
+check("an exact size overrides the S/M/L preset",
+      (big_box[3] - big_box[1]) > (base_box[3] - base_box[1]) + 20,
+      f"(preset {base_box[3] - base_box[1]}px tall, 100px {big_box[3] - big_box[1]})")
+check("size_px=0 hands the size back to the preset",
+      ink(render(size_px=0))[0] == base_box)
+check("...and a large preset is still larger than a small one",
+      (ink(render(size="large"))[0][3] - ink(render(size="large"))[0][1])
+      > (ink(render(size="small"))[0][3] - ink(render(size="small"))[0][1]))
+tall_px = Image.new("RGB", (W * 2, H * 2), BG)
+animatic.draw_texts(tall_px, [{
+    "id": "t1", "text": "HAMBURG", "start_ms": 0, "duration_ms": 1000,
+    "position": "middle", "backdrop": "none", "color": "#ffffff", "opacity": 1.0,
+    "size_px": 100,
+}])
+tall_px_box, _ = ink(tall_px.resize((W, H), Image.LANCZOS))
+check("an exact size scales with the frame, so it is the same at any resolution",
+      abs((tall_px_box[2] - tall_px_box[0]) - (big_box[2] - big_box[0])) <= 6,
+      f"(1080p {big_box[2] - big_box[0]}px, 2160p-halved {tall_px_box[2] - tall_px_box[0]}px)")
+
+# --- Leading ---
+# Measured on TWO lines, because leading is the gap BETWEEN them: on one line
+# there is nothing for it to change, which is the whole point of the second
+# assertion here.
+two = dict(text="ONE\nTWO")
+lead_base, _ = ink(render(**two))
+lead_wide, _ = ink(render(**two, line_height=2.0))
+check("line spacing pushes the lines apart",
+      (lead_wide[3] - lead_wide[1]) > (lead_base[3] - lead_base[1]) + 15,
+      f"(1.28 {lead_base[3] - lead_base[1]}px tall, 2.0 {lead_wide[3] - lead_wide[1]})")
+check("...without making the glyphs wider — it is spacing, not size",
+      abs((lead_wide[2] - lead_wide[0]) - (lead_base[2] - lead_base[0])) <= 2)
+check("a caption with no line spacing set is drawn at 1.28, as it always was",
+      ink(render(**two, line_height=1.28))[0] == lead_base)
+
+# --- Case ---
+lower_box, _ = ink(render(text="hamburg"))
+check("upper case really is drawn in capitals",
+      ink(render(text="hamburg", text_case="upper"))[0] == base_box,
+      "(lower-cased text set in upper case must match the same word typed in caps)")
+check("lower case really is drawn in lower case",
+      ink(render(text="HAMBURG", text_case="lower"))[0] == lower_box)
+check("'none' leaves the typed text exactly as it is",
+      ink(render(text="hamburg", text_case="none"))[0] == lower_box)
+check("title case capitalises each word without lower-casing the rest",
+      animatic._apply_case("a NASA film", "title") == "A NASA Film",
+      f"(got {animatic._apply_case('a NASA film', 'title')!r})")
+
+# --- Wrap width ---
+LONG = "The quick brown fox jumps over the lazy dog and keeps on running"
+wide_box, _ = ink(render(text=LONG))
+narrow_box, _ = ink(render(text=LONG, wrap=0.3))
+check("a narrower wrap breaks the text sooner, so the block is taller",
+      (narrow_box[3] - narrow_box[1]) > (wide_box[3] - wide_box[1]) + 20,
+      f"(0.86 {wide_box[3] - wide_box[1]}px tall, 0.30 {narrow_box[3] - narrow_box[1]})")
+check("...and narrower",
+      (narrow_box[2] - narrow_box[0]) < (wide_box[2] - wide_box[0]) - 20)
+check("the wrap width is a fraction of the FRAME",
+      (narrow_box[2] - narrow_box[0]) <= W * 0.31,
+      f"(block {narrow_box[2] - narrow_box[0]}px on a {W}px frame)")
+
+# --- The backdrop's own ink ---
+# Sampled JUST INSIDE THE LEFT EDGE at the block's vertical centre, which is in
+# the padding: away from the glyphs (so the reading is the backdrop and nothing
+# else) and away from the rounded corners (so it is there at all).
+def backdrop_pixel(image):
+    box = ink(image)[0]
+    return image.getpixel((box[0] + 3, (box[1] + box[3]) // 2))
+
+
+solid = render(backdrop="box")
+check("a backdrop is drawn in the colour it is given",
+      (lambda p: p[0] > 150 and p[1] < 90)(
+          backdrop_pixel(render(backdrop="box", backdrop_color="#ff0000"))),
+      f"(edge pixel {backdrop_pixel(render(backdrop='box', backdrop_color='#ff0000'))})")
+solid_count = ink(solid)[1]
+clear_count = ink(render(backdrop="box", backdrop_opacity=0.0))[1]
+check("a backdrop at 0% is not drawn at all",
+      clear_count < solid_count / 3,
+      f"(solid box {solid_count}px of ink, 0% {clear_count})")
+scrim_px = backdrop_pixel(render(backdrop="scrim"))
+box_px = backdrop_pixel(solid)
+check("with no opacity of its own, a scrim is lighter than a box",
+      scrim_px[0] > box_px[0], f"(scrim {scrim_px}, box {box_px})")
+check("an explicit opacity overrides what the kind is worth",
+      backdrop_pixel(render(backdrop="box", backdrop_opacity=0.55)) == scrim_px)
+square = ink(render(backdrop="box", backdrop_radius=0.0))[1]
+round_ = ink(render(backdrop="box", backdrop_radius=0.9))[1]
+check("rounder corners take a bite out of the backdrop", round_ < square,
+      f"(square {square}px, rounded {round_}px)")
+check("a radius too big for the block is clamped rather than raising",
+      ink(render(backdrop="box", backdrop_radius=2.0))[1] > 0)
+roomy = ink(render(backdrop="box", backdrop_pad=2.5))[0]
+snug = ink(render(backdrop="box", backdrop_pad=0.0))[0]
+check("padding is the room around the text inside the backdrop",
+      (roomy[3] - roomy[1]) > (snug[3] - snug[1]) + 20,
+      f"(0× {snug[3] - snug[1]}px tall, 2.5× {roomy[3] - roomy[1]})")
+
+# --- "Just the letters" vs "Outline only" ---
+# These two are the whole point of the `plain` kind, and they are easy to get
+# wrong in a way nothing else would catch: both draw no bar, so a test that only
+# looked for a backdrop would pass on either.
+plain_box, plain_count = ink(render(backdrop="plain"))
+outline_box, outline_count = ink(render(backdrop="none"))
+check("'plain' draws no backdrop", ink(render(backdrop="plain"))[1] < solid_count / 3)
+check("'plain' draws NO automatic outline either — that is what it is for",
+      plain_count < outline_count,
+      f"(outline only {outline_count}px of ink, just the letters {plain_count})")
+check("...so the letters are narrower than the outlined ones",
+      (plain_box[2] - plain_box[0]) < (outline_box[2] - outline_box[0]),
+      f"(outlined {outline_box[2] - outline_box[0]}px, plain {plain_box[2] - plain_box[0]})")
+check("an outline you ASKED for still draws on 'plain'",
+      (lambda b: b[2] - b[0])(ink(render(backdrop="plain", stroke_px=10))[0])
+      > (plain_box[2] - plain_box[0]) + 6,
+      "(only the AUTOMATIC outline is gone)")
+check("a backdrop kind this build doesn't know folds down to a scrim, not to nothing",
+      ink(render(backdrop="hologram"))[1] > solid_count / 3,
+      "(an unreadable caption is a worse fold than an ugly one)")
+check("...and both sides fold it the same way",
+      animatic_render.text_backdrop({"backdrop": "hologram"}) == "scrim"
+      and animatic_render.text_backdrop({"backdrop": "plain"}) == "plain"
+      and animatic_render.text_backdrop({}) == "scrim")
+
+# --- The shadow's ink and direction ---
+check("a shadow at 0% strength is not drawn",
+      ink(render(shadow=0.15, shadow_opacity=0.0))[0] == base_box)
+up_left, _ = ink(render(shadow=0.15, shadow_angle=225))
+check("225° throws the shadow up and to the left",
+      up_left[0] < base_box[0] and up_left[1] < base_box[1],
+      f"(base {base_box}, 225° {up_left})")
+check("...and the default 45° still throws it down and right, as it always did",
+      ink(render(shadow=0.15, shadow_angle=45))[0] == shadow_box)
+check("the distance is the same whichever way it falls",
+      abs((base_box[0] - up_left[0]) - (shadow_box[2] - base_box[2])) <= 2,
+      f"(45° reaches {shadow_box[2] - base_box[2]}px right, "
+      f"225° {base_box[0] - up_left[0]}px left)")
+tinted = render(text="HAMBURG", size_px=140, shadow=0.3,
+                shadow_color="#ff0000", shadow_opacity=1.0)
+raw = tinted.tobytes()
+reds = sum(1 for i in range(0, len(raw), 3)
+           if raw[i] > 150 and raw[i + 1] < 90 and raw[i + 2] < 90)
+check("a shadow is cast in the colour it is given", reds > 200, f"({reds} red pixels)")
+
+
+# ---------------------------------------------------------------------------
 # 3. An old animatic opens unchanged
 # ---------------------------------------------------------------------------
 print("\nBackwards compatibility — an animatic saved before Phase 5\n")
@@ -290,6 +458,13 @@ check("...and picks up defaults that reproduce exactly what it drew",
       == ("inter", "flow", 0.0, 0.0, 0.0))
 check("...with the subtitle position as its free-placement default",
       (old.x, old.y) == (0.5, 0.85))
+check("...and the same for everything the type gained after that",
+      (old.size_px, old.line_height, old.text_case, old.wrap,
+       old.backdrop_color, old.backdrop_opacity, old.backdrop_radius, old.backdrop_pad,
+       old.shadow_color, old.shadow_opacity, old.shadow_angle)
+      == (0.0, 1.28, "none", 0.86, "#000000", None, 0.25, 1.0, "#000000", 0.55, 45.0),
+      "(a default that is not what the drawing code used to hard-code would "
+      "change every animatic in the library the day it shipped)")
 old_render = Image.new("RGB", (W, H), BG)
 animatic.draw_texts(old_render, [OLD])
 new_render = Image.new("RGB", (W, H), BG)

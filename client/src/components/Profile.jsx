@@ -48,7 +48,18 @@ const COMMON_TIMEZONES = [
   "UTC",
 ];
 
-export default function Profile({ email, onLogout }) {
+export default function Profile({
+  email,
+  onLogout,
+  // ⚠ "Manage accounts" IN THE SIDEBAR'S SWITCHER LANDS HERE, so the managing
+  // has to exist here. A menu row that opens a page with nothing to manage on
+  // it is a dead end wearing a useful name. All optional: without them the
+  // section hides and this is the single-account profile it has always been.
+  accounts,
+  onSwitchAccount,
+  onAddAccount,
+  onForgetAccount,
+}) {
   const [form, setForm] = useState(EMPTY);
   const [loaded, setLoaded] = useState(null); // last saved copy, for dirty checks
   const [createdAt, setCreatedAt] = useState(null);
@@ -268,6 +279,73 @@ export default function Profile({ email, onLogout }) {
         </div>
         <SaveRow name="identity" fields={["full_name", "display_name", "timezone"]} />
       </section>
+
+      {/* Accounts on this browser. Hidden unless the shell handed the list
+          down — see the prop note at the top. */}
+      {accounts?.length > 0 && (
+        <section className="card home-card">
+          <h2>Accounts</h2>
+          <p className="muted tiny">
+            Signed in on this browser. Switching doesn't sign the others out.
+          </p>
+
+          <div className="acct-list">
+            {accounts.map((a) => {
+              const live = a.email === email;
+              return (
+                <div key={a.email} className={`acct-row ${live ? "on" : ""}`}>
+                  <Avatar
+                    size={38}
+                    initial={(a.name || a.email || "?").trim().charAt(0).toUpperCase()}
+                  />
+                  <span className="acct-who">
+                    <span className="acct-name">{a.name || a.email}</span>
+                    {a.name && <span className="muted tiny">{a.email}</span>}
+                  </span>
+                  {live ? (
+                    <span className="acct-live">Signed in</span>
+                  ) : (
+                    onSwitchAccount && (
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() => onSwitchAccount(a.email)}
+                      >
+                        Switch
+                      </button>
+                    )
+                  )}
+                  {onForgetAccount && (
+                    /* ⚠ "Remove" IS NOT "Delete account". It drops the token
+                       this browser is holding — the account itself is
+                       untouched, and signing in again brings it straight back.
+                       Deleting for real is at the bottom of this page, behind a
+                       typed confirmation, and says so. */
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      title={
+                        live
+                          ? "Remove this account from this browser — you'll be signed out"
+                          : "Forget this account on this browser"
+                      }
+                      onClick={() => onForgetAccount(a.email)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {onAddAccount && (
+            <button type="button" className="btn" onClick={onAddAccount}>
+              ＋ Add another account
+            </button>
+          )}
+        </section>
+      )}
 
       {/* Work */}
       <section className="card home-card">

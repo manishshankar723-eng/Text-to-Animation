@@ -1,6 +1,7 @@
 # Bundled caption fonts
 
-These six .ttf files are the ONLY fonts an animatic caption can be set in, and
+These fourteen .ttf files are the ONLY fonts an animatic caption can be set in,
+and
 both halves of the app load them from here:
 
 - the **browser** fetches `/fonts/<file>` through the `@font-face` rules
@@ -18,17 +19,28 @@ every file named in them is actually here.
 
 ## Licences
 
-All six are licensed under the **SIL Open Font License, Version 1.1** — see
-`OFL.txt` in this folder for the full text. Copyright notices, as required:
+**All fourteen** are licensed under the **SIL Open Font License, Version 1.1** —
+see `OFL.txt` in this folder for the full text. That is a condition of being on
+this list, not a coincidence: a font under any other licence needs its own terms
+file here and a check that redistribution inside an exported MP4 is allowed.
+Copyright notices, as required:
 
 | File | Family | Copyright |
 | --- | --- | --- |
 | `Inter-SemiBold.ttf` | Inter | Copyright (c) 2016 The Inter Project Authors |
+| `Montserrat-SemiBold.ttf` | Montserrat | Copyright 2024 The Montserrat.Git Project Authors |
+| `Poppins-SemiBold.ttf` | Poppins | Copyright 2020 The Poppins Project Authors |
+| `Nunito-Bold.ttf` | Nunito | Copyright 2014 The Nunito Project Authors |
 | `Anton-Regular.ttf` | Anton | Copyright 2020 The Anton Project Authors |
 | `BebasNeue-Regular.ttf` | Bebas Neue | Copyright (c) 2010 by Ryoichi Tsunekawa |
+| `Oswald-Medium.ttf` | Oswald | Copyright 2016 The Oswald Project Authors |
+| `ArchivoBlack-Regular.ttf` | Archivo Black | Copyright 2017 The Archivo Black Project Authors |
 | `PlayfairDisplay-SemiBold.ttf` | Playfair Display | Copyright 2017 The Playfair Display Project Authors |
-| `CourierPrime-Regular.ttf` | Courier Prime | Copyright (c) 2013 Quote-Unquote Apps |
+| `Merriweather-Bold.ttf` | Merriweather | Copyright 2020 The Merriweather Project Authors, with Reserved Font Name "Merriweather" |
+| `Bangers-Regular.ttf` | Bangers | Copyright 2010 The Bangers Project Authors |
+| `Lobster-Regular.ttf` | Lobster | Copyright 2010 The Lobster Project Authors, with Reserved Font Name "Lobster" |
 | `Caveat-SemiBold.ttf` | Caveat | Copyright 2015 The Caveat Project Authors |
+| `CourierPrime-Regular.ttf` | Courier Prime | Copyright (c) 2013 Quote-Unquote Apps |
 
 Retrieved from the Google Fonts collection (via the `@expo-google-fonts`
 packages, which ship the same upstream .ttf binaries).
@@ -39,3 +51,21 @@ Drop the .ttf here, add the identical entry to **both** `animatic_fonts.py` and
 `client/src/animatic/fonts.js`, add its copyright line above, and run
 `python tests/captions_check.py`. Nothing else: the picker, the `@font-face`
 rules and the exporter are all generated from those two lists.
+
+⚠ **The entry needs a `line_ratio`** — (ascent + descent) ÷ font size for the
+file, which is what makes the browser space lines the way the exporter does. Read
+it off the file rather than guessing:
+
+```python
+from PIL import ImageFont
+f = ImageFont.truetype("client/public/fonts/YourFont.ttf", 100)
+print(sum(f.getmetrics()) / 100)   # → the number to put on the list
+```
+
+`captions_check.py` re-measures every one of them and fails if the list has
+drifted from the file, so a wrong number here does not survive a test run.
+
+⚠ **Pick ONE weight per family and name the file for it.** There is no bold or
+italic axis on a caption — a face is a whole entry on the list. If a project
+wants Inter Bold, that is a second entry (`inter-bold`) and a second file, not a
+flag.

@@ -8,8 +8,10 @@
  *
  * ⚠ THIS FILE HAS A TWIN: `animatic_render.py` (`scene_at`). They must agree, or
  * the preview lies about the export. That is not a hypothetical — the shape
- * polygons already live in two files (`_SHAPE_POINTS` / `POINTS`) and are kept
- * in step by hand. Here the pair is checked instead: `tests/render_parity.py`
+ * polygons live in two files (`_SHAPE_POINTS` in `animatic.py` / `SHAPE_POINTS`
+ * in `shape_points.js`) because the exporter runs without JS. That pair is
+ * checked now too (`tests/shape_points_check.py`), and so is this one:
+ * `tests/render_parity.py`
  * evaluates a fixture through BOTH and fails on any difference. Change one side,
  * run that test.
  *
@@ -124,6 +126,41 @@ export const TEXT_PLACES = ["flow", "free"];
 export function textPlace(clip) {
   const place = clip?.place || "flow";
   return TEXT_PLACES.includes(place) ? place : "flow";
+}
+
+/**
+ * HOW a caption is kept readable over the art. Four kinds, and the last two are
+ * NOT the same thing — which is the whole reason "plain" exists:
+ *
+ *   scrim — a translucent bar behind the block. The default, and what a caption
+ *           dropped on a busy storyboard thumbnail needs.
+ *   box   — the same bar, nearly solid.
+ *   none  — no bar, but the glyphs get an AUTOMATIC dark outline, because white
+ *           text with nothing behind it is invisible on pale art. This is the
+ *           "Outline only" the picker has always offered.
+ *   plain — nothing whatsoever: no bar, no outline, just the letters in the
+ *           colour they are set in. ⚠ The one setting here that can make a
+ *           caption genuinely unreadable, and that is the point — a title over a
+ *           dark shot wants no furniture at all, and until this the only way to
+ *           get it was an outline you could see.
+ *
+ * Not animatable: half way between a box and no box is not a picture. An
+ * unrecognised value folds to "scrim" — never to "plain", because a value
+ * nobody understands should leave the caption readable.
+ *
+ * ⚠ TWIN of `TEXT_BACKDROPS` / `text_backdrop` in `animatic_render.py`.
+ */
+export const TEXT_BACKDROPS = ["scrim", "box", "none", "plain"];
+
+export function textBackdrop(clip) {
+  const backdrop = clip?.backdrop || "scrim";
+  return TEXT_BACKDROPS.includes(backdrop) ? backdrop : "scrim";
+}
+
+/** Does this kind of backdrop paint a box behind the text at all? */
+export function backdropHasFill(clip) {
+  const backdrop = textBackdrop(clip);
+  return backdrop === "scrim" || backdrop === "box";
 }
 
 // Which table a kind's fallbacks come from. A `kind` that isn't listed uses the

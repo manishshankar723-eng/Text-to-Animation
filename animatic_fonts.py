@@ -46,43 +46,125 @@ FONT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "client", "public", "fonts"
 )
 
+# `line_ratio` is (ascent + descent) ÷ font size for the file, measured with
+# Pillow and rounded to two places — `tests/captions_check.py` re-measures it and
+# fails if the number here has drifted from the .ttf.
+#
+# ⚠ IT IS HERE BECAUSE ONLY THE BROWSER NEEDS IT, and only this list can tell it.
+# The exporter steps its baselines by `(ascent + descent) × line_height`, which
+# it reads off the face; CSS `line-height` is a multiple of the FONT SIZE, which
+# is a different number — 22% smaller for Inter and 51% for Anton. So a two-line
+# caption sat closer together in the monitor than in the MP4, by an amount that
+# depended on which font it was set in. The browser multiplies by this to ask for
+# the same distance the exporter draws. (Fixed in the PREVIEW rather than in the
+# exporter on purpose: no MP4 anyone has already made changes.)
+#
 # ⚠ ELEMENT FOR ELEMENT the same as FONTS in `client/src/animatic/fonts.js`.
-FONTS: tuple[dict[str, str], ...] = (
+FONTS: tuple[dict[str, str | float], ...] = (
+    # --- Sans, for a caption you are meant to READ rather than look at ------
+    # ⚠ INTER IS FIRST AND HAS TO STAY FIRST: `font_entry` falls back to
+    # `FONTS[0]`, so the head of this list is what an id nobody knows folds down
+    # to, and `DEFAULT_FONT` below names the same one.
     {
         "id": "inter",
         "label": "Inter",
         "file": "Inter-SemiBold.ttf",
         "family": "AnimaticInter",
+        "line_ratio": 1.22,
     },
+    {
+        "id": "montserrat",
+        "label": "Montserrat",
+        "file": "Montserrat-SemiBold.ttf",
+        "family": "AnimaticMontserrat",
+        "line_ratio": 1.23,
+    },
+    {
+        "id": "poppins",
+        "label": "Poppins",
+        "file": "Poppins-SemiBold.ttf",
+        "family": "AnimaticPoppins",
+        "line_ratio": 1.4,
+    },
+    {
+        "id": "nunito",
+        "label": "Nunito",
+        "file": "Nunito-Bold.ttf",
+        "family": "AnimaticNunito",
+        "line_ratio": 1.38,
+    },
+    # --- Condensed and heavy, for a title card or a lower third -------------
     {
         "id": "anton",
         "label": "Anton",
         "file": "Anton-Regular.ttf",
         "family": "AnimaticAnton",
+        "line_ratio": 1.51,
     },
     {
         "id": "bebas",
         "label": "Bebas Neue",
         "file": "BebasNeue-Regular.ttf",
         "family": "AnimaticBebas",
+        "line_ratio": 1.2,
     },
+    {
+        "id": "oswald",
+        "label": "Oswald",
+        "file": "Oswald-Medium.ttf",
+        "family": "AnimaticOswald",
+        "line_ratio": 1.49,
+    },
+    {
+        "id": "archivo",
+        "label": "Archivo Black",
+        "file": "ArchivoBlack-Regular.ttf",
+        "family": "AnimaticArchivo",
+        "line_ratio": 1.09,
+    },
+    # --- Serif --------------------------------------------------------------
     {
         "id": "playfair",
         "label": "Playfair Display",
         "file": "PlayfairDisplay-SemiBold.ttf",
         "family": "AnimaticPlayfair",
+        "line_ratio": 1.35,
     },
     {
-        "id": "courier",
-        "label": "Courier Prime",
-        "file": "CourierPrime-Regular.ttf",
-        "family": "AnimaticCourier",
+        "id": "merriweather",
+        "label": "Merriweather",
+        "file": "Merriweather-Bold.ttf",
+        "family": "AnimaticMerriweather",
+        "line_ratio": 1.27,
+    },
+    # --- Faces with a voice of their own ------------------------------------
+    {
+        "id": "bangers",
+        "label": "Bangers",
+        "file": "Bangers-Regular.ttf",
+        "family": "AnimaticBangers",
+        "line_ratio": 1.08,
+    },
+    {
+        "id": "lobster",
+        "label": "Lobster",
+        "file": "Lobster-Regular.ttf",
+        "family": "AnimaticLobster",
+        "line_ratio": 1.25,
     },
     {
         "id": "caveat",
         "label": "Caveat",
         "file": "Caveat-SemiBold.ttf",
         "family": "AnimaticCaveat",
+        "line_ratio": 1.26,
+    },
+    {
+        "id": "courier",
+        "label": "Courier Prime",
+        "file": "CourierPrime-Regular.ttf",
+        "family": "AnimaticCourier",
+        "line_ratio": 1.14,
     },
 )
 
@@ -95,7 +177,7 @@ FONT_IDS = tuple(f["id"] for f in FONTS)
 DEFAULT_FONT = "inter"
 
 
-def font_entry(font_id: str | None) -> dict[str, str]:
+def font_entry(font_id: str | None) -> dict[str, str | float]:
     """The list entry for `font_id`, or the default's. Mirrors `fontEntry`."""
     for font in FONTS:
         if font["id"] == font_id:
@@ -110,7 +192,7 @@ def font_path(font_id: str | None) -> str | None:
     built-in face and still produce a video. An export that dies because one
     caption named a font nobody shipped is a worse failure than an ugly caption.
     """
-    path = os.path.join(FONT_DIR, font_entry(font_id)["file"])
+    path = os.path.join(FONT_DIR, str(font_entry(font_id)["file"]))
     if os.path.isfile(path):
         return path
     logger.warning(

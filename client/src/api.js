@@ -4,6 +4,21 @@
 const BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 const TOKEN_KEY = "cas_token";
 const EMAIL_KEY = "cas_email";
+// ---------------------------------------------------------------- accounts
+// MORE THAN ONE SIGNED-IN ACCOUNT, the way a browser profile switcher works.
+// `cas_token` / `cas_email` are still THE SESSION — every request reads them and
+// nothing below changes that. This is a SIDE LIST of the accounts whose tokens
+// we are also holding, so switching is a copy from the list into those two keys
+// rather than a password prompt.
+//
+// ⚠ THE ACTIVE ACCOUNT IS NOT A FLAG IN HERE. It is whatever `cas_email` says,
+// and that is deliberate: two places that both claim to know who is signed in
+// is two places that can disagree, and the one the API reads has to win.
+//
+// Shape: `[{ email, token, name }]`. `name` is a cached display name, purely so
+// the switcher can show "Manish Kumar" over the address before `me()` answers
+// for an account we are not currently signed in as.
+const ACCOUNTS_KEY = "cas_accounts";
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -11,13 +26,107 @@ export function getToken() {
 export function getEmail() {
   return localStorage.getItem(EMAIL_KEY);
 }
+
+// Every read is defensive: private mode throws on access, and a half-written or
+// hand-edited value must not take the app down on boot. A bad store is an EMPTY
+// store — you are asked to sign in again, which is recoverable.
+function readAccounts() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((a) => a && typeof a.email === "string" && typeof a.token === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The accounts whose tokens we hold.
+ *
+ * ⚠ IT REPAIRS AS IT READS, and it has to. Everyone signed in before this
+ * existed has a `cas_token` and NO entry for it, so an honest read would show
+ * them a switcher that does not list the account they are looking at. The live
+ * session is folded in — and written back, so the repair happens once.
+ */
+export function listAccounts() {
+  const list = readAccounts();
+  const email = getEmail();
+  const token = getToken();
+  if (email && token && !list.some((a) => a.email === email)) {
+    list.push({ email, token, name: "" });
+    writeAccounts(list);
+  }
+  return list;
+}
+
+function writeAccounts(list) {
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(list));
+  } catch {
+    // Storage full or disabled. The SESSION still works — only the ability to
+    // switch back without a password is lost, so this must not throw.
+  }
+}
+
 export function setSession(token, email) {
   localStorage.setItem(TOKEN_KEY, token);
   if (email) localStorage.setItem(EMAIL_KEY, email);
+  if (!email) return;
+  // Upsert, keeping any name we had cached for this address. The newest token
+  // wins — signing in again is how an expired one gets replaced.
+  const list = readAccounts();
+  const at = list.findIndex((a) => a.email === email);
+  const name = at >= 0 ? list[at].name : "";
+  const entry = { email, token, name: name || "" };
+  if (at >= 0) list[at] = entry;
+  else list.push(entry);
+  writeAccounts(list);
 }
+
+// Called once `me()` has answered, so the switcher can name an account it is
+// not currently signed in as. Cosmetic — never required for a switch to work.
+export function rememberAccountName(email, name) {
+  if (!email) return;
+  const list = readAccounts();
+  const at = list.findIndex((a) => a.email === email);
+  if (at < 0 || list[at].name === (name || "")) return;
+  list[at] = { ...list[at], name: name || "" };
+  writeAccounts(list);
+}
+
+/**
+ * Make a remembered account the live session.
+ * @returns {string|null} the email now signed in, or null if it isn't held.
+ */
+export function switchAccount(email) {
+  const found = readAccounts().find((a) => a.email === email);
+  if (!found) return null;
+  localStorage.setItem(TOKEN_KEY, found.token);
+  localStorage.setItem(EMAIL_KEY, found.email);
+  return found.email;
+}
+
+/**
+ * Drop one account's stored token.
+ * ⚠ IF IT IS THE LIVE ONE, THE SESSION GOES WITH IT — forgetting the account
+ * you are signed in as while leaving yourself signed in would be a lie.
+ */
+export function forgetAccount(email) {
+  writeAccounts(readAccounts().filter((a) => a.email !== email));
+  if (getEmail() === email) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EMAIL_KEY);
+  }
+}
+
+// ⚠ LOGGING OUT FORGETS THE ACCOUNT YOU LOGGED OUT OF. Keeping its token so it
+// could be switched back into without a password is the opposite of what "log
+// out" means. The OTHER accounts keep theirs — they were never logged out of.
 export function clearSession() {
+  const email = getEmail();
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EMAIL_KEY);
+  if (email) writeAccounts(readAccounts().filter((a) => a.email !== email));
 }
 
 // Ride out a backend that is momentarily unreachable (typically uvicorn

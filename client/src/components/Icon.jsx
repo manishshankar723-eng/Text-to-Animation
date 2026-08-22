@@ -248,16 +248,28 @@ const PATHS = {
     </>
   ),
 
-  // The gear. Eight teeth as one ring of short spokes rather than a scalloped
-  // outline: at 1em a drawn cog turns to mud, while spokes stay readable.
+  // The gear — A REAL COG, eight teeth around a hub, drawn to a reference the
+  // user supplied.
+  //
+  // ⚠ IT WAS A RING OF SHORT SPOKES, and that was a reasonable thing to try: a
+  // STROKED cog does turn to mud at 1em, because the notch between two teeth is
+  // barely a pixel wide and the two facing outlines close it up. The spokes
+  // stayed readable — they just didn't read as a gear, which is the one job the
+  // icon has.
+  //
+  // ⚠ SO IT IS FILLED, LIKE `play`, and for the same reason: at this size a
+  // solid shape holds its silhouette where an outline cannot. `fill-rule
+  // evenodd` punches the hub out with a second subpath wound the other way, so
+  // the hole is genuinely transparent — it shows the button behind it rather
+  // than a painted-on disc, and the icon still takes its colour from
+  // `currentColor` like every other one here.
   settings: (
-    <>
-      <circle cx="12" cy="12" r="3.2" {...STROKE} />
-      <path
-        d="M12 2.6v2.6M12 18.8v2.6M21.4 12h-2.6M5.2 12H2.6M18.6 5.4l-1.8 1.8M7.2 16.8l-1.8 1.8M18.6 18.6l-1.8-1.8M7.2 7.2 5.4 5.4"
-        {...STROKE}
-      />
-    </>
+    <path
+      d="M10.27 4.8 L10.19 1.76 A10.4 10.4 0 0 1 13.81 1.76 L13.73 4.8 A7.4 7.4 0 0 1 15.87 5.69 L17.97 3.48 A10.4 10.4 0 0 1 20.52 6.03 L18.31 8.13 A7.4 7.4 0 0 1 19.2 10.27 L22.24 10.19 A10.4 10.4 0 0 1 22.24 13.81 L19.2 13.73 A7.4 7.4 0 0 1 18.31 15.87 L20.52 17.97 A10.4 10.4 0 0 1 17.97 20.52 L15.87 18.31 A7.4 7.4 0 0 1 13.73 19.2 L13.81 22.24 A10.4 10.4 0 0 1 10.19 22.24 L10.27 19.2 A7.4 7.4 0 0 1 8.13 18.31 L6.03 20.52 A10.4 10.4 0 0 1 3.48 17.97 L5.69 15.87 A7.4 7.4 0 0 1 4.8 13.73 L1.76 13.81 A10.4 10.4 0 0 1 1.76 10.19 L4.8 10.27 A7.4 7.4 0 0 1 5.69 8.13 L3.48 6.03 A10.4 10.4 0 0 1 6.03 3.48 L8.13 5.69 A7.4 7.4 0 0 1 10.27 4.8 Z M12 8.4 A3.6 3.6 0 1 0 12 15.6 A3.6 3.6 0 1 0 12 8.4 Z"
+      fill="currentColor"
+      fillRule="evenodd"
+      stroke="none"
+    />
   ),
 
   // The sidebar toggle: a panel with its left rail drawn in. Same glyph for

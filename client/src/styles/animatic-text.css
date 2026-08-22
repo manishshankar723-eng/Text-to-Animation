@@ -510,6 +510,17 @@
 .an-text-bottom {
   bottom: 5.5%;
 }
+/* ⚠ EVERY NUMBER BELOW IS A FALLBACK. `captionStyle` writes the line height,
+   the padding, the corners, the backdrop's ink and the wrap width inline, from
+   the clip's own fields, because each of them is now something you can set —
+   and because each has to be the number the exporter uses rather than a number
+   that merely looks like it. These stay so a caption still reads if it is ever
+   drawn without that style, and so the pane's "reset" values have somewhere
+   obvious to be read off.
+   ⚠ `line-height: 1.28` here is NOT what the pane's default renders as: the
+   exporter's 1.28 multiplies (ascent + descent) and CSS's multiplies the font
+   size, so the inline value carries the font's own ratio — see `cssLineHeight`
+   in fonts.js. */
 .an-text-clip {
   display: inline-block;
   max-width: 100%;
@@ -537,13 +548,24 @@
 .an-text-clip.bd-box {
   background: rgba(0, 0, 0, 0.88);
 }
-/* No backdrop means the text sits straight on the art, which on a pale
+/* "Outline only" means the text sits straight on the art, which on a pale
    storyboard thumbnail can be white-on-white — hence the outline, matching the
    stroke the exporter draws in this mode. */
 .an-text-clip.bd-none {
   background: none;
   paint-order: stroke fill;
   -webkit-text-stroke: 0.055em rgba(0, 0, 0, 0.85);
+}
+/* ⚠ "Just the letters" IS NOT `bd-none`, and the difference is the whole point:
+   NO outline either. Nothing but the glyphs in the colour they are set in,
+   which is what a title over a dark shot wants and what the automatic outline
+   above was always in the way of. There is nothing to un-set — the two classes
+   are alternatives, so `bd-none`'s stroke simply never applies — and an outline
+   you ASKED for still draws, because `captionStyle` writes `stroke_px` inline
+   whatever the backdrop is. That is the `else` branch of `_draw_text_block`,
+   exactly. */
+.an-text-clip.bd-plain {
+  background: none;
 }
 .an-text-clip.al-left {
   align-self: flex-start;
