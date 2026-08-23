@@ -433,6 +433,20 @@ probe.menuClick = (text) => {
 
 /** How many clips are selected — what "Select its clips" has to change. */
 probe.selCount = () => document.querySelectorAll(".tl-bar.sel").length;
+/**
+ * The pictures on the IMAGES lanes — `overlays`, which are not `frames`.
+ *
+ * ⚠ A DIFFERENT LIST AND A DIFFERENT BAR CLASS (`.tl-overlay`, where a picture
+ * clip is `.tl-bar`), which is exactly how the library came to miss them.
+ */
+probe.overlayBars = () =>
+  Array.from(document.querySelectorAll('[data-sel^="overlay:"]'))
+    .map((el) => el.dataset.sel.slice("overlay:".length))
+    .sort();
+
+/** How many of THOSE are selected. */
+probe.selOverlayCount = () => document.querySelectorAll(".tl-overlay.sel").length;
+
 
 /**
  * Where the open menu sits RELATIVE TO ITS CARD.
@@ -908,6 +922,85 @@ def main():
             shelf = page.evaluate("() => window.__probe.bin()")
             check("…and its sources are still in Media", len(shelf) == 4,
                   json.dumps(labels(shelf)))
+
+            # -----------------------------------------------------------------
+            # A PICTURE ON THE IMAGES LANE IS AN OVERLAY — AND THE LIBRARY SEES IT
+            # -----------------------------------------------------------------
+            # ⚠ THIS IS THE THIRD PICTURE LIST, AND IT WAS INVISIBLE TO ALL THREE
+            # OF THE PLACES THAT ASK "who uses this source?". An overlay has no
+            # place in `frames`, so the ×N badge read "–" while the picture was
+            # plainly on the timeline; the card's ✕ removed the card and left the
+            # picture playing from a source no longer listed anywhere — the exact
+            # orphan the Media library exists to prevent; and "Select its clips"
+            # could not find it. `AnimaticOverlay.src` is what closed all three.
+            #
+            # ⚠ IT RUNS LAST BECAUSE IT ENDS BY DELETING `spare.png`, which the
+            # lock section above still needs as something to try to drop.
+            print("\nA picture on the Images lane counts, selects and deletes")
+            sel = page.evaluate("() => window.__probe.tag('spare.png', 'ov')")
+            check("the unused card is still there to place", bool(sel), "no spare.png card")
+            if sel:
+                shelf = page.evaluate("() => window.__probe.bin()")
+                spare = next((r for r in shelf if r["label"] == "spare.png"), None)
+                check("…and it starts used by nothing",
+                      bool(spare) and spare["used"] == "–", json.dumps(spare))
+
+                before = page.evaluate("() => window.__probe.overlayBars()")
+                page.dblclick(f"{sel} .fs-thumb")
+                page.wait_for_timeout(1000)
+                after = page.evaluate("() => window.__probe.overlayBars()")
+                fresh = [k for k in after if k not in before]
+                check("double-clicking it puts a picture on the Images lane",
+                      len(fresh) == 1, f"{before} -> {after}")
+                shelf = page.evaluate("() => window.__probe.bin()")
+                spare = next((r for r in shelf if r["label"] == "spare.png"), None)
+                check("…and the card COUNTS it, where it used to read “–”",
+                      bool(spare) and spare["used"] == "×1", json.dumps(spare))
+
+                # ⚠ AND THE OVERLAY RECORDS WHICH SOURCE IT IS PLAYING — the one
+                # line in `overlayFromFrame` that the pure checks in
+                # `asset_fields_check.py` cannot see, because they hand
+                # `assetFromOverlay` an overlay that already has a `src`. It
+                # matters most for the case this fixture cannot reach: a PANEL
+                # dropped on an Images lane is re-uploaded and its `upload_id` is
+                # a copy minted on the spot, so `src` is the only thing left that
+                # names the card. Read off the SAVE, which is the only place the
+                # client's overlay is visible from out here. (AUTOSAVE_MS is 900.)
+                page.wait_for_timeout(1800)
+                saved_ovs = SAVED.get("overlays") or []
+                check("…and the overlay records WHICH source it is playing",
+                      len(saved_ovs) == 1
+                      and (saved_ovs[0].get("src") or {}).get("upload_id") == ORPHAN_UPLOAD,
+                      json.dumps(saved_ovs)[:300])
+
+                page.click(sel, button="right")
+                page.wait_for_timeout(350)
+                items = {i["text"]: i for i in
+                         (page.evaluate("() => window.__probe.menu()") or {}).get("items", [])}
+                line = next((t for t in items if t.startswith("Select its")), "")
+                check("…and Select its clips is live, not greyed out",
+                      line == "Select its 1 clip" and not items[line]["disabled"],
+                      json.dumps(sorted(items)))
+                page.evaluate("() => window.__probe.menuClick('Select its')")
+                page.wait_for_timeout(450)
+                check("…and pressing it selects the picture on the Images lane",
+                      page.evaluate("() => window.__probe.selOverlayCount()") == 1,
+                      str(page.evaluate("() => window.__probe.selOverlayCount()")))
+
+                page.click(sel, button="right")
+                page.wait_for_timeout(350)
+                why = page.evaluate("() => window.__probe.menuClick('Remove from Media')")
+                page.wait_for_timeout(700)
+                shelf = page.evaluate("() => window.__probe.bin()")
+                check("Remove from Media takes the card",
+                      not why and "spare.png" not in labels(shelf),
+                      why or json.dumps(labels(shelf)))
+                # ⚠ AND THE PICTURE WITH IT. A card removed while the picture it
+                # fed goes on playing is unreachable from the UI afterwards: every
+                # control that could delete it lives in the pane the card just left.
+                check("…and the picture it was feeding, so nothing is orphaned",
+                      page.evaluate("() => window.__probe.overlayBars()") == before,
+                      json.dumps(page.evaluate("() => window.__probe.overlayBars()")))
 
             print("\nWhat reached the server")
             check("the library was saved with the project", "assets" in SAVED,

@@ -50,7 +50,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from server.schemas import AnimaticAsset, AnimaticSettings
+from server.schemas import AnimaticAsset, AnimaticOverlay, AnimaticSettings
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -147,7 +147,8 @@ CARDS = {
 HARNESS = """
 import {
   ASSET_KINDS, assetForSave, assetKey, assetOrigin, assetUrl,
-  assetFromFrame, assetFromAudio, clipFromAsset, libraryFromProject, mergeAssets,
+  assetFromFrame, assetFromAudio, assetFromOverlay, clipFromAsset,
+  libraryFromProject, mergeAssets,
 } from "%(mod)s";
 const cards = JSON.parse(process.argv[2]);
 const saved = {};
@@ -189,12 +190,63 @@ const derived = libraryFromProject(
   (() => { let n = 0; return () => `gen${++n}`; })()
 );
 
+// ---------------------------------------------------------------------------
+// AN OVERLAY IS A PICTURE CLIP THE LIBRARY HAS TO RECOGNISE
+// ---------------------------------------------------------------------------
+// A picture on an Images lane is an `overlay`, not a `frame`. Until it carried a
+// `src` the library could not match one to any card, so the ×N badge
+// under-counted, the card's ✕ orphaned the picture, and "Select its clips"
+// missed it. These four shapes are the whole of that fix.
+//
+// ⚠ THE PANEL CASE IS THE ONLY ONE THAT NEEDS THE STORED `src`: a board panel has
+// no upload of its own, so `overlayFromFrame` COPIES its bytes and the overlay's
+// `upload_id` is a fresh id the library has never heard of.
+const panelOverlay = {
+  id: "o1", upload_id: "COPY_OF_PANEL", duration_ms: 2000,
+  src: { kind: "panel", storyboard_id: "b1", index: 2 },
+};
+// A dropped file and a generated picture share the CARD's own upload id, so they
+// matched before the field existed and must still match without one.
+const uploadOverlay = { id: "o2", upload_id: "u4", duration_ms: 2000 };
+// ⚠ AND TWO OVERLAYS SAVED BEFORE THE FIELD EXISTED MUST STAY APART. They get the
+// schema default — `kind: "panel"` with no ids — which keys as `panel::` for every
+// one of them, so reading it raw would fold a whole project's overlays into one
+// card. `overlaySource` reads any src with no usable ids as its own upload.
+const legacyA = { id: "o3", upload_id: "uA", duration_ms: 2000,
+                  src: { kind: "panel", storyboard_id: null, index: null } };
+const legacyB = { id: "o4", upload_id: "uB", duration_ms: 2000,
+                  src: { kind: "panel", storyboard_id: null, index: null } };
+
+const overlayKeys = {
+  panel: assetKey(assetFromOverlay(panelOverlay)),
+  upload: assetKey(assetFromOverlay(uploadOverlay)),
+  legacyA: assetKey(assetFromOverlay(legacyA)),
+  legacyB: assetKey(assetFromOverlay(legacyB)),
+};
+
+// The backfill must see the Images lanes too — a project whose only pictures are
+// overlays derived an EMPTY library and opened saying "Nothing in Media yet".
+// ⚠ AND A FRAME AND AN OVERLAY OF ONE SOURCE ARE ONE CARD, keeping the frame's
+// LABEL: `AnimaticOverlay` has no name field at all, so the frame's card must win.
+const derivedOverlays = libraryFromProject(
+  {
+    frames: [
+      { id: "f9", kind: "image", src: { kind: "panel", storyboard_id: "b1", index: 2 }, duration_ms: 2000, label: "Shot 3" },
+    ],
+    overlays: [panelOverlay, uploadOverlay],
+    audioTracks: [],
+  },
+  (() => { let n = 0; return () => `ov${++n}`; })()
+);
+
 console.log(JSON.stringify({
   kinds: ASSET_KINDS,
   saved, keys, origin, url,
   identity: Object.fromEntries(Object.entries(cards).map(([n, c]) => [n, assetKey(c)])),
   fromVideo, fromPanel, fromColor, roundTrip,
   derived,
+  overlayKeys,
+  derivedOverlays,
   // Adding a card already present must be a no-op, whatever its id.
   merged: mergeAssets([cards.video], [{ ...cards.video, id: "different" }]).length,
   audioCard: assetFromAudio({ id: "t1", upload_id: "u3", filename: "vo.mp3", duration_ms: 91000 }, "a8"),
@@ -243,6 +295,13 @@ LABELS = [
     "clip → card → clip keeps the source",
     "the backfill dedupes: 3 clips + 3 audio clips → 3 cards",
     "…and a colour card is kept, not dropped",
+    # --- an overlay is a picture clip the library has to recognise ---------
+    "a PANEL overlay is matched to the card it was dragged from",
+    "…even though its upload is a COPY with an id of its own",
+    "an uploaded/generated overlay matches on its upload id alone",
+    "two overlays saved before `src` existed stay two cards",
+    "the backfill sees the Images lanes, not just the sequence",
+    "…and a frame and an overlay of one source are ONE card, named",
 ]
 
 print("What a library card sends is what the schema asks for")
@@ -322,6 +381,30 @@ else:
     check(LABELS[17], len(derived) == 3, f"{len(derived)} cards: {keys}")
     check(LABELS[18], any(d["kind"] == "color" for d in derived), str(keys))
 
+    # --- an overlay is a picture clip the library has to recognise --------
+    # ⚠ THESE ARE THE THREE PLACES THAT USED TO MISS IT, asked as one question:
+    # can an overlay be matched to a card at all? The ×N badge, the card's ✕ and
+    # "Select its clips" all key on `assetKey`, so if these hold, all three do.
+    ok = got["overlayKeys"]
+    check(LABELS[19], ok["panel"] == "panel:b1:2", json.dumps(ok))
+    # The proof that it is the stored `src` doing the work and not the upload id:
+    # the overlay's own upload is "COPY_OF_PANEL", which appears in no key.
+    check(LABELS[20], "COPY_OF_PANEL" not in json.dumps(ok), json.dumps(ok))
+    check(LABELS[21], ok["upload"] == "upload:u4", json.dumps(ok))
+    # ⚠ NOT MERELY "they have keys" — they must be DIFFERENT keys. Both carry the
+    # schema default (`kind: "panel"`, no ids), which reads raw as `panel::` for
+    # every legacy overlay in a project.
+    check(LABELS[22], ok["legacyA"] != ok["legacyB"]
+          and ok["legacyA"] == "upload:uA" and ok["legacyB"] == "upload:uB",
+          json.dumps(ok))
+
+    from_overlays = got["derivedOverlays"]
+    labels_of = [d.get("label") for d in from_overlays]
+    # One panel (a frame AND an overlay) + one uploaded overlay = two cards.
+    check(LABELS[23], len(from_overlays) == 2,
+          f"{len(from_overlays)} cards: {labels_of}")
+    check(LABELS[24], "Shot 3" in labels_of, str(labels_of))
+
 # The lock rides in `settings`, so its absence is a settings question rather than
 # a library one — checked here because it is the same "did the field survive?"
 # failure mode and there is no other home for it.
@@ -333,6 +416,31 @@ check("settings carry locked_lanes as well as hidden_lanes",
 check("both default to empty, so an old project is neither hidden nor locked",
       AnimaticSettings().hidden_lanes == [] and AnimaticSettings().locked_lanes == [],
       f"{AnimaticSettings().hidden_lanes} / {AnimaticSettings().locked_lanes}")
+
+# An OVERLAY is a picture clip too, so it has to say which SOURCE it plays or the
+# Media library cannot recognise it — see `AnimaticOverlay.src`. Checked here for
+# the same reason the lock is: it is a "did the field survive the trip?" failure,
+# and the JS half above can only prove what the client BUILDS, never what the
+# store keeps. `_animatics.py` writes overlays with `model_dump(exclude={"url"})`,
+# which is exactly the round trip below.
+print("\nAn overlay says which source it is playing")
+check("AnimaticOverlay carries a src, like a frame does",
+      "src" in set(AnimaticOverlay.model_fields), str(sorted(AnimaticOverlay.model_fields)))
+_legacy = AnimaticOverlay(id="o0", upload_id="u0")
+# ⚠ THE DEFAULT MATCHES NOTHING AND IS THE SAME FOR EVERY LEGACY OVERLAY — which
+# is precisely why the client re-reads a src with no usable ids as its own upload
+# (`overlaySource`), rather than keying on `panel::` and folding them into one.
+check("…defaulting to a reference that names nothing, for a project saved before it",
+      _legacy.src.storyboard_id is None and _legacy.src.upload_id is None,
+      _legacy.src.model_dump_json())
+_stored = AnimaticOverlay(
+    id="o1", upload_id="a_copy",
+    src={"kind": "panel", "storyboard_id": "b1", "index": 2},
+).model_dump(exclude={"url"})
+_back = AnimaticOverlay(**_stored)
+check("…and a panel reference survives the store's round trip",
+      _back.src.kind == "panel" and _back.src.storyboard_id == "b1" and _back.src.index == 2,
+      _back.src.model_dump_json())
 
 print()
 if failures:

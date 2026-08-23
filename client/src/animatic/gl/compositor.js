@@ -33,7 +33,7 @@
  * into the shot" means anything.
  */
 
-import { DEFAULT_MASK, EFFECT_PARAMS, MASK_KINDS } from "../scene.js";
+import { boxSize, DEFAULT_MASK, EFFECT_PARAMS, MASK_KINDS } from "../scene.js";
 import { shapeOutline } from "../shape_points.js";
 import { buildLutPixels } from "./cube.js";
 import {
@@ -618,8 +618,12 @@ export function quad({ x, y, w, h }, uv = { x: 0, y: 0, w: 1, h: 1 }) {
  * box's real aspect and the frame is not square.
  */
 export function overlayRect(item, sourceW, sourceH, frameW, frameH) {
-  const boxW = Math.abs(Number(item.w ?? 0.3)) * frameW;
-  const boxH = Math.abs(Number(item.h ?? 0.3)) * frameH;
+  // ⚠ THE BOX IS w/h AFTER `scale` — see `boxSize`. `draw_overlays` reads it
+  // through the twin of this call, and one of the two left reading the raw field
+  // is an overlay that is the wrong size in exactly one of the two.
+  const size = boxSize(item);
+  const boxW = size.w * frameW;
+  const boxH = size.h * frameH;
   if (!(sourceW > 0) || !(sourceH > 0)) return { w: 0, h: 0 };
   const scale = Math.min(boxW / sourceW, boxH / sourceH);
   return { w: (sourceW * scale) / frameW, h: (sourceH * scale) / frameH };
@@ -671,8 +675,9 @@ export function shapeFan(shape) {
   const points = shapeOutline((shape.kind || "rect").toLowerCase());
   const cx = Number(shape.x ?? 0.5);
   const cy = Number(shape.y ?? 0.5);
-  const w = Math.abs(Number(shape.w ?? 0.25));
-  const h = Math.abs(Number(shape.h ?? 0.25));
+  // ⚠ Through `boxSize`, for the same reason `overlayRect` is — `draw_shapes`
+  // reads the same product on the other side.
+  const { w, h } = boxSize(shape);
   const angle = ((Number(shape.rotation) || 0) * Math.PI) / 180;
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);

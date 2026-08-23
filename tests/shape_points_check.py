@@ -95,6 +95,7 @@ ZERO_MARGIN_OK = {"cog"}
 
 HARNESS = """
 import { SHAPE_CATEGORIES, SHAPE_KINDS, SHAPE_POINTS, shapeOutline } from %(mod)r;
+import { ANIMATABLE, boxSize } from %(scene)r;
 process.stdout.write(JSON.stringify({
   points: SHAPE_POINTS,
   kinds: SHAPE_KINDS.map((k) => k.id),
@@ -102,6 +103,19 @@ process.stdout.write(JSON.stringify({
   groups: SHAPE_CATEGORIES.map((g) => ({ id: g.id, kinds: g.kinds.map((k) => k.id) })),
   ellipse: shapeOutline("ellipse").length,
   unknown: shapeOutline("no-such-shape"),
+  // `scale` multiplies w/h, and FIVE places draw or grab one of these boxes —
+  // two here, two on the server, one in the editor's hit targets. The two
+  // languages agreeing about the product is what stops a shape being the right
+  // size on screen and the wrong size in the MP4.
+  animatable: ANIMATABLE.shape,
+  boxes: [
+    boxSize({ w: 0.25, h: 0.5 }),
+    boxSize({ w: 0.25, h: 0.5, scale: 2 }),
+    boxSize({ w: 0.25, h: 0.5, scale: 0.4 }),
+    boxSize({}),
+    boxSize({ w: 0.25, h: 0.5, scale: null }),
+    boxSize({ w: 0.25, h: 0.5, scale: "not a number" }),
+  ],
 }));
 """
 
@@ -112,9 +126,10 @@ def run_node() -> dict | None:
     work = tempfile.mkdtemp(prefix="shapepts_")
     try:
         mod = (ROOT / "client/src/animatic/shape_points.js").as_uri()
+        scene = (ROOT / "client/src/animatic/scene.js").as_uri()
         harness = os.path.join(work, "harness.mjs")
         with open(harness, "w", encoding="utf-8") as fh:
-            fh.write(HARNESS % {"mod": mod})
+            fh.write(HARNESS % {"mod": mod, "scene": scene})
         proc = subprocess.run(
             ["node", harness],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -313,6 +328,72 @@ else:
         "an unknown kind paints a box rather than nothing",
         unknown.tobytes() == box.tobytes(),
     )
+
+# ---------------------------------------------------------------------------
+# `scale` — the seventh animatable property, and the five places it must reach
+# ---------------------------------------------------------------------------
+print("\nSCALE — one multiplier, both languages")
+
+import animatic_render  # noqa: E402  (only this section needs it)
+
+if got is None:
+    skip("both sides agree what a shape can animate", "node not available")
+    skip("both sides compute the same box for the same scale", "node not available")
+else:
+    check("both sides agree what a shape can animate",
+          list(got["animatable"]) == list(animatic_render.ANIMATABLE["shape"]),
+          f"js {got['animatable']} vs py {list(animatic_render.ANIMATABLE['shape'])}")
+    # ⚠ THE LAST TWO CASES ARE THE ONES THAT MATTER. A clip saved before `scale`
+    # existed has no such key, and a clip written by a client that sent `null`
+    # has one that is not a number — both have to come back as "no scaling", not
+    # as zero, or every shape in the library collapses to nothing the day this
+    # ships.
+    wanted = [
+        animatic_render.box_size({"w": 0.25, "h": 0.5}),
+        animatic_render.box_size({"w": 0.25, "h": 0.5, "scale": 2}),
+        animatic_render.box_size({"w": 0.25, "h": 0.5, "scale": 0.4}),
+        animatic_render.box_size({}),
+        animatic_render.box_size({"w": 0.25, "h": 0.5, "scale": None}),
+        animatic_render.box_size({"w": 0.25, "h": 0.5, "scale": "not a number"}),
+    ]
+    mine = [(round(b["w"], 9), round(b["h"], 9)) for b in got["boxes"]]
+    theirs = [(round(w, 9), round(h, 9)) for w, h in wanted]
+    check("both sides compute the same box for the same scale", mine == theirs,
+          f"js {mine} vs py {theirs}")
+    check("...and a clip with no scale at all is simply unscaled",
+          theirs[0] == (0.25, 0.5) and theirs[3] == (0.25, 0.25),
+          f"{theirs[0]} / {theirs[3]}")
+    check("...and a scale of null is unscaled too, not zero",
+          theirs[4] == (0.25, 0.5), f"{theirs[4]}")
+    check("...and so is a scale nobody can read — an ugly shape beats no shape",
+          theirs[5] == (0.25, 0.5), f"{theirs[5]}")
+
+try:
+    from PIL import Image as _Image
+except Exception as exc:  # pragma: no cover
+    skip("THE EXPORTER ACTUALLY USES `scale`", f"no Pillow ({exc})")
+else:
+    def lit_pixels(**fields):
+        canvas = _Image.new("RGB", (200, 200), (0, 0, 0))
+        clip = {"kind": "rect", "x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2,
+                "color": "#ffffff", "opacity": 1.0}
+        clip.update(fields)
+        animatic.draw_shapes(canvas, [clip])
+        pixels = canvas.load()
+        return sum(1 for y in range(200) for x in range(200) if pixels[x, y][0] > 8)
+
+    plain = lit_pixels()
+    doubled_px = lit_pixels(scale=2)
+    quartered = lit_pixels(scale=0.5)
+    check("THE EXPORTER ACTUALLY USES `scale` — doubling it quadruples the area",
+          abs(doubled_px - plain * 4) < plain * 0.15,
+          f"1× covers {plain}px, 2× covers {doubled_px}px (wanted ~{plain * 4})")
+    check("...and halving it quarters the area",
+          abs(quartered - plain / 4) < plain * 0.05,
+          f"0.5× covers {quartered}px (wanted ~{plain // 4})")
+    check("a shape with no scale draws exactly what it always did",
+          lit_pixels(scale=1) == plain, f"{lit_pixels(scale=1)} vs {plain}")
+
 
 print("\nTHE FOUR THAT CANNOT CHANGE")
 

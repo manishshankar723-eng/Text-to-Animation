@@ -145,6 +145,63 @@ export function assetFromFrame(frame, id) {
   };
 }
 
+/**
+ * WHICH SOURCE AN OVERLAY IS PLAYING — an `AnimaticFrameSource`-shaped object.
+ *
+ * ⚠ AN OVERLAY IS A PICTURE CLIP THAT DOES NOT LIVE IN `frames`, and until it
+ * carried a `src` the library could not recognise one at all: the ×N badge
+ * under-counted, the card's ✕ left it playing from a source no longer listed,
+ * and "Select its clips" could not find it. `AnimaticOverlay.src` is what fixed
+ * that; this is the function that reads it safely.
+ *
+ * ⚠ AND THE FALLBACK IS THE HALF THAT DOES THE WORK. Three things arrive with no
+ * usable `src`, and all three are honestly `{kind: "upload", upload_id}`:
+ *   · an overlay saved BEFORE the field existed — it gets the schema default,
+ *     which is `kind: "panel"` with no ids. ⚠ Keying on that raw would give every
+ *     legacy overlay in the project the SAME key (`panel::`) and fold them into
+ *     one card.
+ *   · a dropped file (`addOverlayFiles`) and a ✨ generated picture, whose cards
+ *     are minted from the very upload id the overlay carries. Those matched on
+ *     `upload_id` all along; `src` merely records what was already true.
+ * Only a BOARD PANEL needs the stored `src`, because its `upload_id` is a COPY
+ * of the panel's bytes made by `overlayFromFrame` and points at nothing the
+ * library knows.
+ */
+export function overlaySource(overlay) {
+  const src = overlay?.src || {};
+  const kind = src.kind || "";
+  const usable =
+    kind === "panel" || kind === "pose"
+      ? Boolean(src.storyboard_id)
+      : kind === "upload" || kind === "video"
+        ? Boolean(src.upload_id)
+        : false;
+  if (usable) return { ...src };
+  return { kind: "upload", upload_id: overlay?.upload_id || "" };
+}
+
+/**
+ * A library card FROM AN OVERLAY — a picture on an Images lane.
+ *
+ * ⚠ NO LABEL, and that is not an omission. `AnimaticOverlay` has no name field:
+ * the timeline draws every overlay bar as the literal word "Picture". So a card
+ * derived from one is unnamed, and `mergeAssets` is what makes that harmless —
+ * an overlay made from a panel or an upload keys to the card that already
+ * exists, WITH its name, and only a genuinely orphaned overlay yields a card
+ * captioned "Untitled".
+ */
+export function assetFromOverlay(overlay, id) {
+  return {
+    id: id || overlay?.id || "",
+    kind: "image",
+    src: overlaySource(overlay),
+    upload_id: "",
+    label: "",
+    duration_ms: Math.max(0, Math.round(Number(overlay?.duration_ms) || 0)),
+    color: "#000000",
+  };
+}
+
 /** A library card FROM AN AUDIO CLIP. Its file, its name, its length. */
 export function assetFromAudio(track, id) {
   return {
@@ -195,7 +252,7 @@ export function mergeAssets(library, incoming) {
  * @param mintId a fresh id per card, so a library row and the clip it was
  *               derived from never share an id — two lists, two id spaces.
  */
-export function libraryFromProject({ frames, audioTracks }, mintId) {
+export function libraryFromProject({ frames, overlays, audioTracks }, mintId) {
   const mint = typeof mintId === "function" ? mintId : () => "";
   const cards = [];
   // ⚠ COLOUR CARDS INCLUDED, and the reason is consistency rather than value.
@@ -205,6 +262,16 @@ export function libraryFromProject({ frames, audioTracks }, mintId) {
   // timeline in front of you. `assetKey` keys them by hex, so four blackouts are
   // one card rather than four.
   for (const frame of frames || []) cards.push(assetFromFrame(frame, mint()));
+  // ⚠ AND THE PICTURES ON THE IMAGES LANES, which are `overlays` and not
+  // `frames`. Leaving them out is how a project whose only picture sits on an
+  // Images lane derived an EMPTY library and opened with a Media pane that said
+  // "nothing here yet" over a timeline plainly holding a picture.
+  // ⚠ AFTER the frames, deliberately: `mergeAssets` keeps the FIRST card for a
+  // key, and a frame's card carries a label where an overlay's cannot.
+  for (const overlay of overlays || []) {
+    if (!overlay?.upload_id && !overlay?.src) continue;
+    cards.push(assetFromOverlay(overlay, mint()));
+  }
   for (const track of audioTracks || []) {
     if (!track?.upload_id) continue;
     cards.push(assetFromAudio(track, mint()));

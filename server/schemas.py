@@ -1213,12 +1213,42 @@ class AnimaticOverlay(BaseModel):
     # canonical comment on `AnimaticTextClip`.
     group_id: str = ""
     upload_id: str
+    # WHERE THE PICTURE CAME FROM — the same reference an `AnimaticFrame` carries.
+    #
+    # ⚠ IT IS METADATA, NOT A PATH. An overlay's bytes are ALWAYS resolved from
+    # `upload_id` — the read fills `url` from it and the exporter opens
+    # `_image_path(job_id, upload_id)` — and nothing reads this field to find a
+    # file. It exists so the MEDIA LIBRARY can recognise its own: a card's
+    # identity is its source (`assetKey` in `client/src/animatic/assets.js`), and
+    # without this an overlay is a picture on the timeline that no card can be
+    # matched to. That cost three things at once: the ×N badge under-counted, the
+    # card's ✕ left the overlay playing from a source no longer listed anywhere,
+    # and "Select its clips" could not find it.
+    #
+    # ⚠ A PANEL OVERLAY'S `upload_id` IS A COPY, WHICH IS WHY MATCHING ON THAT
+    # ALONE WAS NOT ENOUGH. A board panel has no upload of its own, so
+    # `overlayFromFrame` uploads its bytes into this animatic and gets a NEW id,
+    # unrelated to the panel that was dragged. This is the only thing that still
+    # says "panel 3 of that board". The other two ways an overlay is made
+    # (`addOverlayFiles` and the ✨ generate) reuse the card's own upload id, so
+    # they matched on `upload_id` all along and this merely records it.
+    #
+    # ⚠ AN OVERLAY SAVED BEFORE THIS FIELD EXISTED GETS THE DEFAULT — `kind:
+    # "panel"` with no ids, which matches nothing AND is the same for every such
+    # overlay, so keying on it would fold them all together. The client reads any
+    # `src` with no usable ids as `{kind: "upload", upload_id}`, which is exactly
+    # what such an overlay was. See `overlaySource` in `assets.js`.
+    src: AnimaticFrameSource = Field(default_factory=AnimaticFrameSource)
     start_ms: int = Field(0, ge=0)
     duration_ms: int = Field(2000, ge=100, le=600_000)
     x: float = Field(0.5, ge=-1.0, le=2.0)
     y: float = Field(0.5, ge=-1.0, le=2.0)
     w: float = Field(0.3, gt=0.0, le=4.0)
     h: float = Field(0.3, gt=0.0, le=4.0)
+    # The same multiplier a shape carries, for the same reason — see its
+    # comment. An overlay is placed with the identical box and handles, so it
+    # gets the identical field.
+    scale: float = Field(1.0, gt=0.0, le=16.0)
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     rotation: float = Field(0.0, ge=-360.0, le=360.0)
     # --- The LOOK, identical to a frame's ----------------------------------
@@ -1412,6 +1442,14 @@ class AnimaticShape(BaseModel):
     w: float = Field(0.25, gt=0.0, le=4.0)
     h: float = Field(0.25, gt=0.0, le=4.0)
     color: str = Field("#c2185b", description="Fill colour, #rrggbb.")
+    # ⚠ A MULTIPLIER ON w/h, NOT A REPLACEMENT FOR THEM — and it exists for one
+    # reason: it is KEYFRAMABLE AS ONE PROPERTY. "Pop this in" is a single curve
+    # here; done with w and h it is two curves that have to be kept identical by
+    # hand for ever, and the moment they drift the box squashes as it grows.
+    # 1.0 is the size w/h already say, so every shape saved before this draws
+    # exactly as it did. Read `box_size` in `animatic_render.py` for the rule
+    # that every place drawing this box goes through it.
+    scale: float = Field(1.0, gt=0.0, le=16.0)
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     rotation: float = Field(0.0, ge=-360.0, le=360.0, description="Degrees, clockwise.")
     keyframes: dict[str, list[AnimaticKeyframe]] = _KEYFRAMES

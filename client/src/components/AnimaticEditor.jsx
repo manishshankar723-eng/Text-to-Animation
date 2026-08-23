@@ -55,6 +55,7 @@ import {
   sceneAt,
   spreadPanelsForRenders,
   setLookValue,
+  boxSize,
   textBackdrop,
   backdropHasFill,
   valueAt,
@@ -209,6 +210,7 @@ import { ScrubGesture, InfoDot, PropGroup, PropRow, openGroup } from "./properti
 import {
   assetFromAudio,
   assetFromFrame,
+  assetFromOverlay,
   assetKey,
   assetOrigin,
   assetUrl,
@@ -2069,6 +2071,13 @@ export default function AnimaticEditor({
    *
    * It drives the ×N badge and, more importantly, the ✕'s wording: "also deletes
    * 2 clips" has to be said before it happens rather than discovered after.
+   *
+   * ⚠ ALL THREE PICTURE LISTS, AND `overlays` IS THE ONE THAT WAS MISSING. A
+   * picture on an Images lane is an OVERLAY, not a frame, so a card whose only
+   * use was there read "–" while the picture was plainly on screen — and the ✕
+   * then promised to delete nothing and orphaned it. ⚠ THIS MEMO, `deleteAsset`
+   * and `selectAssetClips` ASK THE SAME QUESTION and must be widened together:
+   * a badge that counts what the ✕ does not delete is worse than either bug.
    */
   const libraryUse = useMemo(() => {
     const idOfKey = new Map();
@@ -2079,9 +2088,10 @@ export default function AnimaticEditor({
       if (id) count.set(id, (count.get(id) || 0) + 1);
     };
     for (const frame of frames) bump(assetKey(assetFromFrame(frame)));
+    for (const overlay of overlays) bump(assetKey(assetFromOverlay(overlay)));
     for (const track of audioTracks) bump(assetKey(assetFromAudio(track)));
     return count;
-  }, [assets, frames, audioTracks]);
+  }, [assets, frames, overlays, audioTracks]);
 
   const assetUsedCount = useCallback(
     (asset) => libraryUse.get(asset?.id) || 0,
@@ -4356,6 +4366,14 @@ export default function AnimaticEditor({
         id: newId(),
         layer_id: laneId(lane.layerId || ""),
         upload_id: uploadId,
+        // ⚠ WHERE IT CAME FROM, AND THIS IS THE ONE PATH THAT NEEDS IT STORED. A
+        // panel has no upload of its own, so `uploadId` above is a COPY minted a
+        // few lines up and points at nothing the library knows — without this the
+        // Media card the user just dragged could not be matched to the overlay it
+        // produced (`assetKey`), so its ×N badge under-counted, its ✕ orphaned
+        // this picture, and "Select its clips" missed it. The other two overlay
+        // paths reuse the card's own upload id and matched all along.
+        src: { ...(frame.src || {}) },
         start_ms: at,
         // As long as the still is held in the sequence — the length you can
         // already see on its card, so the overlay arrives the size of the thing
@@ -4392,11 +4410,18 @@ export default function AnimaticEditor({
    * ⚠ AND IT TAKES THE CLIPS WITH IT. Leaving them would be a clip playing from a
    * source that is no longer listed anywhere — unfixable from the UI, because
    * every control that could reach it is in the pane the card just left.
+   *
+   * ⚠ INCLUDING THE OVERLAYS, which it used to miss. A picture on an Images lane
+   * is an overlay rather than a frame, so this left exactly the orphan the whole
+   * feature exists to prevent: a picture still playing from a card that had just
+   * been removed from the pane. See `libraryUse` for why the three places that
+   * ask this question are widened together.
    */
   function deleteAsset(asset) {
     if (!asset?.id) return;
     const key = assetKey(asset);
     const goneFrames = frames.filter((f) => assetKey(assetFromFrame(f)) === key);
+    const goneOverlays = overlays.filter((o) => assetKey(assetFromOverlay(o)) === key);
     const goneAudio = audioTracks.filter((a) => assetKey(assetFromAudio(a)) === key);
     const kept = frames.filter((f) => !goneFrames.includes(f));
 
@@ -4409,12 +4434,17 @@ export default function AnimaticEditor({
       const goneIds = new Set(goneFrames.map((f) => f.id));
       setSelectedId((cur) => (goneIds.has(cur) ? null : cur));
     }
+    if (goneOverlays.length) {
+      const goneIds = new Set(goneOverlays.map((o) => o.id));
+      setOverlays((list) => list.filter((o) => !goneIds.has(o.id)));
+      setSelectedOverlayId((cur) => (goneIds.has(cur) ? null : cur));
+    }
     if (goneAudio.length) {
       const goneIds = new Set(goneAudio.map((a) => clipId(a)));
       setAudioTracks((list) => list.filter((a) => !goneIds.has(clipId(a))));
       setSelectedTrackId((cur) => (goneIds.has(cur) ? null : cur));
     }
-    const used = goneFrames.length + goneAudio.length;
+    const used = goneFrames.length + goneOverlays.length + goneAudio.length;
     setNotice(
       used
         ? `“${asset.label || "Media"}” removed, with ${used} clip${
@@ -4495,11 +4525,10 @@ export default function AnimaticEditor({
    * long timeline the only way to find out was to scroll every row looking for the
    * same thumbnail.
    *
-   * ⚠ THE SAME TWO LISTS `deleteAsset` AND `assetUsedCount` LOOK AT, deliberately.
-   * A picture on the Images lane is an OVERLAY and carries no `src`, so `assetKey`
-   * cannot match one and the badge does not count one either — widening this
-   * without widening those two would make the menu offer a selection the card's
-   * own count disagrees with.
+   * ⚠ THE SAME THREE LISTS `deleteAsset` AND `assetUsedCount` LOOK AT, and they
+   * are widened together on purpose: a menu offering to select clips the badge
+   * does not count, or the ✕ does not delete, is worse than any one of the three
+   * being narrow. `overlays` is the list all three used to miss — see `libraryUse`.
    *
    * `selectMany` is the rubber band's own path, so what lands here is a selection
    * like any other: Delete removes them, Ctrl+G groups them, and it says how many.
@@ -4511,6 +4540,9 @@ export default function AnimaticEditor({
       ...frames
         .filter((f) => assetKey(assetFromFrame(f)) === key)
         .map((f) => ({ kind: "frame", id: f.id })),
+      ...overlays
+        .filter((o) => assetKey(assetFromOverlay(o)) === key)
+        .map((o) => ({ kind: "overlay", id: o.id })),
       ...audioTracks
         .filter((a) => assetKey(assetFromAudio(a)) === key)
         .map((a) => ({ kind: "audio", id: clipId(a) })),
@@ -5294,7 +5326,15 @@ export default function AnimaticEditor({
 
     const startX = e.clientX;
     const startY = e.clientY;
-    const from = { x: shape.x, y: shape.y, w: shape.w, h: shape.h };
+    // ⚠ THE DRAG WORKS IN DRAWN SIZE AND WRITES STORED SIZE, AND THE TWO ARE NOT
+    // THE SAME ONCE `scale` IS NOT 1. What you are pulling is the box you can
+    // see, which is `w × scale`; what has to be written is `w`. Without the
+    // divide, a shape at 300% moved three times as far as the pointer under it —
+    // and it would have looked like the handle drifting off the shape rather
+    // than like a scale bug, which is why the divide is spelled out here.
+    const drawn = boxSize(shape);
+    const scale = Math.abs(Number(shape.scale ?? 1)) || 1;
+    const from = { x: shape.x, y: shape.y, w: drawn.w, h: drawn.h };
     // The corner OPPOSITE the handle stays put while resizing — the behaviour
     // every editor has, and the reason the centre has to move with the size.
     const anchorX = from.x - from.w / 2;
@@ -5311,9 +5351,15 @@ export default function AnimaticEditor({
           y: clamp(from.y + dy, -0.5, 1.5),
         });
       } else {
+        // `w`/`h` here are what is DRAWN; the clip stores them before `scale`.
         const w = clamp(from.w + dx, 0.02, 4);
         const h = clamp(from.h + dy, 0.02, 4);
-        patch(shape.id, { w, h, x: anchorX + w / 2, y: anchorY + h / 2 });
+        patch(shape.id, {
+          w: clamp(w / scale, 0.02, 4),
+          h: clamp(h / scale, 0.02, 4),
+          x: anchorX + w / 2,
+          y: anchorY + h / 2,
+        });
       }
     };
     const up = () => {
@@ -7217,7 +7263,15 @@ export default function AnimaticEditor({
     // server keeps the distinction alive on purpose; see `_assets_of`.
     if (p.assets == null) {
       const derived = libraryFromProject(
-        { frames: p.frames || [], audioTracks: p.audio_tracks || [] },
+        {
+          frames: p.frames || [],
+          // ⚠ THE IMAGES LANES TOO. A project cut before the library existed
+          // whose only pictures sit on an Images lane derived an EMPTY library
+          // and opened saying "Nothing in Media yet" over a timeline plainly
+          // holding pictures — `overlays` is not `frames`.
+          overlays: p.overlays || [],
+          audioTracks: p.audio_tracks || [],
+        },
         newId
       );
       // Nothing on the timeline means nothing to derive, and writing an empty list
@@ -8859,8 +8913,13 @@ export default function AnimaticEditor({
                       style={{
                         left: `${s.x * 100}%`,
                         top: `${s.y * 100}%`,
-                        width: `${s.w * 100}%`,
-                        height: `${s.h * 100}%`,
+                        // ⚠ `boxSize`, NOT `s.w`/`s.h` — the fill under this box
+                        // is drawn at w/h AFTER `scale`, and a hit target that
+                        // ignored the scale would leave you grabbing at where
+                        // the shape used to be. That is the failure this helper
+                        // exists to make impossible; see its docstring.
+                        width: `${boxSize(s).w * 100}%`,
+                        height: `${boxSize(s).h * 100}%`,
                         transform: `translate(-50%, -50%) rotate(${s.rotation || 0}deg)`,
                       }}
                       onPointerDown={(e) => startShapeDrag(e, s, "move")}
@@ -8896,8 +8955,9 @@ export default function AnimaticEditor({
                       style={{
                         left: `${o.x * 100}%`,
                         top: `${o.y * 100}%`,
-                        width: `${o.w * 100}%`,
-                        height: `${o.h * 100}%`,
+                        // Through `boxSize` for the same reason a shape's is.
+                        width: `${boxSize(o).w * 100}%`,
+                        height: `${boxSize(o).h * 100}%`,
                         transform: `translate(-50%, -50%) rotate(${o.rotation || 0}deg)`,
                         // ⚠ NOT faded with the clip. The picture's opacity is
                         // applied in the canvas; fading the HANDLE too would

@@ -42,8 +42,14 @@ EASINGS = ("linear", "hold", "ease-in", "ease-out", "ease-in-out")
 # `text` and `kind` stay themselves. Mirrors ANIMATABLE in scene.js.
 ANIMATABLE: dict[str, tuple[str, ...]] = {
     "frame": ("scale", "x", "y", "opacity"),
-    "shape": ("x", "y", "w", "h", "opacity", "rotation"),
-    "overlay": ("x", "y", "w", "h", "opacity", "rotation"),
+    # ⚠ `scale` SITS WHERE THE PANE PUTS IT — third, above Width and Height,
+    # which are the two it multiplies. This list is the order the pane lists its
+    # rows in AND the order the timeline draws its diamond rows in, and those
+    # two being the same list is the point. Inserting in the MIDDLE is safe
+    # because the timeline draws a row only for a property that actually HAS
+    # keys — a project saved before `scale` existed has none.
+    "shape": ("x", "y", "scale", "w", "h", "opacity", "rotation"),
+    "overlay": ("x", "y", "scale", "w", "h", "opacity", "rotation"),
     # A caption gained x/y in Phase 5. They are what the in/out presets in
     # `client/src/animatic/text_presets.js` animate — a title that slides up
     # into place is two keys on `y`, not a second animation system — and they
@@ -102,6 +108,44 @@ def text_place(clip: dict) -> str:
     """
     place = (clip or {}).get("place") or "flow"
     return place if place in TEXT_PLACES else "flow"
+
+
+def box_size(clip: dict) -> tuple[float, float]:
+    """How big a shape or an overlay actually draws — w/h after `scale`.
+
+    ⚠ EVERY PLACE THAT DRAWS ONE OF THESE BOXES MUST GO THROUGH HERE. There are
+    five: `shapeFan` and `overlayRect` in the compositor, the two DOM hit-boxes
+    in `AnimaticEditor`, and `draw_shapes` / `draw_overlays` in `animatic.py`. A
+    single one left reading `clip["w"]` raw is a shape that is the wrong size in
+    exactly one of the monitor, the handle you grab it by, and the MP4 — the
+    worst shape that bug can take, because two of the three still agree.
+
+    WHY `scale` EXISTS at all when w/h are already the size: because it is
+    KEYFRAMABLE AS ONE PROPERTY. "Make this pop in" is one curve on `scale`;
+    done with w and h it is two curves that must be kept identical by hand for
+    ever, and the moment they drift the shape squashes as it grows.
+
+    ⚠ TWIN of `boxSize` in `client/src/animatic/scene.js`.
+    """
+    clip = clip or {}
+    # ⚠ ABSENT, None AND UNREADABLE ALL MEAN 1, NEVER 0 — see the twin for why.
+    # `clip.get("scale", 1.0) or 0.0` was the first attempt and it is exactly
+    # wrong: None became 0.0, so a clip a client wrote with a null scale drew as
+    # nothing here while the monitor drew it full size.
+    raw = clip.get("scale")
+    if raw is None:
+        scale = 1.0
+    else:
+        try:
+            scale = abs(float(raw))
+        except (TypeError, ValueError):
+            scale = 1.0
+    def side(key: str) -> float:
+        try:
+            return abs(float(clip.get(key, DEFAULTS[key]))) * scale
+        except (TypeError, ValueError):
+            return float(DEFAULTS[key]) * scale
+    return side("w"), side("h")
 
 
 # HOW a caption is kept readable over the art. Four kinds, and the last two are

@@ -73,8 +73,15 @@ export function ease(kind, u) {
  */
 export const ANIMATABLE = {
   frame: ["scale", "x", "y", "opacity"],
-  shape: ["x", "y", "w", "h", "opacity", "rotation"],
-  overlay: ["x", "y", "w", "h", "opacity", "rotation"],
+  // ⚠ `scale` SITS WHERE THE PANE PUTS IT — third, above Width and Height,
+  // which are the two it multiplies. This list is the order the pane lists its
+  // rows in AND the order the timeline draws its diamond rows in, and those two
+  // being the same list is the point (see the header of `PropGroup.jsx`).
+  // Inserting in the MIDDLE is safe here because `renderKeys` draws a row only
+  // for a property that actually HAS keys — a project saved before `scale`
+  // existed has none, so nothing it drew moves.
+  shape: ["x", "y", "scale", "w", "h", "opacity", "rotation"],
+  overlay: ["x", "y", "scale", "w", "h", "opacity", "rotation"],
   // A caption gained `x`/`y` in Phase 5. They are what the in/out presets in
   // `text_presets.js` animate — a title that slides up into place is two keys
   // on `y`, not a new animation system — and they only mean anything when the
@@ -160,6 +167,43 @@ export const TEXT_BACKDROPS = ["scrim", "box", "none", "plain"];
 export function textBackdrop(clip) {
   const backdrop = clip?.backdrop || "scrim";
   return TEXT_BACKDROPS.includes(backdrop) ? backdrop : "scrim";
+}
+
+/**
+ * HOW BIG A SHAPE OR AN OVERLAY ACTUALLY DRAWS — `w`/`h` after `scale`.
+ *
+ * ⚠ EVERY PLACE THAT DRAWS ONE OF THESE BOXES MUST GO THROUGH HERE. There are
+ * five: `shapeFan` and `overlayRect` in the compositor, the two DOM hit-boxes in
+ * `AnimaticEditor`, and `draw_shapes` / `draw_overlays` on the server. A single
+ * one left reading `clip.w` raw is a shape that is the wrong size in exactly one
+ * of the monitor, the handle you grab it by, and the MP4 — which is the worst
+ * shape that bug can take, because two of the three still agree.
+ *
+ * WHY `scale` EXISTS AT ALL when `w`/`h` are already the size. Because it is
+ * KEYFRAMABLE AS ONE PROPERTY. "Make this pop in" is one curve on `scale`; done
+ * with `w` and `h` it is two curves that have to be kept identical by hand for
+ * ever, and the moment they drift the shape squashes as it grows. The pane had a
+ * Scale row that wrote both, and the first thing asked of it was a ⏱ — which is
+ * precisely the thing a two-property shortcut cannot honestly have.
+ *
+ * ⚠ TWIN of `box_size` in `animatic_render.py`.
+ */
+export function boxSize(clip) {
+  // ⚠ ABSENT, null AND UNREADABLE ALL MEAN 1, NEVER 0. A clip saved before
+  // `scale` existed has no such key and a client that sends `null` has one that
+  // is not a number — and "no scaling" is the only safe reading of either. A
+  // fallback of 0 would collapse every shape in the library to nothing the day
+  // this shipped, which is the loudest possible version of this bug and also
+  // the easiest to write. (`?? 1` handled the first two; `Number("abc") || 0`
+  // did not handle the third. Both sides were wrong in DIFFERENT ways, which is
+  // why `tests/shape_points_check.py` compares them rather than either alone.)
+  const raw = clip?.scale;
+  const n = raw === undefined || raw === null ? 1 : Number(raw);
+  const scale = Number.isFinite(n) ? Math.abs(n) : 1;
+  return {
+    w: Math.abs(Number(clip?.w ?? DEFAULTS.w)) * scale,
+    h: Math.abs(Number(clip?.h ?? DEFAULTS.h)) * scale,
+  };
 }
 
 /** Does this kind of backdrop paint a box behind the text at all? */

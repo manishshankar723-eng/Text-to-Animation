@@ -202,7 +202,77 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-23 — **EVERY NUMBER IN EVERY PROPERTIES PANE IS A DRAG
+**Last updated:** 2026-08-23 — **`scale` IS A REAL, KEYFRAMABLE PROPERTY ON A
+SHAPE AND AN OVERLAY NOW** ("i want you add in scale in Key buttun i need this
+fuction"). The Scale row shipped this morning as a SHORTCUT that wrote `w` and
+`h` together, and it deliberately had no ⏱ — one control cannot honestly keyframe
+two properties (rule 1 in `PropGroup.jsx`) and the timeline had no row to draw it
+on. The button was asked for within the hour, so the shortcut is gone and
+`scale` is a stored field: `AnimaticShape.scale` / `AnimaticOverlay.scale`,
+default 1.0, added to `ANIMATABLE` on both sides.
+⚠ **WIDTH AND HEIGHT ARE THE SIZE BEFORE IT.** Same relationship a frame's Scale
+has to its picture and Premiere's has to its source — the two rows no longer move
+when you change this one, which is what makes ONE curve on `scale` a shape that
+grows without squashing.
+⚠ **`boxSize` / `box_size` IS THE ONLY WAY TO ASK HOW BIG A BOX IS**, and FIVE
+places had to start going through it: `shapeFan` and `overlayRect` in the
+compositor, `draw_shapes` and `draw_overlays` on the server, and the two DOM hit
+targets in `AnimaticEditor`. One left reading `clip.w` raw is a shape the wrong
+size in exactly one of the monitor, the handle you grab it by, and the MP4.
+⚠ **THE RESIZE DRAG DIVIDES BY IT.** What you pull is `w × scale`; what gets
+written is `w`. Without the divide a shape at 300% moved three times as far as
+the pointer, and it would have read as the handle drifting, not as a scale bug.
+⚠ **AND THE TEST CAUGHT A REAL CROSS-LANGUAGE SPLIT**: `scale: null` came back as
+1 in JS and **0** in Python, so a clip a client wrote with a null scale drew full
+size in the monitor and *not at all* in the export. Absent, null and unreadable
+now all mean 1 on both sides.
+⚠ **`--tl-key-row` WENT 0.31 → 0.27rem.** A shape animates SEVEN properties now;
+at 0.31 the seventh diamond row reached past the lane and was sliced off by
+`overflow: hidden` — a keyframe you had set, on a bar that showed no sign of it.
+Files: `server/schemas.py`, `animatic_render.py`, `animatic.py`,
+`client/src/animatic/scene.js`, `client/src/animatic/gl/compositor.js`,
+`client/src/components/AnimaticEditor.jsx`,
+`client/src/components/properties/ShapeProperties.jsx`,
+`client/src/styles/animatic-text.css`, `tests/shape_points_check.py`,
+`tests/render_parity.py`, `tests/editor_scrub_check.py`.
+**Verified:** `editor_scrub_check` — **39 checks in Chromium, all pass**,
+including every transform row carrying a ⏱ and Scale's keying `scale` rather
+than `w`/`h`; `shape_points_check` gained 8 (both languages agreeing on the same
+box, the null/junk fallbacks, and the exporter actually quadrupling the area at
+2×); `render_parity` runs a keyframed `scale` through both evaluators.
+`captions_check`, `keyframe_ops_check`, `selection_check`, `animatic_motion_check`,
+`asset_fields_check`, `aspect_refit_check`, `effects_check`, `transition_check`
+and `editor_razor_check` all pass; `npx vite build` clean. A three-star frame at
+0.5× / 1× / 2× plus one resolved mid-curve was rendered and read back.
+
+**Previously:** 2026-08-23 — **AN OVERLAY IS A PICTURE CLIP, AND THE MEDIA
+LIBRARY CAN SEE IT NOW** ("fix open issue" — the follow-up the rename/menu work
+had logged against itself).
+⚠ **A PICTURE ON AN IMAGES LANE IS AN `overlay`, NOT A `frame`**, and it carried
+no source — so `assetKey` could not match one and **all three** places that ask
+"who uses this card?" missed it at once: the ×N badge read "–" while the picture
+was on screen, the card's ✕ removed the card and left the picture playing from a
+source no longer listed anywhere, and "Select its clips" could not find it.
+⚠ **THEY ARE WIDENED TOGETHER ON PURPOSE** — a badge that counts what the ✕ does
+not delete is worse than either one being narrow.
+⚠ **THE FIX IS A NEW `AnimaticOverlay.src`, AND IT IS METADATA, NOT A PATH**: the
+bytes are still always resolved from `upload_id`, so no pixel changes. Only the
+PANEL case needed it stored — a dropped file and a ✨ generated picture already
+share the card's own upload id — because a panel is re-uploaded by
+`overlayFromFrame` and gets a new id unrelated to the panel that was dragged.
+⚠ **AND A LEGACY OVERLAY'S DEFAULT `src` KEYS AS `panel::` FOR EVERY ONE OF
+THEM**, so `overlaySource` re-reads any src with no usable ids as its own upload
+rather than folding a project's overlays into one card.
+Files: `server/schemas.py`, `client/src/animatic/assets.js`,
+`client/src/components/AnimaticEditor.jsx`, `tests/asset_fields_check.py`,
+`tests/editor_media_bin_check.py`.
+**Verified:** `editor_media_bin_check.py` — **74 checks, all pass** (9 new);
+`asset_fields_check.py` — all pass (9 new, six pure + three on the schema);
+`image_lane_routing_check`, `render_parity`, `selection_check`, `captions_check`
+and `npm run build` clean. ⚠ Driven in real Chromium but **no screenshot of it
+was eyeballed**.
+
+**Previously:** 2026-08-23 — **EVERY NUMBER IN EVERY PROPERTIES PANE IS A DRAG
 HANDLE NOW, AND SHAPES HAVE A SCALE ROW** (user-specified: *"i want most
 inprotent you add fuction when my mouse crouser go on scal name or value box so
 user do drag … add in all properties panel"*).
@@ -2480,7 +2550,175 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-23 (latest) — A NUMBER IS A DRAG HANDLE, AND A SHAPE HAS A SCALE (user-specified, with three screenshots: the shape's Transform group, a shape clip on the timeline, and a frame's Scale row as the reference)
+### 2026-08-23 (latest) — SCALE STOPPED BEING A SHORTCUT AND BECAME A PROPERTY (user-specified, with a screenshot of the Transform group and one of the ⏱ glyph)
+
+> "i want you add in scale in Key buttun inneed this fuction"
+
+**The shortcut was the wrong design, and this is the record of why.** Scale
+shipped earlier the same day as a convenience: it read `w / geo.w` and wrote `w`
+and `h` together, keeping their proportion. It deliberately carried **no ⏱**, and
+the entry below says so in as many words — one control cannot honestly keyframe
+two properties (rule 1 in `PropGroup.jsx`), and the timeline draws one diamond
+row per animated property, so there was no row for it. That reasoning was sound
+and the conclusion was still wrong: the ⏱ is not a nicety on this row, it is the
+*reason to have the row*. "Make this pop in" is the thing people want a scale
+for. So the shortcut is gone.
+
+**`scale` is a stored field now** — `AnimaticShape.scale` and
+`AnimaticOverlay.scale`, `gt=0.0, le=16.0`, default `1.0`, which is the size
+`w`/`h` already say, so every shape saved before this draws exactly as it did.
+It is in `ANIMATABLE` on both sides and therefore keyframes, steps, eases,
+re-times and undoes like every other transform property, with no new machinery.
+
+⚠ **WIDTH AND HEIGHT ARE THE SIZE *BEFORE* IT.** The two rows below no longer
+move when Scale does — the same relationship a frame's Scale has to its picture
+and Premiere's has to its source. That separation is the whole benefit: ONE curve
+on `scale` grows a box that has been stretched to 80×40 without un-stretching it,
+where two curves on `w` and `h` have to be kept identical by hand for ever and
+the shape squashes the moment they drift.
+
+⚠ **`scale` SITS THIRD IN `ANIMATABLE`, NOT LAST**, so the pane's row order and
+the timeline's row order stay the same list. Inserting in the middle is safe
+*only* because `renderKeys` draws a row for a property that actually HAS keys —
+a project saved before today has none, so nothing it already drew moves. (The
+first attempt appended it to the end to be safe, which would have put the pane
+and the timeline permanently out of step for no gain.)
+
+⚠ **`boxSize` / `box_size` IS NOW THE ONLY WAY TO ASK HOW BIG ONE OF THESE BOXES
+IS**, and that is the load-bearing part of this change. FIVE places draw or grab
+a shape/overlay box and every one had to start going through it:
+
+| Where | What it is |
+| --- | --- |
+| `shapeFan` (compositor.js) | the fill in the monitor |
+| `overlayRect` (compositor.js) | the picture in the monitor |
+| `draw_shapes` (animatic.py) | the fill in the MP4 |
+| `draw_overlays` (animatic.py) | the picture in the MP4 |
+| the two DOM boxes (`AnimaticEditor`) | the thing you click and drag |
+
+One left reading `clip.w` raw is a shape that is the wrong size in exactly one of
+those — and the worst version of that bug is the DOM one, because the shape looks
+right and the handle is somewhere else.
+
+⚠ **THE RESIZE DRAG DIVIDES BY THE SCALE.** What you are pulling is the box you
+can see (`w × scale`); what has to be written is `w`. Without the divide a shape
+at 300% moved three times as far as the pointer under it, and it would have
+presented as "the handle drifts off the shape" rather than as a scale bug, which
+is why the division is spelled out at the call site rather than hidden.
+
+**⚠ THE TEST FOUND A CROSS-LANGUAGE SPLIT BEFORE IT SHIPPED.** `box_size` began
+as `abs(float(clip.get("scale", 1.0) or 0.0))`, which is exactly wrong for
+`None`: JS's `?? 1` read a null scale as 1 and Python's `or 0.0` read it as
+**0**, so a clip written by a client that sent `null` would have drawn full size
+in the monitor and *not at all* in the export. The JS was separately wrong for a
+non-numeric scale (`Number("abc") || 0` → 0). Absent, null and unreadable now all
+mean **1, never 0** on both sides — an ugly shape beats no shape, and a fallback
+of 0 would have collapsed every shape in the library the day this shipped. That
+is the case `tests/shape_points_check.py` compares the two languages for, rather
+than testing either alone.
+
+⚠ **`--tl-key-row` WENT 0.31 → 0.27rem.** A shape animates SEVEN properties now.
+The reach of the last diamond row is `top + (n−1) × row + size·√2` (the √2
+because the diamonds are rotated 45° and positioned by their corner): at 0.31 a
+seventh row reached 2.43rem against a 2.23rem lane and was sliced off by the
+clip's `overflow: hidden` — a keyframe you had set, on a bar that showed no sign
+of it. At 0.27 seven rows reach 2.19rem. The frame budget only got roomier.
+
+⚠ **AND THE ROW HAS NO ⓘ.** It shipped with one, and it was the only row in
+the group carrying a third button: six rows read ⏱ ↺ and Scale read ⏱ ⓘ ↺,
+which pushed its ↺ out of the column the other six line up in. That column is
+itself information — a lit ↺ down the pane is "everything I have changed on this
+clip" — so a note that breaks it costs more than it explains. Removed on request
+("remove i icon from scal not need to view"); what it said is in the row's
+`title`, where every other explanation in this pane lives.
+
+**Files:** `server/schemas.py`, `animatic_render.py` (`ANIMATABLE`, `box_size`),
+`animatic.py` (`draw_shapes`, `draw_overlays`), `client/src/animatic/scene.js`
+(`ANIMATABLE`, `boxSize`), `client/src/animatic/gl/compositor.js`,
+`client/src/components/AnimaticEditor.jsx` (both hit boxes, the resize drag),
+`client/src/components/properties/ShapeProperties.jsx`,
+`client/src/styles/animatic-text.css`, `tests/shape_points_check.py`,
+`tests/render_parity.py`, `tests/editor_scrub_check.py`.
+
+**Verified:** `python tests/editor_scrub_check.py` — **39 checks in Chromium, all
+pass**: every one of the seven transform rows carries a ⏱, Scale's keys `scale`
+and not `w`/`h`, typing 200% writes `scale` and ONLY `scale`, and Width still
+reads what it was set to. `tests/shape_points_check.py` gained 8 — both languages
+computing the same box for the same scale, the absent/null/unreadable fallbacks,
+and the exporter genuinely quadrupling the painted area at 2×, which is the
+assertion that says the renderer USES the field rather than merely resolving it.
+`tests/render_parity.py` now runs a keyframed `scale` on a curve crossing 1.0
+both ways through both evaluators. `captions_check`, `keyframe_ops_check`,
+`selection_check`, `animatic_motion_check`, `asset_fields_check`,
+`aspect_refit_check`, `effects_check`, `transition_check` and
+**`editor_razor_check`** all pass; `npx vite build` clean. A frame with the same
+star at 0.5× / 1× / 2× plus one resolved mid-curve (1.6× at the midpoint of a
+0.2 → 3.0 ramp) was rendered through `draw_shapes` and read back.
+
+### 2026-08-23 — AN OVERLAY IS A PICTURE CLIP, AND THE MEDIA LIBRARY CAN SEE IT NOW ("fix open issue" — the follow-up logged by the rename/menu entry below)
+
+**A picture on an Images lane is an `overlay`, not a `frame`, and the library
+could not recognise one at all.** A card's identity is its SOURCE (`assetKey`),
+an overlay carried no source, so **all three** places that ask "who uses this
+card?" missed it at once:
+
+| | what it looked at | what the user saw |
+|---|---|---|
+| `assetUsedCount` | `frames` + `audioTracks` | the ×N badge read **"–"** while the picture was plainly on the timeline |
+| `deleteAsset` | `frames` + `audioTracks` | ✕ removed the card and **left the picture playing** from a source no longer listed anywhere |
+| `selectAssetClips` | `frames` + `audioTracks` | "Select its clips" could not find it |
+
+⚠ **THE THREE ARE WIDENED TOGETHER, AND THAT IS NOT TIDINESS.** A badge that
+counts what the ✕ does not delete is a worse bug than either one being narrow, so
+they share one rule now and each says so in its note.
+
+**The fix is a new `AnimaticOverlay.src`** — the same `AnimaticFrameSource` a
+frame carries. ⚠ **IT IS METADATA, NOT A PATH**: an overlay's bytes are still
+always resolved from `upload_id` (the read fills `url` from it, the exporter opens
+`_image_path(job_id, upload_id)`, and `draw_overlays` reads its dict with `.get`,
+so the extra key changes no pixel).
+
+⚠ **ONLY THE PANEL CASE ACTUALLY NEEDED A STORED FIELD, and that is the whole
+argument for adding one.** Of the three ways an overlay is made, two —
+`addOverlayFiles` and the ✨ generate — mint their library card from the very
+upload id the overlay carries, so they matched on `upload_id` all along. But a
+board panel has no upload of its own: `overlayFromFrame` copies its bytes into the
+animatic and gets a **new** id, unrelated to the panel that was dragged. Nothing
+recoverable links the two, which is why matching on `upload_id` alone was the
+cheap half and not the fix.
+
+⚠ **AND THE LEGACY DEFAULT IS A TRAP THAT HAD TO BE DISARMED.** An overlay saved
+before the field existed gets `AnimaticFrameSource()` — `kind: "panel"` with no
+ids — which keys as `panel::` **for every such overlay in the project**, so
+reading it raw would fold them all into ONE card. `overlaySource` therefore reads
+any `src` with no usable ids as `{kind: "upload", upload_id}`, which is exactly
+what such an overlay was.
+
+**`libraryFromProject` reads the Images lanes too** now: a project cut before the
+library existed whose only pictures are overlays derived an EMPTY library and
+opened saying "Nothing in Media yet" over a timeline plainly holding pictures.
+⚠ Overlays are folded in AFTER the frames, because `mergeAssets` keeps the FIRST
+card for a key and **an overlay has no name at all** — `AnimaticOverlay` has no
+label field, and the timeline draws every overlay bar as the literal word
+"Picture". A frame's card carries the name; an overlay's cannot, so the frame's
+has to win.
+
+Files: `server/schemas.py`, `client/src/animatic/assets.js` (new `overlaySource`,
+`assetFromOverlay`), `client/src/components/AnimaticEditor.jsx`,
+`tests/asset_fields_check.py`, `tests/editor_media_bin_check.py`.
+**Verified:** `python tests/editor_media_bin_check.py` — **74 checks, all pass**
+(9 new, in a section that places a picture on the Images lane, watches the badge
+go from "–" to ×1, selects it from the card's menu, and then removes the card and
+proves the picture went with it). `python tests/asset_fields_check.py` — all pass,
+with 9 new: six pure ones covering the panel / upload / legacy keys and the
+backfill, and three on the schema itself, because the JS half can only prove what
+the client BUILDS and never what the store keeps. `image_lane_routing_check`,
+`render_parity`, `selection_check`, `captions_check` and `npm run build` all clean.
+⚠ **THE EDITOR WAS NOT RE-OPENED BY HAND for this one** — the new section drives
+it in real Chromium and asserts the badge text, but no screenshot of it was
+eyeballed, unlike the menu work below.
+
+### 2026-08-23 — A NUMBER IS A DRAG HANDLE, AND A SHAPE HAS A SCALE (user-specified, with three screenshots: the shape's Transform group, a shape clip on the timeline, and a frame's Scale row as the reference)
 
 > "i wand add scal function in shapes clip in properties like other
 >
@@ -16390,24 +16628,16 @@ language — do NOT copy the Drawstory reference's look/colours.
       file remains the STRONGER check (a whole frame with ramps, edges and a
       green block, rather than a flat colour) and its thirteen new point-wise
       cases have never been run, so it is still worth a machine that can build it.
-- [ ] **A PICTURE ON THE IMAGES LANE IS INVISIBLE TO THE MEDIA LIBRARY
-      (found 2026-08-22, pre-existing).** An image placed there is an OVERLAY, and
-      an overlay carries no `src` — so `assetKey` cannot match one and **all three**
-      of `assetUsedCount` (the ×N badge), `deleteAsset` (which takes a source's
-      clips with it) and the new `selectAssetClips` miss it. A card can therefore
-      read "–" while a picture made from it is on screen, and its ✕ leaves that
-      picture playing from a source no longer listed anywhere. The three were left
-      consistent with each other on purpose — widening one alone would make the
-      card's own count disagree with its menu — so whatever the fix is, it has to
-      widen all three together, with `editor_media_bin_check.py` extended to place
-      an image on the Images lane first.
-      ⚠ **IT IS NOT AS SIMPLE AS COPYING `src` ACROSS.** `AnimaticOverlay` has no
-      `src` field at all (only `upload_id`), so matching on `upload_id` is the
-      cheap half — and it only works for a card that WAS an upload. A storyboard
-      panel dropped on the Images lane is re-uploaded by `overlayFromFrame` and
-      gets a NEW `upload_id`, so the link back to the panel card is genuinely gone
-      and no amount of matching recovers it. That half needs a schema field, and
-      therefore a decision, not just a wider filter.
+- [x] **A PICTURE ON THE IMAGES LANE IS INVISIBLE TO THE MEDIA LIBRARY**
+      (found and fixed 2026-08-22; the bug itself was pre-existing). An image
+      placed there is an OVERLAY, and an overlay carried no `src` — so `assetKey`
+      could not match one and **all three** of `assetUsedCount` (the ×N badge),
+      `deleteAsset` (which takes a source's clips with it) and `selectAssetClips`
+      missed it. A card read "–" while a picture made from it was on screen, and
+      its ✕ left that picture playing from a source no longer listed anywhere.
+      **Fixed by giving `AnimaticOverlay` a `src`** and widening the three
+      together — see the Work Log entry for the reasoning, including why the
+      legacy default has to be re-read as an upload rather than keyed raw.
 - [ ] **Render a SECOND shot, and watch it land on the timeline.** The first one
       proved Veo and the extraction; what has still never been seen working is
       the fixed attach path — clip finishes → frame becomes `kind: "video"` →

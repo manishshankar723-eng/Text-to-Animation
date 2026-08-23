@@ -31,10 +31,18 @@ typing, and they are first on purpose.
 
 The pane under test is `ShapeProperties`, mounted on its own rather than through
 `AnimaticEditor` — it needs no backend, and it carries one of every row shape
-this file cares about: plain `NumField`s (Position X, Rotation), a `NumField`
-with the new derived Scale behind it, and a `PropSlider` (Opacity) whose LABEL
-scrubs while its track drags. `ScrubGesture` is provided the way the editor
-provides it, so the undo bracket is exercised too.
+this file cares about: plain `NumField`s (Position X, Rotation), the new `Scale`
+row, and a `PropSlider` (Opacity) whose LABEL scrubs while its track drags.
+`ScrubGesture` is provided the way the editor provides it, so the undo bracket is
+exercised too, and `kf` is stubbed so the ⏱ renders and reports which property it
+was asked to key.
+
+⚠ THE SCALE SECTION IS ALSO THE RECORD OF A DESIGN THAT WAS WRONG ONCE. Scale
+shipped as a shortcut that wrote `w` and `h` together, which meant it could not
+carry a ⏱ — one control cannot honestly keyframe two properties. That was asked
+for within the hour, so `scale` is a stored, animatable field now and these
+checks pin the difference: typing into it writes `scale` and NOTHING else, Width
+and Height keep reading what they were set to, and its ⏱ keys `scale`.
 """
 
 import json
@@ -90,7 +98,7 @@ import ShapeProperties from "/src/components/properties/ShapeProperties.jsx";
 import { ScrubGesture } from "/src/components/properties/PropGroup.jsx";
 import "/src/styles/index.css";
 
-const probe = { errors: [], gestures: 0 };
+const probe = { errors: [], gestures: 0, toggled: [] };
 window.__probe = probe;
 
 window.addEventListener("error", (e) => probe.errors.push(String(e.message || e)));
@@ -120,7 +128,18 @@ function Harness() {
         <ShapeProperties
           shape={shape}
           totalMs={8000}
-          kf={null}
+          kf={{
+            clip: shape,
+            tRel: 0,
+            // Enough of the real contract for the stopwatch to render and
+            // report. The pane only ever CALLS these, so a stub that records
+            // WHICH property was asked for answers the whole question here:
+            // does Scale key `scale`, or does it key something else?
+            onToggle: (prop) => { probe.toggled.push(prop); },
+            onKey: () => {},
+            onSeekKey: () => {},
+            onEase: () => {},
+          }}
           gesture={gestureProps}
           onChange={(id, patch) => setShape((was) => ({ ...was, ...patch }))}
           onDuplicate={() => {}}
@@ -164,6 +183,13 @@ probe.cursorOf = (name, part) => {
 probe.focusedIsFieldOf = (name) =>
   document.activeElement === probe.row(name)?.querySelector("input");
 probe.bodyScrubbing = () => document.body.classList.contains("an-scrubbing");
+probe.hasWatch = (name) => !!probe.row(name)?.querySelector(".an-kf-watch");
+probe.pressWatch = (name) => {
+  const el = probe.row(name)?.querySelector(".an-kf-watch");
+  if (!el) return false;
+  el.click();
+  return true;
+};
 probe.ready = true;
 """
 
@@ -375,40 +401,51 @@ def main():
             reset()
 
             # ---------------------------------------------------------------
-            print("\nScale — the new row, and what it writes\n")
-            page.evaluate("() => window.__probe.set({ w: 0.25, h: 0.25 })")
+            print("\nScale — a multiplier on Width and Height\n")
+            page.evaluate("() => window.__probe.set({ w: 0.25, h: 0.25, scale: 1 })")
             page.wait_for_timeout(60)
+            check("a fresh shape reads 100%",
+                  page.evaluate("() => window.__probe.fieldValue('Scale')") == "100",
+                  page.evaluate("() => window.__probe.fieldValue('Scale')"))
             spot = field("Scale")
             page.mouse.click(spot["x"], spot["y"])
             page.keyboard.press("Control+a")
             page.keyboard.type("200")
             page.wait_for_timeout(80)
-            check("typing 200% doubles the width",
-                  abs(shape()["w"] - 0.5) < 1e-6, f"w={shape()['w']}")
-            check("...and the height with it",
-                  abs(shape()["h"] - 0.5) < 1e-6, f"h={shape()['h']}")
-            check("...and the row now reads 200%",
-                  page.evaluate("() => window.__probe.fieldValue('Scale')") == "200",
-                  page.evaluate("() => window.__probe.fieldValue('Scale')"))
-            # ⚠ THE ONE THAT MATTERS: a box that has been stretched must keep the
-            # proportion it was stretched to. Scaling a 2:1 box back to 100% has
-            # to give a 2:1 box, not a square.
-            page.evaluate("() => window.__probe.set({ w: 0.8, h: 0.4 })")
-            page.wait_for_timeout(60)
-            spot = field("Scale")
-            page.mouse.click(spot["x"], spot["y"])
-            page.keyboard.press("Control+a")
-            page.keyboard.type("100")
-            page.wait_for_timeout(80)
-            check("scaling a stretched box keeps its proportion",
-                  abs(shape()["w"] - 0.25) < 1e-6 and abs(shape()["h"] - 0.125) < 1e-6,
-                  f"w={shape()['w']} h={shape()['h']} — wanted 0.25 × 0.125")
-            page.evaluate("() => window.__probe.set({ w: 0.25, h: 0.25 })")
-            page.wait_for_timeout(60)
+            check("typing 200% writes `scale`, and ONLY `scale`",
+                  abs(shape()["scale"] - 2) < 1e-6
+                  and shape()["w"] == 0.25 and shape()["h"] == 0.25,
+                  f"scale={shape()['scale']} w={shape()['w']} h={shape()['h']}")
+            # ⚠ WIDTH AND HEIGHT ARE THE SIZE **BEFORE** THE SCALE — the same
+            # relationship a frame's Scale has to its picture and Premiere's has
+            # to its source. If they moved too, the rows would be describing the
+            # same thing twice, and the shortcut this replaced is exactly what
+            # that looks like.
+            check("...so Width and Height still read what they were set to",
+                  page.evaluate("() => window.__probe.fieldValue('Width')") == "25",
+                  page.evaluate("() => window.__probe.fieldValue('Width')"))
             drag(page, label("Scale"), 60)
-            check("and Scale scrubs like every other number",
-                  shape()["w"] > 0.25 and shape()["h"] > 0.25,
-                  f"w={shape()['w']} h={shape()['h']}")
+            check("and Scale scrubs like every other number", shape()["scale"] > 2,
+                  f"scale={shape()['scale']}")
+
+            # ---------------------------------------------------------------
+            # ⚠ THE REASON `scale` STOPPED BEING A SHORTCUT. The first version of
+            # this row wrote `w` and `h` together and had no ⏱, because one
+            # control cannot honestly key two properties — rule 1 in
+            # `PropGroup.jsx`, and the timeline had no row to draw it on. It was
+            # asked for within the hour ("i want you add in scale in Key
+            # buttun"), so `scale` is a stored animatable property now, and
+            # these are the assertions that say so.
+            print("\nScale carries a ⏱, like every other transform row\n")
+            for name in ("Position X", "Position Y", "Scale", "Width", "Height",
+                         "Opacity", "Rotation"):
+                check(f"{name} has a keyframe button",
+                      page.evaluate("(n) => window.__probe.hasWatch(n)", name))
+            pressed = page.evaluate("(n) => window.__probe.pressWatch(n)", "Scale")
+            page.wait_for_timeout(60)
+            check("...and Scale's keys ITS OWN property, not `w` and `h`",
+                  pressed and page.evaluate("() => window.__probe.toggled") == ["scale"],
+                  json.dumps(page.evaluate("() => window.__probe.toggled")))
 
             # ---------------------------------------------------------------
             print("\nAfterwards\n")

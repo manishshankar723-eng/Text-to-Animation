@@ -213,6 +213,17 @@ PROJECT = {
                     {"t": 1000, "v": 90, "ease": "ease-in-out"},
                     {"t": 3000, "v": 360},
                 ],
+                # ⚠ `scale` IS THE SEVENTH ANIMATABLE PROPERTY A SHAPE HAS, and
+                # the newest, so it is the one most likely to be resolved by one
+                # side and not the other — which is exactly what this file
+                # exists to catch. Keyed on a curve, and crossing 1.0 both ways,
+                # so a side that silently defaulted it would read 1.0 at every
+                # sample and be caught at the first.
+                "scale": [
+                    {"t": 0, "v": 0.2, "ease": "ease-out"},
+                    {"t": 1500, "v": 1.8, "ease": "ease-in"},
+                    {"t": 3000, "v": 1.0},
+                ],
             },
         },
         # Starts fully transparent. Dropping a zero-opacity clip BEFORE

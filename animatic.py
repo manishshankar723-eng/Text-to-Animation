@@ -74,6 +74,7 @@ from animatic_render import (
     resolve_look,
     scene_at,
     scene_signature,
+    box_size,
     text_backdrop,
     text_place,
     transition_matte,
@@ -1088,8 +1089,13 @@ def draw_shapes(canvas: Image.Image, shapes: list[dict]) -> None:
         opacity = float(shape.get("opacity", 1.0) or 0.0)
         if opacity <= 0:
             continue
-        box_w = max(1, int(round(abs(float(shape.get("w", 0.25))) * width)))
-        box_h = max(1, int(round(abs(float(shape.get("h", 0.25))) * height)))
+        # ⚠ THROUGH `box_size`, NOT OFF `w`/`h` — the box is w/h AFTER `scale`,
+        # and the monitor's `shapeFan` reads it through the twin of this call.
+        # One of the two left reading the raw field is a shape that is the wrong
+        # size in the MP4 and the right size on screen.
+        frac_w, frac_h = box_size(shape)
+        box_w = max(1, int(round(frac_w * width)))
+        box_h = max(1, int(round(frac_h * height)))
         # A shape bigger than the frame is legal (a wash over the whole picture),
         # but there is no reason to allocate a layer larger than one can be seen.
         box_w, box_h = min(box_w, width * 3), min(box_h, height * 3)
@@ -1149,8 +1155,11 @@ def draw_overlays(canvas: Image.Image, overlays: list[dict]) -> Image.Image:
         if opacity <= 0 or not path or not os.path.isfile(path):
             continue
         look = _look_of(item)
-        box_w = max(1, min(int(round(abs(float(item.get("w", 0.3))) * width)), width * 3))
-        box_h = max(1, min(int(round(abs(float(item.get("h", 0.3))) * height)), height * 3))
+        # Through `box_size` for the same reason `draw_shapes` is — an overlay
+        # is placed with the identical box and carries the identical `scale`.
+        frac_w, frac_h = box_size(item)
+        box_w = max(1, min(int(round(frac_w * width)), width * 3))
+        box_h = max(1, min(int(round(frac_h * height)), height * 3))
 
         try:
             with Image.open(path) as source:
