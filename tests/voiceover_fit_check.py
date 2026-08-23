@@ -383,9 +383,19 @@ check("the poll re-reads the FRAMES, not just the texts and the audio",
 # overlays, the Video row and a music bed are left where they were, and one shot
 # growing puts all of them out for the rest of the film. Same `ripple.js` the Veo
 # attach uses — see `tests/timeline_ripple_check.py`.
+# ⚠ THE RIPPLE MOVED INTO `absorbSpeech` (2026-08-23, the Director's phase B) and
+# the assertion moved with it. It is ONE function with TWO callers now — the 🎙
+# dialog's poll and the Director's sound pass — which is the point: this
+# arithmetic is the part nobody can check by eye, and a second copy of it
+# drifting is how "my caption and voiceover not move" comes back.
 check("…and carries the rest of the timeline along with them",
-      "renderShifts(speechFramesRef.current, laid)" in editor
+      "const shifts = renderShifts(beforeFrames || [], laid);" in editor
       and "setShapes((list) => rippleClips(list, shifts));" in editor)
+check("…and the pre-run picture row is what the map is built from",
+      "absorbSpeech(project, speechFramesRef.current, speechAudioRef.current)" in editor)
+check("⚠ …and the Director's pass goes through the SAME re-read, not a second copy",
+      "return { frames: absorbSpeech(project, before, beforeAudio) };" in editor
+      and editor.count("const absorbSpeech = useCallback(") == 1)
 # ⚠ `keep` IS NOT OPTIONAL. The generated captions and the new voiceover are
 # already laid against the NEW layout; shifting them by the same map would move
 # them twice, which is this very bug committed by its own fix.

@@ -110,6 +110,13 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
   // Every Veo render made from this editor. SERVER-owned: it arrives on the
   // project and is never sent back.
   const [veoClips, setVeoClips] = useState([]);
+  // ⚠ THE LAST 🎬 VEO PASS, AND IT IS HERE FOR THE SAME REASON `veoClips` IS:
+  // server-owned state that arrives on the project and is never sent back. A
+  // record still saying "running" on a project that has just been opened means a
+  // pass was interrupted — a refresh, a crash, a closed laptop — and the
+  // Director offers to finish it rather than abandoning shots that were paid
+  // for. See `resumeVeo` in `useDirectorRun.js`.
+  const [directorRun, setDirectorRun] = useState(null);
 
   const [saveState, setSaveState] = useState("saved"); // saved | dirty | saving | error
   // True for a couple of seconds after a save lands, so the tick is a moment of
@@ -163,6 +170,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
         setAudioTracks(p.audio_tracks || []);
         setVideo(p.video || null);
         setVeoClips(p.veo_clips || []);
+        setDirectorRun(p.director_run || null);
         setSourceBoard(p.source_storyboard_id || null);
         setLoading(false);
         // Whatever renders next IS the saved state — take it as the baseline.
@@ -379,6 +387,7 @@ export default function useAnimaticProject({ animaticId, serverBusy, onLoaded, o
     video, setVideo,
     sourceBoard,
     veoClips, setVeoClips,
+    directorRun, setDirectorRun,
     doc, signature, applySnapshot,
     // saving
     saveState, savedFlash, flush,

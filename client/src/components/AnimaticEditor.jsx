@@ -160,6 +160,11 @@ import { forgetAudio } from "../animatic/beats.js";
 import { beatMarks, cutsToDurations, planBeatCuts } from "../animatic/beat_cut.js";
 import useTimelineTransport, { useMonitorVideo } from "../animatic/useTimelineTransport.js";
 import useUndoStack from "../animatic/useUndoStack.js";
+// 🎬 Make Video — the auto-editor. Everything it can do lives in `agent/`, and
+// none of it touches state directly: see `agent/actions.js`.
+import useDirectorRun from "../animatic/agent/useDirectorRun.js";
+import { shotRow } from "../animatic/agent/veo_pass.js";
+import { ACTION_API } from "../animatic/agent/actions.js";
 // ⚠ `sortFiles` ONLY. The strip itself was the Media pane's list of CLIPS; the
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
 // its file-name sort still does, on every upload path.
@@ -172,6 +177,7 @@ import Icon from "./Icon.jsx";
 import AccountMenu, { useMenuDismiss } from "./AccountMenu.jsx";
 import PaneSplitter from "./PaneSplitter.jsx";
 import MediaBin from "./MediaBin.jsx";
+import DirectorPanel from "./DirectorPanel.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
 import ShapeGallery, {
   DEFAULT_SHAPE_COLOR,
@@ -993,6 +999,19 @@ export default function AnimaticEditor({
   // itself mid-flight, and the work is already paid for by then.
   const [speechRunning, setSpeechRunning] = useState(false);
   const [speechProgress, setSpeechProgress] = useState(null);
+  // ⚠ THE SAME PASS, RUN BY THE DIRECTOR (phase B) — a SEPARATE flag, and not to
+  // be merged with the one above. `speechRunning` is what the 🎙 dialog's poll
+  // effect keys on; setting it from the Director would start that poll as well
+  // and the two would race to re-read the same finished job. What the two DO
+  // share is `serverBusy`: for the life of either run the server is the only
+  // writer of this project, and the autosave has to stand down.
+  const [directorSpeaking, setDirectorSpeaking] = useState(false);
+  // ⚠ AND ITS OWN FLAG FOR PHASE C, for exactly the reason `directorSpeaking`
+  // has one: `POST /animatics/{id}/animate` puts the job into RUNNING and
+  // `save_animatic` refuses to write through that, so an autosave landing
+  // mid-pass is a 409 on screen. For the life of a render the server is the only
+  // writer to this project — see `serverBusy`.
+  const [directorRendering, setDirectorRendering] = useState(false);
 
   // --- Phase 7: reaching back to the BOARD, and framing for a new shape ---
   // ⚠ THE RE-BLOCK RUNS ON THE STORYBOARD'S JOB, not this one. The key poses
@@ -1039,7 +1058,9 @@ export default function AnimaticEditor({
   // server that writes the caption clips, so an autosave landing mid-run would
   // put the editor's older `texts` back over work that was paid for. That is
   // the same failure the Veo records were moved into `result` to avoid.
-  const serverBusy = exporting || animating || speechRunning || reframeRunning;
+  const serverBusy =
+    exporting || animating || speechRunning || directorSpeaking || directorRendering ||
+    reframeRunning;
 
   // ------------------------------------------------------------- the project
   // Loading, autosave and "is this saved?" — see `useAnimaticProject`.
@@ -1064,6 +1085,7 @@ export default function AnimaticEditor({
     video, setVideo,
     sourceBoard,
     veoClips, setVeoClips,
+    directorRun, setDirectorRun,
     doc, signature, applySnapshot,
     saveState, savedFlash, flush,
     loadedRef, dirtyRef, baselineRef,
@@ -3865,6 +3887,12 @@ export default function AnimaticEditor({
     setSelectedTextId(clip.id);
     seek(start);
     setNotice("Text added over this frame — type it below, then drag its edge to re-time it.");
+    // ⚠ THE ID GOES BACK TO THE CALLER, and the button ignores it. The Director
+    // cannot: "add a title, then give it the Rise preset" is two steps, and the
+    // second one has no way to name the clip the first one made unless this
+    // says. Returning it costs nothing and is the alternative to a second
+    // `newTextClip` literal living in the agent — see `agent/actions.js`.
+    return clip.id;
   }
 
   const patchText = (id, patch) =>
@@ -5031,6 +5059,8 @@ export default function AnimaticEditor({
     // Same reasoning as `addAssets`: the list it joined may be folded shut.
     openGroup("media:shapes");
     setNotice("Shape added — drag it on the picture to move it, or its corner to resize.");
+    // Same reason as `addText` above: the Director styles what it just made.
+    return shape.id;
   }
 
   const patchShape = (id, patch) =>
@@ -6073,6 +6103,214 @@ export default function AnimaticEditor({
   function setAllDurations(ms) {
     setFrames((list) => list.map((f) => ({ ...f, duration_ms: ms })));
     setNotice(`Every frame set to ${(ms / 1000).toFixed(1)}s.`);
+  }
+
+  // ------------------------------------------------------------ the Director
+  // 🎬 Make Video. See `animatic/agent/` — the runner, the action registry and
+  // the fence all live there, and NONE of it edits the timeline itself: every
+  // verb calls one of the functions above, which is why the AI obeys the
+  // one-transition-per-cut rule and the effects cap without knowing they exist.
+  //
+  // ⚠ TWO REFS AND NOTHING ELSE CROSSES THE LINE. The runner cannot hold
+  // `frames` — it reads a step, edits, and the NEXT step has to see the result,
+  // so anything it captured at mount would be a document 60 edits stale. It gets
+  // `readCtx()`, which reads the refs below, and the refs are refreshed on every
+  // render. See the header of `useDirectorRun.js` for why the loop is a timer.
+  const [directorOpen, setDirectorOpen] = useState(false);
+  // ⚠ THE WHOLE DOCUMENT, FOR REVERT — the same object `useUndoStack` records
+  // and `applySnapshot` restores. Kept as a ref rather than passed as a value
+  // because the snapshot is taken when RUN is pressed, not when the panel
+  // opened: between those two moments the user can still edit, and reverting to
+  // a document from before their edits would throw away work the Director never
+  // touched.
+  const directorDocRef = useRef(null);
+  directorDocRef.current = doc;
+  const directorCtxRef = useRef({});
+  directorCtxRef.current = {
+    frames,
+    starts,
+    texts,
+    shapes,
+    overlays,
+    transitions,
+    audioTracks,
+    layers,
+    totalMs,
+    fps: settings.fps,
+    // ⚠ FOR THE BRIEF, NOT FOR A VERB. `boardFrom` turns the read-model into the
+    // description the model is given, and a film's name and shape are part of
+    // what it is. No action in the registry reads either.
+    title,
+    aspectRatio: settings.aspect_ratio,
+  };
+  // ⚠ A TAKE IS NOT A SHOT, AND THIS IS THE ONE PLACE THAT IS DECIDED.
+  //
+  // `attachVeoClip` appends a finished Veo render to `frames` as an ordinary
+  // clip on the Storyboard video row. So a project that has been animated — by
+  // hand, or by the Director's own phase C one pass earlier — hands the runner a
+  // list of 48 panels AND 48 takes, and every rule downstream that counts shots
+  // reads a 96-shot film that does not exist: `housePlan` takes the median of a
+  // list half of which is footage, `shotIndex` accepts "shot 61", and the preview
+  // table lists every panel twice.
+  //
+  // ⚠ IT IS FILTERED HERE RATHER THAN INSIDE THE AGENT because `starts` has to
+  // be filtered at the SAME indices — `frameSpans` knows about tracks, explicit
+  // `start_ms` and clips that have been dragged, and a second layout derived
+  // from the filtered list would disagree with the timeline on screen the moment
+  // anything is out of list order. `shotRow` does both together.
+  const readDirectorCtx = useCallback(
+    () => ({
+      ...directorCtxRef.current,
+      ...shotRow(directorCtxRef.current.frames, directorCtxRef.current.starts),
+      // `add_transition` sets a length on the record it just made, and that
+      // record does not exist in the ctx it was handed — it was created one
+      // React commit ago. This is the one place a verb needs to read PAST its
+      // own snapshot, so it is the one place that gets a live reader.
+      readTransitions: () => directorCtxRef.current.transitions,
+    }),
+    []
+  );
+  // ⚠ THE NAMES ARE THE CONTRACT — `ACTION_API` in `agent/actions.js` lists
+  // exactly these, and `tests/editor_director_check.py` asserts this object
+  // supplies every one of them. A verb cannot reach anything not named here.
+  const directorApiRef = useRef({});
+  directorApiRef.current = {
+    patchFrame,
+    setAllDurations,
+    seek,
+    selectOnly,
+    addTransitionAtCut,
+    patchTransition,
+    deleteTransition,
+    addEffectToClip,
+    addText,
+    patchText,
+    deleteText,
+    addShape,
+    patchShape,
+    deleteShape,
+    addLayer,
+    patchTrack,
+    addCrossfade,
+    laneSiblings,
+  };
+  // ⚠ KEYED OFF `ACTION_API`, NOT OFF THE OBJECT ABOVE. Building it from its own
+  // keys would make the bag whatever the object happens to hold, so a function
+  // renamed on one side and not the other would produce a bag that is missing a
+  // name and reports nothing. Reading the list means a missing name arrives as
+  // `undefined`, which is what `missingApi` in `useDirectorRun` detects and the
+  // panel says out loud.
+  //
+  // Each entry is a thunk through the ref so the runner always calls the CURRENT
+  // render's closure — half these functions capture `frames`, and one captured at
+  // mount would be editing a document 60 steps stale.
+  const directorApi = useMemo(
+    () =>
+      Object.fromEntries(
+        ACTION_API.filter((name) => typeof directorApiRef.current[name] === "function").map(
+          (name) => [name, (...args) => directorApiRef.current[name](...args)]
+        )
+      ),
+    []
+  );
+  // ⚠ THE MODEL IS ONE FUNCTION, AND IT IS OPTIONAL. `useDirectorRun` falls back
+  // to the deterministic Phase 0 planner whenever this throws — a backend that
+  // is not running, no credentials, a train — and the preview says which planner
+  // it is showing. So the 🎬 button never breaks; it sometimes does less.
+  //
+  // ⚠ IT SENDS THE BOARD AND THE MANIFEST FROM HERE. The document on screen is
+  // ahead of the last autosave, and `capabilities()` is derived from the tables
+  // the renderers read — see the header of `director.py` on why neither may be
+  // rebuilt server-side.
+  const askDirectorModel = useCallback(
+    (payload) => api.directorPlan(animaticId, payload),
+    [animaticId]
+  );
+  // ⚠ THE INTERRUPTED PASS, IF THERE IS ONE — the record and the clips together,
+  // because neither answers the question on its own. The record says what the
+  // run MEANT to render; the clips say what was actually paid for; `outstanding`
+  // in `veo_pass.js` is the difference and the runner does that arithmetic. All
+  // this has to do is hand over both, and only while the record still says the
+  // pass never finished.
+  const directorPending = useMemo(
+    () =>
+      directorRun && (directorRun.status || "") === "running"
+        ? { run: directorRun, clips: veoClips }
+        : null,
+    [directorRun, veoClips]
+  );
+  // ⚠ PHASE B, THROUGH TWO THUNKS, and the ref is doing two jobs at once. The
+  // stable-identity one is the same reason `directorApi` is a thunk: the runner
+  // must always call the CURRENT render's closure. The other is ORDERING — both
+  // passes live further down this file, beside the 🎙 dialog's poll whose
+  // re-read (`absorbSpeech`) they share, and naming them here would read a
+  // `const` before it exists.
+  const directorSpeakRef = useRef(null);
+  const directorScriptRef = useRef(null);
+  const directorSpeak = useCallback((payload) => directorSpeakRef.current(payload), []);
+  const directorReadScript = useCallback(() => directorScriptRef.current(), []);
+  // ⚠ PHASE C, THROUGH THE SAME KIND OF THUNK AND FOR BOTH THE SAME REASONS:
+  // the runner must always call the CURRENT render's closure (`runDirectorVeoPass`
+  // captures `frames` through refs the poll then re-reads), and the pass itself
+  // lives further down beside `reconcileVeoClips`, which it shares with ✨ Animate.
+  const directorRenderRef = useRef(null);
+  const directorRenderPass = useCallback(
+    (payload) => directorRenderRef.current(payload),
+    []
+  );
+  const directorVeoQuote = useCallback(
+    (payload) => api.directorVeoQuote(animaticId, payload),
+    [animaticId]
+  );
+  const directorVeoStart = useCallback(
+    (payload) => api.directorVeoStart(animaticId, payload),
+    [animaticId]
+  );
+  const directorVeoState = useCallback(
+    (payload) => api.directorVeoState(animaticId, payload),
+    [animaticId]
+  );
+  const director = useDirectorRun({
+    readCtx: readDirectorCtx,
+    api: directorApi,
+    applySnapshot,
+    docRef: directorDocRef,
+    onNotice: setNotice,
+    askModel: askDirectorModel,
+    language: settings.language || "",
+    readScript: directorReadScript,
+    speak: directorSpeak,
+    // ------------------------------------------------------------- phase C
+    quoteVeo: directorVeoQuote,
+    startVeo: directorVeoStart,
+    renderPass: directorRenderPass,
+    endVeo: directorVeoState,
+    // ⚠ THE PROJECT'S OWN RENDER SETTINGS, UNTOUCHED EXCEPT FOR THE LENGTH. Tier,
+    // resolution and whether Veo generates sound are the user's decisions and
+    // live in the ✨ Animate dialog; the Director picks the LENGTH per shot,
+    // because that is a decision about the cut rather than about the budget.
+    veoRender: animateRender,
+    veoClips,
+    // ⚠ THE RESUME OFFER. A `director_run` still saying "running" on a project
+    // that has just been loaded means a pass was interrupted — see `resumeVeo`.
+    pendingVeo: directorPending,
+  });
+
+  // Which languages have a description written for them, and which backend is
+  // wired up. Free — no model call — and fetched only when the panel is opened
+  // for the first time, because the editor opens far more often than 🎬 is
+  // pressed. An empty list is harmless: the picker still offers "Something
+  // else…", which is free text and is what actually makes any language work.
+  const [directorLanguages, setDirectorLanguages] = useState([]);
+  function openDirector() {
+    setDirectorOpen(true);
+    director.open();
+    if (!directorLanguages.length) {
+      api
+        .directorConfig()
+        .then((cfg) => setDirectorLanguages(cfg?.languages || []))
+        .catch(() => {});
+    }
   }
 
   // ------------------------------------------------------------- exporting
@@ -7593,6 +7831,260 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * TAKE THE SERVER'S ANSWER FOR A SPEECH PASS AND PUT THE WHOLE FILM BACK
+   * TOGETHER AROUND IT.
+   *
+   * ⚠ ONE COPY, TWO CALLERS, and that is the entire reason it is a function.
+   * The 🎙 dialog's poll below and the Director's phase B both end here, and the
+   * arithmetic they share is the part nobody can check by eye: a voiceover
+   * stretched a shot, so every clip on every other row is now out of step with
+   * the picture by a different amount depending on where it sat. A second copy
+   * of that, drifting, is how "my caption and voiceover not move" comes back.
+   *
+   * @param project      what `GET /animatics/{id}` returned once the job ended
+   * @param beforeFrames the picture row as it was BEFORE the pass ran
+   * @param beforeAudio  the audio tracks as they were, for telling the new one apart
+   * @returns the re-laid picture row, so the caller can see what moved
+   */
+  const absorbSpeech = useCallback(
+    (project, beforeFrames, beforeAudio) => {
+      // ⚠ THE LAYERS FIRST, and this is not optional. A captions run writes a
+      // LANE as well as clips (`captions.CAPTION_LAYER_ID`), and taking the
+      // clips without the lane they sit on leaves the editor holding captions
+      // whose row it doesn't know about — the next autosave would then write
+      // that missing row back and delete it from the project.
+      setLayers(project.layers || []);
+      // ⚠ AND THE FRAMES, which is what makes a voiceover different from a
+      // captions run: reading a line aloud STRETCHES the shot that owns it and
+      // pushes the shots after it along (`_lay_out_speech`, server side), so
+      // the picture rows on screen are stale the moment the run ends. Taking
+      // the audio without the pictures would leave the editor holding the old
+      // layout — and its next autosave would write that back over the one the
+      // server just worked out, putting every line back over the wrong shot.
+      const laid = project.frames || [];
+
+      // ⚠ AND THE REST OF THE FILM GOES WITH THEM, exactly as it does when a
+      // Veo take makes room (`attachVeoClip`). The server re-laid the board's
+      // picture row and wrote its own captions and its own voiceover at the
+      // right times — and left every OTHER clip where it was: typed text,
+      // shapes, overlays, the Video row, a music bed. One shot growing put all
+      // of them out for the rest of the film.
+      //
+      // ⚠ `keep` IS THE HALF THE SERVER ALREADY TIMED, and it is not optional.
+      // The generated captions and the new voiceover track are laid against the
+      // NEW layout; shifting them by the same map would move them a second
+      // time, which is the bug this call is fixing, applied twice.
+      const shifts = renderShifts(beforeFrames || [], laid);
+      const known = new Set((beforeAudio || []).map((t) => t.upload_id));
+      const keep = new Set([
+        ...(project.texts || []).filter(isGeneratedCaption).map((t) => t.id),
+        ...(project.audio_tracks || [])
+          .filter((t) => !known.has(t.upload_id))
+          .map((t) => t.id),
+      ]);
+      // ⚠ THE SERVER'S OWN LISTS ARE AUTHORITATIVE FOR THE TWO IT REWROTE —
+      // the texts (it replaced the generated captions) and the audio (it added
+      // a track) — so those two are rippled as VALUES. The two it never touched
+      // are rippled through their setters, live, like everywhere else here.
+      setFrames(rippleFrames(laid, shifts));
+      setTexts(rippleClips(project.texts || [], shifts, keep));
+      setAudioTracks(rippleAudio(project.audio_tracks || [], shifts, newId, keep));
+      setShapes((list) => rippleClips(list, shifts));
+      setOverlays((list) => rippleClips(list, shifts));
+      // ⚠ AND THE RECORDING JOINS THE LIBRARY. This is the one add path that
+      // reached the timeline WITHOUT reaching the Media pane, because the file it
+      // adds is made on the SERVER: every other route goes through
+      // `addAudioTrack`, which puts a card in as it goes, and this one takes the
+      // project back off the wire and writes `audio_tracks` straight into state.
+      // So a generated voiceover played on the timeline and was listed nowhere —
+      // reported as "i see in timeline i have audio layer with audio clip but why
+      // not audio clip show in media?" — and razoring or deleting its clips lost
+      // the take with no way back short of a second paid run.
+      //
+      // ⚠ THE FILE, NOT THE CLIP, and every track rather than the new one:
+      // `assetKey` keys audio by upload id and `mergeAssets` dedupes on it, so a
+      // voiceover the server cut into four pieces still makes ONE card, and the
+      // music bed that was already listed does not gain a second.
+      addToLibrary(
+        (project.audio_tracks || [])
+          .filter((t) => t?.upload_id)
+          .map((t) => assetFromAudio(t, newId()))
+      );
+      // Same reason `addAudioTrack` does it: the section that now holds something
+      // is no use to anyone folded shut.
+      openGroup("media:audio");
+      return laid;
+    },
+    [
+      addToLibrary,
+      openGroup,
+      setAudioTracks,
+      setFrames,
+      setLayers,
+      setOverlays,
+      setShapes,
+      setTexts,
+    ]
+  );
+
+  // ------------------------------------------------- the Director's phase B
+  //
+  // ⚠ THE SAME TWO SERVER CALLS THE 🎙 DIALOG MAKES, WITH NO DIALOG. The
+  // Director asked its questions in popup one and priced them in popup two, so
+  // by the time these run the user has already read what will be said and
+  // pressed a button that said it would be. See `agent/voice_pass.js` for why
+  // the pass has to happen BEFORE the plan's steps and what the runner does with
+  // the picture row it returns.
+
+  /** FREE, no model: the board's dialogue sheet, for the preview to show. */
+  async function readDirectorScript() {
+    // The server reads the SAVED project to find which panel each clip points
+    // at, exactly as `openVoiceover` does — a clip dragged since the last
+    // autosave is not where the server thinks it is.
+    await flush();
+    return api.getAnimaticDialogue(animaticId);
+  }
+
+  /**
+   * SPENDS. Reads the script aloud, waits it out, and hands back the picture row
+   * the server re-laid — which is the only thing the re-anchor needs.
+   *
+   * ⚠ IT RESOLVES ONLY WHEN THE DOCUMENT IS BACK IN STATE. The runner treats the
+   * resolution as "the film on screen is now the film the plan is about", and
+   * every step after it reads the editor's live refs. Resolving on the 202 and
+   * letting the poll finish later would put the whole step list back to editing
+   * a document that is minutes stale — the exact failure phase B exists to stop.
+   */
+  async function runDirectorVoiceover({ lines, fitShots, addCaptions }) {
+    await flush();
+    const before = framesRef.current;
+    const beforeAudio = audioTracks;
+    setDirectorSpeaking(true);
+    try {
+      await api.voiceAnimatic(animaticId, {
+        voice: speechVoice,
+        lines,
+        fitShots: fitShots !== false,
+        addCaptions: addCaptions !== false,
+        // ⚠ ALWAYS REPLACE. A Director run is one whole treatment of the film,
+        // and running it twice must give the film twice — not the dialogue read
+        // twice over itself.
+        replace: true,
+      });
+      // Its own poll, deliberately not the effect below: see `directorSpeaking`.
+      for (;;) {
+        const job = await api.getJob(animaticId);
+        if (job.status !== "running") {
+          if (job.error) throw new Error(job.error);
+          break;
+        }
+        await new Promise((done) => setTimeout(done, 1500));
+      }
+      const project = await api.getAnimatic(animaticId);
+      return { frames: absorbSpeech(project, before, beforeAudio) };
+    } finally {
+      setDirectorSpeaking(false);
+    }
+  }
+  /**
+   * SPENDS, AND THIS IS THE MOST EXPENSIVE CALL IN THE EDITOR.
+   *
+   * ONE pass — up to `MAX_VIDEO_BATCH` shots — submitted, polled to the end,
+   * attached, and resolved once the takes are actually on the timeline. The
+   * runner calls it once per pass and reads its Stop flag between them; see
+   * `veo_pass.js` on why there is no honest way to stop inside one.
+   *
+   * ⚠ IT GOES THROUGH `POST /animatics/{id}/animate`, THE SAME DOOR ✨ ANIMATE
+   * USES, and there must never be a second one. Every spend guard written for
+   * that button on 2026-08-07 — the batch cap, the refusal of a promptless
+   * frame, the refusal to silently re-render something already paid for, the job
+   * going RUNNING so an autosave cannot roll a clip back — governs the
+   * Director's pass for free by virtue of it being the same endpoint. A
+   * dedicated "director render" route would be four guards to write again and
+   * four to forget.
+   *
+   * ⚠ AND IT SENDS A LENGTH PER SHOT (`durations`), because the Director picks
+   * each take's length from the hold it has to cover. That is the one thing
+   * ✨ Animate's body could not already say.
+   *
+   * ⚠ IT RESOLVES ONLY WHEN THE TAKES ARE COMMITTED. `reconcileVeoClips` attaches
+   * through `setFrames`, and a `setState` from an async continuation is
+   * SCHEDULED, not applied — so returning on the last poll would hand the next
+   * pass (and the re-anchor after it) a film without the footage in it. Same
+   * reason `runDirectorVoiceover` waits, one function up.
+   */
+  async function runDirectorVeoPass({ shots, render, onProgress }) {
+    const rows = shots || [];
+    if (!rows.length) return { attached: 0 };
+    // The renderer resolves each frame's PICTURE off the saved project, so the
+    // shot being animated has to be on the server before it is submitted.
+    await flush();
+    setDirectorRendering(true);
+    try {
+      await api.animateAnimaticFrames(animaticId, {
+        frameIds: rows.map((row) => row.frame_id),
+        prompts: Object.fromEntries(rows.map((row) => [row.frame_id, row.prompt])),
+        durations: Object.fromEntries(rows.map((row) => [row.frame_id, row.seconds])),
+        render,
+      });
+
+      // ⚠ ITS OWN POLL, DELIBERATELY NOT THE `animating` EFFECT BELOW, and for
+      // the reason `runDirectorVoiceover` has its own: the runner has to be able
+      // to await this pass before it submits the next one, and an effect cannot
+      // be awaited. The BODY is the same body — `reconcileVeoClips`, the one
+      // self-heal — so a clip attaches identically whichever poll saw it first.
+      let failure = "";
+      let records = [];
+      for (;;) {
+        // eslint-disable-next-line no-await-in-loop
+        const project = await api.getAnimatic(animaticId);
+        records = project.veo_clips || [];
+        setVeoClips(records);
+        setDirectorRun(project.director_run || null);
+        const seen = reconcileVeoClips(records, framesRef.current);
+        if (seen.failure) failure = seen.failure;
+        if (!seen.pending) break;
+        if (onProgress) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const job = await api.getJob(animaticId);
+            onProgress(job.progress?.message || "");
+          } catch {
+            /* progress is a nicety; losing it must not stop the poll */
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((done) => setTimeout(done, 2000));
+      }
+
+      // ⚠ NOW WAIT FOR THE ATTACH TO COMMIT — see the note above. Asked by
+      // UPLOAD ID, which is the thing that is actually unique to a render;
+      // `reconcileVeoClips` uses the same test to decide whether a clip is
+      // already on the timeline.
+      const wanted = new Set(rows.map((row) => row.frame_id));
+      const landed = records
+        .filter((c) => wanted.has(c.frame_id) && c.status === "ready" && c.upload_id)
+        .map((c) => c.upload_id);
+      for (let tries = 0; tries < 60 && landed.length; tries += 1) {
+        const have = new Set(
+          (framesRef.current || []).map((f) => f.src?.upload_id).filter(Boolean)
+        );
+        if (landed.every((id) => have.has(id))) break;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((done) => setTimeout(done, 60));
+      }
+      if (failure) throw new Error(failure);
+      return { attached: rows.length };
+    } finally {
+      setDirectorRendering(false);
+    }
+  }
+
+  directorSpeakRef.current = runDirectorVoiceover;
+  directorScriptRef.current = readDirectorScript;
+  directorRenderRef.current = runDirectorVeoPass;
+
   // ⚠ KEYED ON `speechRunning` ALONE, for the reason written out above the Veo
   // poll: an effect that restarts on what its own poll writes cancels itself
   // mid-flight, and by then the work has been paid for.
@@ -7619,75 +8111,9 @@ export default function AnimaticEditor({
         // path where the server, not the editor, wrote the project's content.
         const project = await api.getAnimatic(animaticId);
         if (!alive) return;
-        // ⚠ THE CAPTIONS ARE SET BELOW, NOT HERE. A voiceover run may have moved
-        // the shots the typed ones sit over, so what goes into state is the list
-        // AFTER it has been carried along — writing the server's copy first and
-        // the carried one a moment later is two renders of two different films.
-        // ⚠ THE LAYERS TOO, and this is not optional. A captions run writes a
-        // LANE as well as clips (`captions.CAPTION_LAYER_ID`), and taking the
-        // clips without the lane they sit on leaves the editor holding captions
-        // whose row it doesn't know about — the next autosave would then write
-        // that missing row back and delete it from the project.
-        setLayers(project.layers || []);
-        // ⚠ AND THE FRAMES, which is what makes a voiceover different from a
-        // captions run: reading a line aloud STRETCHES the shot that owns it and
-        // pushes the shots after it along (`_lay_out_speech`, server side), so
-        // the picture rows on screen are stale the moment the run ends. Taking
-        // the audio without the pictures would leave the editor holding the old
-        // layout — and its next autosave would write that back over the one the
-        // server just worked out, putting every line back over the wrong shot.
-        const laid = project.frames || [];
-
-        // ⚠ AND THE REST OF THE FILM GOES WITH THEM, exactly as it does when a
-        // Veo take makes room (`attachVeoClip`). The server re-laid the board's
-        // picture row and wrote its own captions and its own voiceover at the
-        // right times — and left every OTHER clip where it was: typed text,
-        // shapes, overlays, the Video row, a music bed. One shot growing put all
-        // of them out for the rest of the film.
-        //
-        // ⚠ `keep` IS THE HALF THE SERVER ALREADY TIMED, and it is not optional.
-        // The generated captions and the new voiceover track are laid against the
-        // NEW layout; shifting them by the same map would move them a second
-        // time, which is the bug this call is fixing, applied twice.
-        const shifts = renderShifts(speechFramesRef.current, laid);
-        const known = new Set(speechAudioRef.current.map((t) => t.upload_id));
-        const keep = new Set([
-          ...(project.texts || []).filter(isGeneratedCaption).map((t) => t.id),
-          ...(project.audio_tracks || [])
-            .filter((t) => !known.has(t.upload_id))
-            .map((t) => t.id),
-        ]);
-        // ⚠ THE SERVER'S OWN LISTS ARE AUTHORITATIVE FOR THE TWO IT REWROTE —
-        // the texts (it replaced the generated captions) and the audio (it added
-        // a track) — so those two are rippled as VALUES. The two it never touched
-        // are rippled through their setters, live, like everywhere else here.
-        setFrames(rippleFrames(laid, shifts));
-        setTexts(rippleClips(project.texts || [], shifts, keep));
-        setAudioTracks(rippleAudio(project.audio_tracks || [], shifts, newId, keep));
-        setShapes((list) => rippleClips(list, shifts));
-        setOverlays((list) => rippleClips(list, shifts));
-        // ⚠ AND THE RECORDING JOINS THE LIBRARY. This is the one add path that
-        // reached the timeline WITHOUT reaching the Media pane, because the file it
-        // adds is made on the SERVER: every other route goes through
-        // `addAudioTrack`, which puts a card in as it goes, and this one takes the
-        // project back off the wire and writes `audio_tracks` straight into state.
-        // So a generated voiceover played on the timeline and was listed nowhere —
-        // reported as "i see in timeline i have audio layer with audio clip but why
-        // not audio clip show in media?" — and razoring or deleting its clips lost
-        // the take with no way back short of a second paid run.
-        //
-        // ⚠ THE FILE, NOT THE CLIP, and every track rather than the new one:
-        // `assetKey` keys audio by upload id and `mergeAssets` dedupes on it, so a
-        // voiceover the server cut into four pieces still makes ONE card, and the
-        // music bed that was already listed does not gain a second.
-        addToLibrary(
-          (project.audio_tracks || [])
-            .filter((t) => t?.upload_id)
-            .map((t) => assetFromAudio(t, newId()))
-        );
-        // Same reason `addAudioTrack` does it: the section that now holds something
-        // is no use to anyone folded shut.
-        openGroup("media:audio");
+        // ⚠ THE WHOLE RE-READ IS ONE CALL, and the Director's phase B makes the
+        // same one. Everything it does and why is written over `absorbSpeech`.
+        absorbSpeech(project, speechFramesRef.current, speechAudioRef.current);
         setSpeechRunning(false);
         setSpeechProgress(null);
         if (job.error) setError(job.error);
@@ -7704,17 +8130,7 @@ export default function AnimaticEditor({
       alive = false;
       clearTimeout(timer);
     };
-  }, [
-    speechRunning,
-    animaticId,
-    setTexts,
-    setLayers,
-    setAudioTracks,
-    setFrames,
-    setShapes,
-    setOverlays,
-    addToLibrary,
-  ]);
+  }, [speechRunning, animaticId, absorbSpeech]);
 
   // -------------------------------------------- Phase 7: back to the board
   //
@@ -9523,6 +9939,29 @@ export default function AnimaticEditor({
                 >
                   🎙 Voiceover
                 </button>
+                {/* ⚠ SPENDS NOTHING, AND SAYS SO. It sits next to 🎙 Voiceover,
+                    which does spend, so the two must not read alike: this one is
+                    `an-add-director`, weighted with the Text / Colour card pair
+                    it belongs to — the buttons that make something out of
+                    nothing for free.
+
+                    Everything behind it is rules (`agent/house_style.js`); no
+                    model is called and no network request is made. The panel it
+                    opens is a PREVIEW — the timeline is not touched until Run is
+                    pressed in there, and Revert puts it all back afterwards. */}
+                <button
+                  type="button"
+                  className="btn small an-add-director"
+                  disabled={!frames.length}
+                  onClick={openDirector}
+                  title={
+                    frames.length
+                      ? "Read the timeline's rhythm and cut it — transitions and camera moves. Free, previewed first, and revertable."
+                      : "Add some pictures first — the Director edits a sequence, so it needs one to read"
+                  }
+                >
+                  🎬 Make Video
+                </button>
               </>
             }
             frames={frames}
@@ -11054,6 +11493,24 @@ export default function AnimaticEditor({
             </div>
           </div>
         </div>
+      )}
+
+      {/* --- 🎬 The Director: the plan, then the rail ---------------------- */}
+      {/* ⚠ ONE STEP, NOT TWO, and that is the difference between this and the
+          three dialogs below it. Those are "panel, then price" because they
+          spend; this one previews and runs in the same card because there is
+          nothing to confirm — Run costs nothing and Revert undoes all of it.
+          The two-popup priced flow arrives with Veo in Phase 4. */}
+      {directorOpen && (
+        <DirectorPanel
+          run={director}
+          frames={frames}
+          languages={directorLanguages}
+          onClose={() => {
+            director.close();
+            setDirectorOpen(false);
+          }}
+        />
       )}
 
       {/* --- Captions / voiceover: the panel, then the price --------------- */}

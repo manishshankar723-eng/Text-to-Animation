@@ -50,6 +50,7 @@ from .common import (
 from .jobs import get_store
 from .schemas import (
     AnimaticAnimateRequest,
+    AnimaticDirectorRun,
     AnimaticAudio,
     AnimaticAudioResponse,
     AnimaticBoardImportRequest,
@@ -578,6 +579,24 @@ def _write_veo_clip(job_id: str, clip_id: str, **fields) -> None:
         logger.exception("[animatic %s] could not persist Veo record %s", job_id, clip_id)
 
 
+def _director_run_of(job: Job) -> "AnimaticDirectorRun | None":
+    """The last 🎬 Veo pass this project started, or None.
+
+    ⚠ SAME HOME AND SAME REASON AS `veo_clips` — the job's `result`, never its
+    `params`. A run record in `params` would be erased by the editor's next
+    autosave, and with it the only statement of what the user agreed to pay for
+    before the tab was closed.
+    """
+    raw = (job.result or {}).get("director_run")
+    if not raw:
+        return None
+    try:
+        return AnimaticDirectorRun(**raw)
+    except Exception:  # noqa: BLE001 — one bad record must not 500 the project
+        logger.warning("[animatic %s] dropping unreadable director run %r", job.job_id, raw)
+        return None
+
+
 def _settings_of(job: Job) -> AnimaticSettings:
     try:
         return AnimaticSettings(**((job.params or {}).get("settings") or {}))
@@ -626,6 +645,7 @@ def _project_of(job: Job) -> AnimaticProject:
     return AnimaticProject(
         job_id=job.job_id,
         veo_clips=_veo_clips_of(job),
+        director_run=_director_run_of(job),
         title=job.character_name or "Project",
         status=job.status,
         source_storyboard_id=(job.params or {}).get("source_storyboard_id"),
@@ -1982,22 +2002,32 @@ def download_video(job_id: str, current: CurrentUser = Depends(get_current_user)
 # from the desktop are the same object on the timeline from the moment each
 # exists, so trimming, speed, frame extraction and export have ONE code path.
 # That is the whole reason this belongs in the editor rather than beside it.
-def _estimate_animate(count: int, render: RenderSettings) -> CostEstimate:
-    """What rendering `count` frames at these settings should cost.
+def _estimate_animate(lengths: list[int], render: RenderSettings) -> CostEstimate:
+    """What rendering takes of these LENGTHS at these settings should cost.
 
     Advisory, and labelled as such in the UI: list prices drift and only Google
     bills. Priced through `video_client.estimate_cost_usd` — the same rate table
     the final-video workspace quotes from, so the two can never disagree.
+
+    ⚠ IT TAKES A LIST OF LENGTHS, NOT A COUNT, and that is not a generalisation
+    for its own sake. ✨ Animate renders a whole batch at one length and passes
+    `[render.duration_seconds] * n`; the 🎬 Director picks a length per shot from
+    that shot's hold and passes the real mixture. A `count × duration` formula
+    would quote the Director's pass for a film it is not going to render.
     """
     from video_client import estimate_cost_usd
 
-    per = estimate_cost_usd(
-        render.duration_seconds, render.resolution, render.tier, render.generate_audio
-    )
+    rows = list(lengths or [])
     return CostEstimate(
-        shots=count,
-        seconds=count * render.duration_seconds,
-        usd=round(per * count, 2),
+        shots=len(rows),
+        seconds=sum(rows),
+        usd=round(
+            sum(
+                estimate_cost_usd(n, render.resolution, render.tier, render.generate_audio)
+                for n in rows
+            ),
+            2,
+        ),
         tier=render.tier,
         resolution=render.resolution,
     )
@@ -2072,6 +2102,16 @@ def render_frame_clip(
 
     _write_veo_clip(job_id, clip_id, status="rendering", error="")
 
+    # ⚠ THE RECORD'S OWN LENGTH WINS OVER THE BATCH'S. A 🎬 pass submits a mixed
+    # bag — a 4-second take over a short hold and an 8-second one over a long
+    # one, in the same submission — because the Director picks each length from
+    # the shot it covers. A record with no length of its own is every render made
+    # before that existed, and it takes the batch's, exactly as it always did.
+    if record.seconds in (4, 6, 8):
+        settings_render = settings_render.model_copy(
+            update={"duration_seconds": record.seconds}
+        )
+
     data = render_shot(
         image,
         record.prompt,
@@ -2121,20 +2161,27 @@ def render_frame_clip(
 
 def _animate_targets(
     job: Job, body: AnimaticAnimateRequest
-) -> list[tuple[AnimaticFrame, str]]:
-    """The (frame, prompt) pairs a request would actually render.
+) -> list[tuple[AnimaticFrame, str, int]]:
+    """The (frame, prompt, seconds) triples a request would actually render.
 
     Everything that could only produce a PAID failure is filtered out here, in
     the one place both the estimate and the render call — so the price quoted is
     the price of the work, and neither can drift from the other.
+
+    ⚠ THE LENGTH IS RESOLVED HERE FOR THE SAME REASON THE REFUSALS ARE. The 🎬
+    Director sends one per frame (`durations`) because it picks each take's
+    length from that shot's hold; everyone else sends none and gets the settings'
+    own. Resolving it in the two endpoints separately is how an estimate starts
+    quoting eight seconds for a take that renders at four.
     """
     frames = {f.id: f for f in _frames_of(job)}
+    render_settings = body.render
     done = {
         c.frame_id
         for c in _veo_clips_of(job)
         if c.status == "ready" and c.upload_id
     }
-    out: list[tuple[AnimaticFrame, str]] = []
+    out: list[tuple[AnimaticFrame, str, int]] = []
     for frame_id in body.frame_ids:
         frame = frames.get(frame_id)
         if frame is None:
@@ -2145,7 +2192,13 @@ def _animate_targets(
         prompt = (body.prompts.get(frame_id) or "").strip()
         if not prompt:
             continue
-        out.append((frame, prompt))
+        # ⚠ A LENGTH VEO WILL NOT RENDER IS NOT A SLIGHTLY-WRONG REQUEST, IT IS A
+        # PAID FAILURE. The menu is 4/6/8, so anything else falls back to the
+        # settings' own length rather than being sent on and refused.
+        seconds = int(body.durations.get(frame_id) or 0)
+        if seconds not in (4, 6, 8):
+            seconds = render_settings.duration_seconds
+        out.append((frame, prompt, seconds))
     return out
 
 
@@ -2162,7 +2215,9 @@ def estimate_animate(
     follows.
     """
     job = _get_owned_animatic(job_id, current)
-    return _estimate_animate(len(_animate_targets(job, body)), body.render)
+    return _estimate_animate(
+        [seconds for _, _, seconds in _animate_targets(job, body)], body.render
+    )
 
 
 @router.post("/{job_id}/animate", response_model=JobCreatedResponse, status_code=202)
@@ -2205,7 +2260,7 @@ def animate_frames(
         )
 
     clip_ids: list[str] = []
-    for frame, prompt in targets:
+    for frame, prompt, seconds in targets:
         clip_id = uuid.uuid4().hex[:12]
         clip_ids.append(clip_id)
         # A re-render is a NEW record rather than an overwrite, so the history of
@@ -2219,11 +2274,17 @@ def animate_frames(
             error="",
             upload_id="",
             duration_ms=0,
+            # ⚠ ON THE RECORD, because a 🎬 batch is a MIXTURE of lengths and the
+            # batch-wide settings can only carry one of them. `render_frame_clip`
+            # reads it back per clip; a record without one (everything rendered
+            # before this field existed, and every ✨ Animate batch) falls through
+            # to the settings, which is what it always used.
+            seconds=seconds,
             cost_usd=0.0,
             rendered_at="",
         )
 
-    estimate = _estimate_animate(len(targets), body.render)
+    estimate = _estimate_animate([seconds for _, _, seconds in targets], body.render)
     get_store().update(
         job_id,
         status=JobStatus.RUNNING,
@@ -2295,7 +2356,7 @@ def estimate_generate_video(
     """FREE. What generating this video would cost, before anything is spent."""
     job = _get_owned_animatic(job_id, current)
     _generate_video_source(job, body.source_upload_id)
-    return _estimate_animate(1, body.render)
+    return _estimate_animate([body.render.duration_seconds], body.render)
 
 
 @router.post(
@@ -2348,7 +2409,7 @@ def generate_animatic_video(
         rendered_at="",
     )
 
-    estimate = _estimate_animate(1, body.render)
+    estimate = _estimate_animate([body.render.duration_seconds], body.render)
     get_store().update(
         job_id,
         status=JobStatus.RUNNING,

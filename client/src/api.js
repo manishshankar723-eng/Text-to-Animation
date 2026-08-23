@@ -866,12 +866,16 @@ export function uploadAnimaticAudio(id, file) {
 
 // Free to call. Drives the confirm dialog, so the price is on screen before the
 // button that spends it.
-export function estimateAnimateFrames(id, { frameIds, prompts, render, force } = {}) {
+export function estimateAnimateFrames(id, { frameIds, prompts, durations, render, force } = {}) {
   return request(`/animatics/${id}/animate/estimate`, {
     method: "POST",
     body: {
       frame_ids: frameIds || [],
       prompts: prompts || {},
+      // frame_id → 4 | 6 | 8. ⚠ ONLY THE 🎬 DIRECTOR SENDS THESE: it picks each
+      // take's length from that shot's own hold, so one submission is a mixture.
+      // Absent means "the settings' own length", which is ✨ Animate.
+      durations: durations || {},
       render,
       force: !!force,
     },
@@ -881,12 +885,16 @@ export function estimateAnimateFrames(id, { frameIds, prompts, render, force } =
 // SPENDS MONEY. Renders the named frames with Veo, async — poll getJob(id).
 // Each finished clip lands as an ordinary video upload, so from that moment it
 // is the same thing on the timeline as a file dragged in from the desktop.
-export function animateAnimaticFrames(id, { frameIds, prompts, render, force } = {}) {
+export function animateAnimaticFrames(id, { frameIds, prompts, durations, render, force } = {}) {
   return request(`/animatics/${id}/animate`, {
     method: "POST",
     body: {
       frame_ids: frameIds || [],
       prompts: prompts || {},
+      // ⚠ SAME BODY AS THE ESTIMATE ABOVE, `durations` included. The moment the
+      // two shapes differ, the number in the confirm dialog stops being the
+      // price of the thing the button does.
+      durations: durations || {},
       render,
       force: !!force,
     },
@@ -1140,6 +1148,77 @@ export function reframeAnimatic(id, { frameIds, aspectRatio } = {}) {
   return request(`/animatics/${id}/reframe`, {
     method: "POST",
     body: { frame_ids: frameIds || [], aspect_ratio: aspectRatio || "" },
+  });
+}
+
+// --- 🎬 The Director --------------------------------------------------------
+// The auto-editor's BRAIN. Two text calls on the server — read the film, write
+// the edit — and what comes back is a plan, not an edit: the browser runs it
+// through `validatePlan` → `applyGuardrails` → `useDirectorRun`, the same two
+// doors the deterministic Phase 0 planner's plan comes through. See
+// `client/src/animatic/agent/` and `director.py`.
+
+// Free, no model call. Which backend the Director is wired to and the languages
+// that have a description written for them. The 🎬 popup opens on this.
+export function directorConfig() {
+  return request(`/director/config`);
+}
+
+// SPENDS TEXT QUOTA — two calls, a fraction of the price of one drawing, and
+// nothing on the timeline moves until the user presses Run in the preview.
+//
+// ⚠ THE BOARD AND THE VOCABULARY ARE SENT FROM HERE, and both on purpose. The
+// document on screen is ahead of the last autosave, so a plan written from the
+// stored project would be a plan for a film one edit stale; and the capability
+// manifest is DERIVED in `agent/capabilities.js` from the tables the renderers
+// read, which is the only honest answer to "what can this build do". A second
+// copy of either on the server would be a copy that goes stale.
+//
+// ⚠ IT ALSO SAVES `language` ONTO THE PROJECT. The language is a property of the
+// film — the voiceover and the captions read it too — so the popup that asks is
+// the popup that persists it.
+export function directorPlan(id, { board, capabilities, include, language = "", brief = "" } = {}) {
+  return request(`/director/${id}/plan`, {
+    method: "POST",
+    body: { board, capabilities, include, language, brief },
+  });
+}
+
+// --- The Director's Veo pass (Phase 4) --------------------------------------
+// ⚠ NOT ONE OF THESE THREE SPENDS ANYTHING, and that is worth stating because
+// all three have "veo" in the name. They quote a pass, open a resumable record
+// and close it. THE MONEY MOVES THROUGH `animateAnimaticFrames` above, one pass
+// of `max_video_batch` at a time — the same door ✨ Animate has used since
+// 2026-08-07, so every spend guard written for that button governs the
+// Director's pass too, without one of them being restated.
+
+// FREE. What rendering these shots would cost, broken into the passes it will
+// actually be submitted in. ⚠ The total comes back as the SUM of the passes to
+// the penny — see `_quote_veo_run` on why it is not calculated twice.
+export function directorVeoQuote(id, { shots, render } = {}) {
+  return request(`/director/${id}/veo/quote`, {
+    method: "POST",
+    body: { shots: shots || [], render },
+  });
+}
+
+// FREE. Write down what this pass MEANS to render, before a penny of it moves.
+// ⚠ THIS IS WHAT MAKES A RUN RESUMABLE. A record written after the first
+// submission would be missing exactly the runs that need it — the ones that die
+// on pass one.
+export function directorVeoStart(id, { shots, render } = {}) {
+  return request(`/director/${id}/veo/start`, {
+    method: "POST",
+    body: { shots: shots || [], render },
+  });
+}
+
+// FREE. Close the run: "done", "stopped" or "failed". The shot list is never
+// rewritten — how far the run got is a question for `veo_clips`.
+export function directorVeoState(id, { runId, status, error = "" } = {}) {
+  return request(`/director/${id}/veo/state`, {
+    method: "POST",
+    body: { run_id: runId || "", status: status || "done", error },
   });
 }
 

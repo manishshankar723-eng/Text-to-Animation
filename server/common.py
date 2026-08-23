@@ -365,3 +365,33 @@ def submit_sequence_run(
         "duration_seconds": duration,
         "lengthened": bool(existing_poses),
     }
+
+
+def write_director_run(job_id: str, run: dict) -> None:
+    """Write the 🎬 Veo pass record onto an animatic. Server-owned state.
+
+    ⚠ IT LIVES IN THE JOB'S `result`, NEVER ITS `params`, for exactly the reason
+    `AnimaticVeoClip` gives one file over: the editor's autosave rewrites
+    `params` wholesale, so a run recorded there would be erased by a save that
+    started before it finished — and with it the only statement of what the user
+    agreed to pay for. `_director_run_of` in `animatics.py` reads it back.
+
+    ⚠ AND IT IS HERE RATHER THAN IN `animatics.py` BECAUSE `director.py` IS THE
+    ONLY WRITER. Two route modules never import each other in this app; anything
+    both need lives in this file. Same rule that put `get_owned_job` here.
+
+    ⚠ THERE IS ONLY EVER ONE. A second 🎬 run replaces the first rather than
+    appending, because the record answers exactly one question — "is there a pass
+    to resume?" — and a list would need a rule for which one wins that nothing
+    else has any use for. The CLIPS are the history; they are kept per render.
+    """
+    store = get_store()
+    job = store.get(job_id)
+    if job is None:
+        return
+    result = dict(job.result or {})
+    result["director_run"] = run
+    try:
+        store.update(job_id, result=result)
+    except Exception:  # noqa: BLE001 — a lost state write must not kill the run
+        logger.exception("[animatic %s] could not persist the director run", job_id)

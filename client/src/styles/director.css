@@ -1,0 +1,497 @@
+/* director.css — the 🎬 Make Video panel.
+ *
+ * ⚠ IT ADDS NO CHROME OF ITS OWN. The card, the ✕, the button row and the
+ * scrolling are `.card`, `.modal-close`, `.an-name-actions` and `.an-name-modal`
+ * from `animatic.css` — the same four every dialog in this editor is made of.
+ * What is here is only what those four have no opinion about: a table, a
+ * progress rail and a log.
+ *
+ * ⚠ WIDER THAN 28rem, and for the same reason the voiceover panel is
+ * (`.an-vo-modal`): it carries a table. A five-column plan folded into 28rem is
+ * five columns of one word each, which is the shape the plan preview exists to
+ * avoid.
+ */
+
+.dir-modal {
+  max-width: 46rem;
+}
+
+.dir-sub {
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
+}
+
+/* The plan's own reasoning, above the table. Set apart with a rule rather than a
+   box: it is the Director talking, and a panel of boxes inside boxes stops
+   reading as prose. */
+.dir-read {
+  margin: 0.85rem 0 0.5rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--primary);
+}
+.dir-read-line {
+  margin: 0.2rem 0;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+
+/* ⚠ THE TABLE SCROLLS SIDEWAYS INSIDE ITS OWN BOX, never the card. A card that
+   scrolls horizontally takes the ✕ off screen with it. */
+.dir-table-wrap {
+  margin: 0.7rem 0;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.dir-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.dir-table th,
+.dir-table td {
+  padding: 0.32rem 0.55rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.dir-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.dir-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* A shot the plan does nothing to. Dimmed rather than hidden — "48 rows, 12 of
+   them lit" is the shape of the edit, and a table of only the treated shots
+   would hide how much of the film is being left alone, which is the thing the
+   house caps exist to guarantee. */
+.dir-row-quiet td {
+  color: var(--muted);
+}
+
+.dir-totals {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------- POPUP ONE: the brief */
+/* ⚠ IT REUSES THE EXPORT DIALOG'S FIELDS — `.an-exp-label`, `.an-prop-input`,
+   `.an-select` — rather than growing a third way to draw a labelled control.
+   What is here is only the stacking, because this form is one column where the
+   export dialog is a two-column grid. */
+.dir-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.9rem 0 0.2rem;
+}
+.dir-brief .an-exp-label {
+  margin-top: 0.4rem;
+}
+.dir-brief-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 3.4rem;
+  font-family: inherit;
+  line-height: 1.45;
+}
+.dir-lang-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+/* ⚠ `theme.css` SETS A GLOBAL `select { width: 100% }`. Left alone the picker
+   eats the whole row and the free-text box beside it has nowhere to go — the
+   same bug the Work Log has recorded more than once. */
+.dir-lang-row .an-select {
+  width: auto;
+  min-width: 12rem;
+}
+.dir-lang-row .an-prop-input {
+  flex: 1;
+  min-width: 0;
+}
+.dir-brief-note {
+  margin: 0.5rem 0 0;
+}
+
+.dir-planning {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.2rem 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+/* Why you are looking at the rhythm plan and not the AI's. Warm, not red: a
+   backend that is not running is not an error the user made. */
+.dir-fallback {
+  margin: 0.8rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--warn);
+  border-radius: 0.5rem;
+  background: rgba(251, 191, 36, 0.07);
+  font-size: 0.8rem;
+}
+
+/* --------------------------------------------------- POPUP TWO: the reading */
+.dir-logline {
+  margin: 0 0 0.2rem;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+.dir-analysis .tiny {
+  margin: 0;
+}
+.dir-notes {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ⚠ THE TICK BOXES SIT WITH THE TOTALS, NOT WITH THE BUTTONS, because they are
+   part of the ANSWER — un-ticking one changes the table above and the number in
+   the button below, and a control that changes two things has to be between
+   them to read as their cause. */
+.dir-include {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  margin: 0.75rem 0 0.35rem;
+}
+.dir-include .an-exp-label {
+  margin: 0;
+}
+.dir-include-box {
+  font-size: 0.8rem;
+}
+
+.dir-cost {
+  margin: 0.45rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.dir-cost strong {
+  color: var(--ok);
+}
+
+/* ------------------------------------------------------------------ the rail */
+.dir-rail {
+  margin: 0.9rem 0 0.35rem;
+  height: 0.3rem;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.dir-rail-fill {
+  height: 100%;
+  background: var(--gold-bar);
+  transition: width 90ms linear;
+}
+.dir-progress {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ⚠ THE LOG SCROLLS AND IS CAPPED. 61 lines would push the buttons off the
+   bottom of a card that is already scrolling, and the buttons are where Stop
+   and Revert live. */
+.dir-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 32vh;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+.dir-log li {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  padding: 0.12rem 0;
+}
+.dir-log-mark {
+  flex: none;
+  width: 0.9rem;
+  text-align: center;
+  color: var(--ok);
+}
+.dir-log-note .dir-log-mark {
+  color: var(--muted);
+}
+.dir-log-failed .dir-log-mark {
+  color: var(--fail);
+}
+.dir-log-note .dir-log-text {
+  color: var(--muted);
+}
+.dir-log-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dir-log-why {
+  color: var(--fail);
+  font-size: 0.74rem;
+}
+
+/* --------------------------------------------------- what it could not use */
+.dir-skipped {
+  margin: 0.7rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.dir-skipped summary {
+  cursor: pointer;
+}
+.dir-skipped ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+.dir-skipped code {
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------- the warning */
+/* The confirm the ✕ raises mid-run. Warm, not red: stopping is a legitimate
+   choice, and the thing being guarded against is doing it by accident. */
+.dir-warn {
+  margin: 0.8rem 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--warn);
+  border-radius: 0.5rem;
+  background: rgba(251, 191, 36, 0.08);
+  font-size: 0.82rem;
+}
+.dir-warn-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.dir-danger {
+  border-color: var(--fail);
+  color: var(--fail);
+}
+.dir-danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.dir-actions {
+  margin-top: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .dir-modal {
+    max-width: 92vw;
+  }
+}
+
+/* ⚠ A BUILD WIRED WRONG, said out loud. Loud on purpose: this never appears for
+   a user of a correct build, and when it does appear the alternative is a run
+   whose steps fail one at a time for no visible reason. */
+.dir-broken {
+  margin: 0.8rem 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--fail);
+  border-radius: 0.5rem;
+  background: rgba(248, 113, 113, 0.1);
+  color: var(--fail);
+  font-size: 0.82rem;
+}
+.dir-broken code {
+  color: var(--text);
+}
+
+/* ------------------------------------------------------- PHASE B: the sound */
+/* ⚠ THE SCRIPT IS OPEN BY DEFAULT WHEN THE DIRECTOR WROTE IT, folded when it
+   came off the board. Words the user's own storyboard already carries need
+   confirming, not reading; words a model invented and is about to say aloud in
+   their film need reading, and a fold is a very good way of not being read. */
+.dir-script {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  font-size: 0.8rem;
+}
+.dir-script summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.dir-script .tiny {
+  margin: 0.4rem 0 0;
+}
+.dir-script-lines {
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+.dir-script-lines li {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.16rem 0;
+  border-top: 1px solid var(--border);
+}
+.dir-script-lines li:first-child {
+  border-top: 0;
+}
+.dir-script-shot {
+  flex: 0 0 4.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dir-script-who {
+  flex: 0 0 auto;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  align-self: center;
+}
+.dir-script-text {
+  flex: 1 1 auto;
+  color: var(--text);
+}
+
+/* ⚠ THE PRICE LINE CHANGES COLOUR WHEN IT CHANGES MEANING. Phase 0's is green
+   and says "Free"; with a paid pass ticked it is the warm one, because a user
+   who has learned that this box is always green has learned to stop reading it. */
+.dir-cost-spends {
+  border-color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+}
+.dir-cost-spends strong {
+  color: var(--warn);
+}
+
+/* Phase B's own line, above the step rail — see the note beside it in the JSX. */
+.dir-speech {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.9rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.dir-speech-done {
+  color: var(--text);
+}
+.dir-speech-failed {
+  color: var(--warn);
+}
+
+
+/* ------------------------------------------------------ PHASE C: the footage */
+/* ⚠ IT BORROWS `dir-script`'s BOX AND INVENTS NOTHING. The two are the same
+   object in the same place doing the same job — "here is what the paid pass will
+   do, read it before you tick it" — and giving the expensive one its own
+   surface would say they are different kinds of promise. Only the LENGTH column
+   is new, because only phase C has lengths. */
+.dir-shoot {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  font-size: 0.8rem;
+}
+.dir-shoot summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.dir-shoot .tiny {
+  margin: 0.4rem 0 0;
+}
+.dir-shoot-lines {
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+.dir-shoot-lines li {
+  display: flex;
+  gap: 0.45rem;
+  padding: 0.16rem 0;
+  border-top: 1px solid var(--border);
+}
+.dir-shoot-lines li:first-child {
+  border-top: 0;
+}
+/* ⚠ TABULAR AND FIXED-WIDTH, so a column of "4s / 8s / 6s" reads as a column
+   rather than as three sentences that happen to start with a number. */
+.dir-shoot-len {
+  flex: 0 0 5.5rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Phase C's line and its own rail, above the step rail — see the JSX. */
+.dir-shootrun {
+  margin: 0.9rem 0 0;
+}
+.dir-shootrun .dir-speech {
+  margin: 0;
+}
+.dir-shootrun .dir-progress {
+  margin: 0 0 0.25rem;
+}
+.dir-shootrun-done .dir-speech {
+  color: var(--text);
+}
+.dir-shootrun-failed .dir-speech,
+.dir-shootrun-stopped .dir-speech {
+  color: var(--warn);
+}
+/* ⚠ THICKER THAN THE STEP RAIL, ON PURPOSE. A step is 90ms and a pass is two
+   minutes of paid rendering; the bar the user actually watches should not be
+   the thinner of the two. */
+.dir-rail-passes {
+  margin: 0.35rem 0 0.2rem;
+  height: 0.45rem;
+}
+
+/* ------------------------------------------------------------- the resume */
+/* ⚠ THE ONLY BLOCK IN THIS PANEL ABOUT MONEY THAT IS ALREADY GONE, and it is
+   the warm surface rather than the neutral one for exactly that reason — every
+   other box here describes a decision still to be made. It sits above the brief
+   because a user who came back to finish a render should not have to read a
+   dialog about writing a new plan first. */
+.dir-resume {
+  margin: 0.8rem 0 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--warn);
+  border-radius: 0.5rem;
+  background: rgba(251, 191, 36, 0.08);
+  font-size: 0.82rem;
+}
+.dir-resume strong {
+  color: var(--warn);
+}
+.dir-resume p {
+  margin: 0.4rem 0 0;
+}

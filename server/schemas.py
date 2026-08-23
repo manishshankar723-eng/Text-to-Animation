@@ -1531,6 +1531,29 @@ class AnimaticSettings(BaseModel):
     fit: str = Field("contain", description="'contain' (letterbox) or 'cover' (crop to fill).")
     background: str = Field("#000000", description="Letterbox colour, #rrggbb.")
     show_labels: bool = Field(False, description="Burn each frame's label into the video.")
+    # --- WHAT LANGUAGE THIS FILM IS IN -------------------------------------
+    # ⚠ IT IS A PROJECT SETTING, NOT A REQUEST PARAMETER, and the difference is
+    # the whole reason it is here. Three separate things write words into an
+    # animatic — the Director's on-screen text, the voiceover, the captions —
+    # and each of them used to decide the language on its own, which is how a
+    # Hinglish film ends up with an English title card over a Hindi voiceover.
+    # Written once, on the film, and read by all of them.
+    #
+    # ⚠ FREE TEXT, NOT AN ENUM. `plan_agent.LANGUAGES` describes the three that
+    # need describing (English, Hinglish — which is Hindi in LATIN script, not
+    # Devanagari — and Hindi), and anything else is passed through as the user's
+    # own name for their language: "Tamil", "Bhojpuri", "Spanish" all work with
+    # no code change. Same rule Plan & Script already follows; there is one table
+    # and it lives in `plan_agent`.
+    #
+    # ⚠ EMPTY IS A REAL ANSWER and it is the default: it means "nobody has said",
+    # and every reader treats that as "use the language the material is already
+    # in". Every animatic saved before this field therefore behaves exactly as it
+    # did. ⚠ A BOARD DOES NOT CARRY A LANGUAGE TODAY — nothing in the storyboard
+    # job records one — so a new animatic inherits one only if the board it came
+    # from has grown the field since; otherwise this stays blank until the 🎬
+    # popup asks.
+    language: str = Field("", description="e.g. 'english', 'hinglish', 'hindi', or any language name.")
     # --- Export presets (Phase 8) ------------------------------------------
     # ⚠ ALL THREE DEFAULT TO WHAT THIS ALWAYS DID: no preset, an MP4, and a
     # still taken from the head of the timeline. Every animatic saved before
@@ -1673,6 +1696,12 @@ class AnimaticProject(BaseModel):
     # deliberately has no matching field — see AnimaticVeoClip for why a paid
     # render must not be reachable by the autosave.
     veo_clips: list["AnimaticVeoClip"] = Field(default_factory=list)
+    # The last 🎬 Veo pass, if one was ever started. READ-ONLY and server-owned
+    # for the same reason `veo_clips` is. ⚠ THIS IS WHAT MAKES A RUN RESUMABLE:
+    # a `status` of "running" on a project that has just been opened means a pass
+    # was interrupted, and the editor offers to pick it up rather than quietly
+    # abandoning shots the user has already paid for.
+    director_run: "AnimaticDirectorRun | None" = None
     error: str | None = None
     created_at: str
     updated_at: str
@@ -2149,6 +2178,12 @@ class AnimaticVeoClip(BaseModel):
     # What we ASKED Veo for, so nothing downstream has to measure it — the same
     # rule the assembler follows, and for the same reason: there is no ffprobe.
     duration_ms: int = 0
+    # ⚠ THE LENGTH THIS RECORD WAS SUBMITTED AT, in seconds, and it is on the
+    # RECORD rather than only in the batch's settings because the 🎬 Director
+    # renders a mixed batch — a 4-second take and an 8-second one in the same
+    # submission. `render_frame_clip` reads it and falls back to the settings,
+    # which is what every render made before this field existed did.
+    seconds: int = 0
     # Advisory, and recorded per render so a running total is a sum of real
     # charges rather than a re-estimate at today's settings.
     cost_usd: float = 0.0
@@ -2189,6 +2224,17 @@ class AnimaticAnimateRequest(BaseModel):
     # is REFUSED rather than rendered: Veo bills for a failure exactly as it
     # bills for a success.
     prompts: dict[str, str] = Field(default_factory=dict)
+    # frame_id → 4, 6 or 8. ⚠ A PER-FRAME OVERRIDE OF `render.duration_seconds`,
+    # and the 🎬 Director is the one caller that sets it: it picks each take's
+    # length from that shot's own hold (the smallest that covers it — see
+    # `coverSeconds` in `veo_pass.js`), so one submission is a mixed bag of
+    # lengths where ✨ Animate's is not. A frame with no entry here falls back to
+    # the settings' own length, which is every caller that existed before this.
+    #
+    # ⚠ IT IS READ BY `_animate_targets`, WHICH IS WHAT KEEPS THE ESTIMATE AND
+    # THE RENDER HONEST. Both endpoints resolve the length in that one function,
+    # so the price quoted is the price of the work whatever the lengths are.
+    durations: dict[str, int] = Field(default_factory=dict)
     render: RenderSettings = Field(default_factory=RenderSettings)
     # Re-render a frame that already produced a clip. It costs again, so it is a
     # separate, differently-worded action in the UI — never a silent retry.
@@ -2540,6 +2586,148 @@ class ReframeCostEstimate(BaseModel):
     aspect_ratio: str = ""
     over_limit: bool = False
     limit: str = Field("", description="What the limit is, in words, when over_limit.")
+
+
+# --- 🎬 THE DIRECTOR (server/director.py) ----------------------------------
+# ⚠ THE BOARD AND THE VOCABULARY ARE SENT BY THE BROWSER, and both are
+# deliberately loose here. The reason is written at the top of `director.py`: the
+# capability manifest is DERIVED on the client from the tables the renderers
+# read, and a Pydantic model of it in this file would be a second, hand-written
+# answer to "what can this build do" that is right today and wrong the first time
+# a transition is added. The same argument applies to the board — the editor's
+# live document is ahead of the last autosave, so the plan has to be written
+# against what is on SCREEN, not against what is in the store.
+#
+# Nothing here is trusted. `director.fold_steps` throws away every argument the
+# named verb does not take, and the client's own `validatePlan` +
+# `applyGuardrails` are still the door the plan comes through.
+class DirectorPlanRequest(BaseModel):
+    """Body for POST /director/{job_id}/plan — write me an edit for this board."""
+
+    # What the user typed in the 🎬 popup. Empty is normal and fine.
+    brief: str = Field("", description="What the film is / what they want, in their words.")
+    # The project's language. ⚠ SAVED ONTO THE PROJECT by this call — see the
+    # note on AnimaticSettings.language on why it belongs to the film.
+    language: str = Field("", description="Blank = leave the project's setting alone.")
+    # Which treatments this run may touch. Keys are INCLUDE_KEYS in plan_schema.js.
+    include: dict = Field(default_factory=dict)
+    # The live timeline: {title, aspect_ratio, fps, total_ms, shots:[…], existing:{…}}.
+    board: dict = Field(default_factory=dict)
+    # `capabilities()` from client/src/animatic/agent/capabilities.js.
+    capabilities: dict = Field(default_factory=dict)
+
+
+class DirectorPlanResponse(BaseModel):
+    """An edit plan, the reading it came from, and what could not be used."""
+
+    provider: str = ""
+    model: str = ""
+    # The EditPlan — the same shape `house_style.housePlan` produces, and it goes
+    # through the same two doors on the way to the timeline.
+    plan: dict = Field(default_factory=dict)
+    # The story reading: logline, mood, genre, scenes, per-shot beats.
+    analysis: dict = Field(default_factory=dict)
+    # ⚠ WRITTEN NOW, SPENT LATER. The per-shot Veo motion prompts, in English,
+    # with the shot's dialogue beside them in the film's own language. NOTHING IN
+    # THIS ENDPOINT RENDERS ANYTHING — see `cost` for what a Veo pass would run to.
+    veo: list[dict] = Field(default_factory=list)
+    # Every step thrown away before the browser saw it, with a reason.
+    dropped: list[dict] = Field(default_factory=list)
+    # What the reading wanted the editor to know — assumptions, gaps, doubts.
+    notes: list[str] = Field(default_factory=list)
+    # FREE, ADVISORY quote for the Veo pass these prompts describe. Shown in the
+    # preview so a plan can be read before anything is spent; this endpoint
+    # spends only text quota.
+    cost: CostEstimate = Field(default_factory=CostEstimate)
+
+
+# --- The Director's Veo pass (Phase 4) --------------------------------------
+# ⚠ THE MOST EXPENSIVE THING THE 🎬 BUTTON CAN DO. A 48-shot board is four
+# submissions of twelve and roughly $46, and the whole point of these three
+# models is that a run which dies halfway through can be picked up again without
+# paying for the half already bought.
+#
+# ⚠ THE RECORD SAYS WHAT WAS INTENDED; `veo_clips` SAYS WHAT WAS PAID FOR, and
+# the two are deliberately not the same object. A resume reads the intention off
+# this and the truth off those — see `outstanding` in `veo_pass.js`. Writing the
+# progress into this record and trusting it would mean trusting a counter that a
+# crashed process was in the middle of updating.
+class AnimaticDirectorShot(BaseModel):
+    """One shot the Director means to render, with the length it chose and why."""
+
+    # 1-based position in the SHOT ROW (takes excluded — see `shotRow`) at the
+    # moment the run started. Kept for the log and the panel; `frame_id` is what
+    # anything acts on.
+    shot: int = 0
+    frame_id: str = ""
+    label: str = ""
+    prompt: str = ""
+    # 4, 6 or 8 — the smallest Veo length that covers `hold_ms`. The policy and
+    # its reasoning are in the header of `veo_pass.js`.
+    seconds: int = 8
+    # What the shot held when that length was chosen, so the panel can say "4.0s
+    # over a 2.4s hold" rather than leaving the growth unexplained.
+    hold_ms: int = 0
+
+
+class AnimaticDirectorRun(BaseModel):
+    """A 🎬 Veo pass, as a SERVER-OWNED record. Survives a refresh and a crash.
+
+    ⚠ Lives in the job's `result` beside `veo_clips`, never in `params`, for
+    exactly the reason `AnimaticVeoClip` gives: the editor's autosave rewrites
+    `params` wholesale, so a run recorded there would be erased by a save that
+    started before it finished — and with it the only statement of what the user
+    agreed to pay for.
+    """
+
+    id: str = ""
+    started_at: str = ""
+    # 'running' | 'done' | 'stopped' | 'failed'. ⚠ 'running' is what makes the
+    # editor offer to resume on the next load; nothing else does.
+    status: str = "running"
+    # The whole intention, written ONCE at the start and never rewritten. A run
+    # that is resumed is the same run — see `outstanding` for how far it got.
+    shots: list[AnimaticDirectorShot] = Field(default_factory=list)
+    render: RenderSettings = Field(default_factory=RenderSettings)
+    # `config.MAX_VIDEO_BATCH` as it stood when the run was quoted, so a resume
+    # against a re-configured server still describes the passes the user saw.
+    batch: int = 0
+    # What the whole pass was quoted at, before a penny of it was spent. The sum
+    # of the per-pass quotes, never a second calculation — see `_quote_veo_shots`.
+    quoted_usd: float = 0.0
+    error: str = ""
+
+
+class DirectorVeoRequest(BaseModel):
+    """Body for the three /director/{id}/veo routes. All three are FREE.
+
+    ⚠ NOT ONE OF THESE SPENDS ANYTHING. The quote is arithmetic, the start writes
+    a record, the state writes a status — the money is spent by
+    `POST /animatics/{id}/animate`, one pass at a time, which is the door every
+    other paid render in this editor already goes through.
+    """
+
+    shots: list[AnimaticDirectorShot] = Field(default_factory=list)
+    render: RenderSettings = Field(default_factory=RenderSettings)
+    # For /veo/state only: which run is being reported on, and how it ended.
+    run_id: str = ""
+    status: str = ""
+    error: str = ""
+
+
+class DirectorVeoQuote(BaseModel):
+    """What a Veo pass would cost, broken down the way it will be submitted.
+
+    ⚠ `total` IS THE SUM OF `passes`, TO THE PENNY, and it is computed that way
+    rather than quoted separately. Two roundings of the same shot list disagree
+    by a cent often enough that a user watching four passes add up to something
+    other than the number they agreed to would be right not to trust either.
+    `tests/director_chunk_check.py` asserts the identity.
+    """
+
+    batch: int = 0
+    passes: list[CostEstimate] = Field(default_factory=list)
+    total: CostEstimate = Field(default_factory=CostEstimate)
 
 
 class VideoBackendStatus(BaseModel):

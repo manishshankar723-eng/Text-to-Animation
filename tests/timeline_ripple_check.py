@@ -469,9 +469,17 @@ check(
 # It is why the captions were reported as not moving twice. There is no document
 # ref any more, and there must not be one: React's functional setters are handed
 # the live list at commit time and cannot be stale.
+# ⚠ THE MATCH IS THE DECLARATION AND THE READ, NOT THE WORD. It used to be a
+# bare `"docRef" not in editor`, and 🎬 Make Video broke it on a false positive:
+# `useDirectorRun` takes a `docRef` PROPERTY, and the editor passes its
+# `directorDocRef` to it. That ref is not this rule's problem and cannot become
+# it — it is read exactly once, when Run is pressed, to keep a snapshot for
+# Revert, and it never feeds a ripple. What this rule forbids is a ref that the
+# five `RIPPLED_LISTS` are read out of, and that is what declaring or
+# dereferencing one in THIS file looks like.
 check(
     "NOTHING READS THE DOCUMENT OUT OF A REF",
-    "docRef" not in editor,
+    "const docRef" not in editor and "docRef.current" not in editor,
     "a ref is empty at load and stale in a poll — and failing that way is silent",
 )
 # Every one of `RIPPLED_LISTS`, at every site that moves the board's row. The

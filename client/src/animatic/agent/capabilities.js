@@ -34,6 +34,14 @@
 // vocabulary untestable outside a browser, which is the half of it most worth
 // testing.
 
+// ⚠ A CYCLE, AND A DELIBERATE ONE: `actions.js` imports the caps table and the
+// three text vocabularies from here, and this reads the verb list back off the
+// registry there. ES modules resolve it because NOTHING AT MODULE LEVEL ON
+// EITHER SIDE TOUCHES THE OTHER'S BINDINGS — `verbVocab()` is called from inside
+// `capabilities()`, and `HOUSE_CAPS` is read from inside a validator. Keep it
+// that way: a top-level `const X = verbVocab()` here would be read before
+// `actions.js` had finished evaluating and would come out empty.
+import { verbVocab } from "./actions.js";
 import { FADE_CURVE_INFO, FADE_CURVES } from "../audio_mix.js";
 import { EFFECT_INFO } from "../fx_library.js";
 import {
@@ -142,6 +150,10 @@ function effectVocab() {
  */
 export function capabilities() {
   return {
+    // ⚠ THE VERBS ARE PART OF THE VOCABULARY, not a separate document. A model
+    // told which transitions exist but not which verb places one has been given
+    // half a language. Derived from `ACTIONS` — see `verbVocab`.
+    verbs: verbVocab(),
     transitions: transitionVocab(),
     transitionDurationMs: { min: MIN_TRANSITION_MS, max: MAX_TRANSITION_MS },
     transitionParamRange: { ...TRANSITION_PARAM_RANGE },

@@ -38,6 +38,7 @@ from . import users
 from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
+from .director import router as director_router
 from .plans import router as plans_router
 from .videos import router as videos_router
 # Shared with the animatics router — they live in common.py so the two route
@@ -162,6 +163,11 @@ app.include_router(plans_router)
 # Rendering is billed per second of output, so every spending path in there
 # estimates first and caps the batch. See server/videos.py.
 app.include_router(videos_router)
+# 🎬 Make Video (/director/…) — the auto-editor's BRAIN: it reads a board and
+# writes an edit plan. Spends TEXT quota only; the plan it returns is applied by
+# the browser, through the same validator and fence the deterministic planner's
+# plan goes through. See server/director.py and director.py.
+app.include_router(director_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

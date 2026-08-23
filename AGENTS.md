@@ -103,6 +103,7 @@ throughout: `google-genai`.
 | Video (Animatic → Final Video) | `VIDEO_PROVIDER` | `veo-3.1-*` (standard / fast / lite) | `video_client.py` |
 | Speech (voiceover) | — | `gemini-2.5-flash-preview-tts` | `tts.py` |
 | Transcription (captions) | — | Gemini text model | `captions.py` |
+| **Edit plans (🎬 Make Video)** | `DIRECTOR_PROVIDER` | falls back to the text model | `director.py`, `llm_json.py` |
 
 ⚠ **Veo is the only thing billed per second of output** — roughly $0.24 (lite/720p)
 to $3+ (standard/1080p) per 8s clip, and a 20-shot project is 20 clips.
@@ -114,6 +115,13 @@ ledger, and an AI Pro/Ultra subscription grants no API access at all. Read
 ⚠ **Vertex needs a real region for Veo** (`us-central1` is the safe default);
 `global`, which the image models require, does not serve it.
 Retry/backoff for every Google call is one shared policy: `retry_policy.py`.
+⚠ **The Director is the only capability that goes through an ADAPTER SEAM**
+(`llm_json.complete_json` — one method, one `JsonRequest` in, a `dict` out).
+Every other module builds its own `genai` client inline, which is right for a
+one-call feature; the Director is TWO calls that must share one set of sampling
+settings, and it is the one module whose rules (language, determinism) have to
+be testable with no credentials. `DIRECTOR_PROVIDER=stub` answers from a JSON
+file and is a supported value, not a test artefact.
 
 ### The twins rule — why this stack has two of some things
 
@@ -173,6 +181,16 @@ structural fact about the codebase:
   test can drive". Dispatching `dragstart`/`dragenter`/`dragover`/`drop` over one
   shared `DataTransfer` drives it exactly — see `DRAG` in
   `tests/editor_effects_drop_check.py`.
+- ⚠ **A TEST THAT NEEDS A MODEL IS A TEST NOBODY RUNS.** The three Director
+  tests (`director_plan_check`, `director_language_check`,
+  `director_determinism_check`) all drive the real code path and none of them
+  makes a network call: `llm_json.use_adapter()` swaps the provider for a
+  function in one line. That seam is most of why `llm_json.py` exists — see its
+  header. What they assert is what is assertable without a model: what is SENT
+  (the language rule is in both prompts; the request is byte-identical across
+  runs) and what is DONE with what comes back (folded, fenced, dropped with a
+  reason). They never claim two live calls matched, because no Gemini endpoint
+  promises that.
 - No linter, formatter, pre-commit hook or CI workflow is configured. Match the
   surrounding file's style by reading it first.
 
@@ -202,7 +220,99 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-23 — **`scale` IS A REAL, KEYFRAMABLE PROPERTY ON A
+**Last updated:** 2026-08-23 — **🎬 THE DIRECTOR CAN SHOOT THE FILM** (Phase 4
+of the Director plan: the Veo pass, wired into the run as PHASE C).
+⚠ **IT RUNS IN PASSES OF `MAX_VIDEO_BATCH`, AND THE STOP LIVES BETWEEN THEM.** A
+48-shot board is four submissions of twelve; a submission is billed the moment it
+leaves, so there is nothing honest for a mid-pass Stop to do. Stop is read at the
+top of each pass and nowhere else, and the button says so in those words
+(`veo_pass.js`).
+⚠ **A RUN THAT DIES HALFWAY IS PICKED UP FROM THE SERVER, AND DOES NOT RE-PAY.**
+`POST /director/{id}/veo/start` writes what the pass MEANT to render before the
+first submission goes; `veo_clips` records what was actually bought.
+`outstanding` is the difference, and the resume renders exactly that.
+⚠ **A FAILED RENDER IS REPORTED, NEVER RETRIED** — Veo bills a failure exactly as
+it bills a success, and an automatic retry on every reopen is a loop that spends.
+⚠ **PHASE C FOLLOWS PHASE B, AND THE ORDER IS THE PRODUCT.** A take's LENGTH is
+chosen from the shot's hold and the voiceover rewrites the holds — a shot
+stretched to 9.3s wants the 8-second take, and the same shot priced before the
+pass would have got 4 and ended on a drawing. One re-anchor (`anchoring`) covers
+both passes.
+⚠ **THE TAKE COVERS THE HOLD AND THE SHOT GROWS TO IT** — the smallest of 4/6/8
+that covers, never the nearest. Same rule `spreadPanelsForRenders` and
+`_lay_out_speech` already keep; a third answer here would be the one that pops
+back to a storyboard panel mid-scene.
+⚠ **`veo` IS THE ONLY TICK BOX IN THE PANEL THAT STARTS OFF**, because it is the
+only one that costs tens of dollars. The shots, their lengths and the price are
+all on screen before it is ticked.
+⚠ **THE TOTAL IS THE SUM OF THE PASSES, TO THE PENNY** — computed that way rather
+than quoted twice, because four numbers on the rail that do not add up to the one
+on the button make both untrustworthy.
+⚠ **A TAKE IS NOT A SHOT.** `shotRow` takes the renders out of the film the
+Director counts, or a second 🎬 run reads a 96-shot film that never existed —
+which was already true of any project animated by hand, one release early.
+⚠ **NO VEO RENDER HAS EVER BEEN PAID FOR FROM THIS PATH.** Every test stubs the
+worker or routes the endpoint. See Next Steps.
+
+**Previously:** 2026-08-23 — **🎬 THE DIRECTOR CAN GIVE THE FILM A VOICE**
+(Phase 3 of the Director plan: the voiceover, wired into the run as PHASE B).
+⚠ **PHASE B RUNS FIRST, AND THAT IS THE WHOLE PHASE.** The voiceover pass
+stretches the shot that owns a line and pushes every shot after it along, so a
+plan applied before it is a plan about a film that no longer exists — and it
+fails INVISIBLY: 24 successful edits, all on the wrong moments. So the sound
+lands, the document is re-read, the plan is re-anchored, and only then do the
+steps run. `tests/director_voice_order_check.py` owns that property and
+`editor_director_check` proves it against the real editor.
+⚠ **THE PANEL STOPPED BEING FREE, AND IT SAYS SO IN THREE PLACES** — the price
+line changes colour and wording, the Run button carries "· 2 spoken", and
+un-ticking Voiceover takes both off before it is pressed.
+⚠ **A SILENT BOARD GETS A SCRIPT.** The analyse call already returns a line per
+shot; when the storyboard has no dialogue at all, those lines ARE the script —
+shown in full in the preview, labelled as written by the Director, before one
+word is read aloud.
+⚠ **REVERT IS NOT A REFUND, AND THE NOTICE SAYS SO.** The timeline goes back
+exactly; the voiceover has been spent.
+
+**Previously:** 2026-08-23 — **🎬 THE DIRECTOR CAN READ THE FILM** (Phase 2
+of the Director plan: the brain + Plan Preview). 🎬 opens on a BRIEF — one
+sentence and a language — then two text calls read the story and write the edit,
+and you get a plan you can read before anything is spent.
+⚠ **NOTHING BELOW `buildPlan` CHANGED.** `validatePlan` → `applyGuardrails` →
+`useDirectorRun` is still the only door to the timeline; it now runs a plan a
+model wrote without knowing that it did. Phase 0's promise that the seam would be
+one line held exactly.
+⚠ **TWO CALLS, AND THE FIRST IS NOT SHOWN THE VOCABULARY** — given the verb list a
+model plans and skims the film; asked only to READ, it finds the scene
+boundaries, which is the real question `house_style`'s "held 1.5× the median" was
+always a proxy for.
+⚠ **THE VOCABULARY IS SENT BY THE BROWSER**, derived from the renderers' own
+tables. A Python rebuild would be a second answer that goes stale in the
+direction that hurts.
+⚠ **UN-TICKING A PHASE RE-COSTS THE PLAN AND RELABELS THE BUTTON, WITH NO SECOND
+CALL** — the film in the table and the film the button makes are the same film at
+every setting.
+⚠ **ON-SCREEN TEXT IS LOCAL, VEO MOTION PROMPTS ARE ENGLISH, THE DIALOGUE INSIDE
+THEM IS LOCAL.** Instructions English, performance local — and the first and last
+are enforced, not merely requested.
+⚠ **A FAILED CALL IS THE RHYTHM PLAN, AND THE PANEL SAYS SO.** `housePlan` stayed
+as both the fallback and a real button ("Just the rhythm").
+⚠ **GREEDY AND SEEDED** — same brief, same request, byte for byte. The honest
+limit is stated everywhere it is claimed: no Gemini endpoint is bit-exact.
+Files: `llm_json.py` (new), `director.py` (new), `server/director.py` (new),
+`prompts.yaml`, `server/schemas.py`, `server/main.py`, `client/src/api.js`,
+`client/src/animatic/agent/*`, `client/src/components/DirectorPanel.jsx`,
+`client/src/components/AnimaticEditor.jsx`, `client/src/styles/director.css`,
+`.env.example`, and three new test files.
+**Verified:** `director_plan_check` 33, `director_language_check` 30,
+`director_determinism_check` 26 — all pass and all mutation-checked;
+`editor_director_check` **47 checks in Chromium** (was 26). Nineteen other suites
+and `npx vite build` clean, and `timeline_ripple_check` — which was already red
+when this session started, on a false positive from Phase 0's `directorDocRef` —
+is fixed and mutation-checked. ⚠ **NO MODEL HAS BEEN CALLED FOR REAL: every path
+here ran through a stub adapter.** ⚠ **And no screenshot of either popup has been
+eyeballed.**
+
+**And before that:** 2026-08-23 — **`scale` IS A REAL, KEYFRAMABLE PROPERTY ON A
 SHAPE AND AN OVERLAY NOW** ("i want you add in scale in Key buttun i need this
 fuction"). The Scale row shipped this morning as a SHORTCUT that wrote `w` and
 `h` together, and it deliberately had no ⏱ — one control cannot honestly keyframe
@@ -2135,6 +2245,8 @@ Pipeline stages (see `pipeline.py`):
 | `luts/*.cube` | The built-in colour looks, as FILES — read by `Color3DLUT` for the export and fetched by the browser for the monitor, so there is one copy of the numbers. Regenerate with `python luts/generate_luts.py`. |
 | `video_assemble.py` | Joins rendered clips into the final cut (`cut` = stream copy, `crossfade` = re-encode). Free and repeatable — spends nothing. Reuses `animatic.py`'s ffmpeg helpers. Take `durations_ms` from the caller: **there is no ffprobe** on an `imageio-ffmpeg` install. |
 | `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
+| `director.py` | **🎬 Make Video — the BRAIN.** A board goes in, an EDIT PLAN comes out: `brief → analyse → polish`. ⚠ **IT EDITS NOTHING AND CANNOT** — it produces the same `{verb, args}` shape `house_style.housePlan` produces, and that plan then goes through the client's own `validatePlan → applyGuardrails → useDirectorRun`, so every Phase 0 safety property holds for free. ⚠ **TWO CALLS, AND THE FIRST IS NOT SHOWN THE VOCABULARY** — given the verb list a model starts planning and reads the film on the way past; asked for the READING alone it finds the SCENE BOUNDARIES, which is the real question `house_style`'s "held 1.5× the median" was only ever a proxy for. ⚠ **THE VOCABULARY COMES FROM THE BROWSER** (`capabilities()`, derived from the renderers' own tables) — rebuilding it here from the Python twins would be a second answer that goes stale in the direction that hurts. What it adds on top of the client's doors: `fold_steps` (an argument the named verb does not take never leaves the server — `x: 0` on a caption is a title pinned to the frame's left edge, and it looks deliberate) and `enforce_language`. Spends TEXT quota only. |
+| `llm_json.py` | **The one-method adapter seam: `complete_json(JsonRequest) -> dict`.** The ONLY way the Director talks to a model — no client, no `GenerateContentConfig` and no model id is visible to anything that imports it. ⚠ **`DIRECTOR_PROVIDER` IS ITS OWN SWITCH** (`vertex` | `gemini` | `stub`), falling back to `TEXT_PROVIDER` so an existing `.env` needs no change. ⚠ **`stub` IS A SUPPORTED VALUE, NOT A TEST ARTEFACT** — it answers from `DIRECTOR_STUB_PATH` and is how the whole workflow is driven with no credentials and no quota. ⚠ **GREEDY AND SEEDED, ONE SETTING FOR BOTH CALLS** — an edit plan is a considered answer, not a lottery ticket, or the preview's "Read it again" stops being a comparison. `use_adapter()` swaps the provider for a function, which is what makes the language and determinism rules testable with no network. Its `fingerprint()` — prompt + schema + sampling — IS what "the same brief twice" means. |
 | `retry_policy.py` | When to retry a Google AI call and how long to wait. Shared by `gemini_client.py` and `video_client.py` so one tuned policy governs both. Pure functions over an exception. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
@@ -2143,6 +2255,7 @@ Pipeline stages (see `pipeline.py`):
 | `server/main.py` | FastAPI app, most endpoints, provider validation. |
 | `server/animatics.py` | `/animatics` router: animatic CRUD, media upload, frame/audio serving, export, stop. |
 | `server/videos.py` | `/final-videos` router: Animatics → Final Video. Project CRUD, art tray, per-shot Veo render, assembly, serving, stop. **The only router that can spend money** — every such path estimates first and caps the batch. Also exports `render_one_shot` / `update_shot` for the worker. |
+| `server/director.py` | `/director` router: 🎬 Make Video's brain. `POST /director/{id}/plan` writes an edit plan; `GET /director/config` says which backend is wired up, which languages have a description, and what `MAX_VIDEO_BATCH` is (the browser must never hard-code that — it is a spend guard an operator sets, and it decides how many passes a Veo run is split into). ⚠ **NOT ONE ROUTE IN THIS FILE SPENDS A PENNY, INCLUDING THE THREE WITH `veo` IN THE NAME.** `/plan` spends text quota; `/veo/quote` is arithmetic, `/veo/start` opens the resumable run record and `/veo/state` closes it. THE MONEY IS SPENT BY `POST /animatics/{id}/animate`, one pass at a time, so every spend guard written for ✨ Animate governs the Director's pass without one of them being restated. ⚠ **`_quote_veo_run`'s TOTAL IS THE SUM OF ITS PASSES**, to the penny, computed that way rather than quoted twice. ⚠ **THE BOARD COMES FROM THE BROWSER, NOT THE STORE** — the editor autosaves, so a plan written from the saved project would be a plan for a film one edit stale. ⚠ **THE ONLY THING IT PERSISTS IS THE PROJECT'S LANGUAGE**, because that is a property of the film and the 🎬 popup is where it is asked. Does not import `animatics.py` — `get_owned_job` comes from `common.py`, per the two-routers rule. |
 | `server/common.py` | Helpers shared by `main.py` and `animatics.py` (`get_owned_job`, `board_dir`, `variants_of`, `panel_path`). They live here so the two route modules don't import each other. |
 | `server/config.py` | Env-driven settings (paths, job store, auth, Mongo). |
 | `server/schemas.py` | Pydantic models (`Job`, responses, `MeshyRequest`). |
@@ -2183,6 +2296,8 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/animatic/useTimelineTransport.js` | **The playhead** — the rAF clock, shuttle (J/K/L), marks (I/O), seek and stepping. **Audio is the master clock**; a `<video>` in the monitor is a slave, which is `useMonitorVideo`, exported separately from the same file. ⚠ `scene` is derived FROM this clock, so it can never be an argument to the transport — that is why the video slaving is a second call. |
 | `client/src/animatic/useUndoStack.js` | Ctrl+Z / Ctrl+Shift+Z over the WHOLE document (one stack, not one per layer), the per-gesture bracket (`gestureProps`), and `reset()` for when a project finishes loading. |
 | `client/src/animatic/util.js` | `clamp`. Nothing else belongs here — scene-model arithmetic goes in `scene.js`. |
+| `client/src/animatic/agent/` | **🎬 MAKE VIDEO — the auto-editor.** Five modules, and the first four are PURE (no React, no DOM) so node can import them: `capabilities.js` DERIVES the vocabulary the planner may use from `TRANSITION_KINDS` / `EFFECT_KINDS` / `SHAPE_KINDS` / `FADE_CURVES` / `TEXT_PRESET_IDS`, and holds the house caps; `plan_schema.js` is what an `EditPlan` is plus the one door every plan comes through (`validatePlan` — it DROPS what it cannot use and reports it, never throws); `actions.js` is the 25 verbs and `ACTION_API`, the list of editor functions a verb may call; `house_style.js` is the deterministic rules-only planner AND the fence (`applyGuardrails`) every plan clears; `voice_pass.js` is PHASE B — the sound, and the re-anchor that has to follow it; `veo_pass.js` is PHASE C — the footage: the length policy, the chunking, the hard stop and the whole resume; `useDirectorRun.js` is the phase machine. **⚠ A VERB DOES NOT EDIT ANYTHING — it calls the editor function that already does**, so the one-transition-per-cut rule and every other invariant is obeyed by the agent for free. **⚠ ONE STEP PER REACT COMMIT, not a loop** — read that file's header before "simplifying" it. **⚠ THE MODEL PLUGS IN AT ONE PLACE AND IT IS `useDirectorRun.buildPlan`** — nothing below it knows whether a language model or a hundred lines of arithmetic wrote the plan, which is exactly what Phase 0's header promised the seam would be. `housePlan` did NOT go away: it is the free door in popup one AND the fallback for a call that failed, and the preview says which one you are looking at. **⚠ RE-COSTING A TICK BOX DOES NOT CALL THE MODEL AGAIN** — the raw plan is kept and re-validated against the new flags, so trying "what does this look like without effects" is instant and free. `capabilities()` now also carries `verbs`, derived from `ACTIONS` by `verbVocab()` (each verb declares the `args` a plan may set), because a model told which transitions exist but not which verb places one has been given half a language. **⚠ PHASE B RUNS BEFORE THE STEPS, AND IT SPENDS** — `voice_pass.js` reads the dialogue aloud (the board's, or one the analyse call wrote for a silent board), then the document is RE-READ and the plan RE-ANCHORED onto the film that came back, because the pass stretches the shot each line is spoken over and pushes the rest along. A plan applied first would report 24 successful edits on the wrong moments and say nothing; `tests/director_voice_order_check.py` owns that property. A PASS IS NOT A VERB and must not become one — read `voice_pass.js`'s header before moving it into `ACTIONS`. **⚠ PHASE C FOLLOWS PHASE B AND SPENDS THE MOST** — `veo_pass.js` renders every shot with a motion prompt in submissions of `MAX_VIDEO_BATCH`, choosing each take's length from that shot's hold (the smallest of 4/6/8 that COVERS it) and letting the shot grow to match, exactly as `spreadPanelsForRenders` and `_lay_out_speech` already do. It follows B because the voiceover rewrites the holds the lengths are read off. **⚠ THE STOP IS BETWEEN PASSES AND NOWHERE ELSE** — a submission is billed the moment it leaves. **⚠ AND A RUN THAT DIED IS PICKED UP FROM THE SERVER**: `outstanding` reads the `director_run` record against `veo_clips` and renders the difference, never a shot already paid for, and never retrying a failure. **⚠ `shotRow` IS WHAT KEEPS A TAKE FROM BEING COUNTED AS A SHOT** — without it a second run reads a 96-shot film that does not exist; it is applied at the editor's `readDirectorCtx`, once. `tests/director_actions_check.py`, `tests/director_guardrails_check.py`, `tests/director_plan_check.py`, `tests/director_voice_order_check.py`, `tests/director_chunk_check.py`, `tests/director_resume_check.py`, `tests/editor_director_check.py`. |
+| `client/src/components/DirectorPanel.jsx` | The 🎬 dialog: the plan as a table by SHOT (not by step), then the progress rail and the log. Owns no logic — everything comes off `useDirectorRun`. **⚠ THE ✕ IS THE ONLY WAY OUT** — no backdrop click, no Esc, unlike every other modal here; the reason is written at the top of the file and mid-run the ✕ asks first. Also prints `missingApi` when the editor stops supplying an `ACTION_API` name, which is what makes that contract assertable from a browser test. **⚠ IT IS TWO POPUPS IN ONE DIALOG SINCE PHASE 2.** Popup ONE is the BRIEF — one sentence about the film, the language, and two doors out ("Read my film" = the AI; "Just the rhythm" = the rules planner, no backend, no key, no quota, and a real button rather than something you discover by having the AI call fail). Popup TWO is the PLAN: the reading, the table by shot, then the tick boxes — **and un-ticking one re-costs the plan and RELABELS THE RUN BUTTON with the new number of edits**, which is what makes the preview trustworthy: the film in the table and the film the button makes are the same film at every setting. The tick list is DERIVED (`governedKeys()`), so a switch that does nothing when clicked is never offered — `veo` is a real include flag that nothing answers to yet and is therefore absent, while **`voiceover` IS offered since Phase 3, because a PASS answers to it**. ⚠ **THAT BOX IS THE FIRST THING IN THIS PANEL THAT SPENDS**, so it changes three things at once and all three before the button is pressed: the script appears in full above the tick boxes (every line, in the film's language, labelled BOARD or DIRECTOR-WRITTEN), the price line turns amber and stops saying "Free", and the Run button reads `· 2 spoken`. ⚠ **AND MID-PASS THE ✕ DOES NOT CLOSE AT ALL** — not even on a second press — while Pause/Step/Stop are hidden: the call is paid for and the run has to be there to receive it. |
 | `client/src/components/properties/` | The Properties pane, one component per selection state: `TransitionProperties`, `TextProperties`, `ShapeProperties` (serves overlays too), `AudioProperties`, `FrameProperties`, `VideoProperties`, re-exported from `index.js`. `VideoClipProperties.jsx` sits beside them but is not a pane — it is the extra rows a video clip or colour card adds to `FrameProperties`. All presentational: no state, they write through the handlers they are given. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
 | `client/src/animatic/shape_points.js` | **WHAT EVERY SHAPE IS** — 41 kinds as points on the unit square, plus the five folders the picker shows (`SHAPE_CATEGORIES`) and the flat `SHAPE_KINDS` derived from them. Pure, so node can import it. Built by generators (`poly`, `starPoly`, `flower`, `cog`, `arc`, `quad`) rather than typed out. **⚠ TWIN of `_SHAPE_POINTS` in `animatic.py`**, pinned by `tests/shape_points_check.py`. **⚠ EVERY SHAPE IS STAR-SHAPED ABOUT ITS CENTRE** — the monitor fans from (0.5, 0.5), so a shape that breaks that draws right in CSS and wrong on the canvas. That is why there is no ring and no crescent. The first four ids are FROZEN (saved projects store them). |
@@ -2240,6 +2355,9 @@ Pipeline stages (see `pipeline.py`):
   **Captions & voiceover:** `POST /animatics/{id}/captions/estimate` — **free** · `POST /animatics/{id}/captions` — **SPENDS QUOTA.** 202, transcribes ONE audio track into caption clips on a lane of their own · `GET /animatics/{id}/dialogue` — **free, and it calls no model**: the dialogue sheet the 🎙 dialog opens on — every spoken line, the shot it belongs to, its speaker, a **persona** guessed from the board's cast, and both pickers (the voice list lives in `tts.CAST`, never in the JSX) · `POST /animatics/{id}/voiceover/estimate` — **free**, and priced from the EDITED sheet in the body, so the quote is the price of the words on screen · `POST /animatics/{id}/voiceover` — **SPENDS QUOTA.** 202, one call per line. ⚠ **IT MOVES PICTURES**: with `fit_shots` (the default) the shot that owns a line is stretched to cover it and the shots after it are pushed clear, so the client must re-read `frames` as well as `texts` and `audio_tracks` when it finishes
   `POST /animatics/{id}/reframe/estimate` — **free** · `POST /animatics/{id}/reframe` — **SPENDS QUOTA.** 202, one vision call per shot on the video pool. Writes `scale`/`x`/`y` onto the frames server-side, so the client re-reads the project when it finishes. Back to QUEUED never FAILED, like the other two AI passes
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
+- **🎬 Make Video — the Director (`server/director.py`):**
+  `GET /director/config` — **free, no model call**: the backend the Director is wired to, the languages `plan_agent.LANGUAGES` describes, and `max_video_batch` (see below). The 🎬 popup's language picker opens on this; the list is a SUGGESTION, not a whitelist — any language name typed in is passed through · `POST /director/{id}/plan` — **SPENDS TEXT QUOTA**, two calls, and **nothing on the timeline moves**. Body carries the LIVE board and the capability manifest from the browser (see `server/director.py` on why neither is rebuilt here), the include flags and the language. Returns `{plan, analysis, veo, dropped, notes, cost}` — the plan is applied by the CLIENT, through the same validator and fence the deterministic planner's plan comes through. ⚠ `veo` is written now and spent later: per-shot motion prompts in English with the shot's dialogue beside them, and `cost` is what rendering them WOULD run to. A failure is a 502 with the model's own reason and the editor falls back to `housePlan`, which is why that planner stayed. ⚠ **AND SINCE PHASE 3 THE 🎬 RUN CAN CALL `POST /animatics/{id}/voiceover` ITSELF** — the same paid pass the 🎙 dialog calls, with the same body, run BEFORE the plan's steps because it moves every shot. There is no new endpoint for it and there must not be: what the Director adds is the script (the board's sheet, or lines the analyse call wrote for a silent board) and the re-anchor afterwards, both of which live in the browser
+  · **PHASE C, since Phase 4 — and the same rule applies twice over.** `POST /director/{id}/veo/quote` — **free**: what rendering these shots would cost, broken into the passes it will be submitted in; **the total is the SUM of the passes to the penny**, never a second calculation · `POST /director/{id}/veo/start` — **free**: writes the `director_run` record (what the pass MEANT to render) into the job's `result` BEFORE the first submission, which is the entire resume · `POST /director/{id}/veo/state` — **free**: closes it (`done` / `stopped` / `failed`); the shot list is never rewritten, because how far a run got is a question for `veo_clips`. ⚠ **THE RENDERS THEMSELVES GO THROUGH `POST /animatics/{id}/animate`**, one pass of `API_MAX_VIDEO_BATCH` at a time, carrying a `durations` map (frame_id → 4|6|8) because the Director picks each take's length from that shot's hold. There is no "director render" route and there must not be — a second door is four spend guards to write again and four to forget
 - **Animatics → Final Video (`server/videos.py`, kind `final_video`):**
   `POST /final-videos` — new project; with `source_animatic_id` and no shots it fills the shot list from that animatic's frames (`FinalVideoLibrary`'s "new from animatic"; the animatic editor's own shortcut to this was removed 2026-08-20); `source_storyboard_id` does the same from drawn panels · `GET /final-videos` — library · `GET/PUT /final-videos/{id}` — read / save (`shots`, `art`, `settings`, `title`; PUT is the workspace autosave, 409 while busy) · `DELETE /final-videos/{id}`
   `GET /final-videos/backend` — is Veo reachable? Checked before the first paid call so a missing key is a banner, not a two-minute wait for a failure
@@ -2550,7 +2668,595 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-23 (latest) — SCALE STOPPED BEING A SHORTCUT AND BECAME A PROPERTY (user-specified, with a screenshot of the Transform group and one of the ⏱ glyph)
+### 2026-08-23 (latest) — 🎬 PHASE 4: THE DIRECTOR CAN SHOOT THE FILM. IN PASSES, RESUMABLY, AND WITHOUT EVER PAYING TWICE
+
+> "Phase 4 — Veo" — the plan the user handed over, built.
+
+**Asked for:** chunked submission across `MAX_VIDEO_BATCH` · progress across
+passes · resume after refresh/crash from the `director_run` record · leaning on
+the existing `reconcileVeoClips` self-heal · the clip-length-vs-shot-length
+policy · a hard stop between passes, never mid-call ·
+`tests/director_resume_check.py` · `tests/director_chunk_check.py` · a browser
+check that clips attach to the `board_video` lane above their stills.
+
+**⚠ THE OPEN QUESTION WAS PUT TO THE USER AND ANSWERED: THE TAKE COVERS THE HOLD,
+AND THE SHOT GROWS TO IT.** Veo renders 4, 6 or 8 seconds and nothing between, so
+a 2.4s shot cannot have a take its own length and something has to give. The
+answer chosen is the one the editor already keeps in two other places —
+`spreadPanelsForRenders` ("the panel takes the take's length … it only ever
+grows") and `_lay_out_speech` — so a shot is as long as the thing laid over it,
+here as everywhere else. **And the SMALLEST length that covers, never the
+nearest:** rounding a 4.6s hold down to a 4s take leaves six tenths of a second
+of the DRAWING at the end of the shot, a pop back to a storyboard panel mid-scene
+that reads as a bug. Covering costs more on some shots and is the only choice
+that never does that. The alternative — trimming the take back to the hold so
+nothing moves — was put on the table and rejected: it throws away footage that
+has been paid for, which is the one thing this feature must not do quietly.
+
+**⚠ WHICH IS WHY PHASE C FOLLOWS PHASE B, and that was the second question.** The
+length is read off the hold, and the voiceover REWRITES the holds. A shot
+stretched to 9.3s to carry its line wants the 8-second take; the same shot priced
+before the pass would have been given 4. So the run is **speak → render →
+re-read → re-anchor ONCE → the steps**, and `useDirectorRun` grew two states
+(`rendering`, `anchoring`) to say so. The re-anchor moved OUT of the speech
+effect: doing it after phase B would re-ask the rules planner about a film phase
+C is one submission away from changing, and re-validate the model's steps against
+a document about to be re-laid.
+
+**⚠ A SUBMISSION IS BILLED THE MOMENT IT LEAVES, SO STOP LIVES BETWEEN PASSES.**
+This is the whole shape of the phase and it is not a workaround for the batch
+cap. `POST /animatics/{id}/animate` caps a submission at `MAX_VIDEO_BATCH` (12) —
+a SPEND guard, not a technical one — so a 48-shot film is four submissions, and
+that is the only place in the run where stopping saves anything: the pass before
+is already paid for and the pass after has not been asked for. `stopRef` is read
+at the TOP of each pass and nowhere else, Pause and Step are hidden, and the
+button reads "Stop after this pass" and then "Stopping after this pass…". A Stop
+that dropped the poll would lose the clips without saving the money.
+
+**⚠ AND A RUN THAT DIES HALFWAY IS PICKED UP FROM THE SERVER — WITHOUT RE-PAYING
+FOR ONE CLIP.** That is `AnimaticDirectorRun`, a new server-owned record living
+in the job's `result` beside `veo_clips` for exactly the reason that one does:
+the editor's autosave rewrites `params` wholesale, so a run recorded there would
+be erased by the save that follows the reload. **THE RECORD SAYS WHAT WAS
+INTENDED; THE CLIPS SAY WHAT WAS PAID FOR**, and `outstanding` is the difference.
+⚠ **THE TRUTH IS THE CLIPS, NOT A CURSOR.** There is deliberately no progress
+counter on the record — a counter is a thing a crashed process was halfway
+through updating, which is precisely the state it exists to survive.
+⚠ **AND A FAILED RENDER IS REPORTED, NOT RETRIED.** Veo bills a failure exactly
+as it bills a success, so a shot that failed once has already cost money and will
+very likely fail again for the same reason; retrying it on every reopen is a loop
+that spends. "Render again" stays a button someone presses on purpose.
+⚠ **A RESUME FINISHES THE FOOTAGE, NOT THE EDIT, and the panel says so.** A plan
+lives in the browser and is never persisted — deliberately, because it is a
+preview the user has to be able to read and re-cost before agreeing to it, and a
+half-applied plan restored from a server is neither. What survives a crash is the
+thing that cost money. The edit can be asked for again, for free, once the takes
+have landed.
+
+**⚠ IT SPENDS THROUGH THE DOOR ✨ ANIMATE ALREADY USES, AND THERE MUST NEVER BE A
+SECOND ONE.** Every spend guard written for that button on 2026-08-07 — the batch
+cap, the refusal of a promptless frame, the refusal to silently re-render
+something already paid for, the job going RUNNING so an autosave cannot roll a
+clip back — governs the Director's pass for free by virtue of it being the same
+endpoint. The three new `/director/{id}/veo/*` routes spend NOTHING: they quote a
+pass, open the record and close it. A dedicated "director render" route would
+have been four guards to write again and four to forget.
+
+**⚠ THE ONE THING `/animate`'s BODY COULD NOT ALREADY SAY WAS A LENGTH PER SHOT.**
+✨ Animate renders a batch at one length; the Director picks each take's length
+from the hold it covers, so a pass is a mixed bag. `AnimaticAnimateRequest`
+gained `durations` (frame_id → 4|6|8), `_animate_targets` resolves it in the ONE
+place both the estimate and the render read — so the price quoted stays the price
+of the work — and `AnimaticVeoClip.seconds` carries it to the worker.
+`_estimate_animate` now takes a LIST OF LENGTHS rather than a count, which is
+what makes `count × duration_seconds` impossible to write by accident.
+⚠ **A LENGTH OFF VEO'S MENU IS NOT A SLIGHTLY-WRONG REQUEST, IT IS A PAID
+REFUSAL**, so anything that is not 4, 6 or 8 falls back to the settings' own.
+
+**⚠ THE TOTAL IS THE SUM OF THE PASSES, TO THE PENNY, AND IT IS COMPUTED THAT WAY
+RATHER THAN QUOTED TWICE.** Every quote is rounded to the penny, and rounding a
+shot list once gives a different answer from rounding four twelfths of it and
+adding. The user is shown ONE total before they press the button and then watches
+four numbers go by on the rail; if those do not add up, the honest reading is
+that neither can be trusted. `_quote_veo_run` sums the passes and
+`director_chunk_check` owns the identity — mutation-checked by making the total a
+second calculation, which failed exactly the four assertions about it.
+
+**⚠ A SPOKEN SHOT IS QUOTED AT THE LONGEST TAKE, ON PURPOSE.** Phase B runs first
+and stretches the shot each line is read over, which can push a take up a size —
+so a quote read off today's holds would be a quote for a film phase B is about to
+replace. Rather than show a number that can only go UP, those shots are priced at
+8 seconds and the panel says which ones and why. The run then costs the same or
+LESS than the button said, which is the only direction a surprise about money may
+go. Un-ticking Voiceover re-prices them immediately, because the two boxes
+interact and a price that does not move when its cause moves is not a preview.
+
+**⚠ `veo` IS THE ONLY TICK BOX IN THIS PANEL THAT STARTS OFF.** Every other key
+in `INCLUDE_KEYS` is free or costs cents; this one renders every shot in the film.
+A default-on box is a box nobody reads, and the first time anyone read this one it
+would be on an invoice. So `defaultInclude()` withholds it, the shots and their
+lengths and the price are all on screen before it is ticked, and ticking it puts
+the money on the Run button (`· $2.88 of footage`) and turns the price line amber
+in the same click.
+
+**⚠ A TAKE IS NOT A SHOT, AND THAT BUG WAS ALREADY THERE.** `attachVeoClip`
+appends the finished take to `frames` as a clip on the `board_video` row — so the
+moment phase C lands, the read-model holds 48 panels AND 48 takes, and everything
+downstream that counts shots reads a 96-shot film that does not exist:
+`housePlan` takes the median of a list half of which is footage, `shotIndex`
+accepts "shot 61", the preview table lists every panel twice. `shotRow` is the
+answer and it is applied at the editor's own `readDirectorCtx`, so there is
+exactly ONE definition of what the Director means by a shot. ⚠ **IT WAS ALREADY
+WRONG BEFORE PHASE C**, on any project the user had animated by hand — phase C
+only made it the normal case. ⚠ **`starts` IS FILTERED AT THE SAME INDICES, never
+re-derived**: the editor's own layout knows about tracks, explicit `start_ms` and
+clips that have been dragged, and a second one would disagree with the timeline
+on screen the moment anything is out of list order.
+
+**⚠ A DROPPED STEP NOW NAMES THE PASS THAT ACTUALLY MOVED ITS SHOT.** Two phases
+grow shots and they are dropped for the same reason but not by the same culprit;
+"the voiceover stretched shot 9" printed under a run with no voiceover in it is
+the kind of wrong sentence that makes a user distrust the right ones.
+`growthCauses` works out which (`before` → `afterSpeech` is B's doing,
+`afterSpeech` → now is C's), and `reanchor` takes a `causes` map. Absent, it
+still means "the voiceover", which is what it meant before phase C existed.
+
+**⚠ ONE REAL BUG, AND THE BROWSER SUITE FOUND IT.** `recost` gained a dependency
+on `loadShoot` and was declared ABOVE it — a `useCallback` dependency array is
+evaluated at render time, so reading a `const` before its own line is a TDZ throw
+rather than an `undefined`. The whole editor failed to mount with "Cannot access
+'loadShoot' before initialization", and `editor_veo_attach_check` was what said
+so. `recost` and `setInclude` moved below `loadShoot`.
+
+Files (new): `client/src/animatic/agent/veo_pass.js`,
+`tests/director_chunk_check.py`, `tests/director_resume_check.py`.
+Files (changed): `server/schemas.py` (`AnimaticDirectorRun`,
+`AnimaticDirectorShot`, `DirectorVeoRequest`, `DirectorVeoQuote`,
+`AnimaticProject.director_run`, `AnimaticAnimateRequest.durations`,
+`AnimaticVeoClip.seconds`), `server/director.py` (the three `/veo` routes,
+`_quote_veo_shots`, `_quote_veo_run`, `max_video_batch` on `/config`),
+`server/common.py` (`write_director_run`), `server/animatics.py`
+(`_director_run_of`, `_estimate_animate` takes lengths, `_animate_targets`
+returns triples, `render_frame_clip` honours the record's length),
+`client/src/api.js` (three routes, `durations` on both animate calls),
+`client/src/animatic/useAnimaticProject.js` (`director_run`),
+`client/src/animatic/agent/useDirectorRun.js` (the `rendering` and `anchoring`
+phases, the hard stop, `resumeVeo`), `client/src/animatic/agent/plan_schema.js`
+(`veo` in `PASS_GOVERNORS`, and off by default),
+`client/src/animatic/agent/voice_pass.js` (`causes` on `reanchor`),
+`client/src/components/DirectorPanel.jsx` (the shoot list, the pass rail, the
+resume offer, the Stop), `client/src/components/AnimaticEditor.jsx`
+(`runDirectorVeoPass`, `directorRendering`, the `shotRow` filter),
+`client/src/styles/director.css`, `tests/editor_director_check.py`.
+
+**Verified:** `director_chunk_check` — **61 checks, all pass**, and
+mutation-checked three ways (rounding to the nearest length, a total quoted
+independently of its passes, and `shotRow` not filtering — each failed exactly
+the assertions about it and nothing else). `director_resume_check` — **44 checks,
+all pass**, mutation-checked by retrying failed renders and by removing
+`_animate_targets`' skip of a paid frame, both of which failed the
+does-not-re-pay assertions. `editor_director_check` — **114 checks in Chromium**,
+up from 78, with two new sections: a mocked Veo pass whose takes are asserted to
+land on the Storyboard VIDEO row, drawn ABOVE the stills' row, each starting
+where its own still starts and each still grown to its take's length; and an
+interrupted run offered back on the brief, which submits the two outstanding
+shots and NOT the paid one. Twenty-three other suites and `npx vite build` clean.
+⚠ **NOT DONE: NOT ONE VEO RENDER HAS BEEN PAID FOR THROUGH THIS PATH.** Every
+test stubs `worker.submit_animatic_animate` or routes `/animate`, so the pass is
+proven up to the submission and from the record back — and the render itself is
+as unproven as it was before. ⚠ **AND NO SCREENSHOT OF THE VEO SECTION, THE PASS
+RAIL OR THE RESUME OFFER HAS BEEN EYEBALLED.** See Next Steps.
+
+### 2026-08-23 — 🎬 PHASE 3: THE DIRECTOR CAN GIVE THE FILM A VOICE. THE SOUND GOES FIRST, AND THE EDIT FOLLOWS IT
+
+> "Phase 3 — Voiceover" — the plan the user handed over, built.
+
+**Asked for:** phase B of the runner · re-read + re-anchor after the pass · a
+script-writing fallback when the board has no dialogue ·
+`tests/director_voice_order_check.py`.
+
+**⚠ THE HEADLINE: PHASE B RUNS FIRST, AND THE ORDER *IS* THE PHASE.** The build
+plan lettered the voiceover "B" and the step list was already there, which reads
+as though the sound comes second. It cannot. `POST /voiceover` with `fit_shots`
+on — the default, and the only setting anyone wants — stretches the shot that
+owns a line to cover what is said over it and pushes every shot after it along.
+So every timing decision in a plan (which cuts breathe, how long a dissolve runs,
+where a caption starts, how far a push-in travels) was made about a film that
+stops existing the moment the pass lands. The run is therefore **speak → re-read
+→ re-anchor → the steps**, and `useDirectorRun`'s state machine grew one state
+(`speaking`) to say so.
+
+**⚠ AND THE FAILURE IT PREVENTS IS INVISIBLE, WHICH IS WHY IT GOT ITS OWN TEST.**
+Plan first and speak second and the run reports "24 edits made", every step
+green, every transition on a real cut. They are simply the WRONG cuts. There is
+no exception, no red log line, no dropped step — nothing on screen ever says so,
+and the only symptom is a film whose dissolves feel oddly placed.
+`tests/director_voice_order_check.py` (35 checks) exists for exactly that, and
+`editor_director_check` proves it against the real editor: the fixture's held
+shots are 2/5/7 so the rhythm says cuts 2 and 5, the pass then stretches shot 4
+to twelve seconds and the answer becomes 2 and 4 — and the test asserts cut 5 is
+NOT treated.
+
+**⚠ IT CAUGHT A REAL BUG ON ITS FIRST RUN IN THE BROWSER, and the bug was the
+same mistake one level down.** `speak()` resolves as soon as the editor has been
+HANDED the server's answer, but a `setState` from an async continuation is
+SCHEDULED, not applied — so `readCtx()` on the next line was still the film as it
+was a minute earlier, and the dissolves landed on [2, 5]. The runner now waits
+for the commit (`settled()`, polling the read-model against the row the pass
+returned) before it re-anchors. Same reason the step loop is a timer and not a
+`for`, written at the top of `useDirectorRun.js` since Phase 0.
+
+**⚠ RE-ANCHORING IS MOSTLY RE-ASKING.** The rules planner's entire input is the
+shot lengths and the pass has just rewritten them, so it is RE-RUN against the
+new row — free, pure, deterministic, and the difference between a dissolve on the
+cut that now ends a scene and one on the cut that used to. A model's plan cannot
+be re-asked for free, so its raw steps are re-validated instead — exactly what
+`recost` does for a tick box — and `validatePlan` + `applyGuardrails` then
+recompute every window and every per-minute budget off the film's new length.
+What `voice_pass.js` adds on top is the two things re-validation cannot know,
+because they are about what the PASS did rather than about the document: a
+`set_shot_duration` on a shot it stretched (applying it would cut the line off
+mid-word) and an `add_text` of words it just captioned (the same sentence on
+screen twice, half a second apart, in two different styles).
+
+**⚠ A SILENT BOARD GETS A SCRIPT, AND IT COSTS NOTHING EXTRA.** A voiceover reads
+the STORYBOARD's dialogue, so on a board that has none the 🎙 button is correctly
+disabled and always will be. The Director is the one caller that can do better:
+the analyse call already returns a `dialogue` line per shot, because it had to
+know what is said in order to write the Veo prompts. So when the board is silent
+those lines ARE the script — anchored to real clip ids, with the speaker split
+off the front (`MAYA: it is late`), shown IN FULL in the preview and labelled as
+written by the Director rather than taken off the board. The analyse prompt now
+carries a `<<SPEECH>>` block saying which of the two jobs it is doing
+(`director.speech_instruction`), because "copy this exactly" and "write this" are
+not the same instruction — and a model asked what is said in a shot that already
+says something will paraphrase the user's own dialogue, which is the worst thing
+this pass could do.
+⚠ **AND IT IS ALLOWED TO WRITE NOTHING.** A montage, a landscape, a title
+sequence: `""` is the right answer, and the prompt says so, because a model given
+a field to fill will fill it.
+
+**⚠ THE PANEL STOPPED BEING FREE, IN THREE PLACES AT ONCE.** Phase 0's "this
+spends nothing" was true of every verb and still is — phase B is not a verb. So
+`Voiceover` is now a real tick box (`PASS_GOVERNORS` in `plan_schema.js`; `veo`
+is still withheld, because nothing answers to it yet), the price line turns amber
+and says what it would spend on, and the Run button reads
+`Run this plan · 24 edits · 2 spoken`. Un-ticking takes all three off BEFORE it
+is pressed, which is the promise the treatment boxes have been making since
+Phase 2 and the only way a preview can prove it is a preview.
+
+**⚠ A PASS IS NOT A VERB, AND MUST NOT BECOME ONE.** A verb is synchronous, runs
+inside one React commit, spends nothing and calls a function a person's own
+button calls. Phase B is a server call that takes a minute, costs money and
+re-lays the picture row underneath the steps that follow it. Every one of those
+is a reason it is a phase of the RUNNER rather than a row in `ACTIONS` — and the
+reason its include flag has to be DECLARED (`PASS_GOVERNORS`) rather than
+inferred from a registry it is deliberately not in.
+
+**⚠ ONE RE-READ, TWO CALLERS.** `absorbSpeech` in `AnimaticEditor.jsx` is the 🎙
+dialog's poll body, extracted verbatim and now shared with phase B. That
+arithmetic — ripple everything the server did NOT re-time, keep everything it did
+— is the part nobody can check by eye, and a second drifting copy of it is how
+"my caption and voiceover not move" comes back. `voiceover_fit_check` asserts
+there is exactly one copy.
+
+**⚠ REVERT PUTS THE TIMELINE BACK AND THE NOTICE REFUSES TO CALL THAT A REFUND.**
+The take, its captions and the whole re-laid picture row are document state, so
+one snapshot undoes all three. The spend is not undone. Saying "Revert puts it
+all back" after a paid run is a sentence that gets the user to run it twice, so
+the notice says the voiceover was spent and that running again reads it again.
+⚠ **AND THE ✕ DOES NOT CLOSE MID-PASS AT ALL**, not even on a second press: the
+call is already paid for and the run has to be there to receive it. Pause, Step
+and Stop are hidden for the same reason — there is nothing honest for them to do
+to a call that has already been made.
+
+Files (new): `client/src/animatic/agent/voice_pass.js`,
+`tests/director_voice_order_check.py`.
+Files (changed): `client/src/animatic/agent/useDirectorRun.js` (the `speaking`
+phase, `settled`, the `readScript` / `speak` injections),
+`client/src/animatic/agent/plan_schema.js` (`PASS_GOVERNORS`),
+`client/src/components/DirectorPanel.jsx` (the script, the price line, the button
+label, the phase-B rail line, the ✕ guard),
+`client/src/components/AnimaticEditor.jsx` (`absorbSpeech` extracted,
+`runDirectorVoiceover`, `readDirectorScript`, `directorSpeaking` in `serverBusy`),
+`client/src/styles/director.css`, `director.py` (`speech_instruction`,
+`<<SPEECH>>`), `prompts.yaml` (the analyse block),
+`tests/editor_director_check.py`, `tests/voiceover_fit_check.py`.
+
+**Verified:** `director_voice_order_check` — **35 checks, all pass**, and
+mutation-checked three ways: removing the re-ask made the order assertions fail
+with "re-anchored [2], should be [5]", and disabling either drop made exactly the
+four assertions about it fail. `editor_director_check` — **78 checks in
+Chromium**, up from 47, driving a full phase-B run through a routed backend: the
+Audio lane and the Captions lane both populate, the caption words appear ONCE
+each, and the transitions land on the re-anchored cuts. That suite is what found
+the `settled()` bug. `voiceover_fit_check` (its browser-wiring section was
+rewritten for the extracted `absorbSpeech` and gained two checks),
+`captions_check`, `timeline_ripple_check`, `director_plan_check`,
+`director_language_check`, `director_determinism_check`, `director_actions_check`,
+`director_guardrails_check` and fifteen other suites all pass; `npx vite build`
+clean.
+⚠ **NOT DONE:** no speech model was called — the pass is answered by a routed
+fixture, exactly as the model half of Phase 2 is answered by a stub adapter. The
+`<<SPEECH>>` prompt block has never met Gemini, so whether a silent board gets a
+script worth hearing is UNKNOWN rather than working. See Next Steps.
+
+### 2026-08-23 — 🎬 PHASE 2: THE DIRECTOR CAN READ. A BRIEF, TWO CALLS, AND A PLAN YOU CAN READ BEFORE SPENDING
+
+> "Phase 2 — the brain + Plan Preview" — the plan the user handed over, built.
+
+**Asked for:** `director.py` (brief → analyse call → polish call) · `llm_json.py`
+(the one-method adapter seam, `DIRECTOR_PROVIDER` env switch) ·
+`server/director.py` router · three prompt blocks in `prompts.yaml` · popup 2 ·
+the language field and its plumbing · greedy sampling + fixed seed so the same
+board gives the same edit twice.
+
+**⚠ THE HEADLINE: NOTHING BELOW `buildPlan` CHANGED.** Phase 0's header promised
+the seam would be one line, and it was. `validatePlan → applyGuardrails →
+useDirectorRun` is still the only way a plan reaches the timeline, still drops
+what it cannot use rather than throwing, still obeys the house caps — and it now
+does all of that to a plan a language model wrote, without knowing that it did.
+The runner, the action registry and the fence were not touched except to have
+each verb DECLARE the arguments a plan may set (`args: [...]`), which is what
+lets the vocabulary sent to the model be derived rather than typed out.
+
+**⚠ TWO CALLS, AND THE FIRST IS DELIBERATELY NOT SHOWN THE VOCABULARY.** This is
+the design decision the whole phase turns on. One call that both reads the film
+and writes the edit spends its attention on the edit: you get thirty dissolves
+and a summary that would fit any board. Asking for the READING first — with no
+verb list, no transition names and no caps to reach for — is what produces
+"shots 7–11 are the workshop at night" instead of "shot 8 is long". The polish
+call then writes its transitions onto the scene boundaries the first call found,
+which is **the real question `house_style.js` says in its own header it was only
+ever approximating**: it dissolves after a shot held 1.5× the median as a PROXY
+for "is this a scene boundary". That proxy now has a replacement, and the rules
+planner stays exactly where it was as the fallback.
+
+**⚠ THE VOCABULARY IS SENT BY THE BROWSER, NOT REBUILT ON THE SERVER.**
+`capabilities()` derives the manifest from the tables the RENDERERS read, and it
+is JavaScript. Rebuilding it in Python from the twins would be a second answer to
+"what can this build do" — right today, wrong the first time a kind is added on
+one side, and wrong in the direction that hurts: the model keeps proposing what
+the validator then drops. So the manifest rides with the request, and
+`director.py` treats it as the definition of the language. It now carries
+`verbs` as well (`verbVocab()`, off `ACTIONS`), because a model told which
+transitions exist but not which verb places one has been given half a language.
+
+**⚠ THE SEAM IS ONE METHOD, AND MOSTLY SO THE RULES CAN BE TESTED.**
+`llm_json.complete_json(JsonRequest) -> dict` is the whole surface; nothing that
+imports it can see a client, a config or a model id. Every other module here
+builds its own `genai` call inline and that is right for a one-call feature. The
+Director is different twice over: it is TWO calls that must share one set of
+sampling settings (the second decides from what the first said), and it is the
+one module whose properties — the language rule, determinism — are exactly the
+things a test must not need credentials to check. `use_adapter()` swaps the
+provider for a function in one line, which is what all three new tests do.
+`DIRECTOR_PROVIDER=stub` is the same idea shipped as a supported value: it
+answers from a JSON file, and it is how the whole workflow can be driven, and
+screenshotted, with no key and no quota.
+
+**⚠ POPUP ONE ASKS, POPUP TWO ANSWERS.** 🎬 no longer opens on a plan. It opens
+on a brief — one optional sentence about the film and the language — with **two
+doors out**, and the free one is a real button: "Just the rhythm" is the Phase 0
+planner, needs no backend, and on an animatic with uneven holds it is genuinely
+good. Someone who does not want to send their film anywhere should not discover
+that by having the AI call fail. Popup two is the plan: the reading (logline,
+mood, the scene list), the table by shot, then the tick boxes.
+
+**⚠ UN-TICKING A PHASE RE-COSTS THE PLAN AND RELABELS THE BUTTON, FOR FREE.** The
+button says `Run this plan · 24 edits`, and un-ticking Effects makes it say a
+smaller number BEFORE it is pressed, while the table above loses exactly those
+rows. That is the only way a preview can prove it is a preview: a table showing a
+film the button will not make is worse than no table, because the user reads it,
+presses Run and gets something else. And it costs no call — the raw plan is kept
+and re-validated against the new flags (`validatePlan` already drops a step whose
+governor is off), because a re-cost that cost a call and a wait is one nobody
+would ever try.
+
+**⚠ THE LANGUAGE RULE IS THREE RULES, AND THE THIRD SURPRISES PEOPLE.** On-screen
+text takes the film's language in its own script — for Hinglish that is LATIN
+letters, because that is what Indian creators actually publish and Devanagari is
+what a model writes when nobody says otherwise. Verbs, kinds and presets stay
+English because the app reads them as DATA. And **a Veo motion prompt stays in
+English while the dialogue quoted inside it does not**: the prompt is an
+INSTRUCTION to a video model, which follows English measurably better, and the
+dialogue is a PERFORMANCE. Instructions English, performance local. All three are
+in both prompts and the first and third are ENFORCED — a caption in the wrong
+script is dropped with a reason, a Devanagari motion prompt is dropped while its
+line is kept.
+
+**⚠ `AnimaticSettings.language` IS A PROJECT FIELD, NOT A REQUEST PARAMETER.**
+Three things write words into an animatic — the Director's on-screen text, the
+voiceover, the captions — and each used to decide the language on its own, which
+is how a Hinglish film gets an English title card over a Hindi voiceover. One
+field on the film, written by the 🎬 popup (the only route in this feature that
+persists anything), read by all of them. Free text, not an enum: "Tamil" works,
+and `plan_agent.LANGUAGES` stays the ONE table — this adds only which SCRIPT each
+of those three is written in, because that is the part that is enforceable rather
+than advisory. ⚠ **A BOARD STILL CARRIES NO LANGUAGE** — nothing in the storyboard
+job records one — so "inherit it from the source board" remains unbuilt and the
+field simply starts blank, which every reader treats as "use what the material is
+already in".
+
+**⚠ GREEDY, SEEDED, AND THE CLAIM IS STATED HONESTLY.** Temperature 0, top-p 1, a
+fixed seed, one setting shared by both calls — because "Read it again" only means
+anything if everything but your edit held still. What the test asserts is that
+the REQUEST is byte-identical (prompt + schema + sampling, via `fingerprint()`)
+and that everything downstream is a pure function. It never asserts two live
+calls matched: no Gemini endpoint is bit-exact, and `gemini-2.5-flash` is a
+rolling alias. Both caveats are written into `llm_json.py`, `.env.example` and the
+determinism test itself.
+
+**⚠ AND A FAILED CALL IS NOT AN ERROR SCREEN.** No backend, no key, a train — all
+of them fall through to the rules planner and the panel SAYS SO. A film cut on
+rhythm is worth having when the film cut on story cannot be had; what is not
+acceptable is silence, because a thin plan read as the AI's opinion of your film
+is a bug report.
+
+Files: `llm_json.py` (new), `director.py` (new), `server/director.py` (new),
+`prompts.yaml` (+ the three `director:` blocks), `server/schemas.py`
+(`AnimaticSettings.language`, `DirectorPlanRequest`, `DirectorPlanResponse`),
+`server/main.py`, `client/src/api.js`, `client/src/animatic/agent/actions.js`
+(`args` per verb + `verbVocab`), `client/src/animatic/agent/capabilities.js`
+(`verbs` in the manifest), `client/src/animatic/agent/plan_schema.js`
+(`governedKeys`), `client/src/animatic/agent/useDirectorRun.js`,
+`client/src/components/DirectorPanel.jsx`,
+`client/src/components/AnimaticEditor.jsx`, `client/src/styles/director.css`,
+`.env.example`, and three new test files.
+
+**Verified:** `director_plan_check` **33 checks**, `director_language_check` **30
+checks**, `director_determinism_check` **26 checks** — all pass, all
+mutation-checked (the language fence switched off, the seed dropped, the verb
+filter removed, the Veo-prompt rule removed: every one produced a red run naming
+the right assertion). `editor_director_check` **47 checks in Chromium**, up from
+26 — the brief, the re-cost, the relabelled button and the soft failure are all
+driven in a real browser. Nineteen other suites re-run and clean, and
+`npx vite build` clean.
+⚠ **`tests/timeline_ripple_check.py` WAS FAILING BEFORE THIS SESSION STARTED and
+is fixed here.** Its "NOTHING READS THE DOCUMENT OUT OF A REF" guard is a
+substring match on `docRef`, and Phase 0's `directorDocRef` — the snapshot Revert
+restores from, read once when Run is pressed and never near a ripple — tripped
+it. The guard now matches the declaration and the dereference (`const docRef`,
+`docRef.current`) instead of the word, and was mutation-checked by putting a real
+`const docRef` back and watching it bite.
+⚠ **NO MODEL HAS BEEN CALLED FOR REAL.** Every path here has been driven through
+a stub adapter. The two calls, their prompts and their schemas have never met
+Gemini, so what the model actually returns for a real board — whether the scene
+list is any good, whether the polish call respects the caps without being
+trimmed — is unmeasured. That is the top Next Step.
+⚠ **AND NO SCREENSHOT OF EITHER POPUP HAS BEEN EYEBALLED**, which was already
+true of Phase 0 and is now true of two more dialogs.
+
+### 2026-08-23 — 🎬 MAKE VIDEO, PHASE 0: THE HANDS (the auto-editor's runner, action registry and fence — no AI, no network, no spend)
+
+> "Start working on this plan" — Phase 0 of the Director build plan.
+
+**What shipped is a button that edits the timeline for you, with no model behind
+it.** `agent/house_style.js` reads the RHYTHM off the shot lengths — which shots
+were held, how that compares to the median — and writes a plan of dissolves and
+push-ins. That plan then goes through exactly the same door an AI's plan will go
+through in Phase 2: `validatePlan` → `applyGuardrails` → the runner. The point of
+doing the rules first is that everything downstream is already built and tested
+by the time a model is allowed to propose anything.
+
+⚠ **A VERB DOES NOT EDIT ANYTHING — IT CALLS THE FUNCTION THAT ALREADY DOES.**
+This is the whole design. `add_transition` does not build a transition record; it
+calls `addTransitionAtCut`, the same function the ＋ on a cut and a tile dragged
+out of the Effects library both call. So the one-per-cut rule, the
+replace-don't-stack rule and the wording of the status line are obeyed by the AI
+for free and cannot drift — there is no second copy of them to drift from. The
+registry that writes `setTransitions([...list, made])` itself was rejected for
+the same reason `newTransition` carries its "one literal, two callers" note.
+
+⚠ **THE VOCABULARY IS DERIVED, NEVER WRITTEN OUT.** `agent/capabilities.js`
+builds the manifest from `TRANSITION_KINDS`, `EFFECT_KINDS`, `SHAPE_KINDS`,
+`FADE_CURVES`, `TEXT_PRESET_IDS`, `EASINGS` and `ANIMATABLE` on every call. Same
+reasoning `fx_library.js` states at its top: the folders are a view, the kinds
+are the truth. A hand-kept list of "effects the AI may use" goes stale in the
+direction that hurts — the planner keeps proposing a kind the validator drops, or
+never proposes a new one at all.
+
+⚠ **AN ILLEGAL VALUE IS DROPPED, NEVER THROWN.** A model will propose
+`kind: "swirl"`. The two options are to stop the run or to leave that cut
+straight, and the second is right every time: 47 good edits and one plain cut is
+a usable film; a plan that died on step 12 is not, and you cannot tell from the
+timeline which half happened. What was dropped is shown in the panel next to what
+survived, so the preview is an honest report rather than a console message.
+
+⚠ **ONE STEP PER TICK, AND THAT IS NOT DECORATION.** The obvious way to run 61
+steps is a loop, and it cannot work: every verb calls a `setState` and the next
+verb has to see the result — `add_transition` reads back the record it just made
+to set its length. In one synchronous loop all 61 steps read the document as it
+was before any of them ran and about half quietly do nothing. So each step is
+scheduled after the previous one commits (90ms) and the read-model is fetched
+fresh at the top of every step. The playback the user watches is a side effect of
+that, not the reason for it.
+
+⚠ **REVERT IS ONE SNAPSHOT, NOT 61 UNDOS.** The document before the run is handed
+back to `applySnapshot` — the same function Ctrl+Z uses. Walking the stack
+backwards 61 times would depend on every verb pushing exactly one entry, which is
+not true (`add_text` is two edits) and never was, since the stack coalesces edits
+within half a second of each other. Ordinary Ctrl+Z still works afterwards, so
+Revert is the big hammer and not the only one.
+
+⚠ **THE HOUSE CAPS ARE TIGHTER THAN THE EDITOR'S, ON PURPOSE.** A person dragging
+five effects onto one shot can see what they are doing and undo it; the Director
+cannot see. So: **≤1 effect per clip**, effects on **≤40% of clips**, transitions
+on **≤35% of the cuts**, 4 shapes and 8 text clips per minute, and a caption
+clamped into the shot it belongs to (400ms of overhang allowed — a title fading
+across a cut is real; one outliving its shot by two seconds reads as broken). The
+reason is what an auto-graded cut looks like when it goes wrong: two effects on
+every shot is not "more graded", it is a film where nothing stands out, and the
+user reads that as "the AI ruined my edit".
+
+⚠ **THE DETERMINISTIC EDITOR WRITES NO WORDS, AND THAT IS THE POINT.** It places
+transitions and camera moves, because rhythm is legible in numbers a timeline
+already has. It adds no titles and no arrows, because no rule produces the right
+words and text invented by arithmetic would be the first thing the user saw and
+the first thing they deleted. Words are what the model is for, in Phase 2.
+
+⚠ **THE PANEL'S ✕ IS THE ONLY WAY OUT — no backdrop click, no Esc.** Every other
+modal in the app closes on a backdrop click; this one breaks that deliberately
+and the reason is written into `DirectorPanel.jsx` so nobody "fixes" it back. In
+Phase 0 the thing being guarded is a run in flight (half a timeline edited, with
+Revert sitting on the dialog that just vanished); from Phase 4 it is money.
+Mid-run the ✕ asks first.
+
+⚠ **TWO EDITOR FUNCTIONS NOW RETURN THE ID THEY MADE.** `addText` and `addShape`
+return the new clip's id; every existing caller ignores it. The Director cannot:
+"add a title, then give it the Rise preset" is two steps, and the second has no
+way to name the first one's clip. Returning the id is the alternative to a second
+`newTextClip` literal living in the agent.
+
+⚠ **A TRANSITION BADGE CARRIES ITS CUT NUMBER IN THE DOM NOW**
+(`data-transition-cut`), the same reasoning as `data-sel` on every clip: a
+question about the timeline should be answerable from what the user is actually
+looking at. It is what lets the browser test assert the Director treated the
+RIGHT cuts rather than merely some cuts — one edit point out everywhere is the
+way this feature fails and still looks like it works.
+
+⚠ **AND THE ACTION-API CONTRACT IS CHECKED IN THE BROWSER, VISIBLY.** `ACTION_API`
+names the 18 editor functions a verb may call. `useDirectorRun` reports the ones
+the editor did not supply and the panel PRINTS them (`.dir-broken`) — not a
+console warning, because `tests/editor_director_check.py` asserts the message is
+absent, and a warning would let that assertion pass while broken. That is the
+only way to cover names this particular run's verbs never reach.
+
+Files (new): `client/src/animatic/agent/capabilities.js`,
+`client/src/animatic/agent/actions.js`,
+`client/src/animatic/agent/plan_schema.js`,
+`client/src/animatic/agent/house_style.js`,
+`client/src/animatic/agent/useDirectorRun.js`,
+`client/src/components/DirectorPanel.jsx`, `client/src/styles/director.css`,
+`tests/director_actions_check.py`, `tests/director_guardrails_check.py`,
+`tests/editor_director_check.py`.
+Files (changed): `client/src/components/AnimaticEditor.jsx` (the 🎬 button, the
+api bag, the two `return id`s), `client/src/components/Timeline.jsx`
+(`data-transition-cut`), `client/src/styles/index.css`,
+`client/src/styles/animatic-text.css`.
+
+**Verified:** `director_actions_check` — **161 checks, all pass** under node,
+including every one of the 25 verbs actually RUN against a recording stub;
+**that test found a real bug on its first run** — `add_text` called `seek`
+without declaring it in `needs`, which is exactly what running every verb rather
+than reading the table is for. `director_guardrails_check` — **30 checks, all
+pass**, and mutation-checked: breaking the one-per-cut rule and the
+one-effect-per-clip rule made 4 of them fail, and they passed again when it was
+put back. `editor_director_check` — **26 checks, all pass, IN CHROMIUM**, driving
+the real editor through Vite: the panel opens without touching the timeline,
+dissolves land on the cuts that follow the held shots and nowhere else, no step
+fails, Revert restores the timeline element for element, the backdrop and Esc
+both leave the panel open, and a FLAT timeline correctly gets nothing at all.
+That test was mutation-checked too — removing `seek` from the editor's api bag
+made the contract assertion fail with the missing name in the message.
+`transition_check`, `render_parity`, `keyframe_ops_check`, `selection_check`,
+`captions_check`, `shape_points_check`, `asset_fields_check`, `effects_check`,
+`animatic_motion_check`, `editor_razor_check` and `editor_scrub_check` all pass;
+`npx vite build` clean.
+⚠ **NOT eyeballed** — every claim above is from an assertion, not from looking at
+a screenshot of the panel. See the new Next Steps item.
+
+### 2026-08-23 — SCALE STOPPED BEING A SHORTCUT AND BECAME A PROPERTY (user-specified, with a screenshot of the Transform group and one of the ⏱ glyph)
 
 > "i want you add in scale in Key buttun inneed this fuction"
 
@@ -15661,6 +16367,56 @@ script→storyboard→animatics→video pipeline.
 human generation, per-part progress + skeletons, custom assets, safe body base
 mesh, zip cache-bust.
 
+**🎬 MAKE VIDEO, AS OF 2026-08-23 — where the auto-editor actually stands.** The
+button on the timeline's add row now opens a BRIEF (one sentence about the film,
+the language), and offers two ways to get a plan:
+
+- **"Just the rhythm"** — `house_style.housePlan`, the Phase 0 planner. Rules
+  only: no backend, no key, no quota, deterministic. It reads the shot LENGTHS
+  and places dissolves and push-ins. This is also what you get when the AI call
+  fails, and the panel says so when that happens.
+- **"Read my film"** — two TEXT calls (`director.py`: analyse, then polish) that
+  read the story and write the edit. The first finds the SCENE BOUNDARIES, which
+  is what the rules planner's "held 1.5× the median" was only ever approximating.
+
+Either way the plan is shown as a table by shot with tick boxes that re-cost it
+for free, and **nothing touches the timeline until Run**. Revert is one snapshot.
+
+⚠ **AND SINCE PHASE 3 THE RUN HAS A PASS IN FRONT OF IT THAT SPENDS.** Ticking
+**Voiceover** — on by default when the film has dialogue — reads that dialogue
+aloud with the speech model BEFORE the steps run, because that pass stretches the
+shot each line is spoken over and pushes the rest of the film along. The panel
+says so in three places (an amber price line, "· 2 spoken" on the Run button, and
+the script itself listed in full above them), and un-ticking takes all three off
+before the button is pressed. On a board with NO dialogue, the lines the analyse
+call wrote become the script — labelled as written by the Director, and readable
+in the preview before a word of it is spoken.
+⚠ **AND SINCE PHASE 4 THERE IS A SECOND PAID PASS BEHIND IT: THE FOOTAGE.**
+Ticking **Veo renders** — the only box in the panel that starts OFF, because it
+is the only one that costs tens of dollars — renders every shot the Director
+wrote a motion prompt for, in submissions of `MAX_VIDEO_BATCH`, and lands each
+take on the Storyboard video row above the still it was made from. It runs AFTER
+the voiceover, because a take's length is chosen from the shot's hold and the
+voiceover rewrites the holds. The shots, their lengths and the price are all in
+the preview before the box is ticked, and ticking it puts the money on the Run
+button.
+⚠ **STOP WORKS BETWEEN PASSES AND SAYS SO.** A submission of twelve renders is
+billed the moment it leaves, so the pass in flight is seen through and the ones
+after it never go — which on a four-pass film is most of the money.
+⚠ **AND A RUN THAT DIED IS OFFERED BACK.** Close the tab mid-render, reopen the
+project, and 🎬 opens on "a render was interrupted — 12 of 48 shots had already
+been rendered", finishes exactly what was never submitted, and re-pays for
+nothing. It finishes the FOOTAGE; the plan lived in the browser that died and has
+to be asked for again, which is free.
+⚠ **NO VERB SPENDS, AND THERE IS STILL NO WAY FOR ONE TO.** The money is in the
+PHASES of the runner, never in the action registry — see `voice_pass.js` on why
+those cannot be the same thing.
+⚠ **AND THE AI HALF HAS NEVER MET A REAL MODEL, NOR HAS ONE VEO RENDER EVER BEEN
+PAID FOR THROUGH THIS PATH** — every path has been driven through a stub adapter
+or a routed endpoint. Those are the top two items under Next Steps, and until
+they are done, treat the quality of what comes back as unknown rather than as
+working.
+
 **CONTINUITY (2026-08-09) — read before changing any panel prompt.** A board is
 generated as ONE FILM, not as N independent pictures. Four things hold it
 together, in order of how much work they do:
@@ -16169,6 +16925,49 @@ language — do NOT copy the Drawstory reference's look/colours.
       generated images become something people make dozens of, this is the thing
       that goes wrong quietly, and a sweep of unreferenced `img_*.png` at load
       would be the cheap half of the fix.
+- [ ] **SPEND A REAL DOLLAR ON 🎬 PHASE C — NOTHING IN IT HAS EVER CALLED VEO,
+      AND IT IS NOW THE MOST EXPENSIVE BUTTON IN THE APP.** Phase 4 (2026-08-23)
+      is covered by 61 + 44 + 114 checks and every one of them stubs
+      `worker.submit_animatic_animate` or routes `/animate`, so the pass is proven
+      up to the submission and from the record back — and the render itself is as
+      unproven as it was before. Five things want a real run, in this order.
+      (1) **Does a 48-shot board actually come back as four passes of twelve?**
+      The chunking is asserted in the abstract; what nobody has watched is four
+      submissions going out over ten minutes with the rail moving between them.
+      (2) **Is the invoice the number the button said?** The quote sums list
+      prices per shot at its own length; a real invoice is the only way to know
+      how far the rate table has drifted, and this is the first path where being
+      wrong is tens of dollars rather than one.
+      (3) **PULL THE PLUG MID-PASS, FOR REAL.** Close the tab during pass two,
+      reopen, and confirm the offer names the right number and that the resumed
+      submission carries only the outstanding shots. Everything about this is
+      asserted against a routed backend; nothing about it has met a worker that
+      genuinely died.
+      (4) **⚠ A SERVER CRASH LEAVES THE JOB `RUNNING`, AND `POST /animate` 409s
+      ON A RUNNING JOB.** So a resume after the SERVER died (as opposed to the
+      browser) will be refused with "This project is already busy" — correctly,
+      because nothing can tell it apart from a batch still in flight, and
+      spending on a guess is the wrong error. That is honest but it is a dead
+      end for the user, and it is PRE-EXISTING (✨ Animate has it too). The fix is
+      a staleness rule on the job — a RUNNING animatic with no worker and no
+      record touched in N minutes — and it wants deciding rather than
+      improvising. Nothing here should ever "unstick" a job by force.
+      (5) **Does the 8-second cap read badly on a long shot?** A hold over 8s
+      keeps its own length and the still shows for the remainder. It is the
+      honest thing to do and nobody has watched one.
+- [ ] **LOOK AT THE VEO SECTION, THE PASS RAIL AND THE RESUME OFFER (2026-08-23).**
+      Three new pieces of panel, all of them code-reviewed and none of them
+      eyeballed. (1) **`.dir-shoot`** deliberately borrows `.dir-script`'s box —
+      same surface, same place, same job — with one new column for the length. If
+      forty-eight rows in an 11rem scroller reads as a wall, the fix is the same
+      one the script list would want. (2) **`.dir-shootrun`'s rail is thicker than
+      the step rail** (0.45rem vs 0.3rem) on the argument that a pass is two
+      minutes and a step is 90ms; that is a guess about what the eye should go
+      to. (3) **`.dir-resume` is the warm surface**, because it is the only block
+      in the panel about money already gone — check it does not read as an error.
+      (4) **The Run button can now carry three clauses** (`Run this plan · 24
+      edits · 2 spoken · $34.56 of footage`); at some width that stops being a
+      label. If it wraps badly, the money is the clause to keep.
 - [ ] **SPEND A REAL DOLLAR ON ✨ VIDEO, IN THE REAL EDITOR — NOTHING IN IT HAS
       EVER CALLED VEO.** The Video tab (2026-08-22) is covered by 39 checks and
       every one of them stubs the worker, so the render itself is unproven end to
@@ -16697,6 +17496,84 @@ language — do NOT copy the Drawstory reference's look/colours.
       Properties only once that end has a fade. And listen: on a cut between two
       pieces of music, Constant Gain should audibly scoop and Constant Power
       should not — that is the difference the whole feature exists to offer.
+- [x] **Phase 0 of the Director — the hands** (done 2026-08-23; see the top Work
+      Log entry. `tests/director_actions_check.py`,
+      `tests/director_guardrails_check.py`, `tests/editor_director_check.py`.)
+- [ ] **LOOK AT THE 🎬 PANEL (2026-08-23).** Everything about Phase 0 is asserted
+      and nothing about it has been SEEN. Open an animatic with uneven shot
+      lengths, press 🎬 Make Video and judge three things only eyes can judge:
+      whether the plan table is readable at 48 rows (it dims the untouched
+      shots — is that the right call, or should they collapse?); whether the
+      90ms step playback reads as work being done or as a stutter; and whether
+      the dissolves it chooses are the ones you would have chosen. That last one
+      is the actual product question — the rule is "dissolve after a shot held
+      1.5x the median", and it is a PROXY for "is this a scene boundary", which
+      is what Phase 2 replaces it with.
+- [x] **Phases 1 & 2 of the Director — the eyes and the brain** (done
+      2026-08-23; see the top Work Log entry. `tests/director_plan_check.py`,
+      `tests/director_language_check.py`, `tests/director_determinism_check.py`,
+      and `tests/editor_director_check.py` grew from 26 checks to 47.) It went in
+      exactly as this item predicted: the seam was one line in
+      `useDirectorRun.buildPlan`, nothing about the runner changed, and
+      `housePlan` stayed as both the fallback and the free door in popup one.
+- [ ] **⚠ CALL THE MODEL FOR REAL, ONCE, AND READ WHAT COMES BACK.** Everything
+      about Phase 2 has been driven through a stub adapter — the language rule,
+      the determinism, the folding, the fence, the panel. The two prompts have
+      never met Gemini. So set `DIRECTOR_PROVIDER`, open a real board with
+      several scenes in it, press "Read my film", and judge the three things only
+      a real answer can settle: whether the SCENE LIST is right (that is the
+      whole reason the analyse call exists and the thing `house_style`'s "held
+      1.5× the median" proxy is being replaced by — if the boundaries are wrong,
+      the proxy was better); whether the polish call respects the house caps on
+      its own or arrives needing to be trimmed by half (the preview shows what
+      was trimmed — read it); and whether the on-screen text it writes is text
+      you would keep. ⚠ It costs two TEXT calls, which is a fraction of one
+      drawing, and it renders nothing. Then compare it against "Just the rhythm"
+      on the SAME board, which is the comparison the two doors exist to make.
+- [x] **Language is a FIELD** (done 2026-08-23). `AnimaticSettings.language`
+      exists, the 🎬 popup asks for it and the `/director` route persists it onto
+      the project, `plan_agent.LANGUAGES` stayed the one table (`director.SCRIPTS`
+      adds only which SCRIPT each is written in, which is the enforceable part),
+      and the Veo rule shipped as written: motion prompts English, dialogue inside
+      them local — asserted both ways in `tests/director_language_check.py`.
+- [x] **Phase 3 of the Director — the VOICE** (done 2026-08-23; see the top
+      Work Log entry. `tests/director_voice_order_check.py` is new — 35 checks —
+      and `editor_director_check` grew from 47 checks to 78.) The order property
+      held as predicted and the browser suite found the one bug worth finding:
+      re-anchoring against a read that React had not committed yet.
+- [ ] **⚠ RUN PHASE B AGAINST THE REAL SPEECH MODEL, ONCE, AND LISTEN TO IT.**
+      Everything about Phase 3 was driven through a routed fixture: the POST is
+      answered 202 and the project reads back the way `_lay_out_speech` would
+      have left it. Nothing has been SAID out loud. Two things only ears can
+      settle: whether the shots the pass stretches still play as a film (a
+      two-second cutaway that becomes eleven seconds to hold a line is correct
+      arithmetic and may be a bad shot), and whether the re-anchored dissolves
+      land where the new rhythm actually wants them — that is the whole claim of
+      the phase and it has only ever been checked against a fixture whose numbers
+      this session chose.
+- [ ] **⚠ AND ASK A REAL MODEL TO WRITE A SCRIPT FOR A SILENT BOARD.** The
+      `<<SPEECH>>` block (`director.speech_instruction`) has never met Gemini.
+      Judge two things: whether the lines are worth hearing at all, and whether
+      it OBEYS the instruction to write `""` where nothing should be said — a
+      model given a field to fill will fill it, and a landscape film narrated
+      wall to wall because the field existed is the failure mode. If it narrates
+      everything, the fix is in the prompt, not in the code.
+- [ ] **The other two writers still do not read the language field.** The
+      Director does — including the script it writes for a silent board, which
+      goes to `tts` in whatever language the film is in and is auto-detected
+      there. `AnimaticVoiceoverRequest` and the captions request still
+      have no `language`, and `tts.py` still has none at all (Gemini TTS
+      auto-detects). That is the whole point of the field being on the FILM
+      rather than on a request — pass `settings.language` into the voiceover's
+      persona/stage direction and into `captions.transcribe`'s existing
+      `language` hint, and a Hinglish film stops being able to get an English
+      title over a Hindi voiceover.
+- [ ] **A BOARD CARRIES NO LANGUAGE, so a new animatic cannot inherit one.**
+      Checked again this session: nothing in the storyboard job records one, so
+      `AnimaticSettings.language` simply starts blank and the 🎬 popup is the
+      first place anyone is asked. If it is worth inheriting, the field has to be
+      added at the Plan & Script → breakdown boundary first — Plan & Script
+      already asks for a language and then drops it on the floor.
 - [ ] **LOOK AT THE ⓘ AND THE CUT CURSOR (2026-08-19).** Both are answers to a
       user report and both are things only eyes can confirm. The ⓘ: every row in
       the Effects tab should carry one, the descriptions should be GONE from the

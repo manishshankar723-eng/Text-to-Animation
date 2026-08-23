@@ -723,8 +723,13 @@
    row beside ＋ Add layer (`.tl-add-tools`). They are a pair and must read as
    one, so they share the weight — the alternative is Text looking like the real
    control and Colour card like an afterthought. */
+/* ⚠ 🎬 Make Video JOINED THE PAIR, and it belongs there: it is the third
+   button in this row that makes something out of nothing and costs nothing.
+   The one it must NOT read like is 🎙 Voiceover directly beside it, which
+   spends — see the note at that button. */
 .an-add-text,
-.an-add-card {
+.an-add-card,
+.an-add-director {
   font-weight: 650;
 }
 

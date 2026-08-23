@@ -2473,6 +2473,20 @@ export default function Timeline({
         <button
           key={transition.id}
           type="button"
+          /* ⚠ WHICH CUT THIS IS, ON THE ELEMENT. The marquee reads `data-sel`
+             off every clip for the same reason: a question about the timeline
+             should be answerable from the DOM, because that is what the user is
+             actually looking at. A transition is not selectable by rubber band
+             (it has no width in the lane sense), so it carries its cut number
+             instead — 1 is the cut after the first picture, matching the way
+             `addTransitionAtCut` counts edges.
+
+             `tests/editor_director_check.py` uses it to assert the Director put
+             a dissolve on the RIGHT cuts rather than merely on some cuts, which
+             is the difference between the feature working and it being one edit
+             point out everywhere. */
+          data-transition-cut={i + 1}
+          data-transition-kind={win.kind}
           className={[
             "tl-transition",
             `tr-${win.kind}`,

@@ -212,6 +212,7 @@ export const ACTIONS = {
     verb: "note",
     label: "Note",
     needs: [],
+    args: ["text"],
     validate: (args) => {
       const text = str(args.text);
       return text ? ok({ text }) : fail("a note with nothing to say");
@@ -224,6 +225,7 @@ export const ACTIONS = {
     verb: "seek",
     label: "Move the playhead",
     needs: ["seek"],
+    args: ["ms"],
     validate: (args, caps, ctx) => {
       const at = ms(args.ms);
       if (at === undefined) return fail("no time given");
@@ -237,6 +239,7 @@ export const ACTIONS = {
     verb: "select_shot",
     label: "Select a shot",
     needs: ["selectOnly"],
+    args: ["shot"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       return i < 0 ? fail(`there is no shot ${args.shot}`) : ok({ shot: i + 1 });
@@ -250,6 +253,7 @@ export const ACTIONS = {
     verb: "set_shot_duration",
     label: "Re-time a shot",
     needs: ["patchFrame"],
+    args: ["shot", "ms"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -266,6 +270,7 @@ export const ACTIONS = {
     verb: "set_all_durations",
     label: "Re-time every shot",
     needs: ["setAllDurations"],
+    args: ["ms"],
     validate: (args) => {
       const length = ms(args.ms);
       if (length === undefined) return fail("no length given");
@@ -280,6 +285,7 @@ export const ACTIONS = {
     verb: "set_shot_transform",
     label: "Frame a shot",
     needs: ["patchFrame"],
+    args: ["shot", "scale", "x", "y", "opacity"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -316,6 +322,7 @@ export const ACTIONS = {
     verb: "push_in",
     label: "Push in",
     needs: ["patchFrame"],
+    args: ["shot", "from", "to", "ease"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -352,6 +359,7 @@ export const ACTIONS = {
     verb: "clear_shot_motion",
     label: "Hold a shot still",
     needs: ["patchFrame"],
+    args: ["shot"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       return i < 0 ? fail(`there is no shot ${args.shot}`) : ok({ shot: i + 1 });
@@ -376,6 +384,7 @@ export const ACTIONS = {
     verb: "add_transition",
     label: "Transition",
     needs: ["addTransitionAtCut", "patchTransition"],
+    args: ["cut", "kind", "ms", "params"],
     validate: (args, caps, ctx) => {
       const cut = int(args.cut);
       if (cut === undefined || cut <= 0 || cut >= (ctx.frames || []).length) {
@@ -431,6 +440,7 @@ export const ACTIONS = {
     verb: "set_transition_duration",
     label: "Re-time a transition",
     needs: ["patchTransition"],
+    args: ["cut", "ms"],
     validate: (args, caps, ctx) => {
       const cut = int(args.cut);
       if (cut === undefined || cut <= 0 || cut >= (ctx.frames || []).length) {
@@ -452,6 +462,7 @@ export const ACTIONS = {
     verb: "remove_transition",
     label: "Straight cut",
     needs: ["deleteTransition"],
+    args: ["cut"],
     validate: (args, caps, ctx) => {
       const cut = int(args.cut);
       if (cut === undefined || cut <= 0 || cut >= (ctx.frames || []).length) {
@@ -472,6 +483,7 @@ export const ACTIONS = {
     verb: "add_effect",
     label: "Effect",
     needs: ["addEffectToClip"],
+    args: ["shot", "kind", "params"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -511,6 +523,7 @@ export const ACTIONS = {
     verb: "set_effect_param",
     label: "Dial an effect",
     needs: ["patchFrame"],
+    args: ["shot", "index", "param", "value"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -539,6 +552,7 @@ export const ACTIONS = {
     verb: "remove_effect",
     label: "Remove an effect",
     needs: ["patchFrame"],
+    args: ["shot", "index"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
       if (i < 0) return fail(`there is no shot ${args.shot}`);
@@ -558,7 +572,17 @@ export const ACTIONS = {
   add_text: {
     verb: "add_text",
     label: "On-screen text",
-    needs: ["addText", "patchText"],
+    // ⚠ `seek` IS IN HERE BECAUSE THE RUN CALLS IT. `addText` places its clip
+    // over the frame at the PLAYHEAD, so putting a caption on shot 12 means
+    // moving the playhead there first — see the note in `run`. Declaring it was
+    // missed on the first write and `director_actions_check` caught it, which is
+    // the whole reason that test runs every verb against a recording stub rather
+    // than reading the table.
+    needs: ["addText", "patchText", "seek"],
+    args: [
+      "shot", "text", "ref", "position", "align", "size", "backdrop", "place", "x", "y",
+      "startMs", "durationMs"
+    ],
     creates: true,
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
@@ -611,6 +635,7 @@ export const ACTIONS = {
     verb: "set_text",
     label: "Restyle text",
     needs: ["patchText"],
+    args: ["ref", "text", "position", "align", "size", "backdrop", "color", "opacity"],
     validate: (args) => {
       const ref = str(args.ref);
       if (!ref) return fail("no text named");
@@ -643,6 +668,7 @@ export const ACTIONS = {
     verb: "apply_text_preset",
     label: "Text in/out",
     needs: ["patchText"],
+    args: ["ref", "preset", "inMs", "outMs"],
     validate: (args, caps) => {
       const ref = str(args.ref);
       if (!ref) return fail("no text named");
@@ -672,6 +698,7 @@ export const ACTIONS = {
     verb: "remove_text",
     label: "Remove text",
     needs: ["deleteText"],
+    args: ["ref"],
     validate: (args) => {
       const ref = str(args.ref);
       return ref ? ok({ ref }) : fail("no text named");
@@ -688,6 +715,10 @@ export const ACTIONS = {
     verb: "add_shape",
     label: "Shape",
     needs: ["addShape", "patchShape"],
+    args: [
+      "shot", "kind", "ref", "x", "y", "w", "h", "color", "opacity", "rotation", "startMs",
+      "durationMs"
+    ],
     creates: true,
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
@@ -732,6 +763,7 @@ export const ACTIONS = {
     verb: "set_shape",
     label: "Restyle a shape",
     needs: ["patchShape"],
+    args: ["ref", "x", "y", "w", "h", "scale", "opacity", "rotation", "color"],
     validate: (args) => {
       const ref = str(args.ref);
       if (!ref) return fail("no shape named");
@@ -766,6 +798,7 @@ export const ACTIONS = {
     verb: "remove_shape",
     label: "Remove a shape",
     needs: ["deleteShape"],
+    args: ["ref"],
     validate: (args) => {
       const ref = str(args.ref);
       return ref ? ok({ ref }) : fail("no shape named");
@@ -782,6 +815,7 @@ export const ACTIONS = {
     verb: "add_layer",
     label: "Add a lane",
     needs: ["addLayer"],
+    args: ["kind", "name"],
     validate: (args) => {
       const kind = oneOf(args.kind, ["image", "text", "shape", "audio"]);
       if (!kind) return fail(`“${args.kind}” is not a kind of lane`);
@@ -796,6 +830,7 @@ export const ACTIONS = {
     verb: "set_track_fade",
     label: "Fade a track",
     needs: ["patchTrack"],
+    args: ["track", "inMs", "outMs", "inCurve", "outCurve"],
     validate: (args, caps, ctx) => {
       const at = int(args.track);
       if (at === undefined || at < 0 || at >= (ctx.audioTracks || []).length) {
@@ -824,6 +859,7 @@ export const ACTIONS = {
     verb: "set_track_volume",
     label: "Set a level",
     needs: ["patchTrack"],
+    args: ["track", "volume"],
     validate: (args, caps, ctx) => {
       const at = int(args.track);
       if (at === undefined || at < 0 || at >= (ctx.audioTracks || []).length) {
@@ -844,6 +880,7 @@ export const ACTIONS = {
     verb: "add_crossfade",
     label: "Crossfade",
     needs: ["addCrossfade", "laneSiblings"],
+    args: ["track", "curve", "ms"],
     validate: (args, caps, ctx) => {
       const at = int(args.track);
       if (at === undefined || at < 0 || at >= (ctx.audioTracks || []).length) {
@@ -872,6 +909,34 @@ export const ACTIONS = {
 
 /** Every verb a plan may use. */
 export const VERBS = Object.keys(ACTIONS);
+
+/**
+ * THE VERBS, AS THE MODEL IS TOLD THEM — id, what it does, what it takes.
+ *
+ * ⚠ DERIVED FROM `ACTIONS`, NEVER TYPED OUT BESIDE IT. Same rule as
+ * `capabilities.js`, one level up: a hand-written list of "verbs the AI may use"
+ * goes stale the first time a verb is added, and it goes stale in the direction
+ * that hurts — the planner keeps proposing an argument the validator drops, or
+ * never learns about a verb that exists. This is the whole vocabulary of the
+ * plan language, read off the registry that implements it.
+ *
+ * ⚠ `args` IS WHAT A PLAN MAY SET, NOT WHAT A STEP CARRIES AFTERWARDS. A
+ * validator FOLDS its arguments — `add_text`'s `position` and `size` come out
+ * inside `patch`, `set_shot_transform`'s four come out inside `patch` — so this
+ * is the INPUT vocabulary, which is the one a planner needs and the one
+ * `director.py` filters a returned step against.
+ */
+export function verbVocab() {
+  return Object.values(ACTIONS).map((action) => ({
+    id: action.verb,
+    label: action.label,
+    args: [...(action.args || [])],
+    // A creating verb is the only kind that may name a `ref`, and a plan that
+    // knows which those are stops writing forward references — the single
+    // commonest fault in a generated plan (see `validatePlan`).
+    creates: Boolean(action.creates),
+  }));
+}
 
 /**
  * Check one step's arguments without running it.

@@ -44,11 +44,18 @@ export const PLAN_VERSION = 1;
 /**
  * What a run is allowed to touch, and what the two popups tick.
  *
- * ⚠ THESE ARE THE FREE ONES. `veo` and `voiceover` are named here because the
- * preview lists them in the same tick-box column, but nothing in Phase 0 reads
- * them — no verb in the registry spends money, and there is deliberately no way
- * for one to. When Phase 4 adds the spending path it adds it beside these, and
- * the reason the flags live together is so the total the user is shown and the
+ * ⚠ TWO OF THESE ARE NOT FREE, AND THEY ARE THE LAST TWO. Every other key here
+ * governs verbs, and a verb is an edit the editor already knows how to make.
+ * Phase 3 wired the existing `/voiceover` pass in beside them and Phase 4 the
+ * Veo pass; both SPEND and both MOVE PICTURES, so the flags are the same shape
+ * as the others and the panel treats them as anything but (see `PASS_GOVERNORS`
+ * below, and the price on the Run button).
+ *
+ * ⚠ AND `veo` IS THE EXPENSIVE ONE BY AN ORDER OF MAGNITUDE — a voiceover is
+ * cents, a 48-shot render is tens of dollars — which is why it is the one flag
+ * in this list that does NOT default to on. See `defaultInclude`.
+ *
+ * The reason the flags live together is so the total the user is shown and the
  * work that actually happens are read off ONE object.
  */
 export const INCLUDE_KEYS = [
@@ -61,9 +68,18 @@ export const INCLUDE_KEYS = [
   "veo",
 ];
 
-/** Everything on, which is what the preview opens with. */
+/**
+ * What the preview opens with: everything on EXCEPT the Veo pass.
+ *
+ * ⚠ THE ONE FLAG THAT STARTS OFF, AND IT IS OFF BECAUSE OF WHAT IT COSTS. Every
+ * other key here is either free or cents; `veo` renders every shot in the film
+ * and a 48-shot board runs to tens of dollars. A default-on tick box is a box
+ * most people never look at, and the first time anyone looked at this one it
+ * would be on an invoice. So the Director writes the motion prompts, prices
+ * them, shows the price — and waits to be asked.
+ */
 export function defaultInclude() {
-  return Object.fromEntries(INCLUDE_KEYS.map((key) => [key, true]));
+  return Object.fromEntries(INCLUDE_KEYS.map((key) => [key, key !== "veo"]));
 }
 
 /**
@@ -91,6 +107,41 @@ const GOVERNED_BY = {
 
 export function governingKey(verb) {
   return GOVERNED_BY[verb] || "";
+}
+
+/**
+ * The include flags governing a PASS rather than a verb.
+ *
+ * ⚠ A PASS IS NOT A VERB, AND IT MUST NOT BECOME ONE. A verb is synchronous, it
+ * runs inside one React commit, it spends nothing and it calls a function a
+ * person's own button calls. Phase B is a server call that takes a minute, costs
+ * money and re-lays the picture row underneath the steps that follow it — every
+ * one of those is a reason it cannot be a row in `ACTIONS`. So it is a phase of
+ * the RUNNER, and this is how its flag reaches the same tick-box column as the
+ * verbs': by being declared, not by being inferred from a registry it is
+ * deliberately not in. See `voice_pass.js`.
+ */
+const PASS_GOVERNORS = ["voiceover", "veo"];
+
+/**
+ * The include flags that actually change something in THIS build — the tick
+ * boxes the preview shows.
+ *
+ * ⚠ DERIVED, so the column cannot offer a switch that does nothing. `captions`
+ * is in `INCLUDE_KEYS` because the flags are read off ONE object and phase B
+ * reads it when it writes its subtitles — but no VERB answers to it and it is
+ * not a pass of its own, so it is not offered here. A tick box that changes
+ * nothing when you click it is worse than an absent one: it teaches the user the
+ * whole panel is decorative.
+ *
+ * ⚠ `veo` JOINED THE LIST IN PHASE 4 and `voiceover` in Phase 3, both by being
+ * DECLARED in `PASS_GOVERNORS` rather than inferred from a registry they are
+ * deliberately not in. That is the whole mechanism by which a PASS reaches the
+ * same column as a verb without becoming one.
+ */
+export function governedKeys() {
+  const used = new Set([...Object.values(GOVERNED_BY), ...PASS_GOVERNORS]);
+  return INCLUDE_KEYS.filter((key) => used.has(key));
 }
 
 const text = (value, fallback = "") =>
