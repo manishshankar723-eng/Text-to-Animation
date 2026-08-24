@@ -244,15 +244,46 @@ check(
     "isVeoRender(asset)" in media_bin,
     "MediaBin no longer guards the download button on isVeoRender",
 )
+# ⚠ IT USED TO SAY "AND IT IS THE ONLY THING THAT DRAWS ONE THERE", counting the
+# icon and requiring exactly 1. That was the right property written as the wrong
+# number, and it went stale the moment the Media pane grew a right-click menu of
+# its own: two ⬇ in the file, BOTH correctly behind the guard, one failing test.
+# What matters is not how many there are — it is that none of them is drawn
+# unguarded, which is what would offer a download of a board panel.
+DOWNLOAD_ICON = 'name="download"'
+
+
+def unguarded_downloads(source, window=900):
+    """Every `Icon name="download"` with no `isVeoRender(` guard above it."""
+    return [
+        m.start() for m in re.finditer(re.escape(DOWNLOAD_ICON), source)
+        if "isVeoRender(" not in source[max(0, m.start() - window):m.start()]
+    ]
+
+
+loose = unguarded_downloads(media_bin)
 check(
-    "...and it is the only thing that draws one there",
-    media_bin.count('name="download"') == 1,
-    f"{media_bin.count(chr(34) + 'download' + chr(34))} download icons in MediaBin",
+    "...and EVERY download it draws is behind that guard, however many there are",
+    media_bin.count(DOWNLOAD_ICON) >= 1 and not loose,
+    f"{len(loose)} of {media_bin.count(DOWNLOAD_ICON)} unguarded",
+)
+# ⚠ THE GUARD MOVED, AND MOVING IT WAS AN IMPROVEMENT. It was written inline as
+# `!onDownloadClip || !isVeoRender(f)` at the one place that opened the menu; the
+# menu then gained a SECOND offer (✨ Generate, on a board still), so the decision
+# became "is there anything in this menu at all" and moved into `clipMenuOffers` —
+# whose own note says why: "asked here rather than at the two call sites so the
+# menu that OPENS and the menu that RENDERS cannot come to disagree". So the
+# question is now "does the ONE decider consult isVeoRender", not "does that
+# literal sit beside the handler".
+offers = timeline.split("const clipMenuOffers", 1)
+check(
+    "the timeline has ONE decider for whether a clip has a menu",
+    len(offers) == 2, "clipMenuOffers is gone",
 )
 check(
-    "the timeline's right-click menu is behind isVeoRender",
-    "isVeoRender(f)" in timeline,
-    "the clip menu no longer guards on isVeoRender",
+    "...and the download it offers is behind isVeoRender",
+    len(offers) == 2 and "isVeoRender(frame)" in offers[1].split("};", 1)[0],
+    "clipMenuOffers no longer asks isVeoRender",
 )
 # ⚠ THE GUARD MUST RETURN *BEFORE* `preventDefault`, or every bar on the timeline
 # swallows the browser's own menu and offers nothing in its place — which is
@@ -260,7 +291,7 @@ check(
 check(
     "...and a clip with no menu keeps the browser's own",
     re.search(
-        r"if \(!onDownloadClip \|\| !isVeoRender\(f\)\) return;\s*\n\s*e\.preventDefault\(\);",
+        r"if \(!clipMenuOffers\(f\)\) return;\s*\n\s*e\.preventDefault\(\);",
         timeline,
     )
     is not None,

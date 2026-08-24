@@ -286,22 +286,22 @@ const ROW_KIND = {
     name: "Storyboard images",
     short: "Story..Image",
     takes: ROW_TAKES.board_image,
-    hint: "Panels imported from a storyboard — in the cut, one shot each",
-    add: "Import a storyboard onto this row",
+    hint: "Storyboard panels",
+    add: "Import a storyboard",
   },
   board_video: {
     name: "Storyboard video",
     short: "Story..Video",
     takes: ROW_TAKES.board_video,
-    hint: "Veo renders of your panels — each drawn OVER the panel it came from",
-    add: "Animate a panel with ✨ to fill this row",
+    hint: "Veo renders",
+    add: "Animate a panel ✨",
   },
   video: {
     name: "Video",
     short: "Video",
     takes: ROW_TAKES.video,
-    hint: "Footage and full-frame stills in the cut, each placed on its own",
-    add: "Add video or full-frame images to the end of this row",
+    hint: "Video track",
+    add: "Add video or image",
   },
 };
 
@@ -2380,8 +2380,8 @@ export default function AnimaticEditor({
         // glyph for each kind (see `LANE_HINT`'s note in `Timeline.jsx`), so the ❝
         // that stood here would be a field nothing reads. What this row IS is said by
         // its name and its hint — which is where it was always said.
-        hint: "Captions written from a track — a run replaces this row, never your own text",
-        add: "Add a caption to this row by hand",
+        hint: "Auto captions",
+        add: "Add a caption",
       });
     }
     /**
@@ -2485,7 +2485,7 @@ export default function AnimaticEditor({
         hint:
           track === 0
             ? ROW_KIND[row.rowKind].hint
-            : `${ROW_KIND[row.rowKind].hint} — drawn OVER the tracks below it, and a gap shows what is under it`,
+            : `${ROW_KIND[row.rowKind].hint} · overlay`,
         add: ROW_KIND[row.rowKind].add,
       });
     }
@@ -8903,7 +8903,7 @@ export default function AnimaticEditor({
           type="button"
           className="btn small an-ws-btn"
           onClick={() => setSettingsOpen(true)}
-          title={`${workspaceLabel(workspace)} — click to switch layout`}
+          title={workspaceLabel(workspace)}
           aria-label="Workspace layout"
         >
           <Icon name={workspaceIcon(workspace)} />
@@ -8924,7 +8924,7 @@ export default function AnimaticEditor({
             }
             title={
               video.stale
-                ? "This file is from before your latest edits — export again for an up-to-date one"
+                ? "Out of date"
                 : `${
                     video.duration_ms ? `${formatTime(video.duration_ms)} · ` : ""
                   }${video.width}×${video.height} · ${(
@@ -8948,10 +8948,10 @@ export default function AnimaticEditor({
           onClick={handleSave}
           title={
             needsName
-              ? "Save — you'll be asked for a name"
+              ? "Save — name it first"
               : saveState === "saved"
-                ? "Everything is already saved"
-                : "Save now (it also saves on its own)"
+                ? "Already saved"
+                : "Save now"
           }
         >
           {saveState === "saving" ? (
@@ -8985,7 +8985,7 @@ export default function AnimaticEditor({
               setSettings((s) => ({ ...s, still_ms: Math.round(timeMs) }));
               setExportOpen(true);
             }}
-            title="Choose the export settings, then encode"
+            title="Export video"
           >
             <Icon name="download" /> Export video
           </button>
@@ -9001,7 +9001,7 @@ export default function AnimaticEditor({
             className="btn"
             disabled={!frames.length || makingVideo}
             onClick={makeFinalVideo}
-            title="Turn these frames into real footage with Veo (free to start)"
+            title="Make final video"
           >
             {makingVideo ? "Creating…" : "🎞️ Make final video"}
           </button>
@@ -9126,7 +9126,7 @@ export default function AnimaticEditor({
                     key={v.id}
                     className={`an-tool ${mediaView === v.id ? "on" : ""}`}
                     aria-pressed={mediaView === v.id}
-                    title={`${v.label} — ${v.note}`}
+                    title={v.label}
                     onClick={() => {
                       setMediaView(v.id);
                       saveMediaView(v.id);
@@ -9279,7 +9279,7 @@ export default function AnimaticEditor({
                    falls through to "image", and exactly the kind of accident
                    that stops being harmless the day a third tab is added. */
                 onClick={() => openImageGen("image")}
-                title="Describe a picture or a shot and have AI make it — an image lands on the Images layer, a video on the Video layer"
+                title="Generate with AI"
                 aria-label="Generate an image or a video with AI"
               >
                 <Icon name="sparkle" size="1.15em" />
@@ -9387,7 +9387,7 @@ export default function AnimaticEditor({
             <select
               className="an-select an-ar-select"
               aria-label="Aspect ratio"
-              title="The shape of the video — every export uses this"
+              title="Aspect ratio"
               value={settings.aspect_ratio || "16:9"}
               onChange={(e) => reshapeFrame({ aspect_ratio: e.target.value })}
             >
@@ -9416,7 +9416,7 @@ export default function AnimaticEditor({
               <button
                 type="button"
                 className="an-tool an-ar-suggest"
-                title={`This workspace is for ${suggestedAspect} video, but the film is ${settings.aspect_ratio}. Press to reshape it — your shots keep their framing and get bars until you reframe them.`}
+                title={`Reshape to ${suggestedAspect}`}
                 onClick={() => reshapeFrame({ aspect_ratio: suggestedAspect })}
               >
                 Make it {suggestedAspect}
@@ -9432,9 +9432,7 @@ export default function AnimaticEditor({
               className="an-tool an-tool-ico an-fs-btn"
               onClick={toggleFullscreen}
               title={
-                fullscreen
-                  ? "Leave full screen (Esc)"
-                  : "Full screen — the monitor and its transport fill the display"
+                fullscreen ? "Leave full screen (Esc)" : "Full screen"
               }
               aria-label={fullscreen ? "Leave full screen" : "Full screen"}
               aria-pressed={fullscreen}
@@ -9684,7 +9682,7 @@ export default function AnimaticEditor({
               <button
                 type="button"
                 className="an-pane-back"
-                title="Deselect — show the settings for the whole video"
+                title="Back to video"
                 onClick={() => selectOnly({})}
               >
                 ← Video
@@ -9850,11 +9848,7 @@ export default function AnimaticEditor({
                       className="btn small"
                       disabled={reframeRunning || serverBusy || !frames.length}
                       onClick={openReframe}
-                      title={
-                        `Look at each shot and pan it so the subject is framed for ` +
-                        `${settings.aspect_ratio}. You'll see the price first, and what ` +
-                        `it writes is an ordinary pan you can still change.`
-                      }
+                      title={`Pan each shot for ${settings.aspect_ratio}`}
                     >
                       {reframeRunning
                         ? `Framing for ${settings.aspect_ratio}…`
@@ -9920,7 +9914,7 @@ export default function AnimaticEditor({
                 type="button"
                 className={`an-tool an-tool-ico ${tool === t.id ? "on" : ""}`}
                 onClick={() => setTool(t.id)}
-                title={`${t.label} (${t.key}) — ${t.hint}`}
+                title={`${t.label} (${t.key})`}
                 aria-label={`${t.label} (${t.key})`}
                 aria-pressed={tool === t.id}
               >
@@ -9953,7 +9947,7 @@ export default function AnimaticEditor({
             type="button"
             className={`an-tool ${snapping ? "on" : ""}`}
             onClick={() => setSnapping((s) => !s)}
-            title={`Snapping is ${snapping ? "on" : "off"} (S) — clip edges jump to nearby cuts, the playhead and the marks`}
+            title={`Snapping ${snapping ? "on" : "off"} (S)`}
             aria-pressed={snapping}
           >
             🧲
@@ -9970,8 +9964,8 @@ export default function AnimaticEditor({
             disabled={frames.length < 2 || !audioTracks.length}
             title={
               !audioTracks.length
-                ? "Cut to beat needs music on the timeline — it reads the beats already marked on the audio lane"
-                : "Pull every cut onto the nearest beat of the music. Free, and one Ctrl+Z puts them all back."
+                ? "Needs music first"
+                : "Cut to the beat"
             }
           >
             🥁
@@ -9989,7 +9983,7 @@ export default function AnimaticEditor({
             className="btn small"
             disabled={!audioMs || !frames.length}
             onClick={fitToAudio}
-            title="Stretch every frame proportionally so the video is exactly as long as the audio"
+            title="Fit to audio"
           >
             ⇔ Fit to audio
           </button>
@@ -10059,10 +10053,10 @@ export default function AnimaticEditor({
                   onClick={() => veoTarget && openAnimate(veoTarget.id)}
                   title={
                     !veoTarget
-                      ? "Nothing to animate yet — add a shot first, or park the playhead on one"
+                      ? "Nothing to animate yet"
                       : veoTargetClip?.status === "ready"
-                        ? `Render “${veoTarget.label || "this shot"}” again with Veo — it costs the same as the first time`
-                        : `Turn “${veoTarget.label || "this shot"}” into real footage with Veo (you'll see the price first)`
+                        ? `Render ${veoTarget.label || "this shot"} again`
+                        : `Animate ${veoTarget.label || "this shot"} with Veo`
                   }
                 >
                   {animating
@@ -10081,7 +10075,7 @@ export default function AnimaticEditor({
                     // lane.
                     () => addText("")
                   }
-                  title="Add a text clip over the frame at the playhead"
+                  title="Add a text clip"
                 >
                   <Icon name="text" /> Text
                 </button>
@@ -10095,7 +10089,7 @@ export default function AnimaticEditor({
                   type="button"
                   className="btn small an-add-card"
                   onClick={() => addColorCard()}
-                  title="Add a colour card after the frame at the playhead — a slug, a blackout or a flash. Pick its colour in Properties."
+                  title="Add a colour card"
                 >
                   <Icon name="card" /> Colour card
                 </button>
@@ -10116,8 +10110,8 @@ export default function AnimaticEditor({
                   onClick={openVoiceover}
                   title={
                     hasBoardFrames
-                      ? "Read the storyboard's dialogue aloud onto the audio layer — costs a little; you see the price first"
-                      : "Nothing here to read: a voiceover comes from the storyboard's dialogue, and none of these clips are board panels"
+                      ? "Read the dialogue aloud"
+                      : "Needs board panels"
                   }
                 >
                   🎙 Voiceover
@@ -10139,8 +10133,8 @@ export default function AnimaticEditor({
                   onClick={openDirector}
                   title={
                     frames.length
-                      ? "Read the timeline's rhythm and cut it — transitions and camera moves. Free, previewed first, and revertable."
-                      : "Add some pictures first — the Director edits a sequence, so it needs one to read"
+                      ? "Cut it for me"
+                      : "Add some pictures first"
                   }
                 >
                   🎬 Make Video
@@ -10226,14 +10220,14 @@ export default function AnimaticEditor({
                       row: true,
                       ico: "🖼",
                       label: "Storyboard images",
-                      note: "Import a storyboard's panels onto a row of their own",
+                      note: "Import a storyboard",
                     },
                     {
                       kind: "board_video",
                       row: true,
                       ico: "✨",
                       label: "Storyboard video",
-                      note: "Where ✨ Animate puts a Veo render — above the panel it came from",
+                      note: "Where ✨ Animate renders go",
                     },
                     {
                       kind: "video",
@@ -10246,25 +10240,25 @@ export default function AnimaticEditor({
                       // place. Full-frame photos go here; Images below is the
                       // one that composites OVER the cut.
                       label: "Video",
-                      note: "Another row for footage and full-frame stills — drawn OVER the tracks below it",
+                      note: "Another video row",
                     },
                     {
                       kind: "image",
                       ico: "🖼",
                       label: "Images",
-                      note: "Pictures composited OVER the video — a logo, an inset, a cut-in",
+                      note: "Pictures over the video",
                     },
                     {
                       kind: "text",
                       ico: "T",
                       label: "Text",
-                      note: "Another row of captions, timed on their own",
+                      note: "Another captions row",
                     },
                     {
                       kind: "shape",
                       ico: "◆",
                       label: "Shape",
-                      note: "Another row for the vector shapes — boxes, stars, arrows",
+                      note: "Another shapes row",
                     },
                     {
                       kind: "audio",
@@ -10278,9 +10272,9 @@ export default function AnimaticEditor({
                       // out, on a project holding one file. Reported as "why is
                       // audio import not available through the dropdown".
                       label: "Audio",
-                      note: `An empty track, mixed with the others (${audioFileCount()}/${MAX_AUDIO_TRACKS})`,
+                      note: `Empty audio track (${audioFileCount()}/${MAX_AUDIO_TRACKS})`,
                       disabled: audioFileCount() >= MAX_AUDIO_TRACKS,
-                      disabledNote: `You already have the maximum of ${MAX_AUDIO_TRACKS} audio files — cutting one into pieces doesn't count against it`,
+                      disabledNote: `Maximum ${MAX_AUDIO_TRACKS} audio files`,
                     },
                     // ⚠ NO "Video — not supported yet" ENTRY, because it IS
                     // supported: a video track holds footage and stills alike,
@@ -10993,7 +10987,7 @@ export default function AnimaticEditor({
                           retireBlob(vidGenSource.blob);
                           setVidGenSource(null);
                         }}
-                        title="Render from the words alone instead"
+                        title="Remove this image"
                       >
                         Remove
                       </button>
@@ -11285,8 +11279,8 @@ export default function AnimaticEditor({
                 onClick={suggestShotPrompt}
                 title={
                   shotGenPrompt.trim()
-                    ? "Write this shot for me, using what you have typed as direction — it replaces the box"
-                    : "Write this shot for me, from the shots either side of it and the story around them"
+                    ? "Rewrite from your direction"
+                    : "Write this shot for me"
                 }
                 aria-label="Write this shot for me"
               >

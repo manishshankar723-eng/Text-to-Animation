@@ -66,11 +66,13 @@
 // — wheel and trackpad still work, they just don't draw anything — and the two
 // bars read the scroller's real geometry back out of the DOM, so nothing here
 // has to predict what the browser is going to lay out.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { cloneElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import PaneSplitter from "./PaneSplitter.jsx";
 import ZoomScrollbar from "./ZoomScrollbar.jsx";
 import Waveform from "./Waveform.jsx";
 import { fadeCurve, fadeWindow, trackPlayMs } from "../animatic/audio_mix.js";
 import { clipId, clipRoomMs, MIN_CLIP_MS } from "../animatic/audio_clips.js";
+import { getRowHeights, saveRowHeights } from "../animatic/row_heights.js";
 import {
   boxesOverlap,
   boxFromCorners,
@@ -190,18 +192,18 @@ const laneHue = (lane) => {
 };
 
 const LANE_HINT = {
-  frames: "A video track — footage and stills, each placed on its own",
-  image: "Pictures composited OVER the video, timed on their own",
-  text: "On-screen text, timed on its own",
-  shape: "Shapes drawn over the picture, timed on their own",
-  audio: "An audio track, mixed on export",
+  frames: "Video track",
+  image: "Picture layer",
+  text: "Text layer",
+  shape: "Shape layer",
+  audio: "Audio track",
 };
 const LANE_ADD = {
-  frames: "Add video or images to the end of this track",
-  image: "Add a picture to this layer",
-  text: "Add a text clip at the playhead",
-  shape: "Add a shape at the playhead",
-  audio: "Add an MP3 to this track",
+  frames: "Add video or image",
+  image: "Add a picture",
+  text: "Add a text clip",
+  shape: "Add a shape",
+  audio: "Add an MP3",
 };
 
 /**
@@ -659,6 +661,79 @@ export default function Timeline({
   // and the tracks BOTH measure themselves against, so the two columns stay in
   // step at any height — that is the whole reason the variable exists.
   const [trackH, setTrackH] = useState(DEFAULT_TRACK_H);
+  /**
+   * ONE ROW'S OWN HEIGHT, when it has been given one — `{ [lane.key]: rem }`.
+   *
+   * ⚠ THE SEAM UNDER A ROW SIZES THAT ROW, which is what every NLE does and what
+   * was asked for: "when user mouse go two layer in between then he do layer
+   * height change small and big, like my four panel". It is the same
+   * `PaneSplitter` the workspace's three seams use, so the gesture, the keyboard
+   * nudge and the double-click-to-reset are one implementation rather than a
+   * second one that behaves almost the same.
+   *
+   * ⚠ IT DOES NOT BREAK THE RULE AT THE TOP OF `animatic-lanes.css` ("do not
+   * give one kind of lane its own height — that is what put every label beside
+   * the wrong track once"). That rule is about a KIND of lane being drawn at a
+   * height of its own on ONE column. This is per ROW and it is applied to BOTH
+   * columns from one number (`heightOf`), so the label box and the track box are
+   * always the same height as each other, which is the invariant that mattered.
+   *
+   * ⚠ AND IT IS VIEW STATE, NOT THE DOCUMENT. `trackH` beside it is the same:
+   * neither is saved, neither is undoable, and neither is worth an autosave. A
+   * row height is how you are looking at the film, not part of the film — and
+   * putting it in the document would put it in the undo stack, where a Ctrl+Z
+   * after a resize would be looking for an edit and find a row.
+   */
+  const [laneH, setLaneH] = useState(getRowHeights);
+  /**
+   * ⚠ REMEMBERED, BECAUSE THE PANES ARE. Written a beat after the drag stops
+   * rather than on every pointer move: a resize is thirty `setLaneH` calls and
+   * thirty `JSON.stringify` + `localStorage.setItem` pairs is thirty synchronous
+   * writes for one gesture. 250ms is under the time it takes to reach for
+   * anything else and long enough that a drag writes once.
+   */
+  useEffect(() => {
+    const timer = setTimeout(() => saveRowHeights(laneH), 250);
+    return () => clearTimeout(timer);
+  }, [laneH]);
+  /** The row's height in rem: its own if it has one, else the vertical zoom's. */
+  const heightOf = (lane) => {
+    const own = lane && laneH[lane.key];
+    return typeof own === "number" && Number.isFinite(own) ? own : trackH;
+  };
+  /**
+   * `--tl-track-h` for one row, for whichever column is asking — or NOTHING.
+   *
+   * ⚠ ONLY A ROW THAT HAS BEEN GIVEN ITS OWN HEIGHT CARRIES AN INLINE VALUE.
+   * Writing it on every row was the first version and it was wrong in a way that
+   * is easy to miss: an inline custom property beats every stylesheet rule, so a
+   * timeline where each lane declared its own `--tl-track-h` could no longer be
+   * driven by setting that variable higher up. The vertical zoom still worked
+   * (it goes through `heightOf`), but anything else that reaches for the variable
+   * — a future rule on `.tl-wrap`, a media query, the harness in
+   * `editor_lane_move_check.py` that simulates the zoom by writing it on the
+   * wrapper — was silently overridden on every row at once.
+   *
+   * So an untouched row inherits, exactly as it did before any of this existed,
+   * and the override appears the moment a seam is dragged and disappears when it
+   * is reset.
+   */
+  const laneStyle = (lane) => {
+    const own = lane && laneH[lane.key];
+    return typeof own === "number" && Number.isFinite(own)
+      ? { "--tl-track-h": `${own}rem` }
+      : undefined;
+  };
+  /**
+   * rem, from the px a drag produces.
+   *
+   * ⚠ READ OFF THE ROOT RATHER THAN ASSUMED TO BE 16. Every length on this bar
+   * is in rem so that the whole timeline scales with the browser's font size
+   * (see `.tl-wrap`); hard-coding 16 here would make one drag mean a different
+   * number of rows-worth on a machine with larger text.
+   */
+  const remPx = () =>
+    parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 
   const readView = useCallback(() => {
     const el = scrollRef.current;
@@ -712,7 +787,7 @@ export default function Timeline({
 
   // …and it changes when the content does: a new layer, a longer audio track, a
   // different zoom. Layout effect, so the bars are never a frame out of date.
-  useLayoutEffect(readView, [readView, width, lanes.length, trackH, frames.length]);
+  useLayoutEffect(readView, [readView, width, lanes.length, trackH, laneH, frames.length]);
 
   // --- Zooming from the bars ----------------------------------------------
   // A grip asks for a WINDOW — "show me from here to here" — as fractions of
@@ -747,9 +822,11 @@ export default function Timeline({
     const rulerH = trackRef.current?.offsetHeight || 0;
     const viewH = Math.max(1, el.clientHeight - rulerH);
     const contentH = Math.max(1, el.scrollHeight - rulerH);
-    // The gaps between lanes don't scale, so this is an approximation — but it
-    // is applied live while the pointer is down, so it converges on what you
-    // asked for as you drag.
+    // The gaps between lanes don't scale — and a row that has been given its
+    // own height (`laneH`) does not scale with this at all — so this is an
+    // approximation. It is applied live while the pointer is down and
+    // `contentH` is re-measured every move, so it converges on what you asked
+    // for as you drag whatever the rows are doing.
     const wanted = Math.max(0.02, b - a) * contentH;
     const next = Math.min(
       MAX_TRACK_H,
@@ -777,7 +854,7 @@ export default function Timeline({
       wantTop.current = null;
     }
     readView();
-  }, [pxPerSec, trackH, readView]);
+  }, [pxPerSec, trackH, laneH, readView]);
 
   function panX(px) {
     const el = scrollRef.current;
@@ -1279,7 +1356,7 @@ export default function Timeline({
       <button
         type="button"
         className="tl-fx"
-        title={`${n} effect${n === 1 ? "" : "s"} on this clip — click to manage them in Properties`}
+        title={`${n} effect${n === 1 ? "" : "s"}`}
         /* The bar underneath selects on pointerdown and can start a drag from
            it. Both are right for the bar and wrong for a button sitting on it,
            so the press stops here and the click does the work. */
@@ -2044,11 +2121,7 @@ export default function Timeline({
               left: at,
               top: `calc(var(--tl-key-top) + ${row} * var(--tl-key-row))`,
             }}
-            title={
-              `${prop} key at ${(shown / 1000).toFixed(2)}s into this clip — ` +
-              "click to go there, drag to re-time it, " +
-              "shift-drag to move every property keyed at this instant"
-            }
+            title={`${prop} key · ${(shown / 1000).toFixed(2)}s`}
             onPointerDown={(e) => startKeyDrag(e, item, t, clipStartMs, kind, prop)}
           />
         );
@@ -2449,7 +2522,7 @@ export default function Timeline({
             type="button"
             className="tl-transition tl-tr-add"
             style={{ left: at }}
-            title="Add a transition on this cut"
+            title="Add transition"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => onAddTransition?.(frames[i].id)}
           >
@@ -2494,7 +2567,7 @@ export default function Timeline({
             dragging ? "dragging" : "",
           ].join(" ")}
           style={{ left: at - width / 2, width }}
-          title={`${win.kind} · ${(durationMs / 1000).toFixed(1)}s across this cut — drag the edge to change it`}
+          title={`${win.kind} · ${(durationMs / 1000).toFixed(1)}s`}
           onPointerDown={(e) => {
             e.stopPropagation();
             onSelectTransition?.(transition.id);
@@ -2503,7 +2576,7 @@ export default function Timeline({
           <span className="tl-tr-mark" />
           <span
             className="tl-tr-handle"
-            title="Drag to change how long the transition lasts"
+            title="Drag to change length"
             onPointerDown={(e) => startTransitionDrag(e, transition, { ...win, maxMs })}
           />
         </button>
@@ -3146,14 +3219,9 @@ export default function Timeline({
               style={{ left, width: w }}
               onPointerDown={(e) => startClipDrag(e, item, "move", lane)}
               title={
-                `${body.title(item)} — ${(start / 1000).toFixed(1)}s for ${(duration / 1000).toFixed(1)}s` +
-                (overruns ? " (runs past the end of the video)" : "") +
-                (grouped ? " · grouped — selecting it selects the others" : "") +
-                "\nDrag it up or down onto another " +
-                (lane.kind === "image" ? "picture" : lane.kind) +
-                " layer to move it there." +
-                "\nShift-click to add it to the selection; drag the empty part of a lane to select several." +
-                "\nAlt-drag it to duplicate it — the copy lands where you let go."
+                `${body.title(item)} — ${(duration / 1000).toFixed(1)}s` +
+                (overruns ? " · past the end" : "") +
+                (grouped ? " · grouped" : "")
               }
             >
               {body.render(item, w)}
@@ -3175,13 +3243,13 @@ export default function Timeline({
                 <span
                   className="tl-handle tl-handle-l"
                   onPointerDown={(e) => startClipDrag(e, item, "trim-start", lane)}
-                  title="Drag to trim the head — it comes in later and still ends where it did"
+                  title="Trim the head"
                 />
               )}
               <span
                 className="tl-handle"
                 onPointerDown={(e) => startClipDrag(e, item, "resize", lane)}
-                title="Drag to change how long this stays on screen"
+                title="Trim the tail"
               />
             </div>
           );
@@ -3325,12 +3393,8 @@ export default function Timeline({
                   setClipMenuId(f.id);
                 }}
                 title={
-                  `${f.label || `Frame ${index + 1}`} — ${(start / 1000).toFixed(1)}s ` +
-                  `for ${(ms / 1000).toFixed(1)}s` +
-                  (clash ? " · OVERLAPPING its neighbour — only the later one shows" : "") +
-                  "\nDrag it along to re-time it, or up and down onto another picture track." +
-                  "\nIts edges trim it; B ripples what follows, N rolls the cut." +
-                  "\nAlt-drag it to duplicate it — the copy lands where you let go."
+                  `${f.label || `Frame ${index + 1}`} — ${(ms / 1000).toFixed(1)}s` +
+                  (clash ? " · overlapping" : "")
                 }
               >
                 <span className="tl-bar-label">{w > 34 ? f.label || index + 1 : ""}</span>
@@ -3355,12 +3419,10 @@ export default function Timeline({
                     onPointerDown={(e) => startClipDrag(e, f, "trim-start", lane)}
                     title={
                       tool === "rolling"
-                        ? "Rolling edit — drag the cut at the head; the clip before it absorbs the change"
+                        ? "Rolling edit"
                         : tool === "ripple"
-                          ? "Ripple trim — the head comes in later and everything after it on this track moves up"
-                          : clipKind(f) === "video"
-                            ? "Drag to trim the head — it starts later into the footage and still ends where it did"
-                            : "Drag to trim the head — it comes in later and still ends where it did"
+                          ? "Ripple trim"
+                          : "Trim the head"
                     }
                   />
                 )}
@@ -3369,10 +3431,10 @@ export default function Timeline({
                   onPointerDown={(e) => startClipDrag(e, f, "resize", lane)}
                   title={
                     tool === "rolling"
-                      ? "Rolling edit — drag the cut; the next clip absorbs it and the track stays the same length"
+                      ? "Rolling edit"
                       : tool === "ripple"
-                        ? "Ripple trim — everything after it on this track moves with the edge, so no gap is left"
-                        : "Drag to change how long this is held — it leaves a gap rather than moving its neighbours"
+                        ? "Ripple trim"
+                        : "Trim the tail"
                   }
                 />
               </div>
@@ -3510,7 +3572,7 @@ export default function Timeline({
                 audioDraft?.toKey && audioDraft.id === id ? "lifting" : "",
               ].join(" ")}
               style={{ left, width: clipW }}
-              title={`${track.filename} — ${(trackStart(track) / 1000).toFixed(1)}s for ${(lengthMs / 1000).toFixed(1)}s. Drag to move it along the timeline, or up and down onto another audio layer to move it there. The razor (C) cuts it where you click; shift-click adds it to the selection, alt-drag makes a copy.`}
+              title={`${track.filename} — ${(lengthMs / 1000).toFixed(1)}s`}
               onPointerDown={(e) => {
                 // ⚠ THE RAZOR BEATS THE DRAG, and it has to: with the tool
                 // selected, a press on a clip means "cut here", and starting a
@@ -3538,10 +3600,12 @@ export default function Timeline({
                 width={clipW}
                 /* Matches --tl-track-h less the track's borders, so a waveform
                    fills its lane exactly like the other tracks. A canvas can't be
-                   sized in rem, so the current track height is converted here —
-                   which also means the waveform grows when the vertical scroll
-                   bar's grips make the tracks taller. */
-                height={Math.max(12, Math.round(trackH * 16) - 4)}
+                   sized in rem, so the height is converted here — which is also
+                   why it grows when the vertical scroll bar's grips make every
+                   track taller, and when THIS row is dragged taller by the seam
+                   under it (`heightOf`, not `trackH`: the audio row may have a
+                   height of its own now). */
+                height={Math.max(12, Math.round(heightOf(lane) * remPx()) - 4)}
                 totalMs={lengthMs}
                 offsetMs={trackOffset(track)}
               />
@@ -3575,13 +3639,13 @@ export default function Timeline({
                 className="tl-fade-grip in"
                 style={{ left: clamp(inW - 5, 0, Math.max(0, clipW - 10)) }}
                 onPointerDown={(e) => startFadeDrag(e, track, "in", lengthMs)}
-                title={`Fade in — ${(fade.inMs / 1000).toFixed(1)}s. Drag to change it.`}
+                title={`Fade in — ${(fade.inMs / 1000).toFixed(1)}s`}
               />
               <span
                 className="tl-fade-grip out"
                 style={{ left: clamp(clipW - outW - 5, 0, Math.max(0, clipW - 10)) }}
                 onPointerDown={(e) => startFadeDrag(e, track, "out", lengthMs)}
-                title={`Fade out — ${(fade.outMs / 1000).toFixed(1)}s. Drag to change it.`}
+                title={`Fade out — ${(fade.outMs / 1000).toFixed(1)}s`}
               />
               {/* A grip at BOTH ends now. The left one is what lets you tidy up
                   the head of a piece the razor left behind, without dragging
@@ -3589,12 +3653,12 @@ export default function Timeline({
               <span
                 className="tl-handle tl-handle-l"
                 onPointerDown={(e) => startAudioDrag(e, track, "start", lane)}
-                title="Drag to trim the head of this clip — it stays where it is on the timeline"
+                title="Trim the head"
               />
               <span
                 className="tl-handle"
                 onPointerDown={(e) => startAudioDrag(e, track, "end", lane)}
-                title="Drag to trim how much of this clip plays"
+                title="Trim the tail"
               />
             </div>
           );
@@ -3636,7 +3700,7 @@ export default function Timeline({
             type="button"
             className="tl-add-layer"
             onClick={onAddLayer}
-            title="Add an empty layer — pick what kind"
+            title="Add layer"
             aria-haspopup="menu"
             aria-expanded={!!addLayerMenu}
           >
@@ -3693,11 +3757,14 @@ export default function Timeline({
               const canMove = !!onMoveLane && !!lane.movable && !lane.locked;
               const selected = ids.includes(selectedTrackId);
               return (
+                <div key={`row:${lane.key}`} className="tl-gutter-stack">
                 <div
-                  key={lane.key}
                   /* The handle the confirm is measured against — see the layout
                      effect by `laneDelete`. A key, not an index: rows come and go. */
                   data-lane-row={lane.key}
+                  /* THIS ROW'S OWN HEIGHT. The same number goes on the track in
+                     the other column — see `heightOf`. */
+                  style={laneStyle(lane)}
                   /* `tl-hue-*` is the row's own colour — see `laneHue`. It is
                      the only class here that says anything about CONTENT; the
                      rest are states. */
@@ -3708,16 +3775,12 @@ export default function Timeline({
                   } ${canMove ? "movable" : ""} ${
                     laneIsDragging(lane) ? "dragging" : ""
                   }`}
-                  title={
-                    (lane.hint || LANE_HINT[lane.kind]) +
-                    "\nDouble-click to select everything on this row." +
-                    /* ⚠ SAID ONLY ON THE ROWS THAT REALLY MOVE. `movable` is
-                       false for audio and for the captions row, and false for a
-                       row that is the only one of its kind — there is nowhere for
-                       it to go — and `canMove` also rules out a locked row, so
-                       this never promises a gesture that then does nothing. */
-                    (canMove ? "\nDrag it up or down to restack it." : "")
-                  }
+                  /* ⚠ SHORT ON PURPOSE — two to four words, like every other
+                     tooltip on this timeline. The gestures this row answers to
+                     (double-click selects it all, drag restacks it) are taught
+                     by the shortcuts panel, not by a paragraph that sits on top
+                     of the clips every time the pointer crosses the gutter. */
+                  title={lane.hint || LANE_HINT[lane.kind] || "Layer"}
                   onPointerDown={(e) => startLaneDrag(e, lane)}
                   onClick={() => ids.length && onSelectTrack(ids[0])}
                   /* ⚠ THE SHORTEST WAY TO "SELECT ALL OF THESE AND DELETE THEM",
@@ -3755,11 +3818,7 @@ export default function Timeline({
                         e.stopPropagation();
                         onSplitFootage(lane);
                       }}
-                      title={
-                        "Put this row's video clips on a picture track of their own. " +
-                        "Nothing is re-timed — every clip still plays at the same moment; " +
-                        "they just get a row you can trim without touching the stills."
-                      }
+                      title="Split to own track"
                     >
                       ▶⇧
                     </button>
@@ -3797,7 +3856,7 @@ export default function Timeline({
                         disabled={clips.length === 0}
                         title={
                           clips.length === 0
-                            ? `Nothing on ${lane.name} to mute yet`
+                            ? "Nothing to mute"
                             : muted
                               ? "Unmute this track"
                               : "Mute this track"
@@ -3816,10 +3875,10 @@ export default function Timeline({
                         disabled={!lane.vis}
                         title={
                           !lane.vis
-                            ? "This row is always drawn"
+                            ? "Always drawn"
                             : lane.hidden
-                              ? `Show ${lane.name} again — it is left out of the video while it is off`
-                              : `Hide ${lane.name} — it stays on the timeline but is left out of the monitor and the video`
+                              ? `Show ${lane.name}`
+                              : `Hide ${lane.name}`
                         }
                         aria-pressed={!!lane.hidden}
                       >
@@ -3848,10 +3907,10 @@ export default function Timeline({
                       disabled={!lane.vis}
                       title={
                         !lane.vis
-                          ? "This row can't be locked"
+                          ? "Can't be locked"
                           : lane.locked
-                            ? `Unlock ${lane.name} — it can be edited again`
-                            : `Lock ${lane.name} — it keeps playing and exporting, but nothing on it can be moved, trimmed or deleted`
+                            ? `Unlock ${lane.name}`
+                            : `Lock ${lane.name}`
                       }
                       aria-pressed={!!lane.locked}
                     >
@@ -3868,7 +3927,7 @@ export default function Timeline({
                       disabled={!!lane.locked}
                       title={
                         lane.locked
-                          ? `${lane.name} is locked — unlock it to add to it`
+                          ? `${lane.name} is locked`
                           : lane.add || LANE_ADD[lane.kind]
                       }
                     >
@@ -3908,19 +3967,56 @@ export default function Timeline({
                       aria-expanded={confirmKey === lane.key}
                       title={
                         lane.locked
-                          ? `${lane.name} is locked — unlock it to delete it`
+                          ? `${lane.name} is locked`
                           : lane.removable
                             ? `Remove ${lane.name}`
                             : clips.length
                               ? `Remove ${clips[0].filename}`
                               : count > 0
-                                ? `Delete everything on ${lane.name} (${count})`
-                                : `Nothing on ${lane.name} to delete yet`
+                                ? `Delete all (${count})`
+                                : "Nothing to delete"
                       }
                     >
                       <Icon name="close" />
                     </button>
                   </div>
+                </div>
+                {/* THE SEAM UNDER THE ROW — drag it to make THIS row taller or
+                    shorter, double-click to put it back to whatever the vertical
+                    zoom says. The same component as the workspace's three pane
+                    seams, which is the point: it was asked for as "like my four
+                    panel move program, media, properties".
+                    ⚠ IT SITS IN THE GAP AND TAKES UP NO ROOM. `--tl-row-gap` is
+                    about 5px, which is too thin to aim at, so the handle is 9px
+                    tall with the difference taken back in negative margins: the
+                    hit area straddles the seam and the rows do not move a pixel
+                    to make room for it. See `.tl-row-split`.
+                    ⚠ AND IT IS IN THE GUTTER, NOT OVER THE TRACK. The track lane
+                    is wall-to-wall gestures — scrub, marquee, move a clip, trim
+                    an edge — and a 9px strip across it that swallowed the press
+                    would take a trim away from every clip whose edge is near a
+                    row boundary. The labels have room to spare. */}
+                <PaneSplitter
+                  orientation="horizontal"
+                  className="tl-row-split"
+                  value={heightOf(lane) * remPx()}
+                  min={MIN_TRACK_H * remPx()}
+                  max={MAX_TRACK_H * remPx()}
+                  sign={1}
+                  step={8}
+                  onChange={(px) =>
+                    setLaneH((was) => ({ ...was, [lane.key]: px / remPx() }))
+                  }
+                  onReset={() =>
+                    setLaneH((was) => {
+                      if (!(lane.key in was)) return was;
+                      const next = { ...was };
+                      delete next[lane.key];
+                      return next;
+                    })
+                  }
+                  label={`${lane.name} height`}
+                />
                 </div>
               );
             })}
@@ -4057,7 +4153,7 @@ export default function Timeline({
                     setClipMenuId(null);
                     onGenerateShot(clipMenuClip, "before");
                   }}
-                  title="Draw the shot that is missing in FRONT of this one, in the board's own look, and drop it into the cut"
+                  title="Draw the shot before"
                 >
                   <span className="tl-layer-menu-ico">
                     <Icon name="sparkle" />
@@ -4072,7 +4168,7 @@ export default function Timeline({
                     setClipMenuId(null);
                     onGenerateShot(clipMenuClip, "after");
                   }}
-                  title="Draw the shot that is missing AFTER this one, in the board's own look, and drop it into the cut"
+                  title="Draw the shot after"
                 >
                   <span className="tl-layer-menu-ico">
                     <Icon name="sparkle" />
@@ -4098,7 +4194,7 @@ export default function Timeline({
                   setClipMenuId(null);
                   onDownloadClip(clipMenuClip);
                 }}
-                title="Save this Veo render to your computer — deleting the project will not lose it then"
+                title="Save to your computer"
               >
                 <span className="tl-layer-menu-ico">
                   <Icon name="download" />
@@ -4142,7 +4238,23 @@ export default function Timeline({
               )}
             </div>
 
-            {lanes.map((lane) => renderLane(lane))}
+            {/* ⚠ THE HEIGHT IS CLONED ON RATHER THAN THREADED THROUGH.
+                `renderLane` returns four different shapes (a clip lane, a bar
+                row, an audio row, a picture row) and each one would have had to
+                take and apply a style prop — four places to change and four to
+                forget. The row's height belongs to the ROW, not to what is drawn
+                on it, so it is set on whatever came back. `data-lane` and every
+                class stay exactly where they were, which is what `laneAtPoint`
+                and the marquee read. */}
+            {lanes.map((lane) => {
+              const drawn = renderLane(lane);
+              if (!drawn) return drawn;
+              const own = laneStyle(lane);
+              if (!own) return drawn;
+              return cloneElement(drawn, {
+                style: { ...(drawn.props.style || {}), ...own },
+              });
+            })}
 
             {/* The rubber band. Drawn inside the scrolling content and never
                 catching the pointer itself — it is a picture of the gesture,

@@ -291,13 +291,34 @@ probe.drift = () => {
   return out;
 };
 
-/** Press one gutter row's control, found by the name shown in it. */
+/**
+ * Press one gutter row's control, found by the name shown in it.
+ *
+ * ⚠ THE ROW IS SCROLLED INTO VIEW FIRST, and that is not a nicety. `btn.click()`
+ * reaches a button on a row that has been scrolled off the bottom of the pane —
+ * something no hand can do — and the ✕'s confirm is then CLAMPED inside the pane
+ * (deliberately: "a confirm about the top row must not open half way off the top
+ * of the timeline"), which puts it nowhere near a row that is not on screen. That
+ * failed the "level with the row it is about" check for a situation the UI cannot
+ * produce. Revealing the row first asks the question a user would ask.
+ */
 probe.press = (rowName, cls) => {
   const rows = Array.from(document.querySelectorAll(".tl-gutter-row"));
   const row = rows.find(
     (r) => ((r.querySelector(".tl-layer-name") || {}).textContent || "").trim() === rowName
   );
   if (!row) return "no row " + rowName;
+  // The gutter is dragged along by a transform when the LANES scroll, so the
+  // thing to scroll is the lane, and the label follows it.
+  const key = row.dataset.laneRow;
+  const lane = key ? document.querySelector(`[data-lane="${key}"]`) : null;
+  const sc = document.querySelector(".tl-scroll");
+  if (lane && sc) {
+    const view = sc.getBoundingClientRect();
+    const box = lane.getBoundingClientRect();
+    const mid = box.top + box.height / 2;
+    sc.scrollTop += mid - (view.top + view.height / 2);
+  }
   const btn = row.querySelector(cls);
   if (!btn) return "no " + cls;
   if (btn.disabled) return cls + " is disabled";

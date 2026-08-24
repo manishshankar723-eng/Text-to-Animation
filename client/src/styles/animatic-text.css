@@ -43,28 +43,8 @@
      The gutter width above has to keep room for the name BESIDE this cluster —
      the two are budgeted together. */
   --tl-act-w: 1.15rem;
-  /* Keyframe rows: one per ANIMATED property, stacked down the clip.
-     ⚠ In `rem`, like the track they sit in — NOT px. Mixing the two means the
-     rows keep their size while the track shrinks with the browser's font size,
-     and the bottom row eventually lands in the transition band. Everything on
-     this bar scales together or the bands stop being bands.
-     Two budgets have to hold at once, and the tighter one is the second:
-       · a FRAME animates at most 4 (zoom, x, y, opacity). Four rows reach
-         1.52rem including the diamonds' rotated corners; `.tl-transition`
-         starts at 66% of 2.6rem = 1.72rem, so they clear it.
-       · a SHAPE animates 7 (x, y, scale, w, h, opacity, rotation) and its clip
-         is inset 3px top and bottom, leaving 2.23rem.
-     ⚠ `--tl-key-row` WENT 0.31 → 0.27rem WHEN A SHAPE GAINED `scale`. The reach
-     of the last row is `top + (n−1) × row + size·√2` (the √2 because the
-     diamonds are rotated 45° and positioned by their corner): at 0.31 a SEVENTH
-     row reached 2.43rem against a 2.23rem lane, so it was sliced off by the
-     clip's `overflow: hidden` — a keyframe you had set, on a bar that showed no
-     sign of it. At 0.27 seven rows reach 2.19rem and fit. The FRAME budget
-     above only got roomier (four rows now reach 1.38rem against the transition
-     band's 1.72rem), so nothing else had to move. */
-  --tl-key-top: 0.15rem;
-  --tl-key-row: 0.27rem;
-  --tl-key-size: 0.3rem;
+  /* Keyframe rows live on `.tl-lane` in `animatic-lanes.css`, not here — see
+     the ⚠ note there for why they cannot be declared on this element. */
   /* A COLUMN now: the two label/track columns, and the horizontal scroll bar
      under both of them. `--tl-track-h` above is only the default — the vertical
      bar's grips overwrite it inline, and every row on both columns is measured

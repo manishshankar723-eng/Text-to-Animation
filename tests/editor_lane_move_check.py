@@ -306,7 +306,21 @@ probe.revealPair = (sel, laneKey) => {
 };
 
 /**
- * Does every empty-row PROMPT fit inside its own row?
+ * Does text in a variable-height lane fit inside its row?
+ *
+ * ⚠ THE EMPTY-ROW PROMPT THIS WAS WRITTEN FOR NO LONGER EXISTS. It was removed
+ * from `Timeline.jsx`, and `animatic-text.css` says so over the rules that
+ * outlived it: "THE EMPTY-ROW PROMPT IS GONE and these rules did NOT go with it
+ * — the audio clip's 'Loading …' placeholder below is the one thing still putting
+ * text in this box". So for a while this measured a selector that matched nothing
+ * while asserting `bool(fit)`, and failed for the one reason a test must never
+ * fail: the thing it was about had gone and nobody had told it.
+ *
+ * What is left to protect is the FIX, not the prompt: `.tl-track-empty` has no
+ * vertical padding, so a single line in it is centred and cannot be sliced by the
+ * lane's `overflow: hidden` at any row height. That is asserted two ways now —
+ * the computed padding (which IS the fix, and cannot rot into a no-op), and the
+ * measured line box of a real element in a real lane.
  *
  * ⚠ MEASURED OFF THE TEXT NODE, not off the button. The button is the full
  * height of the lane by construction, so asking IT whether it overflows answers
@@ -324,6 +338,33 @@ probe.promptFit = (trackH) => {
   const was = wrap.style.getPropertyValue("--tl-track-h");
   if (trackH) wrap.style.setProperty("--tl-track-h", trackH);
   const out = [];
+  // ⚠ THE PADDING IS THE FIX, SO THE PADDING IS THE CHECK. Measured on a real
+  // element in a real lane — and inside `.tl-audio` too, because that row had an
+  // override of its own ("the audio row's `padding: 0.9rem` override made it
+  // worse still"). Synthesised rather than found: the placeholder it belongs to
+  // is only on screen while a waveform is loading.
+  for (const sel of [".tl-lane", ".tl-lane.tl-audio"]) {
+    const lane = document.querySelector(sel);
+    if (!lane) continue;
+    const probeEl = document.createElement("span");
+    probeEl.className = "tl-track-empty";
+    probeEl.textContent = "gyp";
+    lane.appendChild(probeEl);
+    const cs = getComputedStyle(probeEl);
+    const pad = [parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingBottom) || 0];
+    const range = document.createRange();
+    range.selectNodeContents(probeEl);
+    const text = range.getBoundingClientRect();
+    const box = lane.getBoundingClientRect();
+    out.push({
+      row: sel + " (synthesised)",
+      pad,
+      over: Math.round(Math.max(box.top - text.top, text.bottom - box.bottom)),
+      clipped: pad[0] > 0.01 || pad[1] > 0.01
+        || text.top < box.top - 0.5 || text.bottom > box.bottom + 0.5,
+    });
+    probeEl.remove();
+  }
   for (const el of document.querySelectorAll(".tl-lane .tl-track-empty")) {
     const lane = el.closest("[data-lane]");
     const node = el.firstChild;
@@ -482,6 +523,20 @@ def main():
             page = browser.new_page(viewport={"width": 1600, "height": 1800})
             page.route("**/animatics/**", route_api)
             page.route("**/animatics", route_api)
+            # ⚠ AND THE TIMELINE PANE IS ASKED FOR TALL, WHICH THE VIEWPORT ALONE
+            # CANNOT DO. `defaultLayout` in `pane_layout.js` opens the timeline at
+            # `clamp(round(h * 0.3), 208, 320)` — so on this deliberately tall page
+            # the pane still opened at its 320px CEILING, the scroller inside it was
+            # 199px, and a cross-row drag that needs 223px of it was refused by
+            # `revealPair` with "needs 223px of 199px". That read as a broken
+            # gesture and was a harness that could not show two rows at once.
+            # The pane's own limit here is `max(200, h * 0.62)`, so 700 is a size a
+            # person could drag it to — this is the drag, made before the app boots.
+            page.add_init_script(
+                "localStorage.setItem('cas_animatic_panes', JSON.stringify({"
+                " long: { left: 200, right: 260, timeline: 700 },"
+                " reel: { left: 200, right: 260, timeline: 700 } }));"
+            )
             page.goto(f"http://127.0.0.1:{port}/__probe_lanemove.html")
             page.wait_for_function("window.__probe && window.__probe.ready", timeout=60000)
 
@@ -637,16 +692,19 @@ def main():
             # end it landed on the row's bottom edge and `overflow: hidden` took
             # its descenders off. Checked at BOTH ends of the zoom, because a fix
             # that only holds at the default height is not a fix.
-            print("\nThe empty-row prompts fit their rows at any track height")
+            # ⚠ THE PROMPT ITSELF IS GONE (see `probe.promptFit`); what is checked
+            # now is the RULE that fixed it, which still governs the audio row's
+            # "Loading …" placeholder and any other text put in a lane.
+            print("\nText in a lane is centred, not padded, at any track height")
             for label, height in [("the default row height", ""),
                                   ("the SHORTEST row the zoom allows", "1.5rem"),
                                   ("the tallest row the zoom allows", "6rem")]:
                 fit = page.evaluate("(h) => window.__probe.promptFit(h)", height)
                 bad = [f for f in fit if f["clipped"]]
                 check(
-                    f"no empty-row prompt is sliced by its row at {label}",
+                    f"a line of text in a lane is not sliced at {label}",
                     bool(fit) and not bad,
-                    f"measured {len(fit)} prompt(s); overflowing: {bad}",
+                    f"measured {len(fit)} box(es); overflowing: {bad}",
                 )
 
             print("\nAfterwards")

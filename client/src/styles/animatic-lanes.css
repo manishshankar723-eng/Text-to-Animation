@@ -15,6 +15,96 @@
   height: var(--tl-track-h);
   margin-top: var(--tl-row-gap);
 }
+/* --- The seam that resizes one row --------------------------------------- */
+/* A `PaneSplitter` — the same component the workspace's three seams use — sitting
+   on the bottom edge of a gutter row. Drag it: that row gets taller or shorter.
+   Double-click it: back to whatever the vertical zoom says.
+
+   ⚠ ABSOLUTE, SO IT COSTS NO LAYOUT AT ALL. `--tl-row-gap` is about 5px, which
+   is too thin to aim at, and an in-flow handle 9px tall would have had to give
+   the 4px back in negative margins — which collapse against the next row's own
+   `margin-top` and quietly eat the gap. Positioned off the row's bottom edge it
+   straddles the seam, the rows do not move a pixel, and the alignment rule at the
+   top of this file ("one height, one gap, on every row without exception") is
+   untouched: the row's box is exactly what it was.
+
+   ⚠ THE WRAPPER IS `.tl-gutter-stack` AND IT IS A PLAIN BLOCK ON PURPOSE. The
+   row's `margin-top` collapses straight through it, so the gutter's rhythm is the
+   same with the wrapper as without it. Give it a border, a padding or
+   `display: flow-root` and every row gains a second gap.
+
+   ⚠ THE CLASS IS DOUBLED (`.an-split.tl-row-split`) so it beats
+   `.an-split-horizontal`'s own `height` whatever order the imports end up in.
+   `index.css`'s header warns that moving an import can change the page without
+   changing a declaration; this is one of the places that would. */
+.tl-gutter-stack {
+  position: relative;
+}
+.an-split.tl-row-split {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tl-row-gap) * -1);
+  height: calc(var(--tl-row-gap) + 4px);
+  width: auto;
+  z-index: 6;
+  cursor: row-resize;
+}
+/* The gold line, drawn only on hover / focus / drag — `.an-split-grip` already
+   does that; this only says how wide it is. Inset from both ends so it reads as
+   a seam under the label rather than a rule across the whole column. */
+.tl-row-split .an-split-grip {
+  height: 2px;
+  width: calc(100% - 1.6rem);
+}
+
+/* ⚠ THE KEYFRAME METRICS ARE DECLARED HERE, ON THE LANE, AND NOT ON `.tl-wrap`
+   WHERE EVERY OTHER `--tl-*` LIVES. They are `calc()`s over `--tl-track-h`, and a
+   custom property's own `var()`s are substituted where the property is DECLARED,
+   not where it is finally used: declared on `.tl-wrap` they would compute once
+   against the wrapper's height and inherit that fixed pixel value into every
+   lane, so a row dragged taller by its seam drew the same small diamonds it
+   always had. Declared on the lane they resolve against THAT lane's own
+   `--tl-track-h` — which is the inline one `heightOf` writes per row.
+   The arithmetic and the budget are written out over the values themselves. */
+.tl-lane {
+  /* Keyframe rows: one per ANIMATED property, stacked down the clip.
+     ⚠ THEY USED TO BE FIXED rem (top 0.15, row 0.27, size 0.30) and the note
+     here explained why: everything on this bar is in rem so that it all scales
+     together with the browser's font size, and a SEVENTH row at the old 0.31
+     pitch reached 2.43rem against a 2.23rem lane and was sliced off by the clip's
+     `overflow: hidden` — a keyframe you had set, on a bar that showed no sign of
+     it. All of that reasoning still stands; only the unit has moved on, from
+     "a fraction of the root font size" to "a fraction of THIS ROW", which is a
+     strictly stronger version of the same idea now that a row can be any height.
+     See the ratios below for the arithmetic.
+
+     ⚠ THEY ARE A FRACTION OF THE ROW, NOT A FIXED rem. Two reasons:
+       1. THE DIAMONDS WERE TOO SMALL TO AIM AT — asked for as "keep key size
+          little big in clip". At the default row height these ratios give
+          0.40rem against the old 0.30, a third bigger, with the row pitch pulled
+          in from 0.27 to 0.25 to pay for the extra reach (see the budget below).
+       2. A ROW CAN BE RESIZED ONE ROW AT A TIME NOW (`.tl-row-split`), so "the
+          keys are too small" has an answer the user can act on: drag the row
+          taller and the diamonds grow with it. Fixed rem values would have left
+          seven keyframe rows huddled at the top of a 6rem lane.
+     ⚠ AND THE BUDGET IS NOW A RATIO THAT HOLDS AT EVERY HEIGHT. The reach of the
+     last row is `top + (n−1) × row + size × √2` (the √2 because the diamonds are
+     rotated 45° and positioned by their corner), which comes to 0.845 × H:
+       · a FRAME animates at most 4 (zoom, x, y, opacity) → 0.05 + 3×0.096 +
+         0.219 = 0.557H, against `.tl-transition`'s band at 0.66H. Clear.
+       · a SHAPE animates 7 (x, y, scale, w, h, opacity, rotation) → 0.845H,
+         against a clip inset 3px top and bottom, i.e. H − 0.375rem.
+     ⚠ WHICH MEANS THE SEVEN-ROW CASE NEEDS H ≥ 2.42rem — the default 2.6 clears
+     it, the 1.5rem floor does not. That is not a regression: with the old fixed
+     values seven rows reached 2.19rem against the same 1.125rem of lane, which
+     was far worse. And it is now fixable from the timeline instead of from this
+     file: the row that is too short to show its keys is the row you drag taller. */
+  --tl-key-top: calc(var(--tl-track-h) * 0.05);
+  --tl-key-row: calc(var(--tl-track-h) * 0.096);
+  --tl-key-size: calc(var(--tl-track-h) * 0.155);
+}
+
 .tl-lane {
   position: relative;
   border: 1px solid var(--border);
