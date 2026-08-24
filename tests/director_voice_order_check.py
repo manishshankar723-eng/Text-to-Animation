@@ -145,17 +145,30 @@ const before = timeline([2000, 6000, 2000, 2000, 2000, 2000]);
 const script = [{ frame_id: "f5", ms: 9000, text: "the machine is finished" }];
 const after = speakOver(before, script);
 
+// ⚠ THIS SECTION PLANS WITH VEO TICKED, AND THAT IS NOT INCIDENTAL. It reads
+// WHICH CUT the rhythm chooses, and since 2026-08-24 that question only has a
+// rhythm-dependent answer when footage is coming: with Veo OFF the stills are
+// the film and the house pattern is a transition on every OTHER cut, chosen by
+// position rather than by hold (see `transitionBudget` and the ⚠ note over the
+// planner's candidate list). With Veo ON a transition is emphasis and lands on
+// the long holds, which is the behaviour whose answer the voiceover changes.
+//
+// The re-anchor property itself is not weakened by that — with Veo off the pass
+// still moves what the plan is about, and the sections below on the MOVES and on
+// the re-times prove it on exactly the plan the free door produces.
+const withVeo = { include: { veo: true } };
+
 out.rhythm = {
-  before: door(housePlan(before, {}), before).cuts,
-  after: door(housePlan(after, {}), after).cuts,
+  before: door(housePlan(before, withVeo), before).cuts,
+  after: door(housePlan(after, withVeo), after).cuts,
   grewFrom: before.frames.map((f) => f.duration_ms),
   grewTo: after.frames.map((f) => f.duration_ms),
 };
 
 // ⚠ THE RUN, AS THE RUNNER DOES IT: speak, re-read, re-anchor, then the door.
 const shifts = shiftsOf(before.frames, after.frames);
-const anchored = reanchor({ source: "house", raw: housePlan(before, {}), ctx: after,
-                            include: {}, shifts, spoken: new Set() });
+const anchored = reanchor({ source: "house", raw: housePlan(before, withVeo), ctx: after,
+                            include: { veo: true }, shifts, spoken: new Set() });
 out.rhythm.reanchored = door(anchored.raw, after).cuts;
 out.rhythm.shifts = {
   grew: [...shifts.grew],
@@ -166,7 +179,7 @@ out.rhythm.shifts = {
 // ⚠ AND THE NAIVE ORDER, KEPT ON PURPOSE. This is what "plan first, speak
 // second" produces, and the test asserts it is DIFFERENT — otherwise the whole
 // suite could pass against a build that never re-anchors at all.
-out.rhythm.naive = door(housePlan(before, {}), after).cuts;
+out.rhythm.naive = door(housePlan(before, withVeo), after).cuts;
 
 // The model's plan goes through the same re-anchor and keeps its own choices —
 // a model that dissolved on the cut after shot 4 still dissolves there, because

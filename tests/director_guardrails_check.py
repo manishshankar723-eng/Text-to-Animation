@@ -73,8 +73,12 @@ function timeline(n, ms, long = []) {
            audioTracks: [], totalMs: at, caps };
 }
 
-const fence = (steps, ctx) => {
-  const checked = validatePlan({ steps }, caps, ctx);
+const fence = (steps, ctx, include) => {
+  const checked = validatePlan(
+    include ? { steps, include: { ...defaultInclude(), ...include } } : { steps },
+    caps,
+    ctx
+  );
   const fenced = applyGuardrails(checked.plan, ctx);
   return {
     kept: fenced.plan.steps.map((s) => ({ verb: s.verb, args: s.args })),
@@ -98,10 +102,19 @@ const everyShot = fence(
   })), ten);
 
 // --------------------------------------------- ONE TRANSITION PER CUT, CAPPED
+// ⚠ TWO CEILINGS NOW, AND WHICH ONE APPLIES DEPENDS ON WHAT THE FILM IS MADE
+// OF. With Veo OFF the stills ARE the film and the house pattern is a transition
+// on every OTHER cut (asked for three times); with Veo ON a transition is
+// emphasis and 35% of the cuts is the limit it has always been. One function
+// answers both and the planner and the fence both call it: `transitionBudget`.
 const everyCut = fence(
   Array.from({ length: 9 }, (_, i) => ({
     verb: "add_transition", args: { cut: i + 1, kind: "dissolve" },
   })), ten);
+const everyCutWithVeo = fence(
+  Array.from({ length: 9 }, (_, i) => ({
+    verb: "add_transition", args: { cut: i + 1, kind: "dissolve" },
+  })), ten, { veo: true });
 const sameCutTwice = fence([
   { verb: "add_transition", args: { cut: 1, kind: "dissolve" } },
   { verb: "add_transition", args: { cut: 1, kind: "wipe" } },
@@ -195,6 +208,7 @@ const house = {
   varied: planned(varied),
   neighbours: planned(neighbours),
   flat: planned(flat),
+  flatWithVeo: planned(flat, { veo: true }),
   empty: planned(empty),
   // ⚠ THE TWO FILMS THE MOVE RULE MAKES. With Veo un-ticked — which is the
   // DEFAULT — the stills are the finished film and every one of them moves;
@@ -210,7 +224,7 @@ const house = {
 
 process.stdout.write(JSON.stringify({
   capsTable: HOUSE_CAPS,
-  twoOnOne, everyShot, everyCut, sameCutTwice, nextDoor, manyShapes, manyTexts,
+  twoOnOne, everyShot, everyCut, everyCutWithVeo, sameCutTwice, nextDoor, manyShapes, manyTexts,
   orphan, house, model,
 }));
 """
@@ -279,11 +293,18 @@ def main():
           [s["args"]["shot"] for s in every["kept"]] == [1, 2, 3, 4],
           json.dumps([s["args"]["shot"] for s in every["kept"]]))
 
-    print("\n⚠ ONE TRANSITION PER CUT, AND AT MOST 35% OF THE CUTS — a cut is the\n"
-          "  default; a film where every edit dissolves has no edits\n")
+    print("\n⚠ ONE TRANSITION PER CUT, AND A CEILING THAT FITS THE FILM — every other\n"
+          "  cut on a film of stills, 35% of them when footage is coming\n")
     cuts = data["everyCut"]
-    check("9 transitions on 9 cuts come back as 3", len(cuts["kept"]) == 3,
-          f"{len(cuts['kept'])} kept")
+    kept_cuts = sorted(s["args"]["cut"] for s in cuts["kept"])
+    check("9 transitions on 9 cuts come back as 5 — every other one",
+          kept_cuts == [1, 3, 5, 7, 9], json.dumps(kept_cuts))
+    check("...never two in a row, which is what makes it read as a rhythm",
+          all(b - a >= 2 for a, b in zip(kept_cuts, kept_cuts[1:])), json.dumps(kept_cuts))
+    check("⚠ AND WITH VEO TICKED THE 35% SHARE STILL HOLDS: 9 come back as 3,"
+          " because over footage a transition is emphasis rather than a pattern",
+          len(data["everyCutWithVeo"]["kept"]) == 3,
+          f"{len(data['everyCutWithVeo']['kept'])} kept")
     check("...all on different cuts",
           len({s["args"]["cut"] for s in cuts["kept"]}) == len(cuts["kept"]),
           json.dumps([s["args"]["cut"] for s in cuts["kept"]]))
@@ -350,17 +371,35 @@ def main():
 
     near = house["neighbours"]
     near_cuts = [s["args"]["cut"] for s in near["kept"] if s["verb"] == "add_transition"]
-    check("⚠ THE RULES PLANNER SPACES THEM ITSELF — three held shots in a row\n"
-          "       get a transition between them, not one on every cut",
-          near_cuts == [4, 6], json.dumps(near_cuts))
+    check("⚠ THE RULES PLANNER ALTERNATES THEM ITSELF — every other cut, from the\n"
+          "       FIRST one, so a run of held shots cannot cluster and the\n"
+          "       opening cut is not left bare",
+          near_cuts == [1, 3, 5, 7, 9, 11], json.dumps(near_cuts))
     check("...and it is under budget rather than trimmed by the fence, so the\n"
           "       preview IS the film that gets made",
           not near["trimmed"] and not near["dropped"],
           json.dumps(near["trimmed"] + near["dropped"]))
 
     flat = house["flat"]
-    check("⚠ a FLAT timeline gets no transitions — there is no rhythm to read",
-          flat["totals"]["transitions"] == 0, json.dumps(flat["totals"]))
+    # ⚠ THIS EXPECTATION IS DELIBERATELY THE OPPOSITE OF WHAT IT WAS. It read "a
+    # FLAT timeline gets no transitions — there is no rhythm to read", which was
+    # true of the old rule and WAS the bug: a board where every shot is the same
+    # length has no long holds, so it had no candidates, so a film of twelve
+    # identical shots got ZERO transitions and played as twelve hard cuts. That is
+    # the board most users actually have, and it was reported three times. There
+    # is no rhythm to READ on a flat board — so the house GIVES it one.
+    flat_cuts = sorted(s["args"]["cut"] for s in flat["kept"]
+                       if s["verb"] == "add_transition")
+    check("⚠ A FLAT TIMELINE IS GIVEN A RHYTHM: alternate cuts, rather than the"
+          " twelve hard cuts it used to get",
+          flat_cuts == [1, 3, 5, 7, 9, 11], json.dumps(flat_cuts))
+    check("...and the fence keeps every one, so the preview IS the film that is made",
+          not flat["trimmed"] and not flat["dropped"],
+          json.dumps(flat["trimmed"] + flat["dropped"]))
+    check("⚠ BUT WITH VEO TICKED IT GETS NONE: over footage a transition marks a"
+          " held shot, and a flat board has no held shot to mark",
+          house["flatWithVeo"]["totals"]["transitions"] == 0,
+          json.dumps(house["flatWithVeo"]["totals"]))
     check("...and says so rather than sitting there empty",
           any(s["verb"] == "note" for s in flat["kept"]),
           json.dumps([s["verb"] for s in flat["kept"]]))

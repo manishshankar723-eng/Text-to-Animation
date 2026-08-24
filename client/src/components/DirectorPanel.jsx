@@ -906,15 +906,22 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 )}
               </div>
             )}
-            {/* ⚠ THE STEP RAIL IS FOR STEPS. A resumed run has none — it is
-                finishing footage, not applying a plan — and an empty bar sitting
-                over a render that is working reads as a run that is stuck.
+            {/* ⚠ THE STEP RAIL IS FOR STEPS, AND IT IS DRAWN ONLY ONCE THE STEPS
+                ARE THE THING HAPPENING. That was written here as "a resumed run
+                has none", which caught one case of the rule and missed the one
+                every paid run hits: during phase B and phase C the edit has not
+                started, `index` is 0, and the rail is a second bar sitting dead
+                underneath a render bar that is moving perfectly well. Reported
+                as "upper line bar move good but lower bar come in last only".
+                Nothing is lost by hiding it — the sentence directly below says
+                what it is waiting for ("the edit starts when the footage has
+                landed"), which is more than an empty bar was saying.
                 ⚠ AND IT IS THE SAME THICKNESS AS THE RENDER RAIL ABOVE IT. It
                 was thinner, on the argument that the bar worth watching should
                 be the bigger one; two bars of different weights stacked four
                 lines apart read as two different KINDS of thing instead, which
                 is not what they are — both are "how far through this is". */}
-            {plan.steps.length > 0 && (
+            {plan.steps.length > 0 && (stepping || finished) && (
               <div className="dir-rail" aria-label="Progress">
                 <div
                   className="dir-rail-fill"

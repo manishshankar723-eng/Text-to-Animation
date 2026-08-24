@@ -206,6 +206,27 @@ function isStill(frame) {
 }
 
 /**
+ * HOW MANY CUTS MAY BE TREATED — and it depends on what the film is made of.
+ *
+ * ⚠ ONE FUNCTION, READ BY THE PLANNER AND BY THE FENCE. They each had their own
+ * copy of this arithmetic, and the moment the planner started placing a
+ * transition on every OTHER cut (`include.veo === false`) the fence's 35% share
+ * would have trimmed four of them back to two — a preview showing a film that
+ * could not be made, which is the one thing the ⚠ note over the planner's cap
+ * says must never happen.
+ *
+ * With Veo ON a transition is emphasis, and 35% of the cuts is the house limit
+ * it has always been. With Veo OFF the stills ARE the film and the pattern the
+ * user asked for is alternate cuts, so the ceiling is half of them — which
+ * `ceil` makes exactly the number "every other cut from cut 1" produces.
+ */
+export function transitionBudget(shots, include) {
+  const cuts = Math.max(0, (Number(shots) || 0) - 1);
+  if (include && include.veo === false) return Math.max(1, Math.ceil(cuts / 2));
+  return Math.max(1, Math.floor(cuts * HOUSE_CAPS.TRANSITION_CUT_SHARE));
+}
+
+/**
  * A MOVE ON EVERY DRAWING THAT HASN'T GOT ONE — the rule, as a step generator.
  *
  * ⚠ IT IS EXPORTED BECAUSE THE RULE IS NOT THE RULES PLANNER'S. "Nothing is
@@ -332,11 +353,29 @@ export function housePlan(ctx, options = {}) {
     // so the plan the user READS is already house-legal — a preview listing 30
     // dissolves that the fence then silently trims to 16 is a preview of a
     // different film from the one that gets made.
-    const budget = Math.max(1, Math.floor((frames.length - 1) * HOUSE_CAPS.TRANSITION_CUT_SHARE));
+    const budget = transitionBudget(frames.length, include);
     const candidates = [];
-    for (let cut = 1; cut < frames.length; cut += 1) {
-      const before = lengthOf(frames[cut - 1]);
-      if (before >= median * LONG_SHOT) candidates.push({ cut, before });
+    // ⚠ WITH VEO OFF, EVERY OTHER CUT IS TREATED — asked for three times ("i
+    // told you set alternate", "you do transition on alternate clip") and this
+    // is the rule that answers it. The old one only made a cut a CANDIDATE when
+    // the shot before it was a long hold, which is right for a film about to
+    // become footage and wrong for one made of stills: on a board where every
+    // shot is the same length there are no long holds, so there were no
+    // candidates, so a film of eight shots got ZERO transitions and the user
+    // watched eight hard cuts.
+    //
+    // ⚠ FROM CUT 1, SO THE FIRST CUT IS TREATED. Alternating from cut 2 leaves
+    // the opening cut bare, which reads as the effect starting late rather than
+    // as a pattern.
+    if (include.veo === false) {
+      for (let cut = 1; cut < frames.length; cut += 2) {
+        candidates.push({ cut, before: lengthOf(frames[cut - 1]), alternating: true });
+      }
+    } else {
+      for (let cut = 1; cut < frames.length; cut += 1) {
+        const before = lengthOf(frames[cut - 1]);
+        if (before >= median * LONG_SHOT) candidates.push({ cut, before });
+      }
     }
     // The longest holds win the budget — those are the pauses most worth
     // marking. Ties break towards the EARLIER cut so the choice is stable.
@@ -352,8 +391,17 @@ export function housePlan(ctx, options = {}) {
     // twice in a row"), for the same reason: a treatment only reads as one while
     // the cut on either side of it is plain. Greedy over the longest holds, so
     // when two candidates collide the more deserving one wins the cut.
+    // ⚠ THE ALTERNATING LIST IS TAKEN IN FILM ORDER, NOT SORTED BY HOLD. Sorting
+    // it would still produce the right NUMBER of transitions and put them
+    // wherever the longest shots happened to be — which is the clustering this
+    // rule exists to replace. The emphasis list (Veo on) is still greedy over
+    // the longest holds, because there the point IS which shot is longest.
+    const ordered =
+      include.veo === false
+        ? candidates
+        : candidates.sort((a, b) => b.before - a.before || a.cut - b.cut);
     const taken = [];
-    for (const row of candidates.sort((a, b) => b.before - a.before || a.cut - b.cut)) {
+    for (const row of ordered) {
       if (taken.length >= budget) break;
       if (taken.some((t) => Math.abs(t.cut - row.cut) < 2)) continue;
       taken.push(row);
@@ -449,7 +497,10 @@ export function applyGuardrails(plan, ctx, options = {}) {
   let texts = 0;
 
   const effectShotBudget = Math.max(1, Math.floor(frames.length * caps.EFFECT_CLIP_SHARE));
-  const transitionBudget = Math.max(1, Math.floor(Math.max(0, frames.length - 1) * caps.TRANSITION_CUT_SHARE));
+  // ⚠ THE SAME FUNCTION THE PLANNER USES. See `transitionBudget`: a plan that
+  // alternates its transitions is house-legal, and a fence with its own idea of
+  // the ceiling would trim half of them out from under the preview.
+  const cutBudget = transitionBudget(frames.length, plan.include);
   const shapeBudget = Math.max(1, Math.round(minutes * caps.SHAPES_PER_MINUTE));
   const textBudget = Math.max(1, Math.round(minutes * caps.TEXTS_PER_MINUTE));
 
@@ -491,8 +542,8 @@ export function applyGuardrails(plan, ctx, options = {}) {
         drop(`there is already a transition on the cut after shot ${step.args.cut}`);
         return;
       }
-      if (cutsUsed.size >= transitionBudget) {
-        drop(`${cutsUsed.size} cuts are treated already — the house limit is ${transitionBudget}`);
+      if (cutsUsed.size >= cutBudget) {
+        drop(`${cutsUsed.size} cuts are treated already — the house limit is ${cutBudget}`);
         return;
       }
       // ⚠ AND NOT ON THE CUT NEXT DOOR TO ONE. A shot with a transition on both

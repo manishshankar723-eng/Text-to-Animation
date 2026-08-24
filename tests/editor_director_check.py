@@ -1046,15 +1046,22 @@ def main():
             after = page.evaluate("() => window.__probe.timeline()")
             check("transitions landed on the cuts", len(after["transitions"]) > 0,
                   str(after["transitions"]))
-            # ⚠ ON THE RIGHT CUTS. The planner dissolves after a HELD shot, and
-            # shots 2, 5 and 7 are the held ones — so the cuts are 2, 5 and 7,
-            # capped at floor(7 * 0.35) = 2 of them. "some transitions appeared"
-            # would pass with every one of them one cut over.
-            check("⚠ ...on the cuts that follow a HELD shot, and no others",
-                  set(after["transitions"]) <= {2, 5, 7},
-                  f"got {after['transitions']}, held shots are 2/5/7")
-            check("...capped at the house share of the cuts",
-                  len(after["transitions"]) <= 2, str(after["transitions"]))
+            # ⚠ ON ALTERNATE CUTS, WHICH IS THE FREE DOOR'S RULE SINCE 2026-08-24.
+            # It used to be "the cuts that follow a HELD shot, capped at
+            # floor(7 * 0.35) = 2", and on a board whose shots are all the same
+            # length that produced NO transitions at all — the film played as eight
+            # hard cuts. With Veo un-ticked the stills ARE the finished film, so the
+            # house GIVES it a rhythm rather than only reading one: every other cut,
+            # from the first. `transitionBudget` owns the ceiling, and the emphasis
+            # rule (long holds only) still applies with Veo ticked.
+            check("⚠ ...ON ALTERNATE CUTS, FROM THE FIRST",
+                  sorted(after["transitions"]) == [1, 3, 5, 7],
+                  f"got {after['transitions']} on an 8-shot film")
+            check("...so no shot has one on BOTH sides — it would never be on"
+                  " screen whole",
+                  all(b - a >= 2 for a, b in zip(sorted(after["transitions"]),
+                                                 sorted(after["transitions"])[1:])),
+                  str(after["transitions"]))
             check("no picture clip was added or lost",
                   after["frames"] == before["frames"], str(after["frames"]))
             check("the Phase 0 planner wrote no text and no shapes",
@@ -1123,18 +1130,23 @@ def main():
             page.wait_for_timeout(400)
             flat_before = page.evaluate("() => window.__probe.timeline()")
             open_director(page)
-            # ⚠ NO TRANSITIONS, BUT NOT AN EMPTY PLAN. There is no rhythm to
-            # read here — every shot is the same length, so no cut is a pause
-            # and none of them is treated. The MOVES are a different question
+            # ⚠ THIS USED TO ASSERT THE OPPOSITE, AND THE OPPOSITE WAS THE BUG.
+            # "The plan treats no cut — there is no rhythm to read" was true of the
+            # old rule on a board where every shot is the same length: no long
+            # holds, so no candidates, so a film of eight identical shots got ZERO
+            # transitions. That is the board most people actually have, and it was
+            # reported three times. There is no rhythm to READ here, so the house
+            # GIVES it one. The MOVES are a different question
             # and the answer changed with the Veo box: nothing is being
             # rendered, so the stills ARE the film and every drawing gets a
             # rostrum move ("add zoom in / zoom out on all the images when Veo
             # is not selected"). See `STILL_CYCLE` in `house_style.js`.
             flat_rows = page.evaluate("() => window.__probe.planRows()")
-            check("the plan treats no cut — there is no rhythm to read",
-                  all("dissolve" not in r[2].lower() and "dip" not in r[2].lower()
-                      for r in flat_rows),
-                  json.dumps(flat_rows))
+            treated = [i + 1 for i, r in enumerate(flat_rows)
+                       if "dissolve" in r[2].lower() or "dip" in r[2].lower()]
+            check("⚠ A FLAT BOARD IS GIVEN A RHYTHM — a transition arrives INTO"
+                  " every other shot",
+                  treated == [2, 4, 6, 8], json.dumps(treated))
             check("⚠ ...but every drawing still moves, because nothing is being"
                   " rendered over it",
                   flat_rows and all(r[3] != "—" for r in flat_rows),
@@ -1226,14 +1238,24 @@ def main():
             moved = page.evaluate("() => window.__probe.timeline()")
             check("no picture clip was added or lost by the pass",
                   moved["frames"] == before["frames"], json.dumps(moved["frames"]))
-            check("⚠ THE TRANSITIONS ARE ON THE CUTS THE SPOKEN FILM WANTS",
-                  set(moved["transitions"]) <= {2, 4},
-                  f"got {moved['transitions']}, the re-anchored answer is 2 and 4")
-            check("⚠ ...AND NOT ON CUT 5, WHICH IS WHERE PLANNING FIRST WOULD HAVE\n"
-                  "       PUT ONE — every step would have succeeded, on the wrong cut",
-                  5 not in moved["transitions"], json.dumps(moved["transitions"]))
-            check("the dissolve after the stretched shot is there",
-                  4 in moved["transitions"], json.dumps(moved["transitions"]))
+            # ⚠ WHAT THIS SECTION CAN AND CANNOT PROVE NOW THAT THE FREE DOOR
+            # ALTERNATES. It used to read the CUT the rhythm chose — 2 and 4 after
+            # the pass, 5 if you planned first — which was the sharpest possible
+            # demonstration of the re-anchor. With Veo un-ticked the placement is a
+            # fixed pattern now and does not depend on the holds, so that particular
+            # needle is gone from THIS door. It has not gone from the suite:
+            # `director_voice_order_check.py` proves the same property on the
+            # emphasis rule, where the rhythm still chooses the cut. And the checks
+            # here still prove the pass landed on the film that came back — the
+            # captions, the moves, and not one step failing against a document the
+            # plan was not written for.
+            check("⚠ THE PATTERN SURVIVES THE PASS — the sound re-times the film"
+                  " and the transitions are still alternate, not clustered",
+                  sorted(moved["transitions"]) == [1, 3, 5, 7],
+                  f"got {moved['transitions']}")
+            check("...and every treated cut is one this film actually has",
+                  all(1 <= c < len(moved["frames"]) for c in moved["transitions"]),
+                  f"{moved['transitions']} against {len(moved['frames'])} shots")
 
             log = page.evaluate("() => window.__probe.logLines()")
             check("no step failed on the re-anchored plan",

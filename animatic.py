@@ -475,19 +475,43 @@ def draw_texts(canvas: Image.Image, clips: list[dict]) -> None:
         text = _apply_case(text, clip.get("text_case"))
         size_name = clip.get("size", "medium")
         size_px = float(clip.get("size_px") or 0.0)
-        font = _text_font(height, size_name, clip.get("font"), size_px)
+        # ⚠ A CAPTION MAY BE ZOOMED, AND THE WRAP IS MEASURED AT ITS RESTING SIZE.
+        # `scale` is an animatable text property (see `ANIMATABLE` in
+        # animatic_render.py) and it multiplies the FONT — glyphs, leading,
+        # padding, outline and the backdrop box all follow, because every one of
+        # them is already a fraction of `px`. But the LINE BREAKS are taken with
+        # the resting font on purpose: re-wrapping as it grows would throw a word
+        # onto a new line part way through the move and back again on the way
+        # out. The browser gets the same result from a CSS transform, which
+        # scales the laid-out block and cannot reflow it — see `captionStyle`.
+        scale = float(clip.get("scale") or 1.0)
+        if not (0.05 <= scale <= 20.0):
+            scale = 1.0
+        rest_font = _text_font(height, size_name, clip.get("font"), size_px)
+        font = (
+            rest_font
+            if abs(scale - 1.0) < 1e-6
+            else _text_font(height, size_name, clip.get("font"),
+                            _text_px(height, size_name, size_px) * scale)
+        )
         # Letter spacing, the shadow offset and the backdrop's corners and
         # padding are fractions of the FONT SIZE, so they scale with the frame
         # like everything else here and `em` in the browser is the same number
         # with no conversion. Taken from `_text_px` rather than off the font
         # object, because the last-resort bitmap face has no size to read.
-        px = _text_px(height, size_name, size_px)
+        px = _text_px(height, size_name, size_px) * scale
         spacing = float(clip.get("letter_spacing") or 0.0) * px
         # How wide this caption may get before it wraps, as a fraction of the
         # frame. Per-clip now rather than the one `_TEXT_WIDTH` for everything,
         # which is still what an untouched caption asks for.
         max_width = width * _clamp(clip.get("wrap"), 0.1, 1.0, _TEXT_WIDTH)
-        lines = _wrap_text(draw, text, font, max_width, spacing)
+        # ⚠ THE RESTING FONT AND THE RESTING SPACING — see the note above. Wrapping
+        # with the scaled ones is what makes a zoom re-flow.
+        lines = _wrap_text(
+            draw, text, rest_font,
+            max_width,
+            float(clip.get("letter_spacing") or 0.0) * _text_px(height, size_name, size_px),
+        )
         ascent, descent = font.getmetrics()
         line_h = int((ascent + descent) * _clamp(clip.get("line_height"), 0.6, 3.0, _LINE_SPACING))
         # ⚠ THE 6px FLOOR SCALES WITH THE MULTIPLIER. It is there so a tiny

@@ -218,6 +218,41 @@ export function motionKeys(kind, amount = 1, lengthMs = 2000, ease = "ease-in-ou
   return { rest: { scale: over, x: to }, keyframes: { x: keys(from, to) } };
 }
 
+/**
+ * HOW MUCH A CAPTION DRIFTS TOWARDS THE VIEWER while it is on screen.
+ *
+ * ⚠ 4%, AND ONE MOVE ONLY. Asked for as "text clip you also give some motion
+ * little, keep only one motion in text clip like little zoom in" — and the
+ * "little" is the whole specification. A caption is READ, and anything more than
+ * a few per cent makes the reader's eye chase the words instead of finishing the
+ * sentence. It is also why this is a slow push across the whole clip rather than
+ * a second in/out beat: the in and out already belong to the text preset
+ * (`text_presets.js` owns opacity/x/y), and this owns `scale`, so the two never
+ * fight over a track.
+ */
+const TEXT_ZOOM_TO = 0.04;
+
+/**
+ * THE CAPTION'S PUSH, AS THE TWO KEYS IT IS. Pure, like `motionKeys` above.
+ *
+ * ⚠ THE RESTING VALUE IS WHERE IT ENDS, the same rule `motionKeys` keeps: a
+ * scale that finished at 1.04 with a resting 1 snaps back the instant the last
+ * key passes.
+ */
+export function captionPush(lengthMs) {
+  const t = Math.max(HOUSE_CAPS.MIN_CLIP_MS, Number(lengthMs) || 2000);
+  const to = 1 + TEXT_ZOOM_TO;
+  return {
+    rest: { scale: to },
+    keyframes: {
+      scale: [
+        { t: 0, v: 1, ease: "ease-in-out" },
+        { t, v: to, ease: "linear" },
+      ],
+    },
+  };
+}
+
 /** The clip a `ref` names, out of `list`, or null. */
 function byRef(ref, list, refs) {
   const id = refs && refs[ref];
@@ -736,8 +771,16 @@ export const ACTIONS = {
       const id = api.addText("");
       if (!id) return;
       const window = shotWindow(i, ctx, args.startMs, args.durationMs);
+      // ⚠ AND IT GETS A MOVE, BECAUSE A TITLE THAT SITS PERFECTLY STILL LOOKS
+      // PASTED ON. One slow push across the whole clip — see `captionPush` for
+      // why 4% and why `scale` rather than another in/out beat. House behaviour
+      // rather than a plan step: it is a property of how this editor sets type,
+      // not a decision the planner should be spending a step on.
+      const push = captionPush(window.length);
       api.patchText(id, {
         ...args.patch,
+        ...push.rest,
+        keyframes: push.keyframes,
         text: args.text,
         start_ms: window.start,
         duration_ms: window.length,

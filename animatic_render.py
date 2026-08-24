@@ -54,7 +54,11 @@ ANIMATABLE: dict[str, tuple[str, ...]] = {
     # `client/src/animatic/text_presets.js` animate — a title that slides up
     # into place is two keys on `y`, not a second animation system — and they
     # only mean anything when the clip is placed FREE. See `text_place`.
-    "text": ("opacity", "x", "y"),
+    # ⚠ AND `scale` SINCE 2026-08-24 — a zoom of the whole caption, drawn by
+    # `draw_texts` as a font built at the scaled size over lines wrapped at the
+    # resting one, so the wrap cannot shift mid-move. The browser does the same
+    # thing with a CSS transform; see `ANIMATABLE.text` in `scene.js`.
+    "text": ("opacity", "x", "y", "scale"),
 }
 
 DEFAULTS = {
@@ -77,7 +81,11 @@ FRAME_DEFAULTS = {"scale": 1.0, "x": 0.5, "y": 0.5, "opacity": 1.0}
 # ⚠ These are also the field defaults on `AnimaticTextClip`; the three must
 # agree or a clip saved by the server resolves differently from one that never
 # went through it.
-TEXT_DEFAULTS = {"x": 0.5, "y": 0.85, "opacity": 1.0}
+# ⚠ `scale` IS 1.0 HERE FOR EVERY CAPTION EVER WRITTEN. `_resolve` reads this
+# table BY PROPERTY NAME for each entry in `ANIMATABLE["text"]`, so adding a
+# property to that tuple without adding its resting value here is a KeyError
+# on the first caption in the film, not a quiet fallback.
+TEXT_DEFAULTS = {"x": 0.5, "y": 0.85, "opacity": 1.0, "scale": 1.0}
 
 # Which table a kind's fallbacks come from. A kind that isn't listed uses the
 # shared one, which is every kind that existed before frames and captions needed

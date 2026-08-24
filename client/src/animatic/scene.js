@@ -86,7 +86,15 @@ export const ANIMATABLE = {
   // `text_presets.js` animate — a title that slides up into place is two keys
   // on `y`, not a new animation system — and they only mean anything when the
   // clip is placed FREE. See `textPlace`.
-  text: ["opacity", "x", "y"],
+  // ⚠ `scale` IS LAST, AND IT IS A ZOOM OF THE WHOLE CAPTION — glyphs, backdrop
+  // and padding together, laid out at the RESTING size and then scaled, so the
+  // line breaks never move while it animates. Appended rather than slotted in
+  // beside x/y so the pane's existing rows keep the order people already know.
+  // ⚠ IT IS HONOURED IN TWO PLACES AND THEY HAVE TO AGREE: `captionStyle` (a CSS
+  // transform, origin pinned to the caption's own anchor) and `draw_texts` in
+  // `animatic.py` (a font built at the scaled size, over lines wrapped at the
+  // resting one). Same rule as every other number in `captionStyle`'s ⚠ note.
+  text: ["opacity", "x", "y", "scale"],
 };
 
 // The value a property falls back to when the clip doesn't carry it. A frame's
@@ -114,7 +122,11 @@ export const FRAME_DEFAULTS = { scale: 1, x: 0.5, y: 0.5, opacity: 1 };
  * agree or a clip saved by the server resolves differently from one that never
  * went through it.
  */
-export const TEXT_DEFAULTS = { x: 0.5, y: 0.85, opacity: 1 };
+// ⚠ `scale` IS 1 HERE FOR EVERY CAPTION EVER WRITTEN — the resting value the
+// keys resolve around, and what `sceneAt` falls back to for a caption that has
+// never been zoomed. Mirrors `TEXT_DEFAULTS` in `animatic_render.py`, where
+// leaving it out is a KeyError rather than a quiet 1.
+export const TEXT_DEFAULTS = { x: 0.5, y: 0.85, opacity: 1, scale: 1 };
 
 /**
  * HOW a caption is positioned — and the reason `x`/`y` could be added without
@@ -1131,6 +1143,88 @@ export function insertShotBeside(frames, clip, neighbourId, side = "after") {
  * Returns a NEW list when anything moved and the SAME list when nothing did, so
  * a caller can tell whether this was an edit worth saying out loud.
  */
+/**
+ * THE SAME ANIMATION, OVER A CLIP THAT IS NOW A DIFFERENT LENGTH.
+ *
+ * ⚠ THIS IS THE FIX FOR "the move only covers half the clip". Keys are stored in
+ * MILLISECONDS from the clip's start, and a still's hold gets rewritten by four
+ * different things after a move has been written on it: the Veo pass grows a
+ * panel to its take's length (`spreadPanelsForRenders`), the voiceover grows a
+ * shot to cover its line, "Fit to audio" rescales the whole film, and the user
+ * drags the clip's edge. None of them touched the keys, so a Ken Burns push
+ * written across a 2-second hold sat frozen for the second half of the 4-second
+ * clip that hold became — reported with a screenshot of exactly that, twice.
+ *
+ * Every `t` is multiplied by `toMs / fromMs`, so a move that spanned the clip
+ * still spans it and a move that was a beat in the middle is still in the middle.
+ *
+ * ⚠ IT IS FOR A HOLD, NOT FOR A TRIM. A still's duration IS how long it is on
+ * screen, so stretching it and stretching its move are the same intention. A
+ * VIDEO clip's duration is a window on footage — trimming it must leave the
+ * keys where they are, on the frames they were put on — which is why the callers
+ * ask `isStillClip` first rather than this doing it for them.
+ *
+ * Returns the same object when there is nothing to do, so a caller can tell.
+ */
+export function rescaleKeys(keyframes, fromMs, toMs) {
+  const from = Math.round(Number(fromMs) || 0);
+  const to = Math.round(Number(toMs) || 0);
+  if (!keyframes || from <= 0 || to <= 0 || from === to) return keyframes;
+  const factor = to / from;
+  const out = {};
+  let changed = false;
+  for (const [prop, track] of Object.entries(keyframes)) {
+    if (!Array.isArray(track)) {
+      out[prop] = track;
+      continue;
+    }
+    out[prop] = track.map((key) => {
+      const t = Math.round(Math.min(to, Math.max(0, (Number(key.t) || 0) * factor)));
+      if (t !== (Number(key.t) || 0)) changed = true;
+      return { ...key, t };
+    });
+  }
+  return changed ? out : keyframes;
+}
+
+/**
+ * IS THIS CLIP A STILL — i.e. is its duration a HOLD rather than a trim?
+ *
+ * ⚠ THE SAME TEST `isVeoRender` AND THE PROPERTIES PANE MAKE, kept here because
+ * `rescaleKeys`' callers all need it and one of them (`scene.js`) is where the
+ * geometry lives rather than where this rule does.
+ */
+export function isStillClip(clip) {
+  return Boolean(clip) && (clip.kind || "image") !== "video";
+}
+
+/**
+ * A NEW HOLD FOR A STILL, WITH ITS MOVE STRETCHED TO MATCH — as a patch.
+ *
+ * ⚠ EVERY PATH THAT RE-HOLDS A PICTURE GOES THROUGH HERE, and there are five of
+ * them: the Veo pass growing a panel to its take (just below), the voiceover
+ * growing a shot to cover its line, "Fit to audio", "Set all", and the user
+ * dragging a clip's edge. Each of them used to write `duration_ms` and nothing
+ * else, so a Ken Burns move written across the old hold stayed the old hold's
+ * length — a 2-second push frozen for the second half of the 4-second clip it
+ * had become. See `rescaleKeys` for the report and the reasoning.
+ *
+ * ⚠ A VIDEO CLIP IS RETURNED UNTOUCHED. Its duration is a window on footage and
+ * changing it is a TRIM: the keys stay on the frames they were put on.
+ *
+ * @returns the patch to apply — `{ duration_ms }`, plus `keyframes` when there
+ *          was an animation to carry with it
+ */
+export function reholdPatch(frame, toMs, extra = {}) {
+  const to = Math.max(MIN_FRAME_MS, Math.round(Number(toMs) || 0));
+  const patch = { ...extra, duration_ms: to };
+  if (!isStillClip(frame) || !frame.keyframes) return patch;
+  const from = Math.round(Number(frame.duration_ms) || 0);
+  const keyframes = rescaleKeys(frame.keyframes, from, to);
+  if (keyframes !== frame.keyframes) patch.keyframes = keyframes;
+  return patch;
+}
+
 export function spreadPanelsForRenders(frames) {
   const list = frames || [];
   const { spans } = frameSpans(list);
@@ -1189,7 +1283,10 @@ export function spreadPanelsForRenders(frames) {
     // room, it is discarding an edit.
     if (cover > hold) hold = Math.min(cover, MAX_FRAME_MS);
     if (delta || hold !== span.end - span.start) {
-      moved.set(i, { start_ms: start, duration_ms: hold });
+      // ⚠ AND THE PANEL'S MOVE GROWS WITH IT. See `reholdPatch`: the panel
+      // taking the take's length used to leave a 2-second push sitting in the
+      // first half of a 4-second still.
+      moved.set(i, reholdPatch(list[i], hold, { start_ms: start }));
     }
     let free = start + hold;
     for (const j of takes) {

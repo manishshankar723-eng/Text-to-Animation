@@ -53,6 +53,7 @@ import {
   resolveLook,
   pictureTracks,
   sceneAt,
+  reholdPatch,
   spreadPanelsForRenders,
   setLookValue,
   boxSize,
@@ -524,6 +525,31 @@ function captionStyle(c, inZone = false) {
     style.WebkitTextStrokeWidth = `calc(100cqh * ${c.stroke_px} / 1080)`;
     style.WebkitTextStrokeColor = c.stroke_color || "#000000";
     style.paintOrder = "stroke fill";
+  }
+  // ⚠ A ZOOM ON A CAPTION IS A TRANSFORM, NOT A FONT SIZE, and that is the whole
+  // reason it can be trusted. Growing the font size re-wraps the text: a caption
+  // with a word near the edge of its wrap width would jump to a new line part
+  // way through the move, and jump back on the way out. A transform scales the
+  // laid-out block — glyphs, backdrop, padding — and leaves the line breaks
+  // exactly where they were, which is also what `draw_texts` does on the other
+  // side (it wraps with the resting font and draws with the scaled one).
+  //
+  // ⚠ THE ORIGIN IS THE CAPTION'S OWN ANCHOR, or the two sides disagree about
+  // where a growing block grows TO. The exporter re-stacks a scaled block in its
+  // zone: a bottom caption keeps its bottom margin and gets taller upwards, a top
+  // one keeps its top margin, a middle or free one stays centred. These four
+  // origins are that arithmetic, said in CSS.
+  const scale = Number(c.scale);
+  if (Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6) {
+    style.transform = `scale(${scale})`;
+    style.transformOrigin =
+      (c.place || "flow") === "free"
+        ? "center center"
+        : (c.position || "bottom") === "top"
+          ? "center top"
+          : (c.position || "bottom") === "bottom"
+            ? "center bottom"
+            : "center center";
   }
   if (c.shadow) {
     // ⚠ THE SAME √2 THE EXPORTER USES. `shadow` is the offset it always was —
@@ -3585,8 +3611,21 @@ export default function AnimaticEditor({
   });
 
   // ---------------------------------------------------------- frame edits
+  // ⚠ A NEW HOLD CARRIES THE CLIP'S MOVE WITH IT. `reholdPatch` rescales the
+  // keyframes when this patch changes a STILL's duration and does not bring its
+  // own animation — so dragging a 2s panel out to 4s stretches the push across
+  // it instead of leaving it finished half way. A video clip is left alone: its
+  // duration is a trim. See `reholdPatch` in `scene.js`.
+  const rehold = (frame, patch) => {
+    if (!frame || patch.duration_ms === undefined || patch.keyframes !== undefined) return patch;
+    if (Math.round(Number(patch.duration_ms) || 0) === Math.round(Number(frame.duration_ms) || 0)) {
+      return patch;
+    }
+    return reholdPatch(frame, patch.duration_ms, patch);
+  };
+
   const patchFrame = (id, patch) =>
-    setFrames((list) => list.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+    setFrames((list) => list.map((f) => (f.id === id ? { ...f, ...rehold(f, patch) } : f)));
 
   /**
    * SEVERAL pictures in one write — what every timeline edit on a picture track
@@ -3597,12 +3636,19 @@ export default function AnimaticEditor({
    * neighbour what it takes, a group move carries the selection. Forty separate
    * `patchFrame` calls would be forty renders and forty presses of Ctrl+Z.
    */
+  // ⚠ THROUGH A REF, because `patchFrames` is deliberately dep-free (one stable
+  // identity for every timeline edit) and `rehold` is redefined each render.
+  const reholdRef = useRef(rehold);
+  reholdRef.current = rehold;
+
   const patchFrames = useCallback((patches) => {
     const list = Array.isArray(patches) ? patches.filter((x) => x && x.id) : [];
     if (!list.length) return;
     const by = new Map(list.map((x) => [x.id, x]));
     setFrames((frames) =>
-      frames.map((f) => (by.has(f.id) ? { ...f, ...by.get(f.id), id: f.id } : f))
+      frames.map((f) =>
+        by.has(f.id) ? { ...f, ...reholdRef.current(f, by.get(f.id)), id: f.id } : f
+      )
     );
   }, []);
 
@@ -6171,7 +6217,9 @@ export default function AnimaticEditor({
     setFrames((list) => {
       const scaled = list.map((f) => ({
         ...f,
-        duration_ms: Math.max(MIN_MS, Math.round((f.duration_ms * factor) / 100) * 100),
+        // The move is rescaled with the hold — a film stretched to its music
+        // must not leave every push finishing early. See `reholdPatch`.
+        ...reholdPatch(f, Math.max(MIN_MS, Math.round((f.duration_ms * factor) / 100) * 100)),
       }));
       // Rounding to 100ms leaves a few ms over or short; put the remainder on
       // the last frame so the total is EXACT rather than nearly right.
@@ -6179,7 +6227,7 @@ export default function AnimaticEditor({
       const drift = audioMs - sum;
       if (scaled.length && drift) {
         const last = scaled[scaled.length - 1];
-        last.duration_ms = Math.max(MIN_MS, last.duration_ms + drift);
+        Object.assign(last, reholdPatch(last, Math.max(MIN_MS, last.duration_ms + drift)));
       }
       return scaled;
     });
@@ -6187,7 +6235,7 @@ export default function AnimaticEditor({
   }
 
   function setAllDurations(ms) {
-    setFrames((list) => list.map((f) => ({ ...f, duration_ms: ms })));
+    setFrames((list) => list.map((f) => ({ ...f, ...reholdPatch(f, ms) })));
     setNotice(`Every frame set to ${(ms / 1000).toFixed(1)}s.`);
   }
 

@@ -263,7 +263,21 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-24 — **NOBODY HAD EVER SET A THINKING BUDGET, AND THAT
+**Last updated:** 2026-08-24 — **THREE THINGS THE HOUSE STYLE WAS GETTING WRONG.**
+(1) A move's keyframes did not follow its clip's hold, so every path that grows a
+still — Veo, the voiceover, Fit to audio, a drag — left the push finishing half way
+through the shot (`reholdPatch`). (2) A transition was only ever a candidate after
+a LONG HOLD, so a flat board got none at all; with Veo off it is every other cut
+now, and `transitionBudget` is one ceiling the planner and the fence share.
+(3) Captions can `scale` — in BOTH renderers — and the Director gives each one a 4%
+push. See the Work Log.
+
+**Previously:** 2026-08-24 — **THE STEP RAIL NO LONGER SITS DEAD UNDER THE RENDER
+RAIL.** It was drawn whenever the plan had steps, which includes the whole of the
+paid passes — an empty second bar under a render bar that is moving. It now
+appears when the steps are the thing happening (`stepping || finished`).
+
+**Previously:** 2026-08-24 — **NOBODY HAD EVER SET A THINKING BUDGET, AND THAT
 WAS THE LATENCY.** 2.5-class models think with an AUTOMATIC budget unless told:
 measured, a 24-shot board spent 133s on it and an 8-shot one ran past its budget
 and came back 504. `DIRECTOR_THINKING_TOKENS=1024` + `DIRECTOR_MAX_OUTPUT_TOKENS`
@@ -2913,7 +2927,132 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-24 (latest) — 🎬 THE PLAN WAS SLOW BECAUSE NOBODY HAD EVER SET A THINKING BUDGET (measured, not guessed)
+### 2026-08-24 (latest) — THE MOVE DIDN'T COVER THE CLIP, THE TRANSITIONS DIDN'T ALTERNATE, AND THE TEXT DIDN'T MOVE (bug report, timeline screenshot, third asking on two of them)
+
+> "you fix it my transition and scaling image … when user generate all without
+> only veo render, that time you do transition on alternate clip … i want more
+> clip in zoom in scale motion in every image and add extra right and left … and
+> see image, you only put key frame in clip half of clip, not zoom in cover image
+> start to end clip. you think like video editor. and text clip you also give
+> some motion little, keep only one motion in text clip like little zoom in."
+
+**1. THE MOVE ONLY COVERED HALF THE CLIP — the real bug, and it was never in the
+Director at all.** Keyframes are stored in MILLISECONDS from the clip's start,
+and FIVE things rewrite a still's hold after a move has been written on it: the
+Veo pass growing a panel to its take's length (`spreadPanelsForRenders`), the
+voiceover growing a shot to cover its line, "Fit to audio", "Set all", and the
+user dragging a clip's edge. **None of them touched the keys.** So a push written
+across a 2-second hold stayed 2 seconds long on the 4-second clip that hold
+became: the picture finished moving half way through the shot and froze — exactly
+the screenshot. `rescaleKeys` + `reholdPatch` (`scene.js`) are now the one answer
+to "this still is a different length", and all five paths go through them.
+⚠ A VIDEO CLIP IS EXEMPT: its duration is a window on footage, so changing it is
+a TRIM and the keys stay on the frames they were put on. That distinction is why
+this is a function and not a `map`.
+
+**2. TRANSITIONS ON ALTERNATE CUTS — asked for three times, and the old rule made
+it impossible.** A cut was only a CANDIDATE when the shot before it was a long
+hold (`>= median × LONG_SHOT`). On a board where every shot is the same length
+there are no long holds, so there were no candidates, so an eight-shot film got
+**zero** transitions and played as eight hard cuts. That is the board most people
+have. With Veo un-ticked the stills ARE the finished film, so the house now GIVES
+it a rhythm rather than only reading one: every other cut, from cut 1 (`[1,3,5,7]`
+on eight shots). ⚠ FROM THE FIRST CUT, so the opening cut is not left bare and it
+reads as a pattern rather than as an effect that started late. ⚠ AND THE CEILING
+MOVED WITH IT: `transitionBudget(shots, include)` is one function the planner AND
+the fence both call — a plan that alternates is house-legal, and a fence with its
+own 35% share would have trimmed half of them out from under the preview. With Veo
+TICKED nothing changes: a transition is emphasis over footage, and it still lands
+on the long holds at 35% of the cuts.
+
+**3. THE CAPTIONS MOVE NOW, WHICH MEANT TEACHING TEXT TO SCALE ON BOTH SIDES.**
+`ANIMATABLE.text` was `opacity, x, y` — a caption could fade and drift but not
+zoom, in the preview OR the exporter. It is `+ scale` in both tables now, with
+`TEXT_DEFAULTS.scale = 1` in both (⚠ `_resolve` reads that table BY NAME, so a
+property in the tuple without a resting value is a KeyError on the first caption
+in the film). ⚠ AND IT IS A TRANSFORM, NOT A FONT SIZE: growing the font re-wraps
+the text, so a caption with a word near its wrap width would jump to a new line
+part way through the move and back on the way out. The browser scales the
+laid-out block (`transform: scale()`, origin pinned to the caption's own anchor
+so a bottom caption grows upwards exactly as the exporter's zone stacker does
+it), and `draw_texts` wraps with the RESTING font and draws with the scaled one —
+the same result by construction. Every caption the Director writes then gets ONE
+slow push (`captionPush`, 1 → 1.04 across the whole clip): 4% because a caption
+is READ, and `scale` only, so the in/out preset keeps opacity/x/y and the two
+never fight over a track.
+
+**Files:** `client/src/animatic/scene.js` (`rescaleKeys`, `isStillClip`,
+`reholdPatch`, the Veo growth path, `ANIMATABLE.text`, `TEXT_DEFAULTS`),
+`client/src/components/AnimaticEditor.jsx` (`rehold` in `patchFrame` /
+`patchFrames`, `fitToAudio`, `setAllDurations`, `captionStyle`),
+`client/src/animatic/agent/house_style.js` (`transitionBudget`, the alternating
+candidates, the fence reading the same budget),
+`client/src/animatic/agent/actions.js` (`captionPush`, `add_text`),
+`animatic.py` (`draw_texts`), `animatic_render.py` (`ANIMATABLE`,
+`TEXT_DEFAULTS`).
+
+**Verified:** new `tests/move_follows_hold_check.py` — 20 checks: a 2.0s move
+stretched to 4.0s and to 10.1s (the voiceover case), compressed to 1.0s, a video
+clip's keys untouched, a hold that did not change left alone, the Veo path end to
+end (the panel grows to its take AND its push grows with it, while the panel with
+no take is untouched), a non-list track and a zero length not throwing, and the
+caption push being one property, spanning the clip, and 4%.
+`director_guardrails_check` updated and passing, including a NEW check that with
+Veo ticked the 35% share still holds, and one whose expectation is
+**deliberately reversed** ("a flat timeline gets no transitions" → "a flat
+timeline is given a rhythm"). `render_parity` — preview and export agree on every
+sampled moment, which is the test that covers the text-scale data path. The full
+browser `editor_director_check` passes with its three transition expectations
+rewritten the same way. `director_voice_order_check` now plans that one section
+with Veo TICKED, because the property it proves — "the rhythm chooses a different
+cut after the pass" — only has a rhythm-dependent answer on the emphasis rule
+now; the note in the file says so and points at what still proves the re-anchor
+on the free door. Every other suite green; `npm run build` clean.
+
+⚠ **PRE-EXISTING FAILURES, CONFIRMED NOT MINE** (they fail with these changes
+stashed too): `editor_lane_move_check` and `editor_media_row_routing_check` (row
+height / prompt overflow), `profile_check`, `veo_download_check`, and
+`effects_parity_check` (needs a native GL binding deliberately not in
+`package.json`).
+
+⚠ **WHAT IS ARGUED RATHER THAN MEASURED: the caption zoom's pixel parity.** The
+browser scales a laid-out block and Pillow rebuilds one at a bigger font over
+resting line breaks. The anchors were chosen to match and `render_parity` agrees
+on the numbers, but nobody has diffed a preview frame against an exported one at
+scale ≠ 1. At 4% the block edges differ by a pixel or two at 1080p; a caption
+zoomed hard by hand is where that would show.
+
+### 2026-08-24 — THE SECOND RAIL WAS DEAD FOR THE WHOLE RENDER (bug report, two screenshots of a Veo pass in flight)
+
+> "when i generting video that time uper line bar move good but i see only lower
+> bar com in last when don not coming uper like this"
+
+The 🎬 panel draws two rails during a paid run: the RENDER rail (shots bought,
+fed by the pass's own poll) and the STEP rail (`index / plan.steps.length`). The
+step rail was drawn whenever the plan had steps in it — which includes the whole
+of phase B and phase C, when the edit has not started, `index` is 0 and the bar
+is empty. So a render that was working perfectly showed one bar moving and a
+second one flat underneath it, and it filled in one jump at the end.
+
+⚠ **THE RULE WAS ALREADY HALF-WRITTEN HERE.** The comment over that rail said "a
+resumed run has none — an empty bar sitting over a render that is working reads
+as a run that is stuck", which is the same sentence, applied to the one case
+(`plan.steps.length > 0`) that catches a resumed run and misses every ordinary
+paid run. The condition is now `stepping || finished` as well: the step rail
+appears when the steps are the thing happening. Nothing is lost by hiding it —
+the line directly underneath already says what it is waiting for ("The edit
+starts when the footage has landed"), which is more than an empty bar was saying.
+
+**Files:** `client/src/components/DirectorPanel.jsx` (one condition, and the
+comment that now records both halves of the rule).
+
+**Verified:** `npm run build` clean; the full browser `editor_director_check`
+passes (it drives the free door, where `stepping` is reached immediately, so the
+rail it watches is unaffected); and both states rendered in Chromium against the
+BUILT stylesheet — one moving bar during the render, the step rail appearing and
+moving once the edit begins.
+
+### 2026-08-24 — 🎬 THE PLAN WAS SLOW BECAUSE NOBODY HAD EVER SET A THINKING BUDGET (measured, not guessed)
 
 > "this time take too much time how i fast this lentency" — with the panel at
 > 118s — and then, once the clock from the previous entry landed:
