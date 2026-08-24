@@ -285,6 +285,187 @@ export function deleteApiKey(provider) {
   return request(`/auth/me/api-keys/${provider}`, { method: "DELETE" });
 }
 
+// --- Entitlements: what THIS account may see and use ---
+// ⚠ ONE CALL, MADE ON BOOT, AND THE SIDEBAR IS DRAWN FROM IT. The server sends
+// a ready-shaped `workflows` list as well as the raw map, so the nav order does
+// not end up living in the browser again — which is the thing the whole feature
+// registry exists to stop. See server/features.py.
+//
+// ⚠ THE CALLER MUST FAIL OPEN. If this throws, the app has to fall back to the
+// hard-coded WORKFLOWS array in Sidebar.jsx rather than rendering an empty rail:
+// one bad request must not blank every user's navigation at once.
+export function entitlements() {
+  return request("/auth/me/entitlements"); // → { features, states, workflows, account_role }
+}
+
+// --- Billing tiers ---
+// ⚠ `tiers()` IS PUBLIC — no token required. A price list is public by nature,
+// and the logged-out landing page can therefore show the real prices instead of
+// keeping its own copy of them.
+//
+// ⚠ PRICES ARRIVE AS INTEGER MINOR UNITS: 2800 is $28.00. Never do arithmetic
+// on them as dollars; divide only at the moment of display (see `money()` in
+// admin/format.js and the modal's own formatter).
+export function tiers() {
+  return request("/billing/tiers"); // → { tiers: [...], currency, banner }
+}
+
+// Check a discount code. ⚠ IT REDEEMS NOTHING — checking a code is not using
+// one, and the count only moves when a subscription is recorded against it.
+// A rejected code always answers the same way whatever the reason, so this
+// can't be used to enumerate which codes exist.
+export function checkCoupon(code, tier, period) {
+  return request("/billing/coupon", {
+    method: "POST",
+    body: { code, tier, period },
+  });
+}
+
+// --- Admin panel ---
+// ⚠ EVERY ONE OF THESE ANSWERS 404 TO A NON-ADMIN, not 403 — so a failure here
+// reads as "there is no such page", which is what the server wants an ordinary
+// account to believe. The client never decides who is an admin; it only reads
+// `account_role` off the profile to know whether to DRAW the entry point.
+//
+// The email is a path segment and can hold a `+` or a `#`, so every call
+// encodes it. Without that, "a+b@x.com" reaches the server as "a b@x.com" and
+// looks like a user who does not exist.
+function adminUserPath(email, suffix = "") {
+  return `/admin/users/${encodeURIComponent(email)}${suffix}`;
+}
+
+export function adminOverview() {
+  return request("/admin/overview");
+}
+export function adminMeta() {
+  return request("/admin/meta");
+}
+export function adminListUsers({
+  search = "",
+  role = "",
+  disabled = null,
+  sort = "created_at",
+  desc = true,
+  limit = 50,
+  skip = 0,
+  withCounts = false,
+} = {}) {
+  const q = new URLSearchParams();
+  if (search) q.set("search", search);
+  if (role) q.set("role", role);
+  // `disabled` is a TRISTATE — null means "don't filter", and sending
+  // `disabled=false` would instead mean "only enabled accounts".
+  if (disabled !== null) q.set("disabled", disabled ? "true" : "false");
+  q.set("sort", sort);
+  q.set("desc", desc ? "true" : "false");
+  q.set("limit", String(limit));
+  q.set("skip", String(skip));
+  if (withCounts) q.set("with_counts", "true");
+  return request(`/admin/users?${q}`); // → { users, total, limit, skip }
+}
+export function adminGetUser(email) {
+  return request(adminUserPath(email));
+}
+export function adminSetDisabled(email, disabled) {
+  return request(adminUserPath(email, "/disabled"), {
+    method: "POST",
+    body: { disabled },
+  });
+}
+export function adminSetRole(email, accountRole) {
+  return request(adminUserPath(email, "/role"), {
+    method: "POST",
+    body: { account_role: accountRole },
+  });
+}
+export function adminSetNote(email, note) {
+  return request(adminUserPath(email, "/note"), { method: "POST", body: { note } });
+}
+export function adminDeleteUser(email) {
+  return request(adminUserPath(email), { method: "DELETE" });
+}
+export function adminListFeatures() {
+  return request("/admin/features"); // → { features, statuses, rollout_modes, groups }
+}
+export function adminUpdateFeature(key, fields) {
+  // PATCH, and only the fields that changed — a screen editing one control
+  // sends one field, so two admins touching different settings on the same
+  // feature don't overwrite each other's work.
+  return request(`/admin/features/${encodeURIComponent(key)}`, {
+    method: "PATCH",
+    body: fields,
+  });
+}
+export function adminSetOverride(email, key, value) {
+  // ⚠ `value` IS TRISTATE: true forces on, false forces off, and null CLEARS
+  // the override so the account goes back to whatever the rollout rule says.
+  // "remove this exception" and "deny this customer" are different actions.
+  return request(adminUserPath(email, "/override"), {
+    method: "POST",
+    body: { key, value },
+  });
+}
+export function adminListTiers() {
+  return request("/admin/tiers"); // → { tiers, currency, default_tier, tier_ids }
+}
+export function adminUpdateTier(id, fields) {
+  return request(`/admin/tiers/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: fields,
+  });
+}
+export function adminSetMinTier(key, tier) {
+  // "" clears the requirement — the feature goes back to being included in
+  // every tier.
+  return request(`/admin/features/${encodeURIComponent(key)}/min-tier`, {
+    method: "POST",
+    body: { tier: tier || "" },
+  });
+}
+export function adminSetUserTier(email, tier) {
+  return request(adminUserPath(email, "/tier"), { method: "POST", body: { tier } });
+}
+export function adminListOffers() {
+  return request("/admin/offers");
+}
+export function adminCreateOffer(body) {
+  return request("/admin/offers", { method: "POST", body });
+}
+export function adminUpdateOffer(id, fields) {
+  return request(`/admin/offers/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: fields,
+  });
+}
+export function adminListSubscriptions({ status = null, email = "", limit = 50 } = {}) {
+  const q = new URLSearchParams();
+  if (status) q.set("status", status);
+  if (email) q.set("email", email);
+  q.set("limit", String(limit));
+  return request(`/admin/subscriptions?${q}`);
+}
+// ⚠ NO AMOUNT IS SENT. The server works the price out from the plan and the
+// code, so what lands in the ledger is what the pricing page would have quoted
+// rather than a number the browser made up.
+export function adminCreateSubscription(body) {
+  return request("/admin/subscriptions", { method: "POST", body });
+}
+export function adminCancelSubscription(id) {
+  return request(`/admin/subscriptions/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
+}
+export function adminEvents({ limit = 50, types = [], email = "", days = null } = {}) {
+  const q = new URLSearchParams();
+  q.set("limit", String(limit));
+  // Repeated, not comma-joined: the route declares `type` as a list, so
+  // `?type=a&type=b` is the shape FastAPI parses.
+  types.forEach((t) => q.append("type", t));
+  if (email) q.set("email", email);
+  if (days) q.set("days", String(days));
+  return request(`/admin/events?${q}`); // → { events: [...] }
+}
+
 // --- Script draft (autosave) ---
 // The script currently being written, so a refresh can't lose it. ONE draft per
 // account; saving overwrites it. Reading never 404s — a user who has never
@@ -326,23 +507,66 @@ export function sendPlanMessage(planId, message) {
 export function attachPlanChannel(planId, url) {
   return request(`/plans/${planId}/channel`, { method: "POST", body: { url } });
 }
-export function generatePlan(planId, { months, cadence } = {}) {
+// ⚠ `language` MUST be forwarded. It was missing here for a while, and because
+// every other layer was already wired for it — the picker, the request model,
+// plan_agent's LANGUAGES — the bug was invisible from every side except the
+// output: you picked Hinglish, the chip on the board said Hinglish, and the
+// plan came back in English because the field never left the browser.
+export function generatePlan(planId, { months, cadence, language } = {}) {
   return request(`/plans/${planId}/generate`, {
     method: "POST",
-    body: { months: months || 1, cadence: cadence || null },
+    body: {
+      months: months || 1,
+      cadence: cadence || null,
+      language: language || null,
+    },
   });
+}
+
+// --- Plan & Script: the scripts ---
+// Writing one is the only call here that spends quota. `itemIndex` points at a
+// row of the generated calendar (the server reads the row itself — see
+// server/plans.py on why the browser doesn't send it); `brief` is for a script
+// that was never on the calendar. Returns the whole session, so the new script
+// and the updated token total arrive together.
+export function writePlanScript(
+  planId,
+  { itemIndex = null, brief = "", seconds = 60, notes = "", language = "" } = {}
+) {
+  return request(`/plans/${planId}/script`, {
+    method: "POST",
+    body: {
+      item_index: itemIndex,
+      brief,
+      seconds,
+      notes,
+      language: language || null,
+    },
+  });
+}
+export function deletePlanScript(planId, scriptId) {
+  return request(`/plans/${planId}/scripts/${scriptId}`, { method: "DELETE" });
+}
+// Loads the script into the caller's ONE script draft, which is what Script to
+// Storyboard opens on. Overwrites whatever was there — the caller warns first.
+export function planScriptToDraft(planId, scriptId) {
+  return request(`/plans/${planId}/scripts/${scriptId}/to-draft`, { method: "POST" });
 }
 export function youtubeConfigured() {
   return request("/plans/config/youtube"); // → { configured: bool }
 }
 // Exports are binary — fetched as an authed blob and handed to the browser,
 // the same way the storyboard PDF/ZIP downloads work. The server names the
-// file from the plan title; `serverFilename` reads that back off the header.
-export async function downloadPlan(planId, format) {
+// file; `serverFilename` reads that back off the Content-Disposition header.
+//
+// One helper rather than one copy per endpoint: the error handling here is the
+// fiddly part (a failed download answers with JSON, not a blob), and a second
+// copy of it is a second place for a 409 to surface as "undefined".
+async function downloadAuthed(path, fallbackName) {
   const token = getToken();
   let res;
   try {
-    res = await fetchWithRetry(`${BASE}/plans/${planId}/export?format=${format}`, {
+    res = await fetchWithRetry(`${BASE}${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
@@ -360,11 +584,24 @@ export async function downloadPlan(planId, format) {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = serverFilename(res, `plan.${format}`);
+  a.download = serverFilename(res, fallbackName);
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export function downloadPlan(planId, format) {
+  return downloadAuthed(`/plans/${planId}/export?format=${format}`, `plan.${format}`);
+}
+
+// One script, as .txt (the exact bytes the storyboard breakdown reads) or
+// .docx (laid out as a screenplay, for people).
+export function downloadPlanScript(planId, scriptId, format) {
+  return downloadAuthed(
+    `/plans/${planId}/scripts/${scriptId}/export?format=${format}`,
+    `script.${format}`
+  );
 }
 
 // --- Storyboard draft (the review step's backing store) ---

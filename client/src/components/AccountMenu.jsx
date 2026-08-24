@@ -61,6 +61,11 @@ export function useMenuDismiss(open, close, selector) {
  * @param {object}   p
  * @param {Function} [p.onOpenAccount] Your account. Omitted → the row hides.
  * @param {Function} [p.onOpenPricing] Pricing and plan. Omitted → hides.
+ * @param {Function} [p.onOpenAdmin] The admin panel. ⚠ HANDED DOWN ONLY FOR AN
+ *   ADMINISTRATOR, so for everyone else the row is not greyed out — it is not
+ *   there, and the menu gives away nothing about a page they cannot open. The
+ *   editor's copy of this menu passes no account handlers at all, so it drops
+ *   out there too, which is right: the editor's ⚙ is about the PROJECT.
  * @param {Function} [p.onLogout]      Log out. Omitted → hides.
  * @param {Array}    [p.extra]  Rows inserted before Log out — `{ id, ico,
  *   label, note, on, danger }`, the same shape the built-in rows use. This is
@@ -88,6 +93,7 @@ export function useMenuDismiss(open, close, selector) {
 export default function AccountMenu({
   onOpenAccount,
   onOpenPricing,
+  onOpenAdmin,
   onLogout,
   extra = [],
   helpSubject = "Help",
@@ -127,6 +133,16 @@ export default function AccountMenu({
       label: "Pricing and plan",
       note: "What you're on, and what more costs",
       on: onOpenPricing,
+    },
+    // Above Help and below the account rows: it is a destination of the same
+    // weight as "Your account", not a setting. Hidden entirely without a
+    // handler — see the note on `onOpenAdmin` above.
+    {
+      id: "admin",
+      ico: "🛡️",
+      label: "Admin",
+      note: "Users, sign-ins and account activity",
+      on: onOpenAdmin,
     },
     {
       id: "help",

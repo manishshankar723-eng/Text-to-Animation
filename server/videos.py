@@ -36,6 +36,14 @@ from fastapi.responses import FileResponse
 
 from . import config, worker
 from .auth import CurrentUser, get_current_user
+# ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
+# registry is cosmetic — anyone can call these routes directly. See features.py.
+from .features import require_feature
+# ⚠ THE QUOTA GUARD SITS BESIDE `require_feature`, ON THE SAME ROUTES. A limit
+# checked AFTER the work is a limit that bills the customer for the call telling
+# them they are over. See server/usage.py.
+from .usage import require_quota
+from . import usage as usage_counters
 from .common import get_owned_job, panel_path, variants_of
 from .jobs import get_store
 from .schemas import (
@@ -506,6 +514,8 @@ def _copy_animatic_uploads(animatic: Job, video_job_id: str, shots: list[FinalVi
 def create_final_video(
     body: FinalVideoCreateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.animatics-to-video')),
+    _quota: CurrentUser = Depends(require_quota("projects")),
 ):
     """Start a project — empty, or pre-filled from an animatic or a storyboard.
 
@@ -559,6 +569,7 @@ def create_final_video(
             detail=f"A final video can hold at most {config.MAX_VIDEO_SHOTS} shots.",
         )
 
+    usage_counters.increment(current.email, "projects")
     job = get_store().create(
         character_name=title or "Untitled final video",
         kind=JobKind.FINAL_VIDEO,
@@ -879,6 +890,7 @@ def render_shots(
     job_id: str,
     req: RenderShotsRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.veo-render')),
 ):
     """Render shots with Veo, off-request. Poll GET /jobs/{id} for progress.
 

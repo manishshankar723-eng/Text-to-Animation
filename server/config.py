@@ -160,5 +160,82 @@ LOCAL_DRAFTS_PATH = os.environ.get("API_LOCAL_DRAFTS_PATH", ".local_drafts.json"
 # under this — but bounded so a paste accident can't push megabytes per keystroke.
 MAX_SCRIPT_CHARS = int(os.environ.get("API_MAX_SCRIPT_CHARS", str(400_000)))
 
+# --- Admin panel --------------------------------------------------------------
+# WHO IS AN ADMINISTRATOR. The role lives on the user document (`role: "admin"`)
+# so it can be granted and revoked from the panel itself — but that is a
+# chicken-and-egg problem on a fresh database: granting the first role requires
+# an admin, and there isn't one. Every address listed here is treated as an
+# admin REGARDLESS of what its document says. That is the bootstrap, and also
+# the way back in if the last admin is demoted by mistake.
+#
+# ⚠ IT IS A FLOOR, NOT A LIST. Being absent from here does not make you an
+# ordinary user — the document's `role` still counts. Comma-separated.
+ADMIN_EMAILS = frozenset(
+    e.strip().lower()
+    for e in os.environ.get("ADMIN_EMAILS", "").split(",")
+    if e.strip()
+)
+
+# The activity log — registrations, sign-ins, and every admin action. Follows
+# the USER STORE (`API_USER_STORE`) for the same reason drafts do: accounts and
+# the record of what those accounts did belong in the same place, and that is
+# one switch rather than two.
+EVENTS_COLLECTION = os.environ.get("API_EVENTS_COLLECTION", "events")
+LOCAL_EVENTS_PATH = os.environ.get("API_LOCAL_EVENTS_PATH", ".local_events.json")
+# How long an event is kept. Enforced by a Mongo TTL index, so expiry happens in
+# the database and needs no cleanup job. Set 0 to keep events for ever.
+EVENT_RETENTION_DAYS = int(os.environ.get("API_EVENT_RETENTION_DAYS", "180"))
+# The local JSON mirror is a dev convenience, not a database — it is rewritten
+# whole on every append, so it is capped rather than allowed to grow unbounded.
+MAX_LOCAL_EVENTS = int(os.environ.get("API_MAX_LOCAL_EVENTS", "5000"))
+# Page size ceiling for the admin user/event tables. A guard on one accidental
+# `?limit=100000` against a remote database, not a product decision.
+ADMIN_MAX_PAGE = int(os.environ.get("API_ADMIN_MAX_PAGE", "200"))
+
+# --- Feature flags ------------------------------------------------------------
+# What each account may SEE and USE — the registry the sidebar, the entitlements
+# endpoint and every `require_feature` guard read from. Follows the USER STORE
+# for the same reason drafts and events do: one switch, one place.
+FEATURES_COLLECTION = os.environ.get("API_FEATURES_COLLECTION", "features")
+LOCAL_FEATURES_PATH = os.environ.get("API_LOCAL_FEATURES_PATH", ".local_features.json")
+# ⚠ THIS IS READ ON NEARLY EVERY REQUEST AND CHANGED A FEW TIMES A WEEK, so it
+# is cached in-process and an admin write bumps the cache immediately. The TTL
+# only matters for the OTHER processes in a multi-worker deployment, which is
+# what it is sized for: a flag flipped in the panel lands everywhere within it.
+FEATURE_CACHE_TTL_S = float(os.environ.get("API_FEATURE_CACHE_TTL_S", "20"))
+
+# --- Billing tiers ------------------------------------------------------------
+# ⚠ "TIERS", NEVER "PLANS". `server/plans.py`, the `/plans` route and
+# `JobKind.PLAN` have meant *Plan & Script* — the content-planning workflow —
+# since long before there was any billing in this app. A collection called
+# `plans` here would be the single most confusing name in the codebase.
+TIERS_COLLECTION = os.environ.get("API_TIERS_COLLECTION", "tiers")
+LOCAL_TIERS_PATH = os.environ.get("API_LOCAL_TIERS_PATH", ".local_tiers.json")
+# Same reasoning as the feature cache: read constantly, written a few times a
+# month. See FEATURE_CACHE_TTL_S.
+TIER_CACHE_TTL_S = float(os.environ.get("API_TIER_CACHE_TTL_S", "60"))
+# ⚠ DISPLAY ONLY. Prices are stored in MINOR UNITS (cents, paise) as integers,
+# so nothing in the money path is ever a float. This says which currency those
+# integers are in; it does NOT convert anything.
+BILLING_CURRENCY = os.environ.get("API_BILLING_CURRENCY", "USD")
+
+# --- Offers and subscriptions -------------------------------------------------
+# Discounts (a site-wide sale, or a redeemable coupon) and the record of who is
+# paying for what. Same store as everything else the panel owns.
+OFFERS_COLLECTION = os.environ.get("API_OFFERS_COLLECTION", "offers")
+LOCAL_OFFERS_PATH = os.environ.get("API_LOCAL_OFFERS_PATH", ".local_offers.json")
+SUBSCRIPTIONS_COLLECTION = os.environ.get("API_SUBSCRIPTIONS_COLLECTION", "subscriptions")
+LOCAL_SUBSCRIPTIONS_PATH = os.environ.get(
+    "API_LOCAL_SUBSCRIPTIONS_PATH", ".local_subscriptions.json"
+)
+OFFER_CACHE_TTL_S = float(os.environ.get("API_OFFER_CACHE_TTL_S", "30"))
+
+# --- Usage counters -----------------------------------------------------------
+# What each account has used this calendar month, so a tier's `limits` can be
+# enforced. ⚠ NOT CACHED — a counter that is read from a cache is a counter that
+# lets somebody over their limit for the length of the TTL.
+USAGE_COLLECTION = os.environ.get("API_USAGE_COLLECTION", "usage_counters")
+LOCAL_USAGE_PATH = os.environ.get("API_LOCAL_USAGE_PATH", ".local_usage.json")
+
 # True while running on the insecure dev JWT secret (set in security.py).
 JWT_SECRET_IS_DEV = False

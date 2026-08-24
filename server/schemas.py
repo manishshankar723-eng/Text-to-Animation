@@ -364,18 +364,43 @@ class PlanSummary(BaseModel):
     title: str
     message_count: int = 0
     item_count: int = 0
+    script_count: int = 0
     months: int = 0
     channel_title: str = ""
+    # Total tokens this session has spent, so the library card can say so
+    # without opening every session to add them up.
+    tokens: int = 0
     created_at: str = ""
     updated_at: str = ""
+
+
+class PlanScriptRequest(BaseModel):
+    """Body for POST /plans/{id}/script — write the script for one video.
+
+    Exactly one of `item_index` (a row of the generated calendar) or `brief` (a
+    free-text ask) is the subject; both may be sent, in which case the brief
+    refines the calendar row rather than replacing it.
+    """
+
+    # Which calendar row this script is for. None = not from the calendar.
+    item_index: int | None = Field(None, ge=0, description="Index into plan.items.")
+    brief: str = Field(
+        "", max_length=4000, description="Free-text ask, when not from the calendar."
+    )
+    seconds: int = Field(60, ge=10, le=3600, description="Target runtime in seconds.")
+    notes: str = Field("", max_length=2000, description="Extra notes for this script.")
+    # Same vocabulary as the plan's own language — see plan_agent.LANGUAGES.
+    # Defaults to whatever the calendar was written in, resolved server-side.
+    language: str | None = Field(None, max_length=60)
 
 
 class PlanDetail(BaseModel):
     """A whole planning session.
 
-    `channel` and `plan` are free-form dicts on purpose: they are produced by
-    youtube_research and plan_agent, which own their own shapes. Pinning them
-    here would mean changing three files to add one field.
+    `channel`, `plan` and each entry of `scripts` are free-form dicts on
+    purpose: they are produced by youtube_research and plan_agent, which own
+    their own shapes. Pinning them here would mean changing three files to add
+    one field.
     """
 
     job_id: str
@@ -383,6 +408,14 @@ class PlanDetail(BaseModel):
     messages: list[PlanMessage] = Field(default_factory=list)
     channel: dict = Field(default_factory=dict)
     plan: dict = Field(default_factory=dict)
+    # Every script written in this session, newest first. See
+    # plan_agent.write_script for what one contains.
+    scripts: list[dict] = Field(default_factory=list)
+    # Running TOKEN total for the whole session — every chat turn, every
+    # calendar, every script, including the retries. See ai_usage.Usage.
+    # It is a sum of what actually happened rather than a separately maintained
+    # counter, so it cannot drift from the parts it is made of.
+    usage: dict = Field(default_factory=dict)
     created_at: str = ""
     updated_at: str = ""
 

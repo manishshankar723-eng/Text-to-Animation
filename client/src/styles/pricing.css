@@ -252,3 +252,49 @@
   color: var(--muted);
 }
 
+
+/* --- Offers (admin panel, Phase 4) ------------------------------------------
+   A sale reaches the card as an already-discounted price plus a label; a coupon
+   is applied in the browser on top of what the server sent. Both draw ONE
+   struck-through number — see the note in PricingModal.jsx about never showing
+   two. */
+.pricing-banner {
+  /* Louder than the "checkout coming soon" notice it shares a class with: this
+     one is the reason somebody is looking at the page today. */
+  border-color: var(--border-gold);
+  color: var(--primary);
+  font-weight: 600;
+}
+.pricing-sale-tag {
+  display: inline-block;
+  margin: -0.35rem 0 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(229, 193, 88, 0.16);
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pricing-coupon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: center;
+  margin: 1.2rem 0 0.2rem;
+}
+.pricing-coupon input {
+  width: 200px;
+  height: 34px;
+  box-sizing: border-box;
+  text-transform: uppercase;
+}
+/* trap 2 — a button in a ROW resets the gold button's form margin. */
+.pricing-coupon .btn {
+  margin-top: 0;
+  height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}

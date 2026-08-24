@@ -13,11 +13,11 @@ import logging
 import threading
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 
-from . import security, users
+from . import events, security, users
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,19 @@ class UserProfile(BaseModel):
     # --- read-only ---
     created_at: str | None = None
     disabled: bool = False
+    # ⚠ THE ONLY THING THE CLIENT KNOWS ABOUT PRIVILEGE, and it is here rather
+    # than in a second endpoint because the app already fetches this on boot —
+    # a separate /am-i-an-admin call would be one more round trip for a fact
+    # this response was always going to carry.
+    #
+    # ⚠ IT DECIDES WHAT IS DRAWN, NEVER WHAT IS ALLOWED. Anyone can edit their
+    # own copy of this response in a debugger and make the Admin row appear; the
+    # panel behind it is guarded by `require_admin` on the server, which asks
+    # the database rather than the caller. See admin.py.
+    #
+    # ⚠ NOT `role` — that is two fields above and means the person's JOB TITLE,
+    # which they set themselves. See the note on `users.PROFILE_FIELDS`.
+    account_role: str = "user"
 
 
 # Fields a user may edit about themselves. Anything absent is left alone, so a
@@ -252,7 +265,7 @@ def get_current_user(
 # Routes
 # ---------------------------------------------------------------------------
 @router.post("/register", response_model=TokenResponse, status_code=201)
-def register(req: RegisterRequest):
+def register(req: RegisterRequest, request: Request):
     """Create a new account and return an access token."""
     password_hash = security.hash_password(req.password)
     try:
@@ -262,20 +275,41 @@ def register(req: RegisterRequest):
 
     token = security.create_access_token(subject=user["email"])
     logger.info("Registered new user: %s", user["email"])
+    # ⚠ AFTER the account exists, never before: an event for a registration that
+    # then failed would put a customer in the admin panel who cannot sign in.
+    events.record(
+        events.TYPE_REGISTERED, user["email"], **events.request_context(request)
+    )
     return TokenResponse(access_token=token, email=user["email"])
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
     """Exchange email + password for a JWT access token."""
+    ctx = events.request_context(request)
     user = users.get_user_by_email(req.email)
     if user is None or not security.verify_password(req.password, user["password_hash"]):
         # Same message for both cases — don't reveal which emails exist.
+        #
+        # ⚠ THE EVENT DOES NOT KEEP THAT SECRET, AND MUST NOT. The 401 is
+        # careful because it is read by whoever typed the password; this row is
+        # read by an administrator investigating "somebody is trying addresses
+        # against my site", and `existed` is the entire signal there — a run of
+        # failures against real accounts is an attack, the same run against
+        # addresses that do not exist is a scanner.
+        events.record(
+            events.TYPE_LOGIN_FAILED, req.email, existed=user is not None, **ctx
+        )
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
     if user.get("disabled"):
+        events.record(
+            events.TYPE_LOGIN_FAILED, user["email"], reason="disabled", **ctx
+        )
         raise HTTPException(status_code=403, detail="Account is disabled.")
 
     token = security.create_access_token(subject=user["email"])
+    users.record_login(user["email"])
+    events.record(events.TYPE_LOGIN, user["email"], **ctx)
     return TokenResponse(access_token=token, email=user["email"])
 
 
@@ -303,6 +337,7 @@ def _to_profile(user: dict) -> UserProfile:
         timezone=user.get("timezone") or "",
         created_at=user.get("created_at"),
         disabled=user.get("disabled", False),
+        account_role=users.role_of(user),
     )
 
 
@@ -351,6 +386,7 @@ def change_password(
         )
     users.update_password(current.email, security.hash_password(body.new_password))
     logger.info("Password changed for %s", current.email)
+    events.record(events.TYPE_PASSWORD_CHANGED, current.email)
     return None
 
 
@@ -364,6 +400,10 @@ def delete_me(current: CurrentUser = Depends(get_current_user)):
     # when the resolved-user cache happens to expire.
     forget_cached_email(current.email)
     logger.info("Deleted user account: %s", current.email)
+    # ⚠ THE EVENT OUTLIVES THE ACCOUNT ON PURPOSE. "Where did that customer go"
+    # is unanswerable if the only record of them leaving is deleted with them —
+    # the row holds an address and a timestamp, nothing they wrote.
+    events.record(events.TYPE_ACCOUNT_DELETED, current.email)
     return None
 
 

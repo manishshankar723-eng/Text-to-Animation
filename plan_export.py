@@ -233,3 +233,130 @@ EXPORTERS = {
     "docx": (to_docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     "csv": (to_csv, "text/csv; charset=utf-8"),
 }
+
+
+# ---------------------------------------------------------------------------
+# Taking ONE SCRIPT out of the app
+# ---------------------------------------------------------------------------
+# A script leaves two ways, and they are deliberately different documents:
+#
+#   .txt   — the MACHINE-READABLE one. Byte for byte what
+#            `plan_agent.script_to_text` produced, which is byte for byte what
+#            the storyboard breakdown reads. A creator who exports this, edits
+#            it in a text editor and pastes it back into Script to Storyboard
+#            gets exactly the document the app would have handed over itself.
+#            ⚠ DO NOT PRETTY-PRINT IT. Every heading, blank line and `NAME:`
+#            prefix in there is something the breakdown parses.
+#
+#   .docx  — the HUMAN one, laid out the way a screenplay is: slug lines, action
+#            in the margin, dialogue indented under the speaker's name. This one
+#            is for reading, for the client, for the person holding the camera.
+
+
+def to_script_txt(script: dict) -> bytes:
+    """The script exactly as the breakdown reads it. See the note above.
+
+    Falls back to rebuilding the text when a stored script predates the `text`
+    field, so an old session still exports rather than downloading an empty
+    file — through the SAME function, so the format cannot fork.
+    """
+    text = str(script.get("text") or "").strip()
+    if not text:
+        from plan_agent import script_to_text
+
+        text = script_to_text(script).strip()
+    logger.info("[plan-export] script txt: %d chars", len(text))
+    # UTF-8 with a BOM, for the same reason to_csv uses one: this opens in
+    # Notepad and Word as often as in a code editor, and without it a Hindi or
+    # Hinglish script full of Devanagari renders as mojibake.
+    return ("﻿" + text + "\n").encode("utf-8")
+
+
+def to_script_docx(script: dict) -> bytes:
+    """The script laid out as a screenplay, to read or send on."""
+    from docx import Document
+    from docx.shared import Inches, Pt
+
+    doc = Document()
+    doc.add_heading(str(script.get("title") or "Untitled script"), level=0)
+
+    # The header line states the things a reader checks first, and states the
+    # runtime as an ESTIMATE against what was asked for — a script that came
+    # back at 90 seconds when 45 were asked for should say so on page one.
+    bits = []
+    if script.get("seconds"):
+        estimated = script.get("estimated_seconds")
+        bits.append(
+            f"target {script['seconds']}s"
+            + (f" · reads at about {estimated}s" if estimated else "")
+        )
+    if script.get("spoken_words"):
+        bits.append(f"{script['spoken_words']} spoken words")
+    if script.get("rating"):
+        bits.append(f"rated {script['rating']}")
+    if script.get("language"):
+        bits.append(str(script["language"]))
+    if bits:
+        run = doc.add_paragraph().add_run(" · ".join(bits))
+        run.italic = True
+        run.font.size = Pt(9)
+
+    if script.get("logline"):
+        para = doc.add_paragraph()
+        para.add_run("Logline: ").bold = True
+        para.add_run(str(script["logline"]))
+
+    if script.get("characters"):
+        doc.add_heading("Cast", level=1)
+        for c in script["characters"]:
+            para = doc.add_paragraph(style="List Bullet")
+            para.add_run(str(c.get("name", ""))).bold = True
+            if c.get("description"):
+                para.add_run(f" — {c['description']}")
+
+    for scene in script.get("scenes") or []:
+        heading = doc.add_heading(level=1)
+        heading.add_run(
+            f"{scene.get('number', 1)}. {str(scene.get('heading', '')).upper()}"
+        )
+        for beat in scene.get("beats") or []:
+            kind = beat.get("type")
+            text = str(beat.get("text", ""))
+            name = str(beat.get("character", "")).upper()
+
+            if kind in ("dialogue", "vo"):
+                # Indented under the speaker, the way a screenplay sets it —
+                # the one formatting cue that makes a script skimmable.
+                who = doc.add_paragraph()
+                who.paragraph_format.left_indent = Inches(1.5)
+                who.paragraph_format.space_after = Pt(0)
+                who.add_run(name + (" (V.O.)" if kind == "vo" else "")).bold = True
+                line = doc.add_paragraph(text)
+                line.paragraph_format.left_indent = Inches(1.0)
+                line.paragraph_format.right_indent = Inches(1.0)
+            elif kind == "text":
+                para = doc.add_paragraph()
+                para.add_run("ON SCREEN: ").bold = True
+                para.add_run(text)
+            else:
+                doc.add_paragraph(text)
+
+    if script.get("cta"):
+        doc.add_heading("Call to action", level=1)
+        doc.add_paragraph(str(script["cta"]))
+
+    if script.get("notes"):
+        doc.add_heading("Production notes", level=1)
+        for n in script["notes"]:
+            doc.add_paragraph(str(n), style="List Bullet")
+
+    out = io.BytesIO()
+    doc.save(out)
+    logger.info("[plan-export] script docx: %d scene(s)", len(script.get("scenes") or []))
+    return out.getvalue()
+
+
+SCRIPT_EXPORTERS = {
+    "txt": (to_script_txt, "text/plain; charset=utf-8"),
+    "docx": (to_script_docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+}

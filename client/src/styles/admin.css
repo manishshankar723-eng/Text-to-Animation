@@ -1,0 +1,1044 @@
+/* admin.css — the admin panel.
+ *
+ * Built on the tokens in theme.css and the parts in base.css: `.card`, `.btn`,
+ * `.badge`, `.chip`, `.muted`, `.tiny`, `.placeholder`, `.danger-zone` and
+ * `.danger-confirm` are all the app's own. Nothing here restyles them; this
+ * file is the table, the tiles and the tab rail, which the app did not have.
+ *
+ * FOUR TRAPS FROM THE UI RULE IN AGENTS.md, ALL OF THEM LIVE ON THIS SCREEN:
+ *
+ *  1. `theme.css` sets a GLOBAL `select { width: 100% }`. The filter row is
+ *     mostly selects, so `.admin-select` resets it — without that the two
+ *     dropdowns each take a full row and the filter bar is three lines tall.
+ *     This has been reported as a bug more than once elsewhere in the app.
+ *  2. `.btn.primary` carries a global `margin-top: 1.1rem` (it is normally the
+ *     last control in a form). `.admin-actions` and `.admin-filters` are ROWS
+ *     of buttons, so both reset it and give every child an identical box.
+ *  3. A card grid with `align-items: start` makes ragged rows — three reported
+ *     bugs. The tiles stretch and take their height from the tallest.
+ *  4. Never nest two scrolling containers. Exactly one element in the table's
+ *     chain scrolls: `.admin-table-card` is `overflow:hidden` + flex column +
+ *     `min-height:0`, and `.admin-table-wrap` is the single `overflow:auto`.
+ */
+
+/* ---- Shell ---------------------------------------------------------------- */
+.admin-wrap {
+  /* The tab rail and the body below it are a column, so the table can be told
+     to take the remaining height rather than growing the page. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.2rem;
+  /* Narrow windows scroll the rail rather than wrapping it — a tab that has
+     dropped onto a second line stops reading as a tab. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.admin-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 38px;
+  padding: 0 0.95rem;
+  box-sizing: border-box;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.admin-tab:hover {
+  color: var(--text);
+}
+.admin-tab.on {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.admin-tab-ico {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.admin-body {
+  min-height: 0;
+}
+.admin-h2 {
+  font-size: 1.02rem;
+  margin: 0;
+}
+.admin-h3 {
+  font-size: 0.9rem;
+  margin: 1.3rem 0 0.5rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.admin-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+.admin-section-head .btn {
+  margin-top: 0; /* trap 2 */
+}
+.admin-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.admin-foot {
+  margin: 0.9rem 0 0;
+}
+.admin-alarm {
+  margin-bottom: 1.2rem;
+}
+.admin-alarm code {
+  font-size: 0.9em;
+}
+
+/* ---- Dashboard tiles ------------------------------------------------------ */
+.admin-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.9rem;
+  /* trap 3 — stretch, never start. */
+  align-items: stretch;
+  margin-bottom: 0.4rem;
+}
+.admin-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  height: 100%;
+  margin-bottom: 0;
+  padding: 1rem 1.1rem;
+}
+.admin-tile-num {
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--primary);
+}
+.admin-tile-num.warn {
+  color: var(--warn);
+}
+.admin-tile-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.admin-tile-note {
+  margin-top: auto; /* trap 3 — the footer sinks, the row stays even. */
+  padding-top: 0.35rem;
+  opacity: 0.75;
+  font-style: italic;
+}
+.admin-tile.lib-ghost {
+  min-height: 104px;
+}
+
+.admin-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.2rem;
+  align-items: stretch;
+}
+.admin-cols > .card {
+  height: 100%;
+}
+@media (max-width: 900px) {
+  .admin-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- The signup chart ----------------------------------------------------- */
+.admin-spark-wrap {
+  margin-top: auto;
+}
+.admin-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 96px;
+  padding: 0 1px;
+}
+.admin-spark-bar {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 2px 2px 0 0;
+  /* A day with nothing still draws a sliver, in the border colour — so a quiet
+     week reads as quiet rather than as missing data. */
+  background: var(--border);
+  transition: background 0.15s ease;
+}
+.admin-spark-bar.on {
+  background: var(--gold-bar);
+}
+.admin-spark-bar:hover {
+  background: var(--primary-hover);
+}
+.admin-spark-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.45rem;
+}
+
+/* ---- Job-kind bars -------------------------------------------------------- */
+.admin-kinds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.admin-kind {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 2fr auto;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.88rem;
+}
+.admin-kind-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.admin-kind-fill {
+  display: block;
+  height: 100%;
+  background: var(--gold-bar);
+}
+.admin-kind-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* ---- Activity feed -------------------------------------------------------- */
+.admin-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.admin-feed-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+.admin-feed-row:last-child {
+  border-bottom: 0;
+}
+.admin-feed-ico {
+  flex: 0 0 auto;
+  width: 1.4em;
+  text-align: center;
+  color: var(--muted);
+}
+.admin-feed-ico.ok {
+  color: var(--ok);
+}
+.admin-feed-ico.warn {
+  color: var(--warn);
+}
+.admin-feed-ico.fail {
+  color: var(--fail);
+}
+.admin-feed-text {
+  flex: 1;
+  min-width: 0;
+  /* Long addresses and user agents must wrap rather than push the timestamp
+     off the card. */
+  overflow-wrap: anywhere;
+}
+.admin-feed-what {
+  font-weight: 600;
+  margin-right: 0.4rem;
+}
+.admin-feed-ip {
+  margin-left: 0.5rem;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.admin-feed-when {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.admin-feed-full {
+  /* Inside the single scroller — see trap 4. */
+  padding-right: 0.3rem;
+}
+
+/* A plain-text button that reads as a link. Used for "open this account" inside
+   a sentence, where a real button would break the line's rhythm. */
+.admin-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.admin-link:hover {
+  color: var(--primary-hover);
+}
+
+/* ---- Filters -------------------------------------------------------------- */
+.admin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.9rem;
+}
+/* trap 2 — a ROW of buttons resets the gold button's form margin and gives
+   every control the same box, so a ghost button matches a solid one. */
+.admin-filters .btn,
+.admin-actions .btn {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+.admin-filters .btn.on {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+.admin-search {
+  flex: 1;
+  min-width: 180px;
+  height: 34px;
+  box-sizing: border-box;
+}
+/* trap 1 — undo the global `select { width: 100% }`. */
+.admin-select {
+  width: auto;
+  min-width: 120px;
+  height: 34px;
+  box-sizing: border-box;
+}
+
+.admin-segment {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.admin-seg-btn {
+  height: 34px;
+  padding: 0 0.7rem;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.admin-seg-btn:last-child {
+  border-right: 0;
+}
+.admin-seg-btn:hover {
+  color: var(--text);
+}
+.admin-seg-btn.on {
+  background: var(--panel-2);
+  color: var(--primary);
+}
+
+/* ---- The user table ------------------------------------------------------- */
+.admin-split {
+  display: grid;
+  /* Table first and wide; the detail is the narrow companion. The app's own
+     `.layout` is the other way round, which is why this is its own grid. */
+  grid-template-columns: 1fr minmax(340px, 400px);
+  gap: 1.2rem;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .admin-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* trap 4 — this is the ancestor that must NOT scroll. */
+.admin-table-card {
+  overflow: hidden;
+  min-height: 0;
+  max-height: calc(100vh - 230px);
+}
+.admin-table-wrap {
+  flex: 1;
+  min-height: 0;
+  /* …and this is the one element in the chain that does. */
+  overflow: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.admin-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Opaque, or the rows scroll visibly through the header. */
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.admin-th {
+  cursor: pointer;
+  user-select: none;
+}
+.admin-th:hover {
+  color: var(--text);
+}
+.admin-th.on {
+  color: var(--primary);
+}
+.admin-th-caret {
+  margin-left: 0.25rem;
+  font-size: 0.75em;
+}
+
+.admin-row {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.admin-row:hover {
+  background: var(--panel-2);
+}
+.admin-row.on {
+  background: var(--panel-2);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.admin-row.off .admin-cell-name {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.admin-cell-name {
+  display: block;
+  font-weight: 600;
+}
+.admin-cell-sub {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.admin-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.admin-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+}
+.admin-pager-btns {
+  display: inline-flex;
+  gap: 0.45rem;
+}
+.admin-pager .btn {
+  margin-top: 0; /* trap 2 */
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+/* ---- The detail panel ----------------------------------------------------- */
+.admin-detail-col {
+  min-width: 0;
+}
+.admin-detail {
+  /* Its own scroller, and it is a SIBLING of the table's — not nested inside
+     it — so trap 4 does not apply. */
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+}
+.admin-detail-empty {
+  margin-bottom: 0;
+}
+.admin-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.admin-detail-name {
+  font-size: 1.05rem;
+  margin: 0 0 0.15rem;
+  overflow-wrap: anywhere;
+}
+.admin-detail-close {
+  /* `.modal-close` is absolutely positioned for a dialog; this one sits in the
+     flow of a card header instead. */
+  position: static;
+  flex: 0 0 auto;
+}
+.admin-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.7rem 0;
+}
+.admin-kv {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr;
+  gap: 0.3rem 0.8rem;
+  margin: 0.9rem 0 0;
+  font-size: 0.88rem;
+}
+.admin-kv dt {
+  margin: 0;
+}
+.admin-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.admin-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+}
+.admin-note {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 0.86rem;
+}
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.admin-danger {
+  margin-top: 1.4rem;
+}
+.admin-danger .danger-confirm {
+  margin-top: 0.6rem;
+}
+
+/* ---- Access rows (in the user detail) ------------------------------------- */
+.admin-access {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.admin-access-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.86rem;
+}
+.admin-access-row:last-child {
+  border-bottom: 0;
+}
+.admin-access-row.off .admin-access-label {
+  opacity: 0.6;
+}
+.admin-access-ico {
+  flex: 0 0 auto;
+  width: 1.5em;
+  text-align: center;
+}
+.admin-access-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.admin-access-label {
+  font-weight: 600;
+}
+.admin-access-seg {
+  flex: 0 0 auto;
+}
+.admin-access-seg .admin-seg-btn {
+  height: 26px;
+  padding: 0 0.45rem;
+  font-size: 0.76rem;
+}
+
+/* ---- The Features switchboard --------------------------------------------- */
+.admin-note-box {
+  margin-bottom: 1.2rem;
+}
+.admin-group-blurb {
+  margin: 0.25rem 0 0;
+  max-width: 62ch;
+}
+.admin-feature-list {
+  display: flex;
+  flex-direction: column;
+}
+.admin-feature {
+  padding: 0.8rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.admin-feature:last-child {
+  border-bottom: 0;
+}
+/* A hidden feature is dimmed, so the state of the list is readable at a glance
+   rather than only by reading each row's buttons. */
+.admin-feature.hidden .admin-feature-label,
+.admin-feature.hidden .admin-feature-ico {
+  opacity: 0.5;
+}
+.admin-feature-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.admin-feature-ico {
+  flex: 0 0 auto;
+  font-size: 1.15rem;
+  width: 1.5em;
+  text-align: center;
+}
+.admin-feature-name {
+  flex: 1;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.admin-feature-label {
+  font-weight: 600;
+  font-size: 0.94rem;
+}
+.admin-feature-key {
+  font-size: 0.74rem;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.admin-feature-says {
+  margin: 0.4rem 0 0 2.1rem;
+  max-width: 70ch;
+}
+.admin-feature-more {
+  margin-top: 0 !important; /* trap 2 */
+  height: 30px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+.admin-status-seg .admin-seg-btn {
+  height: 30px;
+  font-size: 0.8rem;
+}
+/* The chosen status carries its own colour — green / amber / red — because
+   "which of these three is on" is the only thing being read on this row. */
+.admin-status-seg .admin-seg-btn.on.ok {
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--ok);
+}
+.admin-status-seg .admin-seg-btn.on.warn {
+  background: rgba(251, 191, 36, 0.14);
+  color: var(--warn);
+}
+.admin-status-seg .admin-seg-btn.on.fail {
+  background: rgba(248, 113, 113, 0.14);
+  color: var(--fail);
+}
+.admin-feature-ord {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.admin-ord-btn {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 0.6rem;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.admin-ord-btn:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--border-gold);
+}
+.admin-ord-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.admin-rollout {
+  margin: 0.7rem 0 0 2.1rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+}
+.admin-rollout-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.admin-rollout-row.wide {
+  flex: 1 1 100%;
+}
+.admin-pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.admin-pct input[type="range"] {
+  width: 180px;
+}
+.admin-pct-num {
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2em;
+}
+.admin-rollout-note {
+  flex: 1 1 100%;
+  margin: 0;
+  max-width: 70ch;
+}
+
+/* ---- Pricing --------------------------------------------------------------- */
+.admin-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.2rem;
+  /* trap 3 — stretch, never start; the cards' bodies vary a lot in height. */
+  align-items: stretch;
+}
+.admin-tier {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin-bottom: 0;
+}
+.admin-tier.archived {
+  opacity: 0.6;
+}
+.admin-tier-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.admin-tier-name {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.2rem 0.4rem;
+  color: var(--text);
+}
+/* Editable, but it should not LOOK like a form field until you go near it —
+   the card is meant to read as the pricing card it controls. */
+.admin-tier-name:hover,
+.admin-tier-name:focus {
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+.admin-tier-badges {
+  display: inline-flex;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+}
+.admin-tier-blurb {
+  margin-top: 0.5rem;
+  font-size: 0.84rem;
+}
+
+.admin-price-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.8rem 0 0.4rem;
+}
+.admin-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 30%;
+  min-width: 92px;
+}
+.admin-price-input {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.admin-price-input:focus-within {
+  border-color: var(--border-gold);
+}
+.admin-price-sym {
+  padding: 0 0.1rem 0 0.5rem;
+  color: var(--muted);
+}
+.admin-price-input input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 0.4rem 0.5rem 0.4rem 0.15rem;
+}
+
+.admin-tier-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+  margin-top: 0.7rem;
+  /* The body takes the slack so the footer sinks — trap 3 again. */
+  flex: 1;
+}
+@media (max-width: 520px) {
+  .admin-tier-cols {
+    grid-template-columns: 1fr;
+  }
+}
+.admin-h4 {
+  font-size: 0.74rem;
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.admin-tier-bullets {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.admin-tier-unlocks {
+  list-style: none;
+  margin: 0 0 0.35rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.admin-tier-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: auto; /* trap 3 — the footer sinks, the row stays even. */
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.admin-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.admin-check input {
+  margin: 0;
+}
+.admin-badge-input {
+  width: 110px;
+  height: 30px;
+  box-sizing: border-box;
+  font-size: 0.8rem;
+}
+.admin-tier-chip {
+  text-transform: capitalize;
+}
+
+/* ---- The upgrade gate (a locked workflow's page) --------------------------- */
+.upgrade-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: center;
+  padding: 3rem 1.5rem;
+}
+.upgrade-gate-ico {
+  font-size: 2.6rem;
+  line-height: 1;
+}
+.upgrade-gate .muted {
+  max-width: 48ch;
+}
+/* trap 2 — `.btn.primary` carries a form margin; this one is on its own. */
+.upgrade-gate .btn.primary {
+  margin-top: 0.6rem;
+}
+
+/* The lock beside a workflow in the rail. Sized to sit where the live dot does,
+   so a locked row and a live one are the same height. */
+.sb-badge-locked {
+  margin-left: auto;
+  font-size: 0.8rem;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+/* ---- Sales ----------------------------------------------------------------- */
+.admin-record-open {
+  margin-bottom: 1.2rem;
+}
+.admin-offer-form {
+  margin-left: 0;
+  margin-bottom: 1rem;
+}
+
+/* ---- Usage ----------------------------------------------------------------- */
+.admin-usage {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.admin-usage-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) 2fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.84rem;
+}
+.admin-usage-name {
+  text-transform: capitalize;
+}
+/* At the limit the bar turns red — the one state somebody scanning the panel
+   is actually looking for. */
+.admin-kind-fill.over {
+  background: var(--fail);
+}
+
+/* ---- View as --------------------------------------------------------------- */
+.admin-detail-head-actions {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+.admin-detail-head-actions .btn {
+  margin-top: 0; /* trap 2 */
+  height: 28px;
+  padding-top: 0;
+  padding-bottom: 0;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+.view-as {
+  position: relative;
+  width: min(760px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  margin: 0;
+}
+.view-as-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.4rem;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .view-as-cols {
+    grid-template-columns: 1fr;
+  }
+}
+/* A small stand-in for the real rail. Deliberately recognisable rather than
+   pixel-exact: it answers "is the row there, and what does it wear". */
+.view-as-rail {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.view-as-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--nav-stroke);
+  border-radius: 9px;
+  font-size: 0.84rem;
+}
+.view-as-row.off {
+  opacity: 0.55;
+}
+.view-as-ico {
+  width: 1.3em;
+  text-align: center;
+}
+.view-as-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view-as-lock {
+  font-size: 0.78rem;
+}
+.view-as-hidden {
+  margin-top: 0.5rem;
+}

@@ -77,6 +77,19 @@ class JobStore:
         """
         raise NotImplementedError
 
+    def count_by_kind(self, owner: str | None = None) -> dict[str, int]:
+        """`{kind: how many}`, for the whole store or for one owner.
+
+        Exists for the admin panel, which asks "how much has this account
+        actually made" on every row of a user table and "what is this app being
+        used for" on the dashboard. Both were previously answerable only by
+        listing jobs and measuring the list, which caps out at the page size and
+        so quietly under-reports anyone busy.
+
+        Kinds with no jobs are omitted; the caller fills in the zeroes.
+        """
+        raise NotImplementedError
+
     def delete(self, job_id: str) -> bool:
         """Remove a job record. Returns True if something was deleted."""
         raise NotImplementedError
@@ -184,6 +197,17 @@ class MemoryJobStore(JobStore):
         jobs.sort(key=lambda j: j.created_at, reverse=True)
         return jobs[:limit]
 
+    def count_by_kind(self, owner=None):
+        with self._lock:
+            jobs = list(self._jobs.values())
+        counts: dict[str, int] = {}
+        for job in jobs:
+            if owner is not None and job.owner != owner:
+                continue
+            key = job.kind.value if hasattr(job.kind, "value") else str(job.kind)
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
     def delete(self, job_id):
         with self._lock:
             existed = self._jobs.pop(job_id, None) is not None
@@ -270,6 +294,25 @@ class FirestoreJobStore(JobStore):
             wanted = set(kinds)
             jobs = [j for j in jobs if j.kind in wanted]
         return jobs[:limit]
+
+    def count_by_kind(self, owner=None):
+        """⚠ THIS ONE STREAMS, because Firestore has no group-by.
+
+        Only the `kind` field is selected, so it is one small read per job
+        rather than a full document — but it IS a read per job, and this backend
+        is legacy (see config.JOB_STORE). Mongo, the default, does this in the
+        database. If a Firestore deployment ever grows large enough for this to
+        hurt, that is the signal to migrate it rather than to cap the number and
+        report a wrong one.
+        """
+        query = self._col
+        if owner is not None:
+            query = query.where("owner", "==", owner)
+        counts: dict[str, int] = {}
+        for snap in query.select(["kind"]).stream():
+            key = (snap.to_dict() or {}).get("kind") or JobKind.GENERATE.value
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def delete(self, job_id):
         doc = self._doc(job_id)
@@ -405,6 +448,14 @@ class MongoJobStore(JobStore):
             query["kind"] = {"$in": [JobKind(k).value for k in kinds]}
         cursor = self._col.find(query).sort("created_at", -1).limit(limit)
         return [self._to_job(d) for d in cursor]
+
+    def count_by_kind(self, owner=None):
+        match: dict = {} if owner is None else {"owner": owner}
+        pipeline = [{"$match": match}, {"$group": {"_id": "$kind", "n": {"$sum": 1}}}]
+        return {
+            (row.get("_id") or JobKind.GENERATE.value): row.get("n", 0)
+            for row in self._col.aggregate(pipeline)
+        }
 
     def delete(self, job_id):
         return self._col.delete_one({"_id": job_id}).deleted_count > 0

@@ -37,6 +37,14 @@ import panel_sequence
 
 from . import config, worker
 from .auth import CurrentUser, get_current_user
+# ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
+# registry is cosmetic — anyone can call these routes directly. See features.py.
+from .features import require_feature
+# ⚠ THE QUOTA GUARD SITS BESIDE `require_feature`, ON THE SAME ROUTES. A limit
+# checked AFTER the work is a limit that bills the customer for the call telling
+# them they are over. See server/usage.py.
+from .usage import require_quota
+from . import usage as usage_counters
 from .common import (
     board_dir,
     get_owned_job,
@@ -910,6 +918,8 @@ def _frames_from_board(board: Job, default_duration_ms: int) -> list[AnimaticFra
 def create_animatic(
     body: AnimaticCreateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature("workflow.storyboard-to-animatics")),
+    _quota: CurrentUser = Depends(require_quota("projects")),
 ):
     """Start a new animatic — empty, or pre-filled from a storyboard.
 
@@ -960,6 +970,7 @@ def create_animatic(
     # against to decide whether Save must ask for a real name. Only reachable
     # from a direct API call (the New tile sends the title itself), but a
     # mismatch here would be a project the editor treats as already named.
+    usage_counters.increment(current.email, "projects")
     job = get_store().create(
         character_name=title or "Untitled Project",
         kind=JobKind.ANIMATIC,
@@ -1307,6 +1318,7 @@ def generate_animatic_image(
     job_id: str,
     body: AnimaticImageGenerateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """SPENDS QUOTA. Draw one picture from a sentence, and store it as an upload.
 
@@ -2239,6 +2251,7 @@ def animate_frames(
     job_id: str,
     body: AnimaticAnimateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.veo-render')),
 ):
     """SPENDS MONEY. Render the named frames with Veo. Poll GET /jobs/{id}.
 
@@ -2380,6 +2393,7 @@ def generate_animatic_video(
     job_id: str,
     body: AnimaticVideoGenerateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.veo-render')),
 ):
     """SPENDS MONEY. Render one video from a prompt. Poll GET /jobs/{id}.
 
@@ -3007,6 +3021,7 @@ def caption_animatic(
     job_id: str,
     body: AnimaticCaptionsRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.captions')),
 ):
     """SPENDS QUOTA. Transcribe one audio track into caption clips."""
     import captions as captions_mod
@@ -3223,6 +3238,7 @@ def voice_animatic(
     job_id: str,
     body: AnimaticVoiceoverRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.tts-voiceover')),
 ):
     """SPENDS QUOTA. Read the board's dialogue aloud onto the audio layer."""
     import tts as tts_mod
@@ -3554,6 +3570,7 @@ def regenerate_frame_panel(
     frame_id: str,
     body: AnimaticPanelRegenerateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """SPENDS QUOTA. Re-draw the storyboard panel this clip shows.
 
@@ -3880,6 +3897,10 @@ def suggest_neighbour_shot(
     frame_id: str,
     body: AnimaticNeighbourSuggestRequest,
     current: CurrentUser = Depends(get_current_user),
+    # Gated with the DRAWING it precedes, not on its own: this route writes the
+    # prompt for a shot that `…/neighbour` then draws, so leaving it open would
+    # let a customer without image generation fill a box whose button 403s.
+    _gate: CurrentUser = Depends(require_feature("cap.image-generate")),
 ):
     """SPENDS QUOTA — a TEXT call, which costs a fraction of a drawing.
 
@@ -3932,6 +3953,7 @@ def generate_neighbour_shot(
     frame_id: str,
     body: AnimaticNeighbourShotRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """SPENDS QUOTA. Draw the shot that goes beside this clip.
 
@@ -4107,6 +4129,7 @@ def relength_frame_sequence(
     frame_id: str,
     body: AnimaticRelengthRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """SPENDS QUOTA. Re-block this shot's key poses at a new length.
 
@@ -4207,6 +4230,7 @@ def reframe_animatic(
     job_id: str,
     body: AnimaticReframeRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """SPENDS QUOTA. Find the subject of each shot and frame it for a new shape."""
     import autoframe

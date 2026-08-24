@@ -36,6 +36,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from . import config
 from .auth import CurrentUser, get_current_user
+# ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
+# registry is cosmetic — anyone can call these routes directly. See features.py.
+from .features import require_feature
 from .common import get_owned_job, write_director_run
 from .jobs import Job, get_store
 from .schemas import (
@@ -184,6 +187,7 @@ def start_veo(
     job_id: str,
     body: DirectorVeoRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.veo-render')),
 ):
     """FREE. Open a resumable run: write down what this pass MEANT to render.
 
@@ -290,6 +294,7 @@ def write_plan(
     job_id: str,
     body: DirectorPlanRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.director')),
 ):
     """SPENDS TEXT QUOTA — two calls, and nothing on the timeline moves.
 

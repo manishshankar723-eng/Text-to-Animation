@@ -4,6 +4,9 @@ import Icon from "./Icon.jsx";
 import PlanExportPreview from "./PlanExportPreview.jsx";
 import PlanQuestions from "./PlanQuestions.jsx";
 import PlanLanguageModal, { LANGUAGES } from "./PlanLanguageModal.jsx";
+import PlanScriptModal, { usageLine } from "./PlanScriptModal.jsx";
+// Pure, so node can import it — tests/plan_script_check.py drives it directly.
+import { formatRuntime, secondsFromFormat } from "../plan/script_length.js";
 
 // Same shape as the storyboard library: "Recent" highlights the newest, "All"
 // lists everything (including that one).
@@ -78,7 +81,23 @@ const GOAL_TONE = {
   retention: "goal-retention",
 };
 
-export default function PlanAndScript() {
+// Lengths for a script asked for OUTSIDE the calendar. A calendar row doesn't
+// need this control because its `format` field already says how long it is —
+// see secondsFromFormat.
+const SCRIPT_LENGTHS = [
+  [15, "15s — hook only"],
+  [30, "30s short"],
+  [45, "45s short"],
+  [60, "1 minute"],
+  [90, "90 seconds"],
+  [180, "3 minutes"],
+  [300, "5 minutes"],
+  [480, "8 minutes"],
+  [600, "10 minutes"],
+  [900, "15 minutes"],
+];
+
+export default function PlanAndScript({ onOpenStoryboard }) {
   const [step, setStep] = useState("library");
   const [sessions, setSessions] = useState([]);
   const [plan, setPlan] = useState(null); // the open session
@@ -123,6 +142,15 @@ export default function PlanAndScript() {
   //   "pick"     — from the Language field; confirming just sets the language.
   // null = closed.
   const [langMode, setLangMode] = useState(null);
+
+  // Scripts. `writingFor` is what's currently being written — an item index, or
+  // the string "brief" for the standalone box — so exactly one button can show
+  // a spinner and the rest disable. A plain boolean lit up every card.
+  const [writingFor, setWritingFor] = useState(null);
+  const [openScriptId, setOpenScriptId] = useState(null);
+  const [scriptBusy, setScriptBusy] = useState(false);
+  const [scriptBrief, setScriptBrief] = useState("");
+  const [scriptSeconds, setScriptSeconds] = useState(60);
 
   // What actually gets sent. Note the upper bound is clamped but the LOWER one
   // deliberately is not: an empty or junk Custom box must fall through as 0 so
@@ -325,6 +353,91 @@ export default function PlanAndScript() {
     }
   }
 
+  // --- Scripts -------------------------------------------------------------
+  // The "& Script" half. `itemIndex` writes the script for a calendar row (the
+  // server reads the row from the stored plan, so a stale tab can't write a
+  // script for an upload that was regenerated away); `brief` writes one for
+  // something that was never on the calendar at all.
+  async function writeScript({ itemIndex = null, brief = "", seconds }) {
+    if (!plan || writingFor !== null) return;
+    setWritingFor(itemIndex === null ? "brief" : itemIndex);
+    setError("");
+    setNotice("");
+    try {
+      const id = await ensureSession();
+      const updated = await api.writePlanScript(id, {
+        itemIndex,
+        brief,
+        seconds,
+        language,
+      });
+      setPlan(updated);
+      loadSessions();
+      // Open the one just written. It is first in the list — the server keeps
+      // scripts newest-first — so this doesn't need the id back from the call.
+      const written = updated.scripts?.[0];
+      if (written) setOpenScriptId(written.id);
+      if (itemIndex === null) setScriptBrief("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setWritingFor(null);
+    }
+  }
+
+  async function sendScriptToStoryboard(script) {
+    if (!plan || !script) return;
+    // The app keeps ONE script draft per user, so this replaces whatever is in
+    // the Script to Storyboard paste box. Ask first — losing a draft you were
+    // halfway through is not something to discover afterwards.
+    const ok = window.confirm(
+      "Load this script into Script to Storyboard?\n\n" +
+        "This replaces whatever is currently in that workflow's script box."
+    );
+    if (!ok) return;
+    setScriptBusy(true);
+    setError("");
+    try {
+      await api.planScriptToDraft(plan.job_id, script.id);
+      setOpenScriptId(null);
+      if (onOpenStoryboard) onOpenStoryboard();
+      else setNotice("Loaded into Script to Storyboard — open it from the sidebar.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setScriptBusy(false);
+    }
+  }
+
+  async function downloadScript(script, format) {
+    if (!plan || !script) return;
+    setScriptBusy(true);
+    setError("");
+    try {
+      await api.downloadPlanScript(plan.job_id, script.id, format);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setScriptBusy(false);
+    }
+  }
+
+  async function removeScript(script) {
+    if (!plan || !script) return;
+    if (!window.confirm(`Delete "${script.title}"? This can't be undone.`)) return;
+    setScriptBusy(true);
+    setError("");
+    try {
+      setPlan(await api.deletePlanScript(plan.job_id, script.id));
+      setOpenScriptId(null);
+      loadSessions();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setScriptBusy(false);
+    }
+  }
+
   // Clicking a format opens the PREVIEW; the download happens from inside it.
   // Downloading straight away meant the only way to check an export was to open
   // it in Excel or Word first.
@@ -410,8 +523,15 @@ export default function PlanAndScript() {
             <span className="chip">
               {s.message_count} message{s.message_count === 1 ? "" : "s"}
             </span>
+            {s.script_count > 0 && (
+              <span className="chip">
+                ✍️ {s.script_count} script{s.script_count === 1 ? "" : "s"}
+              </span>
+            )}
             {s.channel_title && <span className="chip">📺 {s.channel_title}</span>}
-            {s.item_count === 0 && <span className="chip">no plan yet</span>}
+            {s.item_count === 0 && s.script_count === 0 && (
+              <span className="chip">no plan yet</span>
+            )}
           </div>
 
           <div className="lib-foot">
@@ -539,6 +659,11 @@ export default function PlanAndScript() {
   const built = plan?.plan || {};
   const items = built.items || [];
   const channel = plan?.channel || {};
+  const scripts = plan?.scripts || [];
+  // The session's running token total — every chat turn, every calendar, every
+  // script, retries included. Summed server-side from what actually happened.
+  const sessionUsage = plan?.usage || {};
+  const openScript = scripts.find((s) => s.id === openScriptId) || null;
 
   return (
     <div className="workflow-head-wrap plan-page">
@@ -573,6 +698,14 @@ export default function PlanAndScript() {
           ←
         </button>
         <div className="review-actions-right">
+          {/* What this session has spent, where it can be seen while spending
+              more. Nothing else in the app showed text-token cost at all, so
+              a long conversation used to be entirely invisible. */}
+          {sessionUsage.total > 0 && (
+            <span className="tiny muted plan-usage" title="Tokens used by this planning session — chat, calendars and scripts, including retries. Cost is an estimate; only Google bills.">
+              {usageLine(sessionUsage)}
+            </span>
+          )}
           {/* Wrapped, not passed directly: onClick would hand rename() the
               click Event as its `target` argument. */}
           <button className="btn ghost" onClick={() => rename()}>
@@ -861,6 +994,129 @@ export default function PlanAndScript() {
         downloading={Boolean(exporting)}
       />
 
+      {/* Write a script — the "& Script" half.
+          Its own box rather than only a button on the calendar, because plenty
+          of scripts are never on a calendar: a one-off, a client brief, an idea
+          that arrived this morning. The planner's conversation is still used as
+          background, so a script asked for here knows who the audience is. */}
+      <section className="card plan-script-ask">
+        <h2>Write a script</h2>
+        <p className="muted tiny">
+          For anything not on the calendar. Everything said above is used as
+          background — who you make for, and how you sound.
+          {items.length > 0 &&
+            " For a planned upload, use the button on its card instead."}
+        </p>
+        <div className="plan-script-row">
+          <label className="field plan-script-brief">
+            <span className="field-label">What is the video?</span>
+            <input
+              value={scriptBrief}
+              placeholder="e.g. a 3-minute horror short about a lift that stops on floor 7"
+              maxLength={4000}
+              onChange={(e) => setScriptBrief(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && scriptBrief.trim()) {
+                  writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds });
+                }
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Length</span>
+            <select
+              value={String(scriptSeconds)}
+              onChange={(e) => setScriptSeconds(Number(e.target.value))}
+            >
+              {SCRIPT_LENGTHS.map(([value, label]) => (
+                <option key={value} value={String(value)}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="field plan-actions-field">
+            <span className="field-label" aria-hidden="true">
+              &nbsp;
+            </span>
+            <button
+              className="btn primary"
+              disabled={writingFor !== null || !scriptBrief.trim()}
+              onClick={() =>
+                writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds })
+              }
+              title={
+                !scriptBrief.trim() ? "Describe the video first" : undefined
+              }
+            >
+              {writingFor === "brief" ? (
+                <>
+                  <span className="spinner-inline" /> Writing in{" "}
+                  {languageLabel(language)}…
+                </>
+              ) : (
+                <>
+                  <Icon name="text" /> Write script
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Every script written in this session. Newest first, same order the
+          server keeps them in. */}
+      {scripts.length > 0 && (
+        <section className="card plan-scripts">
+          <div className="plan-strategy-head">
+            <h2>
+              Scripts <span className="muted">({scripts.length})</span>
+            </h2>
+          </div>
+          <div className="plan-script-list">
+            {scripts.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="plan-script-card"
+                onClick={() => setOpenScriptId(s.id)}
+                title="Open this script"
+              >
+                <span className="plan-script-title">{s.title}</span>
+                <span className="plan-script-meta">
+                  {[
+                    s.item_slot,
+                    `${s.scenes?.length || 0} scene${s.scenes?.length === 1 ? "" : "s"}`,
+                    s.estimated_seconds ? `~${formatRuntime(s.estimated_seconds)}` : "",
+                    s.rating,
+                    languageLabel(s.language),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {/* Per-script cost, on the card. The session total in the
+                    header is the sum of these, so the two can be checked
+                    against each other. */}
+                {s.usage?.total > 0 && (
+                  <span className="plan-script-tokens tiny muted">
+                    {usageLine(s.usage)}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <PlanScriptModal
+        script={openScript}
+        busy={scriptBusy}
+        onClose={() => setOpenScriptId(null)}
+        onDownload={(format) => downloadScript(openScript, format)}
+        onSendToStoryboard={() => sendScriptToStoryboard(openScript)}
+        onDelete={() => removeScript(openScript)}
+      />
+
       {/* The calendar */}
       {items.length > 0 && (
         <>
@@ -874,6 +1130,11 @@ export default function PlanAndScript() {
                   <span className="plan-chip plan-lang-chip">
                     ✍️ {languageLabel(built.language)}
                   </span>
+                )}
+                {/* What THIS calendar cost, not the session — so the price of a
+                    regenerate is visible as its own number. */}
+                {built.usage?.total > 0 && (
+                  <span className="tiny muted plan-usage">{usageLine(built.usage)}</span>
                 )}
               </div>
               <p>{built.summary}</p>
@@ -906,7 +1167,14 @@ export default function PlanAndScript() {
           )}
 
           <div className="plan-grid">
-            {items.map((it, i) => (
+            {items.map((it, i) => {
+              // The scripts already written for this row. Keyed on the index,
+              // which is what the server stored — a plan that has been
+              // regenerated since will simply show none, which is right: those
+              // scripts belong to the calendar that produced them.
+              const written = scripts.filter((s) => s.item_index === i);
+              const runtime = secondsFromFormat(it.format);
+              return (
               <article key={i} className="card plan-item">
                 <header className="plan-item-head">
                   <span className="plan-slot">{it.slot}</span>
@@ -946,8 +1214,48 @@ export default function PlanAndScript() {
                     <p className="muted tiny plan-keywords">{it.keywords.join(" · ")}</p>
                   )}
                 </div>
+
+                {/* The card's own foot, pinned below the scrolling detail — so
+                    "write the script for this one" is on the thing it writes
+                    the script for, rather than in a separate list you have to
+                    match up by title. */}
+                <footer className="plan-item-foot">
+                  <button
+                    className="btn small primary"
+                    disabled={writingFor !== null}
+                    onClick={() => writeScript({ itemIndex: i, seconds: runtime })}
+                    // The length is read off this row's own `format` — that
+                    // field is what says how long the video is — and the button
+                    // says which length it will use rather than deciding
+                    // silently.
+                    title={`Write a ${formatRuntime(runtime)} script for this upload`}
+                  >
+                    {writingFor === i ? (
+                      <>
+                        <span className="spinner-inline" /> Writing…
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="text" />{" "}
+                        {written.length ? "Write another" : "Write script"} ·{" "}
+                        {formatRuntime(runtime)}
+                      </>
+                    )}
+                  </button>
+                  {written.map((s) => (
+                    <button
+                      key={s.id}
+                      className="btn small ghost"
+                      onClick={() => setOpenScriptId(s.id)}
+                      title={`Open "${s.title}"`}
+                    >
+                      <Icon name="eye" /> {s.scenes?.length || 0} scenes
+                    </button>
+                  ))}
+                </footer>
               </article>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

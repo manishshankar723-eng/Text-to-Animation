@@ -13,14 +13,33 @@ import AnimaticsToVideo from "./components/AnimaticsToVideo.jsx";
 import CreateAnimaticImage from "./components/CreateAnimaticImage.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import PricingModal from "./components/PricingModal.jsx";
+import AdminPanel from "./admin/AdminPanel.jsx";
+import WorkflowSoon from "./components/WorkflowSoon.jsx";
+import { WORKFLOWS } from "./components/Sidebar.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
 
-// Every workflow in the sidebar is BUILT, so there is no roadmap placeholder to
-// render any more. `WorkflowSoon.jsx` is kept for the next one that needs it:
-// re-add a `SOON` map here plus the `else if (SOON[nav])` branch below, or a
-// `status: "soon"` item will navigate to a blank page.
+// ⚠ THE "SOON" BRANCH IS BACK, AND IT HAD TO BE. The note that used to sit here
+// warned that a `status: "soon"` workflow would navigate to a blank page unless
+// this branch was restored — and Phase 2 made "soon" something an administrator
+// can set from the panel, at any moment, without touching this file. The trap
+// the old note described was one click away from being live.
+//
+// A workflow marked "soon" is drawn in the rail with its badge and lands here
+// instead of on its real page. The copy is generic on purpose: whoever flips the
+// switch is not editing JSX, so the placeholder has to read sensibly for ANY
+// workflow it is pointed at.
+function soonScreenFor(workflow) {
+  return (
+    <WorkflowSoon
+      icon={workflow?.icon || "🚧"}
+      title={workflow?.label || "Coming soon"}
+      description="This workflow isn't open on your account yet. It's on the way — you'll see it here the moment it is."
+      steps={[]}
+    />
+  );
+}
 
 // A shared storyboard link is `?s=<token>`. Read it once at boot: the app has
 // no router, and this is the only route that must render logged OUT.
@@ -84,6 +103,27 @@ export default function App() {
   // of the local part of their email. Refreshed whenever they leave the profile
   // page, which is the only place it can change.
   const [displayName, setDisplayName] = useState("");
+  // ⚠ WHAT IS DRAWN, NEVER WHAT IS ALLOWED. This decides whether the account
+  // menu shows an Admin row; every /admin route is guarded server-side by
+  // `require_admin`, which reads the role out of the database and answers 404
+  // to anyone else. Editing this in a debugger gets you an empty panel.
+  // It rides along on the `me()` call the shell already makes — see below.
+  const [isAdmin, setIsAdmin] = useState(false);
+  // What this account may SEE and USE, from `/auth/me/entitlements`.
+  // ⚠ `workflows` STARTS AS THE BUILT-IN LIST, not as empty. The rail is drawn
+  // on the very first paint, before any request has answered, and an empty array
+  // there is a blank sidebar every single time the app opens. See Sidebar.jsx.
+  const [workflows, setWorkflows] = useState(WORKFLOWS);
+  // ⚠ "HAS THE SERVER ANSWERED?" IS A DIFFERENT QUESTION FROM "WHAT DID IT SAY?"
+  // and both are needed. A workflow missing from `workflows` means *hidden* only
+  // if the list is the server's; while it is still the built-in fallback, a
+  // missing entry means nothing at all — and treating those the same would show
+  // "not available" for a second on every cold start.
+  const [entitled, setEntitled] = useState(false);
+  // Which tier this account is on. ⚠ IT COMES FROM THE ENTITLEMENTS CALL, NOT
+  // FROM THE PRICE LIST — `/billing/tiers` is public and knows nothing about
+  // who is asking, which is exactly what lets a logged-out page show prices.
+  const [tier, setTier] = useState("");
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -116,6 +156,10 @@ export default function App() {
   useEffect(() => {
     if (!authed) {
       setDisplayName("");
+      setIsAdmin(false);
+      setWorkflows(WORKFLOWS);
+      setEntitled(false);
+      setTier("");
       return;
     }
     let cancelled = false;
@@ -125,6 +169,7 @@ export default function App() {
         if (cancelled) return;
         const name = p?.display_name || p?.full_name || "";
         setDisplayName(name);
+        setIsAdmin(p?.account_role === "admin");
         // Cached against the account so the switcher can name it later, when it
         // is one of the OTHER entries and `me()` is answering for someone else.
         const mine = api.getEmail();
@@ -136,6 +181,26 @@ export default function App() {
       .catch(() => {
         // Cosmetic only — the sidebar falls back to the email.
       });
+
+    // ⚠ A SEPARATE, INDEPENDENTLY-FAILING REQUEST. Chaining it onto `me()` would
+    // mean one failure took out both, and these two have very different blast
+    // radii: a missing display name is cosmetic, a missing workflow list is the
+    // whole navigation. Its own `.catch` KEEPS whatever is already on screen —
+    // never replaces it with nothing.
+    api
+      .entitlements()
+      .then((e) => {
+        if (cancelled) return;
+        if (e?.workflows?.length) {
+          setWorkflows(e.workflows);
+          setEntitled(true);
+        }
+        setTier(e?.tier || "");
+      })
+      .catch(() => {
+        // Leave the last good list (or the built-in one) in place.
+      });
+
     return () => {
       cancelled = true;
     };
@@ -175,6 +240,11 @@ export default function App() {
     if (!now) return;
     setEmail(now);
     setDisplayName("");
+    // ⚠ CLEARED, NOT LEFT TO THE NEXT `me()`. Switching from an admin account
+    // to an ordinary one would otherwise keep the Admin row on screen until
+    // that request answers — and clicking it in that window lands on a panel
+    // whose every call 404s.
+    setIsAdmin(false);
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -189,6 +259,7 @@ export default function App() {
     setAddAccountOpen(false);
     setEmail(mail);
     setDisplayName("");
+    setIsAdmin(false);
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -246,6 +317,22 @@ export default function App() {
   }
 
   // ---- Main content by nav ----
+  // The rail's own entry for wherever we are, so the branch below can ask
+  // whether this workflow is merely a teaser. Looked up in the RESOLVED list,
+  // not the fallback: the fallback is always "live", which is exactly the wrong
+  // answer for something an administrator has just staged.
+  const soonWorkflow = workflows.find((w) => w.id === nav && w.status === "soon");
+  // Visible but above this account's tier. ⚠ A DIFFERENT ANSWER FROM "soon":
+  // "soon" is not for sale at any price, this one is one click from being
+  // bought — so it gets the pricing modal, not a placeholder.
+  const lockedWorkflow = workflows.find((w) => w.id === nav && w.locked);
+  // Switched off underneath somebody who was already standing on it — an admin
+  // hiding a workflow while a customer has it open. The server refuses the work
+  // either way; this stops the page rendering as though it were still there.
+  const hiddenWorkflow =
+    entitled &&
+    WORKFLOWS.some((w) => w.id === nav) &&
+    !workflows.some((w) => w.id === nav);
   let content;
   if (nav === "home") {
     content = (
@@ -278,8 +365,51 @@ export default function App() {
         }}
       />
     );
+  } else if (nav === "admin") {
+    /* ⚠ GUARDED TWICE, AND THE SECOND ONE IS THE REAL GUARD. `isAdmin` only
+       stops the panel being DRAWN for somebody who reached this branch by
+       switching to a non-admin account while sitting on it; the API behind
+       every request in there answers 404 to a non-admin regardless. */
+    content = isAdmin ? (
+      <AdminPanel />
+    ) : (
+      <div className="card placeholder">
+        <p className="muted">That page isn't available on this account.</p>
+      </div>
+    );
+  } else if (hiddenWorkflow) {
+    content = (
+      <div className="card placeholder">
+        <p className="muted">
+          That workflow isn't available on your account. Pick another from the
+          sidebar.
+        </p>
+      </div>
+    );
+  } else if (lockedWorkflow) {
+    content = (
+      <div className="card placeholder upgrade-gate">
+        <span className="upgrade-gate-ico">{lockedWorkflow.icon}</span>
+        <h1 className="wf-title">{lockedWorkflow.label}</h1>
+        <p className="muted">
+          This workflow is part of a higher plan. Upgrade to unlock it — your
+          existing work stays exactly where it is.
+        </p>
+        <button className="btn primary" onClick={() => setUpgradeOpen(true)}>
+          See plans
+        </button>
+      </div>
+    );
+  } else if (soonWorkflow) {
+    // ⚠ CHECKED BEFORE EVERY WORKFLOW BRANCH BELOW, so a workflow switched to
+    // "soon" shows the placeholder rather than its real (working) page. Putting
+    // this after them would make the switch do nothing at all.
+    content = soonScreenFor(soonWorkflow);
   } else if (nav === "plan-and-script") {
-    content = <PlanAndScript />;
+    // The pipeline handoff: a script written in Plan & Script is saved as the
+    // user's script draft server-side, and Script to Storyboard loads that
+    // draft on mount — so navigating there is the whole of the client's job.
+    content = <PlanAndScript onOpenStoryboard={() => setNav("script-to-storyboard")} />;
   } else if (nav === "text-to-image") {
     content = (
       <div className="workflow-head-wrap">
@@ -348,6 +478,7 @@ export default function App() {
       <Sidebar
         active={nav}
         onNavigate={navigate}
+        workflows={workflows}
         email={email}
         displayName={displayName}
         theme={theme}
@@ -356,6 +487,10 @@ export default function App() {
            — one modal, two ways in. */
         onUpgrade={() => setUpgradeOpen(true)}
         onOpenAccount={() => setNav("profile")}
+        /* Omitted for everyone else, and the menu hides a row with no handler —
+           so an ordinary account has no Admin entry at all rather than a
+           greyed-out one advertising that the page exists. */
+        onOpenAdmin={isAdmin ? () => setNav("admin") : undefined}
         onLogout={logout}
         accounts={accounts}
         onSwitchAccount={switchAccount}
@@ -394,7 +529,9 @@ export default function App() {
         </div>
       )}
 
-      {upgradeOpen && <PricingModal onClose={() => setUpgradeOpen(false)} />}
+      {upgradeOpen && (
+        <PricingModal currentTier={tier} onClose={() => setUpgradeOpen(false)} />
+      )}
     </div>
   );
 }

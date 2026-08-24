@@ -35,6 +35,14 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from . import config
 from . import users
+from .admin import router as admin_router
+from .billing import router as billing_router
+from .features import router as features_router, require_feature
+# ⚠ THE QUOTA GUARD SITS BESIDE `require_feature`, ON THE SAME ROUTES. A limit
+# checked AFTER the work is a limit that bills the customer for the call telling
+# them they are over. See server/usage.py.
+from .usage import require_quota
+from . import usage as usage_counters
 from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
@@ -168,6 +176,21 @@ app.include_router(videos_router)
 # the browser, through the same validator and fence the deterministic planner's
 # plan goes through. See server/director.py and director.py.
 app.include_router(director_router)
+# The admin panel (/admin/…) — who registered, who signed in, and the levers on
+# an account. ⚠ EVERY ROUTE IN IT IS BEHIND `require_admin`, which reads the role
+# out of the database rather than out of the token, and answers 404 (not 403) to
+# anyone else. Spends no AI quota. See server/admin.py.
+app.include_router(admin_router)
+# Feature flags. ⚠ ONE ROUTE — `GET /auth/me/entitlements`, what THIS account may
+# see and use — and it is the only call the client makes to find out. The rules
+# behind it are `server/features.py`; the `require_feature` guards below and on
+# the other routers are the same resolver, applied. Spends no AI quota.
+app.include_router(features_router)
+# Billing tiers (/billing/…). ⚠ `GET /billing/tiers` IS PUBLIC — a price list is
+# public by nature, and requiring a session to read one would force a landing
+# page to keep a second copy of the prices. ⚠ AND IT IS "TIERS", NOT "PLANS":
+# /plans is Plan & Script and has been since long before there was billing.
+app.include_router(billing_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]
@@ -298,6 +321,7 @@ def list_templates(current: CurrentUser = Depends(get_current_user)):
 def generate_reference(
     body: ReferenceRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """Generate a T-pose character reference image from a text description.
 
@@ -358,6 +382,7 @@ def generate_reference(
 def generate_asset_reference_image(
     body: AssetReferenceRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """Generate a prop / background reference image (Stage B2 consistency).
 
@@ -489,7 +514,22 @@ def _title_from_script(script: str) -> str:
 def breakdown_script(
     body: ScriptBreakdownRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.script-to-storyboard')),
 ):
+    # ⚠ CHECKED BEFORE THE MODEL CALL, which is the whole point — a breakdown
+    # spends quota, so a script that is over the plan's length must be refused
+    # before it is paid for, not after. `story_pages` is a per-request cap for
+    # the same reason `shots_per_project` is: it describes THIS script.
+    _pages = max(1, round(len(body.script or "") / usage_counters.PAGE_CHARS))
+    _over = usage_counters.cap_exceeded(current.email, "story_pages", _pages)
+    if _over is not None:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Your plan covers scripts up to about {_over} pages, and this one "
+                f"is about {_pages}. Shorten it, or upgrade your plan."
+            ),
+        )
     """Turn a raw script into an ordered storyboard shot list (Stage A).
 
     Synchronous: a single text-model call, usually a few seconds. The chosen
@@ -664,6 +704,8 @@ def delete_storyboard_draft(
 def create_storyboard(
     body: StoryboardCreateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.script-to-storyboard')),
+    _quota: CurrentUser = Depends(require_quota("projects")),
 ):
     """Generate one storyboard panel per reviewed shot (async).
 
@@ -694,6 +736,22 @@ def create_storyboard(
 
     character_ref_paths = _resolve_refs(body.character_refs)
     asset_ref_paths = _resolve_refs(body.asset_refs)
+
+    # ⚠ A PER-REQUEST CAP, NOT A COUNTER. "9 shots per project" is a property
+    # of THIS board; accumulating it would turn it into "9 shots ever". See the
+    # two kinds of limit at the top of server/usage.py. Checked here, before a
+    # job is created or a draft promoted, so a refusal leaves nothing behind.
+    _over = usage_counters.cap_exceeded(
+        current.email, "shots_per_project", len(body.shots)
+    )
+    if _over is not None:
+        raise HTTPException(
+            status_code=402,
+            detail=(
+                f"Your plan allows {_over} shots per storyboard, and this one has "
+                f"{len(body.shots)}. Remove some shots, or upgrade your plan."
+            ),
+        )
 
     title = (body.title or "Storyboard").strip() or "Storyboard"
     shot_dicts = [s.model_dump() for s in body.shots]
@@ -777,6 +835,13 @@ def create_storyboard(
         "cast": cast_dicts,
         "assets": asset_dicts,
     }
+    # ⚠ COUNTED HERE, AFTER THE JOB EXISTS AND THE WORK IS QUEUED — and ONCE,
+    # whether the job was created above or promoted from a draft. Counting at
+    # the create call would miss the promotion path and undercount every board
+    # that went through the review step, which is most of them.
+    usage_counters.increment(current.email, "projects")
+    usage_counters.increment(current.email, "image_generations", len(shot_dicts))
+
     worker.submit_storyboard_job(job.job_id, kwargs)
 
     return JobCreatedResponse(
@@ -1000,6 +1065,10 @@ def copy_storyboard(
     # the copy would stop being independent.
     params["copied_from"] = job_id
 
+    # ⚠ A COPY IS A PROJECT. It occupies a slot in the library and can be
+    # worked on independently — letting it in free would make "2 projects" mean
+    # "2, plus as many duplicates as you like".
+    usage_counters.increment(current.email, "projects")
     copy = get_store().create(
         character_name=source.character_name or "Storyboard",
         kind=JobKind.STORYBOARD,
@@ -1408,6 +1477,7 @@ def regenerate_storyboard_panel(
     job_id: str,
     body: PanelRegenerateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.image-generate')),
 ):
     """Re-draw ONE panel (Retry / edit-and-regenerate). Synchronous single call.
 
@@ -1863,6 +1933,8 @@ async def create_character(
     meshy: str | None = Form(None, description="Comma-separated parts to also submit to Meshy."),
     provider: str | None = Form(None, description="Image backend: 'vertex' or 'gemini'. Defaults to server IMAGE_PROVIDER."),
     local_only: bool = Form(False, description="Skip GCS upload (local output only)."),
+    _gate: CurrentUser = Depends(require_feature('workflow.text-to-image')),
+    _quota: CurrentUser = Depends(require_quota("projects")),
     age: str | None = Form(None),
     gender: str | None = Form(None),
     skin_tone: str | None = Form(None),
@@ -1948,6 +2020,7 @@ async def create_character(
         "provider": provider,
     }
 
+    usage_counters.increment(current.email, "projects")
     job = store.create(
         character_name=name,
         kind=JobKind.GENERATE,
@@ -2328,6 +2401,7 @@ def submit_meshy(
     job_id: str,
     req: MeshyRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('cap.3d-meshy')),
 ):
     """Submit selected parts of a completed generation job to Meshy for 3D.
 

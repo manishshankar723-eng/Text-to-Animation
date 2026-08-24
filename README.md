@@ -9,7 +9,7 @@ Six workflows ship in the UI, all live:
 
 | Workflow | What it does |
 |---|---|
-| 🗓️ **Plan & Script** | Content calendar + script writing, exportable to `.xlsx` / `.docx`. |
+| 🗓️ **Plan & Script** | Talk to a strategist agent → a content calendar (`.xlsx` / `.docx` / `.csv`) → the actual script for any upload on it, which loads straight into Script to Storyboard. Shows what each generation cost in tokens. |
 | 🖼️ **Text to Turnaround Image** | Reference photo or prompt → per-part turnaround sheets → optional 3D (Meshy). |
 | 📝 **Script to Storyboard** | Script → shot list → drawn storyboard panels, with cast/set continuity. |
 | 🖼️ **Image to Animatic Image** | One panel → its key poses for a 2–10s shot. |

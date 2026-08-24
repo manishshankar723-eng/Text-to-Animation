@@ -24,9 +24,16 @@ const MENU_DISMISS = ".sb-account-menu, .sb-workspace";
 // deep links App.jsx sets when one workflow hands off to another.
 //
 // ORDER IS THE OWNER'S CHOICE and is deliberately not pipeline order — don't
-// "fix" it. Every entry is currently `live`; `status: "soon"` is still honoured
-// by the badge below, but adding one again also means restoring the
-// `WorkflowSoon` branch in App.jsx, or the item will navigate to a blank page.
+// "fix" it.
+//
+// ⚠ THIS ARRAY IS THE FALLBACK NOW, NOT THE SOURCE OF TRUTH. Since the feature
+// registry (Phase 2) the real list comes from `GET /auth/me/entitlements` and is
+// handed down as the `workflows` prop — which is what makes hiding, staging and
+// reordering a workflow a switch in the admin panel instead of a redeploy. This
+// is what gets drawn when that call has not answered yet or has FAILED, because
+// a rail that renders nothing is a worse outage than a rail that is briefly out
+// of date. Keep it byte-identical to `_WORKFLOWS` in `server/features.py`, or a
+// database hiccup silently reorders somebody's sidebar.
 export const WORKFLOWS = [
   // FIRST in the pipeline: decide what to make before making any of it.
   { id: "plan-and-script", label: "Plan & Script", icon: "🗓️", status: "live" },
@@ -40,6 +47,10 @@ export const WORKFLOWS = [
 export default function Sidebar({
   active,
   onNavigate,
+  // The resolved list from `/auth/me/entitlements`: `[{id, label, icon, status}]`,
+  // already filtered to what this account may SEE and already in the owner's
+  // order. Null/empty → the built-in fallback above. See the note on WORKFLOWS.
+  workflows,
   email,
   displayName,
   theme,
@@ -49,6 +60,10 @@ export default function Sidebar({
   // the same modal the Upgrade button below opens, and two ways in are fine;
   // two DIFFERENT pricing screens would not be.
   onOpenAccount,
+  // Straight through to the menu. The rail owns none of this — it is only where
+  // the button lives — and an ordinary account is handed nothing, so the row
+  // never renders. See AccountMenu.jsx.
+  onOpenAdmin,
   onLogout,
   // The account switcher inside that menu. Straight through - the rail owns
   // none of this, it is just where the button lives.
@@ -58,6 +73,10 @@ export default function Sidebar({
   collapsed = false,
   onToggleCollapse,
 }) {
+  // ⚠ FAIL OPEN, EVERY TIME. An empty array is treated as "we don't know yet",
+  // not as "this account has no workflows" — the second reading would blank the
+  // rail for everyone the moment the entitlements call had a bad minute.
+  const items = workflows?.length ? workflows : WORKFLOWS;
   const who = displayName || email || "";
   const initial = (who || "?").trim().charAt(0).toUpperCase();
   const workspace = displayName || (email || "My workspace").split("@")[0];
@@ -119,7 +138,7 @@ export default function Sidebar({
         ) : (
           <div className="sb-section-label">Workflows</div>
         )}
-        {WORKFLOWS.map((w) => (
+        {items.map((w) => (
           <button
             key={w.id}
             className={`sb-item ${active === w.id ? "active" : ""}`}
@@ -135,7 +154,17 @@ export default function Sidebar({
             <span className="sb-ico">{w.icon}</span>
             <span className="sb-item-label">{w.label}</span>
             {w.status === "soon" && <span className="sb-badge-soon">Soon</span>}
-            {w.status === "live" && <span className="sb-dot-live" title="Live" />}
+            {/* ⚠ LOCKED IS NOT HIDDEN, ON PURPOSE. A feature nobody can see is a
+                feature nobody upgrades for — the row stays, wearing the reason
+                it can't be opened. */}
+            {w.locked && (
+              <span className="sb-badge-locked" title="Included in a higher plan">
+                🔒
+              </span>
+            )}
+            {w.status === "live" && !w.locked && (
+              <span className="sb-dot-live" title="Live" />
+            )}
           </button>
         ))}
       </nav>
@@ -191,6 +220,7 @@ export default function Sidebar({
               onPick={closeMenu}
               onOpenAccount={onOpenAccount}
               onOpenPricing={onUpgrade}
+              onOpenAdmin={onOpenAdmin}
               onLogout={onLogout}
               helpSubject="Help with Character Studio"
               accounts={accounts}

@@ -11,18 +11,35 @@ Shape of `job.params`:
     messages   — [{role: "user"|"agent", text, at}] the whole transcript
     channel    — the YouTube research result (see youtube_research.py), or {}
     plan       — the structured calendar from plan_agent.generate_plan(), or {}
+    scripts    — [{id, …}] every script written here, newest first; see
+                 plan_agent.write_script
+    usage      — the session's running TOKEN total (see ai_usage.Usage)
 
 Spends TEXT quota only — this workflow never generates an image.
+
+⚠ **EVERY ROUTE THAT CALLS A MODEL MUST GO THROUGH `_record_usage`.** The
+session total is only trustworthy because it is the sum of every call actually
+made, retries included. A route that spends quota and forgets to add it makes
+the number on screen quietly wrong, which is worse than not showing one.
 """
 
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from .auth import CurrentUser, get_current_user
+# ⚠ THE GUARD THAT ACTUALLY TURNS A FEATURE OFF. The sidebar reading the same
+# registry is cosmetic — anyone can call these routes directly. See features.py.
+from .features import require_feature
+# ⚠ THE QUOTA GUARD SITS BESIDE `require_feature`, ON THE SAME ROUTES. A limit
+# checked AFTER the work is a limit that bills the customer for the call telling
+# them they are over. See server/usage.py.
+from .usage import require_quota
+from . import usage as usage_counters
 from .jobs import get_store
 from .schemas import (
     JobKind,
@@ -33,6 +50,7 @@ from .schemas import (
     PlanDetail,
     PlanGenerateRequest,
     PlanRenameRequest,
+    PlanScriptRequest,
     PlanSummary,
 )
 
@@ -44,9 +62,36 @@ router = APIRouter(prefix="/plans", tags=["plans"])
 # turn, and an unbounded one eventually costs real money per message.
 MAX_MESSAGES = 200
 
+# Scripts are much bigger than messages and a session accumulates them slowly.
+# The cap is a runaway guard, not a working limit.
+MAX_SCRIPTS = 60
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _record_usage(params: dict, spent, email: str = "") -> dict:
+    """Add one call's tokens to the session total, in place. Returns `params`.
+
+    Takes the usage dict straight off whatever plan_agent returned, so the
+    caller never has to know the shape — only to remember to call this.
+
+    ⚠ AND IT IS ALSO THE ACCOUNT-LEVEL SINK. Every model-calling route in this
+    router already goes through here, so hooking the per-account monthly counter
+    in at this one point means there is no second list of routes to keep in step
+    — which is the same reason the docstring at the top of this file insists
+    every such route calls this function at all. `email` is optional so an older
+    caller keeps working; it simply does not contribute to the monthly total.
+    """
+    from ai_usage import merge
+    from . import usage as usage_counters
+
+    total = merge(params.get("usage"), spent)
+    params["usage"] = total.as_dict()
+    if email:
+        usage_counters.record_tokens(email, merge(None, spent))
+    return params
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +167,8 @@ def _detail(job) -> PlanDetail:
         messages=p.get("messages") or [],
         channel=p.get("channel") or {},
         plan=p.get("plan") or {},
+        scripts=p.get("scripts") or [],
+        usage=p.get("usage") or {},
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -131,16 +178,33 @@ def _summary(job) -> PlanSummary:
     p = job.params or {}
     plan = p.get("plan") or {}
     channel = p.get("channel") or {}
+    usage = p.get("usage") or {}
     return PlanSummary(
         job_id=job.job_id,
         title=job.character_name or "Untitled plan",
         message_count=len(p.get("messages") or []),
         item_count=len(plan.get("items") or []),
+        script_count=len(p.get("scripts") or []),
         months=int(plan.get("months") or 0),
         channel_title=channel.get("title") or "",
+        tokens=int(usage.get("total") or 0),
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _get_script(job, script_id: str) -> tuple[list[dict], int]:
+    """(all scripts, index of `script_id`), or 404.
+
+    Returns the list too because every caller that finds a script is about to
+    write the list back, and re-reading it would be a second chance to read a
+    different one.
+    """
+    scripts = list((job.params or {}).get("scripts") or [])
+    for i, s in enumerate(scripts):
+        if s.get("id") == script_id:
+            return scripts, i
+    raise HTTPException(status_code=404, detail="Script not found.")
 
 
 def _context(job) -> str:
@@ -157,8 +221,20 @@ def _context(job) -> str:
 def create_plan(
     body: PlanCreateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature("workflow.plan-and-script")),
+    _quota: CurrentUser = Depends(require_quota("projects")),
 ):
-    """Start a planning session. Empty until the user says something."""
+    """Start a planning session. Empty until the user says something.
+
+    ⚠ THE GATE IS ON CREATING AND SPENDING, NEVER ON READING — the rule for
+    every `require_feature` in this codebase. So this route, `/chat`,
+    `/generate` and `/script` refuse when the workflow is switched off, while
+    listing, opening, renaming, deleting and EXPORTING a session that already
+    exists stay open. Turning a workflow off is a product decision; it is not a
+    reason to lock a customer out of work they have already paid for and may
+    need to get out of the app.
+    """
+    usage_counters.increment(current.email, "projects")
     job = get_store().create(
         character_name=(body.title or "").strip() or "Untitled plan",
         kind=JobKind.PLAN,
@@ -218,6 +294,7 @@ def chat_to_plan(
     job_id: str,
     body: PlanChatRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.plan-and-script')),
 ):
     """Send one message and get the agent's reply.
 
@@ -258,6 +335,7 @@ def chat_to_plan(
         }
     )
     params["messages"] = messages[-MAX_MESSAGES:]
+    _record_usage(params, result.get("usage"), current.email)
 
     fields = {"params": params}
     # Name the session after what the opening message is ABOUT, so the library
@@ -302,6 +380,7 @@ def generate(
     job_id: str,
     body: PlanGenerateRequest,
     current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.plan-and-script')),
 ):
     """Turn the conversation into a structured calendar."""
     job = _get_owned_plan(job_id, current)
@@ -332,7 +411,183 @@ def generate(
 
     plan["title"] = job.character_name or "Content plan"
     params["plan"] = plan
+    _record_usage(params, plan.get("usage"), current.email)
     return _detail(get_store().update(job_id, params=params))
+
+
+# ---------------------------------------------------------------------------
+# Writing the script — the "& Script" half of the workflow
+# ---------------------------------------------------------------------------
+@router.post("/{job_id}/script", response_model=PlanDetail)
+def write_script_route(
+    job_id: str,
+    body: PlanScriptRequest,
+    current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.plan-and-script')),
+):
+    """Write the script for one upload, and keep it on the session.
+
+    Two ways in, and they are the same route because they are the same job:
+      - `item_index` — the script for a row of the generated calendar. The row
+        supplies the brief, so there is nothing else to type.
+      - `brief` — a script for something that was never on the calendar.
+
+    ⚠ THE CALENDAR ROW IS READ SERVER-SIDE FROM THE STORED PLAN, not taken from
+    the request body. The browser has the row on screen and could have sent it,
+    but then a stale tab would write a script for an upload that was regenerated
+    away, and the script would claim to be for a calendar entry that no longer
+    says that.
+    """
+    job = _get_owned_plan(job_id, current)
+    params = dict(job.params or {})
+    plan = params.get("plan") or {}
+    items = plan.get("items") or []
+
+    item = None
+    if body.item_index is not None:
+        if body.item_index >= len(items):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "That upload is no longer in the plan — it may have been "
+                    "regenerated. Reopen the plan and pick it again."
+                ),
+            )
+        item = items[body.item_index]
+
+    if item is None and not body.brief.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Pick an upload from the calendar, or describe the video you want.",
+        )
+
+    from plan_agent import ScriptError, write_script
+
+    try:
+        script = write_script(
+            messages=params.get("messages") or [],
+            item=item,
+            brief=body.brief,
+            seconds=body.seconds,
+            # Default to the language the calendar was written in: a script for
+            # a Hinglish plan should not silently arrive in English.
+            language=body.language or plan.get("language") or "",
+            channel_context=_context(job),
+            notes=body.notes,
+        )
+    except ScriptError as e:
+        logger.warning("[plan %s] script failed: %s", job_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[plan %s] unexpected script error", job_id)
+        raise HTTPException(status_code=502, detail=f"Script writing error: {e}")
+
+    script["id"] = uuid.uuid4().hex[:12]
+    script["at"] = _now()
+    # Recorded so the script's card can say which upload it belongs to, and so
+    # a regenerate can be aimed at the same row. The INDEX alone would go stale
+    # the moment the calendar is rebuilt, so the title travels with it.
+    script["item_index"] = body.item_index
+    script["item_title"] = str((item or {}).get("title", "")).strip()
+    script["item_slot"] = str((item or {}).get("slot", "")).strip()
+    script["brief"] = body.brief.strip()
+
+    # Newest first — the one just written is the one being looked at.
+    scripts = [script] + list(params.get("scripts") or [])
+    params["scripts"] = scripts[:MAX_SCRIPTS]
+    _record_usage(params, script.get("usage"), current.email)
+
+    logger.info(
+        "[plan %s] script %s written: %r (%d scene(s), ~%ds)",
+        job_id, script["id"], script["title"], len(script["scenes"]),
+        script.get("estimated_seconds", 0),
+    )
+    return _detail(get_store().update(job_id, params=params))
+
+
+@router.delete("/{job_id}/scripts/{script_id}", response_model=PlanDetail)
+def delete_script(
+    job_id: str,
+    script_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Delete one script. The session's token total is NOT reduced — those
+    tokens were spent, and a total that shrinks when you tidy up is a lie."""
+    job = _get_owned_plan(job_id, current)
+    scripts, i = _get_script(job, script_id)
+    scripts.pop(i)
+    params = dict(job.params or {})
+    params["scripts"] = scripts
+    return _detail(get_store().update(job_id, params=params))
+
+
+@router.post("/{job_id}/scripts/{script_id}/to-draft")
+def script_to_draft(
+    job_id: str,
+    script_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Load this script into the caller's script draft, for Script to Storyboard.
+
+    ⚠ THIS OVERWRITES THE ONE DRAFT PER USER (see drafts.py) — the browser warns
+    first. It is done SERVER-SIDE rather than by the browser PUTting the text
+    because the text the storyboard reads must be the text this workflow
+    produced (`plan_agent.script_to_text`), byte for byte, and a browser that
+    rebuilt it from the scenes would be a second implementation of that format.
+    """
+    job = _get_owned_plan(job_id, current)
+    scripts, i = _get_script(job, script_id)
+    script = scripts[i]
+
+    text = str(script.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=409, detail="That script has no text to send.")
+
+    from .drafts import save_draft
+
+    saved = save_draft(current.email, text, script.get("title") or "")
+    logger.info(
+        "[plan %s] script %s → script draft (%d chars)", job_id, script_id, len(text)
+    )
+    return {"ok": True, "chars": len(text), "updated_at": saved.get("updated_at", "")}
+
+
+@router.get("/{job_id}/scripts/{script_id}/export")
+def export_script(
+    job_id: str,
+    script_id: str,
+    format: str = Query("txt", pattern="^(txt|docx)$"),
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Download one script as .txt or .docx.
+
+    .txt is the SAME bytes the storyboard breakdown reads, so a creator who
+    exports, edits in a text editor and pastes it back gets exactly the document
+    the app would have handed over itself.
+    """
+    job = _get_owned_plan(job_id, current)
+    scripts, i = _get_script(job, script_id)
+    script = scripts[i]
+
+    from plan_export import SCRIPT_EXPORTERS
+
+    build, media_type = SCRIPT_EXPORTERS[format]
+    try:
+        data = build(script)
+    except Exception as e:  # noqa: BLE001 — report clearly
+        logger.exception("[plan %s] script %s export failed", job_id, format)
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}")
+
+    stem = "".join(
+        c if c.isalnum() or c in " -_" else "_" for c in (script.get("title") or "script")
+    )
+    filename = f"{stem.strip() or 'script'}.{format}"
+    logger.info("[plan %s] script %s exported %s (%d bytes)", job_id, script_id, format, len(data))
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------------------------------------------------------------------------

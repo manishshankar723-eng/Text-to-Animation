@@ -263,7 +263,85 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-24 — **EVERY SUITE IN `tests/` PASSES.** Six failures
+**Last updated:** 2026-08-25 — **THE LIMITS ARE REAL NOW (ADMIN PANEL, PHASE 5
+OF 6).** `server/usage.py` counts what each account uses per calendar month and
+`require_quota` refuses BEFORE the spend, beside the existing `require_feature`
+guards — so "2 projects" on the free tier is enforced rather than printed.
+⚠ **TWO KINDS OF LIMIT**: counters accumulate (`projects`,
+`image_generations`); per-request caps describe one request
+(`shots_per_project`, `story_pages`) and never accumulate. ⚠ **MISSING MEANS
+UNLIMITED, NOT ZERO.** ⚠ **IT IS A SINK FOR `ai_usage`, NOT A SECOND COUNTER.**
+⚠ **`watermark` AND `commercial_use` ARE STILL NOT ENFORCED** and every surface
+says so. Admin → Users gained a usage panel and a read-only **View as** screen
+driven by the same resolver the app uses. `tests/usage_check.py` — 49 checks;
+**353 across the five panel suites**. ⚠ **NOT BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **"WHO PURCHASED A PLAN" IS ANSWERABLE (ADMIN
+PANEL, PHASE 4 OF 6).** Admin → Sales records a payment by hand, lists every
+subscription, and runs sales and coupon codes. ⚠ **THE PRICE IS FROZEN ONTO THE
+SUBSCRIPTION AT PURCHASE TIME** — editing a tier's price cannot re-price an
+existing customer, which is the most expensive bug this feature could have.
+⚠ **EXPIRY WORKS WITH NO SCHEDULER**: `tier_expires_at` is compared to the clock
+on every read, so access ends on the minute without a cron that can stop running.
+⚠ **A SALE DRIVES `compare_at`** rather than inventing a second old price, and
+two sales do not compound. ⚠ **STILL NO PAYMENT PROVIDER** — every amount is an
+administrator's bookkeeping entry and four surfaces say so.
+`tests/sales_check.py` — 85 checks; **304 across the four panel suites**.
+⚠ **NOT BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **PRICES ARE DATA NOW (ADMIN PANEL, PHASE 3 OF
+6).** `PricingModal.jsx`'s hard-coded `PLANS` constant is gone; the four tiers
+live in Mongo and `GET /billing/tiers` is public, so the modal, a future landing
+page and Admin → Pricing all read one price list. ⚠ **A TIER DOES NOT LIST WHAT
+IT INCLUDES — A FEATURE SAYS WHICH TIER IT NEEDS** (`min_tier`, now step 4 of
+the resolver's precedence), and "what's in Pro" is DERIVED, so the two can never
+disagree. ⚠ **MONEY IS INTEGER MINOR UNITS** and a float is refused, not
+rounded. ⚠ **A LOCKED FEATURE IS VISIBLE** — drawn with a lock and an upgrade
+page, because nobody upgrades for what they cannot see. ⚠ **NO PAYMENT PROVIDER
+IS CONNECTED**: moving an account onto a tier records it and charges nothing,
+and three screens say so. `tests/billing_check.py` — 70 checks. ⚠ **NOT
+BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **HIDING AND LAUNCHING IS A SWITCH NOW, NOT A
+REDEPLOY (ADMIN PANEL, PHASE 2 OF 6).** `server/features.py` is one resolver that
+the sidebar, `/auth/me/entitlements`, **25 `require_feature` guards** and the
+panel all read from. Admin → Features hides, launches, stages (admins-only /
+allow-list / percentage) and reorders any of the six workflows and six
+capabilities; Users → Access shows per-account why each one resolves as it does,
+and overrides it. ⚠ **EVERYTHING SHIPS ON** — the guards are no-ops until
+something is deliberately switched off. ⚠ **THE RULE: GATE CREATING AND
+SPENDING, NEVER READING** — a workflow switched off stops new work and still
+lets a customer open and export what they already made. ⚠ **THE `WorkflowSoon`
+BRANCH IS RESTORED IN `App.jsx`**; the trap its old note warned about was one
+admin click from being live. `tests/features_check.py` — 63 checks. ⚠ **NOT
+BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **THE APP HAS AN ADMIN PANEL (PHASE 1 OF 6).**
+Roles, a guard, an activity log, a user table and a dashboard. ⚠ **THE FINDING
+THAT SHAPED IT: `role` WAS ALREADY TAKEN** — it is the person's JOB TITLE and it
+is in `PROFILE_FIELDS`, so storing the admin privilege under that name would have
+made "make me an administrator" an ordinary `PATCH /auth/me`. The privilege is
+`account_role`, and `tests/admin_check.py` opens by having a user try exactly
+that attack. 86 checks, no MongoDB, no quota. ⚠ **NOT BROWSER-TESTED.** Phases
+2-6 (feature flags, tiers/prices, offers, subscriptions, usage limits) are
+designed but NOT built — see Current State. Grant the first admin with
+`python seed_admin.py --email you@example.com --role admin`.
+
+**Previously:** 2026-08-25 — **PLAN & SCRIPT CAN NOW WRITE THE SCRIPT, AND
+EVERY TEXT CALL REPORTS ITS TOKENS.** `plan_agent.write_script()` turns one
+calendar row (or a free-text ask) into a script whose FORMAT IS A CONTRACT WITH
+`script_breakdown.py` — every rule in it is the writing side of a rule the
+breakdown already enforces — and one button loads it into the script draft that
+Script to Storyboard opens on. `ai_usage.py` is new: per-call, per-script and
+per-session token counts with an advisory cost, retries included. The editorial
+stance on dark material is now a named constant (`_SCRIPT_STANCE`) instead of
+whatever the model defaults to, and a provider block finally reports its own
+reason instead of "empty response". ⚠ Also fixes a bug that had been live since
+2026-08-04: `api.js` dropped `language` from the generate call, so the picker had
+never once worked. `tests/plan_script_check.py` — 109 checks. ⚠ NOT
+browser-tested. See the Work Log.
+
+**Previously:** 2026-08-24 — **EVERY SUITE IN `tests/` PASSES.** Six failures
 cleared: five were assertions left behind by refactors (a deleted empty-row prompt,
 a download guard that moved into `clipMenuOffers`, a ✕ confirm clicked on a row
 scrolled out of view, a harness pane too short to show two rows) and ONE was a real
@@ -2488,6 +2566,10 @@ Pipeline stages (see `pipeline.py`):
 | `pipeline.py` | Orchestrates all stages. `run_pipeline(...)`. |
 | `gemini_client.py` | Image generation. **Switchable backend: Vertex AI or Gemini API.** Also owns the storyboard panel prompt and its **three continuity channels** — `build_cast_context` / `build_set_context` (the written bible), the scene look-anchor, and `build_flow_context` (what runs either side of this shot). `resolve_name()` is the shared alias-tolerant name matcher; a tie deliberately returns None. |
 | `script_breakdown.py` | Script→Storyboard Stage A: script → shot list (LLM). **Switchable text backend (`TEXT_PROVIDER`): Vertex AI or Gemini API.** |
+| `plan_agent.py` | **Plan & Script — the whole brain, in three deliberately separate capabilities.** `chat()` asks the questions a strategist would (and returns them as CLICKABLE options on the same turn — one call, so the reply and the buttons can't drift apart); `generate_plan()` returns a STRUCTURED calendar via `response_schema`, never free text pretending to be a schedule; `write_script()` turns one calendar row — or a free-text ask — into a shootable script. ⚠ **`write_script`'s OUTPUT FORMAT IS A CONTRACT WITH `script_breakdown.py`.** Every rule in `_SCRIPT_INSTRUCTION` is the writing side of a rule the breakdown enforces on the reading side: one beat per line, every visible person NAMED (the breakdown sees one sentence at a time and cannot resolve a pronoun), one spelling per character, slug lines on scene changes, `NAME: line` for speech. Prose breaks all of it QUIETLY — the board generates, it is just anchored to the wrong words. ⚠ **`script_to_text()` IS THE SINGLE FLATTENER** every route out of the workflow goes through (preview, .txt, clipboard, storyboard draft), so those are the same bytes; a second implementation in the browser is how the export and the board become different documents. ⚠ **`_SCRIPT_STANCE` IS THE EDITORIAL LINE, IN ONE NAMED CONSTANT** so a human can read it and argue with it — dark material is ordinary dramatic material, no unsolicited warnings, no silently softening a brief; the limits that remain are the ones that do harm off the page. `_safety_settings()` sets the provider's own per-category threshold (`AI_SAFETY_THRESHOLD`, default `BLOCK_ONLY_HIGH`) and **validates it itself, because the SDK does not** — `SafetySetting` coerces any string into a new enum member. `_block_reason()` turns "empty response" into the provider's actual reason. Reuses `script_breakdown`'s provider switch, retry policy and greedy sampling rather than growing a second copy. **TEXT quota only, never image.** |
+| `ai_usage.py` | **What a text call cost, in tokens — the only answer to that question in this repo.** `Usage` is ADDITIVE, which is what makes a session total the sum of its parts instead of a counter that drifts from them. Breaks `thinking` out on its own line (2.5-class models bill it as output but report it separately, and it is usually where the money went — the same discovery `DIRECTOR_THINKING_TOKENS` records from the latency side), counts `calls` because one user action is often several, and **counts FAILED RETRIES, which are billed too**. ⚠ **`cost_usd` RETURNS `None`, NOT `0.0`, WHEN IT CANNOT BE STATED HONESTLY** — an unpriced model, or a total spanning two models — because a zero renders as "free", the one wrong answer. The dollar figure is ADVISORY and every surface showing it must say so: only Google bills, list prices drift, and `gemini-2.5-flash` is a rolling alias whose price can move under a fixed id. Override the table with `AI_PRICE_<MODEL>` rather than editing it. |
+| `plan_export.py` | **Taking a plan or a script out of the app.** Calendar: xlsx (frozen header, auto-filter, set widths, a second Strategy sheet so the thinking travels with the schedule), docx (per upload, not one unreadable 40-row table), csv (UTF-8 BOM). `COLUMNS` is shared by all three so they agree, and `tests/plan_export_columns_check.py` asserts the browser's preview list matches it exactly. Script: `SCRIPT_EXPORTERS` — **.txt is the MACHINE format**, byte for byte what `plan_agent.script_to_text` produced and what the breakdown reads, so ⚠ **DO NOT PRETTY-PRINT IT** (every heading and `NAME:` prefix in there is parsed); .docx is the HUMAN one, set as a screenplay. |
+| `youtube_research.py` | **Reads a real channel so the planner isn't guessing.** Two paths, best-first: the **YouTube Data API** (`YOUTUBE_API_KEY`, optional) for EXACT subscriber/view counts and measured cadence, else **Gemini `url_context`** (no key) which opens the channel page and reads it. ⚠ **`url_context` IS USED ALONE** — `google_search` answers CANNOT ACCESS on a channel URL, and the two together blow the 100k tool-output limit. Don't add search back. ⚠ **THE RULE, PER SOURCE: IT NEVER INVENTS CHANNEL DATA.** Every result carries a `source` and `as_context()` grants exactly the claims that source supports — figures only from the Data API, name/topics/titles from a page read, and "ask the user" when neither worked. A plan built on a made-up subscriber count is worse than no plan, because the user cannot tell. |
 | `splitter.py` | Split 2×2 sheet → 4 views. |
 | `postprocess.py` | Clean white bg + crop + normalize. |
 | `storage.py` | Local save, GCS upload, zip. |
@@ -2526,8 +2608,15 @@ Pipeline stages (see `pipeline.py`):
 | `server/jobs.py` | Job store: **MongoDB (default, `API_JOB_STORE=mongo`)** + Firestore and in-memory/JSON fallbacks. |
 | `server/worker.py` | ThreadPoolExecutor running the pipeline off-request. |
 | `server/security.py` | bcrypt password hashing + JWT create/verify. |
-| `server/users.py` | MongoDB-backed user store (`users` collection). |
-| `server/auth.py` | `/auth/register`, `/auth/login`, `/auth/me`, `get_current_user`. |
+| `server/users.py` | MongoDB-backed user store (`users` collection). Since the admin panel it also owns **roles, the sign-in record and the admin listing**. ⚠ **THE PRIVILEGE FIELD IS `account_role`, NOT `role`** (`users.ROLE_FIELD`): `role` was already taken by the person's JOB TITLE, which is in `PROFILE_FIELDS` and therefore writable by the account itself — storing the privilege under that name would have made "make me an administrator" an ordinary `PATCH /auth/me`. `role_of()` treats `ADMIN_EMAILS` as a **floor the document cannot lower** (the bootstrap, and the way back in when the last admin is demoted). Absent role → `"user"`, never `None`, so every account created before roles existed still loads. |
+| `server/auth.py` | `/auth/register`, `/auth/login`, `/auth/me`, `get_current_user`. Now records `user.registered` / `user.login` / `user.login_failed` into the event log, and stamps `last_login_at` onto the account. `UserProfile.account_role` is what tells the client whether to DRAW the Admin row — never what allows it. |
+| `server/events.py` | **The activity log: who registered, who signed in, what an admin did.** ONE stream, not three tables — sign-ups, sign-ins and administrative changes are read together far more often than separately, and one stream cannot disagree with itself about the order. ⚠ **`email` AND `actor` ARE DIFFERENT QUESTIONS**: on a login they are the same person and `actor` is empty; on `admin.user_disabled` the `email` is the customer who lost access and the `actor` is the administrator who took it, and telling those apart during an incident is the whole point. ⚠ **`record()` NEVER RAISES** — it sits inside login and register, and a logging failure must not turn a successful sign-in into a 500. Retention is a Mongo **TTL index** on a separate `expires_at` datetime (`at` stays an ISO string, sortable, like every other timestamp here), so expiry happens in the database with no cleanup job. Follows `API_USER_STORE`, like drafts. |
+| `server/features.py` | **What an account may SEE and USE, and the ONE place that decides it.** The whole point of the file is that there is only one of it — the sidebar, `/auth/me/entitlements`, every `require_feature` guard and the admin panel are all callers of the same `resolve()`. Precedence, highest first: `hidden` kill switch → per-user override → rollout rule → `soon` → `live`. ⚠ **TWO ANSWERS, NOT ONE — `visible` AND `on`**: a "soon" workflow is drawn with a badge and refuses to run, a hidden one is not drawn at all, and one boolean cannot say that (squashing them is what made the old `status: "soon"` placeholder navigate to a blank page). ⚠ **ADMINS BYPASS THE ROLLOUT GATES BUT NOT `hidden`** — you must be able to look at what you are staging, but the kill switch has to mean everyone; an admin who needs past it gives their own account an override. ⚠ **IT FAILS OPEN**: an unreachable store serves the last known good answer, then the built-in catalogue — never an empty map, which is every sidebar in the app going blank at once. An unknown feature key is ON for the same reason. Percentage rollout is a **salted hash**, not `random()`, or a user flickers in and out between two requests on one page. |
+| `server/billing.py` | **The tiers: what they cost, what they include, who is on one.** ⚠ **"TIERS", NEVER "PLANS"** — `server/plans.py`, `/plans` and `JobKind.PLAN` have meant *Plan & Script* since long before there was billing, and a collection called `plans` here would be the most confusing name in the repo. ⚠ **A TIER DOES NOT LIST WHAT IT INCLUDES; A FEATURE SAYS WHICH TIER IT NEEDS.** The obvious `entitlements: {key: bool}` map on each tier is two places to answer one question — `features.min_tier` is the only statement of it, and `includes()` DERIVES "everything in Pro" by asking every feature, so the two cannot disagree. ⚠ **MONEY IS INTEGER MINOR UNITS** (2800 = $28.00); `_minor_units` REFUSES a float rather than rounding one, because quietly storing 28.5 as 28 cents is a hundredfold error nobody sees until an invoice. ⚠ **`rank` IS THE LADDER, NOT `price`** — a weekend sale on Pro must not reorder it below Starter and silently change what every `min_tier` means. ⚠ **ARCHIVE, NEVER DELETE**, and the default tier cannot be archived at all: every account with no `tier` field falls back to it. `GET /billing/tiers` is PUBLIC — a price list is public by nature, and requiring a session would force a landing page to keep a second copy of the prices. |
+| `server/offers.py` | **Discounts: a site-wide sale, or a coupon somebody types.** ONE ROW SHAPE, TWO THINGS, AND THE DIFFERENCE IS ONE FIELD — `code=None` is a SALE (automatic, changes the pricing page), `code="…"` is a COUPON (applies to nobody until typed). ⚠ **A SALE DRIVES `compare_at`; IT DOES NOT INVENT A SECOND OLD PRICE** — the tier's normal price becomes the struck-through one and the discounted price takes its place, so the card keeps ONE idea of what the old price was. ⚠ **TWO OVERLAPPING SALES DO NOT COMPOUND**: the deeper wins, the only tie-break that cannot be accused of short-changing anybody. ⚠ **DISCOUNTS ROUND DOWN, ONCE** — a customer is never charged a cent more than the sign said. ⚠ **AND IT IS THE ONE STORE IN THE PANEL THAT FAILS *CLOSED***: features and tiers serve stale data when the database is gone because a blank app is worse, but an unreadable offer is a discount nobody is entitled to, and inventing one gives money away. |
+| `server/subscriptions.py` | **Who is paying for what, and what they agreed to pay.** ⚠ **THE PRICE IS COPIED ONTO THE SUBSCRIPTION AT PURCHASE TIME, NEVER READ BACK OFF THE TIER** — a tier's `monthly` is what a NEW customer would be quoted; a subscriber pays what they agreed to. Without this, editing a price in the panel silently re-prices every existing customer, which is the most expensive bug this feature could have because nobody notices until the invoices go out. The offer code and discount are frozen the same way, so ending a sale cannot retroactively un-discount the people who bought during it. ⚠ **EXPIRY IS LAZY, NOT SCHEDULED** — there is no cron in this app; `users.tier_expires_at` is compared to the clock inside `billing.tier_of`, off the document already being read. ⚠ **NOTHING HERE TAKES MONEY**: `source="manual"` is an administrator's bookkeeping entry, and Phase 6's webhooks write the SAME record with a different source. |
+| `server/usage.py` | **What an account has used this month, and what it may.** ⚠ **A SINK, NOT A SECOND COUNTER** — `ai_usage.Usage` already counts tokens additively with retries included; `record_tokens` folds one into a per-account, per-month row and re-derives nothing. ⚠ **TWO KINDS OF LIMIT, NOT THE SAME SHAPE**: COUNTERS (`projects`, `image_generations`) accumulate and need storage; PER-REQUEST CAPS (`shots_per_project`, `story_pages`) describe one request and need none — conflating them turns "9 shots per project" into "9 shots ever". ⚠ **MISSING MEANS UNLIMITED, NOT ZERO**: a tier that does not mention a limit must not be read as allowing none of it. ⚠ **`require_quota` SITS BESIDE `require_feature`** so an over-quota request is refused BEFORE the model call — checking after bills the customer for the call telling them they are over; 402 Payment Required is the honest code. ⚠ **A FAILED READ COUNTS AS ZERO** (generous: an unreachable counter must never lock out a paying customer) and `increment` NEVER RAISES (the work already happened). ⚠ `watermark` / `commercial_use` are deliberately NOT enforced and say so. |
+| `server/admin.py` | **The `/admin` router.** Three rules it is built on: (1) **the guard asks the database, not the token** — `ACCESS_TOKEN_EXPIRE_MINUTES` is 1440, so a role baked into a JWT would outlive its own revocation by a day; (2) **an administrator cannot act on themselves** (`_target`), which is the only thing between a mis-click and a site with no administrators left; (3) **every mutation records the actor**. ⚠ **IT ANSWERS 404, NOT 403, TO A NON-ADMIN** — a 403 confirms the panel exists and is a map of the site handed to anyone with an account. Every path that disables, demotes or deletes calls `auth.forget_cached_email`, or the lock-out lands up to 30s late. |
 
 ### Client (Phase 3 — React + Vite, in `client/`)
 | File | Responsibility |
@@ -2841,6 +2930,12 @@ binary files themselves.**
 | Accounts | Mongo `users` | `server/users.py` |
 | Plan & Script sessions (chat + calendar) | Mongo `jobs` (`JobKind.PLAN`) | `server/plans.py` |
 | The script being typed | Mongo `script_drafts` | `server/drafts.py` |
+| **Who registered, who signed in, what an admin changed** | **Mongo `events`** (TTL-expired) | **`server/events.py`** |
+| **What each account may see and use** | **Mongo `features`** + `feature_overrides` on the user | **`server/features.py`** |
+| **What a plan costs, and who is on one** | **Mongo `tiers`** + `tier` on the user | **`server/billing.py`** ⚠ not `plans` |
+| **Sales and coupons** | **Mongo `offers`** | **`server/offers.py`** |
+| **Who purchased, and what they froze in at** | **Mongo `subscriptions`** | **`server/subscriptions.py`** |
+| **What each account used this month** | **Mongo `usage_counters`** | **`server/usage.py`** |
 | **Every job: character runs, storyboards, animatics, and anything added later** | **Mongo `jobs`** | **`server/jobs.py` → `get_store()`** |
 | Image / video BYTES | disk (`output/`, `uploads/`) — GCS when enabled | `storage.py` |
 | **URLs of those files** | **Mongo, inside the job's `result`** | written by the pipeline |
@@ -2944,7 +3039,619 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-24 (latest) — THE OPEN FAILURES, CLEARED: SIX STALE ASSERTIONS AND ONE REGRESSION OF MY OWN
+### 2026-08-25 (latest) — THE ADMIN PANEL, PHASE 5: THE LIMITS ARE REAL
+
+- **Asked for:** the enforcement half of "what he is having" — the tier limits
+  that had been stored and displayed since Phase 3 without anything checking them.
+
+- **⚠ A SINK, NOT A SECOND COUNTER.** `ai_usage.Usage` already counts tokens
+  correctly — additively, retries included, thinking broken out. `usage.py` does
+  not re-count anything: `record_tokens` takes a `Usage` and folds it into a
+  per-account, per-month row. Wired in at **`plans._record_usage`**, the one
+  function every model-calling route in that router already goes through, so
+  there is no second list of routes to keep in step. A second way of counting the
+  same thing is two numbers that disagree and no way to tell which is the bill.
+
+- **⚠ TWO KINDS OF LIMIT, AND THEY ARE NOT THE SAME SHAPE.** COUNTERS
+  (`projects`, `image_generations`) accumulate over a calendar month and need
+  storage. PER-REQUEST CAPS (`shots_per_project`, `story_pages`) are a property
+  of ONE request and need none — the request already carries the number.
+  Conflating them turns "9 shots per project" into "9 shots ever", which is a
+  different product. The test asserts a cap can be hit twice in a row without
+  accumulating.
+
+- **⚠ MISSING MEANS UNLIMITED, NOT ZERO.** A tier that simply does not mention
+  `image_generations` must not be read as allowing none of them — the reading
+  that would have broken every account on the site. Only a number is a limit;
+  absent and `null` both mean unlimited.
+
+- **⚠ REFUSED BEFORE THE SPEND, NOT AFTER.** `require_quota` is a dependency
+  beside `require_feature` on the same routes, so an over-quota request never
+  reaches the model. Checking afterwards bills the customer for the call that
+  told them they were over. **402 Payment Required** is the honest code: they are
+  authenticated, allowed the feature, and simply out of allowance — and the
+  message says how many of how many they have used.
+
+- **⚠ GUARDED BEFORE, COUNTED AFTER.** The increment happens once the work is
+  committed, so a refused request is never counted and a half-failed one is. On
+  storyboards it is counted at the SUBMIT, not at the create call — a board can
+  arrive by promotion from a review draft, and counting at the create would have
+  missed that path and undercounted most boards.
+
+- **⚠ THE ONE THE TEST SUITE FOUND, AND IT WOULD HAVE BEEN A SILENT FALSE PASS:**
+  `require_quota` is a DEPENDENCY, so it runs before the route body — and
+  therefore before the shot cap inside it. An account already out of projects is
+  refused by the wrong rule with the same 402, so the first version of the shot
+  cap test passed without testing anything. It now uses an account with project
+  headroom, and the reason is written at the top of the file.
+
+- **⚠ ADMINS ARE NEVER THROTTLED**, the same rule the feature gates follow: you
+  cannot test what you are selling if the panel's own account is limited.
+
+- **⚠ A FAILED COUNTER READ IS ZERO, WHICH IS THE GENEROUS DIRECTION.** An
+  unreachable counter store must not lock a paying customer out of work they are
+  entitled to — it may undercount during an outage; it must not refuse. And
+  `increment` never raises: the work has already happened by then.
+
+- **⚠ `watermark` AND `commercial_use` ARE DELIBERATELY NOT ENFORCED.** They are
+  not access rules — a watermark is a change to what the EXPORTER DRAWS, and
+  commercial use is a licence term no code can police. Refusing an export over
+  either would be both wrong and useless. `usage.summary` returns them under a
+  separate `not_enforced` key so no caller can mistake them, and the panel prints
+  "Not enforced by the app".
+
+- **⚠ A CUSTOMER CAN SEE THEIR OWN COUNTERS.** `/billing/me` and the boot-time
+  entitlements call both carry them. A limit somebody cannot check is one they
+  discover by being refused mid-task, which is the worst possible moment.
+
+- **View as user** — a read-only screen showing the sidebar and capabilities as
+  one account sees them, drawn from `features.resolve(email)`: THE SAME function
+  the real app uses, so the preview cannot drift from it. It is not
+  impersonation — no token is issued and nothing acts on their behalf. ⚠ It
+  lists what is NOT shown as well as what is, because "why can't they see X" is
+  otherwise answered by a blank space.
+
+- **⚠ A PRE-EXISTING SUITE NEEDED ONE LINE.** `features_check.py` creates four
+  plans while testing something else; the new free-tier limit refused the third.
+  Its account is now on a tier with no project cap, with a comment saying why —
+  a quota refusal there would look like a FEATURE failure and send the next
+  person hunting in the wrong module.
+
+- **Files:** new `server/usage.py`, `client/src/admin/ViewAsUser.jsx`,
+  `tests/usage_check.py`. Changed `server/{config,billing,features,admin,main,
+  animatics,videos,plans}.py`, `client/src/admin/AdminUserDetail.jsx`,
+  `client/src/styles/admin.css`, `tests/features_check.py`, `.env.example`.
+
+- **Verified:** `python tests/usage_check.py` — **49 checks, all pass**; the
+  other four panel suites still pass — **353 across the five**.
+  `animate_guard_check`, `image_generate_check`, `video_generate_check`,
+  `plan_check`, `plan_script_check`, `storyboard_draft_check` and
+  `shot_infill_check` all still pass. `npx vite build` succeeds. ⚠ **NOT OPENED
+  IN A BROWSER.** ⚠ `profile_check` still fails its live-database cleanup
+  assertion — unchanged and unrelated, see Next Steps.
+
+### 2026-08-25 — THE ADMIN PANEL, PHASE 4: WHO PURCHASED, AND WHAT THEY PAID
+
+- **Asked for:** "add some offers … and who purchased a plan". Both halves.
+
+- **⚠ THE RULE THIS PHASE EXISTS TO ENFORCE: THE PRICE IS COPIED ONTO THE
+  SUBSCRIPTION AT PURCHASE TIME.** A tier's `monthly` is what a NEW customer
+  would be quoted today; a subscriber pays what they agreed to. Without this,
+  editing a price in Admin → Pricing silently re-prices every existing customer
+  — the most expensive bug this whole feature could have, because nobody notices
+  until the invoices go out. The offer code and the discount are frozen the same
+  way, so ending a sale cannot retroactively un-discount the people who bought
+  during it. The test changes a tier's price under a live subscriber and asserts
+  the ledger does not move.
+
+- **⚠ THE CLIENT SENDS NO AMOUNT.** The server prices a subscription from the
+  tier and the code, so what lands in the ledger is what the pricing page would
+  have quoted rather than a number the browser made up.
+
+- **⚠ EXPIRY WORKS WITH NO SCHEDULER, AND THAT IS A DESIGN DECISION NOT A
+  SHORTCUT.** This app has no cron. A paid tier stamps `tier_expires_at` on the
+  user document, and `billing.tier_of` compares it to the clock on every read —
+  off the document the caller was already loading, so it costs no extra query.
+  Access ends on the minute, and there is no job that can silently stop running.
+  ⚠ An ABSENT expiry means "does not expire", not "expired": a tier granted by
+  hand with no end date has to keep working.
+
+- **⚠ CANCELLING IS IMMEDIATE, AND THE BUTTON SAYS SO.** "Cancel at period end"
+  is the usual behaviour and needs something to run at that moment. Offering a
+  button that promises a future action nothing will perform is worse than one
+  that is honest about being immediate — and to let somebody keep access until
+  their period ends you simply leave the subscription alone, because
+  `tier_expires_at` lapses on its own. ⚠ Cancelling an OLD record does not knock
+  somebody off a newer one they are still paying for; the route re-reads what is
+  still active and puts them back on that.
+
+- **⚠ ONE ROW SHAPE, TWO KINDS OF OFFER, AND THE DIFFERENCE IS ONE FIELD.**
+  `code=None` is a SALE (automatic, everyone, changes the pricing page);
+  `code="LAUNCH50"` is a COUPON (nobody until typed). They share a collection
+  because it is the same arithmetic over the same fields, and separate halves of
+  the screen because nobody thinks about them together. ⚠ The Mongo index on
+  `code` is **sparse**, or exactly one sale could exist.
+
+- **⚠ A SALE DRIVES `compare_at` — IT DOES NOT INVENT A SECOND OLD PRICE.** The
+  card has always drawn one struck-through number from that field; a sale makes
+  the tier's NORMAL price that number and puts the discounted price in its place.
+  The tier's own `compare_at` is the evergreen anchor used when nothing is on
+  sale, and the two are never added together. A coupon strikes through the listed
+  price instead — never both, because two struck-through numbers on one card is
+  nobody's idea of a clear offer.
+
+- **⚠ TWO OVERLAPPING SALES DO NOT COMPOUND.** The deeper discount wins.
+  Stacking is never what was meant, and "whichever is better for the customer" is
+  the only tie-break that cannot be accused of short-changing anybody.
+
+- **⚠ DISCOUNTS ROUND DOWN, ONCE.** A percentage of an integer number of cents
+  is not an integer; rounding the DISCOUNT down means the customer never pays a
+  cent more than the sign promised, which is the only direction it is safe to be
+  wrong in. A discount larger than the price is capped, never negative — a $10
+  coupon on a $5 plan is free, not a refund.
+
+- **⚠ THE COUPON CHECK IS NOT AN ORACLE.** Expired, fully redeemed, wrong tier
+  and never-existed all answer "That code isn't valid" — otherwise the route
+  enumerates which codes exist and when a sale ends. ⚠ And CHECKING A CODE
+  REDEEMS NOTHING: the count moves only when a subscription is recorded against
+  it. ⚠ An EXPIRED code refuses the whole entry rather than quietly recording
+  full price, because the customer was promised a discount and a wrong number in
+  the ledger is worse than a refusal.
+
+- **⚠ THE CODE IS NOT EDITABLE AFTER CREATION.** One that has been printed on a
+  card or sent in an email is out in the world; renaming it would silently break
+  every place it was written down. Deactivate it and make another.
+
+- **⚠ THE OFFER STORE IS THE ONE THAT FAILS *CLOSED*, and it is the only one.**
+  Features and tiers serve the last known good copy when the database is
+  unreachable, because the alternative is a blank app. An offer that cannot be
+  read is a discount nobody is currently entitled to, and inventing one gives
+  money away — so no offers is the safe answer. Asserted by breaking the store.
+
+- **⚠ STILL NO PAYMENT PROVIDER, AND FOUR SURFACES SAY SO.** Every amount is a
+  bookkeeping entry an administrator typed after a bank transfer or an invoice —
+  which is genuinely how early sales close, and it makes "who purchased"
+  answerable weeks before a gateway exists. The dashboard tile is labelled
+  "recorded monthly — typed in, not charged", and the record form says it before
+  the first field rather than after the last. Phase 6's webhooks write the SAME
+  records with `source: "razorpay"`, and no screen changes.
+
+- **Client:** `AdminSales.jsx` (the ledger, the record-a-payment form, sales and
+  coupons), a coupon box and sale banner on `PricingModal`, event labels for the
+  three new types.
+
+- **Files:** new `server/offers.py`, `server/subscriptions.py`,
+  `client/src/admin/AdminSales.jsx`, `tests/sales_check.py`. Changed
+  `server/{config,users,events,billing,admin}.py`, `client/src/api.js`,
+  `client/src/components/PricingModal.jsx`,
+  `client/src/admin/{AdminPanel,format}.jsx|js`,
+  `client/src/styles/{admin,pricing}.css`, `.env.example`.
+
+- **Verified:** `python tests/sales_check.py` — **85 checks, all pass**;
+  `billing_check` (70), `features_check` (63) and `admin_check` (86) still pass —
+  **304 across the four**. `animate_guard_check`, `image_generate_check`,
+  `video_generate_check`, `plan_check` and `storyboard_draft_check` all still
+  pass. `npx vite build` succeeds. ⚠ **NOT OPENED IN A BROWSER.**
+  ⚠ **`profile_check` FAILS 1 OF 41, AND IT IS NOT THIS WORK** — its last
+  assertion is `count_documents({}) == 1` against the LIVE MongoDB, which holds
+  255 real accounts. It was only ever true on a database with a single account.
+  See Next Steps.
+
+### 2026-08-25 — THE ADMIN PANEL, PHASE 3: THE PRICES ARE DATA
+
+- **Asked for:** "change the prices … add some offers". This is the prices half;
+  offers and subscriptions are Phase 4.
+
+- **⚠ THE DECISION THE PHASE TURNS ON: A TIER DOES NOT LIST WHAT IT INCLUDES.**
+  The obvious design is `entitlements: {feature_key: bool}` on each tier. It is
+  also two places to answer one question — the tier says Pro has Veo, the feature
+  says Veo needs Starter, and the day they disagree there is no way to tell which
+  is the bug. `features.min_tier` is the ONLY statement of what unlocks what, and
+  `billing.includes()` DERIVES "everything in Pro" by asking every feature. The
+  pricing editor shows that derived list **beside** the marketing bullets, so
+  copy promising something the flags don't grant is visible on screen rather than
+  discovered by a customer who paid for it.
+
+- **⚠ "TIERS", NEVER "PLANS".** The one Phase-2 warning that carried over
+  unspent. `server/plans.py`, the `/plans` route and `JobKind.PLAN` have meant
+  *Plan & Script* since long before there was billing here; a `plans` collection
+  would have been the single most confusing name in the repo. The module, the
+  collection, the routes and the env vars are all `tiers`.
+
+- **⚠ MONEY IS INTEGER MINOR UNITS, AND A FLOAT IS REFUSED RATHER THAN
+  ROUNDED.** 2800 is $28.00. `_minor_units` raises on a non-int, and the Pydantic
+  model declares `int` — because a float arriving means the caller is thinking in
+  dollars, and quietly storing 28.5 as 28 cents is a hundredfold pricing error
+  nobody notices until an invoice. The admin field is in dollars and converts in
+  exactly two functions (`toMajor` / `toMinor`); the wire is always minor units.
+
+- **⚠ `rank` IS THE LADDER, NOT `price`.** A weekend sale dropping Pro to $19
+  must not reorder it below Starter and silently change what every `min_tier` in
+  the app means. Asserted directly.
+
+- **⚠ A LOCKED FEATURE IS VISIBLE — A THIRD ANSWER, NOT A SECOND.** `hidden` is
+  not drawn at all; `soon` is drawn and not for sale at any price; **above your
+  tier** is drawn WITH A LOCK and one click from the pricing modal. A feature
+  nobody can see is a feature nobody upgrades for. `min_tier` sits at step 4 of
+  the precedence chain — AFTER the rollout, because something still being staged
+  to 10% of accounts is not for sale at any price, so the rollout says no first.
+  A locked workflow reaches the sidebar wearing a 🔒 and its page becomes an
+  upgrade gate.
+
+- **⚠ ARCHIVE, NEVER DELETE — AND NEVER THE DEFAULT.** A tier somebody is
+  subscribed to has to keep resolving or their account cannot be priced;
+  `archived` takes it off the pricing page and leaves it working. The default
+  tier refuses archiving outright (server-side), because every account with no
+  `tier` field — today, nearly all of them — falls back to it.
+
+- **⚠ `GET /billing/tiers` IS PUBLIC.** A price list is public by nature, and
+  requiring a session to read one would force a logged-out landing page to keep a
+  second, parallel copy of the prices — the exact duplication this phase removes.
+  WHICH tier the caller is on is a different question, answered by
+  `/auth/me/entitlements`.
+
+- **⚠ ONE USER READ PER RESOLVE, STILL.** `min_tier` needs the caller's tier, and
+  `resolve()` runs the rules over twelve features — so `_who()` now returns
+  `(is_admin, overrides, tier)` off ONE document read. Reading per-question,
+  per-feature would have been three dozen Atlas round trips for three fields on
+  one document.
+
+- **`PricingModal.jsx` lost its `PLANS` constant** and reads the API, with the
+  same four tiers kept inline as a FALLBACK — a customer who clicked Upgrade must
+  still see prices if the request fails; an empty modal is a lost sale that looks
+  like a broken app. The yearly saving is now COMPUTED from the two prices rather
+  than a hard-coded "Save 25%", which would go stale the first time somebody
+  edits one. And "Your Plan" is told to it, not guessed from the price being zero
+  — that assumption made Trial the current plan for paying customers too.
+
+- **⚠ NO PAYMENT PROVIDER IS CONNECTED, AND THREE SCREENS SAY SO.** Moving an
+  account onto a tier records what they are on and charges nothing; the dashboard
+  labels its tier breakdown "counts only, not money taken". A dropdown that looks
+  like a billing control and silently isn't one is exactly what somebody will
+  assume charged a card.
+
+- **Files:** new `server/billing.py`, `client/src/admin/AdminPricing.jsx`,
+  `tests/billing_check.py`. Changed `server/{config,users,events,features,admin,
+  main}.py`, `client/src/{App.jsx,api.js}`,
+  `client/src/components/{PricingModal,Sidebar}.jsx`,
+  `client/src/admin/{AdminPanel,AdminFeatures,AdminUsers,AdminUserDetail,
+  AdminOverview,format}.jsx|js`, `client/src/styles/admin.css`, `.env.example`.
+
+- **Verified:** `python tests/billing_check.py` — **70 checks, all pass**;
+  `features_check` (63) and `admin_check` (86) still pass — **219 across the
+  three**. `animate_guard_check`, `image_generate_check`, `video_generate_check`,
+  `plan_check` and `storyboard_draft_check` all still pass. `npx vite build`
+  succeeds. ⚠ **NOT OPENED IN A BROWSER.**
+
+### 2026-08-25 — THE ADMIN PANEL, PHASE 2: HIDING AND LAUNCHING IS A SWITCH, NOT A REDEPLOY
+
+- **Asked for:** the second half of "what I can hide from my website … and from
+  where should we handle these hide and launch some features".
+
+- **⚠ ONE RESOLVER, NOT THREE SYSTEMS — the decision the whole phase turns on.**
+  The obvious build is a hide switch for the nav, a separate thing for the
+  pricing page, and a third for the expensive routes. That is three places to
+  disagree about whether a customer has Veo. `server/features.py` has exactly one
+  `resolve()`, and the sidebar, `GET /auth/me/entitlements`, all 25
+  `require_feature` guards and the admin panel are all callers of it. Precedence,
+  highest first: **`hidden` kill switch → per-user override → rollout rule →
+  `soon` → `live`.**
+
+- **⚠ TWO ANSWERS, NOT ONE: `visible` AND `on`.** A "soon" workflow is drawn in
+  the rail with its badge and refuses to run; a hidden one is not drawn at all.
+  One boolean cannot say that — and squashing them is exactly what made the old
+  `status: "soon"` placeholder navigate to a blank page.
+
+- **⚠ THE `WorkflowSoon` BRANCH IS RESTORED IN `App.jsx`, AND IT HAD TO BE.**
+  The note that used to sit at the top of that file warned that a "soon" workflow
+  would land on a blank page unless the branch was re-added. Phase 1 left that
+  note alone because nothing could set "soon"; **Phase 2 makes it a button in the
+  panel**, so the trap was one click from being live. The placeholder copy is
+  generic on purpose — whoever flips the switch is not editing JSX.
+
+- **⚠ HIDING A BUTTON IS NOT HIDING A FEATURE.** The sidebar reading the registry
+  is cosmetic; anybody can call a route directly. 25 `require_feature`
+  dependencies now sit on the routes that create work or spend money, across
+  `animatics.py`, `videos.py`, `director.py`, `plans.py` and `main.py`. The test
+  suite exercises them as real requests, including that **the guard runs before
+  the body is validated** — a malformed request to a switched-off feature must
+  not get far enough to cost anything.
+
+- **⚠ THE RULE FOR WHERE A GATE GOES: CREATING AND SPENDING, NEVER READING.**
+  A workflow switched off stops new work; it must not make a customer's existing
+  boards unreachable or un-exportable. So `POST /plans`, `/chat`, `/generate` and
+  `/script` refuse while listing, opening, renaming, **exporting** and deleting
+  stay open. Turning a feature off is a product decision, not a reason to lock
+  somebody out of work they have already paid for.
+
+- **⚠ ADMINS BYPASS THE ROLLOUT GATES BUT NOT `hidden`.** Staging a feature to
+  an allow-list is useless if the person staging it cannot look at it — so
+  `admins`, `allowlist` and `percent` all pass for an administrator. `hidden`
+  does NOT: that is the switch you throw when something is broken and it has to
+  mean everyone. An admin who needs past it gives their own account an override,
+  which is recorded like any other change. Both halves are asserted.
+
+- **⚠ IT FAILS OPEN, DELIBERATELY.** An unreachable feature store serves the
+  last good answer it had, and failing that the built-in catalogue — never an
+  empty map, which is every sidebar in the app going blank at once, a worse
+  outage than the one that caused it. An unknown feature key is ON for the same
+  reason: a guard naming a feature that was never added to the catalogue must not
+  silently close a working route. The test breaks the store on purpose.
+
+- **⚠ PERCENTAGE ROLLOUT IS A SALTED HASH, NOT `random()`.** Random would flip a
+  user in and out of a feature between two requests on the same page. Salting
+  with the feature KEY stops a 10% rollout of five different features landing on
+  the same unlucky tenth of the userbase every time. Both asserted.
+
+- **⚠ THE OVERRIDE IS TRISTATE, AND THAT IS NOT PEDANTRY.** `true` forces on,
+  `false` forces off, `null` CLEARS it and hands the account back to the rollout
+  rule. Collapsing `null` and `false` would make "remove this exception" and "ban
+  this customer from it" the same button — and they behave differently the moment
+  the rule changes underneath them, which a test pins down.
+
+- **`Sidebar.WORKFLOWS` IS THE FALLBACK NOW, NOT THE SOURCE OF TRUTH.** The real
+  list comes from the entitlements call. The array stays, byte-identical to
+  `_WORKFLOWS` in `features.py`, and is what gets drawn before that call answers
+  or when it FAILS — a rail that renders nothing is a worse outage than one
+  briefly out of date. `App.jsx` seeds its state from it rather than from `[]`,
+  and tracks "has the server answered" separately from "what did it say", because
+  a workflow missing from the list means *hidden* only once the list is the
+  server's.
+
+- **Client:** `AdminFeatures.jsx` (the switchboard — status segment, rollout
+  editor, reorder), an **Access** panel on `AdminUserDetail` that says *why* each
+  feature resolves as it does per account and lets it be overridden, `format.js`
+  labels for the two new event types. Each control saves on change, one field
+  per PATCH, so two admins editing different settings on one feature don't
+  overwrite each other.
+
+- **Files:** new `server/features.py`, `client/src/admin/AdminFeatures.jsx`,
+  `tests/features_check.py`. Changed `server/{config,users,auth,admin,events,
+  main,animatics,videos,director,plans}.py`, `client/src/{App.jsx,api.js}`,
+  `client/src/components/Sidebar.jsx`, `client/src/admin/{AdminPanel,
+  AdminUserDetail,format}.jsx|js`, `client/src/styles/admin.css`, `.env.example`.
+
+- **Verified:** `python tests/features_check.py` — **63 checks, all pass**;
+  `python tests/admin_check.py` — **86 checks, still pass**. Both run against
+  temporary local stores (no MongoDB, no network, no AI quota). `npx vite build`
+  succeeds. ⚠ **NOT OPENED IN A BROWSER.**
+
+### 2026-08-25 — THE ADMIN PANEL, PHASE 1: WHO REGISTERED, WHO SIGNED IN, AND THE LEVERS ON AN ACCOUNT
+
+- **Asked for:** an admin panel — "see what a user must see, what he is having,
+  what I can hide from my website, add some offers, change the prices … and when
+  a user logged in, who registered, who purchased a plan". A six-phase plan was
+  agreed; **this is Phase 0 + 1, the read-only half plus the two account levers
+  the data model already had.** Nothing here decides what a user can SEE — that
+  is Phase 2, deliberately after the observability rather than before it.
+
+- **⚠ THE FINDING THAT SHAPED THE WHOLE THING: `role` WAS ALREADY TAKEN, AND
+  STORING THE PRIVILEGE THERE WOULD HAVE BEEN A PRIVILEGE-ESCALATION BUG.**
+  `UserProfile.role` is the person's JOB TITLE ("Director", "Producer") and it
+  is in `users.PROFILE_FIELDS`, which is the allow-list of things an account may
+  change **about itself** through `PATCH /auth/me`. The obvious field name for
+  an admin role is `role`; had it been used, `PATCH /auth/me {"role":"admin"}`
+  would have been a self-service promotion for every user on the site. The
+  privilege is `account_role` (`users.ROLE_FIELD`), and the FIRST check in
+  `tests/admin_check.py` is a user attempting precisely that request and being
+  told, correctly, that they have changed their job title.
+
+- **New `server/events.py` — the activity log.** One stream for sign-ups,
+  sign-ins, failed sign-ins and administrative changes, because they are read
+  together ("what happened to this account?") far more often than separately,
+  and one stream cannot disagree with itself about the order. ⚠ `email` is who
+  it happened TO and `actor` is who DID it; on a login they are the same person
+  and `actor` is empty, and on `admin.user_disabled` telling them apart is the
+  entire value of the file during an incident. ⚠ `record()` NEVER RAISES — it
+  sits inside login and register, and a failure to write a note must not turn a
+  successful sign-in into a 500. Retention is a **Mongo TTL index** on a
+  separate `expires_at` BSON datetime, so `at` stays an ISO string (sortable,
+  like every other timestamp in this repo) and expiry needs no cleanup job.
+  Follows `API_USER_STORE`, exactly as `drafts.py` does.
+
+- **New `server/admin.py` — nine routes, three rules.** (1) **The guard asks the
+  database, not the token**: `ACCESS_TOKEN_EXPIRE_MINUTES` is 1440, so a role
+  baked into a JWT would go on being an administrator for a day after the role
+  was taken away, and revocation that takes a day is not revocation. (2) **An
+  administrator cannot act on themselves** — `_target()` refuses, on every
+  mutation, which is the only thing standing between a mis-click and a site with
+  no administrators left; the things a person legitimately wants to do to their
+  own account already exist on `/auth/me`. (3) **Every mutation records the
+  actor.** ⚠ **404, NOT 403, TO A NON-ADMIN** — a 403 confirms the panel exists
+  and that the caller merely lacks the role, which is a map of the site handed
+  to anyone with an account.
+
+- **⚠ `auth.forget_cached_email` FINALLY HAS ITS CALLER.** It has carried a
+  comment since before there was an admin panel — *"for any future admin path
+  that disables an account and wants the lock-out to be immediate"* — and every
+  path here that disables, demotes or deletes now calls it. Without it the 30s
+  resolved-user cache keeps serving a locked account for half a minute, which is
+  precisely the half minute that matters. The test asserts this **with no
+  sleep**: disable, then the very next request with that token must be 403.
+
+- **`ADMIN_EMAILS` is a FLOOR, not a list.** Granting the first role needs an
+  admin and there isn't one on a fresh database. Any address in the env var is
+  an administrator whatever its document says — the bootstrap, and the way back
+  in if the last admin is demoted by mistake. ⚠ The panel **refuses (409)** to
+  change such an account's role rather than saving happily and changing nothing:
+  a control that reports success and does nothing is worse than one that says no.
+
+- **`users.py`**: `role_of` / `is_admin` / `set_role` / `set_disabled` /
+  `set_note` / `record_login` / `list_users` / `count_users`. ⚠ The search box
+  goes through `re.escape` — straight into `$regex` it is a user-supplied
+  pattern against a remote collection, where `.*` returns the whole table and a
+  nested quantifier is a denial of service. A test types `.*` and expects zero
+  results. ⚠ `_LIST_HIDDEN` strips `password_hash` **and `api_keys`**: an
+  administrator has no business reading a customer's third-party credentials.
+  `last_login_at` / `login_count` are denormalised onto the user document
+  because the table asks for them on EVERY row, and an aggregation per row would
+  make that page a hundred queries.
+
+- **`jobs.py`: `count_by_kind()` on all three backends.** "How much has this
+  account made" was previously answerable only by listing jobs and measuring the
+  list, which caps at the page size and so quietly under-reports anyone busy.
+  Mongo groups in the database; memory counts in Python; ⚠ **Firestore streams**
+  (it has no group-by) selecting only `kind` — documented at the method, and a
+  reason to migrate rather than to cap the number and report a wrong one.
+
+- **Client — `client/src/admin/`** (mirroring `client/src/plan/`): `AdminPanel`
+  (tabs), `AdminOverview` (tiles, a hand-drawn 30-day signup chart, job mix,
+  live feed), `AdminUsers` (search / filter / sort / page), `AdminUserDetail`
+  (profile, work, history, private note, the levers), `AdminActivity`,
+  `format.js`. ⚠ **NO CHART LIBRARY** — `client/package.json` still has exactly
+  two runtime dependencies, and thirty bars do not justify being the thing that
+  breaks that. Entry point is a row in the **shared** `AccountMenu`, handed a
+  handler only for an admin, so an ordinary account has no Admin row at all
+  rather than a greyed-out one advertising a page it cannot open.
+
+- **⚠ TWO CLOCKS ON THE DASHBOARD, AND IT SAYS SO.** Signup counts come from
+  `users.created_at`, which every account has always had, so they are correct
+  all the way back. Sign-in counts come from the event log, which starts today —
+  so on a site that has been running for months those tiles legitimately read
+  zero, and a dashboard that does not explain that difference is a dashboard
+  that gets believed.
+
+- **`admin.css` walks straight into four documented UI traps and resets each at
+  the point it matters**: the global `select { width: 100% }` (the filter row is
+  mostly selects), `.btn.primary`'s form margin in a button ROW, `align-items:
+  start` on a card grid, and the never-nest-two-scrollers rule (the table card is
+  `overflow:hidden` + flex + `min-height:0`; `.admin-table-wrap` is the single
+  `overflow:auto`).
+
+- **`seed_admin.py --role admin|user`.** ⚠ The name used to be a lie — there was
+  no such thing as an administrator and it created an ordinary user. Promoting
+  somebody who already has an account needs **no password**, so a colleague can
+  be made an admin without resetting their login.
+
+- **Files:** new `server/events.py`, `server/admin.py`, `client/src/admin/*` (5),
+  `client/src/styles/admin.css`, `tests/admin_check.py`. Changed
+  `server/{config,users,auth,jobs,main}.py`, `seed_admin.py`,
+  `client/src/{App.jsx,api.js}`, `client/src/components/{Sidebar,AccountMenu}.jsx`,
+  `client/src/styles/index.css`, `.env.example`.
+
+- **Verified:** `python tests/admin_check.py` — **86 checks, all pass**, against
+  temporary local stores (no MongoDB, no network, no AI quota). `npx vite build`
+  succeeds. ⚠ **NOT OPENED IN A BROWSER.** The panel has never been rendered
+  against a real screen — see Next Steps.
+
+### 2026-08-25 — PLAN & SCRIPT FINALLY HAS ITS SCRIPT HALF, AND EVERY TEXT CALL NOW SAYS WHAT IT COST
+
+- **Asked for:** somewhere to "ask for a plan, then get the script for its
+  video"; a token/cost readout for generation; the script to be **written in the
+  format the rest of the pipeline already understands**; and — stated bluntly —
+  to stop the agent flinching at scripts that are "a bit inappropriate". The
+  YouTube planner was to be kept exactly as it is.
+- **The workflow's name promised a half it did not have.** `plan_agent.py`'s own
+  "Not done / next" note from 2026-08-04 said the plan doesn't flow INTO Script
+  to Storyboard and that "write the script for this upload" was the obvious next
+  link. That link is now built, and it is a real link, not a copy button.
+
+**1. `plan_agent.write_script()` — the third capability**, beside `chat()` and
+`generate_plan()`. Takes ONE calendar row (server-side, from the stored plan) or
+a free-text brief, plus the conversation as background, and returns a structured
+script: scenes → beats, typed `action` / `dialogue` / `vo` / `text`, with a cast
+list carrying VISUAL descriptions.
+⚠ **THE OUTPUT FORMAT IS A CONTRACT WITH `script_breakdown.py`, NOT A HOUSE
+STYLE.** Every rule in `_SCRIPT_INSTRUCTION` is the writing side of a rule the
+breakdown already enforces on the reading side — one beat per line, every
+visible person NAMED (the breakdown sees one sentence at a time and cannot
+resolve a pronoun), one spelling per character, slug lines on scene changes,
+posture carried forward, `NAME: line` for speech. A script written as prose
+breaks all of it QUIETLY: the board still generates, it is just anchored to the
+wrong words. `script_to_text()` is the single flattener every route out of the
+workflow goes through, so the preview, the .txt, the clipboard and the storyboard
+are the same bytes.
+
+**2. Tokens, everywhere they are spent — `ai_usage.py` (new).** Nothing in this
+app counted text tokens before: image and Veo spend were visible, but a
+forty-turn planning conversation was invisible. `Usage` is additive, breaks
+`thinking` out on its own line (2.5-class models bill it as output and it is
+usually where the money went), counts **failed retries** because they are billed,
+and returns `cost_usd = None` rather than `0.0` when it cannot price a call —
+a zero would render as "free", the one wrong answer. Per-call, per-plan,
+per-script and per-session totals, with the session total defined as the *sum of
+its parts* so it cannot drift from them. `_record_usage` in `server/plans.py` is
+the one door, and the note above it says so.
+
+**3. The content stance is now WRITTEN DOWN, in one named constant.**
+`_SCRIPT_STANCE` says plainly that violence, crime, addiction, grief, religion,
+politics, persuasive villains and adult desire are ordinary dramatic material and
+are to be written at the intensity the brief asks for — no content warnings, no
+disclaimers, no quietly softening a dark brief and handing it back as though it
+were what was asked for. The limits that remain are the ones that do harm off the
+page (real instructions for serious harm, sexual content involving minors,
+targeting a real private person), and they are stated too. ⚠ **IT IS A CONSTANT
+SO A HUMAN CAN FIND IT, READ IT AND ARGUE WITH IT** — `plan_script_check.py`
+asserts both halves, so "we loosened it" can never silently become "we removed
+all of it".
+Alongside it, `_safety_settings()` sets the provider's own per-category threshold
+to `BLOCK_ONLY_HIGH` (a supported API parameter, and the textbook case for it:
+the default trips on a fistfight). ⚠ **THE SDK DOES NOT VALIDATE THAT VALUE** —
+`SafetySetting` coerces any string into a new enum member, so a typo in `.env`
+sailed through construction and would have been rejected by the API instead,
+turning one bad env var into every script call failing with an error naming the
+API rather than the setting. Caught by the test; validated in `plan_agent` now.
+
+**4. `_block_reason()` — the other half of the same complaint.** "The model
+returned an empty response" was the least useful thing we could say: it is
+indistinguishable from a network hiccup and sent people rephrasing prompts that
+were never the problem. The provider does report which category tripped and
+whether it was the prompt or the answer, so that is what the user is told now,
+verbatim, all the way out to the 502.
+
+**5. ⚠ THE LANGUAGE PICKER HAD NEVER WORKED.** `api.js`'s `generatePlan`
+destructured `{ months, cadence }` and dropped `language` on the floor. Every
+other layer was already wired for it — the picker, `PlanGenerateRequest`,
+`plan_agent.LANGUAGES`, the chip on the board — so the bug was invisible from
+every side except the output: you picked Hinglish, the board said Hinglish, and
+the plan came back English. Fixed, and scripts now default to the language the
+calendar was written in rather than to English.
+
+**6. The handoff.** `POST /plans/{id}/scripts/{sid}/to-draft` writes the user's
+ONE script draft (`drafts.py`) server-side and the browser navigates to Script to
+Storyboard, which already loads that draft on mount — so the client's whole job
+is `setNav`. Done server-side deliberately: the storyboard must read the bytes
+`script_to_text` produced, and a browser that rebuilt them from the scenes would
+be a second implementation of the format. It warns first, since there is one
+draft per user. Copy / .txt / .docx are all there too.
+
+- **UI reuses the plan page's furniture and invents almost nothing.**
+  `PlanScriptModal.jsx` is `modal-overlay` / `export-modal` / `modal-close`
+  again — it is the same *kind* of object as the export preview — and only adds
+  the screenplay layout. The write button sits in a new `.plan-item-foot` on the
+  card it writes the script for, and reads its length off that row's own
+  `format` field, saying which length it will use rather than deciding silently.
+  A separate "Write a script" box covers everything that was never on the
+  calendar.
+- **`client/src/plan/script_length.js` is PURE** (no React, no DOM) so node can
+  import it, the same arrangement `lane_order.js` has — the test drives the
+  browser's real answer rather than reimplementing it in Python. ⚠ The range
+  pattern must stay ABOVE the single-value one, or "8-10 min" reads as 8 minutes.
+- **Storage: nothing new, again.** Scripts and the token total are two more keys
+  in the existing `JobKind.PLAN` job's `params`.
+- **Deleting a script does NOT reduce the session's token total.** Those tokens
+  were spent; a number that shrinks when you tidy up is a lie. Asserted.
+- **Verified:** `tests/plan_script_check.py` — **109 checks, model stubbed, no AI
+  quota.** The one that matters most drives the breakdown's own public path:
+  every action beat is handed to `_attach_script_lines` as a shot's
+  `script_excerpt` and must come back **"exact"**, in forward order, resolving to
+  the beat itself rather than the paragraph around it — "fuzzy" is failure here,
+  because fuzzy means the writer and the reader disagree about words that are
+  both ours. Also: token sums, the 409 on a stale calendar row, a failed write
+  leaving the session untouched, .txt being byte-identical to what lands in the
+  draft, owner isolation across five endpoints, 401s, and the stance/threshold
+  assertions. `tests/plan_check.py` and `tests/plan_export_columns_check.py`
+  still pass; `npm run build` clean; 135 endpoints.
+- ⚠ **NOT browser-tested** — no Playwright run, per the standing instruction to
+  wait to be asked. The screenplay layout, the card foot and the modal footer are
+  the things only eyes can confirm.
+- **Follow-ups discovered, not done:** a script carries a `language` and a cast
+  with visual descriptions, and BOTH are thrown away at the breakdown boundary —
+  the same gap the animatic language note already describes. Passing them through
+  would mean a Hinglish script no longer produces an English board, and a cast the
+  breakdown re-derives from scratch could be seeded instead.
+
+### 2026-08-24 — THE OPEN FAILURES, CLEARED: SIX STALE ASSERTIONS AND ONE REGRESSION OF MY OWN
 
 > "fix open issue"
 
@@ -14253,6 +14960,10 @@ with the pricing warning.
 - **Not done / next sections:** the plan doesn't yet flow INTO Script to
   Storyboard (a "write the script for this upload" button is the obvious next
   link). Not browser-tested.
+  → **DONE 2026-08-25** — that button exists, and the flow is a real handoff
+  rather than a copy: `plan_agent.write_script()` writes the script in the
+  format `script_breakdown.py` reads, and `to-draft` loads it into the script
+  draft Script to Storyboard opens on. See the top of this log.
 
 ### 2026-08-04 — Panels now fill their frame consistently + board layout
 
@@ -17545,6 +18256,116 @@ script→storyboard→animatics→video pipeline.
 human generation, per-part progress + skeletons, custom assets, safe body base
 mesh, zip cache-bust.
 
+**🛡️ ADMIN PANEL — PHASE 1 OF 6 IS BUILT (2026-08-25). PHASES 2-6 ARE DESIGNED
+AND NOT BUILT.** The agreed shape is one **entitlements resolver** on the server
+that the sidebar, the pricing modal, every quota-spending route and the panel all
+read from — not three separate systems. Precedence, highest first: a feature's
+`hidden` kill switch → a per-user override → the rollout rule → the tier's grant
+→ the feature default.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 0 | `account_role`, `require_admin`, entry in the account menu | ✅ built |
+| 1 | `events` log, Users table, Overview dashboard | ✅ built |
+| 2 | `features` collection + resolver + `GET /auth/me/entitlements`; Sidebar reads the API; 25 `require_feature` guards; Features screen; per-account Access panel | ✅ built |
+| 3 | `tiers` in Mongo; `PricingModal` reads `/billing/tiers`; Pricing editor; `min_tier` as step 4 of the resolver | ✅ built |
+| 4 | `offers` + `subscriptions` (manually marked); "who purchased"; lazy tier expiry | ✅ built |
+| 5 | `usage_counters` fed from `ai_usage.py`; limit enforcement; "view as user" | ✅ built |
+| 6 | Payment-provider webhooks writing into the same collections | ⬜ **next** |
+
+**✅ THE FOUR PHASE-2 WARNINGS, AND WHAT HAPPENED TO THEM:** *(2) hiding a
+button is not hiding a feature* — 25 `require_feature` guards, exercised as real
+requests. *(3) the `Sidebar.WORKFLOWS` trap* — the `WorkflowSoon` branch is
+restored in `App.jsx`; it was one admin click from being live. *(4) fail open* —
+the resolver serves last-known-good, then the built-in catalogue, and an unknown
+key is ON. **(1) `plans` IS STILL TAKEN and still applies to Phase 3**:
+`server/plans.py`, the `/plans` route and `JobKind.PLAN` all mean *Plan &
+Script*, so billing tiers must be `tiers` / `server/billing.py` /
+`/billing/tiers` — never "plans", anywhere in code.
+
+**✅ THE THREE PHASE-3 WARNINGS, AND WHAT HAPPENED TO THEM:** *(1) `plans` is
+taken* — the module, collection, routes and env vars are all `tiers`. *(2)
+`min_tier` becomes step 4* — it does, in `_resolve_one` and nowhere else, after
+the rollout. *(3) never delete a tier* — `archived` only, and the default tier
+refuses even that. **The half of (3) that is still unspent: a price change must
+not re-price existing subscribers** — which cannot bite until Phase 4 creates
+subscriptions to re-price, and is the first rule to write there.
+
+**✅ ALL THREE PHASE-4 WARNINGS WERE SPENT:** the price is frozen onto the
+subscription (asserted by changing a tier's price under a live subscriber);
+sales and coupons share `offers` and are split across two halves of Admin →
+Sales; and a sale drives `compare_at` rather than inventing a second old price.
+
+**✅ ALL FOUR PHASE-5 WARNINGS WERE SPENT:** the sink is `ai_usage` (hooked at
+`plans._record_usage`); `require_quota` refuses before the spend; the tier's own
+`limits` keys are the ones enforced; and View-as is a second caller of
+`features.resolve`.
+
+**⚠ BEFORE STARTING PHASE 6, READ THESE FOUR:**
+
+1. **A WEBHOOK WRITES THE SAME RECORDS THE PANEL ALREADY WRITES.**
+   `subscriptions.record(..., source="razorpay", provider_ref=...)` and
+   `users.set_tier` / `set_tier_expiry` are the whole integration. If a webhook
+   handler needs its own collection or its own tier logic, it is being written
+   wrong.
+2. **VERIFY THE SIGNATURE BEFORE PARSING THE BODY, AND MAKE IT IDEMPOTENT.**
+   Providers retry; the same event will arrive twice. `provider_ref` is already
+   on the record — make it the idempotency key and index it unique.
+3. **THE PRICE IS STILL FROZEN AT PURCHASE TIME.** A webhook must record the
+   amount the PROVIDER charged, not re-read the tier — the two can differ, and
+   the provider's number is the one on the customer's statement.
+4. **THERE IS STILL NO SCHEDULER, AND TIER EXPIRY LEANS ON THAT.** Renewals will
+   arrive as webhooks (fine — extend `tier_expires_at`), but dunning, reminders
+   and "cancel at period end" all need something that runs. Decide whether Phase
+   6 introduces one before promising any of them in the UI.
+
+**Open follow-ups from Phases 1-2:**
+
+- ⬜ **The panel has never been opened in a browser.** Everything is asserted at
+  the API and by `vite build`; no screen has been looked at. Top of the list.
+- ⬜ **A browser already open does not pick up a flag change until it reloads or
+  the user moves between workflows** — `App.jsx` re-reads entitlements on `nav`
+  change, which is deliberate (no polling), but it means an admin watching a
+  customer's screen will not see it flip. The Features screen says so.
+- ⬜ **Usage is counted at the ROUTE, not at the generator.** `image_generations`
+  counts the panels a board was ASKED for (`len(shots)`), which is right at
+  request time and can drift from what the worker actually drew if a panel
+  fails. `veo_seconds` is not counted at all. Both are fixable by having the
+  worker report back through `usage.increment`, which is the natural next step.
+- ⬜ **The capability flags are enforced but not yet SURFACED in the app.** A
+  customer whose `cap.veo-render` is off — or whose tier doesn't include it —
+  still sees the ✨ Animate button and gets a 403 when they press it. WORKFLOWS
+  are handled (hidden, badged or locked in the rail); capabilities are not. The
+  entitlements response already carries `features` and `states`, so the editor
+  needs to read them and disable the control with the reason. This is the largest
+  remaining gap and it grew with Phase 3: a locked workflow now upsells properly,
+  a locked capability still just errors.
+- ⬜ **`tests/profile_check.py` FAILS ITS LAST ASSERTION, AND IT IS NOT A
+  REGRESSION.** `count_documents({}) == 1` against the LIVE MongoDB (255 real
+  accounts today); the other 40 checks pass. It was only ever true on a database
+  with a single account. Either scope the count to the throwaway addresses it
+  created, or move the suite onto temporary stores the way the four panel suites
+  do — the second is better, and would make it runnable again.
+- ⬜ **There is no scheduler, and two things now lean on that.** Tier expiry is
+  lazy (fine, by design) but nothing sends a renewal reminder, nothing retries a
+  failed payment, and "cancel at period end" cannot be offered. Phase 6 needs to
+  decide whether that stays true.
+- ⬜ **`limits` on a tier are stored and displayed but NOT ENFORCED.** "2
+  projects", "9 shots per project" are what the pricing card says; nothing
+  checks them. Phase 5 wires them to `usage_counters`. Until then they are
+  marketing copy, and the editor labels them as such.
+- ⬜ Grant yourself the role first: `python seed_admin.py --email you@example.com
+  --role admin`, or put the address in `ADMIN_EMAILS` and restart.
+- ⬜ `DELETE /admin/users/{email}` removes the **account only** — their boards
+  and animatics stay in the job store, orphaned but intact. That is deliberate
+  (bundling a work-wipe into a button labelled Delete is how an admin panel
+  destroys something nobody meant to), but a Phase 2 "delete their work too"
+  wants a preview of what it would remove before it is offered.
+- ⬜ The event log does not reach backwards. Accounts that existed before
+  2026-08-25 have no registration or sign-in rows, so their "Last seen" reads
+  *never* until they next sign in. The signup TILES are fine — those are counted
+  from `users.created_at` and are retroactive.
+
 **🎬 MAKE VIDEO, AS OF 2026-08-23 — where the auto-editor actually stands.** The
 button on the timeline's add row now opens a BRIEF (one sentence about the film,
 the language), and offers two ways to get a plan:
@@ -18858,6 +19679,16 @@ language — do NOT copy the Drawstory reference's look/colours.
       first place anyone is asked. If it is worth inheriting, the field has to be
       added at the Plan & Script → breakdown boundary first — Plan & Script
       already asks for a language and then drops it on the floor.
+      **UPDATE 2026-08-25:** that boundary now EXISTS and is carrying traffic —
+      a script written in Plan & Script lands in the script draft the breakdown
+      reads. Two things travel with a script and are still thrown away there:
+      its `language` (so a Hinglish script produces an English board) and its
+      `characters`, each already carrying the visual description the breakdown
+      re-derives from scratch. Threading either one through
+      `POST /storyboards/breakdown` is now a small change on a path that runs,
+      not a new path. ⚠ The browser-side half of the language bug is fixed
+      separately: `api.js` had been dropping `language` from the GENERATE call
+      since 2026-08-04, so the plan picker had never once worked.
 - [ ] **LOOK AT THE ⓘ AND THE CUT CURSOR (2026-08-19).** Both are answers to a
       user report and both are things only eyes can confirm. The ⓘ: every row in
       the Effects tab should carry one, the descriptions should be GONE from the
