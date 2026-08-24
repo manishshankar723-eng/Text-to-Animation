@@ -105,6 +105,22 @@ throughout: `google-genai`.
 | Transcription (captions) | — | Gemini text model | `captions.py` |
 | **Edit plans (🎬 Make Video)** | `DIRECTOR_PROVIDER` | falls back to the text model | `director.py`, `llm_json.py` |
 
+⚠ **THE DIRECTOR IS THE ONE CAPABILITY THAT CAN RUN OFF GOOGLE, SINCE 2026-08-23
+(Phase 5), AND NO SDK WAS ADDED FOR IT.** `DIRECTOR_PROVIDER=openai_compatible`
+(alias `openai`) is a WIRE FORMAT — one `POST {DIRECTOR_BASE_URL}/chat/completions`
+over `requests`, which has always been in `requirements.txt`. That reaches OpenAI,
+Ollama, vLLM, llama.cpp, LM Studio, Groq, Together, OpenRouter and any
+OpenAI-shaped proxy. ⚠ **Images, Veo, TTS and captions remain Google-only** — the
+Director is the only module behind an adapter seam, which is the whole reason
+this was a day's work rather than a rewrite. ⚠ **`DIRECTOR_MODEL` is REQUIRED**
+there; the fallback is the text model's Google id and would buy a 404.
+⚠ **And endpoints that cannot be handed a JSON Schema get it in the prompt** —
+`DIRECTOR_STRUCTURED_OUTPUT=auto|native|prompt`, with extraction and ONE repair
+retry around what comes back (`llm_json.extract_json`). Set it to `prompt` on
+Google to rehearse that path with credentials you already have.
+⚠ **"Will model X work" has ONE answer and it is a command**:
+`DIRECTOR_CONTRACT_LIVE=1 python tests/director_contract_check.py`.
+
 ⚠ **Veo is the only thing billed per second of output** — roughly $0.24 (lite/720p)
 to $3+ (standard/1080p) per 8s clip, and a 20-shot project is 20 clips.
 `video_client.estimate_cost_usd()` runs before anything spends, and
@@ -191,6 +207,22 @@ structural fact about the codebase:
   runs) and what is DONE with what comes back (folded, fenced, dropped with a
   reason). They never claim two live calls matched, because no Gemini endpoint
   promises that.
+- ⚠ **…AND `tests/director_contract_check.py` IS THE ONE THAT CAN BE POINTED AT A
+  MODEL ON PURPOSE (2026-08-23).** It is the exception that proves the rule above
+  rather than a contradiction of it: it runs in REPLAY by default, calling
+  nothing, and goes live only for `DIRECTOR_CONTRACT_LIVE=1`. ⚠ **Nothing in this
+  repo spends because a suite happened to run.** Live, it sends one committed
+  six-shot board (`tests/golden_brief.json`) through whatever
+  `DIRECTOR_PROVIDER` names and asserts the four properties that decide whether
+  a model can do this job at all: a valid plan · every shot covered · no
+  invented vocabulary · the house guard rails respected *without the fence
+  having to trim*. ⚠ **The fourth is the interesting one** — that the fence
+  CATCHES an over-treated plan is already proven in `director_guardrails_check`
+  and holds whoever wrote it; what this asks is whether the model shows restraint
+  ITSELF, because a preview listing 30 dissolves the fence quietly cuts to 1 is a
+  preview of a different film. ⚠ **Do not "improve" the golden board** — changing
+  it silently invalidates every score any model ever got on it; add a second
+  fixture beside it instead.
 - No linter, formatter, pre-commit hook or CI workflow is configured. Match the
   surrounding file's style by reading it first.
 
@@ -198,11 +230,22 @@ structural fact about the codebase:
 
 TypeScript · react-router · Redux/Zustand/MobX · Tailwind/styled-components/MUI ·
 three.js/pixi · d3 or any chart library · Celery/Redis/RabbitMQ · SQLAlchemy or any
-SQL database · Docker/compose · pytest · ESLint/Prettier · a Node backend · OpenAI /
-Anthropic / any non-Google model provider · `ffprobe` · Google Flow.
+SQL database · Docker/compose · pytest · ESLint/Prettier · a Node backend · **any
+non-Google model SDK** (`openai`, `anthropic`, `litellm`, `langchain`, …) ·
+`ffprobe` · Google Flow.
 
 If a task looks like it needs one of these, say so and ask first — several were
 considered and rejected, and the reasons are in the Work Log.
+
+⚠ **THE ENTRY ABOVE CHANGED ON 2026-08-23 AND THE DIFFERENCE MATTERS.** It used
+to read "OpenAI / Anthropic / any non-Google model provider". A non-Google
+*provider* is now reachable for the Director alone — `DIRECTOR_PROVIDER=
+openai_compatible` — because it needed no dependency: it is one `requests.post`
+to an OpenAI-shaped endpoint. What is still forbidden without asking is the
+**SDK**, and the reasoning is unchanged: a second client library is a second
+retry policy, a second auth story, a second set of model-id conventions and a
+second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
+⚠ **A wire format is not a dependency. Reach for the wire format.**
 
 ---
 
@@ -220,7 +263,34 @@ considered and rejected, and the reasons are in the Work Log.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-23 — **🎬 THE DIRECTOR CAN SHOOT THE FILM** (Phase 4
+**Last updated:** 2026-08-23 — **🎬 THE DIRECTOR IS NOT TIED TO ONE MODEL, AND
+THERE IS A COMMAND THAT PROVES IT PER MODEL** (Phase 5: the model-agnostic proof).
+⚠ **"WILL MODEL X WORK" IS NOW AN EXIT CODE.**
+`DIRECTOR_CONTRACT_LIVE=1 python tests/director_contract_check.py` sends one
+committed six-shot board through whatever `DIRECTOR_PROVIDER` names and asserts
+the four things that decide it: a valid plan · every shot covered · no invented
+vocabulary · the guard rails respected *without the fence having to trim*.
+⚠ **NO SECOND SDK WAS ADDED, AND `requirements.txt` IS UNCHANGED.**
+`DIRECTOR_PROVIDER=openai_compatible` is a WIRE FORMAT — one `requests.post` to
+`/chat/completions` — which reaches OpenAI, Ollama, vLLM, llama.cpp, LM Studio,
+Groq, Together and OpenRouter. The forbidden-list entry now says what is really
+forbidden: the **SDK**, not the provider.
+⚠ **THE SCHEMA TRAVELS IN THE PROMPT WHEN IT HAS TO** —
+`DIRECTOR_STRUCTURED_OUTPUT=auto|native|prompt`, with a shape sketch built from
+the same JSON Schema, extraction that walks the braces (a `}` inside a caption is
+data), and ONE repair retry that hands the model its own broken answer back.
+⚠ **`auto` LEAVES THE GOOGLE PATH EXACTLY AS IT WAS** — and `prompt` can be
+pointed at Google to rehearse the other path on credentials you already have.
+⚠ **`director.py` DID NOT CHANGE.** It still writes plain JSON Schema and still
+knows nothing about who answers. That is the adapter seam paying for itself.
+⚠ **THE GOLDEN BOARD IS DATA, NOT A FIXTURE IN A TEST** (`tests/golden_brief.json`),
+so two people comparing two models compare the models. Do not "improve" it — add
+a second one beside it.
+⚠ **NO NON-GOOGLE MODEL HAS EVER ANSWERED THIS CODE.** The wire format is pinned
+field by field against a fake transport; nothing has been sent to a real
+endpoint and `DIRECTOR_CONTRACT_LIVE=1` has never been run. See Next Steps.
+
+**Previously:** 2026-08-23 — **🎬 THE DIRECTOR CAN SHOOT THE FILM** (Phase 4
 of the Director plan: the Veo pass, wired into the run as PHASE C).
 ⚠ **IT RUNS IN PASSES OF `MAX_VIDEO_BATCH`, AND THE STOP LIVES BETWEEN THEM.** A
 48-shot board is four submissions of twelve; a submission is billed the moment it
@@ -494,29 +564,51 @@ rather than trusting it.
 else is GL, so a text row dragged under a picture row cannot be one pass: the
 stack is cut into BANDS at each text row, each band gets its own canvas and
 context, and the captions sit between them as siblings (DOM order *is* stacking
-order). One band for any project nobody has restacked. **The cost, stated:** a
-blend mode cannot see through a band boundary — captions were always on top
-before, so this is a new corner, not a regression.
+order). One band for any project nobody has restacked.
+⚠ **AND THE COMPOSITOR HAD TO LEARN ABOUT ALPHA TO DO IT.** Every write it made
+was `alpha = 1.0` — true and harmless while the monitor was ONE canvas cleared to
+the letterbox colour, and a **black screen** the moment it was two: the upper band
+was an opaque sheet and the whole film vanished behind it. `FRAGMENT` now writes
+real alpha (reducing *exactly* to the old line when the backdrop is opaque, which
+is every single-band frame) and `COPY_FRAGMENT` carries it instead of replacing it.
+⚠ **A BLEND MODE ON AN UPPER BAND SEES THE BAND BELOW** through a second sampler
+(`uUnder`, fed each frame by `compositor.under()`), read for the COLOUR only and
+never written out. **The residue, stated:** it cannot see the CAPTIONS below it —
+they are DOM, not pixels in any canvas — where the exporter, drawing onto one
+Pillow canvas, does include them. Narrow (needs a restack AND a blend mode AND a
+caption underneath) and the export stays the correct side of it.
+⚠ **BOTH OF THOSE WERE FOUND BY SAMPLING PIXELS**, not by reading: every
+structural check — canvas count, DOM order, caption placement — passed while the
+monitor showed nothing but black.
 ⚠ **THE GUTTER NOW SHOWS IMAGES ABOVE SHAPES.** It always showed the opposite
 while the renderers drew overlays over shapes; there is one answer now and it is
 the renderers'.
 ⚠ Audio still does not move (tracks are MIXED, not stacked — no order of them
 makes a different film) and captions stay pinned on top: they are never written
 into `lane_order`, and **being unlisted is what pins them**.
+⚠ **A ROW CREATED AFTER A RESTACK TAKES A SEAT WITH ITS OWN KIND** (`seatLane`),
+instead of inheriting the unlisted-means-on-top fallback and landing over the
+film; a row that is DELETED gives its seat up (`unseatLane`), or the next row to
+claim the same token — any reused picture track number — would silently inherit
+its place in the stack. Both are no-ops on a project with no saved order.
 New: `client/src/animatic/lane_order.js` (rewritten, pure, node-drivable),
 `tests/lane_reorder_check.py` (rewritten), `tests/editor_lane_restack_check.py`.
 Files: `animatic.py`, `animatic_render.py`, `client/src/animatic/scene.js`,
 `client/src/animatic/gl/compositor.js`, `client/src/components/ProgramCanvas.jsx`,
 `AnimaticEditor.jsx`, `Timeline.jsx`, `server/animatics.py`, `server/schemas.py`.
-**Verified:** `python tests/lane_reorder_check.py` — **50 checks, all pass**,
+**Verified:** `python tests/lane_reorder_check.py` — **62 checks, all pass**,
 every rank and every draw order compared JS-against-Python; `render_parity`,
 `picture_tracks_check`, `hidden_lane_check`, `captions_check`,
 `animatic_motion_check`, `effects_check`, `editor_picture_tracks_check` and
-`npm run build` clean. **Browser opened this once, deliberately**:
-`tests/editor_lane_restack_check.py` (18 checks, all pass) is the only thing that
-can see the band split, and it **caught a real bug** — the monitor's project
-object carried no `settings`, so `sceneAt` never saw the order and the preview
-drew the default stack while the timeline and the export used the dragged one.
+`npm run build` clean. **Browser opened deliberately**:
+`tests/editor_lane_restack_check.py` (26 checks, all pass) is the only thing that
+can see the band split, and it **caught all three real bugs in this feature** —
+the monitor's project object carried no `settings` (so the preview drew the
+default stack while the timeline and the export used the dragged one), the upper
+band was opaque black, and a blend mode on it was blind. The last two needed
+PIXEL assertions: it screenshots the monitor and reads colours through the upper
+band. `monitor_effects_check.py` still reports the same exact pixels for every
+effect, which is what pins the single-band path as unchanged.
 **Known, pre-existing, confirmed against HEAD:** `editor_lane_move_check` fails 5
 (3 are empty-row prompts that no longer exist in `Timeline.jsx`; 2 are the pane
 being 199px where the drag needs 227px — 4 of the 5 fail at HEAD too, the extra
@@ -2437,6 +2529,14 @@ previews require a cloud run (not `local_only`).
 | `VERTEX_VIDEO_MODEL` / `GEMINI_VIDEO_MODEL` | Pin an exact Veo model. Unset picks by the project's quality tier (lite/fast/standard). |
 | `VIDEO_MAX_CONCURRENCY` / `VIDEO_POLL_TIMEOUT` / `VIDEO_POLL_INTERVAL` | In-flight renders (default 2 — Veo's quota is tight), give-up seconds (900), poll gap (10). |
 | `API_MAX_VIDEO_SHOTS` / `API_MAX_VIDEO_BATCH` / `API_MAX_VIDEO_WORKERS` | Spend guards: shots per project (60), shots one "Render all" may submit (12), parallel render jobs on their own pool (2). These bound **money**, not just work. |
+| `DIRECTOR_PROVIDER` | `vertex` \| `gemini` \| `stub` \| `openai_compatible`. Unset follows `TEXT_PROVIDER`. ⚠ The only switch in this app that can leave Google. |
+| `DIRECTOR_MODEL` | Model id. Unset = the text model — **except on `openai_compatible`, where it is REQUIRED** (the fallback is a Google id). |
+| `DIRECTOR_BASE_URL` / `DIRECTOR_API_KEY` / `DIRECTOR_TIMEOUT_SECONDS` | The OpenAI-shaped endpoint, its key (a local model wants none) and the per-call ceiling (180s). |
+| `DIRECTOR_STRUCTURED_OUTPUT` | `auto` (default) \| `native` \| `prompt`. Where the JSON Schema travels. `auto` = native on vertex/gemini/stub, prompt elsewhere. Set `prompt` on Google to rehearse the no-schema path. |
+| `DIRECTOR_JSON_MODE` | `on` (default) \| `off`. Sends `response_format: json_object` on OpenAI-shaped calls. Not a schema — turn it off for endpoints that reject the field. |
+| `DIRECTOR_TEMPERATURE` / `DIRECTOR_TOP_P` / `DIRECTOR_SEED` | Greedy and seeded by default (0.0 / 1.0 / 42), so "Read it again" is a comparison and not a re-roll. `none`/`off` on the seed turns it off. |
+| `DIRECTOR_STUB_PATH` | The JSON file `DIRECTOR_PROVIDER=stub` answers from. Keys are call purposes (`analyse`, `polish`). |
+| `DIRECTOR_CONTRACT_LIVE` | `1` lets `tests/director_contract_check.py` call a real model. ⚠ Unset, that test calls nothing. |
 | `MESHY_API_KEY` | Meshy 3D generation. |
 | `JWT_SECRET` | **Required in prod.** JWT signing key. Dev fallback warns loudly. |
 | `JWT_ALGORITHM` / `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT config (defaults HS256 / 1440). |
@@ -2668,7 +2768,135 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-23 (latest) — 🎬 PHASE 4: THE DIRECTOR CAN SHOOT THE FILM. IN PASSES, RESUMABLY, AND WITHOUT EVER PAYING TWICE
+### 2026-08-23 (latest) — 🎬 PHASE 5: "WILL MODEL X WORK" IS A COMMAND NOW, NOT AN OPINION
+
+> "Phase 5 — Model-agnostic proof" — the plan the user handed over, built.
+
+**Asked for:** harden the adapter (schema-in-prompt + parse + one repair retry,
+for models without native structured output) · a committed golden 6-shot brief ·
+`.env.example` documentation · `tests/director_contract_check.py`, which runs
+that brief through whichever provider is configured and asserts a valid plan,
+every shot covered, no illegal vocabulary and the guard rails respected.
+
+**⚠ THE DEPENDENCY QUESTION WAS PUT TO THE USER FIRST AND THE ANSWER WAS "NO NEW
+SDK".** The plan flagged it: a second model SDK is on the forbidden list at the
+top of this file. It turned out not to be needed at all, and that is the better
+answer rather than a compromise. `DIRECTOR_PROVIDER=openai_compatible` is **a
+wire format, not a library** — one `POST {DIRECTOR_BASE_URL}/chat/completions`
+over `requests`, which has been in `requirements.txt` since the first commit.
+**`requirements.txt` is byte-for-byte unchanged.** One format reaches OpenAI,
+Ollama, vLLM, llama.cpp, LM Studio, Groq, Together, OpenRouter and anything
+behind an OpenAI-shaped proxy — strictly more than an `openai` dependency would
+have bought. The "Deliberately absent" entry was rewritten to say what is
+actually forbidden (**the SDK**) instead of what is not (a provider).
+
+**⚠ THE SCHEMA CAN NOW TRAVEL IN THE PROMPT, AND THAT IS ONE SWITCH, NOT A SECOND
+MODULE.** `DIRECTOR_STRUCTURED_OUTPUT=auto|native|prompt`. Vertex and the Gemini
+API enforce a `response_schema` server-side; almost nobody else does. In `prompt`
+mode `llm_json.schema_prose()` renders the same JSON Schema `director.py` already
+writes as a shape sketch — `<integer>`, `<"low" | "normal" | "high">`, `required`
+markers, descriptions as `//` notes — and appends it under three rules that say
+what the READER at this end does with a missing key, an off-enum value and an
+invented one. Nothing in `director.py` changed to make that work: it still writes
+plain JSON Schema and still never imports anyone's types. **That is the seam
+paying for itself.**
+
+**⚠ `auto` MEANS THE GOOGLE PATH IS BYTE-IDENTICAL TO YESTERDAY.** Native on
+vertex/gemini/stub, prompt everywhere else — so no existing `.env`, prompt or
+fingerprint moved. **And you can point `prompt` AT Google**, which turns the
+model you already have keys for into a stand-in for one that cannot be handed a
+schema; when it is set, `_google_adapter` really does drop `response_schema`,
+because rehearsing the path with a safety net under it rehearses nothing.
+
+**⚠ EXTRACTION WALKS THE BRACES. IT DOES NOT REGEX THEM.** `extract_json` strips
+a ```json fence, then scans from the first `{` counting depth while knowing when
+it is inside a string and when a quote is escaped. The obvious version —
+everything up to the last `}` — gets the wrong answer on precisely the input this
+feature exists for: **an edit plan is full of the user's own words**, and a
+caption reading `see you } later` is data. Mutation-checking earned one extra
+test here: every fence case passed with fence-stripping deleted (the walker got
+them anyway), so a case was added where the prose in FRONT of the fence contains
+a `{` — the only one that needs both halves.
+
+**⚠ AND A BROKEN ANSWER BUYS EXACTLY ONE REPAIR.** The model is handed **its own
+output** plus the parse error and asked to mend it — not asked the question
+again, which would cost the whole board a second time and buy a second first
+draft. On a truncated object it has its own half-finished plan in front of it to
+finish. **Once**, and counted separately from the three transport retries, so the
+worst case is 4 calls and not 6: a second repair of the same answer is a model
+that cannot do this task, and finding that out cheaply is the entire point.
+**An EMPTY answer buys no repair at all** — a safety block does not un-block on
+being asked twice, and quoting nothing back is a paid call that cannot succeed.
+
+**⚠ THE GOLDEN BRIEF IS SIX SHOTS AND SIX IS NOT ARBITRARY.**
+`tests/golden_brief.json` is committed data rather than a fixture in a test so
+that two people comparing two models are comparing the models. Five cuts is the
+smallest film where the house budget BITES instead of rounding away: 0.35 of 5
+cuts allows one transition, 0.4 of 6 clips allows two treated shots, 19s allows
+two captions and one shape. Any smaller and every budget rounds to one, so
+restraint would pass by accident. The material asks for something too — one real
+scene boundary (3→4) so a transition has a right place and every other cut is a
+wrong one, a 5.5s hold against a 2s median so "which shot carries the weight" has
+an answer, two shots speaking and four silent. ⚠ **The file says all this in its
+own `_why`, and says not to "improve" the shots** — changing the board silently
+invalidates every score any model ever got on it.
+
+**⚠ THE FOURTH ASSERTION IS THE ONE WORTH HAVING.** Valid plan, every shot
+covered, no illegal vocabulary — and then: *the fence had nothing to trim*. That
+the fence CATCHES an over-treated plan is `director_guardrails_check`'s job and
+holds whoever wrote the plan. What the contract check asks is whether the model
+can show restraint ITSELF, because a preview listing 30 dissolves that the fence
+quietly cuts to 1 is a preview of a different film from the one the button makes.
+The validation and the fence are run **in node, by the client's own modules** —
+the same reason the vocabulary lives on that side.
+
+**⚠ AND THE SECOND ASSERTION IS THE FAILURE THAT LOOKS LIKE SUCCESS.** A model
+that reads four of six shots and plans confidently around them writes a plan that
+validates, runs, reports every step green — and puts the ending in the middle.
+Nothing downstream can see it. This is the only place it is looked for.
+
+**⚠ IT RUNS IN REPLAY BY DEFAULT AND THE BANNER SAYS SO IN THOSE WORDS.** Live
+needs `DIRECTOR_CONTRACT_LIVE=1`, because nothing here spends because a suite
+happened to run. Replay drives the identical code path against a committed answer
+deliberately wrapped the way a small model wraps things — the reading arrives
+truncated inside a fence and must be repaired, the plan arrives with "Here is the
+plan you asked for:" in front of it — so one replay run exercises both halves of
+the hardening. ⚠ **The pass line then says, out loud, that no model was called
+and that this is evidence about the machinery and about no model whatsoever.** A
+green tick that reads as "GPT-5 passed" when nothing was called is worse than a
+red one.
+
+**Files:** `llm_json.py` (the hardening, the sketch, the extractor, the repair,
+the `openai_compatible` adapter), `tests/director_contract_check.py` (new),
+`tests/golden_brief.json` (new), `.env.example`, this file.
+**⚠ `requirements.txt` and `director.py` are UNTOUCHED**, which is the clearest
+statement of what the seam is for.
+
+**Verified:** `director_contract_check` **84 checks**, and **mutation-checked
+six ways** — break the brace walker's string-awareness, make the repair fire per
+attempt instead of per call, delete fence-stripping, drop a shot from the
+reading, invent a transition kind, add two more effects: each one goes red on the
+check that is supposed to see it, and a control mutation (a whitespace edit to
+the board) stays green. That control caught a real brittleness on the first run —
+a check was comparing raw fixture labels against a prompt whose labels have been
+through `_clip`, which strips — and it was fixed rather than the mutation being
+dropped. The other eight Director suites (`director_plan_check`,
+`director_language_check`, `director_determinism_check`, `director_actions_check`,
+`director_guardrails_check`, `director_chunk_check`, `director_resume_check`,
+`director_voice_order_check`) all still pass, `server.main` imports, and eight
+adjacent suites were spot-checked green. ⚠ **A FULL SUITE SWEEP WAS NOT
+COMPLETED** — it timed out at two minutes on the slow suites; `effects_parity_check`
+was red in it and is the known pre-existing GL failure, not a regression. Nothing
+outside the four files above imports the seam (`grep` says: only the Director
+tests, `director.py` and `server/director.py`).
+**⚠ AND THE HEADLINE CAVEAT: NO NON-GOOGLE MODEL HAS EVER ANSWERED THIS CODE.**
+The wire format is asserted field by field against a fake `requests.post` — URL,
+both messages in order, the sampling, the bearer token, `json_object` on and off,
+a 400 quoting the body, a non-OpenAI-shaped reply — but nothing has been sent to
+a real endpoint, and `DIRECTOR_CONTRACT_LIVE=1` has never been run against
+anything. **Top of Next Steps.**
+
+### 2026-08-23 — 🎬 PHASE 4: THE DIRECTOR CAN SHOOT THE FILM. IN PASSES, RESUMABLY, AND WITHOUT EVER PAYING TWICE
 
 > "Phase 4 — Veo" — the plan the user handed over, built.
 
@@ -3673,11 +3901,44 @@ them as ordinary siblings (`.an-screen-gl` and `.an-text-layer` are both
 `position: absolute; inset: 0`, so **DOM order IS stacking order** — no z-index
 arithmetic anywhere). A project nobody has restacked is one band, drawn by exactly
 the code that drew it before.
-**The cost, stated rather than hidden:** a blend mode cannot see through a band
-boundary — it samples a different drawing buffer and reads black there. Captions
-were always on top before, so no blend could ever see one: a new corner, not a
-regression. The alternative was rasterising captions into the canvas, i.e. a THIRD
-text renderer to keep in step with CSS and with Pillow.
+⚠ **AND THE COMPOSITOR HAD TO LEARN ABOUT ALPHA BEFORE ANY OF THAT WORKED.**
+Every write it made was `alpha = 1.0` — in `FRAGMENT`'s final line and again in
+`COPY_FRAGMENT`, which runs between every pair of layers and once more onto the
+visible canvas. That was true and harmless for as long as the monitor was ONE
+canvas cleared to an opaque letterbox colour. With two it meant the upper band was
+an **opaque sheet**: drag the Shapes row above the caption row and the entire film
+disappeared behind a black rectangle with one small box on it. The layer shader
+now does real source-over compositing and writes `vec4(co, ao)`; `COPY_FRAGMENT`
+carries alpha instead of replacing it. ⚠ **IT REDUCES TO THE OLD LINE EXACTLY when
+the backdrop is opaque** (ab = 1 → cs = B(cb,c), ao = 1, co = mix(cb, B, as)), so
+every single-band frame — i.e. every project nobody has restacked — composites bit
+for bit as it did. `monitor_effects_check.py`'s exact per-effect pixel values are
+what hold that down.
+
+⚠ **AND A BLEND MODE ON AN UPPER BAND WOULD OTHERWISE BE BLIND.** "Screen" and
+"multiply" are functions of the pixels beneath the layer, and beneath an upper band
+those pixels are on a different canvas its framebuffer knows nothing about — so a
+flare dragged above a caption row blended against emptiness while the MP4 blended
+it against the shot. `compositor.under()` uploads the band below as a second
+sampler (`uUnder`) each frame, read for the COLOUR ONLY and never written out — or
+the band would paint the picture below back over the captions between them. The
+shader keeps two backdrops on purpose: the blend sees through the band, the alpha
+bookkeeping stays band-local.
+**The residue, stated rather than hidden:** a blend still cannot see the CAPTIONS
+below it, because they are DOM and not pixels in any canvas, where the exporter
+(one Pillow canvas) does include them. It needs a restack AND a blend mode AND a
+caption underneath to reach, and the EXPORT is on the correct side of it — which
+is the right way round, since the file is the deliverable. Closing it would mean
+either a canvas2d caption renderer (a third twin to keep in step with CSS and
+Pillow, risking every caption in the app) or making the exporter ignore caption
+pixels for blend backdrops, i.e. making the file worse to match a limitation of
+the preview.
+
+⚠ **BOTH OF THOSE WERE FOUND BY PIXELS, NOT BY READING.** Every structural
+assertion — two canvases, the caption layer between them, both with a real backing
+store, DOM order correct — passed while the monitor was solid black. The test
+screenshots the monitor and samples a colour through the upper band; that is the
+only question that could have caught it.
 
 ⚠ **THE GUTTER NOW AGREES WITH THE PICTURE ABOUT IMAGES AND SHAPES.** It used to
 show Shapes above Images while all three renderers drew overlays above shapes —
@@ -3696,30 +3957,49 @@ the preview then drew the DEFAULT stack while the timeline, the saved project an
 the export all used the dragged one. It looked exactly like "the drag does
 nothing". Caught by the browser test, not by reading.
 
+⚠ **A ROW CREATED AFTER A RESTACK TAKES A SEAT WITH ITS OWN KIND.** `laneRank`
+ranks an unlisted row ABOVE everything the saved order names — the right FALLBACK
+(a row you cannot find beats a row you cannot see) and the wrong behaviour for the
+＋ Add layer button, which would drop a new picture row on top of the film.
+`seatLane` places it: with its own kind, by derived rank among them (so track 2
+lands between 3 and 1), under the last of them when they tie (which is where the
+derived order always drew "Text 2" relative to "Text"), and by the derived scale
+when it is the first row of its kind. `unseatLane` is its pair and matters for a
+reason that is easy to miss: a dead token left in the list is harmless for the rows
+that remain, right up until a row claims the SAME token — any reused picture track
+number — and silently inherits the deleted row's place in the stack. Both are
+no-ops on an empty order. Wired into all five row-creating paths, two of which are
+`useCallback([])` bodies and reach it through a ref for the same reason they use
+`layersRef`.
+
 **New:** `client/src/animatic/lane_order.js` (rewritten around the rank),
 `tests/lane_reorder_check.py` (rewritten), `tests/editor_lane_restack_check.py`.
 **Renderers:** `client/src/animatic/scene.js` (`orderedLayers`, `layerRuns`,
 `stack_key` on the scene), `animatic_render.py` (the twins), `animatic.py`
 (`render_frame` walks runs; both planners carry `lane_order`),
-`client/src/components/ProgramCanvas.jsx` (bands),
-`client/src/animatic/gl/compositor.js` (a non-bottom band clears transparent).
+`client/src/components/ProgramCanvas.jsx` (bands, each handed the canvas below it),
+`client/src/animatic/gl/compositor.js` (transparent clear above the bottom band,
+`under()`), `client/src/animatic/gl/shaders/layer.js` (real alpha, `uUnder`).
 **Editor:** `AnimaticEditor.jsx` (`lanes` ranks one stack, `moveLane` writes one
 list, `renderCaptions` is handed to the monitor), `Timeline.jsx` (a drop is legal
 across kinds). **Server:** `server/animatics.py` (the order reaches the encoder),
 `server/schemas.py` (`lane_order` re-documented — it is the whole visual stack now
 and the exporter reads it).
 
-**Verified:** `python tests/lane_reorder_check.py` — **50 checks, all pass**. It
+**Verified:** `python tests/lane_reorder_check.py` — **62 checks, all pass**. It
 drives `lane_order.js` through node the way `render_parity.py` drives `scene.js`,
 and compares **every rank and every resolved draw order against Python**, for a
 virgin project, a restacked one and a half-named one. `render_parity`,
 `picture_tracks_check`, `hidden_lane_check`, `captions_check`,
 `animatic_motion_check`, `effects_check`, `editor_picture_tracks_check`,
 `editor_razor_check`, `editor_board_import_check` and `npm run build` are all
-clean. **The browser WAS opened this time, deliberately and against the standing
-preference:** `tests/editor_lane_restack_check.py` (18 checks, all pass) is the
-only thing that can see the band split, and it earned its keep — it is what caught
-the `shown`-has-no-`settings` bug above.
+clean. **The browser WAS opened, deliberately and against the standing preference:**
+`tests/editor_lane_restack_check.py` (26 checks, all pass) is the only thing that
+can see the band split, and it earned its keep three times over — the
+`shown`-has-no-`settings` bug, the opaque band, and the blind blend mode were all
+found by it and none of them by reading. `monitor_effects_check.py` passes with
+the same exact per-effect pixel values as before, which is what pins the
+single-band path as byte-unchanged.
 
 **Known, pre-existing, confirmed by stashing this work and re-running at HEAD:**
 `editor_lane_move_check` fails 5 — 3 are empty-row prompts that no longer exist in
@@ -16817,42 +17097,74 @@ language — do NOT copy the Drawstory reference's look/colours.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
 
+- [ ] **RUN THE CONTRACT CHECK AGAINST A REAL NON-GOOGLE MODEL — NOTHING IN
+      PHASE 5 HAS EVER TALKED TO ONE.** Everything about the wire format is
+      asserted against a fake `requests.post`, which pins what we SEND and can
+      say nothing about what comes back. The cheapest honest first run costs
+      nothing at all: `ollama serve`, then
+      `DIRECTOR_CONTRACT_LIVE=1 DIRECTOR_PROVIDER=openai_compatible
+      DIRECTOR_BASE_URL=http://localhost:11434/v1 DIRECTOR_MODEL=qwen2.5:14b
+      python tests/director_contract_check.py`. ⚠ **Expect the fourth assertion
+      to be the one that fails** — a small model treats everything, and "the
+      fence had nothing to trim" is the property nothing but the model itself
+      can satisfy. That failure is a RESULT, not a broken test: record which
+      model cleared which of the four in the Work Log, because that table is
+      what Phase 5 was actually for. ⚠ **And run it once with
+      `DIRECTOR_STRUCTURED_OUTPUT=prompt` on Vertex too** — that is the schema-in-
+      prompt path against a model whose answers we can already trust, so a
+      failure there is ours and a failure on Ollama is the model's.
+- [ ] **THE REPAIR RETRY HAS NEVER MENDED A REAL MODEL'S ANSWER.** It is exercised
+      by a stub that returns `Here: {oops` and by the replay's truncated reading.
+      What a real truncation looks like — a 4000-token plan cut mid-`args` — is
+      unknown, and so is whether quoting 8000 characters back (`MAX_REPAIR_CHARS`)
+      is enough to mend one or expensive enough to regret. Watch one happen before
+      tuning that number.
+- [ ] **DECIDE WHETHER THE PANEL SHOULD SAY WHICH MODEL WROTE THE PLAN.**
+      `GET /director/config` already returns `provider` and `model`, and the 🎬
+      preview shows neither. It did not matter while the answer was always
+      Gemini. It matters the first time two people get two different plans from
+      the same board and neither can tell why. Small change, real decision —
+      ask before building it.
 - [ ] **DRAG THE ROWS BY HAND AND WATCH THE MONITOR.** The maths is pinned by
-      `lane_reorder_check.py` (50 checks, both languages) and the gesture and the
-      band split by `editor_lane_restack_check.py` (18 checks, real Chromium), so
-      this is no longer "unverified" — it is "unseen by a person". Four things a
-      test cannot judge: (1) dragging **Video over Images** should visibly put the
-      film over the logo in the monitor, and the exported MP4 must agree — the one
-      pairing worth exporting once to confirm; (2) with a **caption row dragged
-      under a picture row** the caption should disappear behind the picture and
-      reappear in its gaps, and the monitor is TWO stacked canvases at that moment
-      — look for any seam, ghosting or half-frame tearing between them; (3) a
-      plain **click still selects** a row and a **double-click still selects the
-      whole row** (`LANE_DRAG_SLOP` is 4px and that is still a guess); (4) reload
-      and confirm the order came back (`settings.lane_order`).
+      `lane_reorder_check.py` (62 checks, both languages) and the gesture, the
+      band split and the compositing by `editor_lane_restack_check.py` (26 checks,
+      real Chromium, **pixel** assertions through the upper band) — so this is no
+      longer "unverified", it is "unseen by a person". Three things a test cannot
+      judge: (1) dragging **Video over Images** should visibly put the film over
+      the logo, and the exported MP4 must agree — the one pairing worth exporting
+      once to confirm; (2) with a **caption row under a picture row** the caption
+      should disappear behind the picture and reappear in its gaps, with no seam,
+      ghosting or half-frame tearing where the two canvases meet; (3) a plain
+      **click still selects** a row and a **double-click still selects the whole
+      row** (`LANE_DRAG_SLOP` is 4px and that is still a guess).
 - [ ] **THE GUTTER NOW SHOWS IMAGES ABOVE SHAPES, AND IT DID NOT BEFORE.** This is
       deliberate — the renderers have always drawn overlays over shapes, and the
       column used to say the opposite — but it is a visible change to a project
-      nobody restacked, so it is worth one look and one word from the user. If it
+      nobody restacked, so it wants one look and one word from the user. If it
       reads wrong, the honest fix is to change what the RENDERERS do (shapes over
-      overlays) rather than to desynchronise the column from the film again.
-- [ ] **A BLEND MODE CANNOT SEE THROUGH A BAND BOUNDARY.** Put a caption row under
-      a picture row and give an overlay ABOVE it a blend mode of "screen" or
-      "multiply": in the monitor it samples an empty drawing buffer and reads
-      black, while the exporter (one Pillow canvas, no bands) composites it
-      correctly. So this is a preview/export divergence in one exotic corner and
-      it should be closed. The cheap fix is seeding each band's backdrop from the
-      previous band's canvas as a texture; the honest one is a canvas2d caption
-      renderer, which is a third twin and was rejected as too risky for the
-      captions everyone can see. Neither is urgent — nothing could hit it before
-      today, because captions were always on top.
-- [ ] **A ROW ADDED AFTER A RESTACK APPEARS AT THE TOP OF THE STACK.** `laneRank`
-      puts an unlisted row above every listed one — deliberately, because the
-      alternative hides a new row behind the pictures, and because the next drag
-      rewrites the whole list and settles it. Still: adding a picture row used to
-      put it among the picture rows, and now it lands over the text. If that reads
-      wrong, the fix is for `addLayer` / `addPictureTrack` to append the new token
-      at its derived position instead of leaving it unlisted.
+      overlays, in all three) rather than to desynchronise the column from the film
+      again.
+- [x] ~~**A ROW ADDED AFTER A RESTACK APPEARS AT THE TOP OF THE STACK.**~~ Fixed:
+      `seatLane` seats a new row with its own kind and `unseatLane` frees the seat
+      of a deleted one, so a reused picture track cannot inherit a dead row's
+      place. Both no-ops on a project with no saved order. Wired into all five
+      row-creating paths; pinned by `lane_reorder_check.py`.
+- [x] ~~**A BLEND MODE CANNOT SEE THROUGH A BAND BOUNDARY.**~~ Fixed, and it was
+      hiding something far worse: the compositor wrote `alpha = 1.0` everywhere, so
+      the upper band was an **opaque black sheet** and the whole film vanished
+      behind it the moment a row went above a caption row. Both are fixed (real
+      source-over alpha in `FRAGMENT`, alpha carried in `COPY_FRAGMENT`, and
+      `compositor.under()` feeding the band below to blend modes as `uUnder`), and
+      both are now pinned by pixel assertions.
+      **What remains, deliberately:** a blend mode still cannot see the CAPTIONS
+      below it — they are DOM, not pixels in any canvas — while the exporter does
+      include them. It needs a restack AND a blend mode AND a caption underneath to
+      reach, and the export is on the correct side of the difference. Closing it
+      means either a canvas2d caption renderer (a third twin against CSS and
+      Pillow, risking every caption in the app) or teaching the exporter to ignore
+      caption pixels when a blend samples its backdrop — i.e. making the file worse
+      to match a limitation of the preview. Neither is worth it unless someone
+      actually hits it.
 - [ ] **OPEN THE SHAPES TAB AND LOOK AT THE FORTY-ONE TILES.** The geometry was
       verified two ways that do not involve a browser — the exporter drew every
       shape onto a Pillow contact sheet and it was looked at, and

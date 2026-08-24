@@ -94,7 +94,16 @@ uniform float uUseAlpha;     // 1 = keep the source's alpha, 0 = force opaque
 uniform vec3  uColor;
 uniform float uOpacity;
 
-uniform sampler2D uBackdrop; // everything composited under this layer
+uniform sampler2D uBackdrop; // everything composited under this layer, THIS BAND
+// ⚠ WHAT IS UNDER THE WHOLE BAND — the finished canvas of the band below this
+// one, or nothing when this IS the bottom band (uHasUnder = 0). It exists for one
+// job: a blend mode has to blend against what a person can SEE beneath the layer,
+// and beneath an upper band that is a different canvas which this band's own
+// framebuffer knows nothing about. It is read for the COLOUR MATHS ONLY and never
+// written out, or the band would paint the picture below it back over the
+// captions that sit between them.
+uniform sampler2D uUnder;
+uniform float uHasUnder;
 uniform vec2  uResolution;
 uniform int   uBlend;
 
@@ -240,8 +249,40 @@ void main() {
   // shot it is arriving over rather than the backdrop.
   a *= matteCoverage(vFrame, uMatteKind, uMatteProgress, uMatteSoftness, uMatteCount, uMatteDir);
 
-  vec3 base = texture2D(uBackdrop, gl_FragCoord.xy / uResolution).rgb;
-  gl_FragColor = vec4(mix(base, clamp(blendMode(base, c, uBlend), 0.0, 1.0), clamp(a, 0.0, 1.0)), 1.0);
+  // ⚠ THE COMPOSITE BELOW HAS AN ALPHA NOW, AND THIS USED TO WRITE 1.0.
+  // Everything the compositor drew was opaque, which was true for as long as the
+  // monitor was ONE canvas cleared to the letterbox colour — and became a black
+  // screen the moment it was more than one. A band above the bottom one is a
+  // sheet of glass over the bands below it (captions are DOM, so a text row
+  // under a picture row splits the stack — see ProgramCanvas.jsx), and an opaque
+  // sheet hides the entire film: the top band reads as black everywhere its own
+  // layers do not cover. Reported by tests/editor_lane_restack_check.py
+  // sampling a pixel through the upper band; nothing structural could see it.
+  //
+  // ⚠ AND IT REDUCES TO THE OLD LINE, EXACTLY, WHEN THE BACKDROP IS OPAQUE.
+  // With ab = 1: cs = B(cb, c), ao = 1, and co = as*B + cb*(1-as), which is the
+  // mix(base, blendMode(...), a) line this replaced. The bottom band always clears
+  // to an opaque colour, so every project that has never been restacked — i.e.
+  // one band — composites bit for bit as it did.
+  vec4 bg = texture2D(uBackdrop, gl_FragCoord.xy / uResolution);
+  float as = clamp(a, 0.0, 1.0);
+  float ab = clamp(bg.a, 0.0, 1.0);
+  // ⚠ A BLEND MODE DEGENERATES TO THE SOURCE WHERE THERE IS NOTHING UNDER IT,
+  // which is the W3C compositing rule (Cs = (1 - ab)·cs + ab·B(cb, cs)) and the
+  // only sane reading: "multiply" against emptiness is not black, it is the
+  // layer. Without this a screened flare on an upper band came out inverted.
+  // ⚠ THE BLEND SEES THROUGH THE BAND, THE ALPHA DOES NOT. Two different
+  // backdrops, and keeping them apart is the whole trick: the COLOUR is blended
+  // against this band's own composite laid over the band below it (what the eye
+  // sees under the layer), while the alpha bookkeeping below stays band-local so
+  // the canvas remains transparent where this band drew nothing.
+  vec4 under = texture2D(uUnder, gl_FragCoord.xy / uResolution) * uHasUnder;
+  vec3 cbSeen = mix(under.rgb, bg.rgb, ab);
+  float abSeen = ab + under.a * (1.0 - ab);
+  vec3 cs = mix(c, clamp(blendMode(cbSeen, c, uBlend), 0.0, 1.0), abSeen);
+  float ao = as + ab * (1.0 - as);
+  vec3 co = ao > 0.0 ? (as * cs + ab * bg.rgb * (1.0 - as)) / ao : vec3(0.0);
+  gl_FragColor = vec4(co, ao);
 }
 `;
 
@@ -250,5 +291,9 @@ export const COPY_FRAGMENT = /* glsl */ `
 precision highp float;
 varying vec2 vUV;
 uniform sampler2D uTexture;
-void main() { gl_FragColor = vec4(texture2D(uTexture, vUV).rgb, 1.0); }
+// ⚠ ALPHA IS CARRIED, NOT REPLACED WITH 1.0. This copy runs between every pair
+// of layers and again onto the visible canvas, so forcing alpha here would undo
+// the transparency FRAGMENT so carefully computes — and did: an upper band came
+// out opaque black however correct the layer maths was.
+void main() { gl_FragColor = texture2D(uTexture, vUV); }
 `;

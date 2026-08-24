@@ -1,0 +1,96 @@
+{
+  "_what": "THE GOLDEN BRIEF — the six shots every model gets asked to edit.",
+  "_why": [
+    "⚠ IT IS COMMITTED SO THAT 'WILL MODEL X WORK' HAS ONE ANSWER AND NOT AN",
+    "ARGUMENT. Point tests/director_contract_check.py at a provider, run it, read",
+    "pass or fail. Two people comparing two models are then comparing the models",
+    "and not their boards — which is the entire reason this file is data rather",
+    "than a paragraph in the test.",
+    "",
+    "⚠ SIX SHOTS, AND SIX IS NOT ARBITRARY. Five cuts is the smallest film where",
+    "the house budget bites rather than rounds away: TRANSITION_CUT_SHARE 0.35 of",
+    "5 cuts allows ONE transition, EFFECT_CLIP_SHARE 0.4 of 6 clips allows TWO",
+    "treated shots, and 19s at TEXTS_PER_MINUTE 8 allows two captions and one",
+    "shape. A model that treats everything is therefore caught by the fence here",
+    "and not merely noticed. Any fewer shots and every budget rounds to one, so",
+    "restraint would pass by accident.",
+    "",
+    "⚠ AND THE MATERIAL IS BUILT TO ASK FOR SOMETHING. There is one real scene",
+    "boundary (shot 3 → 4: the rooftop ends, the descent begins) so a transition",
+    "has a right place to go and every other cut is a wrong one. Shot 3 holds",
+    "5.5s against a 2s median, so 'which shot carries the weight' has an answer.",
+    "Two shots speak and four are silent, so the voiceover pass has something to",
+    "read and the language fence has something to check. Nothing is on the",
+    "timeline yet — no transitions, no captions, no shapes — so a plan that adds",
+    "a title is adding the first one, not the second.",
+    "",
+    "⚠ ENGLISH, DELIBERATELY. The language fence is proved against Hindi and",
+    "Hinglish in tests/director_language_check.py, which needs no model. What THIS",
+    "file asks a model is whether it can edit at all; giving it a second language",
+    "to fail at would make a pass/fail hard to read.",
+    "",
+    "⚠ DO NOT 'IMPROVE' THE SHOTS. Changing this board silently changes what every",
+    "model that has ever been run against it scored. If you need a different film,",
+    "add a second file next to this one and say which is which."
+  ],
+  "language": "english",
+  "brief": "A short, restrained piece about being told no. Hold the phone call — that is the film. Nothing flashy.",
+  "include": {
+    "transitions": true,
+    "effects": true,
+    "text": true,
+    "shapes": true,
+    "captions": true,
+    "voiceover": false,
+    "veo": false
+  },
+  "board": {
+    "title": "Ask Someone Else",
+    "aspect_ratio": "16:9",
+    "fps": 24,
+    "shots": [
+      {
+        "label": "Rooftop, dawn",
+        "ms": 3000,
+        "description": "Wide. The city is grey and still. Aarav is a small figure against the parapet.",
+        "dialogue": ""
+      },
+      {
+        "label": "The ledge",
+        "ms": 2000,
+        "description": "Closer. He turns his phone over in his hand and does not look at it.",
+        "dialogue": ""
+      },
+      {
+        "label": "The call",
+        "ms": 5500,
+        "description": "Close on Aarav. He listens for a long time before he says anything.",
+        "dialogue": "Aarav: They said no. Again."
+      },
+      {
+        "label": "Stairwell",
+        "ms": 1800,
+        "description": "He goes down fast, two steps at a time. Strip lights pass overhead.",
+        "dialogue": ""
+      },
+      {
+        "label": "Street level",
+        "ms": 2200,
+        "description": "He pushes out of the door into a crowd going the other way.",
+        "dialogue": ""
+      },
+      {
+        "label": "The next door",
+        "ms": 4500,
+        "description": "He stops in front of another building and looks up at it.",
+        "dialogue": "Aarav: Then I'll ask someone else."
+      }
+    ],
+    "existing": {
+      "transitionCuts": [],
+      "texts": 0,
+      "shapes": 0,
+      "audioTracks": 1
+    }
+  }
+}

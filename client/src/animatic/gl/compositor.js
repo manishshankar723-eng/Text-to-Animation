@@ -534,12 +534,55 @@ export class Compositor {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, back.texture);
     gl.uniform1i(u("uBackdrop"), 1);
+    // What is under the whole BAND — see `under()`. Bound to a blank 1×1 when
+    // there is nothing, with `uHasUnder` at 0 so the shader ignores it: a sampler
+    // left unbound is undefined behaviour, not zero.
+    // ⚠ UNIT 4, AND IT HAS TO STAY LOW. WebGL1 only guarantees EIGHT fragment
+    // texture units; 0 / 1 / 2 / 3 are the source, this band's backdrop and the
+    // two LUT slots, so 4 is the first one that is free everywhere.
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this._under?.texture || this._blankTexture());
+    gl.uniform1i(u("uUnder"), 4);
+    gl.uniform1f(u("uHasUnder"), this._under ? 1 : 0);
     gl.uniform2f(u("uResolution"), this.size[0], this.size[1]);
 
     this._setLook(look, luts);
     this._setMatte(matte);
     this._draw(this.program, vertices, count, mode);
     this.front = 1 - this.front;
+  }
+
+  /**
+   * WHAT IS UNDERNEATH THIS WHOLE BAND — the finished canvas of the band below
+   * this one, or null when this is the bottom band.
+   *
+   * ⚠ IT IS FOR BLEND MODES AND NOTHING ELSE. A layer set to "screen" or
+   * "multiply" is a function of the pixels beneath it, and beneath an upper band
+   * those pixels are on a DIFFERENT CANVAS that this band's framebuffer knows
+   * nothing about — so without this, a flare dragged above a caption row blended
+   * against emptiness while the exported MP4 blended it against the shot. A
+   * preview that lies about the file is the one failure this editor must not
+   * ship. The shader reads it for the COLOUR ONLY and never writes it out, or the
+   * band would paint the picture below back over the captions between them.
+   *
+   * ⚠ WHAT IT STILL CANNOT SEE: the captions themselves. They are DOM, not
+   * pixels in any canvas, so a blend mode above a caption row blends against the
+   * picture and ignores the text — where the exporter, drawing everything onto one
+   * Pillow canvas, does include it. That residue is the price of captions being
+   * real text; it is narrow (it needs a restack AND a blend mode AND a caption
+   * underneath) and it is documented in AGENTS.md rather than papered over.
+   *
+   * ⚠ RE-UPLOADED EVERY FRAME (`animated: true`), because it is a canvas being
+   * redrawn every frame — the same rule a <video> follows. Call it after `begin()`
+   * and after the band below has been drawn, before this band's first `layer()`.
+   */
+  under(element) {
+    if (!element) {
+      this._under = null;
+      return null;
+    }
+    this._under = this.texture("__under", element, { animated: true });
+    return this._under;
   }
 
   /**
@@ -556,6 +599,10 @@ export class Compositor {
     const [r, g, b] = this.opaque ? parseColour(background) : [0, 0, 0];
     const a = this.opaque ? 1 : 0;
     this.front = 0;
+    // ⚠ FORGOTTEN AT THE START OF EVERY FRAME. The band below can go away — drag
+    // the captions back to the top and this becomes the only band — and a stale
+    // backdrop would go on blending against a canvas nobody draws any more.
+    this._under = null;
     for (const target of this.targets) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, this.size[0], this.size[1]);

@@ -40,6 +40,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,9 +101,15 @@ PROJECT = {
         {"id": "s1", "layer_id": "", "kind": "rect", "start_ms": 0, "duration_ms": 6000,
          "x": 0.3, "y": 0.3, "w": 0.2, "h": 0.2, "color": "#c2185b"},
     ],
+    # ⚠ "screen", AND ON A DIFFERENT PICTURE FROM THE ONE UNDER IT. A blend mode
+    # is a function of the pixels beneath the layer, so it is the one thing that
+    # can tell whether an upper band can SEE the band below it — and it can only
+    # tell if the two colours differ: this overlay is the orange upload over the
+    # blue picture, and screen(blue, orange) is far brighter than either.
     "overlays": [
-        {"id": "o1", "layer_id": "", "upload_id": "u1", "start_ms": 0,
-         "duration_ms": 6000, "x": 0.7, "y": 0.3, "w": 0.2, "h": 0.2},
+        {"id": "o1", "layer_id": "", "upload_id": "u2", "start_ms": 0,
+         "duration_ms": 6000, "x": 0.7, "y": 0.3, "w": 0.2, "h": 0.2,
+         "blend": "screen"},
     ],
     "layers": [], "transitions": [], "audio_tracks": [], "veo_clips": [], "video": None,
 }
@@ -236,6 +243,49 @@ probe.canvasSizes = () =>
   [...document.querySelectorAll(".an-screen-gl")].map((c) => ({
     w: c.width, h: c.height, boxW: Math.round(c.getBoundingClientRect().width),
   }));
+
+/**
+ * Where the overlay picture is drawn, in page coordinates.
+ *
+ * ⚠ READ OFF ITS DRAG HANDLE, which is the one DOM element that carries the
+ * overlay's geometry (`left`/`top`/`width`/`height` as % of the screen box, the
+ * same fractions the compositor draws at). The picture itself is in the canvas
+ * and has no box to ask.
+ */
+probe.overlayBox = () => {
+  const el = document.querySelector(".an-overlay");
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+};
+
+/**
+ * Press a row's EYE — the control that takes it out of the monitor and the video.
+ *
+ * ⚠ CLICKED IN JS, NOT WITH THE POINTER, and deliberately: the rows live in a
+ * clipped scroller, so a real click needs the row revealed first (see
+ * `revealPair`) and this stage is about what the row's ABSENCE does to the
+ * picture, not about the button's hit area. The drag stages are where real
+ * pointer gestures are exercised.
+ */
+probe.pressEye = (key) => {
+  const btn = document.querySelector(`[data-lane-row="${key}"] .tl-layer-mute`);
+  if (!btn) return "no eye on " + key;
+  btn.click();
+  return "";
+};
+
+/** Is the gutter drawing this row as switched off? */
+probe.rowOff = (key) =>
+  !!document.querySelector(`[data-lane-row="${key}"]`)?.classList.contains("off");
+
+/** The monitor's picture box, for a screenshot clip. */
+probe.screenBox = () => {
+  const el = document.querySelector(".an-screen");
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, width: r.width, height: r.height };
+};
 
 /** The status strip — where a drag reports what it did, or refused to do. */
 probe.notice = () =>
@@ -381,6 +431,12 @@ def main():
 
     port = free_port()
     vite = None
+    # ⚠ THE SCREENSHOTS ARE WORKING FILES, NOT ARTEFACTS. The pixel stages have to
+    # capture the monitor to sample it, and dropping two PNGs in the repo root on
+    # every green run is noise in `git status`. They go to a temp dir and are kept
+    # — copied out, named for what failed — only when a check actually fails,
+    # which is the rule the other browser tests' `*_probe_failed.png` follow.
+    shots = tempfile.mkdtemp(prefix="restack_")
     try:
         vite = start_vite(port)
         if vite is None:
@@ -437,6 +493,46 @@ def main():
             check("…and the caption is the LAST thing in the box",
                   stack[-1].startswith("text:"), str(stack))
 
+            # ------------------------------------------------------------
+            print("\nHIDING THE ROWS ABOVE THE PICTURE — the picture must stay")
+            # ⚠ REPORTED FROM THE REAL EDITOR, with the Program panel showing pure
+            # black: "when i uper layer off layer hide then see my video layer not
+            # view in program panel". Switching a row off must take THAT ROW out
+            # of the monitor and change nothing else — it is the one promise the
+            # eye makes. Two ways this can break once rows are freely stacked, and
+            # this stage is blind to neither because it reads pixels:
+            #   · a hidden row's clips were DROPPED from the list the scene is
+            #     built from while the monitor still indexed the FULL list, so
+            #     every picture after them resolved to the wrong clip;
+            #   · a hidden picture row's clips became opaque BACKGROUND cards,
+            #     which was harmless while track 0 was always the bottom of the
+            #     stack and paints over the whole film once it is not.
+            for key in ("text:", "image:", "shape:", "frames:1"):
+                why = page.evaluate("(k) => window.__probe.pressEye(k)", key)
+                check(f"the eye on {key} could be pressed", why == "", why)
+            page.wait_for_timeout(500)
+            check("all four rows report themselves switched off",
+                  all(page.evaluate("(k) => window.__probe.rowOff(k)", k)
+                      for k in ("text:", "image:", "shape:", "frames:1")))
+            box = page.evaluate("() => window.__probe.screenBox()")
+            shot = os.path.join(shots, "hidden.png")
+            page.screenshot(path=shot, clip=box)
+            frame = Image.open(shot).convert("RGB")
+            w, h = frame.size
+            px = frame.getpixel((int(w * 0.5), int(h * 0.5)))
+            # P1 is the blue upload (74, 134, 200) and it is on the bottom picture
+            # row, which is NOT hidden. The letterbox / background is #101820.
+            check("the picture on the row that is still ON is still drawn",
+                  sum(px) > 120 and px[2] > px[0],
+                  f"sampled {px} at the centre — the monitor has gone to the "
+                  f"backdrop, i.e. hiding a row above it blanked the film")
+            # …and back on, so the stages below start from the stack they expect.
+            for key in ("text:", "image:", "shape:", "frames:1"):
+                page.evaluate("(k) => window.__probe.pressEye(k)", key)
+            page.wait_for_timeout(400)
+            check("switching them back on restores the row",
+                  not page.evaluate("() => window.__probe.rowOff('text:')"))
+
             print("\nA PICTURE row can be dropped on an OVERLAY row — the reported case")
             why = drag_row(page, "frames:0", "image:")
             check("the drag ran", why == "", why)
@@ -492,6 +588,93 @@ def main():
             check("with the captions back on top the monitor is one canvas again",
                   stack.count("gl") == 1, str(stack))
 
+            # ------------------------------------------------------------
+            print("\nA SMALL LAYER ON TOP — the bands must be TRANSPARENT")
+            # ⚠ THE ONE THING ONLY PIXELS CAN ANSWER, and the reason this stage
+            # exists at all: an upper band is a sheet of glass over the bands
+            # below it, and every write the compositor makes was `alpha = 1.0`.
+            # A band holding one small shape would then be an OPAQUE canvas with
+            # a shape on it — the film underneath simply gone, black — and every
+            # structural check above passes anyway, because the canvases, the
+            # caption layer and the DOM order are all exactly right.
+            #
+            # So: put the SHAPES row at the very top, which leaves the topmost
+            # band holding nothing but a 20%-wide box, and read the picture
+            # through the rest of it.
+            # ⚠ ONTO THE CAPTION ROW'S PLACE, so the shape ends up ABOVE it.
+            # Dropping it on the picture row would leave the captions on top and
+            # the whole stack in one band again — nothing to see through.
+            why = drag_row(page, "shape:", "text:")
+            check("the drag ran", why == "", why)
+            keys = page.evaluate("() => window.__probe.laneKeys()")
+            check("Shapes is above the caption row now",
+                  keys.index("shape:") < keys.index("text:"), str(keys))
+            page.wait_for_timeout(500)
+            stack = page.evaluate("() => window.__probe.monitorStack()")
+            check("…and the captions are under it, so there are two bands",
+                  stack.count("gl") == 2, str(stack))
+
+            box = page.evaluate("() => window.__probe.screenBox()")
+            shot = os.path.join(shots, "bands.png")
+            page.screenshot(path=shot, clip=box)
+            frame = Image.open(shot).convert("RGB")
+            w, h = frame.size
+            # The shape is a 20%-wide box centred at (0.3, 0.3) of the FRAME, and
+            # the frame is letterboxed inside this box — so sample well away from
+            # it, on the other side of the picture, and away from the caption at
+            # the bottom.
+            picture = frame.getpixel((int(w * 0.75), int(h * 0.45)))
+            shape_px = frame.getpixel((int(w * 0.30), int(h * 0.30)))
+            # P1 is (74, 134, 200); the letterbox is #101820 = (16, 24, 32).
+            lit = sum(picture) > 120 and picture[2] > picture[0]
+            check("the picture is still visible THROUGH the upper band",
+                  lit, f"sampled {picture} at 75%/45% — an opaque band reads as "
+                       f"the letterbox colour or black")
+            check("…and the shape itself is still drawn on the upper band",
+                  shape_px != picture, f"shape {shape_px} vs picture {picture}")
+
+            # ------------------------------------------------------------
+            print("\nA BLEND MODE ON AN UPPER BAND — it must see the band below")
+            # ⚠ THE NARROW HALF OF THE SAME PROBLEM, and the only check that can
+            # find it. A layer set to "screen" is a function of the pixels
+            # beneath it, and beneath an upper band those pixels are on ANOTHER
+            # CANVAS which this band's framebuffer knows nothing about. So the
+            # blend used to be computed against an empty buffer while the
+            # exported MP4 computed it against the shot: a preview that lies
+            # about the file, in the one place a person would never think to
+            # look. `under()` in compositor.js is the fix and this is its proof.
+            # ⚠ ONTO THE TOP ROW'S PLACE, so the overlay ends up above the
+            # captions whatever the previous stages left the order as. Naming a
+            # row to drop on ("text:") would depend on where that row currently
+            # sits, and by here three drags have already moved things.
+            top_row = [k for k in page.evaluate("() => window.__probe.laneKeys()")
+                       if k != "audio:"][0]
+            why = drag_row(page, "image:", top_row)
+            check("the drag ran", why == "", why)
+            keys = page.evaluate("() => window.__probe.laneKeys()")
+            check("the overlay row is above the captions now",
+                  keys.index("image:") < keys.index("text:"), str(keys))
+            page.wait_for_timeout(500)
+            stack = page.evaluate("() => window.__probe.monitorStack()")
+            check("…so it is on an upper band, with a caption row under it",
+                  stack.count("gl") == 2, str(stack))
+
+            spot = page.evaluate("() => window.__probe.overlayBox()")
+            box = page.evaluate("() => window.__probe.screenBox()")
+            shot = os.path.join(shots, "blend.png")
+            page.screenshot(path=shot, clip=box)
+            frame = Image.open(shot).convert("RGB")
+            px = frame.getpixel((int(spot["x"] - box["x"]), int(spot["y"] - box["y"])))
+            # u1 (the picture) is (74, 134, 200); u2 (the overlay) is
+            # (200, 120, 60); screen(u1, u2) ≈ (216, 191, 213). The green channel
+            # separates the three cleanly: 134 unblended picture, 120 overlay on
+            # its own — which is what blending against emptiness produces — and
+            # 191 screened. Anything under 160 means the band is blind.
+            check("the overlay is SCREENED against the picture below the band",
+                  px[1] > 160,
+                  f"sampled {px}; ~(216,191,213) is screened, ~(200,120,60) is the "
+                  f"overlay blending against an empty band")
+
             print("\nAfterwards")
             # ⚠ OPPORTUNISTIC, AND SAID SO. If the autosave has fired by now
             # its body must carry the order — a restack that reached the monitor
@@ -513,6 +696,12 @@ def main():
 
             browser.close()
     finally:
+        if failures:
+            for name in os.listdir(shots):
+                shutil.copy(os.path.join(shots, name),
+                            os.path.join(ROOT, f"restack_probe_{name}"))
+            print(f"  screenshots kept as restack_probe_*.png in {ROOT}")
+        shutil.rmtree(shots, ignore_errors=True)
         if vite:
             vite.terminate()
         for path in (PROBE_JSX, PROBE_HTML):

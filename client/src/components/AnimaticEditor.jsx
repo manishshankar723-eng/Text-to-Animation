@@ -112,6 +112,8 @@ import {
   laneRank,
   laneTokenFor,
   restack,
+  seatLane,
+  unseatLane,
 } from "../animatic/lane_order.js";
 import {
   PRESETS as EXPORT_PRESETS,
@@ -1339,6 +1341,47 @@ export default function AnimaticEditor({
   // and the last of those is read by the Python exporter too — a second spelling
   // on this side would be a row the export ranked differently from the monitor.
   const laneToken = (lane) => laneTokenFor(lane.kind, lane.layerId, lane.track);
+
+  /**
+   * The token for a LAYER RECORD, which is a different shape from a lane — its
+   * id is the lane's `layerId`, and a picture row carries `track`.
+   */
+  const layerTokenOf = (layer) =>
+    laneTokenFor(layer.kind, layer.id, layer.track);
+
+  /**
+   * A ROW HAS JUST BEEN CREATED — put it where its kind lives in the saved order.
+   *
+   * ⚠ IT IS A NO-OP ON A PROJECT NOBODY HAS RESTACKED, and that is deliberate:
+   * an empty `lane_order` means "the derived order", and writing one token into
+   * it would promote that row above every other. See `seatLane`.
+   */
+  const seatNewLane = (token) => {
+    if (!token) return;
+    setSettings((sett) => {
+      const next = seatLane(sett.lane_order, token);
+      return next === sett.lane_order ? sett : { ...sett, lane_order: next };
+    });
+  };
+
+  /**
+   * ⚠ THE SAME FUNCTION, REACHABLE FROM A `useCallback([])` BODY. Two of the row
+   * makers (the Veo row, the dropped-footage row) are memoised on an empty
+   * dependency list — they use `layersRef` for the same reason — so calling
+   * `seatNewLane` directly from them would capture the FIRST render's copy and
+   * write settings that are several edits stale.
+   */
+  const seatNewLaneRef = useRef(null);
+  seatNewLaneRef.current = seatNewLane;
+
+  /** …and a row has just been deleted. See `unseatLane` for why this matters. */
+  const unseatOldLane = (token) => {
+    if (!token) return;
+    setSettings((sett) => {
+      const next = unseatLane(sett.lane_order, token);
+      return next === sett.lane_order ? sett : { ...sett, lane_order: next };
+    });
+  };
 
   // ⚠ THE SAME TOKENS AS `hiddenLanes`, A DIFFERENT MEANING. Hidden takes a row
   // out of the VIDEO; locked takes it out of REACH and changes nothing about the
@@ -3941,6 +3984,7 @@ export default function AnimaticEditor({
       name: name || `${LAYER_NAMES[kind] || "Layer"} ${taken + 2}`,
     };
     setLayers((list) => [...list, layer]);
+    seatNewLane(layerTokenOf(layer));
     if (notice) {
       setNotice(
         `Empty ${LAYER_NAMES[kind]?.toLowerCase() || ""} layer added — use its ＋ to put something on it.`
@@ -3981,6 +4025,7 @@ export default function AnimaticEditor({
     const lane = pictureLane(rowKind, name);
     if (!lane) return null; // no room; `pictureLane` said so
     setLayers((list) => [...list, lane]);
+    seatNewLane(layerTokenOf(lane));
     if (!quiet) {
       setNotice(
         ROW_KIND[lane.kind].takes.length
@@ -4108,6 +4153,10 @@ export default function AnimaticEditor({
    */
   function removeLayer(layerId) {
     const layer = layers.find((l) => l.id === layerId);
+    // ⚠ BEFORE ANYTHING ELSE, and for every kind of row this function can
+    // delete: the saved order must not keep naming a row that is gone, or the
+    // next row to claim the same token inherits its place in the stack.
+    if (layer) unseatOldLane(layerTokenOf(layer));
     if (layer && ROW_KIND[layer.kind]) {
       const track = Number(layer.track);
       const on = frames.filter((f) => frameTrack(f) === track);
@@ -5629,6 +5678,9 @@ export default function AnimaticEditor({
         if (!lane) return; // no room; `pictureLane` said so
         lanes = [...layers, lane];
         track = lane.track;
+        // The row is created here rather than by `addPictureTrack`, so it has to
+        // claim its place in the saved order here too — see `seatNewLane`.
+        seatNewLane(layerTokenOf(lane));
       }
       // ⚠ ONTO A TRACK, AT A TIME. `insertPictures` gives the newcomers explicit
       // starts and ripples what follows them on that row.
@@ -7116,6 +7168,7 @@ export default function AnimaticEditor({
     // finds the row instead of making another.
     layersRef.current = [...rows, record];
     setLayers((list) => [...list, record]);
+    seatNewLaneRef.current?.(laneTokenFor(record.kind, record.id, record.track));
     return next;
   }, []);
 
@@ -7297,6 +7350,7 @@ export default function AnimaticEditor({
         };
         layersRef.current = [...rows, record];
         setLayers((list) => [...list, record]);
+        seatNewLaneRef.current?.(laneTokenFor(record.kind, record.id, record.track));
       }
 
       const made = {

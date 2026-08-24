@@ -202,6 +202,72 @@ export function restack(stackTopFirst, fromToken, toToken) {
   return moveInList(stack, stack.indexOf(fromToken), stack.indexOf(toToken));
 }
 
+/** The lane KIND a token names — "frames" for any picture row. */
+function kindOfToken(token) {
+  if (typeof token !== "string" || !token) return "";
+  if (token.startsWith("frames:")) return "frames";
+  const at = token.indexOf(":");
+  return at < 0 ? "" : token.slice(0, at);
+}
+
+/**
+ * GIVE A BRAND-NEW ROW ITS PLACE IN THE SAVED ORDER.
+ *
+ * ⚠ WITHOUT THIS A ROW ADDED AFTER A RESTACK APPEARS AT THE VERY TOP OF THE
+ * STACK — over the captions, over everything. That is `laneRank`'s unlisted rule
+ * doing exactly what it says, and as a FALLBACK it is the right one (a new row
+ * you cannot see is worse than one in the wrong place). As the behaviour of the
+ * ＋ Add layer button it is simply wrong: add a picture row and it lands on top
+ * of the film.
+ *
+ * ⚠ IT SEATS THE ROW WITH ITS OWN KIND, which is where the derived order always
+ * put it: a new Text row appears with the Text rows, a new picture row with the
+ * picture rows. Among its own kind it goes by derived rank, so picture track 2
+ * lands between 3 and 1 rather than at either end; the overlay kinds all tie on
+ * derived rank, so a new one goes BELOW the existing rows of its kind, which is
+ * where "Text 2" has always been drawn relative to "Text".
+ *
+ * ⚠ AND IT DOES NOTHING AT ALL TO AN EMPTY ORDER. An empty `lane_order` means
+ * "the order this editor has always produced" and every row is placed by the
+ * fallback — writing one token into it would promote that row and demote every
+ * other, which is the bug this function exists to prevent, inverted.
+ */
+export function seatLane(order, token) {
+  const list = [...(order || [])];
+  if (!list.length || !token || list.includes(token)) return list;
+  const rank = defaultLaneRank(token);
+  const kin = list.filter((t) => kindOfToken(t) === kindOfToken(token));
+  if (kin.length) {
+    // The first row of this kind that belongs BELOW the new one — for the overlay
+    // kinds there is none (they all tie), so it goes under the last of them.
+    const below = kin.find((t) => defaultLaneRank(t) < rank);
+    const at = below ? list.indexOf(below) : list.indexOf(kin[kin.length - 1]) + 1;
+    list.splice(at, 0, token);
+    return list;
+  }
+  // No row of this kind is listed: fall back to the derived scale against the
+  // kinds that ARE there, so a first picture row still lands under the shapes.
+  const at = list.findIndex((t) => defaultLaneRank(t) < rank);
+  if (at < 0) list.push(token);
+  else list.splice(at, 0, token);
+  return list;
+}
+
+/**
+ * TAKE A DELETED ROW OUT OF THE SAVED ORDER.
+ *
+ * ⚠ IT IS NOT HOUSEKEEPING. A dead token left in the list is harmless for the
+ * rows that remain — ranks are only ever compared with each other — right up
+ * until a row is created with the SAME token, which for a picture row means any
+ * reused track number. That row would silently inherit the deleted row's place
+ * in the stack, months later, with nothing on screen to explain it.
+ */
+export function unseatLane(order, token) {
+  const list = order || [];
+  if (!token || !list.includes(token)) return list;
+  return list.filter((t) => t !== token);
+}
+
 /**
  * SORT ANYTHING THAT CARRIES A LANE TOKEN INTO STACK ORDER — bottom first, which
  * is the order every renderer draws in.

@@ -165,7 +165,7 @@ PROJECT = {
 HARNESS = """
 import {
   MOVABLE_LANE_KINDS, clipLaneToken, laneMovable, laneRank, laneTokenFor,
-  moveInList, restack, stackKey,
+  moveInList, restack, seatLane, stackKey, unseatLane,
 } from %(lane_order)s;
 import { layerRuns, sceneAt } from %(scene)s;
 
@@ -208,6 +208,16 @@ process.stdout.write(JSON.stringify({
     lanes.filter(laneMovable).map((l) => laneTokenFor(l.kind, l.layerId, l.track)),
     "frames:0", "image:"
   ),
+
+  // --- a row created AFTER a restack ------------------------------------
+  seatText: seatLane(orders.restacked, "text:t9"),
+  seatShape: seatLane(orders.restacked, "shape:s9"),
+  seatTrack: seatLane(orders.restacked, "frames:2"),
+  seatFirstOfKind: seatLane(["text:", "shape:"], "frames:0"),
+  seatVirgin: seatLane([], "text:t9"),
+  seatTwice: seatLane(orders.restacked, "frames:0"),
+  unseat: unseatLane(orders.restacked, "image:"),
+  unseatMissing: unseatLane(orders.restacked, "text:nope"),
 
   // --- the draw order ---------------------------------------------------
   stacks: Object.fromEntries(
@@ -355,6 +365,41 @@ check("the captions row is never written into the saved order",
       "text:captions" not in js["restacked"], js["restacked"])
 check("nor is the audio row", not any(t.startswith("audio") for t in js["restacked"]))
 
+print("\nA ROW ADDED AFTER A RESTACK — it sits with its own kind, not on top")
+# ⚠ THE FALLBACK PUTS AN UNLISTED ROW ON TOP OF EVERYTHING, which is the right
+# rule for a row nobody placed (visible beats hidden) and the wrong behaviour for
+# the ＋ Add layer button: adding a picture row would drop it over the film.
+order = ORDERS["restacked"]
+# ⚠ UNDER THE *LAST* ROW OF ITS KIND, not next to the first one. The overlay
+# kinds all tie on derived rank, so there is no basis for putting a new one
+# between two existing rows — and "under the ones you already have" is where the
+# derived order always drew an added row relative to the default one.
+def seated_under_last(listing, token, kind):
+    kin = [t for t in listing if t.startswith(kind) and t != token]
+    return listing.index(token) == listing.index(kin[-1]) + 1
+
+check("a new TEXT row lands under the LAST text row, where 'Text 2' always was",
+      seated_under_last(js["seatText"], "text:t9", "text:"), js["seatText"])
+check("a new SHAPE row lands under the last shape row",
+      seated_under_last(js["seatShape"], "shape:s9", "shape:"), js["seatShape"])
+check("a new PICTURE row lands between the tracks either side of it, by number",
+      js["seatTrack"].index("frames:3") < js["seatTrack"].index("frames:2")
+      < js["seatTrack"].index("frames:1"),
+      js["seatTrack"])
+check("the FIRST row of its kind falls back to the derived scale — a picture "
+      "row under the shapes",
+      js["seatFirstOfKind"] == ["text:", "shape:", "frames:0"],
+      js["seatFirstOfKind"])
+check("an EMPTY order is left empty — it means 'the order that always was'",
+      js["seatVirgin"] == [], js["seatVirgin"])
+check("seating a row that is already listed changes nothing",
+      js["seatTwice"] == order, js["seatTwice"])
+check("a deleted row leaves the order, so a reused track cannot inherit its place",
+      "image:" not in js["unseat"] and len(js["unseat"]) == len(order) - 1,
+      js["unseat"])
+check("…and unseating something that was never there is a no-op",
+      js["unseatMissing"] == order, js["unseatMissing"])
+
 print("\nTHE DRAW ORDER — what the two renderers actually stack")
 check("the scene's shape is the same on both sides",
       js["sceneKeys"] == sorted(scene_at(PROJECT, 500, None).keys()),
@@ -444,6 +489,12 @@ check("no clip list is re-sorted by a drag any more",
       "sortClipsByLane" not in editor)
 check("a locked row is neither moved nor moved past, by name",
       "is locked — unlock it to restack" in editor)
+check("every row the editor CREATES takes its seat in the saved order",
+      editor.count("seatNewLane(") + editor.count("seatNewLaneRef.current?.(") >= 5,
+      f"{editor.count('seatNewLane(')} direct + "
+      f"{editor.count('seatNewLaneRef.current?.(')} via the ref")
+check("…and a row it DELETES gives its seat up",
+      "unseatOldLane(layerTokenOf(layer))" in editor)
 check("the timeline no longer refuses a drop for being another kind of row",
       "to.group === lane.group" not in timeline)
 check("a row that cannot move is never picked up",
@@ -453,6 +504,16 @@ check("the monitor walks the scene's order rather than one of its own",
       and "for (const shape of scene.shapes" not in program)
 check("the monitor bands the picture at each caption row",
       'kind: "text", indices: run.indices' in program)
+# ⚠ THE TWO THINGS THAT MADE THE BAND SPLIT ACTUALLY WORK, both found by pixels
+# rather than by reading — see `tests/editor_lane_restack_check.py`.
+shader = read(os.path.join(ROOT, "client", "src", "animatic", "gl", "shaders", "layer.js"))
+check("an upper band can be SEEN THROUGH — the compositor carries real alpha",
+      "gl_FragColor = vec4(co, ao);" in shader
+      and "gl_FragColor = texture2D(uTexture, vUV);" in shader,
+      "a hard-coded alpha of 1.0 makes the top band an opaque black sheet")
+check("…and a blend mode on it can see the band below",
+      "uniform sampler2D uUnder;" in shader
+      and "compositor.under(under);" in program)
 check("the exporter walks it too",
       "runs = layer_runs(layers) if layers is not None else None"
       in read(os.path.join(ROOT, "animatic.py")))

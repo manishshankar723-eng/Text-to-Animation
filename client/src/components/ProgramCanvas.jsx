@@ -324,7 +324,7 @@ export default function ProgramCanvas({
     // for ONE canvas, and the loop at the bottom runs it for each. With nothing
     // restacked there is one band, so it runs exactly once and draws exactly what
     // it drew before.
-    const drawBand = (compositor, band) => {
+    const drawBand = (compositor, band, under) => {
     if (!compositor || compositor.lost) return;
     compositor.resize(width, height);
 
@@ -404,6 +404,13 @@ export default function ProgramCanvas({
     };
 
     compositor.begin(settings.background || "#000000");
+    // ⚠ WHAT THIS BAND'S BLEND MODES ARE ALLOWED TO SEE — the finished canvas of
+    // the band below, uploaded as a texture and read for the COLOUR only. Without
+    // it a "screen" or "multiply" layer on an upper band blends against an empty
+    // buffer while the exported MP4 blends it against the shot underneath. Null
+    // on the bottom band, which has nothing below it but the letterbox colour it
+    // already cleared to. See `under()` in compositor.js.
+    compositor.under(under);
 
     /**
      * ONE PICTURE TRACK, drawn over everything already on the canvas.
@@ -536,9 +543,15 @@ export default function ProgramCanvas({
     compositor.end();
     };
 
+    // ⚠ BOTTOM BAND FIRST, AND THAT ORDER IS LOAD-BEARING TWICE OVER: it is the
+    // compositing order, and each band is handed the one below it as the backdrop
+    // its blend modes sample — which only exists once that band has been drawn
+    // THIS frame.
+    let below = null;
     for (const [index, band] of bands.entries()) {
       if (band.kind !== "gl") continue;
-      drawBand(compositorsRef.current.get(index), band);
+      drawBand(compositorsRef.current.get(index), band, below);
+      below = canvasRefs.current.get(index) || below;
     }
     // ⚠ `settings.aspect_ratio` is in here even though nothing above reads it,
     // and `canvasBox` is not enough on its own: the observer reports a frame
