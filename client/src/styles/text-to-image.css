@@ -174,16 +174,44 @@
   box-shadow: var(--gold-glow);
 }
 
-/* Inline spinner */
+/* Inline spinner. GOLD ON A FAINT GOLD TRACK — the same two colours `.btn-ring`
+   uses in `storyboard.css`, so every turning circle in the app is one gesture.
+   The track is `--border-gold` rather than `.btn-ring`'s literal rgba, because
+   it has to follow the LIGHT theme too — there the app's gold is a deeper
+   #8a6b17 and a 25% champagne ring is not there at all.
+
+   ⚠ IT USED TO BE THE OTHER WAY ROUND, AND THAT WAS THE BUG. The track was
+   `--border` (#272c3d, a navy hairline that IS the dark panel) and the moving
+   edge was `--primary-ink` (near-black), which reads only on a gold FILL. On
+   every other surface the circle was a dim blue ring with nothing visibly
+   turning in it — reported against the 🎬 panel's "Reading your film…" as
+   "keep golden colour in circle bar, not blue, it merge in bg … change in all".
+
+   ⚠ THE WHITELIST IT REPLACES IS GONE ON PURPOSE. `animatic-editor.css` had
+   already re-coloured two of these one selector at a time (`.an-status-export`,
+   `.an-prop-progress`) and said the default "must not become" this. That was
+   right when two panels were affected and wrong by the time a third appeared:
+   the default now serves the ~25 spinners that sit on a panel, and the gold FILL
+   — where gold-on-gold would be exactly as invisible — is the exception below. */
 .spinner-inline {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid var(--border);
-  border-top-color: var(--primary-ink);
+  border: 2px solid var(--border-gold);
+  border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
   vertical-align: middle;
+}
+/* ...and back to dark ink on the gold ones. `.btn.primary` is the only
+   gold-filled button in the app that carries a spinner; the other three are
+   buttons that TURN gold on hover while they are already busy. */
+.btn.primary .spinner-inline,
+.btn.secondary:hover .spinner-inline,
+.board-retry:hover .spinner-inline,
+.board-retry-all:hover .spinner-inline {
+  border-color: rgba(20, 16, 5, 0.25);
+  border-top-color: var(--primary-ink);
 }
 
 /* Job list */
@@ -314,10 +342,13 @@
   color: var(--muted);
   margin: 1.1rem 0;
 }
+/* The big one, on a placeholder rather than in a line of text. Same two colours
+   as `.spinner-inline` above — its track was `--border` too, which put a navy
+   ring around a gold arc. */
 .spinner {
   width: 20px;
   height: 20px;
-  border: 3px solid var(--border);
+  border: 3px solid var(--border-gold);
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 0.9s linear infinite;

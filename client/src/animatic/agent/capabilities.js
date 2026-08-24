@@ -41,7 +41,7 @@
 // `capabilities()`, and `HOUSE_CAPS` is read from inside a validator. Keep it
 // that way: a top-level `const X = verbVocab()` here would be read before
 // `actions.js` had finished evaluating and would come out empty.
-import { verbVocab } from "./actions.js";
+import { MOTION_KINDS, MOTION_LABEL, verbVocab } from "./actions.js";
 import { FADE_CURVE_INFO, FADE_CURVES } from "../audio_mix.js";
 import { EFFECT_INFO } from "../fx_library.js";
 import {
@@ -155,6 +155,12 @@ export function capabilities() {
     // half a language. Derived from `ACTIONS` — see `verbVocab`.
     verbs: verbVocab(),
     transitions: transitionVocab(),
+    // ⚠ THE MOVES A STILL CAN CARRY, declared rather than derived — unlike the
+    // transitions and the effects, these are not a renderer's table read back;
+    // they are implemented in `actions.js` itself, so that IS the honest source.
+    // Sent so the model can name one; `add_shot_motion` validates against the
+    // same list, which is what stops the manifest and the validator drifting.
+    motions: MOTION_KINDS.map((id) => ({ id, label: MOTION_LABEL[id] || id })),
     transitionDurationMs: { min: MIN_TRANSITION_MS, max: MAX_TRANSITION_MS },
     transitionParamRange: { ...TRANSITION_PARAM_RANGE },
     effects: effectVocab(),

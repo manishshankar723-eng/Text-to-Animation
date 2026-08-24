@@ -45,13 +45,48 @@
 // — same relationship `PreflightModal` has to the board page: a dialog that
 // renders a decision, not one that makes it.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { governedKeys } from "../animatic/agent/plan_schema.js";
+import { MOTION_LABEL } from "../animatic/agent/actions.js";
+import { freeKeys, paidKeys } from "../animatic/agent/plan_schema.js";
 import Icon from "./Icon.jsx";
 
 /** `1200` → `1.2s`. Times are read as seconds everywhere else in this editor. */
 const secs = (ms) => `${(Math.max(0, Number(ms) || 0) / 1000).toFixed(1)}s`;
+
+/**
+ * HOW LONG THE AI PASS HAS BEEN THINKING, once that stops being obvious.
+ *
+ * ⚠ A SPINNER IS NOT A CLOCK, AND THIS WAIT IS LONGER THAN PEOPLE EXPECT. The
+ * plan is TWO model calls in one request and the browser is willing to wait five
+ * minutes for them (`PLAN_TIMEOUT_MS`) — up from two, which is what used to
+ * abort a perfectly healthy plan and report a stuck database. A turning circle
+ * with no number beside it looks identical at eight seconds and at ninety, so
+ * the second minute reads as a hang and the user reloads the tab on a call that
+ * was about to answer.
+ *
+ * ⚠ IT APPEARS AFTER `QUIET_MS` AND NOT BEFORE. A counter on a call that
+ * finishes in six seconds is a stopwatch on a button press — it makes a fast
+ * thing feel measured. This is only for the wait that has already gone on long
+ * enough to be worth explaining.
+ */
+const QUIET_MS = 8000;
+
+function Elapsed() {
+  const [ms, setMs] = useState(0);
+  useEffect(() => {
+    const began = Date.now();
+    const timer = setInterval(() => setMs(Date.now() - began), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  if (ms < QUIET_MS) return null;
+  return (
+    <span className="tiny muted dir-elapsed">
+      {Math.round(ms / 1000)}s — two calls, and a long board is slow. It gives up on
+      its own if the model never answers.
+    </span>
+  );
+}
 
 /**
  * Which column of the preview table a step belongs in.
@@ -69,6 +104,7 @@ const COLUMN = {
   set_transition_duration: "in",
   remove_transition: "in",
   push_in: "look",
+  add_shot_motion: "look",
   clear_shot_motion: "look",
   set_shot_transform: "look",
   add_effect: "look",
@@ -126,6 +162,8 @@ function cell(step) {
       return `${step.args.to > step.args.from ? "push in" : "pull back"} ${Math.round(
         step.args.to * 100
       )}%`;
+    case "add_shot_motion":
+      return MOTION_LABEL[step.args.kind] || step.args.kind;
     case "clear_shot_motion":
       return "held";
     case "set_shot_transform":
@@ -193,6 +231,18 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
   // so a plan of six notes and nothing else must read "nothing to do" — which is
   // also exactly what the Run button is disabled on.
   const edits = plan.steps.filter((s) => s.verb !== "note").length;
+  // HOW FAR THE RENDER RAIL IS DRAWN. `frac` when the pass has reported one —
+  // it creeps inside a shot as well as between shots — and the shot count when
+  // it has not, which is every run made before the pass started reporting it.
+  const renderPct = Math.max(
+    0,
+    Math.min(
+      100,
+      footage && typeof footage.frac === "number"
+        ? footage.frac * 100
+        : ((footage?.done || 0) / Math.max(1, footage?.total || 1)) * 100
+    )
+  );
 
   function tryClose() {
     // ⚠ THE ONE PLACE THE ✕ IS NOT IMMEDIATE. See the note at the top: closing
@@ -455,6 +505,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
         {phase === "planning" && (
           <p className="dir-planning">
             <span className="spinner-inline" /> Reading your film…
+            <Elapsed />
           </p>
         )}
 
@@ -555,13 +606,13 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 button relabels with the new number of edits. That is what makes
                 the preview trustworthy: the film in the table and the film the
                 button makes are the same film, at every setting.
-                ⚠ THE LIST IS DERIVED (`governedKeys`). `veo` and `voiceover` are
-                real include flags and no verb answers to them yet, so they are
-                NOT offered — a switch that does nothing when clicked teaches the
-                user the whole panel is decorative. */}
+                ⚠ THE LIST IS DERIVED (`freeKeys` / `paidKeys`). A flag no verb
+                and no pass answers to is not offered at all — a switch that does
+                nothing when clicked teaches the user the whole panel is
+                decorative. */}
             <div className="dir-include">
               <span className="an-exp-label">This run may touch</span>
-              {governedKeys().map((key) => (
+              {freeKeys().map((key) => (
                 <label className="an-check dir-include-box" key={key}>
                   <input
                     type="checkbox"
@@ -571,6 +622,36 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                   {INCLUDE_LABEL[key] || key}
                 </label>
               ))}
+            </div>
+            {/* ⚠ THE TWO THAT SPEND GET THEIR OWN ROW, AND IT IS GOLD. They used
+                to sit in the line above between Shapes and the edge, drawn
+                exactly like the free ones — and on a narrow panel "Veo renders"
+                wrapped onto a second line directly underneath "Voiceover". A
+                user who meant to leave the RENDER off and un-ticked the
+                VOICEOVER instead gets a film with no sound and no captions and
+                nothing on screen to say why, which is what was reported. These
+                two are a different kind of switch: they do not change what the
+                edit looks like, they cancel a pass that costs money and, in the
+                voiceover's case, takes the subtitles with it. So they are
+                labelled as what they are. */}
+            <div className="dir-include dir-include-paid">
+              <span className="an-exp-label">These two spend</span>
+              {paidKeys().map((key) => (
+                <label className="an-check dir-include-box" key={key}>
+                  <input
+                    type="checkbox"
+                    checked={include[key] !== false}
+                    onChange={(e) => run.setInclude(key, e.target.checked)}
+                  />
+                  {INCLUDE_LABEL[key] || key}
+                </label>
+              ))}
+              {/* ⚠ SAID OUT LOUD, because "Voiceover" does not look like it owns
+                  the captions and it does: phase B writes them. The one line
+                  that would have answered the whole report. */}
+              <span className="tiny muted dir-include-note">
+                the voiceover writes the captions too
+              </span>
             </div>
 
             {/* ------------------------------------------------- PHASE B: the sound */}
@@ -773,27 +854,37 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 {speech?.message || "Reading the dialogue aloud…"}
               </p>
             )}
-            {/* ⚠ PHASE C GETS ITS OWN LINE AND ITS OWN RAIL, and the rail counts
-                PASSES rather than steps. A step is 90ms; a pass is twelve Veo
-                renders and a couple of minutes, and showing both on one bar
-                would put ninety per cent of the wait into one per cent of the
-                width. The number beside it is what has actually been bought so
-                far, which is the only progress figure here that matters. */}
+            {/* ⚠ PHASE C GETS ITS OWN LINE AND ITS OWN RAIL, and the rail is
+                about SHOTS rather than steps. A step is 90ms; a shot is a Veo
+                render and most of a minute, and showing both on one bar would
+                put ninety per cent of the wait into one per cent of the width.
+                ⚠ IT USED TO COUNT PASSES, which is the bug: a film that fits
+                one submission has exactly one pass, so the bar was empty for
+                the entire render and full the instant it was over. The pass
+                reports its own progress now (`frac`), and the number beside it
+                is what has actually been bought so far — which is still the
+                only progress figure here that costs anything to be wrong. */}
             {(rendering || footage) && (
               <div className={`dir-shootrun dir-shootrun-${footage?.stage || "rendering"}`}>
-                <p className="dir-speech">
-                  {rendering && <span className="spinner-inline" />}
-                  {footage?.message || "Rendering with Veo…"}
-                </p>
+                {/* ⚠ NO SPINNER. It said what the bar below it already says, and
+                    said it WRONG: the circle turned while the rail sat empty,
+                    so the two disagreed about whether anything was happening
+                    and the turning one won. Reported as "the circle moves but
+                    the bar doesn't". The rail is the thing that carries the
+                    number, so the rail is the thing that is kept. */}
+                <p className="dir-speech">{footage?.message || "Rendering with Veo…"}</p>
                 {footage?.passes > 0 && (
                   <>
-                    <div className="dir-rail dir-rail-passes" aria-label="Render passes">
-                      <div
-                        className="dir-rail-fill"
-                        style={{
-                          width: `${Math.min(100, ((footage.done || 0) / Math.max(1, footage.total || 1)) * 100)}%`,
-                        }}
-                      />
+                    {/* ⚠ DRAWN FROM `frac`, NOT FROM THE COUNT BESIDE IT. The
+                        count only moves when a shot LANDS, and on a film that
+                        fits one submission that is a bar which sits empty for
+                        the whole render and fills the instant it is over — the
+                        bug this is the fix for. `frac` is fed by the pass's own
+                        poll, so it creeps inside a shot as well as between
+                        them. The COUNT stays whole shots: "3.4 of 7 rendered"
+                        would be a number about nothing. */}
+                    <div className="dir-rail dir-rail-passes" aria-label="Render progress">
+                      <div className="dir-rail-fill" style={{ width: `${renderPct}%` }} />
                     </div>
                     <p className="dir-progress">
                       {footage.done || 0} of {footage.total || 0} shot
@@ -817,7 +908,12 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
             )}
             {/* ⚠ THE STEP RAIL IS FOR STEPS. A resumed run has none — it is
                 finishing footage, not applying a plan — and an empty bar sitting
-                over a render that is working reads as a run that is stuck. */}
+                over a render that is working reads as a run that is stuck.
+                ⚠ AND IT IS THE SAME THICKNESS AS THE RENDER RAIL ABOVE IT. It
+                was thinner, on the argument that the bar worth watching should
+                be the bigger one; two bars of different weights stacked four
+                lines apart read as two different KINDS of thing instead, which
+                is not what they are — both are "how far through this is". */}
             {plan.steps.length > 0 && (
               <div className="dir-rail" aria-label="Progress">
                 <div

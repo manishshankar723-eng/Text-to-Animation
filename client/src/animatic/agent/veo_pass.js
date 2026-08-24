@@ -174,6 +174,116 @@ export function coverSeconds(holdMs) {
 }
 
 /**
+ * ⚠ THE FLOOR ON SLOWING A TAKE DOWN TO COVER ITS SHOT.
+ *
+ * Below this the footage stops reading as footage and starts reading as
+ * slow-motion nobody asked for — and a shot holding more than twice its take is
+ * not a rounding problem, it is a hold the take was never meant to fill.
+ */
+const MIN_FIT_SPEED = 0.5;
+
+/** Under this a re-fit is not worth writing: a 2% change nobody can see. */
+const FIT_SLACK_MS = 150;
+
+/**
+ * HOW TO PLAY A TAKE THAT IS SHORTER THAN THE SHOT IT LANDS ON.
+ *
+ * ⚠ THIS IS THE 8-SECOND-TAKE-ON-A-9.8-SECOND-SHOT CASE, AND IT IS NOT RARE.
+ * `coverSeconds` asks for the shortest take that COVERS the hold — but Veo's
+ * menu stops at 8 seconds, and the voiceover routinely stretches a shot past
+ * that to cover the line spoken over it. So the take runs out, the clip freezes
+ * on its last frame, and the film sits on a still for the rest of the shot while
+ * the dialogue carries on. Reported as "my clip is 9.8s but the video generated
+ * is 8s — adjust the speed of the video according to the voiceover".
+ *
+ * The fix is the one a person would make by hand: play the take slower so it
+ * lasts exactly as long as the shot. `speed` widens the SOURCE window read
+ * inside a fixed timeline length (see `sourceAt` in `scene.js`), so a take of
+ * `takeMs` covering a hold of `holdMs` runs at `takeMs / holdMs` — 0.82 for the
+ * case above, which is imperceptible.
+ *
+ * Returns `{ speed, durationMs, why }`, or null when the take should be left
+ * exactly as it is — which is most of the time:
+ *
+ *   · the take already covers the hold (the ordinary case — the SHOT grows to
+ *     the take instead, which is `spreadPanelsForRenders`' job, not this one)
+ *   · the difference is under `FIT_SLACK_MS` and nobody could see it
+ *   · the hold is more than twice the take, where slowing it down far enough
+ *     would look worse than the freeze it is replacing
+ *
+ * Pure, and deliberately not in the editor: `tests/veo_speed_fit_check.py`
+ * drives it under node with no browser.
+ */
+export function fitTakeToHold(takeMs, holdMs) {
+  const take = Math.round(Number(takeMs) || 0);
+  const hold = Math.round(Number(holdMs) || 0);
+  if (take <= 0 || hold <= 0) return null;
+  if (hold <= take + FIT_SLACK_MS) return null;
+  const speed = take / hold;
+  if (speed < MIN_FIT_SPEED) return null;
+  return {
+    // Rounded to four places: `AnimaticFrame.speed` is a float the user can see
+    // and edit in the Properties pane, and 0.8163265306122449 in a number box is
+    // a value nobody would ever have typed.
+    speed: Math.round(speed * 10000) / 10000,
+    durationMs: hold,
+    why: `the take is ${(take / 1000).toFixed(1)}s over a ${(hold / 1000).toFixed(1)}s shot`,
+  };
+}
+
+/**
+ * THE MOTION PROMPTS THE FREE PLANNER RENDERS FROM — the board's own words.
+ *
+ * ⚠ THIS IS THE ANSWER TO "I TICKED VEO ON THE RHYTHM PLAN AND NOTHING CAME
+ * BACK". `housePlan` writes no words — that is its whole discipline, see the
+ * header of `house_style.js` — so it wrote no motion prompts either, and phase C
+ * had nothing to render: the tick box was live, the panel said the plan was
+ * free, Run applied two camera moves and no footage was ever asked for. Reported
+ * as "i uncheck all keep only veo check mark and generate so video generated but
+ * not come in layer".
+ *
+ * ⚠ AND IT STILL INVENTS NOTHING. The prompt is the DESCRIPTION THE SHOT WAS
+ * DRAWN FROM, read off the storyboard by `GET /animatics/{id}/panels` — the same
+ * sentence ✨ Animate opens its prompt box on (`boardDraftPrompt`), so the two
+ * ways of animating one panel ask Veo for the same thing. Arithmetic chooses
+ * WHICH shots and HOW LONG; the board says what is in them.
+ *
+ * ⚠ A SHOT WITH NO WORDING IS LEFT PROMPTLESS ON PURPOSE, not dropped silently.
+ * `veoShots` refuses a blank prompt — Veo bills for one exactly as it bills for
+ * a good one — and prints "shot 3 has no motion prompt" under the table, which
+ * is the only way a user learns that an uploaded still is not a board shot.
+ * Dropping it here would leave them with a shorter list and no reason for it.
+ *
+ * ⚠ TAKES AND COLOUR CARDS ARE NOT OFFERED AT ALL. A take is already footage
+ * (`isTake`) and a colour card has nothing to animate; neither is a missing
+ * prompt, so neither earns a line of explanation.
+ *
+ * @param frames the SHOT ROW (see `shotRow`)
+ * @param said   `[{ frame_id, description }]` from the panels read, or nothing
+ * @returns `[{ shot, prompt, dialogue }]` — the shape `veoShots` reads
+ *
+ * Pure: `tests/director_house_veo_check.py` drives it under node.
+ */
+export function housePrompts(frames, said) {
+  const wording = new Map(
+    (said || []).filter((row) => row && row.frame_id).map((row) => [row.frame_id, row])
+  );
+  const out = [];
+  (frames || []).forEach((frame, i) => {
+    if (!frame || isTake(frame)) return;
+    const kind = (frame.src && frame.src.kind) || "";
+    if (kind === "video" || kind === "color") return;
+    const board = String((wording.get(frame.id) || {}).description || "").trim();
+    // The wording a GENERATED in-between shot carries on itself. It has no panel
+    // to be read off the board, and `src.prompt` is what it was drawn from —
+    // the same fallback `openAnimate` makes for the same clip.
+    const own = String((frame.src && frame.src.prompt) || "").trim();
+    out.push({ shot: i + 1, prompt: board || own, dialogue: "" });
+  });
+  return out;
+}
+
+/**
  * WHAT PHASE C WOULD RENDER — the motion prompts, resolved onto real clips.
  *
  * @param veo    `[{ shot, prompt, dialogue }]` from the plan response

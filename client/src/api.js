@@ -142,10 +142,24 @@ export function clearSession() {
 // breakdown and a single-panel redraw are synchronous AI calls), but finite.
 const REQUEST_TIMEOUT_MS = 120000;
 
-async function fetchWithRetry(url, options, attempts = 3, delayMs = 700) {
+// ⚠ THE ONE CALL THAT IS LEGITIMATELY LONGER THAN TWO MINUTES, and it had been
+// aborting at 120s: `POST /director/{id}/plan` is TWO model calls in one
+// request — analyse, then polish — and each of them is allowed
+// `DIRECTOR_BUDGET_SECONDS` (135s) on the server, retries and backoff included.
+// So the honest worst case for a request that is working perfectly is about
+// 270s, and the tab was giving up at 120 and reporting a stuck database.
+// Reported with a screenshot of that exact message over the fallback plan.
+//
+// ⚠ IT MUST STAY BIGGER THAN 2 × THE SERVER'S BUDGET. Raise one of these two
+// numbers and you raise the other, or the browser will abort a request the
+// server is still correctly serving — and the paid call it is in the middle of
+// is billed either way.
+const PLAN_TIMEOUT_MS = 300000;
+
+async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeoutMs = REQUEST_TIMEOUT_MS) {
   for (let i = 1; ; i++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fetch(url, { ...options, signal: controller.signal });
     } catch (e) {
@@ -154,7 +168,7 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700) {
       // retrying (in dev that is usually uvicorn's --reload restarting).
       if (e?.name === "AbortError") {
         throw new Error(
-          `The server didn't respond within ${REQUEST_TIMEOUT_MS / 1000}s. ` +
+          `The server didn't respond within ${Math.round(timeoutMs / 1000)}s. ` +
             `It may be stuck (a database it needs can do this) — check the ` +
             `backend's log, then try again.`
         );
@@ -167,7 +181,7 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700) {
   }
 }
 
-async function request(path, { method = "GET", body, isForm = false } = {}) {
+async function request(path, { method = "GET", body, isForm = false, timeoutMs } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -184,7 +198,13 @@ async function request(path, { method = "GET", body, isForm = false } = {}) {
     // at all. In dev that is nearly always uvicorn's --reload restarting, a
     // window of a second or two, so retry briefly before giving up. A rejected
     // fetch means the request never got a response, so re-sending is safe.
-    res = await fetchWithRetry(`${BASE}${path}`, { method, headers, body: payload });
+    res = await fetchWithRetry(
+      `${BASE}${path}`,
+      { method, headers, body: payload },
+      3,
+      700,
+      timeoutMs || REQUEST_TIMEOUT_MS
+    );
   } catch (e) {
     // "Couldn't connect" and "connected, then silence" are different faults
     // with different fixes, so don't flatten the second into the first — the
@@ -995,6 +1015,18 @@ export function getFramePanel(id, frameId) {
   return request(`/animatics/${id}/frames/${frameId}/panel`);
 }
 
+// Free. The same wording for EVERY clip on the timeline, in one call —
+// `[{ frame_id, description }]`, and `description` is "" for a clip the board
+// says nothing about.
+//
+// ⚠ IT IS WHAT LETS THE DIRECTOR'S FREE PLANNER RENDER. "Just the rhythm" writes
+// no words of its own, so its Veo prompts are the board's own descriptions; one
+// call rather than one per shot, because forty-eight `getFramePanel`s is
+// forty-eight reads of the same storyboard record.
+export function getAnimaticPanels(id) {
+  return request(`/animatics/${id}/panels`);
+}
+
 // SPENDS QUOTA. Re-draws that panel. Synchronous — one image, so there is no
 // job to poll.
 //
@@ -1177,10 +1209,13 @@ export function directorConfig() {
 // ⚠ IT ALSO SAVES `language` ONTO THE PROJECT. The language is a property of the
 // film — the voiceover and the captions read it too — so the popup that asks is
 // the popup that persists it.
+// ⚠ AND IT WAITS LONGER THAN ANYTHING ELSE IN THIS FILE. Two model calls in one
+// request; see `PLAN_TIMEOUT_MS`.
 export function directorPlan(id, { board, capabilities, include, language = "", brief = "" } = {}) {
   return request(`/director/${id}/plan`, {
     method: "POST",
     body: { board, capabilities, include, language, brief },
+    timeoutMs: PLAN_TIMEOUT_MS,
   });
 }
 

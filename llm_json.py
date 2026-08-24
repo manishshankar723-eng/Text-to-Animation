@@ -121,6 +121,7 @@ clears it.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import logging
@@ -143,6 +144,47 @@ INITIAL_BACKOFF_SECONDS = 4
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 42
+
+# ---------------------------------------------------------------------------
+# ⚠ HOW LONG A PLAN TAKES IS DECIDED BY THESE TWO NUMBERS, AND THEY WERE BOTH
+# UNSET UNTIL 2026-08-24. Everything below is MEASURED against
+# `gemini-2.5-flash` on Vertex, greedy decoding, real analyse+polish requests
+# built by `director.py`, on flat boards with no descriptions — the hard case,
+# and the one users actually have (`boardFrom` sends no panel wording).
+#
+#   whole `direct()` call      8 shots    24 shots   48 shots
+#   thinking AUTOMATIC, no cap  24s / 150s FAILED     133s        (not measured)
+#   thinking 512  + cap         15s        15s / 0 STEPS  21s
+#   thinking 1024 + cap         27s        27s        42s
+#   thinking 2048 + cap         22s        34s        42s
+#   thinking 3584 + cap         —          —          61s
+#
+# THINKING. 2.5-class models think by default with an AUTOMATIC budget, and that
+# budget is where the wall clock went: two calls on a 24-shot board spent 133
+# SECONDS, and on the 8-shot board that was reported the polish call ran past
+# 135s and came back `504 DEADLINE_EXCEEDED`. A fixed budget bounds it.
+#
+# ⚠ 1024 RATHER THAN LESS, AND THE REASON IS THE 24-SHOT ROW. At 512 the polish
+# call ran out of room to think and returned a plan with NO STEPS IN IT — fast,
+# and worthless. 1024 was never empty at 8, 24 or 48 shots. Above it the extra
+# budget buys time, not steps.
+# ⚠ AND NEVER 0. With thinking off entirely the polish call loses the thread and
+# generates until something stops it: 8,192 tokens of unparseable JSON against
+# the cap, and 65,536 tokens / 238 SECONDS without one.
+#
+# THE OUTPUT CAP is what makes that survivable rather than fatal. Left unset the
+# ceiling is the model's own — 65,536 tokens here — so a run-away costs four
+# minutes and a timeout instead of a truncated answer the repair path can have
+# another go at (which is exactly what it did on the 24-shot automatic run: cap
+# hit, warning logged, repair asked, plan returned). 12,288 is roomy: polish
+# spends ~70 tokens per step, so it covers a 48-shot board planned to the guard
+# rails and still bounds the worst case to under a minute.
+#
+# ⚠ BOTH TRAVEL IN `sampling()` SO THEY ARE IN THE FINGERPRINT. They change the
+# answer as surely as the prompt does; a determinism claim that did not cover
+# them would be a claim about the wrong bytes.
+DEFAULT_THINKING_TOKENS = 1024
+DEFAULT_MAX_OUTPUT_TOKENS = 12288
 
 SUPPORTED_PROVIDERS = ("vertex", "gemini", "openai_compatible", "stub")
 
@@ -171,9 +213,70 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 # a small local model, so this is generous rather than snappy.
 DEFAULT_TIMEOUT_SECONDS = 180
 
+# THE WALL CLOCK ONE `complete_json` IS ALLOWED, RETRIES AND BACKOFF INCLUDED.
+#
+# ⚠ THIS EXISTS BECAUSE THE CEILING ABOVE IS NOT A BUDGET. Three attempts of 180s
+# with 4s + 8s of backoff is nine and a half minutes for ONE call, and the plan
+# route makes two of them — while the browser gives up at 120s (`api.js`) and the
+# user is looking at a spinner. What they got was "The server didn't respond
+# within 120s. It may be stuck (a database it needs can do this)", which is a
+# true sentence about the wrong component: nothing was stuck, the model was
+# simply still being asked. So a call now stops when its budget is spent and
+# says what actually happened, and the browser waits long enough for two of them
+# (see `DIRECTOR_PLAN_TIMEOUT_MS`).
+#
+# ⚠ IT IS PER CALL, NOT PER REQUEST, and 2 × this has to stay comfortably inside
+# the browser's patience. Raise `DIRECTOR_BUDGET_SECONDS` and you must raise that
+# too, or the tab will abort a request the server is still (correctly) serving.
+DEFAULT_BUDGET_SECONDS = 135
+
+# No attempt is worth starting with less than this left on the clock: the answer
+# could not arrive in time, and asking for it costs money on a paid endpoint.
+MIN_ATTEMPT_SECONDS = 15
+
 # How much of a broken answer is quoted back in the repair call: enough to mend a
 # truncated object, not so much that the repair costs more than the original.
 MAX_REPAIR_CHARS = 8000
+
+
+# ---------------------------------------------------------------------------
+# THE CLOCK
+# ---------------------------------------------------------------------------
+# ⚠ A CONTEXTVAR, NOT AN ARGUMENT, because the thing that needs it is the
+# ADAPTER and the thing that owns it is `complete_json` two frames up — and in
+# between sits the adapter signature, which is the seam the whole provider story
+# is built on (`use_adapter`, the fake transport in the tests). Threading a
+# deadline through it would make every adapter, real or fake, take a parameter
+# that only one of them can honour.
+#
+# ⚠ AND A CONTEXTVAR IS SAFE HERE: FastAPI runs a sync route in a worker thread
+# with a COPY of the context, so two plans being written at once cannot read each
+# other's clock.
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "llm_json_deadline", default=None
+)
+
+
+def call_timeout() -> float:
+    """How long THIS attempt may take: the ceiling, or what is left, whichever is less.
+
+    ⚠ THE ADAPTERS BOTH ASK, AND UNTIL NOW ONLY ONE OF THEM DID ANYTHING. The
+    OpenAI path passed `DIRECTOR_TIMEOUT_SECONDS` to `requests`; the Google path
+    — which is the DEFAULT provider — passed nothing at all, so a wedged Vertex
+    connection hung the worker thread for ever and the env var silently meant
+    nothing on the path almost everyone is on.
+    """
+    ceiling = _env_float("DIRECTOR_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    end = _deadline.get()
+    if end is None:
+        return ceiling
+    return max(MIN_ATTEMPT_SECONDS, min(ceiling, end - time.monotonic()))
+
+
+def _time_left() -> float:
+    """Seconds until this call's budget is gone. `inf` when nothing set one."""
+    end = _deadline.get()
+    return float("inf") if end is None else end - time.monotonic()
 
 
 class LLMJsonError(Exception):
@@ -290,6 +393,15 @@ def sampling() -> dict:
     out: dict = {
         "temperature": _env_float("DIRECTOR_TEMPERATURE", DEFAULT_TEMPERATURE),
         "top_p": _env_float("DIRECTOR_TOP_P", DEFAULT_TOP_P),
+        # ⚠ A REAL `GenerateContentConfig` FIELD, so it reaches Google without
+        # any help from the adapter. See the note over the defaults for what
+        # leaving it unset actually cost.
+        "max_output_tokens": int(_env_float("DIRECTOR_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)),
+        # ⚠ AND THIS ONE IS NOT — `thinking_config` is, and it is an object. The
+        # adapter converts it; it is carried here so it lands in `fingerprint()`
+        # with everything else that decides the answer. -1 is the provider's own
+        # automatic budget; 0 is off and is a bad idea (see above).
+        "thinking_tokens": int(_env_float("DIRECTOR_THINKING_TOKENS", DEFAULT_THINKING_TOKENS)),
     }
     raw_seed = _env("DIRECTOR_SEED") or str(DEFAULT_SEED)
     if raw_seed.lower() not in ("", "none", "off", "random"):
@@ -637,6 +749,13 @@ def _google_adapter(request: JsonRequest) -> str:
     client = get_client(provider)
     settings = {**sampling(), **request.sampling}
 
+    # ⚠ THE ONE SETTING THAT IS NOT A CONFIG FIELD. It travels in `sampling()`
+    # because it changes the answer and therefore belongs in the fingerprint;
+    # `GenerateContentConfig` wants a `ThinkingConfig` object instead, so it is
+    # taken out here rather than being reported as a field the SDK "does not
+    # support" by the check below.
+    thinking = settings.pop("thinking_tokens", None)
+
     # Older SDKs don't carry every generation field. Drop what this one doesn't
     # know rather than fail the call on a kwarg — same trade `_sampling_kwargs`
     # makes in script_breakdown.py, and the same warning so a build that has
@@ -663,11 +782,52 @@ def _google_adapter(request: JsonRequest) -> str:
     if not schema_in_prompt(provider):
         config["response_schema"] = _to_genai_schema(request.schema)
 
+    # ⚠ THE CALL THAT COULD HANG FOR EVER NOW CANNOT. `google-genai` has no
+    # timeout of its own, so a Vertex connection that accepted the request and
+    # then went quiet held this worker thread until the process was restarted —
+    # and `DIRECTOR_TIMEOUT_SECONDS`, which the OpenAI path has always honoured,
+    # meant nothing whatsoever on the DEFAULT provider. What the user saw was the
+    # browser giving up at 120s with a message about a database.
+    # ⚠ MILLISECONDS. `HttpOptions.timeout` is documented in ms and the rest of
+    # this module is in seconds; getting that wrong by 1000× is a timeout of
+    # 0.18s, which fails every call.
+    # ⚠ A SMALL, FIXED THINKING BUDGET. Automatic thinking doubled the wall clock
+    # of both Director calls for no better plan; NO thinking makes the polish
+    # call run away. See the table over `DEFAULT_THINKING_TOKENS`. A negative
+    # value means "leave it to the provider", which is what unset used to do.
+    if thinking is not None and thinking >= 0 and "thinking_config" in supported:
+        config["thinking_config"] = types.ThinkingConfig(thinking_budget=int(thinking))
+
+    if "http_options" in supported:
+        config["http_options"] = types.HttpOptions(timeout=int(call_timeout() * 1000))
+    else:
+        # Same trade as the sampling fields above: an SDK too old to be told is
+        # not a reason to refuse the call, but it IS worth saying out loud,
+        # because on that build this whole guard is decorative.
+        logger.warning(
+            "[llm_json] google-genai is too old to take an http timeout — a wedged "
+            "connection will hang this request. Upgrade the SDK."
+        )
+
     response = client.models.generate_content(
         model=model_id(provider),
         contents=[request.prompt],
         config=types.GenerateContentConfig(**config),
     )
+    # ⚠ AN ANSWER CUT OFF BY THE CAP IS WORTH SAYING OUT LOUD. The text comes
+    # back truncated, `_read_json` reports "it would not parse", and without this
+    # line the log blames the model's JSON for what is really a budget: the plan
+    # was longer than `DIRECTOR_MAX_OUTPUT_TOKENS` allows, or the model was
+    # running away and the cap did its job.
+    for candidate in getattr(response, "candidates", None) or []:
+        if str(getattr(candidate, "finish_reason", "")).endswith("MAX_TOKENS"):
+            logger.warning(
+                "[llm_json] The %s answer hit the output cap (%s tokens) and is "
+                "truncated. Raise DIRECTOR_MAX_OUTPUT_TOKENS for a very large "
+                "board; if it happens on a small one the model is running away.",
+                request.purpose, settings.get("max_output_tokens"),
+            )
+        break
     return getattr(response, "text", "") or ""
 
 
@@ -699,6 +859,12 @@ def _openai_adapter(request: JsonRequest) -> str:
         ],
         "temperature": settings.get("temperature", DEFAULT_TEMPERATURE),
         "top_p": settings.get("top_p", DEFAULT_TOP_P),
+        # The same guard against a run-away, in this wire format's spelling.
+        # ⚠ `thinking_tokens` HAS NO EQUIVALENT HERE and is deliberately dropped:
+        # every endpoint this reaches spells reasoning differently (or not at
+        # all), and inventing a field for them would break the ones that reject
+        # unknown keys.
+        "max_tokens": int(settings.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)),
     }
     if "seed" in settings:
         body["seed"] = settings["seed"]
@@ -709,9 +875,9 @@ def _openai_adapter(request: JsonRequest) -> str:
     if key:
         headers["Authorization"] = "Bearer " + key
 
-    timeout = _env_float("DIRECTOR_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    # The ceiling, or whatever is left of this call's budget — see `call_timeout`.
     response = requests.post(
-        base + "/chat/completions", json=body, headers=headers, timeout=timeout
+        base + "/chat/completions", json=body, headers=headers, timeout=call_timeout()
     )
     if response.status_code >= 400:
         # ⚠ THE BODY IS IN THE MESSAGE. Half the endpoints this reaches are
@@ -767,7 +933,20 @@ def complete_json(request: JsonRequest) -> dict:
     # ⚠ ONE REPAIR PER CALL, NOT ONE PER ATTEMPT. Three transport retries each
     # asking for a mend would be six paid calls to learn one thing.
     repaired = False
+    # ⚠ THE CLOCK STARTS HERE AND IT IS THE WHOLE CALL'S, retries and backoff
+    # included. Without it three attempts could run for nine minutes against a
+    # browser that stops listening after two — see `DEFAULT_BUDGET_SECONDS`.
+    budget = _env_float("DIRECTOR_BUDGET_SECONDS", DEFAULT_BUDGET_SECONDS)
+    clock = _deadline.set(time.monotonic() + budget)
 
+    try:
+        return _attempts(adapter, request, sent, last_reason, repaired, budget)
+    finally:
+        _deadline.reset(clock)
+
+
+def _attempts(adapter, request, sent, last_reason, repaired, budget) -> dict:
+    """The retry loop. Split out only so the clock above is set and reset once."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
@@ -810,10 +989,10 @@ def complete_json(request: JsonRequest) -> dict:
             return parsed
 
         except _Retry:
-            if attempt < MAX_RETRIES:
+            if attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget):
                 time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                 continue
-            raise LLMJsonError(last_reason)
+            raise LLMJsonError(_with_clock(last_reason, budget))
         except LLMJsonError:
             raise
         except Exception as e:  # noqa: BLE001 — surface a clear reason
@@ -823,8 +1002,44 @@ def complete_json(request: JsonRequest) -> dict:
             else:
                 last_reason = f"Text API error during {request.purpose}: {error}"
                 logger.error("[llm_json] %s", last_reason)
-            if attempt < MAX_RETRIES:
+            if attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget):
                 time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                 continue
+            break
 
-    raise LLMJsonError(last_reason)
+    raise LLMJsonError(_with_clock(last_reason, budget))
+
+
+def _worth_retrying(attempt: int, request: JsonRequest, budget: float) -> bool:
+    """Is there time left for the backoff AND an attempt that could finish?
+
+    ⚠ A RETRY THAT CANNOT ARRIVE IN TIME IS A PAID CALL FOR NOTHING. Sleeping
+    eight seconds and then asking a model for a plan the browser has already
+    stopped waiting for costs money and produces an answer nobody reads, so the
+    loop stops early and says the budget ran out — which is the difference
+    between "the model is slow" and "something is stuck", the two things the user
+    is actually trying to tell apart.
+    """
+    backoff = INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    if _time_left() - backoff >= MIN_ATTEMPT_SECONDS:
+        return True
+    logger.warning(
+        "[llm_json] %s: %.0fs budget spent after %d attempt(s) — not trying again.",
+        request.purpose, budget, attempt,
+    )
+    return False
+
+
+def _with_clock(reason: str, budget: float) -> str:
+    """The reason, plus the clock when the clock is why we stopped.
+
+    The panel prints this verbatim under "The AI pass didn't run", so it has to
+    say which of the two things happened in words a person can act on.
+    """
+    if _time_left() > MIN_ATTEMPT_SECONDS:
+        return reason
+    return (
+        f"{reason} It ran out of time — {budget:.0f}s is all one call gets "
+        "(DIRECTOR_BUDGET_SECONDS). A model this slow needs a bigger budget, or a "
+        "smaller board."
+    )

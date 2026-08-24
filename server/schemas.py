@@ -2412,6 +2412,26 @@ class AnimaticVoiceoverRequest(BaseModel):
 # on the BOARD or is an ordinary frame property; nothing here invents a new
 # thing for the exporter to know about.
 # ---------------------------------------------------------------------------
+class AnimaticShotWording(BaseModel):
+    """WHAT THE BOARD SAYS ONE CLIP IS — the whole timeline, in one read.
+
+    ⚠ THIS EXISTS SO THE FREE PLANNER CAN RENDER. `GET /frames/{id}/panel`
+    already answers this for ONE clip and is what ✨ Animate opens its prompt box
+    on; the Director's rules planner needs the same sentence for every shot at
+    once, and forty-eight calls to that route is forty-eight reads of the same
+    board record.
+
+    ⚠ AND `description` IS EMPTY RATHER THAN A LABEL when the board has nothing
+    to say about the shot. "Shot 4" is a name, not a description, and a Veo
+    render is billed for whatever prompt it is handed — so a clip with no wording
+    behind it comes back blank and is REFUSED by `veoShots` with the reason on
+    screen, which is the honest answer and the free one.
+    """
+
+    frame_id: str
+    description: str = ""
+
+
 class AnimaticPanelSource(BaseModel):
     """The board panel behind ONE animatic frame — what the inline pane edits.
 

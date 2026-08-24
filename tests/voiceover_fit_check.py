@@ -66,6 +66,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from fastapi.testclient import TestClient
 
+import captions
 import tts
 from server.animatics import run_voiceover
 from server.jobs import get_store
@@ -272,18 +273,63 @@ check("no picture ever moved backwards",
 
 print("\n[4] ...and the sound is where the picture is")
 doc = project(job_id)
-track = doc["audio_tracks"][-1]
-check("one voiceover track, laid from 0:00", track["start_ms"], 0)
+# ⚠ ONE CLIP PER RUN OF SPEECH, AND IT USED TO BE ONE CLIP OVER THE WHOLE FILM.
+# The file is continuous — a shot's speech sits at that shot's moment and the
+# room between shots is silence — so a single clip spanning it drew a flat empty
+# bar from 0:00 to the first word and another across every pause. Right to the
+# millisecond, wrong to look at, and the user's first job on a paid run was
+# razoring it into the pieces the server already knew the bounds of. Reported as
+# "keep the voiceover wave only, not the blank part".
+voice = [t for t in doc["audio_tracks"] if t["filename"] == "Voiceover.wav"]
+track = voice[0]
+check("ONE CLIP PER RUN OF SPEECH, not one bar across the whole film",
+      len(voice), 2)
+check("the first starts on the first word, at 0:00", voice[0]["start_ms"], 0)
 check("it is a WAV named for what it is", track["filename"], "Voiceover.wav")
+check("⚠ AND THE SECOND SITS ON THE SHOT IT IS READ OVER, not at 0:00 — the"
+      " silence between them is a GAP now, not a flat bar",
+      after["fr2"][0] <= voice[1]["start_ms"] < after["fr2"][1])
+check("no clip carries silence: each is trimmed to its own speech",
+      all(t.get("trim_ms") and t["trim_ms"] > 0 for t in voice))
+check("...and none of them runs into the next",
+      all(voice[i]["start_ms"] + voice[i]["trim_ms"] <= voice[i + 1]["start_ms"]
+          for i in range(len(voice) - 1)))
+check("each reads as far INTO the file as it sits along the timeline",
+      all(t["offset_ms"] == t["start_ms"] for t in voice))
+check("⚠ THEY ARE WINDOWS OF ONE UPLOAD, so Media lists one card",
+      len({t["upload_id"] for t in voice}), 1)
+check("...with an id each, because the editor keys a clip by id",
+      len({t["id"] for t in voice}), 2)
 caps = sorted(
     [t for t in doc["texts"] if t.get("layer_id") == "captions"],
     key=lambda t: t["start_ms"],
 )
-check("one caption per spoken line", len(caps), 2)
+
+
+
+def caps_in(window):
+    """The captions whose words are spoken inside this shot."""
+    lo, hi = window
+    return [c for c in caps if lo <= c["start_ms"] < hi]
+
+
+# ⚠ A SPOKEN LINE IS SEVERAL CAPTIONS NOW, NOT ONE. `captions.MAX_WORDS` caps a
+# caption at five words, so "Sit with me a while." comes back as two — the fix
+# for a whole sentence sitting under the picture as one wall of text while it is
+# read. What has to stay true is that every spoken shot carries its own words and
+# no caption strays into a shot it was not read over, which is what this asserts
+# instead of a count.
+check("every spoken shot carries its caption, and no caption exceeds the word cap",
+      len(caps_in(after["fr0"])) >= 1 and len(caps_in(after["fr2"])) >= 1
+      and all(len(c["text"].split()) <= captions.MAX_WORDS for c in caps))
 check("the first caption sits inside the shot it belongs to",
       after["fr0"][0] <= caps[0]["start_ms"] and caps[0]["start_ms"] < after["fr0"][1])
 check("AND SO DOES THE SECOND — the bug, in one line",
-      after["fr2"][0] <= caps[1]["start_ms"] and caps[1]["start_ms"] < after["fr2"][1])
+      bool(caps_in(after["fr2"]))
+      and all("found" in c["text"] for c in caps_in(after["fr2"])))
+check("...and the pieces of one line stay inside the shot that line is read over",
+      all(after["fr0"][0] <= c["start_ms"] < after["fr0"][1] for c in caps
+          if "Sit" in c["text"] or "while" in c["text"]))
 check("the caption is the WORDS, never the stage direction",
       all("Read this line as" not in c["text"] for c in caps))
 check("...which the model was given, though",
@@ -349,8 +395,12 @@ caps = sorted(
     [t for t in doc["texts"] if t.get("layer_id") == "captions"],
     key=lambda t: t["start_ms"],
 )
+# ⚠ THE SECOND LINE'S CAPTION, FOUND BY ITS WORDS RATHER THAN BY INDEX. The long
+# line is several captions now (`captions.MAX_WORDS`), so `caps[1]` is its second
+# PIECE — still part of the first line, and nowhere near the question being asked.
+second = next(c for c in caps if "found" in c["text"])
 check("the long line still cannot be spoken over by the next one",
-      caps[1]["start_ms"] >= 9000 + GAP)
+      second["start_ms"] >= 9000 + GAP)
 
 # ---------------------------------------------------------------------------
 # The wiring. A source read, because these three are the ways the feature can be

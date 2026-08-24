@@ -116,7 +116,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { capabilities } from "./capabilities.js";
 import { describeStep, ACTIONS, ACTION_API } from "./actions.js";
-import { applyGuardrails, housePlan } from "./house_style.js";
+import { applyGuardrails, fillStillMoves, housePlan } from "./house_style.js";
 import { defaultInclude, emptyPlan, planTotals, validatePlan } from "./plan_schema.js";
 import { reanchor, scriptFor, shiftsOf, speechDue, spokenWords } from "./voice_pass.js";
 import {
@@ -124,6 +124,7 @@ import {
   growthCauses,
   outstanding,
   shotRow,
+  housePrompts,
   veoDue,
   veoShots,
 } from "./veo_pass.js";
@@ -186,6 +187,14 @@ export default function useDirectorRun({
   //                 which is what the re-anchor is computed from.
   readScript,
   speak,
+  // ⚠ FREE, AND IT IS WHAT LETS THE RULES PLANNER RENDER. `[{ frame_id,
+  // description }]` for every clip — the board's own wording, straight off
+  // `GET /animatics/{id}/panels`. "Just the rhythm" writes no words, so without
+  // this it had no motion prompts and the Veo box was a switch that did nothing:
+  // priced at zero, ticked, and then a run that rendered nothing. See
+  // `housePrompts`. Optional like everything else here; handed nothing, the free
+  // plan simply cannot render, which is what it did before.
+  readPanels,
   // ⚠ PHASE C, AND ALL SIX ARE OPTIONAL FOR THE SAME REASON `askModel` IS.
   // Handed none of them, this is Phase 3 exactly: the plan runs, the sound is
   // read and nothing is rendered. `tests/director_guardrails_check.py` and the
@@ -334,7 +343,17 @@ export default function useDirectorRun({
       const caps = capabilities();
       const ctx = { ...readCtx(), caps };
       const withFlags = { ...raw, include: nextInclude };
-      const checked = validatePlan(withFlags, caps, ctx);
+      // ⚠ EVERY DRAWING MOVES WHEN NOTHING IS BEING RENDERED, WHOEVER WROTE THE
+      // PLAN. This used to live inside `housePlan`, so it only applied to the
+      // free door — press "Read my film" with Veo un-ticked and you got the
+      // model's three push-ins and six dead shots between them. It is a house
+      // rule about the FILM ("the stills are the finished film, and a still that
+      // never moves is a slide"), not a rules-planner habit, so it belongs on
+      // the one path every plan takes. `fillStillMoves` fills the shots the plan
+      // has no opinion about and is a no-op with Veo ticked, which is what makes
+      // the tick box add and remove them for free.
+      const filled = fillStillMoves(withFlags, ctx);
+      const checked = validatePlan(filled, caps, ctx);
       const fenced = applyGuardrails(checked.plan, ctx);
       setPlan(fenced.plan);
       setDropped(checked.dropped);
@@ -496,14 +515,33 @@ export default function useDirectorRun({
       // nothing, which is the honest answer: "Just the rhythm" does not invent
       // dialogue any more than it invents titles.
       //
-      // ⚠ AND IT WRITES NO MOTION PROMPTS EITHER, so phase C has nothing to
-      // render and the Veo box says exactly that. Arithmetic can tell which
-      // shots were HELD; it cannot tell what should happen inside one.
+      // ⚠ AND IT WRITES NO MOTION PROMPTS OF ITS OWN EITHER — arithmetic can
+      // tell which shots were HELD, it cannot tell what should happen inside one
+      // — SO IT BORROWS THE BOARD'S. `housePrompts` reads the description each
+      // shot was DRAWN from, which is the same sentence ✨ Animate opens its
+      // prompt box on, so the free plan can render footage without this file
+      // inventing a single word. Until it did, ticking Veo here was a switch
+      // that did nothing: the panel priced the run at zero and Run applied the
+      // camera moves and rendered nothing at all.
       veoRef.current = [];
-      loadScript(null).then((next) => loadShoot([], spokenOver(nextInclude, next)));
+      loadScript(null).then(async (next) => {
+        let said = [];
+        if (readPanels) {
+          try {
+            said = await readPanels();
+          } catch {
+            /* no board wording is not an error — the shots come back promptless,
+               `veoShots` refuses them by name and the panel prints why */
+          }
+        }
+        const prompts = housePrompts(readCtx().frames || [], said);
+        veoRef.current = prompts;
+        setVeo(prompts);
+        loadShoot(prompts, spokenOver(nextInclude, next));
+      });
       return out;
     },
-    [adopt, include, loadScript, loadShoot, readCtx, spokenOver]
+    [adopt, include, loadScript, loadShoot, readCtx, readPanels, spokenOver]
   );
 
   /**
@@ -983,6 +1021,13 @@ export default function useDirectorRun({
           shots: pass.length,
           done: doneShots,
           total: fresh.shots.length,
+          // ⚠ THE BAR'S OWN NUMBER, SEPARATE FROM `done`. `done` counts WHOLE
+          // shots and is what the line under the rail says; `frac` is where the
+          // rail is drawn to, and it moves inside a shot as well as between
+          // them. One number could not do both — a rail driven by `done` sits
+          // at zero for the whole of a one-pass run, and a count that read
+          // "3.4 of 7 shots rendered" would be nonsense.
+          frac: fresh.shots.length ? doneShots / fresh.shots.length : 0,
           usd: spend,
           message:
             `Rendering pass ${at + 1} of ${passes.length} — ${pass.length} shot` +
@@ -994,8 +1039,31 @@ export default function useDirectorRun({
           await renderPass({
             shots: pass,
             render: veoRender,
-            onProgress: (text) =>
-              setFootage((was) => (was ? { ...was, detail: text } : was)),
+            // ⚠ THE PASS REPORTS SHOTS, AND THIS TURNS THEM INTO THE WHOLE RUN.
+            // What comes back is progress through the pass in flight; the rail
+            // is about every shot the run is buying, so the shots already paid
+            // for by earlier passes are added back on. `doneShots` is read from
+            // the loop rather than captured because this fires while that pass
+            // is awaited, when it still holds the count from before it.
+            // ⚠ A STRING IS STILL ACCEPTED. Older callers (and the tests that
+            // stand in for the editor) hand a bare message, and a detail line
+            // that vanished would be a worse failure than a bar that steps.
+            onProgress: (info) =>
+              setFootage((was) => {
+                if (!was) return was;
+                if (typeof info === "string") return { ...was, detail: info };
+                const at100 = Math.max(0, Math.min(100, Number(info?.percent) || 0));
+                const within = Math.min(pass.length, (at100 / 100) * pass.length);
+                const landed = Math.min(pass.length, Number(info?.done) || 0);
+                return {
+                  ...was,
+                  detail: info?.message || "",
+                  done: doneShots + landed,
+                  frac: fresh.shots.length
+                    ? Math.min(1, (doneShots + within) / fresh.shots.length)
+                    : 0,
+                };
+              }),
           });
           // ⚠ SET AFTER THE FIRST PASS LANDS, NOT BEFORE IT. From this moment
           // the notices stop saying "nothing was spent", and Revert stops being
@@ -1034,6 +1102,10 @@ export default function useDirectorRun({
         passes: passes.length,
         done: doneShots,
         total: fresh.shots.length,
+        // The rail and the count agree again the moment the passes are over:
+        // whatever creeping the poll was doing, this is what was actually paid
+        // for.
+        frac: fresh.shots.length ? doneShots / fresh.shots.length : 0,
         message: failed
           ? `The render stopped after ${made} pass${made === 1 ? "" : "es"} (${failed}). ` +
             `${doneShots} shot${doneShots === 1 ? "" : "s"} were rendered and are on the timeline; ` +

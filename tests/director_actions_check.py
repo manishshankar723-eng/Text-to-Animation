@@ -117,6 +117,7 @@ const GOOD = {
   set_all_durations: { ms: 2500 },
   set_shot_transform: { shot: 1, scale: 1.2, x: 0.5, y: 0.5, opacity: 1 },
   push_in: { shot: 2, from: 1, to: 1.1, ease: "ease-in-out" },
+  add_shot_motion: { shot: 2, kind: "pan_left", amount: 1, ease: "ease-in-out" },
   clear_shot_motion: { shot: 2 },
   add_transition: { cut: 1, kind: "dissolve", ms: 700 },
   set_transition_duration: { cut: 1, ms: 800 },

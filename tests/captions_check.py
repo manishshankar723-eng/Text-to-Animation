@@ -540,6 +540,29 @@ check("an old clip and the same clip with the new defaults draw the same picture
 # ---------------------------------------------------------------------------
 print("\nCaption timing — captions.tidy_lines\n")
 
+
+def kept_starts(drawn: list, measured: list) -> bool:
+    """Did every measured line keep the start it was measured at?
+
+    ⚠ A SUBSEQUENCE, NOT AN EQUAL LIST, because `tidy_lines` SPLITS. Since the
+    word cap (`captions.MAX_WORDS`) every sentence long enough to read comes back
+    as several captions, so there are more of them out than in — and comparing
+    the two lists element by element compares piece 1 of line 2 against line 2.
+    What the rule actually promises is that a measured start is never pushed
+    late, and the piece that carries it is the FIRST piece of its line. So: every
+    measured start must appear among the drawn starts, in order.
+    """
+    want = [l["start_ms"] for l in measured]
+    got = [l["start_ms"] for l in drawn]
+    at = 0
+    for start in want:
+        while at < len(got) and got[at] != start:
+            at += 1
+        if at >= len(got):
+            return False
+        at += 1
+    return True
+
 # What was actually said, and when. The stub below returns a plausibly MESSY
 # version of this — the kind of thing a model really returns — and the rules
 # have to recover timing within ±200ms of the truth without ever overlapping.
@@ -961,7 +984,7 @@ check("aligned captions still never overlap once tidied",
       all(a["end_ms"] <= b["start_ms"] for a, b in zip(drawn, drawn[1:])),
       f"\n    {[(l['start_ms'], l['end_ms']) for l in drawn]}")
 check("...and tidying does not undo the alignment by pushing them late",
-      [l["start_ms"] for l in drawn] == [l["start_ms"] for l in aligned],
+      kept_starts(drawn, aligned),
       f"\n    {[l['start_ms'] for l in drawn]} vs {[l['start_ms'] for l in aligned]}")
 
 # --- The ffmpeg half, against REAL audio --------------------------------------
@@ -1037,7 +1060,7 @@ BUTTED = [
 ]
 butted = captions.tidy_lines(BUTTED, total_ms=20_000)
 check("EVERY CAPTION KEEPS THE START IT WAS MEASURED AT",
-      [l["start_ms"] for l in butted] == [l["start_ms"] for l in BUTTED],
+      kept_starts(butted, BUTTED),
       f"\n    got    {[l['start_ms'] for l in butted]}"
       f"\n    wanted {[l['start_ms'] for l in BUTTED]}")
 check("...and the room between them is taken off the line in front",
@@ -1065,8 +1088,17 @@ check("...and they still don't overlap",
 # split collides. None of them may drift.
 LONG_ONE = [{"start_ms": 1000, "end_ms": 9000, "text": " ".join(["word"] * 60)}]
 split = captions.tidy_lines(LONG_ONE, total_ms=12_000)
+# ⚠ THE END IS `<=`, NOT `==`, AND THE SLACK IS EXACTLY ONE MIN_LINE_MS. Since
+# the word cap (`captions.MAX_WORDS`) sixty words is twelve captions rather than
+# four, and at twelve the pieces are shorter than the readability floor — so
+# rule 3 grows the LAST one, which is the only piece with no neighbour in front
+# of it to stop at. That is the rule working, not drift: drift is pieces walking
+# later and later, and the starts below are what actually prove it isn't
+# happening.
 check("splitting a long line does not walk its pieces later and later",
-      split[0]["start_ms"] == 1000 and split[-1]["end_ms"] == 9000,
+      split[0]["start_ms"] == 1000
+      and split[-1]["end_ms"] <= 9000 + captions.MIN_LINE_MS
+      and all(a["start_ms"] <= b["start_ms"] for a, b in zip(split, split[1:])),
       f"\n    {[(l['start_ms'], l['end_ms']) for l in split]}")
 check("...and the pieces still never overlap",
       all(a["end_ms"] <= b["start_ms"] for a, b in zip(split, split[1:])))

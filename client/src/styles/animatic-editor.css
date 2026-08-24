@@ -907,21 +907,13 @@
   color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
-/* THE INLINE SPINNER SPINS IN GOLD ON A DARK PANEL — scoped to the two places
-   in this editor where it sits on one.
-   ⚠ IT IS NOT A FIX TO `.spinner-inline` ITSELF, and must not become one. That
-   rule takes its moving edge from `--primary-ink`, which is near-black, and that
-   is CORRECT for nearly all of its ~50 uses: they sit INSIDE a gold button
-   ("Starting…", "Saving…", "Zipping…"), where a gold edge on gold would be
-   invisible. On a dark panel the same near-black edge all but vanishes the other
-   way, so the circle reads as a static grey ring rather than as something
-   turning — reported against the generate-a-shot dialog as the circle not
-   looking like it was working. Two selectors fix the dark-panel cases and leave
-   every button alone. */
-.an-status-export .spinner-inline,
-.an-prop-progress .spinner-inline {
-  border-top-color: var(--primary);
-}
+/* ⚠ THE TWO SPINNER SELECTORS THAT USED TO SIT HERE ARE GONE, and their job is
+   now the DEFAULT. They re-coloured `.spinner-inline` for `.an-status-export`
+   and `.an-prop-progress` because a near-black moving edge vanishes on a dark
+   panel, and said the base rule "must not become" this — which was right while
+   two panels were affected and wrong by the time the 🎬 panel became the third.
+   `.spinner-inline` in `text-to-image.css` is gold on a faint gold track for
+   every use that is not inside a gold FILL; see the ⚠ note over it. */
 .an-status-bar {
   display: inline-block;
   width: 9rem;

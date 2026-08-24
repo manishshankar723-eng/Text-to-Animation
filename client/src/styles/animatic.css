@@ -343,11 +343,13 @@
   height: 100%;
   object-fit: contain;
 }
+/* The strip's own little wait ring. Same two colours as `.spinner-inline` and
+   `.btn-ring` — its track was `--border`, a navy hairline on a navy strip. */
 .fs-thumb-wait {
   width: 1rem;
   height: 1rem;
   border-radius: 50%;
-  border: 2px solid var(--border);
+  border: 2px solid var(--border-gold);
   border-top-color: var(--primary);
   animation: spin 0.8s linear infinite;
 }

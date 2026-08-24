@@ -166,7 +166,7 @@ import useUndoStack from "../animatic/useUndoStack.js";
 // 🎬 Make Video — the auto-editor. Everything it can do lives in `agent/`, and
 // none of it touches state directly: see `agent/actions.js`.
 import useDirectorRun from "../animatic/agent/useDirectorRun.js";
-import { shotRow } from "../animatic/agent/veo_pass.js";
+import { fitTakeToHold, shotRow } from "../animatic/agent/veo_pass.js";
 import { ACTION_API } from "../animatic/agent/actions.js";
 // ⚠ `sortFiles` ONLY. The strip itself was the Media pane's list of CLIPS; the
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
@@ -6335,6 +6335,21 @@ export default function AnimaticEditor({
   const directorScriptRef = useRef(null);
   const directorSpeak = useCallback((payload) => directorSpeakRef.current(payload), []);
   const directorReadScript = useCallback(() => directorScriptRef.current(), []);
+  // ⚠ FREE, AND IT IS WHAT GIVES THE FREE PLANNER SOMETHING TO RENDER. The
+  // board's own description for every clip in one call — the same sentence
+  // ✨ Animate drafts its motion prompt from, and the only wording "Just the
+  // rhythm" is allowed to use, because that planner writes none of its own.
+  // Without it, ticking Veo on the free plan priced the run at zero and rendered
+  // nothing: "i uncheck all keep only veo check mark and generate so video
+  // generated but not come in layer".
+  //
+  // ⚠ SAVED FIRST, exactly as `readDirectorScript` is: the server answers off
+  // the SAVED project, so a clip added since the last autosave is a clip it has
+  // never heard of.
+  const directorReadPanels = useCallback(async () => {
+    await flush();
+    return api.getAnimaticPanels(animaticId);
+  }, [animaticId, flush]);
   // ⚠ PHASE C, THROUGH THE SAME KIND OF THUNK AND FOR BOTH THE SAME REASONS:
   // the runner must always call the CURRENT render's closure (`runDirectorVeoPass`
   // captures `frames` through refs the poll then re-reads), and the pass itself
@@ -6366,6 +6381,7 @@ export default function AnimaticEditor({
     language: settings.language || "",
     readScript: directorReadScript,
     speak: directorSpeak,
+    readPanels: directorReadPanels,
     // ------------------------------------------------------------- phase C
     quoteVeo: directorVeoQuote,
     startVeo: directorVeoStart,
@@ -7228,13 +7244,25 @@ export default function AnimaticEditor({
       // fixed it, because the server fills a url in on read — which is exactly
       // the bug `newVideoClip`'s own ⚠ note describes, happening a second time
       // in the one place that did not use it.
+      // ⚠ A TAKE SHORTER THAN ITS SHOT IS SLOWED TO FILL IT, rather than left to
+      // freeze on its last frame. Veo's menu stops at 8 seconds and the
+      // voiceover routinely stretches a shot past that to cover its line, so the
+      // 8s-take-on-a-9.8s-shot case is ordinary rather than exceptional. All the
+      // reasoning and every refusal is in `fitTakeToHold`; this only writes what
+      // it decides. `null` — the common answer — leaves the clip exactly as it
+      // was built, which is what keeps the ordinary path byte-for-byte unchanged.
+      const fit = fitTakeToHold(clip.duration_ms, source.duration_ms);
       const render = {
         ...newVideoClip(
           clip.upload_id,
-          clip.duration_ms || source.duration_ms,
+          fit ? fit.durationMs : clip.duration_ms || source.duration_ms,
           source.label || "",
           animaticId
         ),
+        // The whole file, read slower. `out_ms` stays the take's real length —
+        // it is a window on the SOURCE, and slowing playback does not make the
+        // file longer. See `sourceAt`.
+        ...(fit ? { speed: fit.speed } : {}),
         // ⚠ THE PANEL'S `src` IS KEPT UNDERNEATH THE VIDEO ONE, so the render
         // still knows which board shot it came from — that is what keeps it in
         // Storyboard Frames rather than Video (`frameOrigin`).
@@ -8137,7 +8165,21 @@ export default function AnimaticEditor({
           try {
             // eslint-disable-next-line no-await-in-loop
             const job = await api.getJob(animaticId);
-            onProgress(job.progress?.message || "");
+            // ⚠ COUNTS, NOT JUST A SENTENCE. `_run_animatic_animate` already
+            // writes `done_parts` / `total_parts` / `percent` for the batch in
+            // flight — the same numbers ✨ Animate's bar reads — and without
+            // them the Director's rail could only move once per PASS, which on
+            // a one-pass run means it sits empty for two minutes and then jumps
+            // to full. That is the bug this reports away: `percent` creeps
+            // within a shot as well as between shots, so the bar moves while
+            // Veo is working rather than only when it has finished.
+            const p = job.progress || {};
+            onProgress({
+              message: p.message || "",
+              done: Number(p.done_parts) || 0,
+              total: Number(p.total_parts) || rows.length,
+              percent: Number(p.percent) || 0,
+            });
           } catch {
             /* progress is a nicety; losing it must not stop the poll */
           }

@@ -80,6 +80,7 @@ from .schemas import (
     AnimaticSaveRequest,
     AnimaticSettings,
     AnimaticShape,
+    AnimaticShotWording,
     AnimaticSummary,
     AnimaticTextClip,
     AnimaticTransition,
@@ -2829,12 +2830,22 @@ def _lay_out_speech(
 ) -> dict:
     """SPENDS QUOTA. Read every line, and lay the shots out so each holds its own.
 
-    Returns `{"wav", "timings", "frames", "moved", "duration_ms"}` — `frames` is
-    None when nothing had to move, which is what lets the caller skip the write
-    and say so honestly.
+    Returns `{"wav", "timings", "frames", "moved", "duration_ms", "windows"}` —
+    `frames` is None when nothing had to move, which is what lets the caller skip
+    the write and say so honestly.
 
     `timings` are TIMELINE ms and describe the audio that was actually made, so
     the captions built from them match what is heard rather than what was planned.
+
+    ⚠ `windows` IS WHERE THE SPEECH ACTUALLY IS, and the caller lays ONE CLIP PER
+    WINDOW rather than one clip over the whole film. The file is continuous — a
+    shot's speech sits at that shot's moment and the room between shots is
+    silence — so a single clip spanning it draws a flat empty bar from 0:00 to
+    the first word and another one across every pause, which is a timeline the
+    user then has to razor by hand before they can move a line. Reported as
+    "keep voiceover wave only, not the blank part". The clips read windows of
+    ONE upload, which is exactly the shape the razor already leaves behind, so
+    nothing downstream has to learn a new one.
     """
     import tts as tts_mod
 
@@ -2944,7 +2955,11 @@ def _lay_out_speech(
     if not pieces:
         raise tts_mod.VoiceoverError("None of those lines have anything to say.")
 
-    wav = tts_mod.assemble(pieces)
+    # ⚠ ONE WALK WRITES THE BYTES AND REPORTS THE WINDOWS. See `tts.lay_track`:
+    # the clips laid on the timeline are drawn from `windows`, so working the
+    # placement out a second time here would be a waveform that starts just
+    # outside the box around it.
+    wav, windows = tts_mod.lay_track(pieces)
     timings.sort(key=lambda t: t["start_ms"])
     out = None
     if moved:
@@ -2954,7 +2969,11 @@ def _lay_out_speech(
         "timings": timings,
         "frames": out,
         "moved": len(moved),
-        "duration_ms": timings[-1]["end_ms"] if timings else 0,
+        # ⚠ THE FILE'S OWN LENGTH, not the last caption's end. Every clip carries
+        # it as `duration_ms` — the value `track_play_ms` falls back to when a
+        # trim is ever lost — so it has to describe the WAV rather than the words.
+        "duration_ms": (windows[-1]["start_ms"] + windows[-1]["duration_ms"]) if windows else 0,
+        "windows": windows,
     }
 
 
@@ -3318,20 +3337,48 @@ def run_voiceover(job_id: str, body: dict, progress_cb=None) -> None:
     # by the browser; generated speech is the one case the server can answer for
     # itself, exactly, because it made the samples.
     duration_ms = laid["duration_ms"]
-    _add_audio_track(job_id, {
-        # One clip, so its identity is its upload — the same value the backfill
-        # in `_audio_tracks_of` would give it.
-        "id": upload_id,
-        "upload_id": upload_id,
-        "layer_id": "",
-        "filename": "Voiceover.wav",
-        "duration_ms": duration_ms,
-        "start_ms": 0,
-        "offset_ms": 0,
-        "trim_ms": None,
-        "volume": 1.0,
-        "muted": False,
-    })
+    # ⚠ ONE CLIP PER RUN OF SPEECH, NOT ONE CLIP OVER THE WHOLE FILM.
+    #
+    # The file is continuous: a shot's speech sits at that shot's moment and the
+    # room between shots is silence, because the sound and the pictures share one
+    # clock (`_lay_out_speech`). Laid down as a single clip that is right to the
+    # millisecond and wrong to look at — a flat empty bar from 0:00 to the first
+    # word, and another across every pause — and the user's first job on a paid
+    # run was razoring it into the pieces this already knows the bounds of.
+    # Reported as "keep the voiceover wave only, not the blank part".
+    #
+    # ⚠ THEY ARE CLIPS OF ONE UPLOAD, WHICH IS NOT A NEW SHAPE. `start_ms` places
+    # the piece on the timeline and `offset_ms` reads the same distance into the
+    # file — exactly what `splitClip` writes when a person razors a track, and
+    # exactly what `_captioned_clips` / `_clip_windows` already read back. The
+    # Media pane dedupes on the upload, so four clips still make one card.
+    #
+    # ⚠ AND `start_ms == offset_ms` BECAUSE THE FILE STARTS AT 0:00. The pieces
+    # were laid at their timeline moments inside the WAV itself, so the file's
+    # clock and the timeline's are the same clock. It is written out as two
+    # fields rather than one because they mean different things the moment
+    # anybody drags one of these clips.
+    windows = laid["windows"] or [{"start_ms": 0, "duration_ms": duration_ms}]
+    for i, window in enumerate(windows):
+        _add_audio_track(job_id, {
+            # ⚠ ONE ID PER CLIP, and the upload alone is no longer enough for it:
+            # several clips share this file now, and everything the editor keys
+            # per clip (the selection, its <audio> element, a patch, a mute)
+            # keys on `id`. A single-piece run keeps the bare upload id, which
+            # is what `_audio_tracks_of` would have backfilled anyway.
+            "id": upload_id if len(windows) == 1 else f"{upload_id}_{i}",
+            "upload_id": upload_id,
+            "layer_id": "",
+            "filename": "Voiceover.wav",
+            # The FILE's length on every clip — `track_play_ms` falls back to it
+            # when a trim is missing, so it must describe the WAV, not the piece.
+            "duration_ms": duration_ms,
+            "start_ms": window["start_ms"],
+            "offset_ms": window["start_ms"],
+            "trim_ms": window["duration_ms"],
+            "volume": 1.0,
+            "muted": False,
+        })
 
     # THE SHOTS THAT HAD TO MOVE. None when the dialogue fitted inside the
     # pictures as they stood, which is the ordinary case for a board of long
@@ -3466,6 +3513,39 @@ def get_frame_panel(
             )
         ),
     )
+
+
+@router.get("/{job_id}/panels", response_model=list[AnimaticShotWording])
+def get_shot_wording(job_id: str, current: CurrentUser = Depends(get_current_user)):
+    """FREE. What the board says about EVERY clip on this timeline, in one read.
+
+    ⚠ THIS IS WHAT LETS THE FREE PLANNER SPEND. The Director's "Just the rhythm"
+    pass writes no words — it reads the shot lengths and nothing else — so it had
+    no motion prompts, and ticking Veo on it rendered nothing at all while the
+    panel cheerfully said the plan was free. The fix is not to invent prompts by
+    arithmetic (see the header of `house_style.js` on why that is exactly what
+    Phase 0 must never do): it is to hand back the sentence the board ALREADY
+    holds for each shot — the same one ✨ Animate drafts its prompt from — and
+    let the shot be rendered from its own description.
+
+    ⚠ ONE READ PER BOARD, not one per clip. `_shot_wording` takes the cache and
+    an animatic is usually forty-eight clips off one storyboard.
+
+    ⚠ A LABEL IS NOT A DESCRIPTION. `_shot_wording` falls back to "Shot 4" for a
+    clip it can say nothing else about, which is right for the model — a name is
+    better than silence in a brief — and wrong here, because this answer is
+    handed to a renderer that BILLS for it. So a wording that is only the label
+    comes back empty and the shot is refused with a reason the user can read.
+    """
+    job = _get_owned_animatic(job_id, current)
+    boards: dict[str, Job | None] = {}
+    out: list[AnimaticShotWording] = []
+    for frame in _frames_of(job):
+        said = _shot_wording(job, frame, boards)
+        if said and said == (frame.label or "").strip():
+            said = ""
+        out.append(AnimaticShotWording(frame_id=frame.id, description=said))
+    return out
 
 
 @router.post("/{job_id}/frames/{frame_id}/panel", response_model=AnimaticFrame)

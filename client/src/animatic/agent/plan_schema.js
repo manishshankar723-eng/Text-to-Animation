@@ -144,6 +144,29 @@ export function governedKeys() {
   return INCLUDE_KEYS.filter((key) => used.has(key));
 }
 
+/**
+ * THE SAME LIST, SPLIT BY WHETHER TICKING IT COSTS MONEY.
+ *
+ * ⚠ THEY ARE TWO DIFFERENT KINDS OF SWITCH AND THE PANEL HAD BEEN DRAWING THEM
+ * AS ONE ROW. Un-ticking "Effects" changes what the edit looks like; un-ticking
+ * "Voiceover" cancels a pass that would have read the film aloud AND written the
+ * captions under it. A user who meant to un-tick the render and un-ticked the
+ * voiceover instead gets a run with no sound and no subtitles and no clue why —
+ * reported as "i check mark all only i not select veo render … not come
+ * voiceover and caption", with a screenshot in which Voiceover is plainly off
+ * and `Veo renders` had wrapped onto its own line right underneath it.
+ *
+ * Derived from the same two tables as `governedKeys`, so a flag cannot appear in
+ * one row and not the other.
+ */
+export function paidKeys() {
+  return INCLUDE_KEYS.filter((key) => PASS_GOVERNORS.includes(key));
+}
+
+export function freeKeys() {
+  return governedKeys().filter((key) => !PASS_GOVERNORS.includes(key));
+}
+
 const text = (value, fallback = "") =>
   typeof value === "string" && value.trim() ? value.trim() : fallback;
 
@@ -239,7 +262,11 @@ export function planTotals(plan) {
     effects: count("add_effect"),
     texts: count("add_text"),
     shapes: count("add_shape"),
-    moves: count("push_in"),
+    // ⚠ BOTH MOVE VERBS. `add_shot_motion` is the Ken Burns pass that runs when
+    // nothing is being rendered (see `house_style.js`); counting only `push_in`
+    // reported "0 moves" under a plan whose every shot moves, on the one kind of
+    // run where the moves ARE the treatment.
+    moves: count("push_in", "add_shot_motion"),
     retimes: count("set_shot_duration", "set_all_durations"),
   };
 }

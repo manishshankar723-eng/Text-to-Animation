@@ -149,6 +149,75 @@ function shotIndex(value, ctx) {
   return i >= 0 && i < (ctx.frames || []).length ? i : -1;
 }
 
+/**
+ * THE FOUR MOVES A DRAWING CAN CARRY, and why there are only four.
+ *
+ * ⚠ NOT A LIBRARY, AND IT MUST NOT BECOME ONE. Every one of these is a move a
+ * camera on a rostrum could make over a piece of artwork, which is exactly what
+ * an animatic still is — and it is the whole vocabulary a person means when they
+ * say "make the stills move". Rolls, whips, shakes and the rest are things a
+ * person chooses shot by shot; a planner reaching for one is a planner making
+ * the decision the header of `house_style.js` says arithmetic must not make.
+ */
+export const MOTION_KINDS = ["zoom_in", "zoom_out", "pan_left", "pan_right"];
+
+export const MOTION_LABEL = {
+  zoom_in: "push in",
+  zoom_out: "pull back",
+  pan_left: "pan left",
+  pan_right: "pan right",
+};
+
+/**
+ * HOW FAR EACH MOVE TRAVELS at `amount: 1`.
+ *
+ * ⚠ A PAN NEEDS THE PICTURE BIGGER THAN THE FRAME OR IT PANS INTO NOTHING.
+ * `placePicture` reads `x`/`y` as the picture's CENTRE in frame units, so a
+ * picture at scale 1 exactly fills the frame and moving its centre by any amount
+ * at all drags an empty edge into shot. So a pan carries an OVERSCAN — the
+ * picture is held at `PAN_SCALE` for the whole move — and it may only travel
+ * inside the margin that overscan buys: at 1.12 the picture overhangs by 0.06 on
+ * each side, and the pan uses three quarters of that so a panel whose aspect
+ * does not quite match the project still has something in hand.
+ */
+const ZOOM_TO = 0.1;      // a push travels 10% at amount 1
+const PAN_SCALE = 0.12;   // ...and a pan is held 12% oversize to have room
+const PAN_SAFETY = 0.75;  // ...of whose margin it uses three quarters
+
+/**
+ * ONE MOVE, AS THE TWO KEYS IT ACTUALLY IS. Pure — no editor, no React.
+ *
+ * Returns `{ rest, keyframes }`: `rest` is the clip's resting transform and
+ * `keyframes` the curve over it.
+ *
+ * ⚠ THE RESTING VALUE IS WHERE THE MOVE ENDS, never where it starts. `scale` and
+ * `x` are read as the value wherever the keys do not reach, so a move that
+ * finished at 1.1 with a resting 1 snaps back to 1 the instant the last key
+ * passes. Same rule `push_in` and `applyTextPreset` follow, and the same bug if
+ * it is dropped.
+ */
+export function motionKeys(kind, amount = 1, lengthMs = 2000, ease = "ease-in-out") {
+  const t = Math.max(HOUSE_CAPS.MIN_CLIP_MS, Number(lengthMs) || 2000);
+  const by = Math.max(0.25, Math.min(2, Number(amount) || 1));
+  const keys = (from, to) => [
+    { t: 0, v: from, ease },
+    { t, v: to, ease: "linear" },
+  ];
+  if (kind === "zoom_in" || kind === "zoom_out") {
+    const far = 1 + ZOOM_TO * by;
+    const [from, to] = kind === "zoom_in" ? [1, far] : [far, 1];
+    return { rest: { scale: to }, keyframes: { scale: keys(from, to) } };
+  }
+  const over = 1 + PAN_SCALE * by;
+  const reach = ((over - 1) / 2) * PAN_SAFETY;
+  // ⚠ "PAN LEFT" IS WHERE THE CAMERA GOES, NOT WHERE THE PICTURE GOES, which is
+  // the way round every editor in the world names it — so the picture travels
+  // the other way and its centre moves RIGHT.
+  const [from, to] =
+    kind === "pan_left" ? [0.5 - reach, 0.5 + reach] : [0.5 + reach, 0.5 - reach];
+  return { rest: { scale: over, x: to }, keyframes: { x: keys(from, to) } };
+}
+
 /** The clip a `ref` names, out of `list`, or null. */
 function byRef(ref, list, refs) {
   const id = refs && refs[ref];
@@ -351,6 +420,52 @@ export const ACTIONS = {
             { t: length, v: args.to, ease: "linear" },
           ],
         },
+      });
+    },
+  },
+
+  /**
+   * A KEN BURNS MOVE ON A STILL — the four a drawing can actually carry.
+   *
+   * ⚠ WHY THIS EXISTS BESIDE `push_in`. That verb is one gesture, chosen for the
+   * shots a rules planner could justify moving; this one is the answer to a
+   * different question — "nothing in this film is being RENDERED, so every
+   * drawing has to move on its own". A board of fourteen stills with a push on
+   * three of them and nothing on the other eleven reads as a slideshow with a
+   * fault, which is what was reported. See `stillMotion` in `house_style.js`.
+   *
+   * ⚠ AND IT IS STILL NOT A NEW ANIMATION SYSTEM. Same reasoning `push_in` gives:
+   * a zoom is two keys on `scale`, and a pan is two keys on `x` over a picture
+   * scaled up far enough to have somewhere to travel. Written through the clip's
+   * ordinary `keyframes`, so it is scrubbable, editable and deletable afterwards
+   * exactly like one a person set by hand — and `clear_shot_motion` already
+   * removes it without knowing this verb exists.
+   */
+  add_shot_motion: {
+    verb: "add_shot_motion",
+    label: "Move on a still",
+    needs: ["patchFrame"],
+    args: ["shot", "kind", "amount", "ease"],
+    validate: (args, caps, ctx) => {
+      const i = shotIndex(args.shot, ctx);
+      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      const kind = oneOf(args.kind, MOTION_KINDS);
+      if (!kind) return fail(`there is no “${args.kind}” move`);
+      // How far it travels, as a multiple of the house move. Clamped rather than
+      // refused: a planner asking for three times the usual push has asked for
+      // something reasonable badly, not for something else.
+      const amount = clamp(num(args.amount) ?? 1, 0.25, 2);
+      const ease = oneOf(args.ease, EASINGS) || "ease-in-out";
+      return ok({ shot: i + 1, kind, amount, ease });
+    },
+    describe: (args) => `Shot ${args.shot}: ${MOTION_LABEL[args.kind] || args.kind}`,
+    run: ({ api, args, ctx }) => {
+      const frame = ctx.frames[args.shot - 1];
+      const length = Math.max(HOUSE_CAPS.MIN_CLIP_MS, frame.duration_ms || 2000);
+      const move = motionKeys(args.kind, args.amount, length, args.ease);
+      api.patchFrame(frame.id, {
+        ...move.rest,
+        keyframes: { ...(frame.keyframes || {}), ...move.keyframes },
       });
     },
   },

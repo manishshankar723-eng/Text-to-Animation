@@ -394,10 +394,20 @@ def _audio_of(response) -> bytes:
 # ---------------------------------------------------------------------------
 # PCM arithmetic — the part that needs no decoder
 # ---------------------------------------------------------------------------
+def _ms_of_bytes(size: int) -> int:
+    """How long `size` bytes of this PCM format lasts.
+
+    Split out of `pcm_duration_ms` so a caller holding a growing buffer can ask
+    without copying it — `lay_track` measures its own track on every piece, and
+    `bytes(bytearray)` on a few minutes of speech is megabytes of copy per line.
+    """
+    frames = max(0, size) // (SAMPLE_WIDTH * CHANNELS)
+    return int(round(frames * 1000 / SAMPLE_RATE))
+
+
 def pcm_duration_ms(pcm: bytes) -> int:
     """How long this PCM lasts. Exact, from the byte count alone."""
-    frames = len(pcm) // (SAMPLE_WIDTH * CHANNELS)
-    return int(round(frames * 1000 / SAMPLE_RATE))
+    return _ms_of_bytes(len(pcm))
 
 
 def silence(duration_ms: int) -> bytes:
@@ -486,26 +496,49 @@ def speak_lines(
     return bytes(track), spans
 
 
-def assemble(pieces: list[tuple[int, bytes]]) -> bytes:
-    """Lay each blob of speech at its own moment on one track, as a WAV.
+def lay_track(pieces: list[tuple[int, bytes]]) -> tuple[bytes, list[dict]]:
+    """Lay each blob of speech at its own moment on one track, as a WAV, AND say
+    where each one landed.
+
+    Returns `(wav, windows)` where each window is `{"start_ms", "duration_ms"}`
+    — the stretch of the finished file that piece occupies, silence excluded.
 
     `pieces` is `[(start_ms, pcm), …]` — where the caller decided each shot's
     speech goes. Padding is silence, and the arithmetic is exact because the
     byte count IS the duration (see the module header).
+
+    ⚠ THE WINDOWS COME OUT OF THE SAME WALK THAT WRITES THE BYTES, and that is
+    the whole reason this function exists rather than a second one that works
+    the placement out again. The caller lays ONE CLIP PER WINDOW on the
+    timeline, so a window that disagreed with the audio by a single millisecond
+    would be a clip whose waveform starts just outside it — visible, and
+    unfixable by hand. One walk, one answer.
 
     ⚠ A PIECE IS NEVER MIXED INTO THE ONE BEFORE IT. If two overlap the later one
     is pushed to the end of the earlier rather than summed: this is one voice
     reading in turn, and two lines on top of each other is not a mix, it is a
     mistake nobody can edit their way out of. The caller's layout is what makes
     that branch unreachable; it is here so that a bug up there is audible as a
-    late line rather than as a garbled one.
+    late line rather than as a garbled one. ⚠ The window follows the bytes when
+    it does, so a pushed piece is still drawn where it is actually heard.
     """
     track = bytearray()
+    windows: list[dict] = []
     for at, pcm in sorted(pieces or [], key=lambda piece: piece[0]):
         if not pcm:
             continue
-        clock = pcm_duration_ms(bytes(track))
+        clock = _ms_of_bytes(len(track))
         if at > clock:
             track += silence(at - clock)
+        start = _ms_of_bytes(len(track))
         track += pcm
-    return wav_bytes(bytes(track))
+        windows.append({
+            "start_ms": start,
+            "duration_ms": _ms_of_bytes(len(track)) - start,
+        })
+    return wav_bytes(bytes(track)), windows
+
+
+def assemble(pieces: list[tuple[int, bytes]]) -> bytes:
+    """`lay_track`'s WAV, for a caller that does not care where the pieces are."""
+    return lay_track(pieces)[0]

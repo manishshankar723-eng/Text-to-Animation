@@ -68,6 +68,45 @@ function medianDuration(frames) {
 const LONG_SHOT = 1.5;
 
 /**
+ * HOW LONG A HOLD HAS TO BE BEFORE THE CUT GOES THROUGH BLACK RATHER THAN
+ * THROUGH THE PICTURE.
+ *
+ * A dissolve says "a moment passed"; a dip says "that scene is over". Both are
+ * read off the same number — how long the outgoing shot was held against the
+ * median — because that is the only evidence a timeline carries about where a
+ * scene ends, and the ladder between them is what stops every treated cut in the
+ * film being the same gesture.
+ */
+const SCENE_BREAK = 2.2;
+
+/**
+ * WHAT A TREATED CUT LOOKS LIKE, from the hold in front of it.
+ *
+ * ⚠ THE LENGTH USED TO SATURATE, AND THAT IS WHY EVERY DISSOLVE WAS 1.2s. It was
+ * `hold × 0.25` clamped to 400–1200, so anything held past 4.8s hit the ceiling
+ * — on a film whose long shots run 6s and 9.8s, both came out at exactly 1200ms
+ * and the plan read as one gesture repeated. Reported as "you keep the same
+ * dissolve". This curve reaches its ceiling at a hold of 2.75× the median
+ * instead, so two different pauses get two different lengths, and it is
+ * quantised to 100ms so the number reads as a decision rather than as
+ * arithmetic showing through.
+ *
+ * ⚠ AND THE KIND IS ONLY EVER `dissolve` OR `dip`. The build renders a dozen —
+ * irises, clocks, blinds, checkerboards — and not one of them belongs in a plan
+ * written by arithmetic: the same argument the header makes about titles, which
+ * is that a treatment nobody chose is the first thing the user deletes. Variety
+ * here means the right transition for the pause, not a tour of the library.
+ */
+function treatmentFor(ratio, caps) {
+  const kinds = new Set(
+    ((caps && caps.transitions) || []).map((t) => (typeof t === "string" ? t : t.id))
+  );
+  const kind = ratio >= SCENE_BREAK && kinds.has("dip") ? "dip" : "dissolve";
+  const ms = Math.min(1400, Math.max(400, Math.round((300 + 400 * ratio) / 100) * 100));
+  return { kind, ms };
+}
+
+/**
  * WHICH SHOTS MOVE.
  *
  * A push-in on a long shot; nothing on a short one, because a 1.2s shot with a
@@ -81,6 +120,177 @@ const LONG_SHOT = 1.5;
 const MOVING_SHOT = 1.4;
 const PUSH_TO = 1.07;
 const MOVE_SHARE = 1 / 3;
+
+/**
+ * ⚠ AND WHEN NOTHING IS BEING RENDERED, EVERY DRAWING MOVES INSTEAD.
+ *
+ * The two rules above are about a film that is going to become FOOTAGE: a move
+ * is emphasis, so most shots must be locked off or it stops meaning anything.
+ * With Veo un-ticked there is no footage coming and the stills are the finished
+ * film — and then the same restraint produces a slideshow with a push on three
+ * shots out of fourteen and nothing on the other eleven, which is what was
+ * reported ("add zoom in / zoom out / left / right on all the images when Veo is
+ * not selected"). A rostrum camera never sat still over artwork, and this is
+ * the same job.
+ *
+ * ⚠ BUT IT IS NOT A FOUR-WAY ROTATION, AND THAT WAS THE BUG. It used to be
+ * `["zoom_in", "pan_right", "zoom_out", "pan_left"]` indexed by position, which
+ * put a PAN on every other shot — and a rostrum camera does not do that. A pan
+ * drags the frame sideways across a drawing that was composed to be looked at
+ * straight on, so half a film of them reads as the picture sliding about;
+ * reported as "you scale keyframe and left right, not good looking … keep only
+ * the most used, zoom in, and some clips zoom out, and very few left and right".
+ *
+ * So the pattern is WEIGHTED rather than rotated, and the weights are the ones
+ * that were asked for:
+ *
+ *     shot   1  2  3  4  5  6  7  8  9 10 11 12
+ *     move   in in out in ←  out in in out  →  in in
+ *
+ *   · ZOOM IN is the default and carries most of the film.
+ *   · ZOOM OUT every `PULL_EVERY` shots, so the film breathes both ways.
+ *   · A PAN every `PAN_EVERY` shots and no oftener — and the direction
+ *     ALTERNATES between them, so the two nearest pans in the film are never the
+ *     same gesture twice ("left in 5, so right in 10").
+ *
+ * Two zoom-ins in a row is deliberate: they are the shot that does not draw
+ * attention to itself, and `moveAmount` already gives two neighbouring pushes
+ * different distances because the shots are different lengths. Indexed by
+ * position, so it stays deterministic — see the file header.
+ */
+const PULL_EVERY = 3;
+const PAN_EVERY = 5;
+
+function stillMove(at) {
+  const n = at + 1;
+  // ⚠ THE PAN IS TESTED FIRST, so a shot that is both (15, 30, …) pans rather
+  // than pulls back — the rarer gesture wins the collision, or the pans thin out
+  // to nothing on a long film for no reason the user could ever see.
+  if (n % PAN_EVERY === 0) return (n / PAN_EVERY) % 2 ? "pan_left" : "pan_right";
+  if (n % PULL_EVERY === 0) return "zoom_out";
+  return "zoom_in";
+}
+
+/**
+ * How big a move a shot of this length can carry, as a multiple of the house one.
+ *
+ * ⚠ A SHORT SHOT GETS A SMALLER MOVE RATHER THAN NO MOVE. The original rule
+ * skipped anything under `MOVING_SHOT` because a full push across 1.2s reads as
+ * a wobble — true, and the fix is to travel less far, not to leave the shot dead
+ * while the ones on either side of it move. Clamped both ends so a 12-second
+ * hold does not slowly crawl across the whole picture either.
+ */
+function moveAmount(lengthMs, median) {
+  const ratio = (Number(lengthMs) || 0) / Math.max(1, median);
+  return Math.round(Math.max(0.6, Math.min(1.4, ratio)) * 100) / 100;
+}
+
+/**
+ * Can this clip carry a Ken Burns move at all?
+ *
+ * ⚠ IT NAMES WHAT CANNOT, RATHER THAN WHAT CAN, and that is deliberate. Two
+ * kinds of clip have nothing to gain from a move: FOOTAGE, which moves by itself
+ * — scaling and panning a Veo take on top of the motion already inside it is two
+ * cameras fighting — and a COLOUR CARD, which `placePicture` ignores the
+ * transform of anyway because a zoomed flat colour is the same flat colour.
+ * Everything else is a drawing.
+ *
+ * Written this way round because a positive list silently excludes whatever it
+ * has not heard of: a frame carrying no `src` at all (every animatic saved
+ * before sources were recorded, and every fixture) would stop moving, which is a
+ * feature that quietly does nothing on exactly the projects nobody tests with.
+ */
+function isStill(frame) {
+  const kind = (frame && frame.src && frame.src.kind) || "";
+  return kind !== "video" && kind !== "color";
+}
+
+/**
+ * A MOVE ON EVERY DRAWING THAT HASN'T GOT ONE — the rule, as a step generator.
+ *
+ * ⚠ IT IS EXPORTED BECAUSE THE RULE IS NOT THE RULES PLANNER'S. "Nothing is
+ * being rendered, so the stills ARE the film and a still that never moves is a
+ * slide" is true of every plan on screen, and the model's plan is a plan on
+ * screen. Left inside `housePlan` it only applied to the free door: a user who
+ * pressed "Read my film" with Veo un-ticked got the model's three tasteful
+ * push-ins and six dead shots between them, which is precisely what was reported
+ * — "i told you set scale in all clip" — with a screenshot of a nine-shot plan
+ * carrying three moves. `adopt` now runs it over whichever plan it is holding,
+ * so the tick box means the same thing whoever wrote the film.
+ *
+ * ⚠ AND IT FILLS GAPS RATHER THAN OVERWRITING. A shot the plan already has an
+ * opinion about is left alone — including `clear_shot_motion`, which is a
+ * deliberate "hold this one". `skip` is the set of shot NUMBERS already spoken
+ * for; everything else that is a drawing gets `stillMove`'s weighting, indexed
+ * by its position in the film so the pattern reads the same either way: a pan
+ * every 5th shot whether the model wrote that shot's neighbour or this did.
+ *
+ * @param frames the shot row
+ * @param skip   `Set` of 1-based shot numbers the plan already moves
+ */
+export function stillMoveSteps(frames, skip) {
+  const list = frames || [];
+  const median = medianDuration(list);
+  const taken = skip instanceof Set ? skip : new Set(skip || []);
+  const steps = [];
+  let at = 0;
+  list.forEach((frame, i) => {
+    if (!isStill(frame)) return;
+    // ⚠ THE COUNTER ADVANCES FOR A SKIPPED SHOT TOO. It is a position in the
+    // FILM, not in the list of shots this happens to be writing — stopping the
+    // clock on the shots the model moved would slide every pan after them onto
+    // a different shot than the one the pattern says.
+    const kind = stillMove(at);
+    at += 1;
+    if (taken.has(i + 1)) return;
+    steps.push({
+      verb: "add_shot_motion",
+      args: {
+        shot: i + 1,
+        kind,
+        amount: moveAmount(Math.max(HOUSE_CAPS.MIN_CLIP_MS, Number(frame?.duration_ms) || 0), median),
+        ease: "ease-in-out",
+      },
+      note: "nothing is being rendered, so the drawing moves",
+    });
+  });
+  return steps;
+}
+
+/**
+ * THE VERBS THAT ARE AN OPINION ABOUT HOW A SHOT MOVES.
+ *
+ * `clear_shot_motion` is in the list on purpose: "hold this shot still" is an
+ * opinion, and the filler is for shots nobody has one about.
+ */
+const MOTION_VERBS = new Set(["add_shot_motion", "push_in", "clear_shot_motion"]);
+
+/**
+ * THE SAME RULE, APPLIED TO A PLAN SOMEBODY ELSE WROTE. Returns a new plan.
+ *
+ * A no-op unless the Veo box is OFF — with footage coming, a move is emphasis
+ * and most shots have to stay locked off or it stops meaning anything, which is
+ * the argument written over `STILL_CYCLE`'s replacement above.
+ *
+ * ⚠ IT RUNS BEFORE `validatePlan`, NOT AFTER THE FENCE, so what it adds goes
+ * through exactly the same door as everything else: a step naming a shot that
+ * does not exist is dropped with a reason, and the preview table is the film
+ * that gets made. See `adopt` in `useDirectorRun.js`.
+ */
+export function fillStillMoves(plan, ctx) {
+  const source = plan && typeof plan === "object" ? plan : {};
+  if (!source.include || source.include.veo !== false) return source;
+  const steps = Array.isArray(source.steps) ? source.steps : [];
+  const taken = new Set();
+  for (const step of steps) {
+    if (!step || !MOTION_VERBS.has(step.verb)) continue;
+    const shot = Number(step.args && step.args.shot);
+    if (Number.isFinite(shot)) taken.add(shot);
+  }
+  const added = stillMoveSteps((ctx && ctx.frames) || [], taken);
+  if (!added.length) return source;
+  return { ...source, steps: [...steps, ...added] };
+}
 
 /**
  * The plan the rules produce. Raw — it goes through `validatePlan` like any
@@ -130,41 +340,66 @@ export function housePlan(ctx, options = {}) {
     }
     // The longest holds win the budget — those are the pauses most worth
     // marking. Ties break towards the EARLIER cut so the choice is stable.
-    candidates
-      .sort((a, b) => b.before - a.before || a.cut - b.cut)
-      .slice(0, budget)
+    // ⚠ AND THEY ALTERNATE — NEVER TWO TREATED CUTS IN A ROW. The budget alone
+    // put them wherever the longest holds happened to be, and on a board where
+    // two held shots sit side by side that came out as a transition on BOTH
+    // sides of one shot: it fades up and starts fading out again before it has
+    // been on screen whole, and the row of markers reads as a cluster rather
+    // than as a rhythm. Reported as "i told you set alternate … and you add like
+    // this", with a screenshot of the shot-3/shot-4/shot-5 run.
+    //
+    // ⚠ IT IS THE SAME RULE THE MOVES ALREADY KEEP one section down ("never
+    // twice in a row"), for the same reason: a treatment only reads as one while
+    // the cut on either side of it is plain. Greedy over the longest holds, so
+    // when two candidates collide the more deserving one wins the cut.
+    const taken = [];
+    for (const row of candidates.sort((a, b) => b.before - a.before || a.cut - b.cut)) {
+      if (taken.length >= budget) break;
+      if (taken.some((t) => Math.abs(t.cut - row.cut) < 2)) continue;
+      taken.push(row);
+    }
+    taken
       .sort((a, b) => a.cut - b.cut)
       .forEach(({ cut, before }) => {
+        // A longer hold gets a longer transition, and a hold long enough to be a
+        // scene break gets a different KIND of one. See `treatmentFor`.
+        const ratio = before / median;
+        const { kind, ms } = treatmentFor(ratio, ctx && ctx.caps);
         steps.push({
           verb: "add_transition",
-          args: {
-            cut,
-            kind: "dissolve",
-            // A longer hold gets a longer dissolve, within the sane range. A
-            // fixed 600ms on a five-second hold reads as a glitch.
-            ms: Math.min(1200, Math.max(400, Math.round(before * 0.25))),
-          },
-          note: `shot ${cut} holds ${(before / 1000).toFixed(1)}s`,
+          args: { cut, kind, ms },
+          note:
+            `shot ${cut} holds ${(before / 1000).toFixed(1)}s` +
+            (kind === "dip" ? " — long enough to read as the end of a scene" : ""),
         });
       });
   }
 
   // ------------------------------------------------------------------ moves
-  const moveBudget = Math.floor(frames.length * MOVE_SHARE);
-  let moved = 0;
-  let lastMoved = -2;
-  frames.forEach((frame, i) => {
-    if (moved >= moveBudget) return;
-    if (i - lastMoved < 2) return;
-    if (lengthOf(frame) < median * MOVING_SHOT) return;
-    steps.push({
-      verb: "push_in",
-      args: { shot: i + 1, from: 1, to: PUSH_TO, ease: "ease-in-out" },
-      note: `shot ${i + 1} is held long enough to move on`,
+  // ⚠ TWO DIFFERENT FILMS, AND THE TICK BOX SAYS WHICH ONE THIS IS. With Veo on,
+  // most of these shots are about to become footage and a move is EMPHASIS — so
+  // it goes on the few shots held long enough to earn one. With Veo off the
+  // stills ARE the film, and a still that never moves is a slide. See
+  // `STILL_CYCLE`.
+  if (include.veo === false) {
+    steps.push(...stillMoveSteps(frames));
+  } else {
+    const moveBudget = Math.floor(frames.length * MOVE_SHARE);
+    let moved = 0;
+    let lastMoved = -2;
+    frames.forEach((frame, i) => {
+      if (moved >= moveBudget) return;
+      if (i - lastMoved < 2) return;
+      if (lengthOf(frame) < median * MOVING_SHOT) return;
+      steps.push({
+        verb: "push_in",
+        args: { shot: i + 1, from: 1, to: PUSH_TO, ease: "ease-in-out" },
+        note: `shot ${i + 1} is held long enough to move on`,
+      });
+      moved += 1;
+      lastMoved = i;
     });
-    moved += 1;
-    lastMoved = i;
-  });
+  }
 
   if (steps.length === 1) {
     steps.push({
@@ -258,6 +493,20 @@ export function applyGuardrails(plan, ctx, options = {}) {
       }
       if (cutsUsed.size >= transitionBudget) {
         drop(`${cutsUsed.size} cuts are treated already — the house limit is ${transitionBudget}`);
+        return;
+      }
+      // ⚠ AND NOT ON THE CUT NEXT DOOR TO ONE. A shot with a transition on both
+      // sides is never fully on screen — it fades up and begins fading out — and
+      // a run of treated cuts reads as a cluster rather than as a rhythm. The
+      // rules planner already places them alternating (see `housePlan`); this is
+      // the same rule for a plan the MODEL wrote, which is where the clustered
+      // ones the user photographed came from.
+      if (cutsUsed.has(step.args.cut - 1) || cutsUsed.has(step.args.cut + 1)) {
+        drop(
+          `the cut after shot ${step.args.cut} touches one that is already ` +
+            "treated — transitions alternate, so the shot between them is not " +
+            "dissolving at both ends"
+        );
         return;
       }
       cutsUsed.add(step.args.cut);

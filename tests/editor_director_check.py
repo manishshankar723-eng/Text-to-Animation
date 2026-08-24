@@ -1115,7 +1115,7 @@ def main():
             page.wait_for_timeout(200)
 
             # ---------------------------------------------------------------
-            print("\n⚠ A FLAT TIMELINE GETS NOTHING — there is no rhythm to read\n")
+            print("\n⚠ A FLAT TIMELINE GETS NO TRANSITIONS — there is no rhythm to read\n")
             SERVING["project"] = FLAT
             page.reload()
             page.wait_for_function("window.__probe && window.__probe.ready", timeout=60000)
@@ -1123,8 +1123,22 @@ def main():
             page.wait_for_timeout(400)
             flat_before = page.evaluate("() => window.__probe.timeline()")
             open_director(page)
-            check("the plan is a note and nothing else — no table to run",
-                  page.query_selector(".dir-table") is None)
+            # ⚠ NO TRANSITIONS, BUT NOT AN EMPTY PLAN. There is no rhythm to
+            # read here — every shot is the same length, so no cut is a pause
+            # and none of them is treated. The MOVES are a different question
+            # and the answer changed with the Veo box: nothing is being
+            # rendered, so the stills ARE the film and every drawing gets a
+            # rostrum move ("add zoom in / zoom out on all the images when Veo
+            # is not selected"). See `STILL_CYCLE` in `house_style.js`.
+            flat_rows = page.evaluate("() => window.__probe.planRows()")
+            check("the plan treats no cut — there is no rhythm to read",
+                  all("dissolve" not in r[2].lower() and "dip" not in r[2].lower()
+                      for r in flat_rows),
+                  json.dumps(flat_rows))
+            check("⚠ ...but every drawing still moves, because nothing is being"
+                  " rendered over it",
+                  flat_rows and all(r[3] != "—" for r in flat_rows),
+                  json.dumps(flat_rows))
             # ⚠ AND YET RUN IS ENABLED, BECAUSE THERE IS STILL SOMETHING TO DO.
             # This board has no rhythm to read but it does have dialogue, and
             # phase B is not an edit — so the button offers the one thing that is
@@ -1133,15 +1147,21 @@ def main():
             flat_label = page.evaluate("() => window.__probe.runLabel()")
             check("⚠ ...but Run still offers the voiceover, and NAMES it",
                   "spoken" in flat_label, flat_label)
-            check("...without claiming any edits", _edits(flat_label) == -1, flat_label)
+            check("...alongside the moves it is making", _edits(flat_label) > 0,
+                  flat_label)
             page.evaluate("() => window.__probe.untick('Voiceover')")
             page.wait_for_timeout(250)
             runnable = page.evaluate(
                 "() => { const b = document.querySelector('.dir-actions button.primary');"
                 " return b ? !b.disabled : null; }"
             )
-            check("⚠ ...and with that un-ticked there is genuinely nothing to run",
-                  runnable is False, str(runnable))
+            # ⚠ AND IT IS STILL RUNNABLE WITH THE VOICEOVER OFF, which is the
+            # opposite of what this asserted while a flat board got nothing at
+            # all: the moves are edits, they are free, and a button disabled
+            # over a plan with eight steps in it would be lying about the plan
+            # printed above it.
+            check("⚠ ...and the moves alone are still worth running",
+                  runnable is True, str(runnable))
             page.click(".dir-modal .modal-close")
             page.wait_for_timeout(200)
             check("...and the timeline was left alone",

@@ -130,6 +130,7 @@
 .dir-planning {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 1.2rem 0;
   font-size: 0.86rem;
@@ -179,6 +180,31 @@
 }
 .dir-include-box {
   font-size: 0.8rem;
+}
+/* THE TWO SWITCHES THAT SPEND, IN THEIR OWN GOLD BOX. Same row, same tick
+   boxes, a different colour of card around them — the panel's one accent, used
+   here for the one thing in the panel that costs money.
+   ⚠ IT IS A SEPARATION, NOT A DECORATION. Drawn in the free row these two were
+   indistinguishable from Effects and Shapes, and on a narrow panel "Veo renders"
+   wrapped directly under "Voiceover" — untick the wrong one and the film comes
+   back with no sound and no captions, which is exactly what happened. */
+.dir-include-paid {
+  margin: 0.35rem 0 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 0.5rem;
+  background: var(--panel);
+}
+.dir-include-paid .an-exp-label {
+  color: var(--primary);
+}
+.dir-include-note {
+  margin-left: auto;
+}
+
+/* The wait, once it has gone on long enough to need explaining. See `Elapsed`. */
+.dir-elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 .dir-cost {
@@ -467,12 +493,23 @@
 .dir-shootrun-stopped .dir-speech {
   color: var(--warn);
 }
-/* ⚠ THICKER THAN THE STEP RAIL, ON PURPOSE. A step is 90ms and a pass is two
-   minutes of paid rendering; the bar the user actually watches should not be
-   the thinner of the two. */
+/* ⚠ THE SAME THICKNESS AS THE STEP RAIL, AND IT USED TO BE THICKER (0.45rem vs
+   0.3rem). The argument for the difference was that a pass is two minutes and a
+   step is 90ms, so the bar worth watching should be the bigger one — but the two
+   sit four lines apart in the same dialog, both saying "how far through this
+   is", and giving them different weights made them read as two different kinds
+   of thing. Reported as the bars not matching. Only `.dir-rail` sets a height
+   now, so they cannot drift apart again. */
 .dir-rail-passes {
   margin: 0.35rem 0 0.2rem;
-  height: 0.45rem;
+}
+/* ⚠ AND SLOWER THAN THE STEP RAIL, FOR THE SAME REASON IT IS THICKER. The step
+   rail is re-drawn every 90ms, so its transition has to be over before the next
+   step arrives; this one is fed by a poll that answers every two seconds, and
+   at 90ms each update is a snap rather than a movement — which is what made an
+   advancing bar look like a stuck one between ticks. */
+.dir-rail-passes .dir-rail-fill {
+  transition: width 900ms ease-out;
 }
 
 /* ------------------------------------------------------------- the resume */

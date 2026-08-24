@@ -96,6 +96,29 @@ MIN_HOLD_MS = 400
 # because it is what a person can read in one glance.
 MAX_CHARS = 84
 
+# ⚠ AND THE CAP THAT ACTUALLY BITES, BECAUSE `MAX_CHARS` ALONE DID NOT. Eighty-four
+# characters is a legal subtitle and still a bad one: "We won't just be kings, we
+# will be gods, and no middle-class trash will ever stand" is 81 characters, so it
+# came through whole — one wall of text sitting under the picture for six seconds
+# while the line was read. Reported against the program monitor as the caption
+# being too long.
+#
+# A caption should turn over with the speech, so the cap that matters is WORDS.
+# Five is the ceiling and the splitter balances under it — sixteen words become
+# four captions of four, never five-five-five-one — so nothing ever flashes a
+# single orphaned word.
+#
+# ⚠ IT IS THE DEFAULT FOR EVERY CALLER, not a switch the voiceover turns on. A
+# caption written from a transcript and a caption written from a voiceover are
+# the same object doing the same job, and a rule about how much a person can read
+# at a glance cannot be true of one and false of the other.
+MAX_WORDS = 5
+
+# Where a caption would rather end than in the middle of a clause. Checked one
+# word either side of the balanced target, so "…we will be gods," closes a
+# caption instead of leaving "gods," to open the next one.
+_CLAUSE_END = (",", ".", "?", "!", ";", ":", "…", "—")
+
 # The shortest piece of a CUT line worth keeping. A razor cut through the middle
 # of a word leaves a few milliseconds of that line audible on the far side; a
 # caption for it would be one word flashing on screen for no reason. Lines that
@@ -799,6 +822,7 @@ def tidy_lines(
     total_ms: int | None = None,
     offset_ms: int = 0,
     max_chars: int = MAX_CHARS,
+    max_words: int = MAX_WORDS,
 ) -> list[dict]:
     """Make a transcript SAFE TO DRAW: in order, non-overlapping, readable.
 
@@ -806,7 +830,9 @@ def tidy_lines(
 
       1. **Split first.** A 30-word line is split into readable ones and its
          time shared out by character count, so the pieces are timed before
-         anything else reasons about their neighbours.
+         anything else reasons about their neighbours. ⚠ Split under BOTH caps —
+         `max_words` is the one a reader feels and `max_chars` is the backstop;
+         see `MAX_WORDS` for why the character cap alone was not enough.
       2. **Order, and never overlap — BY SHORTENING THE LINE IN FRONT.** Two
          captions colliding are separated by pulling the EARLIER one's end back,
          not by pushing the later one's start forward. ⚠ Which way round this
@@ -836,7 +862,7 @@ def tidy_lines(
     """
     out: list[dict] = []
     for line in sorted(lines, key=lambda l: (l.get("start_ms") or 0, l.get("end_ms") or 0)):
-        out.extend(_split_line(line, max_chars))
+        out.extend(_split_line(line, max_chars, max_words))
 
     tidied: list[dict] = []
     for line in out:
@@ -865,6 +891,14 @@ def tidy_lines(
         target = max(line["end_ms"], line["start_ms"] + MIN_LINE_MS)
         if i + 1 < len(tidied):
             target = min(target, max(line["end_ms"], tidied[i + 1]["start_ms"] - GAP_MS))
+        # ⚠ AND A SPLIT PIECE IS ALLOWED TO OUTLIVE ITS OWN SENTENCE, by up to
+        # the readability floor and no more. Since the word cap the LAST piece of
+        # a line is often under `MIN_LINE_MS` — "up on time." is half a second —
+        # and capping it at the moment the sentence stopped being spoken buys
+        # nothing and costs a subtitle nobody can read. The overrun is bounded by
+        # the rule above (`start + MIN_LINE_MS`, never the whole gap in front),
+        # so a line followed by thirty seconds of silence still leaves when it
+        # has been read rather than sitting there.
         line["end_ms"] = target
 
     if total_ms:
@@ -880,20 +914,8 @@ def tidy_lines(
     return tidied
 
 
-def _split_line(line: dict, max_chars: int) -> list[dict]:
-    """One long line into several readable ones, sharing out its time.
-
-    Split at word boundaries, and the time each piece gets is PROPORTIONAL TO
-    ITS CHARACTER COUNT rather than an equal share — speech takes about as long
-    as it is long, and an equal share puts a two-word piece on screen for as
-    long as a twelve-word one.
-    """
-    text = (line.get("text") or "").strip()
-    start = int(line.get("start_ms") or 0)
-    end = max(start + 1, int(line.get("end_ms") or 0))
-    if len(text) <= max_chars:
-        return [{"start_ms": start, "end_ms": end, "text": text}]
-
+def _pack_chars(text: str, max_chars: int) -> list[str]:
+    """Greedy word packing to a character ceiling. The backstop cap."""
     pieces: list[str] = []
     current = ""
     for word in text.split():
@@ -905,6 +927,74 @@ def _split_line(line: dict, max_chars: int) -> list[dict]:
             current = trial
     if current:
         pieces.append(current)
+    return pieces
+
+
+def _pack_words(words: list[str], max_words: int) -> list[list[str]]:
+    """Split a line into BALANCED runs of at most `max_words` words.
+
+    ⚠ BALANCED, NOT GREEDY, and that is the whole of it. Packing greedily to the
+    ceiling leaves the remainder as the last piece — sixteen words at a cap of
+    five is 5, 5, 5, 1, and that last caption is one word flashing on screen for
+    a fifth of a second. Deciding HOW MANY pieces first and then sharing the
+    words between them gives 4, 4, 4, 4, and no piece is ever an orphan.
+
+    ⚠ AND IT BREAKS AT A CLAUSE WHERE ONE IS GOING SPARE. If a word one either
+    side of the balanced target ends a clause, the piece ends there instead — so
+    "We won't just be kings," closes a caption rather than trailing "kings," onto
+    the front of the next one. The order of the search is the target, then one
+    word LONG, then one word short: a comma most often falls just past an even
+    share, and refusing to reach for it was what left the first caption reading
+    "We won't just be". Growing is still capped at `max_words`, and neither
+    direction is taken if it would leave a one-word tail behind it — tidying a
+    break must not manufacture the orphan the balancing just avoided.
+    """
+    if not words:
+        return []
+    count = -(-len(words) // max_words)          # ceil: how many pieces are needed
+    per = -(-len(words) // count)                # ...and an even share between them
+    out: list[list[str]] = []
+    at = 0
+    while at < len(words):
+        left_now = len(words) - at
+        take = min(per, left_now)
+        if take > 1 and at + take < len(words):
+            for end in (take, take + 1, take - 1):
+                if end < 1 or end > min(left_now, max_words):
+                    continue
+                left = len(words) - (at + end)
+                if left and left < 2:
+                    continue
+                if words[at + end - 1].endswith(_CLAUSE_END):
+                    take = end
+                    break
+        out.append(words[at:at + take])
+        at += take
+    return out
+
+
+def _split_line(line: dict, max_chars: int, max_words: int = MAX_WORDS) -> list[dict]:
+    """One long line into several readable ones, sharing out its time.
+
+    Split at word boundaries under two caps — `max_words` first (the one a
+    reader actually feels; see its note) and `max_chars` as the backstop for a
+    run of very long words — and the time each piece gets is PROPORTIONAL TO ITS
+    CHARACTER COUNT rather than an equal share, because speech takes about as
+    long as it is long and an equal share puts a two-word piece on screen for as
+    long as a twelve-word one.
+    """
+    text = (line.get("text") or "").strip()
+    start = int(line.get("start_ms") or 0)
+    end = max(start + 1, int(line.get("end_ms") or 0))
+    words = text.split()
+    if len(text) <= max_chars and not (max_words and len(words) > max_words):
+        return [{"start_ms": start, "end_ms": end, "text": text}]
+
+    runs = _pack_words(words, max_words) if max_words else [words]
+    pieces: list[str] = []
+    for run in runs:
+        # The char cap applies INSIDE a run, so five very long words still fit.
+        pieces.extend(_pack_chars(" ".join(run), max_chars))
     if len(pieces) <= 1:
         return [{"start_ms": start, "end_ms": end, "text": text}]
 

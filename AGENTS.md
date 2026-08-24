@@ -263,7 +263,71 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-24 — **A HIDDEN ROW ABOVE A RESTACKED PICTURE WAS
+**Last updated:** 2026-08-24 — **NOBODY HAD EVER SET A THINKING BUDGET, AND THAT
+WAS THE LATENCY.** 2.5-class models think with an AUTOMATIC budget unless told:
+measured, a 24-shot board spent 133s on it and an 8-shot one ran past its budget
+and came back 504. `DIRECTOR_THINKING_TOKENS=1024` + `DIRECTOR_MAX_OUTPUT_TOKENS`
+take that to 28s / 20-25s. ⚠ The bounds matter BOTH ways — at 512 the polish call
+returns an EMPTY plan, at 0 it runs away for 238s. See the Work Log for the table.
+
+**Previously:** 2026-08-24 — **THE AI PASS COULD NOT FINISH INSIDE THE BROWSER'S
+PATIENCE.** The tab aborted every request at 120s; one model ATTEMPT was allowed
+180s, `complete_json` made three of them, and the plan route makes two calls — and
+the Google adapter (the DEFAULT provider) passed no timeout to `google-genai` at
+all, so a wedged connection hung the worker for ever. There is one clock now
+(`DIRECTOR_BUDGET_SECONDS`, honoured by both adapters), the plan route gets 300s
+in the browser, and a test asserts the two numbers still agree. See the Work Log.
+
+**Previously:** 2026-08-24 — **THE "EVERY DRAWING MOVES" RULE NOW APPLIES TO
+THE MODEL'S PLAN TOO.** It lived inside `housePlan`, so with Veo un-ticked the free
+door moved every still and "Read my film" moved the three the model chose.
+`fillStillMoves` runs in `adopt`, over every plan, filling only the shots the plan
+has no opinion about. Also: the two PAID tick boxes (Voiceover, Veo renders) have
+their own gold row now — they were mis-clickable beside the free ones, and
+un-ticking Voiceover silently takes the captions with it. See the Work Log.
+
+**Previously:** 2026-08-24 — **EVERY SPINNER TURNS IN GOLD NOW.**
+`.spinner-inline`'s track was `--border` (the dark panel's own navy hairline) and
+its moving edge `--primary-ink` (near-black) — right on a gold FILL, invisible on
+the twenty-five other surfaces it is used on. The default is gold on a faint gold
+track now, matching `.btn-ring`; `.btn.primary` and the three buttons that turn
+gold on hover are the exception. See the Work Log.
+
+**Previously:** 2026-08-24 — **THE FREE PLAN COULD NOT BUY FOOTAGE, THE PANS
+WERE ON HALF THE FILM, AND TWO TRANSITIONS SAT EITHER SIDE OF ONE SHOT** (bug
+report, four screenshots of the 🎬 panel and the timeline).
+
+> "i see transition i told you set alternate like this … and look you scale
+> keyframe and left right, not good looking, so keep only the most used, zoom in,
+> and some clips zoom out, and very few left and right … and most important, when
+> i want i generate veo video, i click make video, click just the rhythm, uncheck
+> all, keep only veo check mark and generate — so video generated but not come in
+> layer. fix it please"
+
+⚠ **THE VEO ONE WAS NOT AN ATTACH BUG — NOTHING WAS EVER RENDERED.** "Just the
+rhythm" (`housePlan`) writes no words by design, so it wrote no MOTION PROMPTS,
+so `veoShots` returned an empty list, so `veoDue` said "there are no motion
+prompts to render" and phase C never ran. The panel showed the Veo box ticked
+next to "**Free.** This plan spends nothing" and Run applied the camera moves —
+exactly what the fourth screenshot shows. Fixed by `housePrompts` (`veo_pass.js`)
+plus `GET /animatics/{id}/panels`: the free plan's prompt for a shot is **the
+description that shot was drawn from**, straight off the storyboard — the same
+sentence ✨ Animate opens its prompt box on — so Phase 0 still invents nothing and
+can now buy footage. A shot the board says nothing about comes back promptless
+and is refused BY NAME, because Veo bills for a blank prompt.
+
+⚠ **THE MOVES ARE WEIGHTED NOW, NOT ROTATED.** `STILL_CYCLE` was the four moves
+in order, which put a PAN on every second drawing. It is `stillMove(at)` instead:
+zoom in by default, zoom out every 3rd shot, and a pan every 5th with the
+direction ALTERNATING — "left in 5, so right in 10".
+
+⚠ **AND TREATED CUTS ALTERNATE.** Two held shots side by side used to get a
+transition on both sides of one shot, which never gets to be on screen whole.
+`housePlan` picks greedily by hold and skips a cut next door to one already
+taken; `applyGuardrails` enforces the same thing on a plan the MODEL wrote, which
+is where the cluster in the screenshot came from.
+
+**Previously:** 2026-08-24 — **A HIDDEN ROW ABOVE A RESTACKED PICTURE WAS
 PAINTING OVER THE WHOLE FILM** (bug report, with three screenshots of a project
 built entirely out of the restack feature from 2026-08-22: eleven rows, most of
 them added copies — "Shapes 2", "Shapes 3", "Video 2", "Video 3" — and every eye
@@ -2608,7 +2672,11 @@ previews require a cloud run (not `local_only`).
 | `API_MAX_VIDEO_SHOTS` / `API_MAX_VIDEO_BATCH` / `API_MAX_VIDEO_WORKERS` | Spend guards: shots per project (60), shots one "Render all" may submit (12), parallel render jobs on their own pool (2). These bound **money**, not just work. |
 | `DIRECTOR_PROVIDER` | `vertex` \| `gemini` \| `stub` \| `openai_compatible`. Unset follows `TEXT_PROVIDER`. ⚠ The only switch in this app that can leave Google. |
 | `DIRECTOR_MODEL` | Model id. Unset = the text model — **except on `openai_compatible`, where it is REQUIRED** (the fallback is a Google id). |
-| `DIRECTOR_BASE_URL` / `DIRECTOR_API_KEY` / `DIRECTOR_TIMEOUT_SECONDS` | The OpenAI-shaped endpoint, its key (a local model wants none) and the per-call ceiling (180s). |
+| `DIRECTOR_BASE_URL` / `DIRECTOR_API_KEY` | The OpenAI-shaped endpoint and its key (a local model wants none). |
+| `DIRECTOR_TIMEOUT_SECONDS` | One ATTEMPT's ceiling (180s). ⚠ Honoured on **both** providers since 2026-08-24 — the Google path used to pass no timeout at all, so a wedged Vertex connection hung the worker for ever. |
+| `DIRECTOR_THINKING_TOKENS` | **The biggest latency knob in the Director** (1024). 2.5-class models think with an automatic budget unless told; that cost a 24-shot board 133s (28s at 1024) and 504'd an 8-shot one. ⚠ Below ~1024 the polish call returns an EMPTY plan; at 0 it runs away. `-1` = provider default. |
+| `DIRECTOR_MAX_OUTPUT_TOKENS` | One answer's ceiling (12288). Unset it is the model's own 65,536 — a run-away then costs four minutes instead of a truncated answer the repair path can retry. |
+| `DIRECTOR_BUDGET_SECONDS` | One CALL's wall clock, retries and backoff included (135s). The plan route makes two, and the browser waits 300s (`PLAN_TIMEOUT_MS`, `client/src/api.js`) — raise one and you raise the other. |
 | `DIRECTOR_STRUCTURED_OUTPUT` | `auto` (default) \| `native` \| `prompt`. Where the JSON Schema travels. `auto` = native on vertex/gemini/stub, prompt elsewhere. Set `prompt` on Google to rehearse the no-schema path. |
 | `DIRECTOR_JSON_MODE` | `on` (default) \| `off`. Sends `response_format: json_object` on OpenAI-shaped calls. Not a schema — turn it off for endpoints that reject the field. |
 | `DIRECTOR_TEMPERATURE` / `DIRECTOR_TOP_P` / `DIRECTOR_SEED` | Greedy and seeded by default (0.0 / 1.0 / 42), so "Read it again" is a comparison and not a re-roll. `none`/`off` on the seed turns it off. |
@@ -2845,7 +2913,337 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-24 (latest) — TWO BUGS BEHIND ONE BLACK PROGRAM PANEL (bug report, three screenshots of a project entirely built out of the 2026-08-22 restack feature)
+### 2026-08-24 (latest) — 🎬 THE PLAN WAS SLOW BECAUSE NOBODY HAD EVER SET A THINKING BUDGET (measured, not guessed)
+
+> "this time take too much time how i fast this lentency" — with the panel at
+> 118s — and then, once the clock from the previous entry landed:
+> "The AI pass didn't run (Text API error during polish: 504 DEADLINE_EXCEEDED …
+> It ran out of time — 135s is all one call gets)"
+
+**The clock did its job and named the culprit: the POLISH call.** Everything
+below is measured against `gemini-2.5-flash` on Vertex with the real analyse and
+polish requests, on flat boards with no descriptions — the hard case, and the one
+users actually have (`boardFrom` sends no panel wording, so the model plans from
+shot lengths alone).
+
+| whole `direct()` | 8 shots | 24 shots | 48 shots |
+|---|---|---|---|
+| thinking AUTOMATIC, no cap (what shipped) | 24s, and **150s → 504** | **133s** | — |
+| thinking 512 + cap | 15s | 15s but **0 STEPS** | 21s |
+| **thinking 1024 + cap (ships now)** | **20–25s** | **28s** | **39s** |
+| thinking 2048 + cap | 22s | 34s | 42s |
+| thinking 3584 + cap | — | — | 61s |
+
+⚠ **NOTHING IN THIS APP HAD EVER SET `thinking_config`.** 2.5-class models think
+by default with an AUTOMATIC budget, and that is where the wall clock went: both
+Director calls were spending ~1,250 thinking tokens on what is mostly
+bookkeeping, and on a 24-shot board the two of them took 133 SECONDS. Now
+`DIRECTOR_THINKING_TOKENS` (1024) caps it.
+
+⚠ **AND 1024 RATHER THAN LESS, WHICH IS THE PART A GUESS WOULD HAVE GOT WRONG.**
+At 512 the plan came back in 15s on a 24-shot board **with no steps in it** — the
+polish call ran out of room to think and gave up. At 0 it is worse: it loses the
+thread entirely and generates until something stops it — 8,192 tokens of
+unparseable JSON against the cap, and **65,536 tokens / 238 SECONDS** without
+one, which is exactly the shape of the user's 504. Above 1024 the extra budget
+buys time, not steps.
+
+⚠ **AND `max_output_tokens` HAD NEVER BEEN SET EITHER**, so the ceiling was the
+model's own 65,536 — that is what turns a run-away into four minutes and a
+timeout instead of a truncated answer the existing repair path can have another
+go at. `DIRECTOR_MAX_OUTPUT_TOKENS` (12,288) covers a 48-shot board planned to
+the guard rails at ~70 tokens a step. It was seen firing correctly during the
+measurements: cap hit → warning logged naming the cap → repair asked → plan
+returned.
+
+Both settings travel in `sampling()`, so they are inside `fingerprint()` with
+everything else that decides the answer — a determinism claim that did not cover
+them would be a claim about the wrong bytes. `thinking_tokens` is not a
+`GenerateContentConfig` field, so `_google_adapter` pops it and builds the
+`ThinkingConfig`; the OpenAI path drops it deliberately (every endpoint spells
+reasoning differently) and takes the cap as `max_tokens`.
+
+**Files:** `llm_json.py` (`DEFAULT_THINKING_TOKENS`, `DEFAULT_MAX_OUTPUT_TOKENS`,
+`sampling()`, both adapters, the MAX_TOKENS warning), `.env.example`, the env
+table in this file, `tests/director_timeout_check.py` (six new checks).
+
+**Verified:** end to end against the real endpoint, `director.direct()` with the
+shipped defaults — 8 shots 24.5s / 19.9s, 24 shots 27.6s, 48 shots 39.0s, every
+one returning a plan with steps in it and motion prompts for every shot; and the
+BEFORE case reproduced first (150.7s → `504 DEADLINE_EXCEEDED`, the user's exact
+failure). `python tests/director_timeout_check.py` — 19 checks, all pass,
+including that the budget is neither 0 nor below 1024 and that the adapter builds
+a real `ThinkingConfig` (fake client, no network). `director_determinism_check`,
+`director_contract_check`, `director_plan_check`, `director_language_check`,
+`director_guardrails_check`, `director_house_veo_check`, `director_actions_check`
+all clean.
+
+⚠ **WHAT IS STILL TRUE: STEP COUNTS ARE NOISY ON A FEATURELESS BOARD.** The same
+board planned twice at the same budget can come back with 13 steps or 5 — the
+model has almost nothing to go on when every shot is 2.0s and none of them
+carries a description. That is a separate problem from latency, and the honest
+fix for it is the one already noted under the panels endpoint: send the board's
+own wording in `boardFrom`, which today sends `description: ""` for every panel.
+
+### 2026-08-24 — THE AI PASS TIMED OUT AT 120s AND BLAMED A DATABASE (bug report, screenshot of the 🎬 panel's fallback banner)
+
+> "The AI pass didn't run (The server didn't respond within 120s. It may be stuck
+> (a database it needs can do this) — check the backend's log, then try again.),
+> so this is the rhythm read off the timeline."
+
+Nothing was stuck and no database was involved. **Three numbers had never been
+made to agree with each other:**
+
+| where | what it allowed |
+|---|---|
+| `client/src/api.js` | the tab aborts ANY request after **120s** |
+| `DIRECTOR_TIMEOUT_SECONDS` | one attempt may take **180s** — already more than the tab would wait |
+| `complete_json` | **3** attempts of that, with 4s + 8s of backoff — ~9½ min per call |
+| `POST /director/{id}/plan` | makes **two** of those calls (analyse, then polish) |
+
+So a plan that was working perfectly could not finish inside the browser's
+patience, and the message the user got named the wrong component.
+
+⚠ **AND THE GOOGLE ADAPTER PASSED NO TIMEOUT AT ALL** — the worst of it, because
+`vertex`/`gemini` is the DEFAULT provider. `client.models.generate_content(...)`
+was called with no `http_options`, so `DIRECTOR_TIMEOUT_SECONDS` was a setting
+that silently did nothing on the path almost everyone is on, and a Vertex
+connection that accepted the request and then went quiet held that worker thread
+until the process was restarted. It now passes
+`types.HttpOptions(timeout=call_timeout() * 1000)` — ⚠ MILLISECONDS, which the
+field is documented in and the rest of the module is not — and an SDK too old to
+take one says so in the log rather than pretending to be guarded.
+
+**The clock, as it now works.** `DIRECTOR_TIMEOUT_SECONDS` (180) is one
+ATTEMPT's ceiling and is honoured by BOTH adapters. New `DIRECTOR_BUDGET_SECONDS`
+(135) is one CALL's wall clock, retries and backoff included: `complete_json`
+sets a deadline in a contextvar, `call_timeout()` hands each attempt the ceiling
+or whatever is left (whichever is less, floored at `MIN_ATTEMPT_SECONDS` = 15s),
+and the loop refuses to sleep into a budget that is already gone — a retry that
+cannot arrive in time is a paid call for an answer nobody will read. The reason
+then names the clock, so "the model is slow" and "something is stuck" are
+distinguishable in the panel. A contextvar rather than a parameter because the
+thing that needs the deadline is the ADAPTER and the thing that owns it is
+`complete_json` two frames up, with the adapter signature — the seam the whole
+provider story and every fake transport is built on — in between.
+
+**And the browser now waits for what the server may legitimately take:**
+`PLAN_TIMEOUT_MS` = 300s for the plan route only (`request()` takes an optional
+`timeoutMs`; everything else still gets 120s). 2 × 135 + overhead fits inside it,
+and `tests/director_timeout_check.py` asserts that relationship so raising one
+number without the other fails a test instead of a user's plan.
+
+⚠ **AND THE WAIT IS LEGIBLE NOW.** A spinner is not a clock, and this one can
+honestly run for two minutes. After 8s the "Reading your film…" line grows a
+seconds counter and one sentence saying it is two calls and that it gives up on
+its own — a turning circle looks identical at 8s and at 90s, which is how a
+healthy call gets reloaded out from under itself.
+
+**Files:** `llm_json.py` (`DEFAULT_BUDGET_SECONDS`, `MIN_ATTEMPT_SECONDS`,
+`_deadline`, `call_timeout`, `_time_left`, `_attempts`, `_worth_retrying`,
+`_with_clock`, both adapters), `client/src/api.js` (`PLAN_TIMEOUT_MS`,
+`request({timeoutMs})`, `fetchWithRetry`), `client/src/components/DirectorPanel.jsx`
+(`Elapsed`), `client/src/styles/director.css` (`.dir-elapsed`, the wrap),
+`.env.example` + the env table above. New: `tests/director_timeout_check.py`.
+
+**Verified:** `python tests/director_timeout_check.py` — **13 checks, all pass**,
+driving `complete_json` through a fake transport that burns its budget: it stops
+after one attempt instead of three, does not sleep 4s into a spent clock, names
+the clock in the reason, and does NOT name it when the fault was unusable JSON;
+plus the ms/seconds unit and the client-vs-server relationship read out of the
+real files. `director_plan_check`, `director_language_check`,
+`director_guardrails_check`, `director_house_veo_check`, `director_actions_check`,
+`director_determinism_check`, `director_contract_check` (skips without
+`DIRECTOR_CONTRACT_LIVE`), and the full browser `editor_director_check` all
+clean. `npm run build` clean.
+
+⚠ **WHAT THIS DOES NOT PROVE: that the user's call was slow rather than wedged.**
+Nothing here has been run against a real Vertex endpoint that hangs — the fix is
+that either case now ends in a sentence naming the right thing, within a bounded
+time, instead of a browser abort. If it recurs, the backend log now carries the
+`[llm_json] … budget spent after N attempt(s)` line that says which it was.
+
+### 2026-08-24 — THE MOVE RULE WAS THE RULES PLANNER'S, NOT THE FILM'S (bug report, timeline + 🎬 panel screenshots of an AI plan)
+
+> "when click make video buttun and check mark all only i not select veo render,
+> after generate then i see in timeline only text come and scal transition come,
+> but i told you set scal in all clip — and not come voiceover and caption"
+
+**BUG — "every drawing moves when Veo is off" only ever applied to the FREE
+door.** It was written inside `housePlan`'s `include.veo === false` branch, so
+"Just the rhythm" moved all fourteen stills and "Read my film" moved whichever
+three the model felt like: the screenshot is a nine-shot plan with `push in` on
+2, 4 and 7 and nothing on the other six. But the rule is a statement about the
+FILM — nothing is being rendered, so the stills are the finished film and a still
+that never moves is a slide — and it is just as true of a plan a language model
+wrote. Extracted as `stillMoveSteps` (the generator both callers share) plus
+`fillStillMoves(plan, ctx)`, which `adopt` now runs over EVERY raw plan before
+`validatePlan` sees it. ⚠ IT FILLS GAPS, IT DOES NOT OVERWRITE: a shot the plan
+already has an opinion about is left exactly as written, `clear_shot_motion`
+("hold this one") included. ⚠ AND THE PATTERN STAYS POSITIONAL — the counter
+advances over skipped shots too, so a pan still lands on shot 5 and 10 whether
+this or the model wrote their neighbours. ⚠ AND IT IS STILL A NO-OP WITH VEO
+TICKED, so the box adds and removes eight moves for free, live, in the preview.
+
+**NOT A BUG — the voiceover and the captions.** The Voiceover box is plainly
+UN-ticked in the user's screenshot ("Would read 2 lines aloud", not "Reads"), so
+phase B never ran, and the captions go with it because phase B is what writes
+them. Nothing was broken; the panel was easy to mis-click. The two PAID switches
+were drawn in the same row as Transitions / Effects / Text / Shapes, and on a
+narrow panel `Veo renders` had wrapped onto its own line directly underneath
+`Voiceover` — so "leave the render off" and "cancel the voiceover" were two
+adjacent identical boxes. They now sit in their OWN gold-bordered row labelled
+**"These two spend"** (`freeKeys()` / `paidKeys()` in `plan_schema.js`, derived
+from the same tables as `governedKeys` so a flag cannot appear in one and not the
+other), with the sentence that would have answered the whole report beside them:
+**"the voiceover writes the captions too"**.
+
+**Files:** `client/src/animatic/agent/house_style.js` (`stillMoveSteps`,
+`fillStillMoves`, `MOTION_VERBS`; `housePlan`'s branch is now a call),
+`client/src/animatic/agent/useDirectorRun.js` (`adopt` fills before validating),
+`client/src/animatic/agent/plan_schema.js` (`freeKeys`, `paidKeys`),
+`client/src/components/DirectorPanel.jsx` (the second tick-box row),
+`client/src/styles/director.css` (`.dir-include-paid`, `.dir-include-note`).
+
+**Verified:** `python tests/director_guardrails_check.py` — all pass, with a new
+section driving a MODEL-shaped plan (three pushes and one deliberate hold on a
+12-shot board) through `fillStillMoves`: the model's three survive untouched,
+the nine it said nothing about are filled, shot 9's hold is respected, the pans
+still land on 5 (left) and 10 (right), nothing is dropped or trimmed, and ticking
+Veo takes all eight fills straight back off. `director_house_veo_check`,
+`director_actions_check`, `director_determinism_check`, `director_plan_check`,
+`director_voice_order_check`, `director_chunk_check`, `director_resume_check` all
+clean. `python tests/editor_director_check.py` — all pass (its `untick('…')`
+probe finds boxes by label text, which the new row keeps). `npm run build` clean,
+and the new tick-box rows rendered in Chromium against the BUILT stylesheet to
+check the gold row reads as separate.
+
+⚠ **THE 4 DROPPED STEPS IN THE USER'S SCREENSHOT ARE STILL UNEXPLAINED.** Their
+plan shows "0 transitions" with "4 steps couldn't be used", and a nine-shot flat
+board with well-spaced transitions keeps two under the budget (checked directly).
+Whatever refused those four is inside that `<details>` and has not been read.
+
+### 2026-08-24 — EVERY SPINNER TURNS IN GOLD NOW, NOT IN NAVY (bug report, screenshot of the 🎬 panel mid-plan)
+
+> "see keep golden color in circle bar not keep blue it merge in bg and this type
+> of circle bar use so change in all"
+
+`.spinner-inline` was built for ONE surface and used on twenty-five: its track
+was `--border` (#272c3d — literally the dark panel's own hairline) and its moving
+edge was `--primary-ink` (near-black), which reads only against a gold FILL. So
+inside a gold button it was perfect and everywhere else it was a dim blue ring
+with nothing visibly turning in it — the 🎬 panel's "Reading your film…" in the
+screenshot.
+
+**Inverted, rather than patched again.** `animatic-editor.css` had already
+re-coloured two of these one selector at a time (`.an-status-export`,
+`.an-prop-progress`) and its comment said the base rule "must not become" this —
+correct while two panels were affected, wrong by the time the Director panel
+became the third. The default is now **gold on a faint gold track**, the same two
+colours `.btn-ring` (`storyboard.css`) has always used, and the gold FILL is the
+exception: `.btn.primary` plus the three buttons that TURN gold on hover while
+they are busy keep the dark ink, because gold-on-gold is exactly as invisible as
+near-black-on-navy. ⚠ The track is `var(--border-gold)` rather than `.btn-ring`'s
+literal rgba, so it follows the LIGHT theme too, where the app's gold is a much
+deeper #8a6b17.
+
+Same two colours applied to the two other rings that still had a `--border`
+track: `.spinner` (the 20px placeholder one) and `.fs-thumb-wait` (the frame
+strip's).
+
+**Files:** `client/src/styles/text-to-image.css` (`.spinner-inline`, its new
+gold-fill exception, `.spinner`), `client/src/styles/animatic-editor.css` (the
+two-selector whitelist deleted, replaced by a note saying where the rule went),
+`client/src/styles/animatic.css` (`.fs-thumb-wait`).
+
+**Verified:** `npm run build` clean, and the computed colours read out of a real
+Chromium against the BUILT stylesheet — panel / plain `.btn` / `.btn.secondary` /
+`.spinner` / `.fs-thumb-wait` all `rgb(229,193,88)` on `rgba(229,193,88,.35)`,
+`.btn.primary` still `rgb(20,16,5)` on `rgba(20,16,5,.25)`, and the light theme
+swapping both to its deeper gold (`rgb(138,107,23)` on `rgba(150,116,27,.4)`).
+Not eyeballed in the running app.
+
+### 2026-08-24 — 🎬 THE RHYTHM PLAN CAN RENDER, THE PANS ARE RARE, AND TRANSITIONS ALTERNATE (bug report, four screenshots)
+
+> "i see transition i told you set alternate like this … you scale keyframe and
+> left right, not good looking … keep only the most used, zoom in, and some clips
+> zoom out, and very few left and right, so left in 5, so right in 10 … and most
+> important, when i want i generate veo video, i click make video, click just the
+> rhythm, uncheck all, keep only veo check mark and generate — so video generated
+> but not come in layer"
+
+**BUG 1 (the important one) — "not come in layer" was never an attach problem:
+the free plan could not ask for a render at all.** `housePlan` writes no words on
+purpose (arithmetic can say which shots were HELD; it cannot say what happens
+inside one), and it had been writing no MOTION PROMPTS for the same reason —
+`veoRef.current = []`. So on "Just the rhythm" the Veo tick box was a switch that
+did nothing: `veoShots` returned nothing, `veoDue` answered "there are no motion
+prompts to render", phase C was skipped, and the panel cheerfully said "**Free.**
+This plan spends nothing" with the box ticked (screenshot 4). Fixed WITHOUT
+letting Phase 0 invent a single word: `housePrompts`
+(`client/src/animatic/agent/veo_pass.js`) resolves each shot's prompt to **the
+description it was drawn from**, read in one call by the new
+`GET /animatics/{id}/panels` (`server/animatics.py`, reusing `_shot_wording`'s
+three-source ladder and its per-board cache). That is the same sentence the
+✨ Animate dialog drafts its prompt from, so two ways of animating one panel now
+ask Veo for the same thing. ⚠ A LABEL IS NOT A DESCRIPTION — the endpoint blanks
+a wording that is only "Shot 4", and a promptless shot is refused by name in the
+preview rather than rendered, because Veo bills for a blank prompt exactly as it
+bills for a good one. The runner reads it through a new optional `readPanels`
+thunk, so the whole agent still runs under bare node with nothing wired up.
+
+**BUG 2 — a pan on every second drawing.** `STILL_CYCLE` (the "every drawing
+moves when Veo is off" rule from earlier the same day) rotated through
+`zoom_in → pan_right → zoom_out → pan_left`, which makes half the film slide
+sideways across artwork composed to be looked at straight on. Replaced by
+`stillMove(at)`: **zoom in by default, zoom out every 3rd shot, a pan every 5th**,
+with the pan direction alternating — left at 5, right at 10, left at 15. Over
+twelve stills that is 6 pushes, 4 pull-backs and 2 pans, which is the weighting
+the report asked for in so many words.
+
+**BUG 3 — transitions clustered instead of alternating.** The planner took the
+`TRANSITION_CUT_SHARE` budget straight off the longest holds, so three held shots
+in a row got a transition on cuts 4, 5 AND 6 — shot 5 dissolving at both ends,
+never fully on screen (screenshot 3). `housePlan` now walks the candidates
+greedily by hold and skips any cut next door to one already taken, and
+`applyGuardrails` drops the same case out of a plan the MODEL wrote (which is
+where the photographed cluster came from), with the reason on screen.
+
+New: `client/src/animatic/agent/veo_pass.js` → `housePrompts`;
+`server/animatics.py` → `GET /{job_id}/panels`; `server/schemas.py` →
+`AnimaticShotWording`; `client/src/api.js` → `getAnimaticPanels`;
+`tests/director_house_veo_check.py`. **Files:**
+`client/src/animatic/agent/house_style.js` (`stillMove`, the transition spacing,
+the fence rule), `client/src/animatic/agent/useDirectorRun.js` (`readPanels`,
+`buildHousePlan`), `client/src/components/AnimaticEditor.jsx`
+(`directorReadPanels`).
+
+**Verified:** `python tests/director_house_veo_check.py` — **14 checks, all
+pass** (new: the board writes the prompts, a wordless shot is refused by name, a
+generated in-between shot uses its own wording, a take and a colour card are not
+offered, the tick box is due again, the length still comes from the hold).
+`python tests/director_guardrails_check.py` — **all pass**, with new checks for
+the alternating cuts (planner AND fence) and the move weighting.
+`director_actions_check`, `director_chunk_check`, `director_contract_check`,
+`director_determinism_check`, `director_language_check`, `director_plan_check`,
+`director_resume_check`, `director_voice_order_check`, `editor_veo_attach_check`,
+`veo_speed_fit_check`, `animate_prompt_draft_check`, `animate_guard_check` all
+clean. `python tests/editor_director_check.py` — **all pass**, after correcting
+three assertions in its FLAT-timeline stage that were left stale by the earlier
+"every drawing moves when Veo is off" change (a flat board now gets 8 moves and
+no transitions, so "no table to run" and "nothing to run" were both wrong; they
+now assert that no cut is treated, that every drawing moves, and that the moves
+alone are worth running).
+
+⚠ **NOT YET SEEN IN A BROWSER AGAINST A REAL BOARD.** The end-to-end claim —
+tick Veo on "Just the rhythm", get takes on the Storyboard video row — is proven
+by the node checks and by `editor_director_check`'s stubbed render pass, not by a
+paid Veo run against a real storyboard. The one thing that cannot be checked here
+is whether the user's own board actually carries panel descriptions: a board
+imported without them will show "shot N has no motion prompt" for every shot,
+which is the correct answer and a visible one.
+
+### 2026-08-24 — TWO BUGS BEHIND ONE BLACK PROGRAM PANEL (bug report, three screenshots of a project entirely built out of the 2026-08-22 restack feature)
 
 > "see when i uper layer off layer hide then see my video layer not view in
 > program panel and same happen when my only Story image layer but not view see
@@ -16849,6 +17247,25 @@ the voiceover, because a take's length is chosen from the shot's hold and the
 voiceover rewrites the holds. The shots, their lengths and the price are all in
 the preview before the box is ticked, and ticking it puts the money on the Run
 button.
+⚠ **AND THE RENDER RAIL MOVES WHILE VEO IS WORKING (2026-08-24).** It used to be
+fed by the PASS counter, so a film that fits one submission — which is most of
+them — got a bar that sat empty for two minutes and then jumped to full the
+instant the render was over. `runDirectorVeoPass` now reports the job's own
+`percent` / `done_parts` / `total_parts` (the same numbers ✨ Animate's bar
+reads) and the panel draws the rail from `footage.frac`, which creeps inside a
+shot as well as between shots. ⚠ THE COUNT BESIDE IT IS STILL WHOLE SHOTS — two
+numbers, because "3.4 of 7 shots rendered" is a number about nothing. The
+spinner that used to sit in front of the message is GONE: it turned while the
+rail sat still, so the two disagreed about whether anything was happening and
+the turning one won.
+⚠ **AND SINCE 2026-08-24 THE *FREE* PLAN CAN RENDER TOO.** "Just the rhythm"
+writes no words, so it used to write no motion prompts either — which made the
+Veo box on that plan a switch that did nothing at all: priced at zero, ticked,
+and then a run with no footage in it. `housePrompts` gives each shot the
+description it was DRAWN from (`GET /animatics/{id}/panels`, the same wording
+✨ Animate opens on), so Phase 0 still invents nothing and can still buy
+footage. A shot the board says nothing about is refused by name in the preview —
+Veo bills for a blank prompt exactly as it bills for a good one.
 ⚠ **STOP WORKS BETWEEN PASSES AND SAYS SO.** A submission of twelve renders is
 billed the moment it leaves, so the pass in flight is seen through and the ones
 after it never go — which on a four-pass film is most of the money.
@@ -16857,6 +17274,42 @@ project, and 🎬 opens on "a render was interrupted — 12 of 48 shots had alre
 been rendered", finishes exactly what was never submitted, and re-pays for
 nothing. It finishes the FOOTAGE; the plan lived in the browser that died and has
 to be asked for again, which is free.
+⚠ **FIVE THINGS CHANGED ON 2026-08-24, ALL FROM ONE RUN THE USER WATCHED** (14
+shots, everything ticked except Veo renders). Each is written up where it lives;
+this is the index.
+1. **The voiceover is one clip per run of speech, not one bar over the film.**
+   `_lay_out_speech` returns `windows` (from `tts.lay_track`, the same walk that
+   writes the bytes) and `run_voiceover` lays a clip per window — `start_ms` on
+   the timeline, `offset_ms` the same distance into the file, `trim_ms` its own
+   length. The file is continuous, so a single clip drew a flat empty bar from
+   0:00 to the first word and another across every pause, and razoring it into
+   these exact pieces was the user's first job on a paid run. The shape is the
+   one `splitClip` already leaves and `_captioned_clips` already reads.
+2. **Captions are capped at FIVE WORDS** (`captions.MAX_WORDS`), balanced so
+   sixteen words are four captions of four rather than 5/5/5/1, and broken at a
+   clause where one is going spare. `MAX_CHARS` alone did not bite: an 81-char
+   sentence is a legal subtitle and still a wall of text under the picture.
+   ⚠ It is the default for EVERY caller — a transcript caption and a voiceover
+   caption are the same object doing the same job.
+3. **Transitions vary in kind and length.** The old rule was `hold × 0.25`
+   clamped to 400–1200, which saturated at a 4.8s hold — so a film whose long
+   shots run 6s and 9.8s got 1.2s dissolves on both and read as one gesture
+   repeated. Now the length curve reaches its ceiling at 2.75× the median and a
+   hold past `SCENE_BREAK` (2.2×) dips through black instead. ⚠ Still only
+   `dissolve` and `dip`: the build renders a dozen and an iris chosen by
+   arithmetic is the first thing a user deletes.
+4. **With Veo un-ticked, EVERY drawing moves** — `add_shot_motion`, a new verb,
+   cycling zoom in / pan right / zoom out / pan left so no shot repeats its
+   neighbour, with the travel scaled by the hold so a short shot gets a smaller
+   move rather than none. With Veo ticked the old emphasis rule is unchanged.
+   ⚠ A pan carries an overscan because `placePicture` reads x/y as the picture's
+   CENTRE — at scale 1 a pan drags an empty edge into shot.
+5. **A take shorter than its shot is slowed to fill it** (`fitTakeToHold`).
+   Veo's menu stops at 8s and the voiceover routinely stretches a shot past it,
+   so an 8s take on a 9.8s shot froze on its last frame for 1.8s. It now plays
+   at 0.8163. Refused when the take already covers the hold, when the difference
+   is under 150ms, and when the hold is more than twice the take.
+
 ⚠ **NO VERB SPENDS, AND THERE IS STILL NO WAY FOR ONE TO.** The money is in the
 PHASES of the runner, never in the action registry — see `voice_pass.js` on why
 those cannot be the same thing.
@@ -17441,14 +17894,33 @@ language — do NOT copy the Drawstory reference's look/colours.
       eyeballed. (1) **`.dir-shoot`** deliberately borrows `.dir-script`'s box —
       same surface, same place, same job — with one new column for the length. If
       forty-eight rows in an 11rem scroller reads as a wall, the fix is the same
-      one the script list would want. (2) **`.dir-shootrun`'s rail is thicker than
-      the step rail** (0.45rem vs 0.3rem) on the argument that a pass is two
-      minutes and a step is 90ms; that is a guess about what the eye should go
-      to. (3) **`.dir-resume` is the warm surface**, because it is the only block
+      one the script list would want. (2) ~~`.dir-shootrun`'s rail is thicker
+      than the step rail~~ — **SETTLED 2026-08-24, and the guess was wrong.** The
+      user looked at it: two bars four lines apart, both answering "how far
+      through this is", read as two different kinds of thing when they are
+      different weights. They are both `.dir-rail`'s 0.3rem now, and only
+      `.dir-rail` sets a height so they cannot drift apart again. (3)
+      **`.dir-resume` is the warm surface**, because it is the only block
       in the panel about money already gone — check it does not read as an error.
       (4) **The Run button can now carry three clauses** (`Run this plan · 24
       edits · 2 spoken · $34.56 of footage`); at some width that stops being a
       label. If it wraps badly, the money is the clause to keep.
+- [ ] **WATCH ONE MAKE VIDEO RUN END TO END AFTER THE 2026-08-24 CHANGES.** Five
+      things changed off one reported run and all five are proven by tests
+      (`veo_speed_fit_check`, `director_guardrails_check`, `captions_check`,
+      `voiceover_fit_check`) and none by eyes. (1) **The voiceover is several
+      clips now** — check the Media pane still lists ONE card and that dragging
+      one piece does what you would expect. (2) **Captions turn over every ~4
+      words**; on fast speech many are under `MIN_LINE_MS`, so they will be
+      butted up against each other with a 60ms gap — check that reads as
+      subtitles rather than as flicker. (3) **A `dip` goes through BLACK** and
+      the house has never placed one before; on a film whose shots are all long
+      it may fire more often than intended. (4) **Every still moves when Veo is
+      un-ticked** — the pan overscan is 12% and the travel 4.5%, both guesses
+      about what looks right on a 16:9 panel, and a panel whose aspect does NOT
+      match the project is the case to look at. (5) **A slowed take** at 0.82
+      should be imperceptible; at the 0.5 floor it will not be, so check the
+      floor is in the right place.
 - [ ] **SPEND A REAL DOLLAR ON ✨ VIDEO, IN THE REAL EDITOR — NOTHING IN IT HAS
       EVER CALLED VEO.** The Video tab (2026-08-22) is covered by 39 checks and
       every one of them stubs the worker, so the render itself is unproven end to
