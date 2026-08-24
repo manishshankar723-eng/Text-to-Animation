@@ -108,6 +108,7 @@ import { MIN_SPLIT_MS, splitTimedClip } from "../animatic/razor.js";
 // `tests/lane_reorder_check.py`) and so the exporter's Python twin has something
 // to be a twin OF: this order decides the film, not just the look of the gutter.
 import {
+  bottomPictureTrack,
   laneMovable,
   laneRank,
   laneTokenFor,
@@ -1532,26 +1533,39 @@ export default function AnimaticEditor({
   // thing here as it does in the MP4, and this is the one place the monitor's
   // answer comes from, so it is the one place that has to know.
   //
-  // ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON TRACK 0 AND DROPPED ABOVE IT, and the
-  // asymmetry is not a compromise — the two are the SAME PICTURE where each one
-  // applies, and only one of them is safe in each case.
+  // ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON THE BOTTOM OF THE STACK AND DROPPED
+  // ABOVE IT, and the asymmetry is not a compromise — the two are the SAME
+  // PICTURE where each one applies, and only one of them is safe in each case.
   //
-  //   TRACK 0 is the bottom of the stack, so what a dropped clip would reveal is
-  //     the letterbox colour — which is exactly what a colour card of the
-  //     letterbox colour draws. Blanking is chosen because it also HOLDS THE
-  //     TIME: a base track hidden in full would otherwise leave the export with
-  //     no pictures at all, which `build_animatic` cannot encode.
-  //   ABOVE IT a dropped clip reveals the track UNDERNEATH, and an opaque card
+  //   THE BOTTOM OF THE STACK is where what a dropped clip would reveal is the
+  //     letterbox colour — which is exactly what a colour card of the letterbox
+  //     colour draws. Blanking is chosen because it also HOLDS THE TIME: the
+  //     bottom row hidden in full would otherwise leave the export with no
+  //     pictures at all, which `build_animatic` cannot encode.
+  //   ABOVE IT a dropped clip reveals the row UNDERNEATH, and an opaque card
   //     would hide it. So those are dropped, which is what an NLE shows for a
-  //     track it is not outputting.
+  //     row it is not outputting.
+  //
+  // ⚠ "THE BOTTOM OF THE STACK" IS NOT TRACK 0 ANY MORE — it is whichever
+  // picture track `bottomPictureTrack` says is lowest-RANKED right now. That was
+  // the bug, reported as "when i uper layer off layer hide then see my video
+  // layer not view in program panel": this used to hard-code track 0 as the
+  // bottom, which was true only because a picture row's rank WAS its track
+  // number before `lane_order` existed. Drag track 0 above another row and its
+  // hidden card — still blanked, because it is still track 0 — now paints an
+  // opaque rectangle at its NEW, HIGHER rank, over the picture, the shapes, the
+  // overlays, everything beneath it. With no saved order `bottomPictureTrack`
+  // returns 0 always, so a project nobody has restacked is blanked on exactly
+  // the track it always was.
   //
   // ⚠ TWINNED IN `server/animatics.py`, clip for clip, or the monitor and the MP4
   // would disagree about a row you had switched off.
   const shown = useMemo(() => {
     // ⚠ `settings` IS IN HERE FOR ONE FIELD, AND IT IS NOT OPTIONAL: `lane_order`
-    // is what `sceneAt` ranks the stack by. This object used to carry the five
-    // clip lists and nothing else — harmless while the draw order was hard-coded
-    // in the renderers, and silently wrong the moment it wasn't: the monitor drew
+    // is what `sceneAt` ranks the stack by (and what decides which picture track
+    // is the bottom of it — see above). This object used to carry the five clip
+    // lists and nothing else — harmless while the draw order was hard-coded in
+    // the renderers, and silently wrong the moment it wasn't: the monitor drew
     // the DEFAULT stack while the timeline, the saved project and the export all
     // used the dragged one. A preview that disagrees with the file is the one
     // failure this editor must never ship, and it looked exactly like "the drag
@@ -1559,17 +1573,24 @@ export default function AnimaticEditor({
     // ⚠ ONLY THE ORDER, not the whole of `settings` — this memo must not rebuild
     // on every fps or aspect-ratio change, and nothing else in the scene model
     // reads a setting.
+    const order = settings.lane_order || [];
     const doc = {
       frames, texts, shapes, overlays, transitions,
-      settings: { lane_order: settings.lane_order || [] },
+      settings: { lane_order: order },
     };
     if (!hiddenLanes.size) return doc;
     const kept = (kind) => (clip) => !hiddenLanes.has(`${kind}:${clip.layer_id || ""}`);
     const hiddenTrack = (f) => hiddenLanes.has(`frames:${frameTrack(f)}`);
+    // ⚠ COMPUTED FROM `frames`, NOT FROM `videoTracks`. `videoTracks` also counts
+    // a track a LAYER RECORD claims but no clip is currently on, and an empty
+    // track holds nothing that could ever need blanking — it is `pictureTracks`,
+    // the same function that decides which rows the gutter draws, for the same
+    // reason: both are asking "which tracks does the picture actually have".
+    const bottomTrack = bottomPictureTrack(pictureTracks(frames), order);
     return {
       ...doc,
       frames: frames
-        .filter((f) => !(hiddenTrack(f) && frameTrack(f) > 0))
+        .filter((f) => !(hiddenTrack(f) && frameTrack(f) !== bottomTrack))
         .map((f) =>
           hiddenTrack(f)
             ? { ...f, kind: "color", color: settings.background || "#000000" }
@@ -1589,7 +1610,20 @@ export default function AnimaticEditor({
     [shown, timeMs, spanMs]
   );
 
-  const currentIndex = scene.frame ? scene.frame.index : -1;
+  // ⚠ LOOKED UP BY ID, NOT TAKEN FROM `scene.frame.index` DIRECTLY. That index
+  // is the clip's position in `shown.frames` — the hidden-lane-FILTERED array
+  // `scene` was actually built from — and it only agrees with a position in
+  // `frames` (this file's own, unfiltered state) while nothing is hidden. The
+  // moment a picture row is switched off, `shown.frames` is shorter and every
+  // index after the hidden clip shifts down, so `frames[scene.frame.index]`
+  // started naming the WRONG CLIP — reported as "when i uper layer off layer
+  // hide then see my video layer not view in program panel". Every consumer of
+  // `currentIndex` below (effects, frame-stepping, duration lookups, where a new
+  // clip gets inserted) inherits the fix from this one line, because all of them
+  // already assumed — correctly, just not until now — that it indexes `frames`.
+  const currentIndex = scene.frame
+    ? frames.findIndex((f) => f.id === scene.frame.id)
+    : -1;
   const currentFrame = currentIndex >= 0 ? frames[currentIndex] : null;
   // The resolved picture — `currentFrame` with its pan/zoom/fade applied. The
   // two are different things and both are wanted: edits are written to the
@@ -9667,8 +9701,13 @@ export default function AnimaticEditor({
                 // meaningful, and only shown, while THIS clip is the one on
                 // screen. Reading the scene rather than recomputing it means
                 // the pane can't disagree with the monitor.
+                // ⚠ `shownFrame.id`, NOT `frames[shownFrame.index]`. The index is
+                // a position in `shown.frames` (the hidden-lane-filtered array),
+                // and `shownFrame` — a resolved picture — already carries its own
+                // clip's id directly (`resolve()` spreads the clip), so there is
+                // no array to be out of step with here at all.
                 sourceMs={
-                  shownFrame && frames[shownFrame.index]?.id === selectedFrame.id
+                  shownFrame && shownFrame.id === selectedFrame.id
                     ? shownFrame.source_ms
                     : null
                 }

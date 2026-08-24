@@ -263,7 +263,84 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-23 — **🎬 THE DIRECTOR IS NOT TIED TO ONE MODEL, AND
+**Last updated:** 2026-08-24 — **A HIDDEN ROW ABOVE A RESTACKED PICTURE WAS
+PAINTING OVER THE WHOLE FILM** (bug report, with three screenshots of a project
+built entirely out of the restack feature from 2026-08-22: eleven rows, most of
+them added copies — "Shapes 2", "Shapes 3", "Video 2", "Video 3" — and every eye
+but one switched off).
+
+> "see when i uper layer off layer hide then see my video layer not view in
+> program panel and same happen when my only Story image layer but not view see
+> above layer hide but not video … please fix it please"
+
+⚠ **TWO BUGS, AND THE SECOND ONE WAS OLDER AND WORSE.**
+
+**Bug 1 — the hidden-picture-row "which track is the bottom" rule still meant
+`track === 0`.** Blanking (an opaque letterbox card, holding the clip's time
+open) vs. dropping (revealing the row underneath) has always turned on whether a
+picture row is the BOTTOM of the stack — safe to blank there, wrong everywhere
+else. That question used to be answered with a hard-coded `track > 0`, which was
+correct back when a row's RANK *was* its track number and is simply wrong now
+that `lane_order` (2026-08-22) can put track 0 anywhere: drag it above another
+row, hide it, and its still-blanked card now paints the letterbox colour at its
+NEW, higher rank — over the picture, the shapes, the overlays, all of it.
+`bottomPictureTrack` (JS) / `bottom_picture_track` (Python) ask the RANK instead
+of the number; with no saved order both return 0, always, so nothing about an
+un-restacked project changes.
+
+**Bug 2 — deeper, pre-existing, and what actually produced the black panel: an
+array INDEX crossing a filter boundary.** `sceneAt` is built from `shown` —
+`frames` with every hidden picture row's clips already removed — so
+`scene.frame.index` is a position in THAT shorter array. `ProgramCanvas` and
+`AnimaticEditor` were both indexing the FULL, unfiltered `frames` prop with it
+(`frames[picture.index]`, `frames[currentIndex]`, `frames[shownFrame.index]`).
+The two arrays are the same length only while nothing is hidden; hide anything
+that isn't the LAST clip in array order and every later index points at the
+wrong clip — which is exactly why the user saw a picture that had nothing to do
+with what was switched on. This was always reachable (hiding any upper track
+whose clip sits before a lower one in array order), Bug 1 just made track 0 —
+usually the FIRST clips in the array — newly eligible to be the one dropped.
+**Fixed by never trusting the index across that boundary again**: a resolved
+picture already carries its own clip's `id` (`resolve()` spreads the clip), so
+every lookup goes through an id — `framesById` (a `Map`, built once per
+`frames` change) in ProgramCanvas, `frames.findIndex(f => f.id === …)` for
+`currentIndex` in AnimaticEditor, and a direct `shownFrame.id === selectedFrame.id`
+compare (no array at all) for the Properties pane's `sourceMs`.
+
+⚠ **FOUND BY PIXELS, NOT BY READING.** The maths for Bug 1 checked out perfectly
+in isolation (node script confirmed `bottomPictureTrack` and `sceneAt` both
+correct) — the fix looked complete and the browser test still showed blue where
+orange belonged. Bug 2 only showed up because
+`tests/editor_lane_restack_check.py` samples actual canvas pixels through a real
+restack-then-hide gesture; a maths-only check would have passed against a broken
+picture.
+
+New: nothing. **Files:** `client/src/animatic/lane_order.js`
+(`bottomPictureTrack`), `animatic_render.py` (`bottom_picture_track`, its twin),
+`client/src/components/AnimaticEditor.jsx` (`shown`'s track filter, `currentIndex`,
+the Properties pane's `sourceMs`), `client/src/components/ProgramCanvas.jsx`
+(`framesById`, both `frames[picture.index]` sites), `server/animatics.py` (the
+export-side twin of the track filter).
+
+**Verified:** `python tests/lane_reorder_check.py` — **74 checks, all pass**,
+including 8 new ones comparing `bottomPictureTrack`/`bottom_picture_track`
+JS-against-Python across every order. `python tests/hidden_lane_check.py` — **40 checks, all pass**, with a new `[4b]` section that restacks the two picture
+tracks via `settings.lane_order` and proves the swap at the HTTP/export-payload
+level (dropping the now-non-base track leaves nothing renderable in this
+file-less fixture — the 409 IS the proof the drop happened; blanking the new
+base track still exports clean). `tests/editor_lane_restack_check.py` — **41
+checks, all pass**, with a new stage that restacks a picture row above another
+in the real editor, hides the top one, and reads the SAMPLED PIXEL at the
+monitor's centre (this is the stage that caught Bug 2 — the maths-only checks
+above it were all green while this one still failed). `npm run build`,
+`render_parity`, `picture_tracks_check`, `captions_check`,
+`animatic_motion_check`, `effects_check`, `editor_picture_tracks_check`,
+`editor_razor_check`, `editor_board_import_check`, `editor_media_bin_check`,
+`editor_veo_attach_check`, `editor_effects_drop_check`, `frame_save_fields_check`,
+`image_lane_routing_check`, `aspect_refit_check`, `keyframe_ops_check`,
+`razor_check`, `audio_razor_check` all clean.
+
+**Previously:** 2026-08-23 — **🎬 THE DIRECTOR IS NOT TIED TO ONE MODEL, AND
 THERE IS A COMMAND THAT PROVES IT PER MODEL** (Phase 5: the model-agnostic proof).
 ⚠ **"WILL MODEL X WORK" IS NOW AN EXIT CODE.**
 `DIRECTOR_CONTRACT_LIVE=1 python tests/director_contract_check.py` sends one
@@ -2768,7 +2845,99 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-23 (latest) — 🎬 PHASE 5: "WILL MODEL X WORK" IS A COMMAND NOW, NOT AN OPINION
+### 2026-08-24 (latest) — TWO BUGS BEHIND ONE BLACK PROGRAM PANEL (bug report, three screenshots of a project entirely built out of the 2026-08-22 restack feature)
+
+> "see when i uper layer off layer hide then see my video layer not view in
+> program panel and same happen when my only Story image layer but not view see
+> above layer hide but not video … please fix it please"
+
+The report came against a project the user had built by exercising the restack
+feature heavily: eleven gutter rows, several of them duplicated ("Shapes 2",
+"Shapes 3", "Video 2", "Video 3") from repeated ＋ Add layer, with almost every
+row's eye switched off and only one or two left on. The Program panel showed
+solid colour regardless.
+
+**BUG 1 — hiding a picture row still asked "is your track number 0", not "are
+you the bottom of the stack".** Blanking a hidden picture row to an opaque
+letterbox card (rather than dropping it) is only safe on whichever row is
+physically the BOTTOM of the visual stack — that's the row a dropped clip would
+otherwise correctly reveal the letterbox colour under anyway, and the only row
+that needs its TIME held open so the export doesn't fall short a picture
+entirely. Before `lane_order` (2026-08-22) that row was always track 0, so the
+check was `frameTrack(f) > 0` — correct then, wrong the moment track 0 can be
+dragged above another row: its hidden card is still blanked (because it's still
+literally track 0) but now painted at its NEW, higher rank, over everything
+beneath it. Fixed with `bottomPictureTrack` (`client/src/animatic/lane_order.js`)
+/ `bottom_picture_track` (`animatic_render.py`), which ask `laneRank` which
+picture track is lowest-ranked RIGHT NOW rather than assuming the number. With no
+saved order both return 0 always, so an un-restacked project is unaffected.
+
+**BUG 2 — deeper, pre-existing, and the one that actually explains a picture
+that had nothing to do with what was switched on.** `scene.frame.index` (and
+every `scene.pictures[].frame.index`) is a position in `shown.frames` — the
+array with hidden picture rows' clips already REMOVED, built fresh in
+`AnimaticEditor.jsx`'s `shown` memo. `ProgramCanvas.jsx` (twice) and
+`AnimaticEditor.jsx` (twice) were all indexing the FULL, unfiltered `frames`
+PROP with that same number. The two arrays agree only while nothing is hidden;
+hide anything that isn't the very LAST clip in array order and every later index
+shifts, so `frames[picture.index]` names a different clip than the one the scene
+actually resolved. **This bug predates today's session entirely** — any project
+hiding an upper picture track whose clip sits earlier in the frames array than a
+lower track's could always have hit it; Bug 1 just made track 0 (usually the
+FIRST clips added, i.e. earliest in the array) newly eligible to be the dropped
+one, which is what turned a rare corner into "hide the only remaining row and
+the film goes black". Fixed by never crossing that boundary by index again: a
+resolved picture already carries its own clip's `id` (`resolve()` spreads the
+clip before touching anything), so every one of the four sites now looks up by
+id instead — a `framesById` `Map` in ProgramCanvas (built once per `frames`
+change, both `frames[picture.index]` sites read from it), `frames.findIndex(f =>
+f.id === scene.frame.id)` for `currentIndex` in AnimaticEditor, and a direct
+`shownFrame.id === selectedFrame.id` compare (no array involved at all) for the
+Properties pane's `sourceMs`.
+
+⚠ **BUG 2 WAS INVISIBLE TO EVERY MATHS-ONLY CHECK, INCLUDING A NODE SCRIPT I
+WROTE TO ISOLATE BUG 1.** Once Bug 1's fix landed, a standalone script calling
+`sceneAt` directly confirmed `bottomPictureTrack` and the whole `shown` filter
+were exactly correct — `scene.frame` resolved to the right clip's `id`. The
+browser test still showed the WRONG colour. Only sampling the actual canvas
+PIXEL through a real restack-then-hide gesture caught it, which is the entire
+reason `tests/editor_lane_restack_check.py` reads screenshots rather than
+component state.
+
+**New:** nothing. **Files:** `client/src/animatic/lane_order.js`
+(`bottomPictureTrack`), `animatic_render.py` (`bottom_picture_track`),
+`client/src/components/AnimaticEditor.jsx` (`shown`'s picture-track filter,
+`currentIndex`, the Properties pane's `sourceMs`),
+`client/src/components/ProgramCanvas.jsx` (`framesById`, both index sites and
+their `useMemo`/effect dependency arrays), `server/animatics.py` (the
+export-side twin of the track filter, so the MP4 matches the monitor).
+
+**Verified:** `python tests/lane_reorder_check.py` — **74 checks, all pass**,
+including 8 new ones under "WHICH PICTURE TRACK IS THE BOTTOM" comparing
+`bottomPictureTrack`/`bottom_picture_track` JS-against-Python across the empty,
+restacked and partial orders, plus the empty-list and single-track edge cases.
+`python tests/hidden_lane_check.py` — **40 checks, all pass**, with a new `[4b]`
+section (8 checks) that saves a `lane_order` restacking the two picture tracks
+and proves the swap through the real HTTP export payload: hiding the
+now-non-base track drops every one of its clips and — in this file-less fixture
+— correctly leaves nothing renderable (**the 409 is the proof the drop
+happened**, not an inconvenience: under the old bug, hiding it would still have
+blanked those clips to colour cards and the export would have wrongly
+succeeded); hiding the new base track blanks its one clip and exports clean.
+`python tests/editor_lane_restack_check.py` — **41 checks, all pass**, with a
+new "HIDING A RESTACKED PICTURE ROW" stage that drags a picture row above
+another in the real running editor, hides the top one, and samples the pixel at
+the monitor's centre — the one stage in the whole suite that caught Bug 2, after
+every maths-level check on Bug 1's fix was already green. `npm run build` clean.
+Also re-run clean: `render_parity`, `picture_tracks_check`, `captions_check`,
+`animatic_motion_check`, `effects_check`, `editor_picture_tracks_check`,
+`editor_razor_check`, `editor_board_import_check`, `editor_media_bin_check`,
+`editor_veo_attach_check`, `editor_effects_drop_check`, `frame_save_fields_check`,
+`image_lane_routing_check`, `aspect_refit_check`, `keyframe_ops_check`,
+`razor_check`, `audio_razor_check`. **Browser opened**, same as the restack
+feature's own entry — this bug is invisible without it.
+
+### 2026-08-23 — 🎬 PHASE 5: "WILL MODEL X WORK" IS A COMMAND NOW, NOT AN OPINION
 
 > "Phase 5 — Model-agnostic proof" — the plan the user handed over, built.
 

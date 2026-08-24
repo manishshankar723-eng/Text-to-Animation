@@ -58,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from animatic_render import lane_rank, layer_runs, scene_at
+from animatic_render import bottom_picture_track, lane_rank, layer_runs, scene_at
 from server.schemas import AnimaticSettings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -164,8 +164,8 @@ PROJECT = {
 
 HARNESS = """
 import {
-  MOVABLE_LANE_KINDS, clipLaneToken, laneMovable, laneRank, laneTokenFor,
-  moveInList, restack, seatLane, stackKey, unseatLane,
+  MOVABLE_LANE_KINDS, bottomPictureTrack, clipLaneToken, laneMovable, laneRank,
+  laneTokenFor, moveInList, restack, seatLane, stackKey, unseatLane,
 } from %(lane_order)s;
 import { layerRuns, sceneAt } from %(scene)s;
 
@@ -243,6 +243,20 @@ process.stdout.write(JSON.stringify({
     clipLaneToken("overlay", { layer_id: "i2" }),
     clipLaneToken("text", { layer_id: "" }),
   ],
+
+  // --- which picture track is the BOTTOM of the stack --------------------
+  // ⚠ THE BUG: "when i uper layer off layer hide then see my video layer not
+  // view in program panel". A hidden picture-track clip is blanked (kept, as an
+  // opaque colour card) if it is on the BOTTOM track and DROPPED otherwise — and
+  // "bottom" used to mean "track 0", hard-coded, which stopped being true the
+  // moment track 0 could be dragged above another row.
+  bottomTracks: Object.fromEntries(
+    Object.entries(orders).map(([name, order]) => [
+      name, bottomPictureTrack([0, 1, 2, 3], order),
+    ])
+  ),
+  bottomTrackEmpty: bottomPictureTrack([], []),
+  bottomTrackOne: bottomPictureTrack([7], []),
 }));
 """
 
@@ -399,6 +413,32 @@ check("a deleted row leaves the order, so a reused track cannot inherit its plac
       js["unseat"])
 check("…and unseating something that was never there is a no-op",
       js["unseatMissing"] == order, js["unseatMissing"])
+
+print("\nWHICH PICTURE TRACK IS THE BOTTOM — the fix for a real bug")
+# ⚠ THE REPORT: "when i uper layer off layer hide then see my video layer not
+# view in program panel". A hidden picture-track clip is blanked to an opaque
+# colour card rather than dropped ONLY on the track that is the physical bottom
+# of the stack — everywhere else, blanking would paint over whatever is below
+# it. That used to be hard-coded as track 0; it is asked of the rank now.
+check("with NO saved order, track 0 is the bottom — same as it always was",
+      js["bottomTracks"]["empty"] == 0, js["bottomTracks"]["empty"])
+check("once track 0 is dragged to the top, it is NO LONGER the bottom",
+      js["bottomTracks"]["restacked"] != 0, js["bottomTracks"]["restacked"])
+check("…track 1 is, because it is what the drag left lowest-ranked",
+      js["bottomTracks"]["restacked"] == 1, js["bottomTracks"]["restacked"])
+check("a row explicitly seated under everything else is the bottom",
+      js["bottomTracks"]["partial"] == 0, js["bottomTracks"]["partial"])
+check("an empty track list has no bottom", js["bottomTrackEmpty"] is None)
+check("a single track is its own bottom, whatever the order says",
+      js["bottomTrackOne"] == 7, js["bottomTrackOne"])
+py_bottoms = {
+    name: bottom_picture_track([0, 1, 2, 3], order) for name, order in ORDERS.items()
+}
+check("JS and Python agree on the bottom track, for every order",
+      js["bottomTracks"] == py_bottoms,
+      f"js={js['bottomTracks']} py={py_bottoms}")
+check("…and agree on the empty-list and single-track edge cases",
+      bottom_picture_track([], []) is None and bottom_picture_track([7], []) == 7)
 
 print("\nTHE DRAW ORDER — what the two renderers actually stack")
 check("the scene's shape is the same on both sides",

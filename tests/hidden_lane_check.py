@@ -139,6 +139,28 @@ def export(hidden):
     return sent[-1]
 
 
+def try_export_restacked(hidden, lane_order):
+    """`export`, plus a saved row order — the restacked-project half of [4].
+
+    Returns the raw `/export` response rather than assuming success, because one
+    of the two restacked cases below is EXPECTED to fail: with only two picture
+    tracks and no real file behind either upload in this fixture (see the module
+    docstring), dropping the row that holds the project's only colour card can
+    legitimately leave nothing renderable. That 409 is itself the proof the fix
+    works — see the comment where it's asserted.
+    """
+    sent.clear()
+    job_id = make(hidden)
+    res = client.put(f"/animatics/{job_id}", headers=auth,
+                      json={"settings": {"hidden_lanes": hidden, "background": "#101010",
+                                          "lane_order": lane_order}})
+    assert res.status_code == 200, res.text
+    assert res.json()["settings"]["lane_order"] == lane_order, res.json()["settings"]
+    r = client.post(f"/animatics/{job_id}/export", headers=auth)
+    client.delete(f"/animatics/{job_id}", headers=auth)
+    return r
+
+
 TOTAL_MS = sum(f["duration_ms"] for f in FRAMES)
 
 # ---------------------------------------------------------------------------
@@ -212,6 +234,52 @@ check("a blank holds exactly the time it held", blank["duration_ms"], 2000)
 check("it draws the letterbox colour", blank["color"], "#101010")
 check("and has no file to draw", (blank["path"], blank["video_path"]), (None, None))
 check("the clip on track 1 still plays", p["frames"][2]["kind"], "video")
+
+# ---------------------------------------------------------------------------
+print("\n[4b] ⚠ RESTACKED: which track is 'the base' follows the drag, not track 0")
+# The report this closes: "when i uper layer off layer hide then see my video
+# layer not view in program panel" — a picture row dragged above another one kept
+# being treated as the base (because it always used to BE the base) and its
+# hidden card painted over everything beneath it in its NEW, higher position.
+#
+# `lane_order` here puts "frames:1" LAST — i.e. lowest-ranked, i.e. the new
+# bottom of the stack — with "frames:0" above it. The asymmetry from [4] must
+# swap with it: track 1 is now the one that gets BLANKED when hidden, and track 0
+# is now the one that gets DROPPED.
+RESTACKED = ["frames:0", "frames:1"]  # top of stack first; frames:1 is now bottom
+
+# Track 0 is no longer the base, so hiding it now DROPS its clips — EVERY one
+# (f1, f2, f4, f5: the board panel, the animated board shot, the upload, the
+# colour card), not just whichever happened to be on screen. That empties the
+# project down to f3 alone, a video clip with no real file behind it in this
+# fixture — so nothing is left to render, and the export is correctly REFUSED.
+# ⚠ THIS 409 IS THE PROOF, not an inconvenience: under the bug this closes, track
+# 0 was hard-coded as the base regardless of the drag, so hiding it would still
+# have BLANKED f1/f2/f4/f5 to colour cards instead of dropping them — leaving
+# four perfectly exportable stills and no 409 at all. Getting the refusal here is
+# what shows the drop actually happened.
+r = try_export_restacked(["frames:0"], RESTACKED)
+check("with the base track's clips genuinely gone, nothing is left to export",
+      r.status_code, 409)
+check("…and it says so, not something else that happens to also be a 409",
+      "None of these clips have a file" in r.json()["detail"], True)
+
+# Track 1 is the new base, so hiding it now BLANKS its clip instead — which
+# holds its place and its time, so the OTHER four (still colour-card-backed)
+# clips stay exportable and this one succeeds.
+r = try_export_restacked(["frames:1"], RESTACKED)
+check("track 1 is the new base, so hiding it now BLANKS its clip and still exports",
+      r.status_code, 202)
+p = sent[-1]
+check("nothing was dropped", len(p["frames"]), 5)
+blank = p["frames"][2]
+check("the blanked clip is the one that was on track 1", blank["id"], "f3")
+check("it draws the letterbox colour, not the video", blank["kind"], "color")
+check("it holds exactly the time it held",
+      blank["duration_ms"], next(f["duration_ms"] for f in FRAMES if f["id"] == "f3"))
+check("the track-0 clips are untouched",
+      [f["kind"] for f in p["frames"] if f["id"] != "f3"],
+      ["image", "video", "image", "color"])
 
 # ---------------------------------------------------------------------------
 print("\n[5] rows switch off independently, and an unknown token is inert")

@@ -111,6 +111,33 @@ export default function ProgramCanvas({
   // Dragging a pane seam or resizing the window had the same fault.
   const [canvasBox, setCanvasBox] = useState({ w: 0, h: 0 });
 
+  /**
+   * THE CLIP A RESOLVED PICTURE POINTS AT — by ID, never by `.index`.
+   *
+   * ⚠ THIS IS THE FIX FOR A REAL BUG: `picture.index` is that clip's position in
+   * `shown.frames` — the HIDDEN-LANE-FILTERED array `sceneAt` was actually given
+   * in `AnimaticEditor.jsx` — and `frames`, this component's own prop, is the
+   * FULL, UNFILTERED array. The two are the same length and order only while
+   * nothing is hidden; the moment a picture row is switched off, `shown.frames`
+   * is shorter, every index after the removed clip shifts down, and
+   * `frames[picture.index]` starts naming the WRONG CLIP — reported as "when i
+   * uper layer off layer hide then see my video layer not view in program
+   * panel": the monitor kept drawing whatever clip happened to have landed on
+   * the hidden clip's OLD index, not the one actually on screen.
+   *
+   * A resolved picture always carries its own clip's `id` (`resolve()` spreads
+   * the clip before touching anything), and an id survives being filtered out of
+   * an array in a way an index cannot. So every lookup goes through this map
+   * instead — built once per `frames` change, not per picture, since a frame can
+   * draw on more than one call in one pass (mid-transition, `frame` and
+   * `frame_b` both resolve to entries in it).
+   */
+  const framesById = useMemo(() => {
+    const map = new Map();
+    for (const f of frames) map.set(f.id, f);
+    return map;
+  }, [frames]);
+
   // Every picture on screen at this instant, across every picture TRACK and
   // including the one arriving mid-transition on each. Used to decide what has to
   // be in the document and which LUTs have to be fetched — not for drawing, which
@@ -169,7 +196,7 @@ export default function ProgramCanvas({
   const sources = useMemo(() => {
     const out = [];
     for (const picture of pictures) {
-      const clip = frames[picture.index];
+      const clip = framesById.get(picture.id);
       if (!clip || picture.kind === "color") continue;
       if (picture.kind === "video") {
         const url = videoUrls[clip.src?.upload_id];
@@ -187,7 +214,7 @@ export default function ProgramCanvas({
       if (url) out.push({ key: `ov:${overlay.id}`, url, kind: "image" });
     }
     return out;
-  }, [pictures, frames, urls, videoUrls, overlayUrls, scene.overlays]);
+  }, [pictures, framesById, urls, videoUrls, overlayUrls, scene.overlays]);
 
   // --- LUTs ----------------------------------------------------------------
   // Fetched once per name for the life of the tab (`loadLut` caches the
@@ -345,7 +372,7 @@ export default function ProgramCanvas({
       { opacity = 1, matte = null, shiftX = 0, shiftY = 0 } = {}
     ) => {
       if (!picture) return;
-      const clip = frames[picture.index];
+      const clip = framesById.get(picture.id);
       if (!clip) return;
       const look = { effects: picture.effects, mask: picture.mask, blend: picture.blend };
       const alpha = (picture.opacity ?? 1) * opacity;
@@ -562,7 +589,7 @@ export default function ProgramCanvas({
   }, [
     scene,
     bands,
-    frames,
+    framesById,
     settings.fit,
     settings.background,
     settings.aspect_ratio,

@@ -780,6 +780,28 @@ def lane_rank(token: str, order: list[str] | None) -> int:
     return len(list_) - 1 - i
 
 
+def bottom_picture_track(tracks: list[int], order: list[str] | None) -> int | None:
+    """Which picture track is physically the bottom of the stack right now.
+
+    Mirrors `bottomPictureTrack` in lane_order.js — read that docstring, it
+    carries the bug report and the reasoning. `tracks` is every picture track
+    number in use (typically `picture_tracks(frames)`, which always includes 0).
+    `None` for an empty list, which a real project never passes.
+
+    ⚠ WITH NO SAVED ORDER THIS IS ALWAYS 0 — track 0's rank is its own number,
+    which is the lowest any picture track can have. So a project nobody has
+    restacked is blanked on exactly the track it always was.
+    """
+    best: int | None = None
+    best_rank = None
+    for track in tracks or []:
+        rank = lane_rank(f"frames:{track}", order)
+        if best_rank is None or rank < best_rank:
+            best_rank = rank
+            best = track
+    return best
+
+
 def stack_key(order: list[str] | None) -> str:
     """Is this project restacked at all? Mirrors `stackKey`. "" when it is not."""
     list_ = order or []

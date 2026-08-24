@@ -153,6 +153,43 @@ export function laneRank(token, order) {
   return list.length + defaultLaneRank(token);
 }
 
+/**
+ * WHICH PICTURE TRACK IS PHYSICALLY THE BOTTOM OF THE STACK RIGHT NOW — the one
+ * a hidden clip on it should be BLANKED rather than DROPPED.
+ *
+ * ⚠ THIS IS THE FIX FOR A REAL BUG, reported as "when i uper layer off layer
+ * hide then see my video layer not view in program panel" — a whole project
+ * going black with only one row still switched on. A hidden picture-track clip
+ * used to be blanked to an opaque colour card ONLY when its `track` was 0, on
+ * the assumption that track 0 is always the bottom of the stack — true before
+ * `lane_order` existed, because a picture row's rank WAS its track number. Once
+ * a picture row can be dragged anywhere, track 0 can end up ranked ABOVE other
+ * rows, and its opaque card — still there, just moved — paints over every row
+ * beneath it: the picture, the shapes, the overlays, all of it. `Math.min` on
+ * a track number is the wrong question now; this asks the right one.
+ *
+ * `tracks` is every picture track number the project currently uses (typically
+ * `pictureTracks(frames)`, which always includes 0). Returns `null` for an
+ * empty list, which cannot happen for a real project.
+ *
+ * ⚠ WITH NO SAVED ORDER THIS RETURNS 0, EVERY TIME — rank falls back to the
+ * track number itself, so track 0 is always the lowest rank among picture
+ * tracks, exactly as the old hard-coded assumption had it. So a project nobody
+ * has restacked is blanked on exactly the row it always was.
+ */
+export function bottomPictureTrack(tracks, order) {
+  let best = null;
+  let bestRank = Infinity;
+  for (const track of tracks || []) {
+    const rank = laneRank(laneTokenFor("frames", "", track), order);
+    if (rank < bestRank) {
+      bestRank = rank;
+      best = track;
+    }
+  }
+  return best;
+}
+
 /** Can this row be dragged up or down at all? */
 export function laneMovable(lane) {
   if (!lane) return false;

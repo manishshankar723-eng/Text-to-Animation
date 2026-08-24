@@ -548,6 +548,48 @@ def main():
                   keys[0] not in ("frames:0", "image:", "shape:") or "captions" not in keys,
                   str(keys))
 
+            # ------------------------------------------------------------
+            print("\nHIDING A RESTACKED PICTURE ROW — the row under it must show")
+            # ⚠ THE EXACT REPORT, and it needs the drag above to reproduce at all:
+            # "when i uper layer off layer hide then see my video layer not view
+            # in program panel and same happen when my only Story image layer but
+            # not view see above layer hide but not video". A hidden picture-track
+            # clip used to be BLANKED to an opaque colour card only when its track
+            # number was 0, on the assumption that track 0 is always the bottom of
+            # the stack — true before rows could be dragged, false the moment
+            # `frames:0` is restacked ABOVE `frames:1` as it was two checks ago.
+            # The blanked card is still drawn, just now at track 0's NEW rank —
+            # painting the letterbox colour over frames:1 and everything else
+            # beneath it, which is a project going solid-colour with only ONE row
+            # left switched on, exactly as reported.
+            check("frames:0 really is above frames:1 now (the setup for this bug)",
+                  keys.index("frames:0") < keys.index("frames:1"), str(keys))
+            why = page.evaluate("() => window.__probe.pressEye('frames:0')")
+            check("its eye could be pressed", why == "", why)
+            page.wait_for_timeout(500)
+            check("the row reports itself switched off",
+                  page.evaluate("() => window.__probe.rowOff('frames:0')"))
+            box = page.evaluate("() => window.__probe.screenBox()")
+            shot = os.path.join(shots, "hidden_top_track.png")
+            page.screenshot(path=shot, clip=box)
+            frame = Image.open(shot).convert("RGB")
+            w, h = frame.size
+            px = frame.getpixel((int(w * 0.5), int(h * 0.5)))
+            # b1 on track 1 is the orange upload u2 = (200, 120, 60); the
+            # letterbox/background is #101820 = (16, 24, 32). A red channel
+            # higher than the other two is orange showing through; roughly equal
+            # low values across all three is the backdrop the bug painted instead.
+            check("the row BELOW the hidden one shows through, not the backdrop",
+                  px[0] > px[2] and sum(px) > 120,
+                  f"sampled {px} at the centre — a hidden row that used to be at "
+                  f"the bottom, and is not any more, has painted over the row "
+                  f"beneath it")
+            # …and back on, so the stage below starts from the stack it expects.
+            page.evaluate("() => window.__probe.pressEye('frames:0')")
+            page.wait_for_timeout(400)
+            check("switching it back on restores the row",
+                  not page.evaluate("() => window.__probe.rowOff('frames:0')"))
+
             print("\nA CAPTION UNDER A PICTURE — the monitor cuts itself into bands")
             why = drag_row(page, "text:", "frames:0")
             check("the drag ran", why == "", why)

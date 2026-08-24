@@ -1794,29 +1794,42 @@ def export_animatic(job_id: str, current: CurrentUser = Depends(get_current_user
     # picture comes from — and `url` because it is a read-only convenience the
     # encoder has no use for.
     #
-    # ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON TRACK 0 AND DROPPED ABOVE IT, and the
-    # asymmetry is not a compromise — the two are the SAME PICTURE where each one
-    # applies, and only one of them is safe in each case.
+    # ⚠ A HIDDEN PICTURE TRACK IS BLANKED ON THE BOTTOM OF THE STACK AND DROPPED
+    # ABOVE IT, and the asymmetry is not a compromise — the two are the SAME
+    # PICTURE where each one applies, and only one of them is safe in each case.
     #
-    #   TRACK 0 is the bottom of the stack, so what a dropped clip would reveal is
-    #     the letterbox colour — which is exactly what a colour card of the
-    #     letterbox colour draws. Blanking is chosen because it also HOLDS THE
-    #     TIME: a base track hidden in full would otherwise leave the export with
-    #     no pictures at all, and `build_animatic` cannot encode that.
-    #   ABOVE IT a dropped clip reveals the track UNDERNEATH, and an opaque card
+    #   THE BOTTOM OF THE STACK is where what a dropped clip would reveal is the
+    #     letterbox colour — which is exactly what a colour card of the letterbox
+    #     colour draws. Blanking is chosen because it also HOLDS THE TIME: the
+    #     bottom row hidden in full would otherwise leave the export with no
+    #     pictures at all, and `build_animatic` cannot encode that.
+    #   ABOVE IT a dropped clip reveals the row UNDERNEATH, and an opaque card
     #     would hide it. So those are dropped, which is what an NLE shows for a
-    #     track it is not outputting.
+    #     row it is not outputting.
+    #
+    # ⚠ "THE BOTTOM OF THE STACK" IS NOT TRACK 0 ANY MORE. It used to be — a
+    # picture row's rank WAS its track number before `settings.lane_order`
+    # existed — but a row dragged above another one keeps its track number while
+    # its RANK changes, so hard-coding 0 here painted a hidden track 0's opaque
+    # card over whatever the user had dragged it above: reported as "when i uper
+    # layer off layer hide then see my video layer not view in program panel".
+    # `bottom_picture_track` asks the rank instead, and with no saved order it
+    # answers 0 every time — so a project nobody has restacked exports exactly as
+    # it always did.
     #
     # The monitor does the identical conversion (`shown` in AnimaticEditor.jsx),
     # which is what keeps the preview and the MP4 the same picture.
     hidden = set(settings.hidden_lanes or [])
+    lane_order = list(settings.lane_order or [])
+    tracks_in_use = sorted({f.track for f in frames} | {0})
+    bottom_track = animatic_render.bottom_picture_track(tracks_in_use, lane_order)
     resolved = []
     for f in frames:
         item = f.model_dump(exclude={"url", "src"})
         item["path"] = None
         item["video_path"] = None
         if f"frames:{animatic_render.frame_track(item)}" in hidden:
-            if animatic_render.frame_track(item) > 0:
+            if animatic_render.frame_track(item) != bottom_track:
                 continue
             item["kind"] = "color"
             item["color"] = settings.background or "#000000"
