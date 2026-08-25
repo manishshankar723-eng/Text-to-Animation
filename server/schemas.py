@@ -967,6 +967,19 @@ class AnimaticAsset(BaseModel):
     # in which case a new clip opens at the default hold.
     duration_ms: int = Field(0, ge=0, le=24 * 3_600_000)
     color: str = "#000000"
+    # THE CREDIT THIS SOURCE ARRIVED WITH — "" for anything the user made or
+    # uploaded themselves, and a ready-to-print line for a sound taken from the
+    # Freesound library (`freesound.credit_line`).
+    #
+    # ⚠ IT IS STORED, NOT RECOMPUTED, and that is the whole point of it being
+    # here. A CC BY sound obliges whoever publishes the video to credit its
+    # author; if the credit lived only in the search result it would be gone the
+    # moment the pane was closed, and the obligation would outlive the only
+    # record of who has to be thanked. It rides on the LIBRARY card rather than
+    # on the audio clip for the same reason the card exists at all: the razor
+    # makes four clips out of one recording, and the licence belongs to the
+    # recording.
+    attribution: str = ""
     # Filled on READ, never stored — same rule as `AnimaticFrame.url` and for the
     # same reason: the path is resolved per request, so a saved one goes stale.
     #
@@ -2809,3 +2822,104 @@ class PublicStoryboard(BaseModel):
     created_at: str
 
 
+# ---------------------------------------------------------------------------
+# The sound library (Freesound)
+# ---------------------------------------------------------------------------
+# ⚠ THE LICENCE FIELDS ARE NOT DECORATION. A sound carries its licence into the
+# customer's exported video, so `license`, `needs_credit` and `attribution` are
+# the difference between a legal advert and an infringing one. They are filled
+# by `freesound.py` — the whitelist there is what guarantees "Attribution
+# NonCommercial" never reaches this shape at all — and `attribution` is carried
+# onto the media-library card (`AnimaticAsset.attribution`) so the credit
+# survives the import and can still be printed months later.
+
+
+class SoundSearchItem(BaseModel):
+    """One sound as the Sounds tab draws it."""
+
+    id: str
+    name: str = ""
+    username: str = ""
+    # The SOURCE's natural length, same units and same meaning as
+    # `AnimaticAsset.duration_ms`, so an imported card needs no conversion.
+    duration_ms: int = 0
+    # "cc0" | "by" — our codes, never Freesound's prose. See `freesound.LICENCES`.
+    license: str = "cc0"
+    # ⚠ TWO STRINGS, TWO JOBS. `license_name` is the licence as it belongs in a
+    # CREDIT ("CC BY 4.0"); `license_label` is the BADGE on the card and ends in
+    # the obligation ("CC BY 4.0 - credit required"). Putting the badge in a
+    # credit publishes "credit required" to the viewer of the finished video.
+    license_name: str = ""
+    license_label: str = ""
+    license_url: str = ""
+    # Whether USING this sound obliges the customer to credit somebody. False for
+    # CC0, true for CC BY; the UI badges the card from this and nothing else.
+    needs_credit: bool = False
+    # The ready-to-print credit line. Built once in `freesound.credit_line`.
+    attribution: str = ""
+    page_url: str = ""
+    # Freesound's own CDN, played by the browser directly. Not proxied: see the
+    # note in `freesound._normalise` about the 60-requests-a-minute budget.
+    preview_url: str = ""
+    waveform_url: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class SoundSearchResponse(BaseModel):
+    """Returned from GET /sounds/search."""
+
+    items: list[SoundSearchItem] = Field(default_factory=list)
+    page: int = 1
+    page_size: int = 24
+    # ⚠ THE SIZE OF THE SEARCH, NOT OF `items`. Results whose licence we do not
+    # recognise are dropped after Freesound counted them, so these two numbers
+    # legitimately disagree — and paging has to follow this one.
+    total: int = 0
+    has_next: bool = False
+    licence: str = "safe"
+
+
+class SoundStatus(BaseModel):
+    """Whether the sound library is switched on for this deployment.
+
+    ⚠ IT NEVER CARRIES THE KEY. `configured` is a yes/no; §B.4 of the Freesound
+    API terms requires the token to stay on the server. The client uses this only
+    to decide whether to draw the Sounds tab.
+    """
+
+    configured: bool = False
+    # The licence buckets the search box may offer, newest-safest first.
+    licences: list[str] = Field(default_factory=list)
+    sorts: list[str] = Field(default_factory=list)
+    provider: str = "freesound"
+    # Said on screen, once, under the search box: what the user is agreeing to by
+    # putting one of these files in a video they sell.
+    notice: str = ""
+
+
+class SoundImportRequest(BaseModel):
+    """POST /animatics/{id}/sounds — file one Freesound sound into a project."""
+
+    # ⚠ AN ID, NOT A URL. The server re-asks Freesound for the download location
+    # rather than fetching whatever the browser hands it; see `freesound.sound`.
+    sound_id: str = Field(..., description="The Freesound sound id, digits only.")
+
+
+class SoundImportResponse(BaseModel):
+    """The imported sound, as an ordinary audio upload plus its licence.
+
+    ⚠ SUPERSET OF `AnimaticAudioResponse`, deliberately: an imported sound IS an
+    audio upload — same `audio_<id>.mp3` on disk, same serve route, same
+    `addAudioTrack` in the editor — and the only thing that makes it different is
+    the paperwork it arrived with. One extra field rather than a second pipeline.
+    """
+
+    upload_id: str
+    filename: str = ""
+    url: str
+    duration_ms: int = 0
+    attribution: str = ""
+    license: str = "cc0"
+    license_label: str = ""
+    needs_credit: bool = False
+    page_url: str = ""

@@ -697,3 +697,238 @@
   transform: scale(1.15);
 }
 
+
+/* --- The Sounds tab (Freesound) -------------------------------------------
+   Somebody else's catalogue, drawn as a search box over a list of rows.
+
+   ⚠ IT IS ROWS, NOT THE `.fx-lib` TREE AND NOT THE MEDIA TILES, and the reason
+   is what a sound IS: a length and a waveform, neither of which a 90px tile can
+   show and neither of which a one-line tree row has anywhere to put. A row
+   gives the waveform a full-width strip to live on — which is the only part of
+   a sound you can judge without pressing play.
+
+   ⚠ EVERY WIDTH HERE IS EXPLICIT because `theme.css` sets a global
+   `select { width: 100% }`. Two selects in a flex row inherit that and each
+   demand the whole pane; `.snd-sel` is what stops the licence picker pushing
+   the search box onto its own line. (Noted in AGENTS.md as a repeat offender.) */
+.snd-lib {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.snd-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.snd-q {
+  /* Grows, and is the first thing to get the space back when the pane widens —
+     the two pickers below it are fixed choices and never need more. */
+  flex: 1 1 8rem;
+  min-width: 6rem;
+}
+.snd-sel {
+  /* ⚠ THE OVERRIDE. See the note above: without it the global rule makes each
+     of these full-width and the row becomes three stacked lines. */
+  width: auto;
+  max-width: 100%;
+  flex: 1 1 8rem;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.35rem;
+}
+.snd-hint,
+.snd-tos {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+.snd-tos {
+  /* The standing licence note, dimmed: it is true on every visit and read once,
+     so it sits under the list rather than above it and does not compete with a
+     result you are looking at. */
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 0.35rem;
+}
+.snd-err {
+  color: var(--fail);
+}
+.snd-state {
+  margin: 0.2rem 0;
+}
+
+/* The starting words, so the tab is not an empty box on its first visit. */
+.snd-seeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.1rem 0;
+}
+.snd-seed {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+}
+.snd-seed:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+.snd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* A re-search dims the list it is replacing rather than blanking it: the rows
+   under the cursor stay readable while the new page arrives, which is what
+   makes paging feel like paging instead of a reload. */
+.snd-list.busy {
+  opacity: 0.55;
+}
+
+.snd-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  min-width: 0;
+}
+.snd-card.on {
+  border-color: var(--primary);
+}
+.snd-play {
+  flex: 0 0 auto;
+  width: 1.7rem;
+  height: 1.7rem;
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 50%;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.6rem;
+  line-height: 1;
+}
+.snd-card.on .snd-play {
+  background: var(--primary);
+  color: var(--primary-ink);
+  border-color: var(--primary);
+}
+.snd-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.snd-line {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.snd-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.76rem;
+}
+.snd-sub {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+.snd-by {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snd-src {
+  display: inline-flex;
+  color: inherit;
+  margin-left: auto;
+}
+.snd-src:hover {
+  color: var(--primary);
+}
+
+/* ⚠ THE BADGE SAYS THE OBLIGATION, AND ITS COLOUR SAYS THE SAME THING TWICE.
+   "credit needed" is a warning tint and "no credit" is a quiet one, because the
+   choice being made on this row can put a licence condition into a video
+   somebody sells — and the moment to notice that is while choosing. */
+.snd-lic {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  padding: 0.05rem 0.35rem;
+  white-space: nowrap;
+}
+.snd-lic.free {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok);
+}
+.snd-lic.credit {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+}
+
+/* Freesound's own waveform image. It is a picture of the sound and nothing
+   more — no scrubbing, no playhead — so it is decorative and carries an empty
+   alt. `--muted` tints it to the pane instead of the bright green it ships as. */
+.snd-wave {
+  width: 100%;
+  height: 1.4rem;
+  object-fit: cover;
+  border-radius: 3px;
+  opacity: 0.5;
+  filter: grayscale(1);
+}
+.snd-card.on .snd-wave {
+  opacity: 0.9;
+  filter: none;
+}
+
+.snd-add {
+  flex: 0 0 auto;
+  align-self: center;
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+  padding: 0.2rem 0.4rem;
+  white-space: nowrap;
+}
+.snd-add:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.snd-add:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+
+.snd-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+.snd-off {
+  padding: 0.4rem 0;
+}

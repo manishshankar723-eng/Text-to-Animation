@@ -263,7 +263,33 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-25 — **A LOCKED CAPABILITY IS DRAWN AS LOCKED.**
+**Last updated:** 2026-08-25 — **THE AUDIO LAYER HAS A SOUND LIBRARY, FENCED BY
+LICENCE.** A fourth **Sounds** tab beside Media/Shapes/Effects searches Freesound
+and files a sound into the project as an ORDINARY audio upload — same
+`audio_<id>.mp3`, same track, same library card (`placeAudioUpload` was factored
+out of `addAudioTrack` so there is one way in, not two). ⚠ **TWO DIFFERENT
+LICENCES**: the API licence lets our server talk to theirs; the CONTENT licence
+travels into the customer's video. ⚠ **A FREE FREESOUND KEY IS A NON-COMMERCIAL
+KEY** — §3 of their API terms says commercial use is negotiated case by case
+with UPF (mtg@upf.edu). **Do that before charging anyone.** ⚠ **THE FENCE IS
+STRUCTURAL**: "Attribution NonCommercial" is ABSENT from `freesound.LICENCES`,
+not filtered out of it, and an unknown `licence` value falls back to CC0-only.
+⚠ **THE CREDIT IS STORED, NOT RECOMPUTED** — `AnimaticAsset.attribution` on the
+library CARD (not the clip), shown as "Credit" in the Media properties.
+⚠ **THE KEY NEVER REACHES THE BROWSER**; previews play off Freesound's public
+CDN because the API budget is 60/min for the whole deployment.
+⚠ **THE DOCS DESCRIBE A FIELD THE API DOES NOT SEND** — `license` arrives as a
+deed URL, not prose, so the first build dropped 100% of results against a good
+key; and the URL is parsed BY SEGMENT because NonCommercial's deed contains
+"by". ⚠ **THE BADGE'S WORDING NO LONGER LEAKS INTO THE CREDIT** —
+`license_name` ("CC BY 4.0") is for credits, `license_label` ("… - credit
+required") is for the card. `tests/sound_licence_check.py` — **76 checks**, no
+key and no network needed, plus a live end-to-end HTTP pass against a real key
+(4230 results, 0 NonCommercial, a real 3.7 MB mp3 imported and served).
+⚠ **STILL NOT BROWSER-TESTED** — the tab has not been clicked and no export has
+been made with an imported sound. See the Work Log.
+
+**Previously:** 2026-08-25 — **A LOCKED CAPABILITY IS DRAWN AS LOCKED.**
 The capability flags have been ENFORCED since Phase 2 and were never SURFACED:
 an account without `cap.veo-render` still saw ✨ Animate and got a 403 by
 pressing it. `client/src/entitlements.js` + `useCapability()` read the answer
@@ -2734,6 +2760,9 @@ Pipeline stages (see `pipeline.py`):
   `POST /final-videos/{id}/render` — **SPENDS MONEY.** 202, renders off-request (poll `GET /jobs/{id}`). Empty `shot_ids` = every included shot without a clip. Refuses prompt-less shots, skips already-rendered ones unless `force`, caps at `API_MAX_VIDEO_BATCH`
   `GET /final-videos/{id}/shot/{shot_id}/image` — the source still · `GET /final-videos/{id}/shot/{shot_id}/clip` — that shot's rendered MP4
   `POST /final-videos/{id}/assemble` — **free**; 202, joins the clips (poll `GET /jobs/{id}`) · `POST /final-videos/{id}/stop` — stops a render batch or an assembly, keeping every clip already paid for · `GET /final-videos/{id}/video` — the final cut
+- **The sound library (`server/sounds.py` + `freesound.py`):**
+  `GET /sounds/status` — **free, no upstream call**: is a Freesound key configured, and which licence buckets / sorts the search box may offer. ⚠ **It never returns the key.** The client draws the Sounds tab only when this says `configured` · `GET /sounds/search` — text search over Freesound, **fenced on the server to CC0 and CC BY**. ⚠ **"Attribution NonCommercial" is ABSENT from `freesound.LICENCES` rather than filtered out of it**, so no query parameter can ask for it and an unknown `licence` value falls back to the SAFE bucket (CC0 only). Spends no AI quota; it does spend the deployment's shared Freesound rate limit, which is why `SoundLibrary.jsx` debounces
+  `POST /animatics/{id}/sounds` — **in `server/animatics.py`, not in the sounds router**, because it writes into the project's media directory: downloads one sound's HQ mp3 preview and files it as an **ordinary audio upload** (`audio_<upload_id>.mp3`, same serve route, same track, same library card). ⚠ **The body is a sound ID, never a URL** — the server re-asks Freesound where the file is, so a crafted call cannot point the backend at an address of its choosing — and **the licence is re-checked here**, not only at search time. ⚠ **The preview, not the original**: `/apiv2/sounds/{id}/download/` needs OAuth2, i.e. a Freesound account per end user. The credit line comes back with it and is stored on `AnimaticAsset.attribution`
 - `GET /templates` · `GET /health` (also reports `ffmpeg`)
 
 ---
@@ -2818,6 +2847,7 @@ previews require a cloud run (not `local_only`).
 | `DIRECTOR_STUB_PATH` | The JSON file `DIRECTOR_PROVIDER=stub` answers from. Keys are call purposes (`analyse`, `polish`). |
 | `DIRECTOR_CONTRACT_LIVE` | `1` lets `tests/director_contract_check.py` call a real model. ⚠ Unset, that test calls nothing. |
 | `MESHY_API_KEY` | Meshy 3D generation. |
+| `FREESOUND_API_KEY` | The editor's **Sounds** tab. Unset = the tab is not drawn and nothing else changes. Free key from <https://freesound.org/apiv2/apply/>. ⚠ **SERVER-SIDE ONLY — never give it a `VITE_` prefix**, which would compile it into the browser bundle (§B.4 of their terms). ⚠ **A FREE KEY IS A NON-COMMERCIAL KEY**: §3 of <https://freesound.org/help/tos_api/> says commercial terms are negotiated case by case with UPF (mtg@upf.edu). ⚠ Rate limit is **per key, not per user** — 60/min, 2000/day shared by the whole deployment. |
 | `JWT_SECRET` | **Required in prod.** JWT signing key. Dev fallback warns loudly. |
 | `JWT_ALGORITHM` / `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT config (defaults HS256 / 1440). |
 | `MONGODB_URI` / `MONGODB_DB` | User account store (default `mongodb://localhost:27017`). |
@@ -3054,7 +3084,153 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-25 (latest) — A LOCKED CAPABILITY IS DRAWN AS LOCKED
+### 2026-08-25 (latest) — THE AUDIO LAYER HAS SOMETHING TO PUT ON IT: A SOUND LIBRARY, FENCED BY LICENCE (user-specified — "freesound.org … i want use in my editor in layer … how we set up this website free api for commercial user my app")
+
+**The ask was two questions and only one of them is code.** "Put Freesound in
+the editor" is a feature. "How do we set it up for commercial use" is a
+CONTRACT, and the honest answer is written into the repo rather than into a
+reply that scrolls away — see the header of `freesound.py` and the
+`FREESOUND_API_KEY` row in the env table. **A free Freesound key is a
+NON-COMMERCIAL key.** §3 of <https://freesound.org/help/tos_api/>, verbatim:
+"Terms for commercial use of the API will be negotiated on a case by case basis
+with UPF." Nothing shipped here changes that; email mtg@upf.edu before this goes
+in front of a paying customer.
+
+**⚠ TWO DIFFERENT LICENCES, AND CONFLATING THEM IS THE EXPENSIVE MISTAKE.** The
+API licence is what lets OUR SERVER talk to THEIRS. The CONTENT licence is per
+sound and travels into the customer's finished video. They are separate
+documents with separate answers, and the second one is the one a user can breach
+by pressing a button in our UI.
+
+**⚠ THE FENCE IS STRUCTURAL, NOT A FILTER.** Freesound has three content
+licences; "Attribution NonCommercial" is **absent from `freesound.LICENCES`**
+rather than filtered out of it. There is no code path that could stop excluding
+it: no bucket names it, `_filter` always emits a licence clause (even for
+"both", even for an unknown value, which falls back to CC0-only), and
+`_normalise` **drops** a result whose licence it cannot place rather than drawing
+it with a blank badge. Reaching that line means the fence upstream already
+failed, and showing the sound anyway is the exact outcome the whole thing exists
+to prevent.
+
+**⚠ THE CREDIT IS STORED, NOT RECOMPUTED.** A CC BY sound obliges whoever
+publishes the video to name its author. `AnimaticAsset.attribution` (new field,
+in `assetForSave` and the schema — `tests/asset_fields_check.py` enforces the
+pair) carries a ready-to-print line onto the **library card**, so the obligation
+outlives the search that found it. On the card and not the clip, for the same
+reason the library exists: the razor makes four clips out of one recording and
+that is still one obligation. It shows in the Media pane's properties view as
+"Credit". CC0 gets a shorter line that says no credit is required — telling a
+customer to credit a public-domain file is telling them to do work they do not
+owe.
+
+**⚠ AN IMPORTED SOUND IS AN ORDINARY AUDIO UPLOAD, WITH NO SECOND CODE PATH.**
+It lands as `audio_<upload_id>.mp3` in the same media directory, is served by the
+same `/media/{upload_id}`, becomes the same `AnimaticAudio` track and the same
+library card. `placeAudioUpload` was factored OUT of `addAudioTrack` so both
+ways in (a dropped file, a fetched sound) share the lane rule, the clip
+identity, the library card and which Media section opens. The only thing that
+survives the import as different is the credit line.
+
+**⚠ THE PREVIEW, NOT THE ORIGINAL.** `/apiv2/sounds/{id}/download/` needs OAuth2
+— every end user would need their own Freesound account and a sign-in. The HQ
+mp3 preview (~128 kbps) needs only our server token, is the same recording under
+the same content licence, and is what `fetch_preview` brings back. Swapping to
+the original later is an auth change, not a change to the fence.
+
+**⚠ THE BROWSER NEVER TOUCHES THE API, ONLY THE CDN.** The key is a server
+secret (§B.4). Search and import go through us; the preview mp3 plays straight
+off Freesound's public CDN, because proxying it would mean re-asking the API for
+a URL on every press out of a budget of **60 requests a minute shared by the
+whole deployment**. That budget is also why the search box debounces at 500ms
+rather than searching per keystroke.
+
+**⚠ SENDS AN ID, NEVER A URL.** `POST /animatics/{id}/sounds` takes a sound id
+and re-asks Freesound where the file is. Trusting the `preview_url` already on
+the card would save one request and would also mean our backend fetching
+whatever address a crafted body handed it.
+
+**Files.** New: `freesound.py` (provider client, beside `meshy.py`/`tripo.py`),
+`server/sounds.py` (`GET /sounds/status`, `GET /sounds/search`),
+`client/src/components/SoundLibrary.jsx`, `tests/sound_licence_check.py`.
+Changed: `server/animatics.py` (`POST /{job_id}/sounds`), `server/schemas.py`
+(`SoundSearchItem`/`SoundSearchResponse`/`SoundStatus`/`SoundImportRequest`/
+`SoundImportResponse`, plus `AnimaticAsset.attribution`), `server/main.py`
+(router), `client/src/api.js` (`soundStatus`/`searchSounds`/`importSound`),
+`client/src/animatic/assets.js` (`attribution` through `assetFromAudio` and
+`assetForSave`), `client/src/components/AnimaticEditor.jsx` (fourth **Sounds**
+tab beside Media/Shapes/Effects, `placeAudioUpload`, `addSoundFromLibrary`),
+`client/src/components/MediaBin.jsx` (the "Credit" row),
+`client/src/styles/animatic-tools.css` (`.snd-*`), `.env.example`.
+
+**⚠ TWO BUGS THE FIRST LIVE KEY FOUND, AND BOTH ARE WORTH KNOWING ABOUT.**
+
+**1. The docs describe a field the API does not send.** The API reference says
+`license` is prose ("Creative Commons 0"); **every real response carries a deed
+URL** ("http://creativecommons.org/publicdomain/zero/1.0/"). Reading only the
+documented shape meant every single result was unrecognised, so every single
+result was dropped and the tab came up empty against a perfectly good key. ⚠ The
+fence had failed SAFE, which is the design working — but an empty library is
+still a broken library, and **the test had passed because it only ever fed the
+documented form.** Both shapes are read now, and the test's fixtures are URLs
+copied out of a real response. ⚠ **AND THE URL IS PARSED BY PATH SEGMENT, NEVER
+BY `in`**: NonCommercial's deed is ".../licenses/**by-nc**/4.0/", of which
+`"by" in url` is true. A substring test there is how an NC sound reaches a
+customer's advert. `by-nc`, `by-nc-sa`, `by-nc-nd`, `by-sa` and `sampling+` are
+all in the test and all must drop.
+
+**2. The badge's wording was leaking into the credit.** `credit_line` was built
+from `license_label`, which ends in "credit required" — so a published video's
+description would have read *"Piano chord 3" by mistakeless - CC BY 4.0 - credit
+required - https://…*, an instruction addressed to the wrong person. There are
+two strings now: **`license_name`** ("CC BY 4.0") is what a credit says, and
+**`license_label`** ("CC BY 4.0 - credit required") is what the card's badge
+says. The version rides on both, because CC BY 3.0 and 4.0 are not the same
+terms and a credit that links the wrong deed points the reader at rules that do
+not apply to the file.
+
+**Verified — AGAINST A REAL KEY, end to end.** `tests/sound_licence_check.py` —
+**76 checks**, all passing, no key and no network needed.
+`tests/asset_fields_check.py` still passes with the new field. `npm run build`
+clean. Then, live, through the running backend over HTTP with a throwaway
+account (deleted afterwards, along with its project): `GET /sounds/status` →
+`configured: true`; `GET /sounds/search?q=rain&licence=safe` → **4230** results,
+correctly labelled; `licence=credit` → CC BY 4.0 results; 30 results at
+`licence=both` → **0** NonCommercial; the duration window honoured;
+`POST /animatics/{id}/sounds` → a real **3.7 MB mp3** written into the project
+and served back from `/media/{upload_id}`. ⚠ **STILL NOT BROWSER-TESTED** — the
+Sounds tab itself has not been clicked, and no export has been made with an
+imported sound in it. See Next Steps.
+
+**⚠ AND THE FIRST LIVE RUN FAILED FOR A REASON THAT WAS NOT THIS FEATURE.** The
+dev machine's router DNS (192.168.0.1) was intermittently failing to resolve
+anything — `cdn.freesound.org` and `google.com` both — so the first attempt died
+in `getaddrinfo` before a single request left the box. Setting the Wi-Fi
+adapter's DNS to 8.8.8.8 / 1.1.1.1 fixed it, **and fixed MongoDB Atlas at the
+same time**: the long-standing "Atlas is unreachable from this machine — SSL
+handshake" note in `.env` was never TLS and never Atlas, it was a lookup that
+never happened. That note has been corrected in `.env`.
+
+**Next Steps this opened.**
+- [x] Get a key (<https://freesound.org/apiv2/apply/>) and put it in `.env`. Done
+      2026-08-25; `GET /sounds/status` reports `configured: true`.
+- [x] Live pass over HTTP: search (both licence buckets, the length window and
+      the NonCommercial fence) and a real import that wrote a 3.7 MB mp3 into a
+      project and served it back. Done 2026-08-25 — it is what found the two
+      bugs above.
+- [ ] **Browser pass, still outstanding**: open the Sounds tab, press ▶ on a
+      card (the preview plays off Freesound's CDN, which nothing has exercised
+      yet), press ＋ Add, and EXPORT — then confirm the sound is audible in the
+      finished MP4. That last step is the only one that proves the imported file
+      reaches the exporter.
+- [ ] **Before charging anyone**: email mtg@upf.edu for commercial API terms and
+      a higher rate limit. Record the answer here.
+- [ ] A **Credits** export. The line is stored per card; nothing yet collects the
+      cards that have one into a list the user can paste under a video.
+- [ ] Consider OAuth2 so a user can pull the ORIGINAL file (wav/flac) rather than
+      the 128 kbps preview, for masters that need it.
+
+
+### 2026-08-25 — A LOCKED CAPABILITY IS DRAWN AS LOCKED
 
 - **Asked for:** the next thing that was not payments. The top buildable item on
   the list, and the one it called *the largest remaining gap*: the capability

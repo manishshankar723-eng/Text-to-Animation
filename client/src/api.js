@@ -1115,6 +1115,63 @@ export function uploadAnimaticAudio(id, file) {
   return request(`/animatics/${id}/audio`, { method: "POST", body: fd, isForm: true });
 }
 
+// --- The sound library (Freesound) -----------------------------------------
+// ⚠ THE BROWSER NEVER TALKS TO FREESOUND'S API, only to ours. The key is a
+// server secret (§B.4 of their terms) and the licence fence that keeps
+// NonCommercial sounds out of the results is a server rule — a search the client
+// could compose itself is a fence the client could open. The one Freesound URL
+// the browser DOES touch is the mp3 preview, which is public and unauthenticated
+// and is played straight off their CDN; see `soundPreviewUrl` below.
+
+// Is the Sounds tab worth drawing? Answers `{ configured, licences, sorts,
+// notice }` — never the key itself. Called once when the editor opens.
+export function soundStatus() {
+  return request("/sounds/status");
+}
+
+/**
+ * Search the sound library.
+ *
+ * @param q         what to look for; "" browses by `sort` alone
+ * @param licence   "safe" (CC0 only, the default) | "credit" (CC BY) | "both"
+ * @param sort      one of the keys `soundStatus().sorts` lists
+ * @param page      1-based
+ *
+ * ⚠ DEBOUNCE THE CALLER, DON'T RETRY THIS. A free Freesound key allows 60
+ * requests a minute for the WHOLE deployment, so a search-per-keystroke burns a
+ * budget every user shares. `SoundLibrary.jsx` waits for a pause in typing.
+ */
+export function searchSounds({ q = "", licence = "safe", sort = "relevance", page = 1, minSeconds = 0, maxSeconds = 0 } = {}) {
+  const params = new URLSearchParams({
+    q,
+    licence,
+    sort,
+    page: String(page),
+  });
+  if (minSeconds > 0) params.set("min_seconds", String(minSeconds));
+  if (maxSeconds > 0) params.set("max_seconds", String(maxSeconds));
+  return request(`/sounds/search?${params.toString()}`);
+}
+
+/**
+ * Bring one sound into a project as an ordinary audio upload.
+ *
+ * ⚠ SENDS THE ID, NOT THE PREVIEW URL THE CARD IS HOLDING. The server re-asks
+ * Freesound where the file lives, so a crafted call cannot point our backend at
+ * an address of its choosing — and so the licence is re-checked on the way in
+ * rather than only at search time.
+ *
+ * Answers the same shape `uploadAnimaticAudio` does — `{ upload_id, filename,
+ * url }` — plus `duration_ms` and the licence fields, so the caller can reuse
+ * `addAudioTrack` unchanged.
+ */
+export function importSound(animaticId, soundId) {
+  return request(`/animatics/${animaticId}/sounds`, {
+    method: "POST",
+    body: { sound_id: String(soundId) },
+  });
+}
+
 // --- Animating a frame with Veo, from inside the editor ---------------------
 // ⚠ The one path in the animatic editor that SPENDS MONEY. The pair mirrors
 // `estimateFinalVideo` / `renderFinalVideoShots` exactly, including taking the

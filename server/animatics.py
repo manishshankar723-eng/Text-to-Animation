@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import animatic_render
+import freesound
 import panel_sequence
 
 from . import config, worker
@@ -109,6 +110,8 @@ from .schemas import (
     PersonaOption,
     ReframeCostEstimate,
     RenderSettings,
+    SoundImportRequest,
+    SoundImportResponse,
     VoiceOption,
 )
 
@@ -1585,6 +1588,91 @@ async def upload_audio(
         upload_id=upload_id, filename=name,
         # By upload id: usable immediately, before the project is saved.
         url=f"/animatics/{job_id}/media/{upload_id}"
+    )
+
+
+@router.post("/{job_id}/sounds", response_model=SoundImportResponse)
+def import_sound(
+    job_id: str,
+    body: SoundImportRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Bring one Freesound sound into this project, AS AN ORDINARY AUDIO UPLOAD.
+
+    ⚠ IT LANDS EXACTLY WHERE A DROPPED MP3 LANDS — same `audio_<upload_id>.mp3`
+    in the same media directory, same `/media/{upload_id}` to serve it, same
+    `AnimaticAudio` track and same library card. That is the whole design: a
+    sound the user found in the Sounds tab must be indistinguishable from a sound
+    they dragged in, or every downstream thing — the razor, the waveform, the
+    exporter, the "fit frames to audio" button — would need a second code path
+    for it. The ONLY thing that survives the import as different is the credit
+    line, and it rides on the library card (`AnimaticAsset.attribution`).
+
+    ⚠ THE BROWSER SENDS AN ID, NEVER A URL. `freesound.fetch_preview` re-asks
+    Freesound where the file is; the alternative — trusting the `preview_url` the
+    search result already put on screen — would be our server fetching whatever
+    address a crafted request handed it.
+
+    ⚠ AND THE LICENCE IS RE-CHECKED HERE, not just at search time. Search fences
+    NonCommercial sounds out of the LIST; this route fences them out of the
+    PROJECT, because the id in this body did not have to come from that list.
+    `freesound.sound` raises for a licence we do not offer, and 400 is the
+    answer — the request is wrong, not the upstream service.
+
+    Spends no AI quota. It does spend the deployment's shared Freesound rate
+    limit: one API call for the metadata, then a plain CDN download.
+    """
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+
+    # Counted in FILES, the same rule the voiceover route follows and the same
+    # one the editor mirrors: a track razored into four clips is still one file.
+    if len(_audio_files_of(job)) >= config.MAX_ANIMATIC_AUDIO_TRACKS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This project already has {config.MAX_ANIMATIC_AUDIO_TRACKS} audio "
+                "tracks. Remove one before adding a sound."
+            ),
+        )
+
+    try:
+        data, filename, item = freesound.fetch_preview(
+            body.sound_id, config.MAX_AUDIO_BYTES
+        )
+    except freesound.FreesoundError as exc:
+        text = str(exc)
+        # A refused LICENCE or a malformed id is the caller's mistake; anything
+        # else — no key, a timeout, a 5xx — is the upstream service's.
+        bad_request = "NonCommercial" in text or "not a Freesound sound id" in text
+        raise HTTPException(status_code=400 if bad_request else 502, detail=text) from exc
+
+    media = _media_dir(job_id)
+    os.makedirs(media, exist_ok=True)
+    upload_id = uuid.uuid4().hex[:12]
+    with open(os.path.join(media, f"audio_{upload_id}.mp3"), "wb") as fh:
+        fh.write(data)
+
+    logger.info(
+        "[animatic %s] freesound %s imported as %s (%d bytes, %s)",
+        job_id, item["id"], upload_id, len(data), item["license"],
+    )
+    return SoundImportResponse(
+        upload_id=upload_id,
+        filename=filename,
+        url=f"/animatics/{job_id}/media/{upload_id}",
+        # ⚠ FREESOUND'S OWN DURATION, not something we measured. There is no
+        # ffprobe on an `imageio-ffmpeg` install, so the server cannot measure an
+        # audio file at all — the browser normally does it (`measureAudio`). This
+        # number means the card is right the instant it appears, and the editor
+        # still re-measures once the blob is loaded.
+        duration_ms=int(item.get("duration_ms") or 0),
+        attribution=item.get("attribution") or "",
+        license=item.get("license") or "cc0",
+        license_label=item.get("license_label") or "",
+        needs_credit=bool(item.get("needs_credit")),
+        page_url=item.get("page_url") or "",
     )
 
 

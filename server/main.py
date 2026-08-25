@@ -48,6 +48,7 @@ from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
 from .director import router as director_router
 from .plans import router as plans_router
+from .sounds import router as sounds_router
 from .videos import router as videos_router
 # Shared with the animatics router — they live in common.py so the two route
 # modules don't have to import each other. Aliased to the names used below.
@@ -191,6 +192,14 @@ app.include_router(features_router)
 # page to keep a second copy of the prices. ⚠ AND IT IS "TIERS", NOT "PLANS":
 # /plans is Plan & Script and has been since long before there was billing.
 app.include_router(billing_router)
+# The sound library (/sounds/…) — a search box over Freesound's CC0 / CC BY
+# catalogue, so the editor's audio layer has something to put on it without the
+# user going and finding a file first. ⚠ SEARCHING ONLY: filing a sound into a
+# project is `POST /animatics/{id}/sounds`, because that writes into the
+# project's media directory. Spends no AI quota; it does spend the deployment's
+# SHARED Freesound rate limit. Read the licence note at the top of `freesound.py`
+# before shipping this commercially — the free API key is a non-commercial one.
+app.include_router(sounds_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

@@ -196,6 +196,7 @@ import ShapeGallery, {
 } from "./Shapes.jsx";
 import EffectsPanel from "./EffectsPanel.jsx";
 import EffectsLibrary from "./EffectsLibrary.jsx";
+import SoundLibrary from "./SoundLibrary.jsx";
 import { FX_ITEM_COUNT, fxEntry } from "../animatic/fx_library.js";
 import { MAX_EFFECTS } from "../animatic/gl/shaders/layer.js";
 import RegeneratePanelInline, { RelengthShotInline } from "./RegeneratePanelInline.jsx";
@@ -6011,6 +6012,75 @@ export default function AnimaticEditor({
   // `_audio_files_of` on the server, which enforces the same rule.
   const audioFileCount = () => new Set(audioTracks.map((a) => a.upload_id)).size;
 
+  /**
+   * PUTS AN ALREADY-UPLOADED SOUND ON THE TIMELINE AND IN THE LIBRARY.
+   *
+   * ⚠ IT DOES NOT UPLOAD ANYTHING — that is the point of it being separate.
+   * There are two ways a sound gets onto the server now (the user's own file,
+   * through `POST /audio`, and one taken from the Sounds tab, through
+   * `POST /sounds`) and exactly ONE way it becomes a track. Everything that
+   * makes an audio track an audio track — the lane rule, the clip identity, the
+   * library card, which Media section opens — lives here and is therefore the
+   * same for both. A second copy of this for imported sounds is a second place
+   * for "a lane holds one track" to stop being true.
+   *
+   * @param upload  `{ upload_id, filename, duration_ms, attribution }` — the
+   *                shape BOTH upload routes answer with. `attribution` is "" for
+   *                a file the user owns and a printable credit for a Freesound
+   *                one; see `AnimaticAsset.attribution`.
+   * @param startMs where on the timeline it lands.
+   */
+  function placeAudioUpload(upload, startMs = 0) {
+    // The lane the ＋ was pressed on, if any — so the file lands on THAT row
+    // rather than making a new one. Consumed here, so a later drop onto the
+    // pane can't inherit it.
+    const layerId = pendingAudioLane.current;
+    pendingAudioLane.current = "";
+    setAudioTracks((list) => [
+      // A lane holds one track: dropping a second file on it replaces what
+      // was there — every clip of it — which is what "add audio to this row"
+      // has to mean.
+      ...list.filter((a) => !layerId || a.layer_id !== layerId),
+      {
+        // A fresh clip identity. It happens to equal the upload for a track
+        // nobody has cut yet, which is exactly what the server's backfill
+        // gives an animatic saved before the razor existed.
+        id: upload.upload_id,
+        upload_id: upload.upload_id,
+        layer_id: layerId,
+        filename: upload.filename || "",
+        duration_ms: upload.duration_ms || 0,
+        start_ms: Math.max(0, Math.round(startMs || 0)),
+        offset_ms: 0,
+        volume: 1,
+        muted: false,
+        url: `/animatics/${animaticId}/media/${upload.upload_id}`,
+      },
+    ]);
+    // ⚠ THE FILE JOINS THE LIBRARY, and it is the file and not the clip. A
+    // razored voiceover is four clips reading one recording, so the library
+    // keeps ONE card — keyed by upload id (`assetKey`) — and deleting every
+    // clip of it still leaves the recording there to drag back out.
+    //
+    // ⚠ AND IT IS THE CARD, NOT THE CLIP, THAT CARRIES THE CREDIT. A CC BY
+    // sound obliges whoever publishes the video to name its author; razoring it
+    // into four pieces does not create four obligations, and deleting all four
+    // must not lose the one.
+    addToLibrary([
+      assetFromAudio({
+        id: upload.upload_id,
+        upload_id: upload.upload_id,
+        filename: upload.filename || "",
+        duration_ms: upload.duration_ms || 0,
+        attribution: upload.attribution || "",
+      }, newId()),
+    ]);
+    // Here rather than in the callers: every audio add goes through this one
+    // function — the pane's drop card, the Audio lane's ＋, "Add layer" and the
+    // Sounds tab — so the section that now holds it opens for all of them.
+    openGroup("media:audio");
+  }
+
   // Adds a NEW track — it never replaces an existing one. The cap is checked by
   // the caller so a multi-file drop can report what it had to leave out.
   // `startMs` is where on the timeline it lands: 0 for every picker and card,
@@ -6019,55 +6089,72 @@ export default function AnimaticEditor({
     if (!file) return;
     setError("");
     try {
+      // ⚠ MEASURED IN THE BROWSER, IN PARALLEL WITH THE UPLOAD. The server has
+      // no audio decoder and does not need one — an `imageio-ffmpeg` install
+      // ships no ffprobe — so this is the only place the file's length is known.
       const [res, durationMs] = await Promise.all([
         api.uploadAnimaticAudio(animaticId, file),
         measureAudio(file),
       ]);
-      // The lane the ＋ was pressed on, if any — so the file lands on THAT row
-      // rather than making a new one. Consumed here, so a later drop onto the
-      // pane can't inherit it.
-      const layerId = pendingAudioLane.current;
-      pendingAudioLane.current = "";
-      setAudioTracks((list) => [
-        // A lane holds one track: dropping a second file on it replaces what
-        // was there — every clip of it — which is what "add audio to this row"
-        // has to mean.
-        ...list.filter((a) => !layerId || a.layer_id !== layerId),
+      placeAudioUpload(
         {
-          // A fresh clip identity. It happens to equal the upload for a track
-          // nobody has cut yet, which is exactly what the server's backfill
-          // gives an animatic saved before the razor existed.
-          id: res.upload_id,
           upload_id: res.upload_id,
-          layer_id: layerId,
           filename: res.filename || file.name,
           duration_ms: durationMs,
-          start_ms: Math.max(0, Math.round(startMs || 0)),
-          offset_ms: 0,
-          volume: 1,
-          muted: false,
-          url: `/animatics/${animaticId}/media/${res.upload_id}`,
+          // A file the user brought is a file the user owns. Nobody to credit.
+          attribution: "",
         },
-      ]);
-      // ⚠ THE FILE JOINS THE LIBRARY, and it is the file and not the clip. A
-      // razored voiceover is four clips reading one recording, so the library
-      // keeps ONE card — keyed by upload id (`assetKey`) — and deleting every
-      // clip of it still leaves the recording there to drag back out.
-      addToLibrary([
-        assetFromAudio({
-          id: res.upload_id,
-          upload_id: res.upload_id,
-          filename: res.filename || file.name,
-          duration_ms: durationMs,
-        }, newId()),
-      ]);
-      // Here rather than in the callers: this is the one function every audio
-      // add goes through — the pane's drop card, the Audio lane's ＋ and
-      // "Add layer" — so the section that now holds it opens for all three.
-      openGroup("media:audio");
+        startMs
+      );
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  /**
+   * THE SOUNDS TAB'S ＋ — fetch one Freesound sound and make it a track.
+   *
+   * ⚠ IT THROWS RATHER THAN SETTING `error`, unlike every other add on this
+   * screen, and `SoundLibrary` catches it. The reason is where the message has
+   * to appear: the pane's error line is above a scrolling list, and the row you
+   * pressed may be ten cards down by the time the answer arrives. The library
+   * shows it against the search, where you are looking.
+   *
+   * ⚠ THE CAP IS CHECKED HERE AS WELL AS ON THE SERVER. Ours is the one that
+   * can say so BEFORE spending a Freesound request out of a budget the whole
+   * deployment shares; the server's is the one that is actually enforced.
+   */
+  async function addSoundFromLibrary(item) {
+    if (!item?.id) return;
+    if (audioFileCount() >= MAX_AUDIO_TRACKS) {
+      throw new Error(
+        `That's the limit — a project can hold ${MAX_AUDIO_TRACKS} audio tracks. ` +
+          "Remove one and try again."
+      );
+    }
+    setError("");
+    // ⚠ THE ID, NOT THE PREVIEW URL THE CARD IS HOLDING. The server re-asks
+    // Freesound where the file is, re-checks the licence, and only then
+    // downloads — see `import_sound` in server/animatics.py.
+    const res = await api.importSound(animaticId, item.id);
+    placeAudioUpload(
+      {
+        upload_id: res.upload_id,
+        filename: res.filename || item.name,
+        // ⚠ FREESOUND'S NUMBER, NOT `measureAudio`'S. There is no File object
+        // here to measure — the bytes went straight from their CDN to our
+        // server — so the length comes back with the import. The blob effect
+        // below loads the track for its waveform either way.
+        duration_ms: res.duration_ms || item.duration_ms || 0,
+        attribution: res.attribution || item.attribution || "",
+      },
+      0
+    );
+    setNotice(
+      res.needs_credit
+        ? `Added “${item.name}”. ⚠ It is ${res.license_label} — your finished video must credit it. The credit line is saved on its Media card.`
+        : `Added “${item.name}” (CC0 — no credit needed).`
+    );
   }
 
   // The Audio layer's ＋ and the "Add layer" control both land here.
@@ -9132,6 +9219,19 @@ export default function AnimaticEditor({
               >
                 Effects
               </button>
+              {/* ⚠ SOMEBODY ELSE'S CATALOGUE, not this project's audio — which
+                  is why it is a tab beside Shapes and Effects rather than a
+                  section inside Media. A sound only appears in Media once it
+                  has been fetched INTO the project, and at that moment it is an
+                  ordinary audio upload with nothing left to distinguish it but
+                  the credit line on its card. See SoundLibrary.jsx. */}
+              <button
+                type="button"
+                className={`an-tab ${mediaTab === "sounds" ? "on" : ""}`}
+                onClick={() => setMediaTab("sounds")}
+              >
+                Sounds
+              </button>
             </span>
             <span className="an-spacer" />
             {/* How the footage is listed. Only on the Media tab: the shape
@@ -9161,11 +9261,30 @@ export default function AnimaticEditor({
                 ? `${assets.length} in Media`
                 : mediaTab === "effects"
                   ? `${FX_ITEM_COUNT} to drag`
-                  : `${shapes.length} on the timeline`}
+                  : mediaTab === "sounds"
+                    // ⚠ THE CAP, NOT A RESULT COUNT. How many sounds a search
+                    // found is on the pager beside the results; what this line
+                    // has to say is whether pressing ＋ will work, because a
+                    // full project is the one case where every card's button is
+                    // dead and the reason is not on any of them.
+                    ? `${audioFileCount()}/${MAX_AUDIO_TRACKS} audio tracks`
+                    : `${shapes.length} on the timeline`}
             </span>
           </div>
 
-          {mediaTab === "effects" ? (
+          {mediaTab === "sounds" ? (
+            <div className="an-pane-body an-media-body">
+              {/* No `PropGroup` around it, unlike Shapes and Effects: those two
+                  are FOLDERS you open, and this one is a search box whose first
+                  control has to be reachable without a disclosure first. The
+                  licence note it needs is not a "true forever" ⓘ either — it
+                  changes with the picker — so it stands under the controls. */}
+              <SoundLibrary
+                onAdd={addSoundFromLibrary}
+                full={audioFileCount() >= MAX_AUDIO_TRACKS}
+              />
+            </div>
+          ) : mediaTab === "effects" ? (
             <div className="an-pane-body an-media-body">
               {/* The hint lives behind the section's ⓘ for the same reason the
                   shape picker's does: it is true forever and read once, so as

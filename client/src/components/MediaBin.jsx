@@ -79,6 +79,14 @@ function assetFacts(asset, used) {
   }
   const file = kind === "audio" ? asset?.upload_id || "" : src.upload_id || "";
   if (file) rows.push(["File id", file]);
+  // ⚠ THE CREDIT, AND IT IS ONLY EVER ON A CARD THAT ACTUALLY OWES ONE. A sound
+  // taken from the Sounds tab arrives with a printable line (CC BY: the author
+  // must be named in the finished video; CC0: where it came from, for the
+  // record). Everything the user made or uploaded themselves has "" and gets no
+  // row — a "Credit: —" on every photo would be furniture, and worse, it would
+  // make the rows that DO matter unremarkable. This properties view is where the
+  // obligation is readable months after the search that found it was closed.
+  if (asset?.attribution) rows.push(["Credit", asset.attribution]);
   return rows;
 }
 

@@ -215,6 +215,11 @@ export function assetFromAudio(track, id) {
     // library card that knows how long the whole recording is.
     duration_ms: Math.max(0, Math.round(Number(track?.duration_ms) || 0)),
     color: "#000000",
+    // Empty for a file the user uploaded — they own it, nobody has to be
+    // credited. A sound taken from the Sounds tab arrives with the line already
+    // written (`freesound.credit_line`), and this is where it lands so that it
+    // outlives the search that found it.
+    attribution: track?.attribution || "",
   };
 }
 
@@ -342,5 +347,11 @@ export function assetForSave(asset) {
     label: asset.label || "",
     duration_ms: Math.max(0, Math.round(Number(asset.duration_ms) || 0)),
     color: asset.color || "#000000",
+    // The credit a Freesound import arrived with, "" for everything else. ⚠ IT
+    // HAS TO BE ON THIS LIST: a CC BY sound obliges whoever publishes the video
+    // to name its author, and a field this whitelist forgets is a field the
+    // server never sees — the exact silent loss this file's test exists to
+    // catch. See `AnimaticAsset.attribution`.
+    attribution: asset.attribution || "",
   };
 }
