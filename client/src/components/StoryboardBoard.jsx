@@ -5,6 +5,9 @@
 import { useEffect, useRef, useState } from "react";
 import ScriptPanel from "./ScriptPanel.jsx";
 import * as api from "../api.js";
+// Drawing a panel spends `cap.image-generate` — guarded on
+// POST /storyboards/{id}/regenerate-panel. Fail-open until the boot call lands.
+import useCapability from "../useCapability.js";
 import DialogueBox from "./DialogueBox.jsx";
 import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
 import PanelVersions from "./PanelVersions.jsx";
@@ -50,6 +53,9 @@ export default function StoryboardBoard({
 }) {
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
+  // May this account draw at all? Every button on this page that costs an image
+  // reads it. See `entitlements.js`.
+  const imageCap = useCapability("image-generate");
   const [panelUrls, setPanelUrls] = useState({});
   const panelUrlsRef = useRef({});
   // Blobs REPLACED by a fresher render of the same panel. They can't be revoked
@@ -658,7 +664,12 @@ export default function StoryboardBoard({
             </button>
           )}
           {/* Finish a stopped board in one click, instead of tile by tile. */}
-          {!running && emptyIdx.length > 0 && (
+          {/* ⚠ THE BULK BUTTONS GO WHEN DRAWING IS OFF, and that is the
+              one place hiding beats greying: they are the two controls that
+              spend forty images in one press, each panel carries its own locked
+              button with the reason on it, and a greyed slab labelled "Generate
+              remaining (40)" says nothing the tiles do not already say. */}
+          {!running && imageCap.on && emptyIdx.length > 0 && (
             <button
               type="button"
               /* While drawing it's BUSY, not unavailable — the gold fill dimmed
@@ -678,7 +689,7 @@ export default function StoryboardBoard({
               )}
             </button>
           )}
-          {!running && failedCount > 0 && (
+          {!running && imageCap.on && failedCount > 0 && (
             <button
               type="button"
               className={`btn board-retry-all ${batch?.kind === "failed" ? "is-busy" : ""}`}
@@ -876,14 +887,28 @@ export default function StoryboardBoard({
                     that reads differently in three places reads as three
                     different tools. */}
                 <DialogueBox dialogue={p.dialogue} className="board-dialogue" />
+                {/* ⚠ THE BUTTON STAYS, GREYED AND LABELLED. A board of
+                    forty panels with no draw button on any of them and no
+                    sentence anywhere saying why is the exact failure this
+                    change exists to prevent. */}
                 <button
                   type="button"
-                  className={`btn small board-regen-btn ${isNew ? "secondary" : ""}`}
+                  className={`btn small board-regen-btn ${isNew ? "secondary" : ""} ${
+                    imageCap.on ? "" : "cap-off"
+                  }`}
                   onClick={() => retryPanel(p.index)}
-                  disabled={retrying[p.index]}
-                  title={isNew ? "Draw this panel" : "Re-draw this shot with the current prompt"}
+                  disabled={!imageCap.on || retrying[p.index]}
+                  title={
+                    !imageCap.on
+                      ? imageCap.reason
+                      : isNew
+                        ? "Draw this panel"
+                        : "Re-draw this shot with the current prompt"
+                  }
                 >
-                  {retrying[p.index] ? (
+                  {!imageCap.on ? (
+                    "🔒 Locked"
+                  ) : retrying[p.index] ? (
                     <>
                       <span className="spinner-inline" /> {isNew ? "Generating…" : "Redrawing…"}
                     </>

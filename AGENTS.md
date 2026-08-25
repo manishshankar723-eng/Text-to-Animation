@@ -263,7 +263,22 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-25 — **THE LIMITS ARE REAL NOW (ADMIN PANEL, PHASE 5
+**Last updated:** 2026-08-25 — **A LOCKED CAPABILITY IS DRAWN AS LOCKED.**
+The capability flags have been ENFORCED since Phase 2 and were never SURFACED:
+an account without `cap.veo-render` still saw ✨ Animate and got a 403 by
+pressing it. `client/src/entitlements.js` + `useCapability()` read the answer
+the boot call already carried, and every control that spends one of the six
+capabilities now draws itself gone, locked or on. ⚠ **IT IS NOT A SECOND
+GATE** — the browser decides nothing; the guards are still the lock, asserted.
+⚠ **ONE WORDING FOR ONE REFUSAL**: `features.refusal()` writes the 403 detail
+AND the `reason` shipped to the browser. ⚠ **IT FAILS OPEN** — everything is
+on until the server answers. ⚠ **UPLOADING IS NEVER GATED, AND 🎬 MAKE VIDEO
+STAYS PRESSABLE** — `cap.director` gates the AI door only, because the rules
+planner calls nothing. `tests/capability_check.py` — 44 checks, six of them
+driving the browser module under node; **397 across the six panel suites.**
+⚠ **NOT BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **THE LIMITS ARE REAL NOW (ADMIN PANEL, PHASE 5
 OF 6).** `server/usage.py` counts what each account uses per calendar month and
 `require_quota` refuses BEFORE the spend, beside the existing `require_feature`
 guards — so "2 projects" on the free tier is enforced rather than printed.
@@ -3039,7 +3054,116 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-25 (latest) — THE ADMIN PANEL, PHASE 5: THE LIMITS ARE REAL
+### 2026-08-25 (latest) — A LOCKED CAPABILITY IS DRAWN AS LOCKED
+
+- **Asked for:** the next thing that was not payments. The top buildable item on
+  the list, and the one it called *the largest remaining gap*: the capability
+  flags were ENFORCED and never SURFACED. A customer whose `cap.veo-render` was
+  off still saw ✨ Animate, still wrote a motion prompt, still pressed the
+  button, and learned the answer from a 403. Workflows had been handled since
+  Phase 2 — hidden, badged or locked in the rail; the capabilities INSIDE them
+  had not, and Phase 3 widened it: a locked workflow upsells properly, a locked
+  capability just errored.
+
+- **⚠ IT IS NOT A SECOND GATE, AND THAT IS THE WHOLE DESIGN.** Nothing in the
+  browser decides anything. The answer is computed once, by the one resolver,
+  and shipped on the boot call; `client/src/entitlements.js` holds it and shapes
+  it for a button. Editing it in a debugger turns a control back on and the
+  route still answers 403 — asserted at the bottom of the new suite, because a
+  client-side lock that people start trusting is how a guard eventually gets
+  deleted as redundant.
+
+- **⚠ ONE WORDING FOR ONE REFUSAL.** `features.refusal()` is new and is the only
+  place the sentence lives: `require_feature` raises it as the 403 detail, and
+  `/auth/me/entitlements` ships the SAME string as each capability's `reason`.
+  The greyed-out button and the error the customer would have got by pressing it
+  say the same thing, which is what lets a support agent match a ticket to the
+  rule that fired. Asserted by pressing the route and comparing the two strings.
+
+- **⚠ THREE STATES, NOT TWO — gone, locked, on.** *Gone* (a kill switch, or a
+  rollout this account is not in) means the control is not drawn at all: there
+  is nothing to say and nothing to sell. *Locked* (a tier) means it IS drawn,
+  disabled, wearing the reason — the same argument the rail's 🔒 row is built
+  on: nobody upgrades for what they cannot see. One boolean cannot say that, and
+  squashing it is what made the old "soon" placeholder navigate to a blank page.
+
+- **⚠ AND IT FAILS OPEN, LIKE EVERY OTHER READER OF THE RESOLVER.** Until the
+  boot call answers, every capability is ON. A cold start that greyed out ✨
+  Animate for a second — on every page load, for every account, including the
+  ones paying for it — would be a worse bug than the one this fixes. `known` is
+  "has the server answered", kept separate from "what did it say", exactly as
+  `entitled` is in `App.jsx`.
+
+- **⚠ THE REFUSAL NAMES THE PLAN when the plan is the reason.** `explain()` is
+  `is_on()` with the answer kept — the guard needs the `source`, because "off"
+  and "off because it is on a plan you are not on" are the same refusal and two
+  completely different sentences, and only the second has an action attached.
+  `is_on` is now a one-line wrapper over it, so nothing else changed shape.
+
+- **⚠ A MODULE STORE, NOT A CONTEXT**, matching how this client already works
+  (`api.js` holds the session the same way; the editor's state is three custom
+  hooks). `useCapability("veo-render")` is one line at the CONTROL — a pane does
+  not spend money, the button in it does — so nothing is threaded through eight
+  components to reach a button in a properties pane. `entitlements.js` imports
+  no React on purpose: that is what lets the new suite drive it under **node**.
+
+- **What is wired, and where the line was drawn.** ✨ Animate (both copies — the
+  timeline's and Properties'), 🎙 Voiceover, Write captions, the Media pane's AI
+  Image and AI Video tabs, Generate the shot, the storyboard board's draw/redraw
+  and its two bulk buttons, Cast and Props reference generation, the
+  turnaround's Generate Reference Image, Generate 3D, and Final Video's three
+  Render buttons plus a banner beside the "Veo isn't reachable" one.
+  ⚠ **UPLOADING IS NEVER GATED** — on Cast, Props and the turnaround form the
+  upload door stays open and the printed reason says so, because a customer's
+  own file draws nothing and is how an account without generation still works.
+  ⚠ **AND 🎬 MAKE VIDEO STAYS PRESSABLE**: `cap.director` gates the AI door
+  ("Read my film") and nothing else, because "Just the rhythm" is the Phase 0
+  rules planner — no backend, no key, no quota, nothing for a server to refuse.
+  Gating it in the browser only would be a lock with no rule behind it.
+
+- **⚠ THE DIRECTOR'S TWO PAID TICK BOXES ARE UN-TICKED, NOT JUST GREYED.** A
+  disabled box that stayed CHECKED would leave `include.veo` true, and everything
+  downstream reads that flag: the amber price line, the count on the Run button,
+  and the pass itself. The user would be shown a price for footage the server is
+  going to refuse, and then pay the wait to find out. Setting it false runs the
+  same free re-cost an ordinary un-tick does, so the panel re-prices itself with
+  the pass gone.
+
+- **⚠ THE REASON IS PRINTED, NOT ONLY HOVERED.** A `title` is invisible on a
+  touchscreen and invisible to anyone who does not think to hover a control they
+  have already been refused. Every locked control has the sentence beside it, in
+  the pane's own existing note style — `PropNote`, `.tiny.muted`, `.fv-banner
+  warn`. The only new CSS is `.cap-off`, and it is two rules: `:disabled`
+  already dims and sets the cursor, and a second visual language for "off" would
+  make one greyed button in a row of greyed buttons look like a different kind
+  of broken.
+
+- **⚠ A SECOND PRE-EXISTING SUITE NEEDED THE PHASE-5 LINE.**
+  `voiceover_fit_check.py` creates three animatics while testing how a voiceover
+  is TIMED, and `require_quota("projects")` refused the third on the free tier —
+  it died with a 402 about billing in a file about audio. Its account is now on
+  an unlimited tier with a comment saying why, same fix and same reason as
+  `features_check.py` in Phase 5. **It was failing before this session's
+  changes, not because of them.**
+
+- **Files:** new `client/src/entitlements.js`, `client/src/useCapability.js`,
+  `tests/capability_check.py`. Changed `server/features.py`,
+  `client/src/App.jsx`, `client/src/components/{AnimaticEditor,DirectorPanel,
+  JobDetail,StoryboardBoard,StoryboardCast,StoryboardAssets,GenerateForm,
+  RegeneratePanelInline,FinalVideoWorkspace,FinalVideoRenderStep}.jsx`,
+  `client/src/components/properties/{FrameProperties,AudioProperties}.jsx`,
+  `client/src/styles/admin.css`, `tests/voiceover_fit_check.py`.
+
+- **Verified:** `python tests/capability_check.py` — **44 checks, all pass**
+  (six of them driving the browser module under node); the other five panel
+  suites still pass — **397 across the six**. `animate_guard_check`,
+  `image_generate_check`, `video_generate_check`, `plan_check`,
+  `plan_script_check`, `captions_check`, `storyboard_draft_check` and
+  `voiceover_fit_check` all pass. `npm run build` succeeds. ⚠ **NOT OPENED IN A
+  BROWSER** — no locked button has been looked at, and this change is entirely
+  about what a screen looks like. Top of Next Steps, where it already was.
+
+### 2026-08-25 — THE ADMIN PANEL, PHASE 5: THE LIMITS ARE REAL
 
 - **Asked for:** the enforcement half of "what he is having" — the tier limits
   that had been stored and displayed since Phase 3 without anything checking them.
@@ -18332,14 +18456,26 @@ Sales; and a sale drives `compare_at` rather than inventing a second old price.
   request time and can drift from what the worker actually drew if a panel
   fails. `veo_seconds` is not counted at all. Both are fixable by having the
   worker report back through `usage.increment`, which is the natural next step.
-- ⬜ **The capability flags are enforced but not yet SURFACED in the app.** A
-  customer whose `cap.veo-render` is off — or whose tier doesn't include it —
-  still sees the ✨ Animate button and gets a 403 when they press it. WORKFLOWS
-  are handled (hidden, badged or locked in the rail); capabilities are not. The
-  entitlements response already carries `features` and `states`, so the editor
-  needs to read them and disable the control with the reason. This is the largest
-  remaining gap and it grew with Phase 3: a locked workflow now upsells properly,
-  a locked capability still just errors.
+- ✅ **The capability flags are surfaced now** (2026-08-25, top Work Log
+  entry). `client/src/entitlements.js` + `useCapability()`; every control that
+  spends one of the six draws itself gone / locked / on, and the reason on it is
+  the same string the route's 403 would have carried. ⚠ **THE PART THAT IS NOT
+  DONE: nobody has looked at one.** Every assertion is at the API or under node.
+- ⬜ **Two controls were deliberately left ungated, and both are decisions
+  rather than omissions.** (1) The timeline's right-click "draw the shot either
+  side of this one" still opens its dialog for an account that cannot draw — the
+  dialog's own button is locked and says why, and threading a reason into
+  `Timeline`'s context menu to save one click would put the drawing rules in a
+  third file. (2) `cap.image-generate` is not read by `PanelSequenceStrip` or
+  the key-pose controls; they call panel routes that the same guard covers
+  server-side, so they refuse correctly but still refuse LATE. Both are worth
+  doing the next time either file is open.
+- ⬜ **Some suites write to the REPO's own local stores.**
+  `voiceover_fit_check.py` and its neighbours do not point `API_LOCAL_*` at a
+  temporary directory the way the six panel suites do, so running them dirties
+  `.local_usage.json` in the working tree and their accounts share one set of
+  counters. It is why that suite hit the free-tier project cap at all. The fix
+  is the panel suites' opening block, copied.
 - ⬜ **`tests/profile_check.py` FAILS ITS LAST ASSERTION, AND IT IS NOT A
   REGRESSION.** `count_documents({}) == 1` against the LIVE MongoDB (255 real
   accounts today); the other 40 checks pass. It was only ever true on a database

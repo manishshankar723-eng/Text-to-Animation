@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api.js";
 import { applyTheme, getTheme } from "./theme.js";
+// The same answer this shell reads for the rail, handed to the controls buried
+// inside the workflows — ✨ Animate, 🎙 Voiceover, the 3D popup. See
+// `entitlements.js`; it is a module store, so nothing is threaded as a prop.
+import { clearEntitlements, setEntitlements } from "./entitlements.js";
 import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -14,6 +18,9 @@ import CreateAnimaticImage from "./components/CreateAnimaticImage.jsx";
 import PublicStoryboard from "./components/PublicStoryboard.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import AdminPanel from "./admin/AdminPanel.jsx";
+// The panel gets its own shell, not the second column of this one - see the
+// header of AdminShell.jsx for why the workflow rail has no business beside it.
+import AdminShell from "./admin/AdminShell.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
 import { WORKFLOWS } from "./components/Sidebar.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
@@ -48,6 +55,32 @@ function readShareToken() {
   return t && /^[a-f0-9]{32}$/i.test(t) ? t : null;
 }
 
+// The admin panel is `?admin`. THE SECOND AND LAST THING IN THE URL, and it is
+// here for one reason: the panel is a place somebody is sent to ("open the
+// admin panel and look at this account"), and a place you can only reach by
+// signing in and hunting through a menu is a place nobody links to.
+//
+// ⚠ IT IS AN ADDRESS, NOT A PERMISSION. Typing it gets a non-admin the same
+// "not available on this account" card the menu already refuses to offer them,
+// and every /admin/* request behind it answers 404 regardless. See require_admin.
+const ADMIN_PARAM = "admin";
+
+function readAdminRoute() {
+  return new URLSearchParams(window.location.search).has(ADMIN_PARAM);
+}
+
+// Keep the address honest as `nav` moves. ⚠ `replaceState`, NOT `pushState` -
+// the app has no router and therefore nothing that could answer a Back button
+// walking through a history of nav states; pushing would build a stack that
+// only ever behaves wrongly.
+function syncAdminUrl(onAdmin) {
+  const url = new URL(window.location.href);
+  if (onAdmin === url.searchParams.has(ADMIN_PARAM)) return;
+  if (onAdmin) url.searchParams.set(ADMIN_PARAM, "1");
+  else url.searchParams.delete(ADMIN_PARAM);
+  window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+}
+
 // Whether the nav rail is collapsed to icons. Remembered per browser, like the
 // theme is: someone who works in the narrow rail wants it narrow next time too.
 // Kept HERE and not in Sidebar because `.shell` is a two-column grid — the rail
@@ -71,7 +104,11 @@ export default function App() {
   // Land on HOME by default — both a fresh login and a returning session. Home
   // is the dashboard (profile, plan, recent work), so opening the app shows
   // where things stand rather than dropping you mid-workflow.
-  const [nav, setNav] = useState("home"); // "home" | "profile" | workflow id
+  // ⚠ THE URL WINS OVER THE DEFAULT, and only for this one destination. A
+  // bookmark or a pasted link has to land where it points; everything else
+  // still opens on Home, which is the dashboard.
+  const [nav, setNav] = useState(() => (readAdminRoute() ? "admin" : "home"));
+  // "home" | "profile" | "admin" | workflow id
   // Bumped when the user clicks the workflow they are ALREADY in. Every
   // workflow keeps its own screen in local state (library → session → board),
   // so re-selecting it in the sidebar did nothing — you stayed wherever you
@@ -127,6 +164,13 @@ export default function App() {
 
   useEffect(() => applyTheme(theme), [theme]);
 
+  // ⚠ ONE DIRECTION ONLY: nav writes the URL, the URL is read once at boot.
+  // Watching the address as well would make two owners of one piece of state,
+  // and the app has no router to arbitrate between them.
+  useEffect(() => {
+    syncAdminUrl(nav === "admin");
+  }, [nav]);
+
   useEffect(() => {
     try {
       localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed ? "1" : "0");
@@ -160,6 +204,11 @@ export default function App() {
       setWorkflows(WORKFLOWS);
       setEntitled(false);
       setTier("");
+      // ⚠ CLEARED IS "WE DON'T KNOW", NOT "NOTHING IS ALLOWED" — the module
+      // goes back to fail-open, exactly as the rail goes back to WORKFLOWS.
+      // Leaving the last account's answer in place would grey out a control for
+      // the next person to sign in on this browser.
+      clearEntitlements();
       return;
     }
     let cancelled = false;
@@ -196,6 +245,11 @@ export default function App() {
           setEntitled(true);
         }
         setTier(e?.tier || "");
+        // ⚠ OUTSIDE THE `workflows.length` BRANCH ON PURPOSE. The two answers
+        // are independent: an account can legitimately have every workflow and
+        // a capability switched off, and hanging this on the rail's condition
+        // would have made "no workflows" silently mean "every button on".
+        setEntitlements(e);
       })
       .catch(() => {
         // Leave the last good list (or the built-in one) in place.
@@ -245,6 +299,13 @@ export default function App() {
     // that request answers — and clicking it in that window lands on a panel
     // whose every call 404s.
     setIsAdmin(false);
+    // ⚠ AND THE SAME FOR THE CAPABILITIES, for a sharper version of that
+    // reason: the effect above re-runs on `nav`, and switching account while
+    // already on Home does not change `nav` — so the previous account's answer
+    // would sit there unrefreshed until they navigated. Cleared, it means "we
+    // don't know yet", which is fail-open; kept, it is one customer's locks on
+    // another customer's screen.
+    clearEntitlements();
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -260,6 +321,8 @@ export default function App() {
     setEmail(mail);
     setDisplayName("");
     setIsAdmin(false);
+    // It IS a switch — same reason as `switchAccount`, same reset.
+    clearEntitlements();
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -373,8 +436,15 @@ export default function App() {
     content = isAdmin ? (
       <AdminPanel />
     ) : (
+      /* ⚠ AND IT NEEDS ITS OWN WAY BACK NOW. In the app shell the rail was the
+         way out of this card; in the admin shell there is no rail, and someone
+         who followed a `?admin` link they cannot open would otherwise be sitting
+         on a dead end with a top bar. */
       <div className="card placeholder">
         <p className="muted">That page isn't available on this account.</p>
+        <button className="btn" onClick={() => setNav("home")}>
+          Go to the app
+        </button>
       </div>
     );
   } else if (hiddenWorkflow) {
@@ -470,6 +540,31 @@ export default function App() {
           setNav("storyboard-to-animatics");
         }}
       />
+    );
+  }
+
+  // ---- The admin panel, in its own shell -------------------------------
+  // ⚠ RETURNED BEFORE THE APP SHELL, NOT INSIDE IT. `content` above already
+  // decided WHAT to draw here (the panel, or the refusal card for an account
+  // that is not an administrator); this decides what it is drawn IN, and the
+  // answer is deliberately not the customer's workflow rail. The modals below
+  // do not come with it: "Add another account" and the pricing modal are both
+  // about being a customer, and the panel has its own Pricing tab.
+  if (nav === "admin") {
+    return (
+      <AdminShell
+        email={email}
+        displayName={displayName}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        onExit={() => setNav("home")}
+        /* Your account is in the app, so this leaves the panel to get there —
+           the same door, not a second copy of the profile page. */
+        onOpenAccount={() => setNav("profile")}
+        onLogout={logout}
+      >
+        {content}
+      </AdminShell>
     );
   }
 

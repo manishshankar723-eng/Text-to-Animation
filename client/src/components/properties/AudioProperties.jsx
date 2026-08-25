@@ -20,6 +20,8 @@ import {
   FADE_CURVES,
 } from "../../animatic/audio_mix.js";
 import { clipId } from "../../animatic/audio_clips.js";
+// Transcribing spends `cap.captions`, which an account may not have.
+import useCapability from "../../useCapability.js";
 import { formatTime } from "../Timeline.jsx";
 import { PropGroup, PropRow, NumField } from "./PropGroup.jsx";
 
@@ -42,6 +44,7 @@ export default function AudioProperties({
 }) {
   const id = clipId(track);
   const set = (patch) => onChange(id, patch);
+  const captionsCap = useCapability("captions");
   const volume = track.volume ?? 1;
   const startMs = Math.max(0, track.start_ms || 0);
   const rest = Math.max(0, (track.duration_ms || 0) - (track.offset_ms || 0));
@@ -410,7 +413,11 @@ export default function AudioProperties({
           can be turned into that isn't free.
           ⚠ Keyed by the UPLOAD, not the clip — transcribing listens to the
           whole FILE, so cutting it up neither changes nor multiplies the job. */}
-      {onCaptions && (
+      {/* ⚠ GONE WHEN IT IS HIDDEN, LOCKED WHEN IT IS SOLD. A group whose
+          only control cannot be pressed and cannot be bought is an empty
+          section; one that CAN be bought is the only place a customer finds out
+          this track could have been transcribed at all. */}
+      {onCaptions && captionsCap.visible && (
         <PropGroup id="audio:captions" title="Captions">
           <PropRow
             full
@@ -420,14 +427,29 @@ export default function AudioProperties({
           >
             <button
               type="button"
-              className="btn small"
-              disabled={captionsBusy}
+              className={`btn small ${captionsCap.on ? "" : "cap-off"}`}
+              disabled={!captionsCap.on || captionsBusy}
               onClick={() => onCaptions(track.upload_id)}
-              title="Listen to this track and write a caption for each spoken line"
+              title={
+                captionsCap.on
+                  ? "Listen to this track and write a caption for each spoken line"
+                  : captionsCap.reason
+              }
             >
-              <Icon name="text" /> Write captions from this track
+              {captionsCap.on ? (
+                <>
+                  <Icon name="text" /> Write captions from this track
+                </>
+              ) : (
+                <>🔒 Write captions from this track</>
+              )}
             </button>
           </PropRow>
+          {!captionsCap.on && (
+            <PropRow full>
+              <span className="tiny muted">🔒 {captionsCap.reason}</span>
+            </PropRow>
+          )}
           {/* ⚠ WHERE THE BUTTON IS, because that is where the user is looking.
               The status bar at the top of the editor has always reported this,
               but it is three panes away from the thing just clicked, so the

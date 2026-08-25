@@ -10,6 +10,11 @@
 
 import Icon from "../Icon.jsx";
 import KeyframeControls from "../KeyframeControls.jsx";
+// ⚠ THE SAME ANSWER THE TIMELINE'S COPY OF THIS BUTTON READS. Both open the
+// same priced dialog and both spend `cap.veo-render`, so both ask the same
+// question — asked here rather than passed in, because a prop for this would
+// have to be threaded through a pane that only hosts the button.
+import useCapability from "../../useCapability.js";
 import VideoClipProperties, { ColorCardProperties } from "./VideoClipProperties.jsx";
 import { PropGroup, PropRow, NumField, PropSlider } from "./PropGroup.jsx";
 import { clamp } from "../../animatic/util.js";
@@ -53,6 +58,9 @@ export default function FrameProperties({
   // always was.
   const pct = (v) => Math.round((v ?? 0) * 100);
   const kind = frame.kind || "image";
+  // May this account render footage at all? Fail-open until the boot call
+  // answers — see `entitlements.js`.
+  const veoCap = useCapability("veo-render");
   // Is this property animated? A ↺ has to light up for that too — a keyframed
   // scale is a change even when the value under the playhead reads 100%.
   const keyed = (prop) => (frame.keyframes?.[prop] || []).length > 0;
@@ -255,27 +263,41 @@ export default function FrameProperties({
           the dialog that prices the job first. The wording changes once a clip
           exists, because paying a second time has to be a deliberate act and
           never look like a retry. */}
-      {onAnimate && (
+      {/* ⚠ THE WHOLE GROUP GOES when the capability is not visible — a
+          hidden capability must not leave an empty "Footage" section behind. A
+          LOCKED one keeps its group, because the rendered-cost row below is
+          still the record of what this shot has already cost. */}
+      {onAnimate && veoCap.visible && (
         <PropGroup id="frame:veo" title="Footage" hint="Turn this still into moving video">
           <PropRow full>
             <button
               type="button"
-              className="btn small"
-              disabled={animating}
+              className={`btn small ${veoCap.on ? "" : "cap-off"}`}
+              disabled={!veoCap.on || animating}
               onClick={() => onAnimate(frame.id)}
               title={
-                veo?.status === "ready"
-                  ? "Render this shot again with Veo — it costs the same as the first time"
-                  : "Turn this still into real footage with Veo (you'll see the price first)"
+                !veoCap.on
+                  ? veoCap.reason
+                  : veo?.status === "ready"
+                    ? "Render this shot again with Veo — it costs the same as the first time"
+                    : "Turn this still into real footage with Veo (you'll see the price first)"
               }
             >
-              {animating
-                ? "Animating…"
-                : veo?.status === "ready"
-                  ? "✨ Render again with Veo"
-                  : "✨ Animate with Veo"}
+              {!veoCap.on
+                ? "🔒 Animate with Veo"
+                : animating
+                  ? "Animating…"
+                  : veo?.status === "ready"
+                    ? "✨ Render again with Veo"
+                    : "✨ Animate with Veo"}
             </button>
           </PropRow>
+          {/* Printed, not only hovered — see the same note in DirectorPanel. */}
+          {!veoCap.on && (
+            <PropRow full>
+              <span className="tiny muted">🔒 {veoCap.reason}</span>
+            </PropRow>
+          )}
           {veo?.status === "ready" && (
             <PropRow label="Rendered" title="What this shot has already cost">
               <span className="an-row-read">~${(veo.cost_usd || 0).toFixed(2)}</span>

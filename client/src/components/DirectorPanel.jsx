@@ -49,7 +49,13 @@ import { useEffect, useState } from "react";
 
 import { MOTION_LABEL } from "../animatic/agent/actions.js";
 import { freeKeys, paidKeys } from "../animatic/agent/plan_schema.js";
+import useCapability from "../useCapability.js";
 import Icon from "./Icon.jsx";
+
+// ⚠ ONLY THE TWO PAID FLAGS ARE GATED, and the free ones must never join them:
+// transitions, effects, text and shapes are edits this browser makes to a
+// document in memory. They call nothing and cost nothing, so a lock on them
+// would be a lock with no server rule behind it — see `entitlements.js`.
 
 /** `1200` → `1.2s`. Times are read as seconds everywhere else in this editor. */
 const secs = (ms) => `${(Math.max(0, Number(ms) || 0) / 1000).toFixed(1)}s`;
@@ -202,12 +208,32 @@ const INCLUDE_LABEL = {
 
 export default function DirectorPanel({ run, frames, languages = [], onClose }) {
   const [confirmClose, setConfirmClose] = useState(false);
+  // ⚠ THREE CAPABILITIES REACH THIS PANEL, AND THEY GATE THREE DIFFERENT
+  // THINGS. `director` is the AI DOOR ONLY — "Just the rhythm" is the Phase 0
+  // rules planner, which calls nothing and must stay pressable for an account
+  // that has no AI at all. The other two are the passes that spend.
+  const directorCap = useCapability("director");
+  const voiceoverCap = useCapability("tts-voiceover");
+  const veoCap = useCapability("veo-render");
+  const capFor = { voiceover: voiceoverCap, veo: veoCap };
   const {
     phase, plan, totals, dropped, trimmed, log, index, missingApi,
     source, why, analysis, veo, cost, include, hasModel,
     script, speech, willSpeak, speechWhy,
     shoot, quote, footage, willRender, renderWhy, pending, resuming,
   } = run;
+  // ⚠ UN-TICKED, NOT JUST GREYED. A disabled box that is still CHECKED would
+  // leave `include.veo` true, and everything downstream reads that flag: the
+  // amber price line, the count on the Run button, and the pass itself. The
+  // user would be shown a price for footage the server is going to refuse, and
+  // then pay the wait to find out. Setting it false runs the same free re-cost
+  // an ordinary un-tick does, so the panel re-prices itself with the pass gone.
+  const setInclude = run.setInclude;
+  useEffect(() => {
+    if (!voiceoverCap.on && include.voiceover !== false) setInclude("voiceover", false);
+    if (!veoCap.on && include.veo !== false) setInclude("veo", false);
+  }, [voiceoverCap.on, veoCap.on, include.voiceover, include.veo, setInclude]);
+
   // ⚠ `speaking` IS IN FLIGHT BUT NOT STEPPABLE. Phase B is one server call that
   // has already been paid for by the time it starts, so there is nothing honest
   // for Pause, Step or Stop to do while it runs — but the ✕ must still guard,
@@ -499,6 +525,17 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               On-screen text is written in this language. Veo motion prompts stay in
               English — the dialogue inside them does not.
             </p>
+
+            {/* ⚠ SAID HERE, WHERE THE CHOICE IS MADE. The 🔒 on the button
+                below explains why it cannot be pressed; this explains what the
+                one beside it still does, so the answer to "my AI is off" is a
+                working plan rather than a closed dialog. */}
+            {!directorCap.on && directorCap.visible && (
+              <p className="tiny muted dir-brief-note">
+                🔒 {directorCap.reason} “Just the rhythm” still works — it reads the
+                shot lengths and needs no AI at all.
+              </p>
+            )}
           </div>
         )}
 
@@ -636,22 +673,49 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 labelled as what they are. */}
             <div className="dir-include dir-include-paid">
               <span className="an-exp-label">These two spend</span>
-              {paidKeys().map((key) => (
-                <label className="an-check dir-include-box" key={key}>
-                  <input
-                    type="checkbox"
-                    checked={include[key] !== false}
-                    onChange={(e) => run.setInclude(key, e.target.checked)}
-                  />
-                  {INCLUDE_LABEL[key] || key}
-                </label>
-              ))}
+              {paidKeys().map((key) => {
+                // ⚠ THE BOX STAYS ON SCREEN WHEN IT IS LOCKED, un-ticked and
+                // wearing the reason. Removing it would leave a panel that
+                // simply never mentions Veo — and the customer who is paying
+                // for a plan without it has no way to learn what they would
+                // get. It only disappears when the capability is not visible at
+                // all, which is a kill switch and has nothing to offer.
+                const cap = capFor[key];
+                if (cap && !cap.visible) return null;
+                const off = cap && !cap.on;
+                return (
+                  <label
+                    className={`an-check dir-include-box ${off ? "cap-off" : ""}`}
+                    key={key}
+                    title={off ? cap.reason : undefined}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!off && include[key] !== false}
+                      disabled={off}
+                      onChange={(e) => run.setInclude(key, e.target.checked)}
+                    />
+                    {off ? "🔒 " : ""}
+                    {INCLUDE_LABEL[key] || key}
+                  </label>
+                );
+              })}
               {/* ⚠ SAID OUT LOUD, because "Voiceover" does not look like it owns
                   the captions and it does: phase B writes them. The one line
                   that would have answered the whole report. */}
               <span className="tiny muted dir-include-note">
                 the voiceover writes the captions too
               </span>
+              {/* ⚠ THE REASON IS PRINTED, NOT ONLY HOVERED. A `title` is
+                  invisible on a touchscreen and invisible to anyone who does
+                  not think to hover a control they have already been refused. */}
+              {[voiceoverCap, veoCap]
+                .filter((c) => c.visible && !c.on)
+                .map((c) => (
+                  <span className="tiny muted dir-include-note" key={c.reason}>
+                    🔒 {c.reason}
+                  </span>
+                ))}
             </div>
 
             {/* ------------------------------------------------- PHASE B: the sound */}
@@ -996,14 +1060,25 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               >
                 Just the rhythm
               </button>
+              {/* ⚠ THIS DOOR IS THE ONLY ONE `cap.director` GATES, and the one
+                  beside it proves why that distinction matters: "Just the
+                  rhythm" is the rules planner — no backend, no key, no quota,
+                  nothing to refuse — so an account without the AI still has a
+                  working 🎬 Make Video rather than a dialog with two dead
+                  buttons. The server guards `POST /director/{id}/plan` and
+                  nothing else; this matches it exactly. */}
               <button
                 type="button"
-                className="btn primary"
-                disabled={!hasModel || !frames.length}
+                className={`btn primary ${directorCap.on ? "" : "cap-off"}`}
+                disabled={!directorCap.on || !hasModel || !frames.length}
                 onClick={() => run.buildPlan({ ai: true })}
-                title="Two text calls. Nothing is rendered and nothing is edited yet."
+                title={
+                  directorCap.on
+                    ? "Two text calls. Nothing is rendered and nothing is edited yet."
+                    : directorCap.reason
+                }
               >
-                Read my film
+                {directorCap.on ? "Read my film" : "🔒 Read my film"}
               </button>
             </>
           )}

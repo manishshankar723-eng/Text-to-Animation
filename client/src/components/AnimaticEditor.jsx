@@ -164,6 +164,11 @@ import { forgetAudio } from "../animatic/beats.js";
 import { beatMarks, cutsToDurations, planBeatCuts } from "../animatic/beat_cut.js";
 import useTimelineTransport, { useMonitorVideo } from "../animatic/useTimelineTransport.js";
 import useUndoStack from "../animatic/useUndoStack.js";
+// ⚠ WHETHER THE EXPENSIVE BUTTONS MAY BE PRESSED AT ALL. Every one of them is
+// already guarded server-side (`require_feature('cap.veo-render')` and its
+// four neighbours); this is what stops the customer finding that out by
+// pressing it. Fail-open until the boot call answers — see `entitlements.js`.
+import useCapability from "../useCapability.js";
 // 🎬 Make Video — the auto-editor. Everything it can do lives in `agent/`, and
 // none of it touches state directly: see `agent/actions.js`.
 import useDirectorRun from "../animatic/agent/useDirectorRun.js";
@@ -847,6 +852,20 @@ export default function AnimaticEditor({
   // The export dialog, and the file name it will download as.
   const [exportOpen, setExportOpen] = useState(false);
   const [exportName, setExportName] = useState("");
+
+  // --- What this account may actually USE ------------------------------
+  // ⚠ FIVE OF THE SIX CAPABILITIES ARE REACHABLE FROM THIS ONE SCREEN, which
+  // is why they are read together here rather than at each button: ✨ Animate
+  // and the Media pane's video tab spend Veo, 🎙 Voiceover spends speech,
+  // Write captions spends transcription, 🎬 Make Video spends two text calls,
+  // and the Media pane's image tab draws pictures. Each is `{on, visible,
+  // locked, reason}` and every one of them is ON until the server says
+  // otherwise — see `entitlements.js` on why that direction is the safe one.
+  const veoCap = useCapability("veo-render");
+  const voiceCap = useCapability("tts-voiceover");
+  const captionsCap = useCapability("captions");
+  const directorCap = useCapability("director");
+  const imageCap = useCapability("image-generate");
 
   // --- Animating a frame with Veo (THE ONE THING HERE THAT COSTS MONEY) ---
   // The records themselves are SERVER-owned and live on the project (see
@@ -10046,25 +10065,39 @@ export default function AnimaticEditor({
                     out of nothing and costs nothing. This one spends, and reading
                     as one of them would be a lie about it — the same reason
                     🎙 Voiceover is plain. */}
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={!veoTarget || serverBusy}
-                  onClick={() => veoTarget && openAnimate(veoTarget.id)}
-                  title={
-                    !veoTarget
-                      ? "Nothing to animate yet"
-                      : veoTargetClip?.status === "ready"
-                        ? `Render ${veoTarget.label || "this shot"} again`
-                        : `Animate ${veoTarget.label || "this shot"} with Veo`
-                  }
-                >
-                  {animating
-                    ? "✨ Animating…"
-                    : veoTargetClip?.status === "ready"
-                      ? "✨ Render again with Veo"
-                      : "✨ Animate with Veo"}
-                </button>
+                {/* ⚠ GONE, NOT GREYED, when the capability is not visible at
+                    all — a kill switch or a rollout this account is not in.
+                    There is nothing to say about those and nothing to sell, so
+                    the button is simply not in the row. `locked` is the other
+                    story: it stays, disabled, wearing the reason. */}
+                {veoCap.visible && (
+                  <button
+                    type="button"
+                    className={`btn small ${veoCap.on ? "" : "cap-off"}`}
+                    disabled={!veoCap.on || !veoTarget || serverBusy}
+                    onClick={() => veoTarget && openAnimate(veoTarget.id)}
+                    title={
+                      // ⚠ THE CAPABILITY'S REASON WINS OVER "nothing selected".
+                      // Both are true when neither holds, and only one of them
+                      // is worth acting on.
+                      !veoCap.on
+                        ? veoCap.reason
+                        : !veoTarget
+                          ? "Nothing to animate yet"
+                          : veoTargetClip?.status === "ready"
+                            ? `Render ${veoTarget.label || "this shot"} again`
+                            : `Animate ${veoTarget.label || "this shot"} with Veo`
+                    }
+                  >
+                    {!veoCap.on
+                      ? "🔒 Animate with Veo"
+                      : animating
+                        ? "✨ Animating…"
+                        : veoTargetClip?.status === "ready"
+                          ? "✨ Render again with Veo"
+                          : "✨ Animate with Veo"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn small an-add-text"
@@ -10103,19 +10136,23 @@ export default function AnimaticEditor({
                     `.an-add-card` weight: those two are a pair that makes a clip
                     out of nothing and costs nothing. This one spends, and
                     reading as one of them would be a lie about it. */}
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={!hasBoardFrames || serverBusy}
-                  onClick={openVoiceover}
-                  title={
-                    hasBoardFrames
-                      ? "Read the dialogue aloud"
-                      : "Needs board panels"
-                  }
-                >
-                  🎙 Voiceover
-                </button>
+                {voiceCap.visible && (
+                  <button
+                    type="button"
+                    className={`btn small ${voiceCap.on ? "" : "cap-off"}`}
+                    disabled={!voiceCap.on || !hasBoardFrames || serverBusy}
+                    onClick={openVoiceover}
+                    title={
+                      !voiceCap.on
+                        ? voiceCap.reason
+                        : hasBoardFrames
+                          ? "Read the dialogue aloud"
+                          : "Needs board panels"
+                    }
+                  >
+                    {voiceCap.on ? "🎙 Voiceover" : "🔒 Voiceover"}
+                  </button>
+                )}
                 {/* ⚠ SPENDS NOTHING, AND SAYS SO. It sits next to 🎙 Voiceover,
                     which does spend, so the two must not read alike: this one is
                     `an-add-director`, weighted with the Text / Colour card pair
@@ -10833,15 +10870,33 @@ export default function AnimaticEditor({
               >
                 <Icon name="sparkle" /> AI Image
               </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={imgGenTab === "video"}
-                className={`an-tab ${imgGenTab === "video" ? "on" : ""}`}
-                onClick={() => setImgGenTab("video")}
-              >
-                <Icon name="sparkle" /> AI Video
-              </button>
+              {/* ⚠ THE TAB IS THE GATE HERE, not the button three rows
+                  down: an account without Veo should not be able to fill in a
+                  prompt, pick a quality and choose a source still before being
+                  told. It is still DRAWN when it is locked — the pane behind it
+                  is what makes both tabs one height (see below), and a customer
+                  who cannot see the tab cannot know there is anything to buy. */}
+              {veoCap.visible && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={imgGenTab === "video"}
+                  disabled={!veoCap.on}
+                  className={`an-tab ${imgGenTab === "video" ? "on" : ""} ${
+                    veoCap.on ? "" : "cap-off"
+                  }`}
+                  onClick={() => setImgGenTab("video")}
+                  title={veoCap.on ? undefined : veoCap.reason}
+                >
+                  {veoCap.on ? (
+                    <>
+                      <Icon name="sparkle" /> AI Video
+                    </>
+                  ) : (
+                    <>🔒 AI Video</>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* ⚠ BOTH BODIES ARE RENDERED, STACKED IN ONE GRID CELL, and that
@@ -11114,20 +11169,32 @@ export default function AnimaticEditor({
               {imgGenTab === "image" ? (
                 <button
                   type="button"
-                  className="btn primary"
-                  disabled={!imgGenPrompt.trim() || imgGenBusy}
+                  className={`btn primary ${imageCap.on ? "" : "cap-off"}`}
+                  disabled={!imageCap.on || !imgGenPrompt.trim() || imgGenBusy}
                   onClick={doGenerateImage}
+                  title={imageCap.on ? undefined : imageCap.reason}
                 >
-                  {imgGenBusy ? "Drawing the image…" : "Generate the image"}
+                  {!imageCap.on
+                    ? "🔒 Generate the image"
+                    : imgGenBusy
+                      ? "Drawing the image…"
+                      : "Generate the image"}
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="btn primary"
-                  disabled={!vidGenPrompt.trim() || vidGenBusy || vidGenUploading}
+                  className={`btn primary ${veoCap.on ? "" : "cap-off"}`}
+                  disabled={
+                    !veoCap.on || !vidGenPrompt.trim() || vidGenBusy || vidGenUploading
+                  }
                   onClick={askToGenerateVideo}
+                  title={veoCap.on ? undefined : veoCap.reason}
                 >
-                  {vidGenBusy ? "Checking the price…" : "See the price →"}
+                  {!veoCap.on
+                    ? "🔒 See the price →"
+                    : vidGenBusy
+                      ? "Checking the price…"
+                      : "See the price →"}
                 </button>
               )}
             </div>
@@ -11440,13 +11507,21 @@ export default function AnimaticEditor({
               </button>
               <button
                 type="button"
-                className="btn primary"
+                className={`btn primary ${imageCap.on ? "" : "cap-off"}`}
                 disabled={
-                  !shotGenCtx?.can_generate || !shotGenPrompt.trim() || shotGenBusy
+                  !imageCap.on ||
+                  !shotGenCtx?.can_generate ||
+                  !shotGenPrompt.trim() ||
+                  shotGenBusy
                 }
                 onClick={doGenerateShot}
+                title={imageCap.on ? undefined : imageCap.reason}
               >
-                {shotGenBusy ? "Drawing the shot…" : "Generate the shot"}
+                {!imageCap.on
+                  ? "🔒 Generate the shot"
+                  : shotGenBusy
+                    ? "Drawing the shot…"
+                    : "Generate the shot"}
               </button>
             </div>
           </div>

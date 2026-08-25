@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+// Drawing the reference from a sentence spends `cap.image-generate`. ⚠ THE
+// UPLOAD TAB IS NOT GATED — a photo the user supplies draws nothing, and it is
+// how an account without generation still starts a turnaround.
+import useCapability from "../useCapability.js";
 
 // Friendly labels for specific part keys; anything else is title-cased.
 const PART_LABELS = { jacket: "Upper Garments", pants: "Lower Garments" };
@@ -18,6 +22,7 @@ const DEFAULT_PARTS = [
 // Upload a reference image OR generate one from text, then start a pipeline job.
 // Calls onJobCreated(jobId) after a successful enqueue.
 export default function GenerateForm({ onJobCreated }) {
+  const imageCap = useCapability("image-generate");
   const [templates, setTemplates] = useState([]);
   const [name, setName] = useState("");
 
@@ -242,15 +247,29 @@ export default function GenerateForm({ onJobCreated }) {
           {!referenceId && (
             <button
               type="button"
-              className="btn secondary"
-              disabled={generating || !prompt.trim()}
+              className={`btn secondary ${imageCap.on ? "" : "cap-off"}`}
+              disabled={!imageCap.on || generating || !prompt.trim()}
               onClick={handleGenerate}
+              title={imageCap.on ? undefined : imageCap.reason}
             >
               {generating ? (
                 <span className="spinner-inline" />
               ) : null}
-              {generating ? " Generating…" : "Generate Reference Image"}
+              {!imageCap.on
+                ? "🔒 Generate Reference Image"
+                : generating
+                  ? " Generating…"
+                  : "Generate Reference Image"}
             </button>
+          )}
+          {/* ⚠ AND WHERE THE OTHER DOOR IS. This form has an Upload tab
+              that is not gated at all, so the refusal comes with the way
+              forward rather than being the end of the page. */}
+          {!referenceId && !imageCap.on && imageCap.visible && (
+            <p className="tiny muted">
+              🔒 {imageCap.reason} Upload a reference photo instead — the tab
+              above works as it always did.
+            </p>
           )}
 
           {refPreview && (

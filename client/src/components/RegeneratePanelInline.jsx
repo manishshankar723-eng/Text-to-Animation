@@ -37,6 +37,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import { PropGroup, PropRow, PropNote } from "./properties/PropGroup.jsx";
+// Re-drawing costs one image, and `cap.image-generate` is what an account needs
+// to spend it. The server guards `POST /animatics/{id}/frames/{fid}/panel`.
+import useCapability from "../useCapability.js";
 
 export default function RegeneratePanelInline({
   animaticId,
@@ -54,6 +57,7 @@ export default function RegeneratePanelInline({
   const [panel, setPanel] = useState(null);
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
+  const imageCap = useCapability("image-generate");
   // The wording as the SERVER last had it. What ↺ goes back to, and what
   // decides whether the description counts as edited — comparing against the
   // draft's own initial value would make every keystroke permanent.
@@ -133,7 +137,14 @@ export default function RegeneratePanelInline({
         </div>
       )}
 
-      {!panel.can_regenerate ? (
+      {/* ⚠ THE CAPABILITY IS ASKED BEFORE THE PANEL IS, and it reuses
+          the refusal this pane already had. "This shot can't be re-drawn" and
+          "your plan can't draw" are both a sentence in the same place, which is
+          the whole reason that note exists — a greyed button with no line under
+          it is the thing this component was written to avoid. */}
+      {!imageCap.on ? (
+        <PropNote>🔒 {imageCap.reason}</PropNote>
+      ) : !panel.can_regenerate ? (
         <PropNote>{panel.reason}</PropNote>
       ) : (
         <>

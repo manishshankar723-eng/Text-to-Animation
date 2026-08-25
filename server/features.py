@@ -451,8 +451,16 @@ def _in_percent(email: str, key: str, percent: int) -> bool:
     return int(digest[:8], 16) % 100 < percent
 
 
-def is_on(email: str, key: str) -> bool:
-    """Whether one feature is usable by one account. Never raises."""
+def explain(email: str, key: str) -> dict:
+    """The whole answer for ONE feature and one account — not just the boolean.
+
+    ⚠ THE GUARD NEEDS THE `source`, NOT ONLY THE VERDICT. "Off" and "off
+    because it is on a plan you are not on" are the same refusal and two
+    completely different sentences, and only the second one tells the customer
+    what to do about it. `is_on` is this function with the answer thrown away.
+
+    Never raises, and fails OPEN — see the module docstring.
+    """
     try:
         feat = all_features().get(key)
         if feat is None:
@@ -460,12 +468,17 @@ def is_on(email: str, key: str) -> bool:
             # added to the catalogue must not silently close a working route —
             # the typo should be found in the panel, not by a customer.
             logger.warning("require_feature named an unknown feature: %s", key)
-            return True
+            return _answer(True, True, STATUS_LIVE, "unknown")
         is_admin, overrides, tier = _who(email)
-        return _resolve_one(feat, email, is_admin, overrides.get(key), tier)["on"]
+        return _resolve_one(feat, email, is_admin, overrides.get(key), tier)
     except Exception as e:  # noqa: BLE001 — fail OPEN, see the module docstring
         logger.warning("Could not resolve feature %s for %s: %s", key, email, e)
-        return True
+        return _answer(True, True, STATUS_LIVE, "error")
+
+
+def is_on(email: str, key: str) -> bool:
+    """Whether one feature is usable by one account. Never raises."""
+    return explain(email, key)["on"]
 
 
 # ===========================================================================
@@ -486,25 +499,47 @@ def require_feature(key: str):
     """
 
     def guard(current: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if not is_on(current.email, key):
+        state = explain(current.email, key)
+        if not state["on"]:
             feat = all_features().get(key) or {}
             label = feat.get("label") or key
-            status = feat.get("status")
             # 403 and a sentence a support agent can act on. The customer is
             # authenticated and known — this is not "who are you", it is "not
             # on your account", and saying which is the difference between one
             # email and four.
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"{label} isn't available on your account yet."
-                    if status == STATUS_SOON
-                    else f"{label} isn't enabled for your account."
-                ),
-            )
+            raise HTTPException(status_code=403, detail=refusal(label, state))
         return current
 
     return guard
+
+
+def refusal(label: str, state: dict) -> str:
+    """The sentence for one refusal. ⚠ THE ONLY PLACE THIS WORDING LIVES.
+
+    The guard raises it as a 403 detail and `/auth/me/entitlements` ships the
+    same string to the browser, so the greyed-out button and the error the
+    customer would have got by pressing it say exactly the same thing. Two
+    wordings for one refusal is how a support agent ends up unable to tell which
+    rule fired.
+    """
+    if state.get("source") == "tier" and state.get("min_tier"):
+        # ⚠ NAMES THE PLAN, because "not enabled" leaves a paying customer with
+        # nowhere to go. This is the one refusal with an action attached.
+        return f"{label} is part of the {_tier_name(state['min_tier'])} plan."
+    if state.get("status") == STATUS_SOON:
+        return f"{label} isn't available on your account yet."
+    return f"{label} isn't enabled for your account."
+
+
+def _tier_name(tier_id: str) -> str:
+    """The tier's display name, falling back to its id. Never raises."""
+    try:
+        from . import billing
+
+        return (billing.all_tiers().get(tier_id) or {}).get("name") or tier_id
+    except Exception as e:  # noqa: BLE001 — a refusal must not fail to be worded
+        logger.warning("Could not name tier %s: %s", tier_id, e)
+        return tier_id
 
 
 # ===========================================================================
@@ -545,6 +580,42 @@ def my_entitlements(current: CurrentUser = Depends(get_current_user)) -> dict:
         )
     workflows.sort(key=lambda w: (_order_of(feats, w["id"]), w["label"]))
 
+    # ⚠ THE SAME SHAPE FOR THE CAPABILITIES, AND FOR THE SAME REASON. A
+    # capability is not a page, so nothing navigates to it — it is the ✨
+    # Animate button, the 🎙 Voiceover button, the 3D popup. The browser has to
+    # draw those in three states (gone / locked / on) and it cannot work out
+    # which from a bare boolean, so the pre-shaped answer carries the label to
+    # print, the reason to show and the tier to sell.
+    capabilities = []
+    for key, state in resolved.items():
+        feat = feats.get(key) or {}
+        if feat.get("group") != GROUP_CAPABILITY:
+            continue
+        # ⚠ INVISIBLE IS OMITTED, exactly as a hidden workflow is. A control the
+        # customer must not see at all is one the browser is never told about —
+        # "draw it disabled" is the answer for locked, not for hidden.
+        if not state["visible"]:
+            continue
+        label = feat.get("label") or key
+        capabilities.append(
+            {
+                "id": key.split(".", 1)[1],
+                "key": key,
+                "label": label,
+                "icon": feat.get("icon") or "•",
+                "note": feat.get("note") or "",
+                "on": state["on"],
+                "status": state["status"],
+                # Visible, off, and one purchase away — the button wears a lock
+                # and offers the upgrade instead of erroring when pressed.
+                "locked": state["source"] == "tier",
+                "min_tier": state.get("min_tier"),
+                # ⚠ THE SAME SENTENCE THE 403 WOULD HAVE CARRIED. See `refusal`.
+                "reason": "" if state["on"] else refusal(label, state),
+            }
+        )
+    capabilities.sort(key=lambda c: ((feats.get(c["key"]) or {}).get("order", 999), c["label"]))
+
     from . import billing
 
     tier_id = billing.tier_of(current.email)
@@ -556,6 +627,7 @@ def my_entitlements(current: CurrentUser = Depends(get_current_user)) -> dict:
         "features": {k: v["on"] for k, v in resolved.items()},
         "states": resolved,
         "workflows": workflows,
+        "capabilities": capabilities,
         "account_role": users.ROLE_ADMIN if is_admin else users.ROLE_USER,
         # What they are on, so the pricing modal can mark the current card and
         # Home can stop saying "Free plan" to somebody paying for Pro.

@@ -16,6 +16,9 @@
 // input, so re-describing it wastes the prompt. The placeholder says so.
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
+// Every button on this screen spends `cap.veo-render`. The workspace above
+// prints the reason once as a banner; these carry it as their tooltip.
+import useCapability from "../useCapability.js";
 import Icon from "./Icon.jsx";
 
 const TIERS = [
@@ -47,6 +50,7 @@ export default function FinalVideoRenderStep({
   backendOk,
   onNext
 }) {
+  const veoCap = useCapability("veo-render");
   // { shotIds, force, estimate } while the confirm dialog is open.
   const [confirm, setConfirm] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -244,13 +248,15 @@ export default function FinalVideoRenderStep({
         <div className="fv-batch">
           <button
             type="button"
-            className="btn"
-            disabled={running || busy || !backendOk || !renderable.length}
+            className={`btn ${veoCap.on ? "" : "cap-off"}`}
+            disabled={!veoCap.on || running || busy || !backendOk || !renderable.length}
             onClick={() => askToRender([], false)}
             title={
-              !backendOk
-                ? "Veo isn't reachable — see the banner above"
-                : "Render every shot that has a prompt and no clip yet"
+              !veoCap.on
+                ? veoCap.reason
+                : !backendOk
+                  ? "Veo isn't reachable — see the banner above"
+                  : "Render every shot that has a prompt and no clip yet"
             }
           >
             ▶ Render remaining ({renderable.length})
@@ -354,9 +360,13 @@ export default function FinalVideoRenderStep({
                       {isReady ? (
                         <button
                           type="button"
-                          className="btn small ghost"
-                          disabled={running || busy || !backendOk}
-                          title="Render this shot again — it costs the same as the first time"
+                          className={`btn small ghost ${veoCap.on ? "" : "cap-off"}`}
+                          disabled={!veoCap.on || running || busy || !backendOk}
+                          title={
+                            veoCap.on
+                              ? "Render this shot again — it costs the same as the first time"
+                              : veoCap.reason
+                          }
                           onClick={() => askToRender([shot.id], true)}
                         >
                           ↻ Re-render
@@ -365,13 +375,15 @@ export default function FinalVideoRenderStep({
                         <button
                           type="button"
                           className="btn small"
-                          disabled={running || busy || !hasPrompt || !backendOk}
+                          disabled={!veoCap.on || running || busy || !hasPrompt || !backendOk}
                           title={
-                            !hasPrompt
-                              ? "Say what should move first — a shot with no prompt can only fail"
-                              : !backendOk
-                                ? "Veo isn't reachable — see the banner above"
-                                : "Render just this shot"
+                            !veoCap.on
+                              ? veoCap.reason
+                              : !hasPrompt
+                                ? "Say what should move first — a shot with no prompt can only fail"
+                                : !backendOk
+                                  ? "Veo isn't reachable — see the banner above"
+                                  : "Render just this shot"
                           }
                           onClick={() => askToRender([shot.id], false)}
                         >

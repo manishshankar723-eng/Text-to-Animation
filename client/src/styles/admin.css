@@ -905,6 +905,140 @@
   text-transform: capitalize;
 }
 
+/* =========================================================================
+   THE ADMIN SHELL — the panel's own frame, not the app's
+   =========================================================================
+   ⚠ THE PANEL IS NOT A WORKFLOW, so it is not drawn in the second column of
+   `.shell` beside the workflow rail. See the header of AdminShell.jsx. One bar,
+   one column, and the width back: six tabs and a table of every account were
+   being laid out in `1fr` next to a 280px rail. */
+.admin-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+/* Sticky, because the tab rail is the panel's own navigation and the way OUT
+   has to stay at least as reachable as the way around. */
+.admin-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem clamp(1.2rem, 3vw, 2.5rem);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+.admin-brand-ico {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.admin-brand-name {
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The word that says which room this is. Gold, like every other "this is the
+   paid/privileged thing" mark in the app. */
+.admin-brand-tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+  background: rgba(229, 193, 88, 0.1);
+  border: 1px solid var(--border-gold);
+}
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* trap: `.btn.primary` carries a form margin and these sit in a bar. */
+.admin-topbar-actions .btn {
+  margin-top: 0;
+}
+.admin-theme {
+  padding-left: 0.7rem;
+  padding-right: 0.7rem;
+}
+.admin-account-wrap {
+  position: relative;
+  display: block;
+}
+.admin-account-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.55rem 0.25rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  max-width: 15rem;
+}
+.admin-account-btn:hover,
+.admin-account-btn.active {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+.admin-account-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ⚠ THE CLASS IS DOUBLED, AND IT HAS TO BE — same trap as
+   `.tl-layer-menu.an-settings-menu`: the surface is `.tl-layer-menu`'s, whose
+   `left: 0` would otherwise win on source order and open this off the right
+   edge of the window with its labels cut in half. It hangs off the LAST control
+   in the bar, so it opens leftward, downward. */
+.tl-layer-menu.admin-account-menu {
+  top: calc(100% + 0.3rem);
+  bottom: auto;
+  left: auto;
+  right: 0;
+  min-width: 12rem;
+  max-width: 18rem;
+  z-index: 40;
+}
+.admin-account-menu .tl-layer-menu-opt.danger:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--fail);
+}
+.admin-account-menu .tl-layer-menu-opt.danger:hover:not(:disabled) .tl-layer-menu-ico {
+  color: var(--fail);
+}
+.admin-main {
+  min-width: 0;
+  flex: 1;
+  padding: 1.8rem clamp(1.2rem, 3vw, 2.5rem);
+  overflow-x: hidden;
+}
+/* Narrow: the name goes and the avatar stays, so the bar keeps its three
+   controls instead of wrapping onto a second line. */
+@media (max-width: 620px) {
+  .admin-brand-name,
+  .admin-account-name {
+    display: none;
+  }
+}
+
 /* ---- The upgrade gate (a locked workflow's page) --------------------------- */
 .upgrade-gate {
   display: flex;
@@ -933,6 +1067,21 @@
   font-size: 0.8rem;
   line-height: 1;
   opacity: 0.75;
+}
+
+/* A control the account may not use — Animate with Veo, Voiceover, Generate 3D.
+   ⚠ IT IS DELIBERATELY ALMOST NOTHING. `:disabled` already dims the button and
+   sets the cursor; what a locked one needs on top of that is a REASON, and the
+   reason is in its label, its `title` and the line printed beside it. A second
+   visual language for "off" — a stripe, a tint, a badge of its own — would make
+   one greyed button in a row of greyed buttons look like a different kind of
+   broken. This exists so the state can be found in the DOM and in a test, and
+   so the not-allowed cursor survives on the wrappers that are not <button>. */
+.cap-off {
+  cursor: not-allowed;
+}
+label.cap-off {
+  opacity: var(--disabled-opacity);
 }
 
 /* ---- Sales ----------------------------------------------------------------- */

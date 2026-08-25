@@ -95,6 +95,15 @@ def register():
 
 
 auth, email = register()
+# \u26a0 ON AN UNLIMITED TIER, AND NOT BECAUSE THIS SUITE CARES ABOUT TIERS. It
+# creates three animatics while testing how a voiceover is TIMED, and Phase 5's
+# `require_quota("projects")` refuses the third on the free tier - so without
+# this line the run dies with a 402 about billing in a file about audio, and
+# sends the next person hunting in the wrong module. Same fix, same reason, as
+# the note at the top of `features_check.py`.
+from server import users as _users  # noqa: E402
+
+_users.set_tier(email, "production")
 print(f"\nstore: {type(store).__name__}\n")
 
 # ---------------------------------------------------------------------------

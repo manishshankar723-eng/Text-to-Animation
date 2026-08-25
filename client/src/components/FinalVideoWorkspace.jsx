@@ -17,6 +17,8 @@
 // dialog in FinalVideoRenderStep, which asks the server for an estimate first.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
+// Rendering is `cap.veo-render`, guarded on POST /final-videos/{id}/render.
+import useCapability from "../useCapability.js";
 import Icon from "./Icon.jsx";
 import FinalVideoArtStep from "./FinalVideoArtStep.jsx";
 import FinalVideoRenderStep from "./FinalVideoRenderStep.jsx";
@@ -80,6 +82,7 @@ function useAuthedMedia() {
 }
 
 export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
+  const veoCap = useCapability("veo-render");
   const [project, setProject] = useState(null);
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
@@ -506,6 +509,17 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
         <div className="fv-banner warn">
           <strong>Veo isn't reachable.</strong> {backend.error} You can still
           write prompts and arrange shots; rendering needs this fixed.
+        </div>
+      )}
+
+      {/* ⚠ THE SAME SHAPE, ONE ROW DOWN, because it is the same news to
+          the person reading it: this screen can do everything except the part
+          that spends. Said once here rather than on each of the twenty Render
+          buttons — which are disabled and carry the reason as well. */}
+      {!veoCap.on && veoCap.visible && (
+        <div className="fv-banner warn">
+          <strong>🔒 {veoCap.reason}</strong> You can still write prompts,
+          arrange shots and assemble the clips you have already rendered.
         </div>
       )}
 

@@ -6,6 +6,11 @@
 import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
+// A reference is a drawn image, so it spends `cap.image-generate` — guarded on
+// POST /characters/reference. ⚠ UPLOADING ONE IS NOT GATED and must not be:
+// the file is the customer's own, nothing is drawn, and it is the way an
+// account without generation still gets a consistent cast.
+import useCapability from "../useCapability.js";
 
 // Fields worth keeping when the user steps away from this page (see `saved`).
 // `uploaded` rides along so "Generate all" keeps skipping the user's own images
@@ -24,6 +29,7 @@ export default function StoryboardCast({
   busy,
 }) {
   const [lightbox, setLightbox] = useState(null);
+  const imageCap = useCapability("image-generate");
   // `saved` holds what the user already set up for these characters on an
   // earlier visit (the workflow owns it, so it outlives this component). Seed
   // from it, otherwise fall back to the breakdown's description.
@@ -168,7 +174,16 @@ export default function StoryboardCast({
         </button>
       </div>
 
-      {cast.length > 0 && (toGenCount > 0 || failedCount > 0) && (
+      {/* ⚠ THE REASON IS PRINTED ONCE, ABOVE THE LIST, and it says what
+          still works. Uploading is untouched — an account that cannot draw a
+          reference can still give every character one. */}
+      {!imageCap.on && imageCap.visible && (
+        <p className="tiny muted">
+          🔒 {imageCap.reason} You can still upload your own reference for each
+          character.
+        </p>
+      )}
+      {cast.length > 0 && imageCap.on && (toGenCount > 0 || failedCount > 0) && (
         <div className="cast-toolbar">
           {failedCount > 0 && (
             <button
@@ -244,11 +259,14 @@ export default function StoryboardCast({
                 <div className="cast-actions">
                   <button
                     type="button"
-                    className="btn secondary cast-btn"
-                    disabled={ch.busy}
+                    className={`btn secondary cast-btn ${imageCap.on ? "" : "cap-off"}`}
+                    disabled={!imageCap.on || ch.busy}
                     onClick={() => generateRef(i)}
+                    title={imageCap.on ? undefined : imageCap.reason}
                   >
-                    {ch.busy ? (
+                    {!imageCap.on ? (
+                      "🔒 Generate"
+                    ) : ch.busy ? (
                       <>
                         <span className="spinner-inline" /> Working…
                       </>

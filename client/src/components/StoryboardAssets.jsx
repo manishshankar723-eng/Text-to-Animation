@@ -7,6 +7,9 @@
 import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
+// Same rule as the Cast page: DRAWING a reference is gated, UPLOADING one is
+// not — see the note there.
+import useCapability from "../useCapability.js";
 
 // Small labelled badge so props and backgrounds are visually distinct.
 const CATEGORY_META = {
@@ -49,6 +52,7 @@ export default function StoryboardAssets({
     })
   );
   const [lightbox, setLightbox] = useState(null);
+  const imageCap = useCapability("image-generate");
   const [bulkBusy, setBulkBusy] = useState(false);
   const fileInputs = useRef([]);
 
@@ -176,7 +180,13 @@ export default function StoryboardAssets({
         </button>
       </div>
 
-      {items.length > 0 && (toGenCount > 0 || failedCount > 0) && (
+      {!imageCap.on && imageCap.visible && (
+        <p className="tiny muted">
+          🔒 {imageCap.reason} You can still upload your own reference for each
+          prop and background.
+        </p>
+      )}
+      {items.length > 0 && imageCap.on && (toGenCount > 0 || failedCount > 0) && (
         <div className="cast-toolbar">
           {failedCount > 0 && (
             <button
@@ -263,11 +273,14 @@ export default function StoryboardAssets({
                   <div className="cast-actions">
                     <button
                       type="button"
-                      className="btn secondary cast-btn"
-                      disabled={it.busy}
+                      className={`btn secondary cast-btn ${imageCap.on ? "" : "cap-off"}`}
+                      disabled={!imageCap.on || it.busy}
                       onClick={() => generateRef(i)}
+                      title={imageCap.on ? undefined : imageCap.reason}
                     >
-                      {it.busy ? (
+                      {!imageCap.on ? (
+                        "🔒 Generate"
+                      ) : it.busy ? (
                         <>
                           <span className="spinner-inline" /> Working…
                         </>

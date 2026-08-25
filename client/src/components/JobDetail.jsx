@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
+// Third-party 3D is `cap.3d-meshy`, guarded on POST /jobs/{id}/meshy.
+import useCapability from "../useCapability.js";
 
 const VIEWS = ["front", "left", "three_quarter", "back"];
 
@@ -19,6 +21,7 @@ function prettyPart(p) {
 // Detail panel for one job: polls until done, then shows the gallery, per-part
 // prompt view/edit, single-part regeneration, zip download, and Meshy 3D submission.
 export default function JobDetail({ jobId, onChanged }) {
+  const threeDCap = useCapability("3d-meshy");
   const [job, setJob] = useState(null);
   const [assets, setAssets] = useState(null);
   const [error, setError] = useState("");
@@ -410,14 +413,29 @@ export default function JobDetail({ jobId, onChanged }) {
                           >
                             ⬇ Download zip
                           </button>
-                          <button
-                            type="button"
-                            className="btn small secondary part-btn"
-                            title={`Generate a 3D model for ${prettyPart(part)}`}
-                            onClick={() => open3D(part)}
-                          >
-                            🧊 Generate 3D
-                          </button>
+                          {/* ⚠ HIDDEN ONLY WHEN IT IS HIDDEN. A locked one
+                              keeps its place in the row, greyed and wearing the
+                              reason — it is a section of an asset sheet the
+                              customer has already paid to generate, and "you
+                              could turn this into a 3D model" is exactly the
+                              moment the upgrade is worth mentioning. */}
+                          {threeDCap.visible && (
+                            <button
+                              type="button"
+                              className={`btn small secondary part-btn ${
+                                threeDCap.on ? "" : "cap-off"
+                              }`}
+                              disabled={!threeDCap.on}
+                              title={
+                                threeDCap.on
+                                  ? `Generate a 3D model for ${prettyPart(part)}`
+                                  : threeDCap.reason
+                              }
+                              onClick={() => open3D(part)}
+                            >
+                              {threeDCap.on ? "🧊 Generate 3D" : "🔒 Generate 3D"}
+                            </button>
+                          )}
                         </div>
                       </>
                     ) : (
