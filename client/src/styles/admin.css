@@ -5,7 +5,7 @@
  * `.danger-confirm` are all the app's own. Nothing here restyles them; this
  * file is the table, the tiles and the tab rail, which the app did not have.
  *
- * FOUR TRAPS FROM THE UI RULE IN AGENTS.md, ALL OF THEM LIVE ON THIS SCREEN:
+ * SIX TRAPS FROM THE UI RULE IN AGENTS.md, ALL OF THEM LIVE ON THIS SCREEN:
  *
  *  1. `theme.css` sets a GLOBAL `select { width: 100% }`. The filter row is
  *     mostly selects, so `.admin-select` resets it — without that the two
@@ -19,6 +19,16 @@
  *  4. Never nest two scrolling containers. Exactly one element in the table's
  *     chain scrolls: `.admin-table-card` is `overflow:hidden` + flex column +
  *     `min-height:0`, and `.admin-table-wrap` is the single `overflow:auto`.
+ *  5. A FIXED HEIGHT ON A FIELD CUTS THAT FIELD'S OWN TEXT IN HALF, and unlike
+ *     a button — which lets its label overflow — a form control CLIPS. See
+ *     `.admin-field-box` below; this was reported with a screenshot of the
+ *     filter row reading "Any status" with the bottom third of the letters
+ *     gone.
+ *  6. A CLASS OF ONE LOSES TO `.btn.small`. `.admin-feature-more` and
+ *     `.admin-theme` both spent a release trying to zero a padding that a
+ *     two-class rule in base.css was still setting. Any rule that has to beat
+ *     `.btn.small` is written `.btn.<name>`, never `.<name>` — admin.css is
+ *     last in the cascade, so an equal-specificity rule wins here.
  */
 
 /* ---- Shell ---------------------------------------------------------------- */
@@ -342,6 +352,32 @@
   box-sizing: border-box;
 }
 
+/* ⚠ TRAP 5 — EVERY COMPACT FIELD ON THIS SCREEN HAS TO GIVE THE PADDING BACK.
+   `theme.css` sets `input, select, textarea { padding: 0.65rem 0.75rem }`, which
+   is the right box for a full-size field in a form — 21px of it is vertical.
+   Put that inside a 34px control and the arithmetic is fatal: 34 − 21 padding −
+   2 border leaves an 11px content box for a 17px line, and a form control CLIPS
+   what does not fit rather than letting it overflow the way a button does. The
+   filter row read "All roles" / "Any status" with the bottom third of the
+   letters sliced off, and `.admin-badge-input` (30px, and 8px short) was worse.
+   Reported with three screenshots — "text half hide from box not full view".
+   ⚠ ZEROING IS RIGHT, PADDING IT DOWN TO 0.2rem IS NOT. An input and a select
+   both CENTRE their single line inside the content box, so a 32px box holding a
+   17px line is already perfectly centred and the height alone does the spacing —
+   whereas any leftover vertical padding is one more number that has to be
+   re-derived by hand every time a font size on this screen moves.
+   ⚠ LONGHANDS, NOT `padding: 0 0.75rem`. Restating the horizontal value would
+   fork it from theme.css, so the next time the app's field padding changes these
+   three would silently keep the old one.
+   ⚠ NOT `.admin-note`. A textarea does NOT centre its text — it starts at the
+   top — and it has no fixed height here, so its padding is doing real work. */
+.admin-search,
+.admin-select,
+.admin-badge-input {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .admin-segment {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -551,6 +587,24 @@
   resize: vertical;
   font: inherit;
   font-size: 0.86rem;
+  /* ⚠ `flex: none` IS THE WHOLE REASON THE PRIVATE NOTE IS STILL A BOX.
+     `.admin-detail` is `.admin-card` — a COLUMN FLEX with
+     `max-height: calc(100vh - 230px)` — and a full account detail is taller
+     than that. Flex layout runs BEFORE the scrollbar appears, so every item in
+     the column is asked to shrink first, and a flex item's automatic minimum
+     size is its content… EXCEPT for a scroll container, where the spec makes it
+     ZERO. A textarea is a scroll container. So this one item, alone in the
+     column, collapsed from its three rows to 23px — a 0.2px content box holding
+     a 16.5px line — and the note read as one sentence cut through the middle
+     (user-reported, with a screenshot of it beside Save note). Every heading and
+     paragraph around it held its size, which is exactly why the panel looked
+     fine apart from this one box.
+     ⚠ NOT `min-height`, AND NOT `flex-shrink: 0` ALONE. A `min-height` would be
+     a second, hand-derived copy of what `rows` already says, and it would have
+     to be re-derived for each of the three places this class is used (rows 2, 3
+     and 4). `flex: none` says the real thing: a note box is not the slack in
+     anybody's layout. `resize: vertical` still works — the user can grow it. */
+  flex: none;
 }
 .admin-actions {
   display: flex;
@@ -668,7 +722,10 @@
   margin: 0.4rem 0 0 2.1rem;
   max-width: 70ch;
 }
-.admin-feature-more {
+/* `.btn.admin-feature-more`, not `.admin-feature-more` — trap 6. `.btn.small`
+   sets `padding: 0.4rem 0.75rem` at two classes, so the padding reset below was
+   losing and the 30px box was 0.4rem short of its own label. */
+.btn.admin-feature-more {
   margin-top: 0 !important; /* trap 2 */
   height: 30px;
   padding-top: 0;
@@ -731,6 +788,16 @@
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+/* ⚠ `flex: 1` IS A MAIN-AXIS GROW, AND THIS ROW'S MAIN AXIS IS DOWN. The offer
+   form and the rollout box are the only places a `.admin-search` is stacked
+   under its own label instead of sitting in `.admin-filters`, and there its
+   `flex: 1` was being read as `flex-basis: 0%` on the HEIGHT — the fixed 34px
+   was thrown away and the field grew to 39px beside a 34px select in the same
+   form. `flex: none` hands the height back; the full width still comes from the
+   column's default `align-items: stretch`. */
+.admin-rollout-row > .admin-search {
+  flex: none;
 }
 .admin-rollout-row.wide {
   flex: 1 1 100%;
@@ -972,7 +1039,9 @@
 .admin-topbar-actions .btn {
   margin-top: 0;
 }
-.admin-theme {
+/* Same as `.btn.admin-feature-more` — trap 6. A one-class rule cannot narrow
+   `.btn.small`'s padding, so the tighter box never happened. */
+.btn.admin-theme {
   padding-left: 0.7rem;
   padding-right: 0.7rem;
 }

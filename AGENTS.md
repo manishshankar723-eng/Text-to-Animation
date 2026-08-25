@@ -187,6 +187,18 @@ structural fact about the codebase:
   **SwiftShader** — so they need no backend, no GPU and no native module. ⚠ **They
   are also where the SHADERS actually execute**, since `headless-gl` will not
   build on this machine.
+- ⚠ **ONE BROWSER TEST STARTS A REAL BACKEND INSTEAD OF ROUTING ITS CALLS**, and
+  it is `tests/admin_fields_check.py` — the admin panel. Six tabs, seven forms
+  and a table of accounts is far more API surface than a Playwright router can
+  honestly fake, and every store already has an env var pointing it at a file,
+  so it launches a real uvicorn over a temp directory (`API_USER_STORE=local`,
+  `API_JOB_STORE=memory`, and **all nine** `API_LOCAL_*_PATH` — forget one and
+  the run leaves `.local_features.json` in `git status`). ⚠ **The admin is
+  PINNED through `ADMIN_EMAILS`, never promoted through the store** — the API is
+  a separate process, so writing a role into its JSON from the test is a race
+  against that process's cache. What it asserts is a MEASUREMENT, not a
+  screenshot: for every field on screen the content box must be at least a line
+  box tall. Still no MongoDB, no key, no GPU.
 - ⚠ **A UI TEST THAT HAS NEVER BEEN WATCHED TO FAIL IS NOT A TEST.** Both of the
   editor ones were written against a live bug and run against the un-fixed code
   first; the razor one passed against its own bug on the first attempt, because
@@ -263,7 +275,33 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-25 — **🎬 MAKE VIDEO SCORES THE FILM.** Sound effects
+**Last updated:** 2026-08-25 — **THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN
+HALF, IN TWO DIFFERENT WAYS.** Reported with three screenshots: dropdowns reading
+"Any status" with the bottom third of the letters gone, and the Private note box
+squeezed to one clipped line. ⚠ **CAUSE (a) IS ARITHMETIC, NOT DESIGN** — the
+app's global `input, select, textarea { padding: 0.65rem 0.75rem }` (~21px
+vertical) inside `admin.css`'s FIXED field heights leaves an 11px content box for
+a 17px line, and **a form control clips where a button overflows**, which is why
+the buttons in the same row looked fine. `.admin-search` / `.admin-select` /
+`.admin-badge-input` now zero their vertical padding — **17 fields across five
+tabs**. ⚠ **CAUSE (b) IS THE FLEXBOX RULE NOBODY REMEMBERS**: a flex item's
+automatic minimum size is its content EXCEPT for a scroll container, where it is
+**zero**, and a `<textarea>` is a scroll container — so in `.admin-card`
+(`flex-direction: column` + `max-height`) the note box was shrunk to **22.8px
+with a 0.2px content box** while every heading beside it held its size.
+`.admin-note { flex: none }`. Two more of the same family, unreported:
+`.admin-feature-more` / `.admin-theme` were trying to beat `.btn.small` with one
+class, and `.admin-search`'s `flex: 1` was growing its HEIGHT inside the
+column-flex rollout row. **New: `tests/admin_fields_check.py` — 17 checks, and it
+caught (b) itself.** It is the first browser test here that starts a REAL uvicorn
+instead of routing calls (six tabs and seven forms is more surface than a router
+can fake), over a temp directory with all nine `API_LOCAL_*_PATH` redirected, and
+the assertion is a MEASUREMENT — content box ≥ line box for every field on every
+tab. ⚠ **The first of the three screenshots was NOT a bug**: that line only
+looked truncated because the crop ended there. See the Work Log.
+
+
+**Previously:** 2026-08-25 — **🎬 MAKE VIDEO SCORES THE FILM.** Sound effects
 and a background-music bed are laid down automatically, on two audio rows of
 their own (Sound FX · Music), beside the voiceover / captions / text / shapes /
 Veo passes that were already automatic. ⚠ **THE NEW PHASE RUNS *LAST*, WHICH IS
@@ -2819,6 +2857,33 @@ Pipeline stages (see `pipeline.py`):
 
 ## ▶️ How to run
 
+### One command (Windows)
+```powershell
+.\start-app.ps1            # backend + frontend + browser
+.\start-app.ps1 -Admin     # straight into the admin panel
+.\start-app.ps1 -Restart   # kill whatever holds the ports, start fresh
+```
+Or double-click `start-app.bat`. It starts each half ONLY if its port is free,
+so running it twice cannot fork a second dev server, and it never kills anything
+unless `-Restart` is passed.
+
+⚠ **THE APP IS ON 5173 AND ONLY 5173.** `client/vite.config.js` now sets
+`strictPort: true`. Without it Vite treated 5173 as a *preference*: if anything
+was already holding the port it quietly started on **5174** and printed the real
+address into a terminal nobody was reading. That address then lived on in the
+browser's history, and every later start on 5173 left the remembered 5174
+answering `ERR_CONNECTION_REFUSED` — an app that looks dead while it is running.
+Cost a debugging session. With `strictPort` Vite either gets 5173 or refuses to
+start and says the port is taken, which is a message you can act on.
+
+⚠ **`start-app.ps1` AND `start-app.bat` ARE PURE ASCII, DELIBERATELY.** Windows
+PowerShell 5.1 reads a BOM-less `.ps1` as cp1252, so a UTF-8 em-dash arrives as
+three characters and the middle one (`0x94`) is a SMART CLOSING QUOTE that
+PowerShell honours as a real delimiter. One em-dash inside one `Write-Host`
+string ended that string early and threw four cascading parse errors thirty
+lines away. No em-dashes, arrows or glyphs in either file.
+
+
 ### CLI
 ```powershell
 # Full run with uploaded image (female subject template), skip some parts:
@@ -3052,7 +3117,7 @@ own.
 
 ## 🎨 UI rule — REUSE THE EXISTING LAYOUT FOR A NEW WORKFLOW
 
-**Two traps that have already been hit, both reported by the user:**
+**Eight traps that have already been hit, most of them reported by the user:**
 
 0. **`align-items: start` on a card grid makes ragged rows.** It has caused a
    reported bug THREE times (storyboard library, Home dashboard, plan calendar).
@@ -3082,6 +3147,33 @@ own.
    `overflow:auto`; its ancestor gets `overflow:hidden` + `display:flex` +
    `min-height:0`, and the scroller gets `flex:1; min-height:0`. Then the bar is
    pinned to the visible bottom and stays put.
+5. **A fixed height on a FIELD cuts that field's own text in half.**
+   `theme.css` sets `input, select, textarea { padding: 0.65rem 0.75rem }` —
+   about 21px of vertical padding, right for a full-size form field. Trap 2
+   above then says every control in a row needs a fixed `height`. Put the two
+   together and a 34px control has an 11px content box for a 17px line, and
+   **a form control CLIPS what will not fit** where a button merely lets its
+   label overflow. **Any field given a fixed height must zero its vertical
+   padding** (`padding-top/bottom: 0`, longhands, so the horizontal value stays
+   theme.css's) — an input and a select both centre their single line, so the
+   height alone does the spacing. Reported with three screenshots of the admin
+   filter row: "text half hide from box not full view". Guarded by
+   `tests/admin_fields_check.py`.
+6. **A TEXTAREA IN A COLUMN FLEX BOX COLLAPSES TO NOTHING, and no other child
+   does.** A flex item's automatic minimum size is its content — *except* for a
+   scroll container, where the spec makes it **zero**, and a `<textarea>` is a
+   scroll container. So in any `display:flex; flex-direction:column` card with a
+   `max-height` (which is every `.admin-card`), flex layout shrinks the textarea
+   to a sliver *before* the card ever grows a scrollbar, while every heading and
+   paragraph beside it holds its size. The admin panel's private-note box went
+   from three rows to 23px this way. **A textarea in a flex column needs
+   `flex: none`** — not a hand-derived `min-height`, which is a second copy of
+   what `rows` already says.
+7. **A class of one loses to `.btn.small`.** `.btn.small` is two classes, so
+   `.my-button { padding-top: 0 }` never applies to a `btn small my-button`.
+   Write the rule as `.btn.my-button`; admin.css and the workflow files are late
+   in the cascade, so equal specificity wins there. Two controls in the admin
+   top bar spent a release trying to narrow a padding that was never theirs.
 
 
 **User's instruction, after a workflow shipped with its own bespoke gallery:**
@@ -3134,7 +3226,103 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-25 (latest) — 🎬 MAKE VIDEO SCORES THE FILM NOW: SOUND EFFECTS AND A MUSIC BED, ON THEIR OWN TWO AUDIO ROWS (user-specified — "add Sound effetcs and Bg music Automatic set in layer when user generete Story..image to Full video editing with Ai make video buutun all work")
+### 2026-08-25 (latest) — THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN HALF, IN TWO DIFFERENT WAYS (bug report, three screenshots — "text half hide from box not full view … aur kahi v admin panel aisa problem dikhe to thik kar dena")
+
+**The report:** three crops of the admin panel — a filter row whose dropdowns
+read "All roles" and "Any status" with the bottom third of the letters gone, and
+the account detail's **Private note** box squeezed down to one clipped line.
+
+**Two unrelated causes, both in `client/src/styles/admin.css`, and both
+reproduced and measured in Chromium before anything was changed.**
+
+**(a) A FIXED HEIGHT ON A FIELD PLUS THE APP'S GLOBAL FIELD PADDING.**
+`theme.css` sets `input, select, textarea { padding: 0.65rem 0.75rem }` — ~21px
+of vertical padding, correct for a full-size form field. `admin.css` gives the
+panel's compact fields a fixed `height`, because trap 2 in that file says every
+control in a row must have an identical box. 34px − 21px padding − 2px border
+leaves an **11px content box for a 17px line**, and ⚠ **a form control CLIPS
+what does not fit** where a button lets its label overflow harmlessly — which is
+why the buttons in the same row looked fine. Measured: `.admin-search` and
+`.admin-select` 6.1px short, `.admin-badge-input` (30px) **8.2px short** and the
+worst on the screen. `.admin-search` / `.admin-select` / `.admin-badge-input` now
+zero their vertical padding and let the height do the spacing — longhands, so the
+horizontal value stays theme.css's rather than forking from it. That one rule
+fixes **17 fields** across five tabs: Users' filter row, Sales' record-a-payment
+and offer forms, the rollout box, the tier badge input.
+
+**(b) A TEXTAREA IS A SCROLL CONTAINER, AND THAT MAKES IT THE ONE FLEX CHILD
+THAT VANISHES.** The private note is not a padding problem at all — it was
+**22.8px tall with a 0.2px content box**. `.admin-detail` is `.admin-card`, i.e.
+`display:flex; flex-direction:column`, with `max-height: calc(100vh - 230px)`,
+and a full account detail is taller than that. ⚠ **Flex layout shrinks its items
+BEFORE the container grows a scrollbar**, and a flex item's automatic minimum
+size is its content **except for a scroll container, where the spec makes it
+zero** — a `<textarea>` is a scroll container. So every heading, paragraph and
+list in that column held its size and this one item collapsed from three rows to
+a sliver. `.admin-note { flex: none }`. ⚠ **Not a `min-height`** — that would be
+a hand-derived second copy of what `rows` already says, and the class is used at
+rows 2, 3 and 4.
+
+**Also fixed, same class of fault, not reported:** `.admin-feature-more` and
+`.admin-theme` were each trying to narrow a padding set by `.btn.small` — two
+classes beats one, so their `padding-top: 0` had never applied. Both are
+`.btn.<name>` now. And `.admin-search`'s `flex: 1` is a **main-axis** grow, so
+inside `.admin-rollout-row` (a COLUMN) it was being read as `flex-basis: 0%` on
+the *height*: the field threw its fixed 34px away and grew to 39px beside a 34px
+select in the same form. `flex: none` in that context.
+
+**New: `tests/admin_fields_check.py` — 17 checks, and it was watched to fail.**
+It found (b) on its first run, against code where (a) was already fixed. ⚠ **It
+is the first browser test in the repo that starts a REAL backend rather than
+answering calls from Playwright's router** — six tabs and seven forms is more API
+surface than a router can fake honestly, so it launches uvicorn over a temp
+directory with **all nine** `API_LOCAL_*_PATH` redirected (the first run forgot
+four and left `.local_features.json` in `git status`), pins the admin through
+`ADMIN_EMAILS` rather than racing the API process's role cache, seeds two
+customers, a failed sign-in, a recorded payment and an offer so no tab is empty,
+then walks every tab and opens every form. ⚠ **The assertion is a MEASUREMENT,
+not a screenshot**: content box ≥ line box (× `rows`) for every field, plus a
+sweep for text trimmed sideways by an `overflow:hidden` with no ellipsis to
+explain it. No MongoDB, no key, no GPU.
+
+⚠ **THE FIRST SCREENSHOT WAS NOT A BUG.** The "Not enforced by the app:
+watermark, commercial_use." line looked truncated because the crop ended there;
+rendered at full width in the real panel it wraps correctly. Said here so the
+next agent does not go looking for a third cause.
+
+**Files:** `client/src/styles/admin.css` (traps 5 and 6 added to its header),
+`tests/admin_fields_check.py` (new), `AGENTS.md` (UI rule traps 5-7).
+**Verified:** `python tests/admin_fields_check.py` → all 17 ok;
+`npx vite build` clean.
+
+#### Follow-up the same day - THE PANEL WAS NOT BROKEN, THE ADDRESS AND THE ACCOUNT WERE (user-reported - "not open my adim pane")
+
+Two separate non-bugs, both worth writing down because both cost real time.
+
+**(a) `ERR_CONNECTION_REFUSED` on `localhost:5174`.** A healthy Vite was
+listening on **5173** the whole time; 5174 was a port Vite had drifted onto once
+when 5173 was busy, and the browser had remembered it. Fixed at the source:
+`strictPort: true` in `client/vite.config.js`, so the drift cannot happen again
+and a taken port is an error message instead of a silent move. Plus
+`start-app.ps1` / `start-app.bat` — one command for both halves, idempotent,
+prints the address out loud. ⚠ **The first draft of the script did not parse**:
+its UTF-8 em-dashes are read as cp1252 by PowerShell 5.1 and `0x94` is a smart
+quote, which closed a `Write-Host` string early. Both files are pure ASCII now
+and the reason is in their headers.
+
+**(b) "That page isn't available on this account."** The panel *did* open; the
+signed-in account (`manishshankar723@gmail.com`) is `account_role: user`, so
+`require_admin` answered 404 and the panel drew its own not-available card —
+working as designed. `studio.admin@example.com` already exists in Mongo with
+`role='admin'`; verified end to end against the running API (`/auth/login` 200,
+`/admin/overview` 200, 277 accounts visible). Nothing to fix — the answer is to
+sign in as that account, or promote the other one with
+`python seed_admin.py --email <address> --role admin`.
+
+**Files:** `start-app.ps1` (new), `start-app.bat` (new),
+`client/vite.config.js` (`strictPort`), `AGENTS.md`.
+
+### 2026-08-25 — 🎬 MAKE VIDEO SCORES THE FILM NOW: SOUND EFFECTS AND A MUSIC BED, ON THEIR OWN TWO AUDIO ROWS (user-specified — "add Sound effetcs and Bg music Automatic set in layer when user generete Story..image to Full video editing with Ai make video buutun all work")
 
 **The ask, in one sentence:** the 🎬 button already lays down the voiceover, the
 captions, the text, the shapes and the Veo takes automatically — make it lay down
