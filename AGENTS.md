@@ -263,7 +263,57 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-25 — **THE AUDIO LAYER HAS A SOUND LIBRARY, FENCED BY
+**Last updated:** 2026-08-25 — **🎬 MAKE VIDEO SCORES THE FILM.** Sound effects
+and a background-music bed are laid down automatically, on two audio rows of
+their own (Sound FX · Music), beside the voiceover / captions / text / shapes /
+Veo passes that were already automatic. ⚠ **THE NEW PHASE RUNS *LAST*, WHICH IS
+THE OPPOSITE OF THE OTHER TWO PASSES** — `speaking → rendering → anchoring →
+running → scoring → done`. B and C move the PICTURES, so they must precede the
+steps; a sound cue lands on a MOMENT, and the steps are what decide where that
+moment is. Cues are timed twice (preview, then the finished film) and
+`tests/director_sound_check.py` fails the naive "place it with the plan" build on
+purpose. ⚠ **THE CUES COST NOTHING EXTRA** — the analyse call now returns
+`shots[].sfx` and one `music` object beside `motion` and `dialogue`. ⚠ **A CUE IS
+A SEARCH TERM, NOT PROSE, AND ALWAYS ENGLISH**; a cue in another script is dropped
+rather than searched for, because the library would find nothing. ⚠ **CC0 ONLY** —
+a tighter fence than the Sounds tab, because nobody reads a licence badge during
+an automatic pass. ⚠ **A LOOPED BED IS SEVERAL CLIPS OF ONE FILE**, last one
+trimmed so the fade-out lands on the final frame — no loop flag, one file, one
+entry against the audio cap. ⚠ **TWO CAPS MOVED AND HAD TO**:
+`MAX_ANIMATIC_AUDIO_TRACKS` 4 → **16** (a run wants 12 files) and
+`MAX_ANIMATIC_AUDIO_CLIPS` 48 → **120**. ⚠ **BOTH TICK BOXES ARE IN THE *FREE*
+ROW** — they spend Freesound requests, never money, which is why `PAID_PASSES` is
+now a table of its own. `tests/director_sound_check.py` — **60 checks**, no
+browser, no backend, no key.
+
+⚠ **AND THE FIRST REAL RUN FOUND TWO BUGS THAT PRE-DATE ALL OF IT, BOTH SILENT.**
+(a) `add_transition` resolved its cut number against the editor's WHOLE picture
+list while the Director counted the shot row, so on a project carrying Veo takes
+the transition was created against a clip on the video row, nothing drew it, and
+the step logged "done" — `addTransitionAfterFrame` means no index crosses the line
+any more. (b) A transition across a GAP was reported as done and rendered nothing
+(`transitionWindow`: "there is no edit point in a gap"), and
+`spreadPanelsForRenders` MAKES those gaps — `cutAfter()` now refuses it in the
+preview with the gap's length in the sentence. Also: the panel was handed the raw
+picture list, so it said "16 shots · 64.0s" for an 8-shot 32-second film.
+`tests/director_take_row_check.py` — **34 checks**.
+
+⚠ **AND THE FIRST AI RUN CAME OUT WITH NO TRANSITIONS AND NO MUSIC — THREE MORE
+CAUSES.** (a) Eight identical shots read as ONE scene, and the prompt earns a
+dissolve on a scene BOUNDARY, so the model correctly wrote zero and the film was
+eight hard cuts: `fillAlternateTransitions` is `fillStillMoves`' twin, re-asks
+`housePlan` rather than copying the rule, and is a no-op the moment the plan
+places one transition of its own. (b) A four-word cue finds NOTHING (the library
+matches every word), and the length filters — 8s max for an effect, a 12s FLOOR
+for the bed — finished the job: bounds widened to 30s/5s, the prompt now demands
+**one to three words** with the user's own two failures as the BAD examples, and
+every cue gets a second, wider ask on its LAST TWO WORDS with the length filter
+dropped. ⚠ **The LICENCE never relaxes, and the widening is REPORTED.** (c) Three
+malformed model steps printed "there is no shot undefined" — `noShot()` now says
+which fault it was, and the polish prompt says `shot`/`cut`/`kind`/`text` are
+never optional. ⚠ **NOT BROWSER-TESTED.** See the Work Log.
+
+**Previously:** 2026-08-25 — **THE AUDIO LAYER HAS A SOUND LIBRARY, FENCED BY
 LICENCE.** A fourth **Sounds** tab beside Media/Shapes/Effects searches Freesound
 and files a sound into the project as an ORDINARY audio upload — same
 `audio_<id>.mp3`, same track, same library card (`placeAudioUpload` was factored
@@ -2690,7 +2740,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/animatic/useTimelineTransport.js` | **The playhead** — the rAF clock, shuttle (J/K/L), marks (I/O), seek and stepping. **Audio is the master clock**; a `<video>` in the monitor is a slave, which is `useMonitorVideo`, exported separately from the same file. ⚠ `scene` is derived FROM this clock, so it can never be an argument to the transport — that is why the video slaving is a second call. |
 | `client/src/animatic/useUndoStack.js` | Ctrl+Z / Ctrl+Shift+Z over the WHOLE document (one stack, not one per layer), the per-gesture bracket (`gestureProps`), and `reset()` for when a project finishes loading. |
 | `client/src/animatic/util.js` | `clamp`. Nothing else belongs here — scene-model arithmetic goes in `scene.js`. |
-| `client/src/animatic/agent/` | **🎬 MAKE VIDEO — the auto-editor.** Five modules, and the first four are PURE (no React, no DOM) so node can import them: `capabilities.js` DERIVES the vocabulary the planner may use from `TRANSITION_KINDS` / `EFFECT_KINDS` / `SHAPE_KINDS` / `FADE_CURVES` / `TEXT_PRESET_IDS`, and holds the house caps; `plan_schema.js` is what an `EditPlan` is plus the one door every plan comes through (`validatePlan` — it DROPS what it cannot use and reports it, never throws); `actions.js` is the 25 verbs and `ACTION_API`, the list of editor functions a verb may call; `house_style.js` is the deterministic rules-only planner AND the fence (`applyGuardrails`) every plan clears; `voice_pass.js` is PHASE B — the sound, and the re-anchor that has to follow it; `veo_pass.js` is PHASE C — the footage: the length policy, the chunking, the hard stop and the whole resume; `useDirectorRun.js` is the phase machine. **⚠ A VERB DOES NOT EDIT ANYTHING — it calls the editor function that already does**, so the one-transition-per-cut rule and every other invariant is obeyed by the agent for free. **⚠ ONE STEP PER REACT COMMIT, not a loop** — read that file's header before "simplifying" it. **⚠ THE MODEL PLUGS IN AT ONE PLACE AND IT IS `useDirectorRun.buildPlan`** — nothing below it knows whether a language model or a hundred lines of arithmetic wrote the plan, which is exactly what Phase 0's header promised the seam would be. `housePlan` did NOT go away: it is the free door in popup one AND the fallback for a call that failed, and the preview says which one you are looking at. **⚠ RE-COSTING A TICK BOX DOES NOT CALL THE MODEL AGAIN** — the raw plan is kept and re-validated against the new flags, so trying "what does this look like without effects" is instant and free. `capabilities()` now also carries `verbs`, derived from `ACTIONS` by `verbVocab()` (each verb declares the `args` a plan may set), because a model told which transitions exist but not which verb places one has been given half a language. **⚠ PHASE B RUNS BEFORE THE STEPS, AND IT SPENDS** — `voice_pass.js` reads the dialogue aloud (the board's, or one the analyse call wrote for a silent board), then the document is RE-READ and the plan RE-ANCHORED onto the film that came back, because the pass stretches the shot each line is spoken over and pushes the rest along. A plan applied first would report 24 successful edits on the wrong moments and say nothing; `tests/director_voice_order_check.py` owns that property. A PASS IS NOT A VERB and must not become one — read `voice_pass.js`'s header before moving it into `ACTIONS`. **⚠ PHASE C FOLLOWS PHASE B AND SPENDS THE MOST** — `veo_pass.js` renders every shot with a motion prompt in submissions of `MAX_VIDEO_BATCH`, choosing each take's length from that shot's hold (the smallest of 4/6/8 that COVERS it) and letting the shot grow to match, exactly as `spreadPanelsForRenders` and `_lay_out_speech` already do. It follows B because the voiceover rewrites the holds the lengths are read off. **⚠ THE STOP IS BETWEEN PASSES AND NOWHERE ELSE** — a submission is billed the moment it leaves. **⚠ AND A RUN THAT DIED IS PICKED UP FROM THE SERVER**: `outstanding` reads the `director_run` record against `veo_clips` and renders the difference, never a shot already paid for, and never retrying a failure. **⚠ `shotRow` IS WHAT KEEPS A TAKE FROM BEING COUNTED AS A SHOT** — without it a second run reads a 96-shot film that does not exist; it is applied at the editor's `readDirectorCtx`, once. `tests/director_actions_check.py`, `tests/director_guardrails_check.py`, `tests/director_plan_check.py`, `tests/director_voice_order_check.py`, `tests/director_chunk_check.py`, `tests/director_resume_check.py`, `tests/editor_director_check.py`. |
+| `client/src/animatic/agent/` | **🎬 MAKE VIDEO — the auto-editor.** Seven modules, and all but `useDirectorRun.js` are PURE (no React, no DOM) so node can import them: `capabilities.js` DERIVES the vocabulary the planner may use from `TRANSITION_KINDS` / `EFFECT_KINDS` / `SHAPE_KINDS` / `FADE_CURVES` / `TEXT_PRESET_IDS`, and holds the house caps; `plan_schema.js` is what an `EditPlan` is plus the one door every plan comes through (`validatePlan` — it DROPS what it cannot use and reports it, never throws); `actions.js` is the 25 verbs and `ACTION_API`, the list of editor functions a verb may call; `house_style.js` is the deterministic rules-only planner AND the fence (`applyGuardrails`) every plan clears; `voice_pass.js` is PHASE B — the sound, and the re-anchor that has to follow it; `veo_pass.js` is PHASE C — the footage: the length policy, the chunking, the hard stop and the whole resume; `useDirectorRun.js` is the phase machine. **⚠ A VERB DOES NOT EDIT ANYTHING — it calls the editor function that already does**, so the one-transition-per-cut rule and every other invariant is obeyed by the agent for free. **⚠ ONE STEP PER REACT COMMIT, not a loop** — read that file's header before "simplifying" it. **⚠ THE MODEL PLUGS IN AT ONE PLACE AND IT IS `useDirectorRun.buildPlan`** — nothing below it knows whether a language model or a hundred lines of arithmetic wrote the plan, which is exactly what Phase 0's header promised the seam would be. `housePlan` did NOT go away: it is the free door in popup one AND the fallback for a call that failed, and the preview says which one you are looking at. **⚠ RE-COSTING A TICK BOX DOES NOT CALL THE MODEL AGAIN** — the raw plan is kept and re-validated against the new flags, so trying "what does this look like without effects" is instant and free. `capabilities()` now also carries `verbs`, derived from `ACTIONS` by `verbVocab()` (each verb declares the `args` a plan may set), because a model told which transitions exist but not which verb places one has been given half a language. **⚠ PHASE B RUNS BEFORE THE STEPS, AND IT SPENDS** — `voice_pass.js` reads the dialogue aloud (the board's, or one the analyse call wrote for a silent board), then the document is RE-READ and the plan RE-ANCHORED onto the film that came back, because the pass stretches the shot each line is spoken over and pushes the rest along. A plan applied first would report 24 successful edits on the wrong moments and say nothing; `tests/director_voice_order_check.py` owns that property. A PASS IS NOT A VERB and must not become one — read `voice_pass.js`'s header before moving it into `ACTIONS`. **⚠ PHASE C FOLLOWS PHASE B AND SPENDS THE MOST** — `veo_pass.js` renders every shot with a motion prompt in submissions of `MAX_VIDEO_BATCH`, choosing each take's length from that shot's hold (the smallest of 4/6/8 that COVERS it) and letting the shot grow to match, exactly as `spreadPanelsForRenders` and `_lay_out_speech` already do. It follows B because the voiceover rewrites the holds the lengths are read off. **⚠ THE STOP IS BETWEEN PASSES AND NOWHERE ELSE** — a submission is billed the moment it leaves. **⚠ AND A RUN THAT DIED IS PICKED UP FROM THE SERVER**: `outstanding` reads the `director_run` record against `veo_clips` and renders the difference, never a shot already paid for, and never retrying a failure. **⚠ `shotRow` IS WHAT KEEPS A TAKE FROM BEING COUNTED AS A SHOT** — without it a second run reads a 96-shot film that does not exist; it is applied at the editor's `readDirectorCtx`, once. `tests/director_actions_check.py`, `tests/director_guardrails_check.py`, `tests/director_plan_check.py`, `tests/director_voice_order_check.py`, `tests/director_chunk_check.py`, `tests/director_resume_check.py`, `tests/director_sound_check.py`, `tests/editor_director_check.py`. **⚠ PHASES D AND E RUN *AFTER* THE STEPS, WHICH IS THE OPPOSITE RULE, AND THEY SPEND NOTHING** — `sound_pass.js` places the sound effects the reading cued and one looped music bed, on two audio rows of their own. B and C precede the steps because they move the PICTURES; a sound cue lands on a MOMENT, and `set_shot_duration` / `set_all_durations` are what decide where that moment is — so the cues are timed AGAIN at `scoring` time, off the finished film. It needs no re-anchor of its own because nothing downstream of it makes a timing decision. **⚠ A CUE IS A SEARCH TERM, ENGLISH, AND MOST SHOTS GET NONE** — the analyse call writes them (`shots[].sfx`, one `music` object) beside `motion` and `dialogue`, so they cost nothing extra; a cue in another script is DROPPED (`director.enforce_sound_language`) because the library would find nothing. **⚠ CC0 ONLY**, a tighter fence than the Sounds tab's, because nobody reads a licence badge during an automatic pass. **⚠ A LOOPED BED IS SEVERAL CLIPS OF ONE FILE** — there is no loop flag and there must not be one; the last clip is trimmed so the fade-out lands on the final frame. `POST /animatics/{id}/soundtrack` takes the WHOLE cue list, because the audio-file cap has to be measured once and identical cues must dedupe to one download. |
 | `client/src/components/DirectorPanel.jsx` | The 🎬 dialog: the plan as a table by SHOT (not by step), then the progress rail and the log. Owns no logic — everything comes off `useDirectorRun`. **⚠ THE ✕ IS THE ONLY WAY OUT** — no backdrop click, no Esc, unlike every other modal here; the reason is written at the top of the file and mid-run the ✕ asks first. Also prints `missingApi` when the editor stops supplying an `ACTION_API` name, which is what makes that contract assertable from a browser test. **⚠ IT IS TWO POPUPS IN ONE DIALOG SINCE PHASE 2.** Popup ONE is the BRIEF — one sentence about the film, the language, and two doors out ("Read my film" = the AI; "Just the rhythm" = the rules planner, no backend, no key, no quota, and a real button rather than something you discover by having the AI call fail). Popup TWO is the PLAN: the reading, the table by shot, then the tick boxes — **and un-ticking one re-costs the plan and RELABELS THE RUN BUTTON with the new number of edits**, which is what makes the preview trustworthy: the film in the table and the film the button makes are the same film at every setting. The tick list is DERIVED (`governedKeys()`), so a switch that does nothing when clicked is never offered — `veo` is a real include flag that nothing answers to yet and is therefore absent, while **`voiceover` IS offered since Phase 3, because a PASS answers to it**. ⚠ **THAT BOX IS THE FIRST THING IN THIS PANEL THAT SPENDS**, so it changes three things at once and all three before the button is pressed: the script appears in full above the tick boxes (every line, in the film's language, labelled BOARD or DIRECTOR-WRITTEN), the price line turns amber and stops saying "Free", and the Run button reads `· 2 spoken`. ⚠ **AND MID-PASS THE ✕ DOES NOT CLOSE AT ALL** — not even on a second press — while Pause/Step/Stop are hidden: the call is paid for and the run has to be there to receive it. |
 | `client/src/components/properties/` | The Properties pane, one component per selection state: `TransitionProperties`, `TextProperties`, `ShapeProperties` (serves overlays too), `AudioProperties`, `FrameProperties`, `VideoProperties`, re-exported from `index.js`. `VideoClipProperties.jsx` sits beside them but is not a pane — it is the extra rows a video clip or colour card adds to `FrameProperties`. All presentational: no state, they write through the handlers they are given. |
 | `client/src/components/FrameStrip.jsx` | Frame thumbnails: typed hold time, drag-reorder, duplicate, delete, add images. |
@@ -3084,7 +3134,316 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-25 (latest) — THE AUDIO LAYER HAS SOMETHING TO PUT ON IT: A SOUND LIBRARY, FENCED BY LICENCE (user-specified — "freesound.org … i want use in my editor in layer … how we set up this website free api for commercial user my app")
+### 2026-08-25 (latest) — 🎬 MAKE VIDEO SCORES THE FILM NOW: SOUND EFFECTS AND A MUSIC BED, ON THEIR OWN TWO AUDIO ROWS (user-specified — "add Sound effetcs and Bg music Automatic set in layer when user generete Story..image to Full video editing with Ai make video buutun all work")
+
+**The ask, in one sentence:** the 🎬 button already lays down the voiceover, the
+captions, the text, the shapes and the Veo takes automatically — make it lay down
+the sound effects and the background music too, on audio rows of their own, the
+way the voiceover already does it.
+
+⚠ **THE ORDER IS THE WHOLE FEATURE, AND IT IS THE OPPOSITE OF THE OTHER TWO
+PASSES.** Phase B (voiceover) and phase C (Veo) run BEFORE the steps because they
+MOVE THE PICTURES, which is why there is a re-anchor between them and the run.
+A sound cue is the other way round: it lands on a MOMENT — "the door slams as
+shot 9 begins" — and the steps spend six seconds rewriting where shot 9 begins
+(`set_shot_duration`, `set_all_durations`). So the new phase runs LAST:
+
+    speaking → rendering → anchoring → running → **scoring** → done
+
+and it needs no re-anchor of its own, because nothing downstream of it makes a
+timing decision. The cues are timed TWICE — once for the preview, once against
+the finished film — and `tests/director_sound_check.py` asserts that the naive
+"place it with the plan" build ships the wrong number (9s instead of 18s on its
+fixture), so that failure cannot come back silently.
+
+⚠ **THE WORDS COST NOTHING EXTRA — THEY WERE ALREADY PAID FOR.** The analyse
+call now returns `shots[].sfx` (a search term) and one `music` object, beside the
+`motion` and `dialogue` it already returned, because what a moment SOUNDS like is
+a story decision that belongs next to the beat. Asking a second model at
+placement time would be asking one that has not read the film.
+
+⚠ **A CUE IS A SEARCH TERM, NOT A SOUND — AND THE PROMPT HAS TO SAY SO IN THOSE
+WORDS.** Asked what a shot sounds like a model writes prose ("the dull thud of the
+door closing on everything he was"), which is a lovely sentence and zero results
+in a stock library. `director.sound_instruction()` spends most of its words on the
+two failures that matter: prose instead of searchable words, and cueing every
+single shot. Both cues are ENGLISH in every language, like a Veo prompt — and a
+cue in the wrong script is DROPPED (`enforce_sound_language`) rather than searched
+for, because unlike a Devanagari camera move it would find literally nothing.
+
+⚠ **CC0 ONLY — A TIGHTER FENCE THAN THE SOUNDS TAB'S, ON PURPOSE.** The tab
+offers CC BY too, because the person clicking can read the "credit needed" badge
+and accept the obligation. NOBODY IS READING A BADGE HERE: the pass files eleven
+sounds while the user watches a progress line. An attribution obligation the
+customer never agreed to is one they discover when somebody complains about their
+published video. `licence="safe"` is not a default on the new route, it is the
+rule, and it is not a parameter the route accepts.
+
+⚠ **A LOOPED MUSIC BED IS SEVERAL CLIPS OF ONE FILE, NOT A LOOP FLAG.** A
+Freesound preview is 10-30s and a film is minutes. The razor, the waveform, the
+mixer, the fades and the EXPORTER all already understand "several clips of one
+file back to back" — that is what a razored take is — whereas a loop flag would
+be a second thing every one of them has to learn. So a 70s film over a 20s bed is
+four clips, and the LAST one is TRIMMED so the fade-out lands on the final frame
+(`fade_out_ms` is measured from the clip's own end, so an untrimmed last loop
+would fade out past the end of the film, i.e. never). One file, therefore ONE
+entry against the audio cap.
+
+⚠ **THE LEVEL IS ON THE CLIP, AND IT DEPENDS ON WHETHER ANYONE SPEAKS.** 0.14
+under a voiceover, 0.30 on a silent film. There is a real ducking graph in
+`audio_engine.js` for the PREVIEW, but the EXPORT mixes what the clips say
+(`animatic.py`), so a level that only existed in the browser would be a preview
+that lies about the mp4.
+
+⚠ **ONE SERVER CALL FOR THE WHOLE LIST, AND THAT IS NOT A ROUND-TRIP
+OPTIMISATION.** `POST /animatics/{id}/soundtrack` takes the cue list because the
+audio-file cap has to be measured ONCE: eleven separate imports would each check
+the room the previous ten had just used up, so the tail of the list would be
+refused for a reason the user could do nothing about. It also dedupes — six shots
+cueing "footsteps on gravel" are one search, one download, one file and six
+clips, which is also the right FILM (one recording of gravel is one place) — and
+it answers PARTIALLY on purpose: a cue that finds nothing is a row in `skipped`
+with a reason, never a rejected request.
+
+⚠ **AND `freesound.download()` WAS SPLIT OUT OF `fetch_preview()` TO HALVE THE
+BUDGET.** `fetch_preview` re-asks the API where the file is, which is right when
+the caller was handed an id by a BROWSER. Here the item came from our own search,
+so the metadata read is a wasted request out of 60 a minute shared by the whole
+deployment — eleven cues cost eleven requests instead of twenty-two.
+
+⚠ **TWO CAPS HAD TO MOVE, AND WITHOUT THEM THE FEATURE WAS IMPOSSIBLE RATHER
+THAN LIMITED.** `MAX_ANIMATIC_AUDIO_TRACKS` was **4** — a voiceover is one file,
+the bed is one, and the effects pass fetches up to ten distinct recordings, so
+the honest ceiling for one run is twelve. At 4 the pass would have filed two
+sound effects and reported the rest as "no room", on every project, every time.
+It is **16** now (client `MAX_AUDIO_TRACKS` mirrored). `MAX_ANIMATIC_AUDIO_CLIPS`
+went **48 → 120**, because a looped bed is many clips of one file and one run can
+legitimately want ~70; the browser's own ceilings (`MAX_SFX_CLIPS` 32,
+`MAX_LOOPS` 32) are what keep it under that, and 120 is a backstop for a
+malformed save rather than a budget the editor works inside.
+
+⚠ **THE TWO TICK BOXES ARE IN THE *FREE* ROW, AND THAT NEEDED A NEW TABLE.**
+"Is it a pass" and "does it spend" had the same answer until now, so `paidKeys`
+read `PASS_GOVERNORS` directly. These two are passes in every structural sense
+and they spend NOTHING (Freesound requests, not money), so `PAID_PASSES` is now a
+separate list: `PASS_GOVERNORS` decides whether a flag is OFFERED, `PAID_PASSES`
+decides which ROW it is offered in. Listing them under "These two spend" would
+have priced a free run and got the boxes un-ticked out of caution. Both default
+**ON**, like everything except Veo.
+
+**Files:** `client/src/animatic/agent/sound_pass.js` (NEW — pure, no React/fetch),
+`useDirectorRun.js` (the `scoring` phase), `plan_schema.js` (`sfx`/`music` flags +
+`PAID_PASSES`), `DirectorPanel.jsx` (the cue preview, the run line, the free-row
+labels, "Skip the sound"), `AnimaticEditor.jsx` (`placeSoundtrack` — two new
+lanes, ONE undo, and the raised cap), `styles/director.css`, `director.py`
+(`sound_instruction`, the schema, the coercion, `enforce_sound_language`),
+`prompts.yaml`, `server/director.py`, `server/animatics.py`
+(`POST /{id}/soundtrack`), `server/schemas.py`, `server/config.py`, `freesound.py`
+(`download()`), `client/src/api.js` (`buildSoundtrack`).
+
+**Tests:** `tests/director_sound_check.py` — **60 checks**, no browser, no
+backend, no Freesound key and no dollar; the "import" is a dict shaped exactly
+like the route's answer. The route itself was driven in-process against a faked
+provider (dedupe, the CC0 assertion, the skip reason, the room arithmetic and the
+files on disk all verified). Every existing director suite still passes
+(`plan`, `language`, `determinism`, `actions`, `guardrails`, `voice_order`,
+`house_veo`, `chunk`, `resume`, `contract`, plus `capability` and
+`sound_licence`), and `npm run build` is clean.
+
+⚠ **NOT BROWSER-TESTED.** `tests/editor_director_check.py` has not been run
+against this — the standing user preference is not to run the browser suites
+unasked — so the panel's new block, the "Skip the sound" button and
+`placeSoundtrack`'s two lanes have not been clicked, and no export has been made
+with an automatic soundtrack on it. That is the top item under Next Steps.
+
+⚠ **AND THE FREESOUND CONTRACT IS UNCHANGED AND STILL OUTSTANDING.** A free key
+is a NON-COMMERCIAL key (§3 of their API terms); this feature makes the app lean
+on that key far harder, which makes emailing mtg@upf.edu more urgent, not less.
+
+#### Follow-up the same day — THE FIRST REAL TEST FOUND THREE THINGS, AND TWO OF THEM PRE-DATE THE SOUND PASSES (user-reported — "transition ek abhi jagh nhi laga hua hai … music and sound effets ka option v nhi aa rha hia popup mai")
+
+The user imported a dance-script storyboard onto a project that already carried
+eight Veo takes, pressed 🎬, took the rules-only door, and ran it. Three separate
+things came out of one screenshot.
+
+⚠ **1. A TRANSITION'S CUT NUMBER WAS RESOLVED AGAINST THE WRONG LIST. THIS IS A
+BUG, IT PRE-DATES THE SOUND WORK, AND IT WAS SILENT.** `readDirectorCtx` runs
+`shotRow`, so the Director counts EIGHT shots; `addTransitionAtCut` counted into
+`frames`, the whole picture list, which on that project held SIXTEEN — eight
+panels and eight takes. So `add_transition` created the record against
+`frames[cut - 1]` in the editor and then looked it up by `ctx.frames[cut - 1].id`
+here: **two different clips.** The transition landed on a take on the Storyboard
+video row, where nothing draws it, and the `duration_ms` patch that follows found
+no record and dropped the length too. ⚠ **NOTHING THREW AND THE STEP LOGGED
+"done"** — the only kind of bug worth a whole test file.
+
+⚠ **AND THE LAYOUT OF THE PICTURE LIST DECIDED HOW BADLY IT BROKE, WHICH IS HOW IT
+SURVIVED.** With the takes APPENDED (what `attachVeoClip` produces) the panels
+happen to occupy exactly the indices the shot row does, so cuts 1…n-1 landed
+correctly **by accident** — almost certainly the layout this was written and
+eyeballed against. Interleaved, every even cut is wrong; takes-first, every cut
+is. **Fix:** `addTransitionAfterFrame(entry, frameId)` is the editor's new door
+and the only one in `ACTION_API`; `addTransitionAtCut` stays as a two-line wrapper
+for the two DRAG gestures, which get their number from `frameIndexAt` and so are
+counting into the same list by construction. **No index crosses the line any more.**
+
+⚠ **2. A TRANSITION ACROSS A GAP WAS REPORTED AS DONE AND RENDERED NOTHING.** A
+cut is two clips that TOUCH — `transitionWindow` returns null when the next clip
+on the row does not start exactly where this one ends, and `renderTransitions`
+draws no badge there, both stating "there is no edit point in a gap". Nothing told
+the PLANNER. ⚠ **And the gaps are not hypothetical: `spreadPanelsForRenders` makes
+them** — a take longer than its hold pushes the panels after it clear of its end,
+so the projects most likely to hit this are exactly the ones that have already
+been animated. `cutAfter()` now refuses the step in the VALIDATOR, so it appears
+under the preview table as "there is a 4.0s gap after shot 3, so there is no cut
+there for a transition to happen on" before Run is pressed. ⚠ **Measured off
+`starts`, never re-derived** — those are the editor's own `frameSpans` numbers
+filtered at the same indices, and laying the durations end to end here would be a
+second layout engine. A caller that sends no `starts` is TRUSTED (every maths-only
+test means "end to end" by omitting them).
+
+⚠ **3. THE PANEL WAS DESCRIBING A FILM THAT DOES NOT EXIST.** `<DirectorPanel>`
+was handed `frames` — the raw picture list — while the runner read the shot row,
+so the header said **"16 shots · 64.0s" for an 8-shot 32-second film** and the
+preview table drew sixteen rows of which the last eight were nothing but dashes,
+because the plan it was folding onto them only ever mentioned eight. The user read
+both off the screen. It now gets `directorShots`, the same `shotRow` call the
+runner makes.
+
+⚠ **AND THE TWO SOUND BOXES WERE ABSENT FOR THE MOST ordinary REASON: A STALE
+BUNDLE.** `freeKeys()` returns six keys and the screenshot showed four; the panel
+maps `freeKeys()`, so a fresh build cannot draw four. Nothing to fix — but it did
+expose a real gap in the new work: **the cue block only exists when there ARE
+cues**, so a rules-only plan drew two ticked boxes marked "Sound effects" and
+"Background music" over a run that added neither and said nothing about why. That
+is the worst kind of tick box: one that is ON and does nothing. The reasons
+`sfxDue` / `musicDue` already write are now printed where the block would have
+been, with "press **Read it again** and choose the AI door" after them — because
+that is the actual answer: **the cues are WORDS, and "Just the rhythm" writes
+none.** Arithmetic can tell which shots were HELD; it cannot tell that one of them
+is a door closing.
+
+**Files:** `client/src/animatic/agent/actions.js` (`cutAfter`,
+`addTransitionAfterFrame` in `ACTION_API`, `add_transition` resolves one frame and
+uses it for both halves), `client/src/components/AnimaticEditor.jsx`
+(`addTransitionAfterFrame`, `addTransitionAtCut` as its wrapper, `directorShots`),
+`client/src/components/DirectorPanel.jsx` (the shot row, the "nothing was cued"
+line), `client/src/styles/director.css`.
+
+**Tests:** `tests/director_take_row_check.py` — NEW, **34 checks**, node only. It
+drives `add_transition` through a stub editor in all three picture-list layouts
+and asserts the id handed over is the third PANEL's every time; it computes the
+old naive index alongside and asserts it DIFFERS where it can — and asserts it
+AGREES in the appended layout, because pretending otherwise would be describing a
+bug that layout does not have. It also asserts the gap refusal, that the cuts
+either side of a hole still validate, that a hole-free row costs nothing, and that
+`addTransitionAtCut` is no longer reachable from a verb. ⚠ **The harness's own
+first version was wrong in an instructive way** — it laid all sixteen clips end to
+end, which describes a 64-second film nobody has and invents a gap under every
+panel; `starts` are PER ROW because the two rows play at the same time.
+Every other director suite still passes, plus `capability` and `lane_reorder`.
+`npm run build` is clean.
+
+⚠ **STILL NOT BROWSER-TESTED**, and the top Next Step is unchanged.
+
+#### Second follow-up the same day — THE AI DOOR RAN, AND THE FILM CAME OUT WITH NO TRANSITIONS AND NO MUSIC (user-reported — "se not transition add no bg music too … without transiition and music not complate video")
+
+With the bundle rebuilt, both tick boxes appeared and the AI door worked. The run
+then produced **eight moves, zero transitions, one sound effect and no music** —
+and every one of those was a separate cause.
+
+⚠ **1. THE MODEL WROTE ZERO TRANSITIONS, AND IT WAS RIGHT TO.** Eight identical
+four-second shots, no descriptions, no dialogue: the reading came back "1 scene: A
+Quiet Discovery (1–8)" with a note saying *"the lack of any shot descriptions or
+dialogue required inventing a simple, universal narrative"*. The polish prompt
+earns a dissolve on a **scene boundary**, and a film with one scene has none. So
+the plan was internally consistent and the film was eight hard cuts.
+
+⚠ **AND THE ANSWER IS NOT TO ARGUE WITH THE PROMPT.** "Restraint is the craft"
+stays. What was missing is the thing the MOVES already had:
+`fillAlternateTransitions` is `fillStillMoves`' twin, on the same one path every
+plan takes (`adopt`), for the shots the plan has no opinion about. ⚠ **It RE-ASKS
+`housePlan` rather than re-implementing the rule** — the alternating-cut rule, the
+budget, the never-two-in-a-row spacing and the dissolve/dip choice were argued
+over three rounds of user reports and live in one place; a second copy here would
+drift. ⚠ **One `add_transition` anywhere and it is a no-op** — a model that placed
+two dissolves has an opinion about the rhythm, and filling in around it would be
+overruling a decision rather than supplying a missing one. `remove_transition`
+counts as an opinion too, exactly as `clear_shot_motion` does for the moves.
+
+⚠ **2. NO MUSIC, BECAUSE THE CUE WAS FOUR WORDS LONG.** "ambient peaceful piano
+underscore" and "light feather rustle" both returned **zero** CC0 results. The
+library matches EVERY word, so each extra adjective can only cut the results
+down — and a fourth cuts them to nothing. On top of that the length filters were
+doing real damage: **8 seconds max for an effect and a 12-second FLOOR for the
+bed**, stacked on a CC0-only filter and a rare four-word phrase.
+
+Three fixes, and the order matters:
+- ⚠ **THE PROMPT NOW SAYS ONE TO THREE WORDS AND SAYS WHY**, with the user's own
+  two failures written into it as the BAD examples. "door slam" finds hundreds;
+  "heavy wooden door slams shut" finds zero and that shot ends up silent.
+- ⚠ **THE LENGTH BOUNDS ARE PREFERENCES NOW, NOT FILTERS** — 30s and 5s. Nothing
+  downstream needed the old ones: a bed shorter than the film is LOOPED and an
+  effect longer than its shot is clamped by `trackPlayMs`, so they only exist to
+  stop a five-minute field recording being filed as a door slam.
+- ⚠ **AND EVERY CUE GETS A SECOND, WIDER ASK** (`_cue_attempts`): its **last two
+  words**, with the length filter dropped entirely. Last two rather than first
+  two because English puts the head noun at the END of a noun phrase — the
+  searchable part of "light feather rustle" is "feather rustle". ⚠ **The LICENCE
+  is never what relaxes**; it is the rule, and the ladder cannot reach it. ⚠ **And
+  the widening is REPORTED** (`relaxed_to` on `SoundtrackItem`, a line in the
+  panel, a clause in `scoreReport`) — a sound found by answering a narrower
+  question than the plan printed is not the sound the preview promised, and
+  folding it into "2 sound effects added" would make that promise unfalsifiable.
+- ⚠ **TWO ATTEMPTS, NEVER MORE**, because the budget is 60 requests a minute for
+  the whole deployment. Ten cues at two attempts is twenty; most land on the first
+  and cost one.
+
+⚠ **3. AND `freesound.download` ALREADY HALVED THE REQUEST COST**, which is what
+made room for a second attempt at all — see the first entry.
+
+⚠ **4. THREE OF THE MODEL'S OWN STEPS WERE MALFORMED, AND THE MESSAGES WERE
+UNREADABLE.** `add_text` with no `shot`, `add_effect` with no `kind`, and then an
+`apply_text_preset` pointing at the title the dropped `add_text` never created.
+The validator handled all three correctly — that is the contract — but it printed
+**"there is no shot undefined"** and **"this build has no “undefined” effect"**,
+which read like a crash rather than a dropped step and describe the wrong fault.
+`noShot()` now separates "the step named no shot" from "there is no shot 61 — this
+film has 48", and the effect message does the same. ⚠ **AND THE PROMPT GAINED THE
+RULE IT WAS MISSING**: "OMIT EVERY ARGUMENT YOU ARE NOT DELIBERATELY SETTING" was
+being applied to the TARGET, so the polish block now says in as many words that
+`shot`, `cut`, `kind` and `text` are never optional, with those three real
+failures as the example.
+
+**Files:** `client/src/animatic/agent/house_style.js`
+(`fillAlternateTransitions`), `useDirectorRun.js` (it runs in `adopt`, beside
+`fillStillMoves`), `actions.js` (`noShot`, the effect message, a stale header
+reference to `addTransitionAtCut`), `sound_pass.js` (the length bounds,
+`relaxedTo` carried onto the clips, the report clause), `DirectorPanel.jsx` (the
+widened-cue list), `director.py` (`sound_instruction` — one to three words),
+`prompts.yaml` (the target-is-not-optional rule), `server/animatics.py`
+(`_cue_attempts` and the ladder), `server/schemas.py` (`relaxed_to`).
+
+**Tests:** `tests/director_guardrails_check.py` gained the transition filler —
+its `adopted()` helper now runs BOTH fillers, because that helper exists to be
+the door every plan comes through and leaving one out would test a door the app
+does not have. Nine new checks: the fill happens, the note says the HOUSE did it,
+it is `housePlan`'s own answer rather than a copy, one transition of its own makes
+it a no-op, so does `remove_transition`, un-ticking Transitions still wins, and a
+one-shot film invents nothing. `tests/director_sound_check.py` gained the ladder —
+fifteen new checks driving the real route against a fake provider that only
+answers for the SHORTENED music query, which is exactly the shape the user hit; it
+asserts the second ask happened, the music landed, the widening was reported, a
+cue found as written reports nothing, and **the licence is never what relaxes**.
+Every director suite passes, plus `capability`, `lane_reorder` and
+`sound_licence`. `npm run build` is clean.
+
+⚠ **STILL NOT BROWSER-TESTED.** And two things here are unproven against a real
+model and a real catalogue: whether the tightened prompt actually produces
+one-to-three-word cues, and whether "the top most-downloaded CC0 result" is a
+sound anybody would have chosen. Both are on Next Steps.
+
+### 2026-08-25 — THE AUDIO LAYER HAS SOMETHING TO PUT ON IT: A SOUND LIBRARY, FENCED BY LICENCE (user-specified — "freesound.org … i want use in my editor in layer … how we set up this website free api for commercial user my app")
 
 **The ask was two questions and only one of them is code.** "Put Freesound in
 the editor" is a feature. "How do we set it up for commercial use" is a
@@ -19183,6 +19542,57 @@ language — do NOT copy the Drawstory reference's look/colours.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
 
+- [ ] **CLICK THE SOUNDTRACK. IT HAS NEVER BEEN CLICKED.** Phases D and E are
+      asserted end to end without a browser (`tests/director_sound_check.py`, 60
+      checks) and the route was driven in-process against a faked provider, but
+      nobody has pressed 🎬 with `FREESOUND_API_KEY` set and watched two audio
+      rows appear. Four things to look at, in this order:
+      1. **DO THE CUES LAND ON THE RIGHT FRAMES?** Run a plan that RE-TIMES shots
+         (one with `set_all_durations` in it) and check a sound effect sits on the
+         cut it was cued for. This is the property the whole phase order exists
+         for and the one that fails invisibly.
+      2. **EXPORT ONE.** Nothing in the exporter was changed — a placed sound is
+         an ordinary audio clip — but "a looped bed of sixteen clips" is a shape
+         `animatic.py` has never actually been handed, and the fade-out on the
+         trimmed final clip is the bit to listen for.
+      3. **ONE Ctrl+Z, NOT ELEVEN.** `placeSoundtrack` does three `setState`s in
+         one handler so React batches them into one undo entry. Verify the whole
+         soundtrack goes back in one press, and that Revert does too.
+      4. **THE LEVELS.** 0.14 under a voiceover and 0.30 without one are
+         judgement calls made from a chair, not from listening. Adjust them in
+         `sound_pass.js` — they are two named constants and nothing else reads
+         them.
+      Then run `python tests/editor_director_check.py`, which mounts the real
+      editor and asserts the panel reports no missing API.
+- [ ] **DOES THE TIGHTENED PROMPT ACTUALLY PRODUCE ONE-TO-THREE-WORD CUES?** The
+      first live run wrote "ambient peaceful piano underscore" and "light feather
+      rustle" — four words and three — and both found nothing. The prompt now
+      forbids that in as many words and the server widens the search as a safety
+      net, but ⚠ **the net is a fallback, not a fix**: a widened cue is a sound
+      chosen for a different question than the one the user read. Count the words
+      in the cues of the next few live runs; if the model is still over three,
+      the honest next move is to TRUNCATE in `_coerce_analysis` rather than ask
+      again nicely. ⚠ **And add it to `tests/director_contract_check.py`** — the
+      one test that can be pointed at a model on purpose, whose fourth assertion
+      already measures exactly this kind of restraint.
+- [ ] **THE CUE QUALITY IS UNKNOWN, AND IT IS A PROMPT PROBLEM, NOT A CODE ONE.**
+      `director.sound_instruction()` asks for 2-5 concrete English words and says
+      most shots should get nothing. Whether a real model obeys either half is
+      unmeasured — the plausible failures are prose ("the dull thud of…", which
+      finds nothing) and a cue on every shot (which spends the whole shared
+      Freesound budget on one press and scores a cartoon). ⚠ **Add a fixture to
+      `tests/director_contract_check.py` rather than tightening the prompt on a
+      hunch**: it is the one test that can be pointed at a model on purpose, and
+      "what fraction of shots did it cue" is exactly the kind of restraint
+      property its fourth assertion already measures for transitions.
+- [ ] **THE TOP CC0 RESULT IS CHOSEN WITHOUT ANYONE LISTENING TO IT.** The route
+      takes the most-DOWNLOADED match (`_SOUNDTRACK_SORT`), on the reasoning that
+      download count is the closest the catalogue has to "other editors used this
+      and did not regret it". That is a guess. If the sounds come back wrong in
+      practice the cheap fixes, in order: prefer results whose tags actually
+      contain the cue words; drop results under ~0.4s (a phone recording of a
+      door is the most relevant thing to "door slam" and unusable); offer the
+      user a re-roll on one lane rather than the whole pass.
 - [ ] **RUN THE CONTRACT CHECK AGAINST A REAL NON-GOOGLE MODEL — NOTHING IN
       PHASE 5 HAS EVER TALKED TO ONE.** Everything about the wire format is
       asserted against a fake `requests.post`, which pins what we SEND and can

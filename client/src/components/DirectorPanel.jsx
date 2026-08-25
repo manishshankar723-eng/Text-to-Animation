@@ -202,6 +202,13 @@ const INCLUDE_LABEL = {
   text: "Text",
   shapes: "Shapes",
   captions: "Captions",
+  // ⚠ THEY SAY WHAT THEY DO, NOT WHICH PHASE THEY ARE. "Sound effects" and
+  // "Background music" are the two things a person came here wanting; "phase D"
+  // is a fact about this file. Both are in the FREE row — they take files out of
+  // a stock library and spend no money at all (see `PAID_PASSES` in
+  // `plan_schema.js`), and putting them beside Veo would price a run that is free.
+  sfx: "Sound effects",
+  music: "Background music",
   voiceover: "Voiceover",
   veo: "Veo renders",
 };
@@ -221,6 +228,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
     source, why, analysis, veo, cost, include, hasModel,
     script, speech, willSpeak, speechWhy,
     shoot, quote, footage, willRender, renderWhy, pending, resuming,
+    sfx, music, score, willSfx, willMusic, sfxWhy, musicWhy,
   } = run;
   // ⚠ UN-TICKED, NOT JUST GREYED. A disabled box that is still CHECKED would
   // leave `include.veo` true, and everything downstream reads that flag: the
@@ -247,7 +255,12 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
   // its own would be a flicker with a name.
   const rendering = phase === "rendering" || phase === "anchoring";
   const stepping = phase === "running" || phase === "paused";
-  const inFlight = stepping || speaking || rendering;
+  // ⚠ `scoring` IS IN FLIGHT AND IT IS THE ONLY IN-FLIGHT PHASE THAT COSTS
+  // NOTHING. It runs AFTER the steps — the cues have to land on shots the plan
+  // has finished moving — so it is the one phase where a full step rail sits
+  // above a pass that is still working, which is exactly right: the edit IS done.
+  const scoring = phase === "scoring";
+  const inFlight = stepping || speaking || rendering || scoring;
   const finished = phase === "done" || phase === "stopped";
   const notes = plan.steps.filter((s) => s.verb === "note");
   const rows = byShot(plan, frames);
@@ -841,6 +854,97 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               </details>
             )}
 
+            {/* ------------------------------ PHASES D AND E: the soundtrack */}
+            {/* ⚠ THE CUES ARE SHOWN AS THE SEARCH TERMS THEY ARE, not dressed up
+                as sounds. Nobody can audition these before the run — the pass
+                takes the top CC0 result for each and lays it down — so the one
+                honest thing the preview can show is exactly what will be typed
+                into the library, next to the shot it will land on. A user who
+                reads "shot 4 · heavy door slam" knows what they are getting and
+                can un-tick the box; a user shown "🔊 Sound design ✓" does not.
+                ⚠ AND IT IS FREE, WHICH THE SUMMARY SAYS BEFORE ANYTHING ELSE —
+                this block sits directly under the Veo one, which is the most
+                expensive thing in the app, and a reader skimming downwards will
+                assume the two cost the same kind of thing unless told. */}
+            {/* ⚠ AND WHEN THERE IS NOTHING CUED, THE REASON IS STILL ON SCREEN.
+                The block below only exists when there are cues, so the first
+                build of this feature drew two ticked boxes marked "Sound effects"
+                and "Background music" over a run that added neither and said
+                nothing about why — which is the worst version of a tick box: one
+                that is ON and does nothing. The reasons are written by
+                `sfxDue`/`musicDue` and this is the one place they can be read on
+                a rules-only plan, where they are the whole story: arithmetic can
+                tell which shots were HELD, it cannot tell that one of them is a
+                door closing. */}
+            {!sfx.cues.length && !music && (sfxWhy || musicWhy) && (
+              <p className="tiny muted dir-score-none">
+                {sfxWhy || musicWhy}
+                {source !== "ai" && hasModel && (
+                  <>
+                    {" "}
+                    Press <strong>Read it again</strong> and choose the AI door to get them.
+                  </>
+                )}
+              </p>
+            )}
+
+            {(sfx.cues.length > 0 || music) && (
+              <details className="dir-score-plan">
+                <summary>
+                  {willSfx || willMusic ? "Adds" : "Would add"}{" "}
+                  {[
+                    sfx.cues.length
+                      ? `${sfx.cues.length} sound effect${sfx.cues.length === 1 ? "" : "s"}`
+                      : "",
+                    music ? "a music bed" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" and ")}{" "}
+                  — free
+                </summary>
+                <p className="tiny muted">
+                  These are search terms, not sounds. Each one is looked up in the
+                  library and the top public-domain (CC0) result is used, so nothing
+                  here obliges you to credit anybody. They are laid on their own two
+                  rows — Sound FX and Music — after the edit is finished, so they land
+                  on the shots as they end up rather than as they are now.
+                </p>
+                {music && (
+                  <p className="dir-score-bed">
+                    <span className="dir-script-shot">Music</span>
+                    <span className="dir-script-text">{music.query}</span>
+                    {music.mood && <span className="dir-script-who">{music.mood}</span>}
+                  </p>
+                )}
+                {sfx.cues.length > 0 && (
+                  <ul className="dir-script-lines">
+                    {sfx.cues.map((cue, i) => (
+                      <li key={`${cue.frame_id}:${i}`}>
+                        <span className="dir-script-shot">Shot {cue.shot}</span>
+                        <span className="dir-script-text">{cue.query}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {/* ⚠ WHAT THE CUE PASS ITSELF LEFT OUT, before anything has been
+                    searched for. A cue over a shot that does not exist, or one
+                    past the shared library budget, is a silence the user is owed
+                    an explanation for — and the explanation is cheaper here than
+                    after the run, where it would compete with the result. */}
+                {sfx.skipped.length > 0 && (
+                  <ul className="dir-notes">
+                    {sfx.skipped.map((row, i) => (
+                      <li key={i}>
+                        Shot {row.shot} — {row.why}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {!willSfx && sfxWhy && <p className="tiny muted">{sfxWhy}</p>}
+                {!willMusic && musicWhy && <p className="tiny muted">{musicWhy}</p>}
+              </details>
+            )}
+
             <p className="dir-totals">
               {edits} edit{edits === 1 ? "" : "s"} · {totals.transitions} transition
               {totals.transitions === 1 ? "" : "s"} · {totals.moves} move
@@ -970,6 +1074,69 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 )}
               </div>
             )}
+            {/* ⚠ PHASES D AND E GET THEIR OWN LINE, BELOW THE OTHER TWO AND ABOVE
+                THE STEP RAIL, because that is the order they actually happen in —
+                and this is the only pass that runs with the step rail already
+                FULL. It has no bar of its own on purpose: it is one request and
+                one placement, so a rail would be empty and then finished, which
+                is the exact bug the render bar was fixed for. The sentence it
+                leaves behind is the count of what landed AND what did not. */}
+            {(scoring || score) && (
+              <div className={`dir-shootrun dir-shootrun-${score?.stage || "fetching"}`}>
+                <p className="dir-speech">
+                  {scoring && <span className="spinner-inline" />}
+                  {score?.message || "Finding the sound…"}
+                </p>
+                {/* ⚠ A CUE THAT FOUND NOTHING IS NAMED, not folded into a count.
+                    "9 of 11 sounds added" tells the user something is missing and
+                    not which shot is silent — and the shot is the only thing they
+                    can act on. */}
+                {(score?.missing || []).length > 0 && (
+                  <ul className="dir-notes">
+                    {score.missing.map((row, i) => (
+                      <li key={i}>
+                        Shot {row.shot} — nothing usable was found for “{row.query}”
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {/* ⚠ A SOUND FOUND BY WIDENING THE SEARCH IS NAMED. The plan said
+                    "light feather rustle"; if the library only had something for
+                    "feather rustle", what is on the timeline is an answer to a
+                    narrower question than the one on screen — and a user who
+                    reads the cue and hears something else needs to be told which
+                    of the two happened, not left to wonder whether the feature
+                    works. */}
+                {(score?.widened || []).length > 0 && (
+                  <ul className="dir-notes">
+                    {score.widened.map((row, i) => (
+                      <li key={`w${i}`}>
+                        “{row.query || row.filename}” — nothing matched it exactly, so{" "}
+                        {row.relaxedTo === "any length"
+                          ? "the length limit was dropped"
+                          : `“${row.relaxedTo}” was searched for instead`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {(score?.skipped || []).length > 0 && (
+                  <ul className="dir-notes">
+                    {score.skipped.map((row, i) => (
+                      <li key={`s${i}`}>
+                        {row.query ? `“${row.query}” — ` : row.shot ? `Shot ${row.shot} — ` : ""}
+                        {row.why}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {score?.stopping && score.stage === "fetching" && (
+                  <p className="tiny muted">
+                    Stopping when this lookup lands — nothing has been spent and nothing
+                    will be laid down.
+                  </p>
+                )}
+              </div>
+            )}
             {/* ⚠ THE STEP RAIL IS FOR STEPS, AND IT IS DRAWN ONLY ONCE THE STEPS
                 ARE THE THING HAPPENING. That was written here as "a resumed run
                 has none", which caught one case of the rule and missed the one
@@ -985,7 +1152,11 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 be the bigger one; two bars of different weights stacked four
                 lines apart read as two different KINDS of thing instead, which
                 is not what they are — both are "how far through this is". */}
-            {plan.steps.length > 0 && (stepping || finished) && (
+            {/* ⚠ `scoring` KEEPS THE RAIL ON SCREEN, FULL. The steps really are
+                finished by then, so hiding it would take a completed bar away and
+                put it back a few seconds later — which reads as the edit having
+                been undone and re-done. */}
+            {plan.steps.length > 0 && (stepping || scoring || finished) && (
               <div className="dir-rail" aria-label="Progress">
                 <div
                   className="dir-rail-fill"
@@ -1002,6 +1173,8 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                   ? "The edit starts when the footage has landed."
                   : phase === "anchoring"
                     ? "Re-anchoring the edit onto the film that came back…"
+                    : scoring
+                      ? "The edit is done — laying the sound on the finished film…"
                         : phase === "done"
                       ? resuming
                         ? "Done — the interrupted render is finished."
@@ -1099,11 +1272,11 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               <button
                 type="button"
                 className="btn primary"
-                disabled={!edits && !willSpeak && !willRender}
+                disabled={!edits && !willSpeak && !willRender && !willSfx && !willMusic}
                 onClick={run.start}
               >
                 <Icon name="play" />{" "}
-                {edits || willSpeak || willRender
+                {edits || willSpeak || willRender || willSfx || willMusic
                   ? [
                       edits ? `Run this plan · ${edits} edit${edits === 1 ? "" : "s"}` : "Run this plan",
                       // ⚠ THE SPEND IS ON THE BUTTON ITSELF, IN MONEY WHERE THERE
@@ -1117,6 +1290,15 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                           ? `$${quote.total.usd.toFixed(2)} of footage`
                           : `${shoot.shots.length} rendered`
                         : "",
+                      // ⚠ A COUNT, NEVER A PRICE. The two segments above are
+                      // about money; these two are about work that costs none, so
+                      // they say what will be ADDED and stop there. Sliding a
+                      // dollar figure in beside them would be the button pricing
+                      // a free pass.
+                      willSfx && sfx.cues.length
+                        ? `${sfx.cues.length} sound effect${sfx.cues.length === 1 ? "" : "s"}`
+                        : "",
+                      willMusic ? "music" : "",
                     ]
                       .filter(Boolean)
                       .join(" · ")
@@ -1131,6 +1313,23 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               call that has already been made. Stop is different — it saves the
               passes that have NOT been submitted, which on a four-pass film is
               most of the money. See `veo_pass.js`. */}
+          {/* ⚠ AND THE SOUND PASS GETS THE SAME ONE CONTROL, WITH THE MONEY
+              SENTENCE TAKEN OUT. Stopping here loses nothing but the lookup in
+              flight, so the button does not need to explain what is already paid
+              for — it needs to say that the edit is safe, which is what a person
+              pressing Stop at this point is actually worried about. */}
+          {phase === "scoring" && (
+            <button
+              type="button"
+              className="btn small dir-danger"
+              disabled={Boolean(score?.stopping)}
+              onClick={run.stop}
+              title="The edit is already on the timeline — only the sound is skipped"
+            >
+              {score?.stopping ? "Stopping…" : "Skip the sound"}
+            </button>
+          )}
+
           {phase === "rendering" && (
             <button
               type="button"

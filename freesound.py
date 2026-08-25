@@ -433,9 +433,26 @@ def fetch_preview(sound_id: str, max_bytes: int) -> tuple[bytes, str, dict]:
     none. `max_bytes` is the caller's cap (`config.MAX_AUDIO_BYTES`), enforced
     WHILE streaming so an unexpectedly huge file is refused rather than read
     into memory first and measured afterwards.
+
+    ⚠ IT COSTS TWO STEPS: an API call to re-ask where the file is, then a plain
+    CDN download. Use `download()` instead when you are holding an item this
+    module itself just produced — see the note on `download`.
     """
     item = sound(sound_id)
-    url = item.get("preview_url") or ""
+    data, filename = download(item, max_bytes)
+    return data, filename, item
+
+
+def download(item: dict, max_bytes: int) -> tuple[bytes, str]:
+    """The mp3 for an item THIS MODULE ALREADY NORMALISED. Returns `(data, name)`.
+
+    ⚠ THE DIFFERENCE FROM `fetch_preview` IS ONE API REQUEST, AND THAT REQUEST IS
+    SCARCE. A free Freesound key allows 60 a MINUTE for the whole deployment, so a
+    pass that files eleven sounds costs eleven searches plus eleven metadata reads
+    — twenty-two — where it could cost eleven. This takes the item a `search()`
+    already returned and skips straight to the CDN.
+    """
+    url = (item or {}).get("preview_url") or ""
     if not url:
         raise FreesoundError("Freesound has no mp3 preview for that sound.")
     try:
@@ -457,8 +474,8 @@ def fetch_preview(sound_id: str, max_bytes: int) -> tuple[bytes, str, dict]:
 
     # A name a human recognises in the Media pane, with the id kept so that two
     # sounds both called "rain" are still two cards.
-    stem = _safe_name(item["name"]) or "sound"
-    return b"".join(chunks), "%s-freesound-%s.mp3" % (stem, item["id"]), item
+    stem = _safe_name(item.get("name")) or "sound"
+    return b"".join(chunks), "%s-freesound-%s.mp3" % (stem, item.get("id"))
 
 
 def _safe_name(name: str) -> str:
@@ -476,6 +493,7 @@ __all__ = [
     "api_key",
     "configured",
     "credit_line",
+    "download",
     "fetch_preview",
     "search",
     "sound",

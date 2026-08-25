@@ -112,6 +112,9 @@ from .schemas import (
     RenderSettings,
     SoundImportRequest,
     SoundImportResponse,
+    SoundtrackItem,
+    SoundtrackRequest,
+    SoundtrackResponse,
     VoiceOption,
 )
 
@@ -1674,6 +1677,284 @@ def import_sound(
         needs_credit=bool(item.get("needs_credit")),
         page_url=item.get("page_url") or "",
     )
+
+
+# How many results to look at per cue before giving up on it. ⚠ ONE REQUEST
+# EITHER WAY — the page size costs nothing extra, and looking at eight rather than
+# one means a cue whose best match has no mp3 preview still finds a sound.
+_SOUNDTRACK_LOOK = 8
+
+# ⚠ MOST-DOWNLOADED, NOT BEST-MATCH, AND THAT IS A DELIBERATE DEMOTION OF
+# RELEVANCE. Nobody is auditioning these: the pass takes the first result and
+# lays it on the timeline. Freesound's relevance ranking will happily put a
+# 0.3-second phone recording of a door at the top for "heavy door slam", and it
+# IS the most relevant thing to those words — it is just not a sound you can put
+# in a film. Download count is the closest thing the catalogue has to "other
+# editors used this and did not regret it", and it is the right tie-breaker when
+# the choice is being made by something that cannot listen.
+_SOUNDTRACK_SORT = "downloads"
+
+# ⚠ HOW MANY WAYS ONE CUE IS ASKED FOR BEFORE IT IS GIVEN UP ON. Two, and the
+# ceiling is the shared rate limit: ten cues at two attempts is twenty requests
+# out of sixty a minute for the WHOLE deployment, which is a run and a bit. Every
+# cue that lands on the first attempt costs one, which is most of them.
+_SOUNDTRACK_ATTEMPTS = 2
+
+
+def _cue_attempts(query: str, max_seconds: float, min_seconds: float) -> list[dict]:
+    """THE LADDER: the same cue, asked for in narrowing-to-widening order.
+
+    ⚠ THIS EXISTS BECAUSE A FOUR-WORD CUE FINDS NOTHING AND THE FILM GOES SILENT.
+    Reported from the screen: "ambient peaceful piano underscore" and "light
+    feather rustle" both came back with zero CC0 results, so a plan that promised
+    two sound effects and a music bed delivered one effect and no music. The
+    library matches EVERY word in the query, so a model that writes one adjective
+    too many is a shot with no sound — and the model is instructed not to (see
+    `director.sound_instruction`), but an instruction is not a guarantee and the
+    cost of being wrong is the whole feature looking broken.
+
+    So each cue gets a SECOND, WIDER attempt before it is written off:
+
+      1. the cue as written, with the length filter for its kind
+      2. ⚠ THE LAST TWO WORDS, WITH NO LENGTH FILTER AT ALL
+
+    ⚠ THE LAST TWO WORDS RATHER THAN THE FIRST TWO, because English puts the head
+    noun at the END of a noun phrase: the searchable part of "light feather
+    rustle" is "feather rustle", and of "ambient peaceful piano underscore" is
+    "piano underscore". Dropping from the front throws away adjectives, which is
+    exactly what one wants to throw away.
+
+    ⚠ AND THE LENGTH FILTER GOES ENTIRELY ON THE SECOND PASS. It is the other half
+    of why these came back empty: a CC0 filter and a "no shorter than 12 seconds"
+    filter and four rare words leave nothing standing. Nothing downstream needs
+    the bound — a bed shorter than the film is LOOPED (`musicPlacement`) and an
+    effect longer than its shot is clamped to the end of the film by
+    `trackPlayMs` — so the filter is a preference on the first attempt and never
+    a requirement.
+    """
+    words = (query or "").split()
+    attempts = [
+        {
+            "query": query,
+            "max_seconds": max(0.0, float(max_seconds or 0)),
+            "min_seconds": max(0.0, float(min_seconds or 0)),
+            "relaxed": "",
+        }
+    ]
+    if len(words) > 2:
+        wider = " ".join(words[-2:])
+    elif len(words) == 2:
+        # Two words already: the only thing left to widen is the length filter,
+        # and a single word out of two is usually the adjective's turn to go.
+        wider = words[-1]
+    else:
+        wider = query
+    attempts.append(
+        {
+            "query": wider,
+            "max_seconds": 0.0,
+            "min_seconds": 0.0,
+            # Printed on screen when it is the one that found the sound, because
+            # "we searched for something else and used what came back" is not a
+            # thing to do quietly.
+            "relaxed": wider if wider != query else "any length",
+        }
+    )
+    # Identical attempts are not worth a request out of a shared budget.
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for attempt in attempts[:_SOUNDTRACK_ATTEMPTS]:
+        key = (attempt["query"], attempt["max_seconds"], attempt["min_seconds"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(attempt)
+    return out
+
+
+@router.post("/{job_id}/soundtrack", response_model=SoundtrackResponse)
+def build_soundtrack(
+    job_id: str,
+    body: SoundtrackRequest,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """THE DIRECTOR'S PHASES D AND E: find a film's worth of sound, and file it in.
+
+    ⚠ IT IS `POST /sounds` IN A LOOP, WITH THE THREE THINGS A LOOP NEEDS. Every
+    sound that lands here lands exactly where a hand-picked one does — same
+    `audio_<upload_id>.mp3`, same media directory, same serve route, same
+    `AnimaticAudio` track and same library card — because a Director-placed sound
+    the razor or the exporter had to treat differently would be a second code
+    path for no gain. What this route adds over calling that one eleven times is:
+
+      1. ONE CAP CHECK, against the project as it is NOW. Eleven separate imports
+         would each measure the room the previous ten just used up, so the tail of
+         the list would be refused for a reason the user cannot act on.
+      2. DEDUPE. Six shots that all cue "footsteps on gravel" are one search, one
+         download and one file — which is also the right film: one recording of
+         gravel is one place, six different ones is six places.
+      3. A PARTIAL ANSWER. A cue that finds nothing is a row in `skipped`, never a
+         failed request: ten of eleven landing is a film with sound in it.
+
+    ⚠ CC0 ONLY, WHICH IS A TIGHTER FENCE THAN THE SOUNDS TAB'S. The tab offers CC
+    BY as well, because the person clicking can read the "credit needed" badge and
+    accept the obligation. NOBODY IS READING A BADGE HERE — this files eleven
+    sounds while the user watches a progress line — and an attribution obligation
+    the customer never agreed to is one they discover when somebody complains
+    about their published video. `licence="safe"` is not a default here, it is the
+    rule, and it is not a parameter this route accepts.
+
+    ⚠ SPENDS NO AI QUOTA AND NO MONEY. It does spend the deployment's shared
+    Freesound budget — 60 requests a minute on a free key — at ONE request per
+    distinct cue (`freesound.download` skips the metadata re-read, because the
+    item came from our own search rather than from the browser). The browser caps
+    the cue count for the same reason: see `MAX_SFX_SOUNDS` in `sound_pass.js`.
+    """
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+    if not freesound.configured():
+        # 503, not 500: the deployment has no key, which is a configuration fact
+        # and not a fault in this request. The Director treats it as "no sound was
+        # added" and says so, exactly as it treats a failed voiceover.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The sound library is not configured on this server, so no sound "
+                "effects or music could be fetched."
+            ),
+        )
+
+    # ⚠ MEASURED OFF THE SAVED PROJECT, WHICH CAN BE BEHIND THE EDITOR. Same
+    # limitation `import_sound` has and the same mitigation: the browser counts
+    # its own tracks too (`audioFileCount`), and this is the count that is
+    # actually enforced. A saved project one track behind means one fewer sound
+    # than the preview promised, which is reported rather than hidden.
+    room = max(0, config.MAX_ANIMATIC_AUDIO_TRACKS - len(_audio_files_of(job)))
+
+    items: list[SoundtrackItem] = []
+    skipped: list[dict] = []
+    # Cue key → the item already filed in, so a repeated cue costs nothing.
+    done: dict[str, SoundtrackItem] = {}
+    media = _media_dir(job_id)
+
+    for cue in body.sounds or []:
+        query = (cue.query or "").strip()
+        key = (cue.key or "").strip() or query.lower()
+        if not query:
+            skipped.append({"key": key, "query": query, "why": "the cue was empty"})
+            continue
+        if key in done:
+            # Not a skip and not an error — the caller asked for one sound twice
+            # and gets the one file back. It is already in `items`.
+            continue
+        if len(done) >= room:
+            skipped.append(
+                {
+                    "key": key,
+                    "query": query,
+                    "why": (
+                        f"this project can hold {config.MAX_ANIMATIC_AUDIO_TRACKS} audio "
+                        "files and there was no room left for it"
+                    ),
+                }
+            )
+            continue
+
+        # ⚠ THE LADDER, AND IT STOPS AT THE FIRST HIT. Most cues land on attempt
+        # one and cost one request; a cue the model over-described gets a second,
+        # wider ask before the shot is left silent. See `_cue_attempts`.
+        picked = None
+        relaxed = ""
+        failure = ""
+        for attempt in _cue_attempts(query, cue.max_seconds, cue.min_seconds):
+            try:
+                found = freesound.search(
+                    query=attempt["query"],
+                    # ⚠ NOT A PARAMETER, AND NOT SOMETHING THE LADDER RELAXES
+                    # EITHER. The length filter is a preference and goes on the
+                    # second attempt; the LICENCE is the rule. See the docstring.
+                    licence="safe",
+                    min_seconds=attempt["min_seconds"],
+                    max_seconds=attempt["max_seconds"],
+                    page=1,
+                    page_size=_SOUNDTRACK_LOOK,
+                    sort=_SOUNDTRACK_SORT,
+                )
+            except freesound.FreesoundError as exc:
+                # ⚠ ONE CUE'S FAILURE IS ONE CUE, NEVER THE PASS. A rate limit hit
+                # halfway through a list must leave the sounds already filed in on
+                # the timeline; raising here would throw away work that has been
+                # done. And a failed attempt does not stop the wider one — a
+                # timeout on the narrow ask says nothing about the broad one.
+                failure = str(exc)
+                continue
+            for candidate in found.get("items") or []:
+                if candidate.get("preview_url"):
+                    picked = candidate
+                    relaxed = attempt["relaxed"]
+                    break
+            if picked:
+                break
+
+        if not picked:
+            skipped.append(
+                {
+                    "key": key,
+                    "query": query,
+                    "why": failure
+                    or (
+                        f"the sound library has no CC0 result for “{query}”, even "
+                        "searched on its last two words alone"
+                    ),
+                }
+            )
+            continue
+
+        try:
+            data, filename = freesound.download(picked, config.MAX_AUDIO_BYTES)
+        except freesound.FreesoundError as exc:
+            skipped.append({"key": key, "query": query, "why": str(exc)})
+            continue
+
+        os.makedirs(media, exist_ok=True)
+        upload_id = uuid.uuid4().hex[:12]
+        with open(os.path.join(media, f"audio_{upload_id}.mp3"), "wb") as fh:
+            fh.write(data)
+
+        item = SoundtrackItem(
+            key=key,
+            query=query,
+            # ⚠ SAID OUT LOUD WHEN IT IS NOT WHAT WAS ASKED FOR. If the cue only
+            # found something on the wider attempt, the sound on the timeline is
+            # an answer to a DIFFERENT question than the one the preview printed —
+            # and a user who reads "gentle wind chimes" in the plan and hears a
+            # gong is owed the sentence "we searched for 'wind chimes' instead".
+            relaxed_to=relaxed,
+            kind=(cue.kind or "sfx"),
+            upload_id=upload_id,
+            filename=filename,
+            url=f"/animatics/{job_id}/media/{upload_id}",
+            # ⚠ FREESOUND'S OWN NUMBER. There is no ffprobe on an `imageio-ffmpeg`
+            # install, so the server cannot measure an audio file at all — and the
+            # music pass NEEDS this one before it can loop the bed, which is the
+            # first time that number has been load-bearing rather than cosmetic.
+            # The editor still re-measures the blob once it is loaded.
+            duration_ms=int(picked.get("duration_ms") or 0),
+            attribution=picked.get("attribution") or "",
+            license=picked.get("license") or "cc0",
+            license_label=picked.get("license_label") or "",
+            needs_credit=bool(picked.get("needs_credit")),
+            page_url=picked.get("page_url") or "",
+        )
+        done[key] = item
+        items.append(item)
+
+    logger.info(
+        "[animatic %s] soundtrack: %d cue(s) asked, %d filed, %d skipped.",
+        job_id, len(body.sounds or []), len(items), len(skipped),
+    )
+    return SoundtrackResponse(items=items, skipped=skipped, room_left=max(0, room - len(done)))
 
 
 @router.get("/{job_id}/frame/{frame_id}")

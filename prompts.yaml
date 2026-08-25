@@ -456,6 +456,12 @@ director:
   # already has dialogue it says COPY IT EXACTLY; on a silent board it says write
   # it, because that reading is the only script the voiceover pass will ever get.
   # Both halves are in `director.speech_instruction` with the reasoning.
+  #
+  # ⚠ <<SOUND>> IS CONSTANT, AND IT IS ABOUT SEARCH TERMS RATHER THAN SOUND. The
+  # cues this call writes are typed into a stock library by phases D and E, so
+  # the block spends most of its words on the two things a model gets wrong here:
+  # writing prose instead of searchable words, and cueing every single shot. See
+  # `director.sound_instruction`.
   analyse: >
     Read this animatic and tell me what it is.
 
@@ -467,6 +473,8 @@ director:
     <<LANGUAGE>>
 
     <<SPEECH>>
+
+    <<SOUND>>
 
     Return:
 
@@ -498,6 +506,14 @@ director:
                     it says whether you are copying the board's own lines or
                     writing them, and they are not the same job. These words may
                     be READ ALOUD in the finished film.
+        `sfx`       SEARCH WORDS for the one sound this shot needs, or "" — and
+                    "" is the usual answer. ⚠ Read the SOUND block above: this is
+                    typed into a stock library, so it is 2-5 concrete English
+                    words naming the source ("heavy door slam"), never a
+                    sentence and never a feeling.
+    - `music`: ONE bed for the WHOLE film — `query` (English search words for the
+      score), `mood`, `why`. Not one per scene. `query` is "" for a film that
+      should play dry, which is the right answer more often than people expect.
     - `title_card`: the words you would put on screen at the very start, or "" if
       the film does not want one. Short. A title, not a sentence.
     - `notes`: anything you had to assume, anything the material did not tell
@@ -543,6 +559,17 @@ director:
       not mean to send is not harmless — `x: 0` on a caption pins it to the left
       edge of the frame. Send `shot` and `kind` and the one or two things you
       actually decided; leave the rest out and the editor's own defaults apply.
+    - ⚠ BUT THE TARGET AND THE KIND ARE NEVER OPTIONAL, AND THIS IS THE RULE THAT
+      GETS BROKEN. Every step has to say WHAT it applies to and, where the verb
+      takes one, WHICH KIND it is: `shot` on anything that treats a shot, `cut` on
+      anything that treats a cut, `kind` on `add_transition`, `add_effect`,
+      `add_shape` and `add_shot_motion`, `text` on `add_text`. A step missing one
+      of those is not a step with a default — it is a step with nothing to land
+      on, and it is DROPPED. Three steps in one real plan were lost this way: an
+      `add_text` with no `shot`, an `add_effect` with no `kind`, and then an
+      `apply_text_preset` that referred to the title the dropped `add_text` was
+      supposed to have created. The rule above is about the OPTIONAL arguments —
+      position, size, colour, easing. It is not about the target.
     - Shots are numbered from 1. `cut` numbers the GAPS: cut 1 is between shot 1
       and shot 2, and there is no cut after the last shot.
     - A verb that creates something (see `creates` in the vocabulary) takes a

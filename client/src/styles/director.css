@@ -512,6 +512,55 @@
   transition: width 900ms ease-out;
 }
 
+/* -------------------------------------------- PHASES D AND E: the soundtrack */
+/* ⚠ IT BORROWS `dir-script`'s BOX TOO, and this time the reason is the opposite
+   of phase C's. Phase C looks like phase B because both are promises about money.
+   This one looks like both of them because it is a promise about the SAME KIND of
+   thing — "read what this pass will do before you tick it" — and the one thing it
+   must NOT get is a surface of its own that makes it look expensive. It sits
+   directly under the Veo block, which is the priciest control in the app; a
+   reader skimming down would read a distinct treatment as a distinct cost. The
+   word "free" in the summary does that job, in prose, where it can be read. */
+.dir-score-plan {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  font-size: 0.8rem;
+}
+.dir-score-plan summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.dir-score-plan .tiny {
+  margin: 0.4rem 0 0;
+}
+/* The "nothing was cued, and here is why" line. It sits where the cue block
+   would have been, so a reader who was looking for the sound finds the reason in
+   the same place rather than having to notice an absence. */
+.dir-score-none {
+  margin: 0.6rem 0 0;
+}
+
+/* The music bed is ONE row and it is not in the list, because it is not one of
+   the cues: it plays under the whole film rather than at a shot. Same layout as
+   a cue row so the two read as one family, and a rule under it so the difference
+   between "the score" and "the effects" is visible without a heading. */
+.dir-score-bed {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  margin: 0.45rem 0 0;
+  padding: 0 0 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The run line reuses `dir-shootrun` — see the JSX for why it has no rail. */
+.dir-shootrun-fetching .dir-speech {
+  color: var(--muted);
+}
+
 /* ------------------------------------------------------------- the resume */
 /* ⚠ THE ONLY BLOCK IN THIS PANEL ABOUT MONEY THAT IS ALREADY GONE, and it is
    the warm surface rather than the neutral one for exactly that reason — every

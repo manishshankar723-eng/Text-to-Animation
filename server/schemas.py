@@ -2697,6 +2697,14 @@ class DirectorPlanResponse(BaseModel):
     # with the shot's dialogue beside them in the film's own language. NOTHING IN
     # THIS ENDPOINT RENDERS ANYTHING — see `cost` for what a Veo pass would run to.
     veo: list[dict] = Field(default_factory=list)
+    # ⚠ WRITTEN NOW, FETCHED LATER, AND THEY COST NO MONEY AT ALL. `sfx` is
+    # `[{shot, query}]` and `music` is `{query, mood, why}` — stock-library SEARCH
+    # TERMS, in English, for phases D and E to look up (`sound_pass.js`). Nothing
+    # in this endpoint touches the sound library; that is
+    # `POST /animatics/{id}/soundtrack`, which spends the deployment's shared
+    # Freesound request budget and nobody's cash.
+    sfx: list[dict] = Field(default_factory=list)
+    music: dict = Field(default_factory=dict)
     # Every step thrown away before the browser saw it, with a reason.
     dropped: list[dict] = Field(default_factory=list)
     # What the reading wanted the editor to know — assumptions, gaps, doubts.
@@ -2895,6 +2903,91 @@ class SoundStatus(BaseModel):
     # Said on screen, once, under the search box: what the user is agreeing to by
     # putting one of these files in a video they sell.
     notice: str = ""
+
+
+# --- The Director's soundtrack pass (phases D and E) ------------------------
+# ⚠ ONE REQUEST FOR A WHOLE FILM'S SOUND, and the reason is the audio cap. Eleven
+# separate imports from the browser would each check "is there room for one more
+# file" against a project that the previous ten have already grown, so the tenth
+# would be refused for a reason the user could do nothing about and the run would
+# report ten different failures. Taking the list means the cap is arithmetic done
+# ONCE, against what the project holds now, and the answer says exactly what
+# landed and what did not.
+#
+# ⚠ AND THE SEARCH IS CC0-ONLY HERE, unlike the Sounds tab. See the long note at
+# the top of `client/src/animatic/agent/sound_pass.js`: a person picking a sound
+# by hand can read the "credit needed" badge and accept the obligation; a pass
+# that files eleven sounds while they watch a progress line cannot ask, so it
+# takes only the licence that obliges nobody.
+
+
+class SoundCueRequest(BaseModel):
+    """One sound to find — a search term, never a sound id."""
+
+    # ⚠ THE CALLER'S OWN KEY, ECHOED BACK UNCHANGED. The browser has already
+    # decided which shots this cue belongs to (`sfxCues` dedupes by it), and it is
+    # the only thing that lets the answer be matched to the placements without the
+    # server having to know anything about shots.
+    key: str = Field("", description="Opaque to us. Echoed back on the result.")
+    query: str = Field(..., description="What to search the sound library for. English.")
+    kind: str = Field("sfx", description="'sfx' | 'music' — only which filter to use.")
+    # A sound effect is short and a music bed is not, and the difference is a
+    # filter on the search rather than a rule about the file.
+    max_seconds: float = Field(0, ge=0, le=3600)
+    min_seconds: float = Field(0, ge=0, le=3600)
+
+
+class SoundtrackRequest(BaseModel):
+    """POST /animatics/{id}/soundtrack — find and file a film's worth of sound."""
+
+    sounds: list[SoundCueRequest] = Field(default_factory=list)
+
+
+class SoundtrackItem(BaseModel):
+    """One cue that found something, as an ordinary audio upload.
+
+    ⚠ SAME FIELDS AS `SoundImportResponse` PLUS THE `key`, deliberately: a sound
+    this pass filed in IS an audio upload, indistinguishable on disk and in the
+    editor from a dropped mp3. The `key` is the only thing that makes it a CUE.
+    """
+
+    key: str = ""
+    query: str = ""
+    # ⚠ EMPTY WHEN THE CUE WAS FOUND AS WRITTEN, which is the usual case. Set to
+    # the words actually searched for when the cue only turned something up on the
+    # wider second attempt — "feather rustle" for a cue of "light feather rustle",
+    # or "any length" when only the duration filter had to go. The panel prints
+    # it, because a sound found by answering a different question is not the sound
+    # the preview promised and the user has to be able to see that.
+    relaxed_to: str = ""
+    kind: str = "sfx"
+    upload_id: str
+    filename: str = ""
+    url: str
+    duration_ms: int = 0
+    attribution: str = ""
+    license: str = "cc0"
+    license_label: str = ""
+    needs_credit: bool = False
+    page_url: str = ""
+
+
+class SoundtrackResponse(BaseModel):
+    """What landed, and — just as importantly — what did not and why.
+
+    ⚠ A CUE THAT FOUND NOTHING IS NOT AN ERROR. Ten of eleven cues landing is a
+    film with sound in it; refusing the request because one search came back empty
+    would be a pass that fails whenever a model writes an unusual word. So every
+    failure is a row in `skipped` with a reason written for a human, and the panel
+    prints them under the run.
+    """
+
+    items: list[SoundtrackItem] = Field(default_factory=list)
+    skipped: list[dict] = Field(default_factory=list)
+    # How many audio FILES the project may still take after this call. The editor
+    # shows it when a pass had to stop early, so "why did only six land" has an
+    # answer on screen.
+    room_left: int = 0
 
 
 class SoundImportRequest(BaseModel):

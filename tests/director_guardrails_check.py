@@ -53,7 +53,7 @@ def check(label, good, detail=""):
 
 HARNESS = """
 import { capabilities, HOUSE_CAPS } from "__CAPS__";
-import { applyGuardrails, fillStillMoves, housePlan } from "__HOUSE__";
+import { applyGuardrails, fillAlternateTransitions, fillStillMoves, housePlan } from "__HOUSE__";
 import { defaultInclude, validatePlan, planTotals } from "__SCHEMA__";
 
 const caps = capabilities();
@@ -189,8 +189,12 @@ const modelSteps = [
   { verb: "add_text", args: { shot: 7, text: "Beautiful.", ref: "t1" } },
 ];
 function adopted(steps, ctx, include) {
+  // ⚠ THE SAME TWO FILLERS `adopt` RUNS, IN THE SAME ORDER. This helper exists to
+  // be the door every plan comes through, so leaving one out here would test a
+  // door the app does not have.
   const filled = fillStillMoves({ steps, include: { ...defaultInclude(), ...include } }, ctx);
-  const checked = validatePlan(filled, caps, ctx);
+  const rhythmed = fillAlternateTransitions(filled, ctx);
+  const checked = validatePlan(rhythmed, caps, ctx);
   const fenced = applyGuardrails(checked.plan, ctx);
   return {
     kept: fenced.plan.steps.map((s) => ({ verb: s.verb, args: s.args })),
@@ -202,6 +206,59 @@ function adopted(steps, ctx, include) {
 const model = {
   off: adopted(modelSteps, varied, { veo: false }),
   on: adopted(modelSteps, varied, { veo: true }),
+};
+
+// ------------------------------------ AND THE CUTS ARE THE FILM'S TOO. A model
+// handed eight identical four-second shots with no descriptions reads the whole
+// thing as ONE scene — correctly — and the polish prompt earns a dissolve on a
+// scene BOUNDARY, of which one scene has none. So it wrote zero transitions and
+// the run made eight hard cuts. Reported as "without transiition and music not
+// complate video". `fillAlternateTransitions` is `fillStillMoves`' twin.
+const flat8 = timeline(8, 4000);
+const movesOnly = [
+  { verb: "push_in", args: { shot: 2, from: 1, to: 1.05, ease: "ease-in-out" } },
+  { verb: "push_in", args: { shot: 7, from: 1, to: 1.1, ease: "ease-in-out" } },
+];
+const cuts = (out) => out.kept.filter((s) => s.verb === "add_transition").map((s) => s.args.cut);
+const rhythm = {
+  // Nothing said about the cuts at all — the house fills them in.
+  silent: adopted(movesOnly, flat8, { veo: false }),
+  // One dissolve of its own is an OPINION, and the filler leaves it alone.
+  opinionated: adopted(
+    [...movesOnly, { verb: "add_transition", args: { cut: 4, kind: "dissolve", ms: 700 } }],
+    flat8,
+    { veo: false }
+  ),
+  // "Make this a straight cut" is also an opinion.
+  straightened: adopted(
+    [...movesOnly, { verb: "remove_transition", args: { cut: 4 } }],
+    flat8,
+    { veo: false }
+  ),
+  // The tick box still wins over the house rule.
+  ticked_off: adopted(movesOnly, flat8, { veo: false, transitions: false }),
+  // A one-shot film has no cuts to fill.
+  single: adopted([], timeline(1, 4000), { veo: false }),
+  // ⚠ AND THE FILLER MUST BE THE HOUSE PLANNER'S OWN ANSWER, not a second copy
+  // of the rule. Same film, same flags, asked both ways.
+  same:
+    JSON.stringify(
+      cuts(adopted(movesOnly, flat8, { veo: false }))
+    ) ===
+    JSON.stringify(
+      housePlan(flat8, { include: { ...defaultInclude(), veo: false } })
+        .steps.filter((s) => s.verb === "add_transition")
+        .map((s) => s.args.cut)
+    ),
+  // ⚠ READ OFF THE FILLER, NOT OFF `kept`. `adopted` maps its steps down to
+  // `{verb, args}` — the note is deliberately not part of what the fence is
+  // asserted on — so reading it there gets "" every time and asserts nothing.
+  notes: fillAlternateTransitions(
+    { steps: movesOnly, include: { ...defaultInclude(), veo: false } },
+    flat8
+  ).steps
+    .filter((s) => s.verb === "add_transition")
+    .map((s) => s.note || ""),
 };
 
 const house = {
@@ -225,7 +282,7 @@ const house = {
 process.stdout.write(JSON.stringify({
   capsTable: HOUSE_CAPS,
   twoOnOne, everyShot, everyCut, everyCutWithVeo, sameCutTwice, nextDoor, manyShapes, manyTexts,
-  orphan, house, model,
+  orphan, house, model, rhythm,
 }));
 """
 
@@ -495,6 +552,39 @@ def main():
           on["totals"]["moves"] == 3
           and not any(s["verb"] == "add_shot_motion" for s in on["kept"]),
           json.dumps(on["totals"]))
+    print()
+    print("⚠ A PLAN WITH NO OPINION ABOUT THE CUTS GETS THE HOUSE RHYTHM")
+    print("  (eight identical shots read as one scene, so the model wrote zero)")
+    print()
+    r = data["rhythm"]
+    silent = [s["args"]["cut"] for s in r["silent"]["kept"] if s["verb"] == "add_transition"]
+    check("⚠ a model plan with NO transitions gets the alternating dissolves",
+          silent == [1, 3, 5, 7], json.dumps(silent))
+    check("...and the note says the HOUSE filled them in, not the AI",
+          all("house rhythm" in n for n in r["notes"]) and len(r["notes"]) == 4,
+          json.dumps(r["notes"]))
+    check("...and it is the rules planner's own answer, not a second copy of it",
+          r["same"], str(r["same"]))
+    check("the model's own moves are untouched by any of it",
+          [s["args"]["shot"] for s in r["silent"]["kept"] if s["verb"] == "push_in"] == [2, 7],
+          json.dumps([s["verb"] for s in r["silent"]["kept"]]))
+    opinion = [s["args"]["cut"] for s in r["opinionated"]["kept"] if s["verb"] == "add_transition"]
+    check("⚠ ONE TRANSITION OF ITS OWN AND THE FILLER IS A NO-OP — that is an\n"
+          "       opinion about the rhythm, and filling around it would overrule it",
+          opinion == [4], json.dumps(opinion))
+    straight = [s["verb"] for s in r["straightened"]["kept"]]
+    check("...and so is \"make this a straight cut\"",
+          "add_transition" not in straight, json.dumps(straight))
+    check("un-ticking Transitions still wins over the house rule",
+          not any(s["verb"] == "add_transition" for s in r["ticked_off"]["kept"]),
+          json.dumps([s["verb"] for s in r["ticked_off"]["kept"]]))
+    check("a one-shot film has no cut to fill, and nothing is invented",
+          not any(s["verb"] == "add_transition" for s in r["single"]["kept"]),
+          json.dumps([s["verb"] for s in r["single"]["kept"]]))
+    check("nothing the filler added was dropped or trimmed",
+          not r["silent"]["dropped"] and not r["silent"]["trimmed"],
+          json.dumps(r["silent"]["dropped"] + r["silent"]["trimmed"]))
+
     print()
     if failures:
         print(f"{len(failures)} FAILED:")

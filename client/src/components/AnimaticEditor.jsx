@@ -173,6 +173,11 @@ import useCapability from "../useCapability.js";
 // none of it touches state directly: see `agent/actions.js`.
 import useDirectorRun from "../animatic/agent/useDirectorRun.js";
 import { fitTakeToHold, shotRow } from "../animatic/agent/veo_pass.js";
+// ⚠ ONLY THE TWO LANE NAMES. Every number in `sound_pass.js` — the levels, the
+// fades, the loop ceiling — is decided there and arrives ON the clips, because the
+// editor's job here is to lay down what it is handed rather than to have a second
+// opinion about how loud a music bed should be.
+import { MUSIC_LANE_NAME, SFX_LANE_NAME } from "../animatic/agent/sound_pass.js";
 import { ACTION_API } from "../animatic/agent/actions.js";
 // ⚠ `sortFiles` ONLY. The strip itself was the Media pane's list of CLIPS; the
 // pane lists the LIBRARY now (`MediaBin`), so the component has no reader here —
@@ -251,7 +256,12 @@ const DEFAULT_PPS = 32;
 const ZOOM_STEP = 1.6;
 const MIN_MS = 100;
 // Mirrors API_MAX_ANIMATIC_AUDIO_TRACKS on the server.
-const MAX_AUDIO_TRACKS = 4;
+// ⚠ 4 UNTIL THE 🎬 DIRECTOR LEARNED TO SCORE A FILM. One run can want twelve
+// FILES — a voiceover, a music bed and up to ten distinct sound effects — so at
+// 4 the sound passes were not limited, they were impossible. Files, not clips:
+// the razor and the looped music bed both make many clips out of one file and
+// neither costs anything here. See `sound_pass.js`.
+const MAX_AUDIO_TRACKS = 16;
 // `AnimaticFrame.track` is `le=15`, so a sixteenth row is a value the server
 // would reject. Checked where a row is ADDED, so the refusal is a notice rather
 // than a failed save.
@@ -3911,12 +3921,44 @@ export default function AnimaticEditor({
    * way `frameIndexAt` counts them: 0 is before the first picture and
    * `frames.length` is past the last, and neither of those is an edit point.
    */
-  function addTransitionAtCut(entry, cut) {
-    if (cut <= 0 || cut >= frames.length) {
+  /**
+   * A CUT IS A NUMBER TO A DRAG AND A FRAME ID TO THE DIRECTOR, and this is the
+   * seam between the two.
+   *
+   * ⚠ THE DIRECTOR MUST NEVER USE `addTransitionAtCut`, AND THAT IS WHY THIS
+   * EXISTS. `addTransitionAtCut` counts into `frames` — the WHOLE picture list,
+   * every row of it — which is exactly right for the two gestures that call it,
+   * because both got their number from `frameIndexAt(timeMs)`, i.e. from the same
+   * list. The Director counts into a DIFFERENT list: `readDirectorCtx` runs
+   * `shotRow`, which takes the Veo takes out, so on an animated project its "cut
+   * 3" and this function's "cut 3" are two different cuts.
+   *
+   * ⚠ AND THE FAILURE WAS SILENT, WHICH IS WHY IT SHIPPED. The record was still
+   * created — attached to whatever clip sat at that index in the unfiltered list,
+   * usually a take on the Storyboard video row — so nothing threw, the step
+   * logged "done", and the transition simply did not render anywhere the user
+   * could see it. The `duration_ms` patch that follows it then looked the record
+   * up by the FILTERED frame's id, found nothing, and dropped the length too.
+   * Reported as "transition ek bhi jagah nahi laga hua hai" on a 16-frame project
+   * that was 8 panels and 8 takes.
+   *
+   * So the Director passes the frame's OWN ID, resolved from the row it counted,
+   * and no index crosses the line. `addTransitionAtCut` is now a two-line wrapper
+   * that turns a number from `frames` into an id before doing the same thing.
+   */
+  function addTransitionAfterFrame(entry, afterFrameId) {
+    const after = frames.find((f) => f.id === afterFrameId);
+    if (!after) {
       setNotice("A transition goes on a cut BETWEEN two shots — there isn't one there.");
       return;
     }
-    const after = frames[cut - 1];
+    // ⚠ "IS THERE A CUT AFTER THIS CLIP" IS THE CALLER'S QUESTION, NOT THIS
+    // ONE'S, and that is not laziness — it is the only place it can be answered.
+    // A cut exists after a clip if something FOLLOWS IT ON ITS OWN ROW, and this
+    // function is handed one id and no row. Both callers already know: the index
+    // form checks `cut >= frames.length` against the list it counted, and
+    // `add_transition` checks `cut >= ctx.frames.length` against the shot row in
+    // its validator, so a plan can never ask for a transition after its last shot.
     const existing = transitions.find((t) => t.after_frame_id === after.id);
     if (existing) {
       // ⚠ REPLACE, DON'T STACK. One transition per cut is what keeps
@@ -3939,6 +3981,23 @@ export default function AnimaticEditor({
     setNotice(
       `${entry.label} added on that cut — it blends across the edit without making the video any longer.`
     );
+  }
+
+  /**
+   * The same thing, addressed by a POSITION in `frames`.
+   *
+   * ⚠ FOR THE TWO DRAG GESTURES ONLY. Both get their `cut` from
+   * `frameIndexAt(timeMs)`, which counts into the same unfiltered `frames` this
+   * indexes — so the number and the list agree by construction. Anything whose
+   * numbering came from somewhere else must use `addTransitionAfterFrame`; see
+   * its header for the bug that rule is written from.
+   */
+  function addTransitionAtCut(entry, cut) {
+    if (cut <= 0 || cut >= frames.length) {
+      setNotice("A transition goes on a cut BETWEEN two shots — there isn't one there.");
+      return;
+    }
+    addTransitionAfterFrame(entry, frames[cut - 1].id);
   }
 
   /**
@@ -6157,6 +6216,114 @@ export default function AnimaticEditor({
     );
   }
 
+  /**
+   * THE 🎬 DIRECTOR'S SOUNDTRACK — every sound effect and the music bed, at once.
+   *
+   * ⚠ IT IS NOT `placeAudioUpload` IN A LOOP, AND THAT IS THE WHOLE REASON IT
+   * EXISTS. Three things go wrong if it is:
+   *
+   *   1. UNDO. The stack takes one entry per state update (`useUndoStack`), so
+   *      eleven calls would be eleven Ctrl+Zs to take a soundtrack back off —
+   *      except that they coalesce unpredictably when they land inside half a
+   *      second of each other, so it would be somewhere between one and eleven and
+   *      the user could not tell which. A soundtrack is ONE thing they asked for.
+   *   2. THE LANE RULE. `placeAudioUpload` replaces whatever is on the lane it
+   *      is given, because "add audio to this row" has to mean that for a person
+   *      dropping a file. Eleven sound effects on one row would leave the eleventh.
+   *   3. THE FILE COUNT. Each call reads `audioTracks` from the render it was
+   *      made in, so eleven of them would all see the list as it was before any
+   *      landed.
+   *
+   * ⚠ TWO NEW LANES, ALWAYS NEW ONES. The sound effects and the music go on rows
+   * of their own — never onto the voiceover's row, and never onto a row the user
+   * put something on — because the first thing anybody does with an automatic
+   * soundtrack is turn part of it down or throw part of it away, and that is a
+   * gesture on a ROW. A pass that mixed its whoosh in among the narration would
+   * make "mute the sound effects" impossible without a razor.
+   *
+   * ⚠ AND THE CREDIT STILL RIDES ON THE CARD, not on the clip — same rule as
+   * every other way a sound gets in here (`AnimaticAsset.attribution`). These
+   * are CC0 by the time they reach us (the route fences it), so in practice the
+   * line is empty; carrying it anyway is what keeps one code path.
+   *
+   * @param sfx   clips from `sfxPlacements` — `[{upload_id, start_ms, volume, …}]`
+   * @param music clips from `musicPlacement`, all of one file, back to back
+   */
+  function placeSoundtrack({ sfx = [], music = [] } = {}) {
+    if (!sfx.length && !music.length) return;
+
+    const lanes = [];
+    const clips = [];
+    const cards = [];
+    // ⚠ ONE CARD PER FILE, NOT PER CLIP. A looped music bed is sixteen clips of
+    // one recording and a repeated cue is six clips of one recording; the library
+    // holds the RECORDING, keyed by upload id, exactly as it does for a razored
+    // take. `addToLibrary` dedupes as well, but building the list right means the
+    // count in the notice is the count of files.
+    const filed = new Set();
+    const card = (clip) => {
+      if (!clip.upload_id || filed.has(clip.upload_id)) return;
+      filed.add(clip.upload_id);
+      cards.push(
+        assetFromAudio(
+          {
+            id: clip.upload_id,
+            upload_id: clip.upload_id,
+            filename: clip.filename || "",
+            duration_ms: clip.duration_ms || 0,
+            attribution: clip.attribution || "",
+          },
+          newId()
+        )
+      );
+    };
+
+    // The clip fields every audio clip in this project carries. Written out here
+    // rather than spread from the placement so a field `sound_pass.js` invents
+    // cannot quietly become part of the document shape.
+    const lay = (clip, layerId) => ({
+      id: newId(),
+      upload_id: clip.upload_id,
+      layer_id: layerId,
+      filename: clip.filename || "",
+      duration_ms: Math.max(0, Math.round(clip.duration_ms || 0)),
+      start_ms: Math.max(0, Math.round(clip.start_ms || 0)),
+      offset_ms: Math.max(0, Math.round(clip.offset_ms || 0)),
+      trim_ms: Math.max(0, Math.round(clip.trim_ms || 0)),
+      volume: Math.max(0, Math.min(2, Number(clip.volume) || 1)),
+      muted: false,
+      fade_in_ms: Math.max(0, Math.round(clip.fade_in_ms || 0)),
+      fade_out_ms: Math.max(0, Math.round(clip.fade_out_ms || 0)),
+      url: `/animatics/${animaticId}/media/${clip.upload_id}`,
+    });
+
+    if (sfx.length) {
+      const lane = { id: newId(), kind: "audio", name: SFX_LANE_NAME };
+      lanes.push(lane);
+      for (const clip of sfx) {
+        clips.push(lay(clip, lane.id));
+        card(clip);
+      }
+    }
+    if (music.length) {
+      const lane = { id: newId(), kind: "audio", name: MUSIC_LANE_NAME };
+      lanes.push(lane);
+      for (const clip of music) {
+        clips.push(lay(clip, lane.id));
+        card(clip);
+      }
+    }
+
+    // ⚠ THREE UPDATES IN ONE HANDLER, WHICH REACT BATCHES INTO ONE RENDER — and
+    // therefore into one undo entry. This is the same trick `addCrossfade` uses to
+    // keep half a crossfade from surviving a Ctrl+Z, one level up in scale.
+    setLayers((list) => [...list, ...lanes]);
+    setAudioTracks((list) => [...list, ...clips]);
+    addToLibrary(cards);
+    for (const lane of lanes) seatNewLane(layerTokenOf(lane));
+    openGroup("media:audio");
+  }
+
   // The Audio layer's ＋ and the "Add layer" control both land here.
   async function pickAudio(file) {
     if (!file) return;
@@ -6410,6 +6577,21 @@ export default function AnimaticEditor({
     }),
     []
   );
+  /**
+   * THE SAME ROW, AS A VALUE, FOR THE PANEL TO DRAW.
+   *
+   * ⚠ THE PANEL AND THE RUNNER MUST COUNT THE SAME SHOTS. `readDirectorCtx` is a
+   * stable-identity callback that reads refs — right for the runner, useless to a
+   * component that has to re-render when the film changes — so the row is derived
+   * here as well, from the same `shotRow` and the same two arrays. It is NOT a
+   * second answer: one function, called twice.
+   *
+   * ⚠ AND IT IS WHY THE PREVIEW USED TO LIE. Handed the raw `frames`, the panel
+   * counted 8 panels + 8 takes as a 16-shot 64-second film and drew eight empty
+   * rows under the eight real ones. Cheap to derive, and the alternative is a
+   * dialog that describes a film nobody has.
+   */
+  const directorShots = useMemo(() => shotRow(frames, starts).frames, [frames, starts]);
   // ⚠ THE NAMES ARE THE CONTRACT — `ACTION_API` in `agent/actions.js` lists
   // exactly these, and `tests/editor_director_check.py` asserts this object
   // supplies every one of them. A verb cannot reach anything not named here.
@@ -6419,7 +6601,11 @@ export default function AnimaticEditor({
     setAllDurations,
     seek,
     selectOnly,
-    addTransitionAtCut,
+    // ⚠ THE `AfterFrame` FORM, NEVER `AtCut`. The Director counts shots in the
+    // row `shotRow` gives it and the editor counts clips in the whole picture
+    // list, so handing it an index was handing it a number about a different
+    // film. See `addTransitionAfterFrame`'s header.
+    addTransitionAfterFrame,
     patchTransition,
     deleteTransition,
     addEffectToClip,
@@ -6525,6 +6711,27 @@ export default function AnimaticEditor({
     (payload) => api.directorVeoState(animaticId, payload),
     [animaticId]
   );
+  // ---------------------------------------------------------- phases D and E
+  // ⚠ FREE, AND THE PANEL MUST KEEP SAYING SO. Finding a film's sound spends the
+  // deployment's shared Freesound budget — 60 requests a minute for everybody —
+  // and not one penny of anybody's money. It is wired in beside the paid passes
+  // because it is the same KIND of thing (a server call the runner waits for),
+  // not because it costs the same kind of thing.
+  const directorSoundtrack = useCallback(
+    (payload) => api.buildSoundtrack(animaticId, payload),
+    [animaticId]
+  );
+  // ⚠ A THUNK, LIKE `directorApi`. The runner holds this for the length of a run
+  // and `placeSoundtrack` closes over `audioTracks`, `layers` and `assets` as they
+  // were when it was made — so a stable-identity wrapper that re-reads the latest
+  // one is the difference between placing sound onto the film and placing it onto
+  // the film as it was before the Director started.
+  const directorPlaceSoundRef = useRef(null);
+  directorPlaceSoundRef.current = placeSoundtrack;
+  const directorPlaceSound = useCallback(
+    (payload) => directorPlaceSoundRef.current(payload),
+    []
+  );
   const director = useDirectorRun({
     readCtx: readDirectorCtx,
     api: directorApi,
@@ -6550,6 +6757,11 @@ export default function AnimaticEditor({
     // ⚠ THE RESUME OFFER. A `director_run` still saying "running" on a project
     // that has just been loaded means a pass was interrupted — see `resumeVeo`.
     pendingVeo: directorPending,
+    // ------------------------------------------------------- phases D and E
+    // The sound effects and the music bed, laid on lanes of their own AFTER the
+    // steps have finished moving the shots their cues have to land on.
+    buildSoundtrack: directorSoundtrack,
+    placeSoundtrack: directorPlaceSound,
   });
 
   // Which languages have a description written for them, and which backend is
@@ -11873,9 +12085,17 @@ export default function AnimaticEditor({
           nothing to confirm — Run costs nothing and Revert undoes all of it.
           The two-popup priced flow arrives with Veo in Phase 4. */}
       {directorOpen && (
+        // ⚠ `frames` IS THE SHOT ROW, NOT THE PICTURE LIST, AND THAT WAS A BUG
+        // THE USER READ STRAIGHT OFF THE SCREEN. The runner counts shots through
+        // `shotRow`, which takes the Veo takes out; the panel was handed the raw
+        // list. So on an animated project the header said "16 shots · 64.0s" for
+        // an 8-shot 32-second film, and the preview table drew sixteen rows of
+        // which the last eight were nothing but dashes — because the plan it was
+        // folding onto them only ever mentioned eight. One list, read one way, or
+        // the panel describes a film that does not exist.
         <DirectorPanel
           run={director}
-          frames={frames}
+          frames={directorShots}
           languages={directorLanguages}
           onClose={() => {
             director.close();

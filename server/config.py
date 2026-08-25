@@ -98,14 +98,35 @@ MAX_ANIMATIC_LAYERS = int(os.environ.get("API_MAX_ANIMATIC_LAYERS", "24"))
 # re-added holds more sources than it has clips. It is a list of references, not
 # of files, so the cost of a row here is a few hundred bytes.
 MAX_ANIMATIC_ASSETS = int(os.environ.get("API_MAX_ANIMATIC_ASSETS", "1000"))
-# Audio FILES per animatic (music + voiceover is the usual pair). Every extra
-# file is another upload to store, so this stays small.
-MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "4"))
+# Audio FILES per animatic. Every extra file is another upload to store, so this
+# stays modest — but it is no longer "music + voiceover is the usual pair".
+#
+# ⚠ IT WAS 4 UNTIL THE DIRECTOR LEARNED TO SCORE A FILM, and 4 made that feature
+# impossible rather than merely limited: the voiceover is one file, the music bed
+# is one, and the sound-effects pass fetches up to `MAX_SFX_SOUNDS` (10) distinct
+# recordings — so the honest ceiling for one 🎬 run is 12. At 4 the pass would
+# have filed two sound effects and reported the rest as "no room", every time,
+# on every project.
+#
+# ⚠ AND IT IS FILES, NOT CLIPS — the razor and the music loop both make many
+# clips out of one file, and neither costs anything here. See
+# `MAX_ANIMATIC_AUDIO_CLIPS` below, which is the cap that grows with editing.
+MAX_ANIMATIC_AUDIO_TRACKS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_TRACKS", "16"))
 # Audio CLIPS per animatic. ⚠ NOT the same cap: the razor cuts one file into
 # several clips without uploading anything, so counting clips against the file
 # limit above would make a track uncuttable after three cuts. Every clip is one
 # more ffmpeg input to decode, which is why there is a ceiling at all.
-MAX_ANIMATIC_AUDIO_CLIPS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_CLIPS", "48"))
+#
+# ⚠ RAISED FROM 48 WITH THE DIRECTOR'S SOUND PASSES, and the arithmetic is worth
+# writing down because 48 was not far off being hit by ONE run. A LOOPED MUSIC BED
+# IS MANY CLIPS OF ONE FILE — there is no loop flag on an audio clip, deliberately
+# (see `sound_pass.js`), so a 15-second bed under a four-minute film is sixteen
+# clips. Add up to `MAX_SFX_CLIPS` (32) sound effects and the voiceover's own
+# pieces and one 🎬 run can legitimately want ~70. The browser's own ceilings
+# (`MAX_SFX_CLIPS`, and `MAX_LOOPS` inside `musicPlacement`) are what keep it
+# under this; this is the backstop, and it is a backstop for a malformed save
+# rather than a budget the editor is expected to work inside.
+MAX_ANIMATIC_AUDIO_CLIPS = int(os.environ.get("API_MAX_ANIMATIC_AUDIO_CLIPS", "120"))
 # Transitions per animatic. There is at most one per cut, so the frame cap is
 # the real ceiling; this only stops a malformed save carrying thousands.
 MAX_ANIMATIC_TRANSITIONS = int(

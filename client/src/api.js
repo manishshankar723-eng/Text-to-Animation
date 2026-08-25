@@ -1172,6 +1172,33 @@ export function importSound(animaticId, soundId) {
   });
 }
 
+/**
+ * THE 🎬 DIRECTOR'S SOUND PASSES — a whole film's worth of sound, in one call.
+ *
+ * ⚠ SEARCH TERMS GO IN, FILED UPLOADS COME OUT. Nothing here is a sound id: the
+ * cues were written by the analyse call that read the film (`sfx` and `music` on
+ * the plan response) and the server searches for each one, so the browser never
+ * has to see a result it is not going to show anybody.
+ *
+ * ⚠ ONE CALL FOR THE WHOLE LIST, AND THAT IS NOT A ROUND-TRIP OPTIMISATION. The
+ * audio-file cap has to be measured ONCE against the project, or the tail of an
+ * eleven-cue list is refused for room the first ten took — see the route's own
+ * docstring. It also dedupes: six shots cueing the same sound are one download.
+ *
+ * ⚠ IT ANSWERS PARTIALLY ON PURPOSE. `{ items, skipped, room_left }` — a cue that
+ * found nothing is a row in `skipped` with a reason, not a rejected request, so a
+ * film gets the ten sounds that were found rather than none of them.
+ *
+ * @param payload `{ sounds: [{key, query, kind, max_seconds, min_seconds}] }`
+ *                — `soundtrackRequest()` in `sound_pass.js` builds exactly this.
+ */
+export function buildSoundtrack(animaticId, payload) {
+  return request(`/animatics/${animaticId}/soundtrack`, {
+    method: "POST",
+    body: { sounds: (payload && payload.sounds) || [] },
+  });
+}
+
 // --- Animating a frame with Veo, from inside the editor ---------------------
 // ⚠ The one path in the animatic editor that SPENDS MONEY. The pair mirrors
 // `estimateFinalVideo` / `renderFinalVideoShots` exactly, including taking the

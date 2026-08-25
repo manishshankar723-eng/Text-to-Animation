@@ -5,8 +5,10 @@
 // ---------------------------------------------------------------------------
 // This is the whole design, and it is the reason the runner is safe to point at
 // a real project. `add_transition` does not build a transition record — it calls
-// `addTransitionAtCut`, the same function the ＋ on a cut and a tile dragged out
-// of the Effects library both call. So the one-per-cut rule, the replace-don't-
+// `addTransitionAfterFrame`, which is what the ＋ on a cut and a tile dragged out
+// of the Effects library both end up in as well (they arrive through
+// `addTransitionAtCut`, which resolves their index and delegates — see its header
+// for why a verb may not use the index form). So the one-per-cut rule, the replace-don't-
 // stack rule and the wording of the status line are obeyed by the AI for free,
 // and they cannot drift, because there is no second copy of them to drift from.
 //
@@ -75,7 +77,14 @@ export const ACTION_API = [
   "setAllDurations",
   "seek",
   "selectOnly",
-  "addTransitionAtCut",
+  // ⚠ BY FRAME ID, NOT BY CUT NUMBER, AND THE EDITOR HAS BOTH. `addTransitionAtCut`
+  // counts into the editor's WHOLE picture list; the Director counts into the
+  // shot row (`shotRow` takes the Veo takes out), so on an animated project the
+  // two disagree about which cut "3" is — and the failure was silent: the record
+  // was created against a take on the video row, the step logged "done", and no
+  // transition rendered anywhere a person could see it. A verb resolves the id
+  // out of its own `ctx` and hands that over, so no index crosses the line.
+  "addTransitionAfterFrame",
   "patchTransition",
   "deleteTransition",
   "addEffectToClip",
@@ -133,6 +142,86 @@ function oneOf(value, allowed) {
 
 function clamp(n, low, high) {
   return Math.max(low, Math.min(high, n));
+}
+
+/**
+ * IS THERE ACTUALLY A CUT AFTER SHOT `cut`? Returns the frame, or a reason.
+ *
+ * ⚠ A CUT IS TWO CLIPS THAT TOUCH, NOT TWO CLIPS IN A ROW, and until this
+ * existed the Director could not tell the difference. `transitionWindow` refuses
+ * to place a transition where the next clip on the row does not START EXACTLY
+ * where this one ENDS — "there is no edit point in a gap" — and `renderTransitions`
+ * refuses to draw a badge there for the same reason. So a plan that asked for a
+ * dissolve across a gap produced a real record, a step logged as DONE, and
+ * absolutely nothing on screen or in the export. Silent, and indistinguishable
+ * from the feature being broken.
+ *
+ * ⚠ AND THE GAPS ARE NOT HYPOTHETICAL — `spreadPanelsForRenders` MAKES THEM. A
+ * Veo take is usually longer than the hold it was made from, so the panels after
+ * it are pushed clear of its end, and the panel row ends up with holes in it.
+ * Which means the projects most likely to hit this are exactly the ones that have
+ * already been animated: press 🎬 on one and every dissolve in the plan can
+ * quietly evaporate.
+ *
+ * ⚠ IT IS A DROP IN THE PREVIEW, NOT A FAILURE AT RUN TIME. Refusing here means
+ * the reason appears under the table before Run is pressed — "3 steps couldn't be
+ * used" with a sentence each — which is the whole contract this validator has
+ * with the user. The other forty-seven steps still make a film.
+ *
+ * ⚠ MEASURED OFF `starts`, NEVER RE-DERIVED. Those are the editor's own
+ * `frameSpans` numbers, filtered by `shotRow` at the same indices — the same
+ * arithmetic the timeline is drawing and the renderer is reading. Laying the
+ * durations end to end here instead would be a second layout engine that
+ * disagrees with the screen the moment anything is dragged.
+ */
+function cutAfter(cut, ctx) {
+  const frames = ctx.frames || [];
+  const starts = ctx.starts || [];
+  const i = cut - 1;
+  const from = frames[i];
+  const to = frames[i + 1];
+  if (!from || !to) return { frame: null, why: `cut ${cut} is not between two shots` };
+  // No `starts` at all is an older caller (and every maths-only test): fall back
+  // to trusting list order, which is what every one of them means by it.
+  if (starts.length <= i + 1) return { frame: from, why: "" };
+  const end = (Number(starts[i]) || 0) + (Number(from.duration_ms) || 0);
+  const next = Number(starts[i + 1]) || 0;
+  if (next !== end) {
+    const gap = Math.round(next - end);
+    return {
+      frame: null,
+      why:
+        gap > 0
+          ? `there is a ${(gap / 1000).toFixed(1)}s gap after shot ${cut}, so there is no cut ` +
+            "there for a transition to happen on"
+          : `shot ${cut} overlaps the shot after it, so there is no clean cut between them`,
+    };
+  }
+  return { frame: from, why: "" };
+}
+
+/**
+ * WHY A SHOT COULD NOT BE RESOLVED, in words a person can act on.
+ *
+ * ⚠ "THERE IS NO SHOT UNDEFINED" WAS ON A USER'S SCREEN, and it is two different
+ * faults wearing one sentence. A step that names shot 61 on a 48-shot film is a
+ * model that misread the board; a step with NO `shot` at all is a model that took
+ * "omit every argument you are not deliberately setting" one field too far — and
+ * the second is the one that happened, three times in one plan (`add_text` with no
+ * shot, `add_effect` with no kind). Printing `undefined` back at the user tells
+ * them neither, and reads like a crash rather than a dropped step.
+ *
+ * ⚠ AND IT NAMES THE LENGTH OF THE FILM in the out-of-range case, because "there
+ * is no shot 61" is only actionable next to "this film has 48".
+ */
+function noShot(value, ctx) {
+  const count = (ctx && ctx.frames ? ctx.frames.length : 0) || 0;
+  if (value === undefined || value === null || value === "") {
+    return "the step named no shot to apply it to";
+  }
+  const n = int(value);
+  if (n === undefined) return `“${value}” is not a shot number`;
+  return `there is no shot ${n} — this film has ${count}`;
 }
 
 /**
@@ -346,7 +435,7 @@ export const ACTIONS = {
     args: ["shot"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      return i < 0 ? fail(`there is no shot ${args.shot}`) : ok({ shot: i + 1 });
+      return i < 0 ? fail(noShot(args.shot, ctx)) : ok({ shot: i + 1 });
     },
     describe: (args) => `Select shot ${args.shot}`,
     run: ({ api, args, ctx }) => api.selectOnly({ frame: ctx.frames[args.shot - 1].id }),
@@ -360,7 +449,7 @@ export const ACTIONS = {
     args: ["shot", "ms"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const length = ms(args.ms);
       if (length === undefined) return fail("no length given");
       return ok({ shot: i + 1, ms: clamp(length, HOUSE_CAPS.MIN_CLIP_MS, 600000) });
@@ -392,7 +481,7 @@ export const ACTIONS = {
     args: ["shot", "scale", "x", "y", "opacity"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const patch = {};
       const scale = num(args.scale);
       if (scale !== undefined) patch.scale = clamp(scale, 0.1, 8);
@@ -429,7 +518,7 @@ export const ACTIONS = {
     args: ["shot", "from", "to", "ease"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const from = clamp(num(args.from) ?? 1, 0.5, 4);
       const to = clamp(num(args.to) ?? 1.08, 0.5, 4);
       if (Math.abs(to - from) < 0.001) return fail("a push that goes nowhere");
@@ -483,7 +572,7 @@ export const ACTIONS = {
     args: ["shot", "kind", "amount", "ease"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const kind = oneOf(args.kind, MOTION_KINDS);
       if (!kind) return fail(`there is no “${args.kind}” move`);
       // How far it travels, as a multiple of the house move. Clamped rather than
@@ -512,7 +601,7 @@ export const ACTIONS = {
     args: ["shot"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      return i < 0 ? fail(`there is no shot ${args.shot}`) : ok({ shot: i + 1 });
+      return i < 0 ? fail(noShot(args.shot, ctx)) : ok({ shot: i + 1 });
     },
     describe: (args) => `Shot ${args.shot} is held — no move`,
     run: ({ api, args, ctx }) => {
@@ -533,13 +622,17 @@ export const ACTIONS = {
   add_transition: {
     verb: "add_transition",
     label: "Transition",
-    needs: ["addTransitionAtCut", "patchTransition"],
+    needs: ["addTransitionAfterFrame", "patchTransition"],
     args: ["cut", "kind", "ms", "params"],
     validate: (args, caps, ctx) => {
       const cut = int(args.cut);
       if (cut === undefined || cut <= 0 || cut >= (ctx.frames || []).length) {
         return fail(`cut ${args.cut} is not between two shots`);
       }
+      // ⚠ AND THE TWO SHOTS HAVE TO TOUCH. See `cutAfter`: a dissolve across a
+      // GAP is a record nothing renders and nothing draws, reported as done.
+      const joint = cutAfter(cut, ctx);
+      if (!joint.frame) return fail(joint.why);
       const kind = str(args.kind);
       if (!isKnown(caps, "transitions", kind)) {
         return fail(`this build has no “${args.kind}” transition`);
@@ -572,13 +665,24 @@ export const ACTIONS = {
       return `${label || args.kind}${dir} on the cut after shot ${args.cut}`;
     },
     run: ({ api, args, ctx }) => {
-      api.addTransitionAtCut(entryFor(ctx.caps, "transitions", args.kind, args.params), args.cut);
-      if (args.ms === undefined) return;
-      // The length is a second edit because `addTransitionAtCut` owns the
-      // record's creation and always makes it `DEFAULT_TRANSITION_MS` long —
-      // which is right, and is why this asks for the change afterwards by id
-      // rather than reaching into the constructor.
+      // ⚠ ONE FRAME, READ ONCE, USED BY BOTH HALVES. The record is created
+      // against this clip and then looked up again by the same id — which is the
+      // whole fix: before, it was created against `frames[cut - 1]` in the EDITOR
+      // (the unfiltered picture list) and looked up against `ctx.frames[cut - 1]`
+      // here (the shot row), so on any project carrying Veo takes the two were
+      // different clips. The transition landed on a take nobody sees and the
+      // length patch below found nothing to patch. Neither said a word.
       const after = ctx.frames[args.cut - 1];
+      if (!after) return;
+      api.addTransitionAfterFrame(
+        entryFor(ctx.caps, "transitions", args.kind, args.params),
+        after.id
+      );
+      if (args.ms === undefined) return;
+      // The length is a second edit because the editor owns the record's
+      // creation and always makes it `DEFAULT_TRANSITION_MS` long — which is
+      // right, and is why this asks for the change afterwards by id rather than
+      // reaching into the constructor.
       const made = (ctx.readTransitions ? ctx.readTransitions() : ctx.transitions || []).find(
         (t) => t.after_frame_id === after.id
       );
@@ -636,10 +740,17 @@ export const ACTIONS = {
     args: ["shot", "kind", "params"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const kind = str(args.kind);
       if (!isKnown(caps, "effects", kind)) {
-        return fail(`this build has no “${args.kind}” effect`);
+        return fail(
+          // ⚠ TWO FAULTS, TWO SENTENCES — same reason as `noShot`. "this build
+          // has no “undefined” effect" was on a user's screen and means "the
+          // step named no effect at all", which is a different thing to fix.
+          kind
+            ? `this build has no “${kind}” effect`
+            : "the step named no effect to add"
+        );
       }
       const spec = (caps.effects || []).find((e) => e.id === kind) || {};
       const params = {};
@@ -676,7 +787,7 @@ export const ACTIONS = {
     args: ["shot", "index", "param", "value"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const param = str(args.param);
       if (!param) return fail("no parameter named");
       const value = typeof args.value === "string" ? str(args.value) : num(args.value);
@@ -705,7 +816,7 @@ export const ACTIONS = {
     args: ["shot", "index"],
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const at = int(args.index);
       return ok({ shot: i + 1, index: at === undefined ? 0 : Math.max(0, at) });
     },
@@ -736,7 +847,7 @@ export const ACTIONS = {
     creates: true,
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const text = str(args.text);
       if (!text) return fail("a text clip with no words in it");
       const out = { shot: i + 1, text, ref: str(args.ref) || "", patch: {} };
@@ -880,7 +991,7 @@ export const ACTIONS = {
     creates: true,
     validate: (args, caps, ctx) => {
       const i = shotIndex(args.shot, ctx);
-      if (i < 0) return fail(`there is no shot ${args.shot}`);
+      if (i < 0) return fail(noShot(args.shot, ctx));
       const kind = str(args.kind);
       if (!isKnown(caps, "shapes", kind)) {
         return fail(`this build has no “${args.kind}” shape`);

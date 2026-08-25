@@ -314,6 +314,72 @@ export function fillStillMoves(plan, ctx) {
 }
 
 /**
+ * THE VERBS THAT ARE AN OPINION ABOUT WHERE THE CUTS BREATHE.
+ *
+ * `remove_transition` is in the list on purpose, for the same reason
+ * `clear_shot_motion` is in `MOTION_VERBS`: "make this a straight cut" is an
+ * opinion, and the filler is only for a plan that has none at all.
+ */
+const TRANSITION_VERBS = new Set(["add_transition", "remove_transition", "set_transition_duration"]);
+
+/**
+ * A FILM WITH NO TRANSITIONS IN THE PLAN GETS THE HOUSE'S RHYTHM. Returns a new plan.
+ *
+ * ⚠ THIS IS `fillStillMoves`' TWIN AND IT IS HERE FOR THE SAME REASON, reported
+ * the same way. A model handed eight shots of exactly four seconds, no
+ * descriptions and no dialogue reads the whole thing as ONE scene — correctly —
+ * and the polish prompt says a dissolve is earned on a SCENE BOUNDARY. One scene
+ * has no boundaries, so it wrote zero transitions, and the run made eight hard
+ * cuts. Reported as "se not transition add … without transiition and music not
+ * complate video".
+ *
+ * ⚠ AND THE ANSWER IS NOT TO ARGUE WITH THE PROMPT. "Restraint is the craft" is
+ * right and it stays; what was missing is the same thing the moves were missing
+ * — a HOUSE RULE about the film, applied on the one path every plan takes, for
+ * the shots the plan has no opinion about. `fillStillMoves`' header already
+ * makes the argument: press Run with Veo un-ticked and the stills ARE the
+ * finished film, so a film of eight hard cuts is a slideshow.
+ *
+ * ⚠ IT RE-ASKS `housePlan` RATHER THAN RE-IMPLEMENTING THE RULE, which is the
+ * whole reason this is five lines. The alternating-cut rule, the budget, the
+ * never-two-in-a-row spacing and the dissolve/dip choice are all decided in one
+ * place and were argued for over three rounds of user reports; a second copy
+ * here would be a second answer that drifts. The rules planner is pure,
+ * deterministic and free, so asking it costs nothing.
+ *
+ * ⚠ ONLY WHEN THE PLAN SAYS NOTHING AT ALL. One `add_transition` anywhere and
+ * this is a no-op — a model that placed two dissolves has an opinion about the
+ * rhythm, and filling in around it would be overruling a decision rather than
+ * supplying a missing one.
+ *
+ * ⚠ AND IT RUNS BEFORE `validatePlan`, like its twin, so what it adds goes
+ * through exactly the same door: a dissolve across a gap is dropped with a
+ * reason and the preview table is the film that gets made. See `adopt` in
+ * `useDirectorRun.js`.
+ */
+export function fillAlternateTransitions(plan, ctx) {
+  const source = plan && typeof plan === "object" ? plan : {};
+  const include = source.include;
+  if (!include || include.transitions === false) return source;
+  const steps = Array.isArray(source.steps) ? source.steps : [];
+  if (steps.some((step) => step && TRANSITION_VERBS.has(step.verb))) return source;
+  const house = housePlan(ctx, { include });
+  const added = (house.steps || [])
+    .filter((step) => step.verb === "add_transition")
+    .map((step) => ({
+      ...step,
+      // ⚠ RE-NOTED, because the note is read by a person deciding whether to
+      // trust the plan. The house planner's own wording ("shot 3 holds 4.0s") is
+      // an argument about rhythm; here the argument is "the AI had no opinion
+      // about the cuts, so the house filled them in", and saying the first would
+      // hide which planner actually made this decision.
+      note: "the plan left every cut straight, so the house rhythm filled them in",
+    }));
+  if (!added.length) return source;
+  return { ...source, steps: [...steps, ...added] };
+}
+
+/**
  * The plan the rules produce. Raw — it goes through `validatePlan` like any
  * other, which is what proves the deterministic path cannot skip the door.
  *

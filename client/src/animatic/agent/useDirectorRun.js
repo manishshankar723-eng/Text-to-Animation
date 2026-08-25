@@ -9,14 +9,28 @@
 //                                                                   anchoring
 //                                                                        │
 //                                                                        ▼
-//                                                          done ◀── running
-//                                                             │  ▲
-//                                                        pause│  │resume
-//                                                             ▼  │
-//                                                          paused
-//                                                             │stop
-//                                                             ▼
-//                                                          stopped
+//                                                       scoring ◀── running
+//                                                             │       │  ▲
+//                                                             ▼  pause│  │resume
+//                                                          done       ▼  │
+//                                                                  paused
+//                                                                     │stop
+//                                                                     ▼
+//                                                                  stopped
+//
+// ---------------------------------------------------------------------------
+// ⚠ AND ONE PASS RUNS *AFTER* THE STEPS, WHICH IS THE OPPOSITE RULE.
+// ---------------------------------------------------------------------------
+//   `scoring`    PHASES D AND E — the sound effects and the music bed. FREE
+//                (Freesound requests, not money) and it moves nothing.
+//
+// A sound cue lands on a MOMENT — "the door slams as shot 9 begins" — so the only
+// thing it needs is where shot 9 actually starts, and the steps have just spent
+// six seconds rewriting exactly that (`set_shot_duration`, `set_all_durations`).
+// Placed before them it would be right about a film that had not been edited yet.
+// So it goes last, it re-reads the cue times off the finished film, and it needs
+// no re-anchor of its own because nothing downstream of it decides a timing.
+// The reasoning and all the arithmetic are in `sound_pass.js`.
 //
 // ---------------------------------------------------------------------------
 // ⚠ THE TWO PAID PASSES BOTH RUN BEFORE THE STEPS, AND THE ORDER IS THE PRODUCT.
@@ -116,9 +130,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { capabilities } from "./capabilities.js";
 import { describeStep, ACTIONS, ACTION_API } from "./actions.js";
-import { applyGuardrails, fillStillMoves, housePlan } from "./house_style.js";
+import {
+  applyGuardrails,
+  fillAlternateTransitions,
+  fillStillMoves,
+  housePlan,
+} from "./house_style.js";
 import { defaultInclude, emptyPlan, planTotals, validatePlan } from "./plan_schema.js";
 import { reanchor, scriptFor, shiftsOf, speechDue, spokenWords } from "./voice_pass.js";
+import {
+  musicCue,
+  musicDue,
+  musicPlacement,
+  scoreReport,
+  sfxCues,
+  sfxDue,
+  sfxPlacements,
+  soundtrackRequest,
+} from "./sound_pass.js";
 import {
   chunkPasses,
   growthCauses,
@@ -151,6 +180,9 @@ const NO_SHOOT = { shots: [], skipped: [] };
 
 /** No quote yet. The shape `POST /director/{id}/veo/quote` returns. */
 const NO_QUOTE = { batch: 0, passes: [], total: NO_COST };
+
+/** Nothing cued, and the shape `sfxCues` returns. */
+const NO_SFX = { cues: [], sounds: [], skipped: [] };
 
 /**
  * THE FILM AS THE DIRECTOR COUNTS IT, out of anything the server hands back.
@@ -221,6 +253,25 @@ export default function useDirectorRun({
   // The server's own `veo_clips`, so the preview can say which shots are already
   // paid for and skip them rather than quoting for them twice.
   veoClips = [],
+  // ⚠ PHASES D AND E, AND BOTH ARE OPTIONAL FOR THE SAME REASON EVERYTHING ELSE
+  // HERE IS. Handed neither, the run ends where it always ended and the two tick
+  // boxes say why they cannot do anything. `tests/director_guardrails_check.py`
+  // and the whole rules-only path never supply them.
+  //
+  // ⚠ AND NEITHER OF THEM SPENDS MONEY. They spend the deployment's shared
+  // Freesound request budget, which is why the cue count is capped in
+  // `sound_pass.js` — but the price line and the Run button's label must not
+  // mention them, because a run that adds sound and no footage costs $0.00 and
+  // saying otherwise gets the box un-ticked out of caution.
+  //
+  //   `buildSoundtrack` FREE. Searches the sound library for every distinct cue
+  //                     and files what it finds in as ordinary audio uploads.
+  //                     `POST /animatics/{id}/soundtrack`, one call for the lot.
+  //   `placeSoundtrack` The editor's own callback: lay these clips on the Sound
+  //                     FX and Music lanes, in ONE state update, so Ctrl+Z takes
+  //                     the whole soundtrack back as one thing.
+  buildSoundtrack,
+  placeSoundtrack,
 }) {
   const [phase, setPhase] = useState("closed");
   // ⚠ AND AS A REF, for `stop` alone. Stop means two different things depending
@@ -301,6 +352,36 @@ export default function useDirectorRun({
   // priced: phase B can stretch a shot up a size. See `resolveShoot`.
   const shootRef = useRef([]);
 
+  // --------------------------------------------------------- phases D and E
+  // WHAT THE FILM SHOULD SOUND LIKE, read off the analyse call that already ran.
+  //
+  // ⚠ WORKED OUT AT PREVIEW TIME LIKE EVERYTHING ELSE HERE, so the panel can list
+  // the cues before Run is pressed — and worked out AGAIN at `scoring` time, off
+  // the finished film, because the plan itself re-times shots and a cue's whole
+  // job is to land on one particular frame. The list of SOUNDS cannot change
+  // between the two (no verb adds or removes a shot); only the TIMES can, which
+  // is exactly what the second reading is for. See `sound_pass.js`.
+  const [sfx, setSfx] = useState(NO_SFX);
+  const [music, setMusic] = useState(null);
+  // What phases D and E are doing, while they do it: `{ stage, message, … }`.
+  const [score, setScore] = useState(null);
+  // ⚠ ALL FOUR AS REFS, because the scoring effect is keyed on the phase alone —
+  // the same rule the speech and Veo effects follow, and for the same reason: an
+  // effect that restarted on what its own call writes would tear itself down
+  // mid-flight and leave a downloaded soundtrack attached to nothing.
+  const sfxRef = useRef(NO_SFX);
+  sfxRef.current = sfx;
+  const musicRef = useRef(null);
+  musicRef.current = music;
+  // The reading, for the SECOND cue pass. `analysis` state would do, but the
+  // effect reads it from inside a promise chain a minute old.
+  const analysisRef = useRef(null);
+  // ⚠ DID ANYBODY ACTUALLY END UP SPEAKING? The music bed's LEVEL depends on it —
+  // a score at full gain under a voiceover is not music, it is a fault — and
+  // "was the box ticked" is the wrong question: a voiceover that failed leaves a
+  // film with nothing to duck under. Set only when a pass landed.
+  const spokeRef = useRef(false);
+
   // The document as it was before the run — what Revert puts back.
   const snapshotRef = useRef(null);
   const [canRevert, setCanRevert] = useState(false);
@@ -353,7 +434,17 @@ export default function useDirectorRun({
       // has no opinion about and is a no-op with Veo ticked, which is what makes
       // the tick box add and remove them for free.
       const filled = fillStillMoves(withFlags, ctx);
-      const checked = validatePlan(filled, caps, ctx);
+      // ⚠ AND EVERY CUT BREATHES WHEN THE PLAN HAS NO OPINION ABOUT THE CUTS.
+      // Same shape of rule as `fillStillMoves` one line up, same place on the
+      // one path every plan takes, and reported the same way: a model given
+      // eight identical four-second shots with no descriptions reads the film as
+      // ONE scene, the polish prompt earns a dissolve on a scene BOUNDARY, and a
+      // film with one scene has none — so it wrote zero and the run made eight
+      // hard cuts. `fillAlternateTransitions` re-asks the rules planner rather
+      // than re-deciding the rhythm here, and is a no-op the moment the plan
+      // places a single transition of its own.
+      const rhythmed = fillAlternateTransitions(filled, ctx);
+      const checked = validatePlan(rhythmed, caps, ctx);
       const fenced = applyGuardrails(checked.plan, ctx);
       setPlan(fenced.plan);
       setDropped(checked.dropped);
@@ -410,6 +501,35 @@ export default function useDirectorRun({
         ? new Set()
         : new Set(((nextScript && nextScript.lines) || []).map((l) => l.frame_id).filter(Boolean)),
     []
+  );
+
+  /**
+   * WHAT PHASES D AND E WOULD LAY DOWN. Free, calls no model and no network.
+   *
+   * ⚠ ASKED FOR ONCE PER PLAN, and asked for even when both boxes are un-ticked,
+   * because a tick box has to be able to say what ticking it would DO. The cues
+   * were written by the analyse call that has already been paid for — reading them
+   * costs nothing at all, unlike the Veo quote one function up, which is a call.
+   *
+   * ⚠ AND IT IS THE PREVIEW'S ANSWER, NOT THE RUN'S. The times in it are read off
+   * the film as it stands now; the run reads them again off the film the steps
+   * leave behind. Both are correct about the moment they are asked.
+   */
+  const loadCues = useCallback(
+    (reading) => {
+      analysisRef.current = reading || null;
+      const ctx = readCtx();
+      const cues = sfxCues({
+        analysis: reading,
+        frames: ctx.frames || [],
+        starts: ctx.starts || [],
+      });
+      const bed = musicCue({ analysis: reading });
+      setSfx(cues);
+      setMusic(bed);
+      return { sfx: cues, music: bed };
+    },
+    [readCtx]
   );
 
   /**
@@ -524,6 +644,11 @@ export default function useDirectorRun({
       // that did nothing: the panel priced the run at zero and Run applied the
       // camera moves and rendered nothing at all.
       veoRef.current = [];
+      // ⚠ AND NO SOUND CUES EITHER, FOR THE SAME REASON. Arithmetic can tell
+      // which shots were HELD; it cannot tell that one of them is a door closing.
+      // `sfxDue` and `musicDue` then say so under the two tick boxes rather than
+      // leaving them looking like switches that do nothing.
+      loadCues(null);
       loadScript(null).then(async (next) => {
         let said = [];
         if (readPanels) {
@@ -541,7 +666,7 @@ export default function useDirectorRun({
       });
       return out;
     },
-    [adopt, include, loadScript, loadShoot, readCtx, readPanels, spokenOver]
+    [adopt, include, loadCues, loadScript, loadShoot, readCtx, readPanels, spokenOver]
   );
 
   /**
@@ -598,6 +723,12 @@ export default function useDirectorRun({
         // depends on which shots phase B will stretch, so it cannot be worked
         // out until the script is known.
         veoRef.current = answer.veo || [];
+        // ⚠ PHASES D AND E READ THE SAME ANSWER. `sfx` and `music` are on the
+        // reading beside `motion` and `dialogue` because what a moment sounds
+        // like is a story decision — see `sound_instruction` in `director.py`.
+        // Nothing is fetched here; these are search terms on a plan the user
+        // reads before pressing anything.
+        loadCues(answer.analysis || null);
         loadScript(answer.analysis || null).then((next) =>
           loadShoot(veoRef.current, spokenOver(nextInclude, next))
         );
@@ -614,6 +745,7 @@ export default function useDirectorRun({
       brief,
       buildHousePlan,
       include,
+      loadCues,
       loadScript,
       loadShoot,
       readCtx,
@@ -649,6 +781,11 @@ export default function useDirectorRun({
     setIncludeState(defaultInclude());
     setScript(NO_SCRIPT);
     setSpeech(null);
+    setSfx(NO_SFX);
+    setMusic(null);
+    setScore(null);
+    analysisRef.current = null;
+    spokeRef.current = false;
     veoRef.current = [];
     shootRef.current = [];
     runRef.current = null;
@@ -679,8 +816,32 @@ export default function useDirectorRun({
   const willRenderRef = useRef(false);
   willRenderRef.current = willRender;
 
+  /**
+   * ⚠ PHASES D AND E, AND THE SAME CONTRACT: A REASON, NOT A FLAG.
+   *
+   * Both need the two callbacks AND something cued. A deployment with no
+   * Freesound key gets the callbacks and an empty answer, which is reported as
+   * "no sound was found" by the run rather than being predicted here — the
+   * browser is not told whether the server has a key (`GET /sounds/status` says
+   * so, but the panel that asks it is the Sounds tab, not this one).
+   */
+  const sfxLot = sfxDue(include, sfx.sounds);
+  const willSfx = Boolean(buildSoundtrack) && Boolean(placeSoundtrack) && sfxLot.due;
+  const bedLot = musicDue(include, music);
+  const willMusic = Boolean(buildSoundtrack) && Boolean(placeSoundtrack) && bedLot.due;
+  /** Is there a soundtrack pass at the end of this run at all? */
+  const willScore = willSfx || willMusic;
+  // Refs, because the scoring effect is keyed on the phase alone. Same reason as
+  // `willRenderRef` one line up.
+  const willSfxRef = useRef(false);
+  willSfxRef.current = willSfx;
+  const willMusicRef = useRef(false);
+  willMusicRef.current = willMusic;
+  const willScoreRef = useRef(false);
+  willScoreRef.current = willScore;
+
   const start = useCallback(() => {
-    if (!plan.steps.length && !willSpeak && !willRender) return;
+    if (!plan.steps.length && !willSpeak && !willRender && !willScore) return;
     // ⚠ THE SNAPSHOT IS TAKEN HERE, not when the panel opened. Between opening
     // the preview and pressing Run the user can still edit — and reverting to
     // the document as it was before they did would throw away work the Director
@@ -707,10 +868,14 @@ export default function useDirectorRun({
     setIndex(0);
     setSpeech(null);
     setFootage(null);
+    setScore(null);
+    spokeRef.current = false;
     // ⚠ THE PAID PASSES FIRST, ALWAYS, AND B BEFORE C. See the header for why
-    // neither may follow the steps and why C may not precede B.
+    // neither may follow the steps and why C may not precede B. The SOUND passes
+    // are the other way round — they go last, after the steps have finished
+    // moving the shots their cues have to land on. See `sound_pass.js`.
     setPhase(willSpeak ? "speaking" : willRender ? "rendering" : "running");
-  }, [plan, docRef, readCtx, shoot, willSpeak, willRender]);
+  }, [plan, docRef, readCtx, shoot, willSpeak, willRender, willScore]);
 
   const pause = useCallback(() => {
     clearTimer();
@@ -738,6 +903,25 @@ export default function useDirectorRun({
         onNotice(
           "Stopping after this pass. The renders already submitted are paid for either " +
             "way, so they are being waited for rather than thrown away."
+        );
+      }
+      return;
+    }
+    // ⚠ MID-SCORE, STOP IS ALSO A REQUEST — but for a different reason, and the
+    // panel must not borrow the render's wording. Nothing here is billed; the
+    // pass is one HTTP call to a search engine. What cannot be interrupted is the
+    // call itself, so the flag is raised, the answer is waited for, and the sound
+    // is simply not laid down. Nothing has been spent and nothing is wasted
+    // except a few requests out of a shared budget.
+    if (phaseRef.current === "scoring") {
+      stopRef.current = true;
+      setScore((was) =>
+        was ? { ...was, stopping: true } : { stage: "fetching", stopping: true }
+      );
+      if (onNotice) {
+        onNotice(
+          "Stopping. The edit is already on the timeline; the sound will not be laid " +
+            "down. Nothing was spent either way."
         );
       }
       return;
@@ -892,6 +1076,12 @@ export default function useDirectorRun({
 
       if (after) {
         spentRef.current = true;
+        // ⚠ SOMEBODY IS TALKING ON THIS FILM, AND PHASE E NEEDS TO KNOW. The
+        // music bed goes under a voiceover at a fraction of the level it plays at
+        // on a silent film — and "was the box ticked" is the wrong question,
+        // because a voiceover that FAILED leaves nothing to duck under. Set here,
+        // where the pass is known to have landed.
+        spokeRef.current = true;
         setCanRevert(true);
         // ⚠ AND NOW WAIT FOR THE COMMIT. `speak` resolves the moment the editor
         // has been HANDED the server's answer — but a `setState` from an async
@@ -1235,6 +1425,22 @@ export default function useDirectorRun({
   useEffect(() => {
     if (phase !== "running") return undefined;
     if (index >= stepsRef.current.length) {
+      // ⚠ THE SOUND GOES ON AFTER THE LAST STEP, NOT BEFORE THE FIRST. A cue
+      // lands on a MOMENT — "the door slams as shot 9 begins" — and the steps
+      // have just finished moving the shots around (`set_shot_duration`,
+      // `set_all_durations`), so this is the first instant at which shot 9's
+      // start is the number it will still be when the film is exported. It is
+      // also why phases D and E need no re-anchor of their own: nothing
+      // downstream of them makes a timing decision. See `sound_pass.js`.
+      //
+      // ⚠ AND THE END-OF-RUN NOTICE MOVES WITH THEM. It is written once, by
+      // whichever phase actually ends the run, because a "the Director made 24
+      // edits" notice printed before the soundtrack lands is a notice the user
+      // reads as the end of the run — and then things carry on happening.
+      if (willScoreRef.current) {
+        setPhase("scoring");
+        return undefined;
+      }
       setPhase("done");
       setCanRevert(true);
       if (onNotice) {
@@ -1260,6 +1466,174 @@ export default function useDirectorRun({
     timerRef.current = setTimeout(() => setIndex((i) => i + 1), STEP_MS);
     return clearTimer;
   }, [phase, index, runStep, onNotice]);
+
+  // ---------------------------------------------------------- PHASES D AND E
+  /**
+   * THE SOUNDTRACK. The last thing the 🎬 button does, and the only pass that
+   * runs AFTER the steps.
+   *
+   * ⚠ IT READS THE FILM RATHER THAN CHANGING IT, WHICH IS WHY IT MAY GO LAST. The
+   * other two paid passes move the pictures, so everything downstream of them has
+   * to be re-anchored; this one places clips at moments the film has already
+   * settled on. Nothing after it makes a timing decision, so there is nothing to
+   * re-anchor and no re-read to wait for.
+   *
+   * ⚠ THE CUES ARE RE-COMPUTED HERE, AND THAT IS THE WHOLE POINT OF THE PHASE'S
+   * PLACE IN THE ORDER. The preview's cue list was timed against the film as it
+   * stood before the run; `set_shot_duration` and `set_all_durations` have since
+   * rewritten the holds, so shot 9 begins somewhere else now. The list of SOUNDS
+   * cannot have changed — no verb adds or removes a shot — so what was fetched is
+   * still what is wanted; only the times are read again.
+   *
+   * ⚠ ONE EFFECT, KEYED ON THE PHASE ALONE. The same rule as the speech and Veo
+   * effects: an effect that restarted on something its own call writes would tear
+   * itself down between the download and the placement, leaving a soundtrack on
+   * the server attached to nothing on the timeline.
+   *
+   * ⚠ AND A FAILURE HERE IS NOT AN ERROR SCREEN. No key, no results, a 502 from
+   * the library — all of them end the run with the edit intact and a sentence
+   * saying there is no sound on it, exactly as a failed voiceover does.
+   */
+  useEffect(() => {
+    if (phase !== "scoring") return undefined;
+    let alive = true;
+
+    (async () => {
+      const cues = sfxRef.current || NO_SFX;
+      const sounds = willSfxRef.current ? cues.sounds : [];
+      const bed = willMusicRef.current ? musicRef.current : null;
+      const asked = sounds.length + (bed ? 1 : 0);
+      setScore({
+        stage: "fetching",
+        message:
+          `Finding ${asked} sound${asked === 1 ? "" : "s"} in the library` +
+          `${bed ? " — the effects and one music bed" : ""}…`,
+        asked,
+      });
+
+      const payload = soundtrackRequest({ sounds, music: bed });
+      let answer = null;
+      let failed = "";
+      try {
+        answer = payload ? await buildSoundtrack(payload) : { items: [], skipped: [] };
+      } catch (err) {
+        failed = err?.message || "the sound library could not be reached";
+      }
+      if (!alive) return;
+
+      // ⚠ STOP IS READ AFTER THE CALL, NEVER DURING IT. The requests have already
+      // gone out of the shared budget whatever happens next, so the honest thing
+      // Stop can do is decline to lay the sound down — which leaves the edit
+      // exactly as the steps made it. See `stop`.
+      if (stopRef.current) {
+        setScore({
+          stage: "stopped",
+          message:
+            "Stopped before the sound was laid down. The edit is on the timeline; " +
+            "reopen 🎬 to score it.",
+        });
+        setPhase("stopped");
+        setCanRevert(true);
+        if (onNotice) {
+          onNotice("Stopped — the edit is on the timeline and no sound was added.");
+        }
+        return;
+      }
+
+      const items = (answer && answer.items) || [];
+      const ctx = readCtx();
+      // The second reading: the same cues, timed against the finished film.
+      const fresh = willSfxRef.current
+        ? sfxCues({
+            analysis: analysisRef.current,
+            frames: ctx.frames || [],
+            starts: ctx.starts || [],
+          })
+        : NO_SFX;
+      const placedSfx = sfxPlacements({ cues: fresh.cues, imported: items });
+      const placedBed = bed
+        ? musicPlacement({
+            cue: bed,
+            imported: items,
+            totalMs: ctx.totalMs || 0,
+            // ⚠ ANY SOUND ALREADY ON THE FILM DUCKS THE BED, not only this run's
+            // voiceover. A user who dropped their own narration in last week is
+            // owed the same courtesy as one who let the Director read it, and the
+            // timeline is the one place both are visible.
+            underSpeech: spokeRef.current || (ctx.audioTracks || []).length > 0,
+          })
+        : { clips: [], why: "" };
+
+      if (placedSfx.clips.length || placedBed.clips.length) {
+        try {
+          // ⚠ ONE CALL, BOTH LANES, ONE UNDO. See `placeSoundtrack` in the editor:
+          // a soundtrack is one thing the user asked for, so Ctrl+Z takes all of
+          // it back rather than removing one whoosh at a time.
+          placeSoundtrack({ sfx: placedSfx.clips, music: placedBed.clips });
+          setCanRevert(true);
+        } catch (err) {
+          failed = failed || err?.message || "the sound could not be placed";
+        }
+      }
+
+      const report = failed
+        ? `No sound was added — ${failed}.`
+        : scoreReport({
+            sfx: placedSfx.clips,
+            music: placedBed.clips,
+            sfxMissing: placedSfx.missing,
+            musicWhy: placedBed.why,
+          });
+      setScore({
+        stage: failed ? "failed" : "done",
+        message: report,
+        asked,
+        // What the server would not or could not find, plus what the cue pass
+        // itself left out. Two different failures, and the panel lists both.
+        skipped: [...(cues.skipped || []), ...((answer && answer.skipped) || [])],
+        missing: placedSfx.missing,
+        // ⚠ WHICH SOUNDS ANSWER A DIFFERENT QUESTION FROM THE ONE THE PREVIEW
+        // PRINTED. A cue the server could only match by widening the search is
+        // neither a success nor a failure, and folding it into "2 sound effects
+        // added" would make the preview's promise unfalsifiable. Deduped by
+        // upload, because a repeated cue is one recording.
+        widened: [
+          ...new Map(
+            [...placedSfx.clips, ...placedBed.clips]
+              .filter((c) => c && c.relaxedTo)
+              .map((c) => [c.upload_id, c])
+          ).values(),
+        ],
+        sfx: placedSfx.clips.length,
+        music: placedBed.clips.length,
+      });
+      setPhase("done");
+      setCanRevert(true);
+      if (onNotice) {
+        const edits = stepsRef.current.filter((s) => s.verb !== "note").length;
+        // ⚠ THE SAME THREE-WAY SENTENCE THE STEP EFFECT WRITES, with the sound on
+        // the end. `spentRef` is still the only thing that may claim money moved:
+        // the soundtrack passes spend requests, never cash, and a run that added
+        // eleven sounds and rendered nothing must still say "nothing was spent".
+        onNotice(
+          `${
+            spentRef.current
+              ? `The Director spent on this film and made ${edits} edits around what it bought.`
+              : `The Director made ${edits} edits.`
+          } ${report} ${
+            spentRef.current
+              ? "Revert puts the timeline back — the voiceover and the renders have been paid for."
+              : "Nothing was spent — Revert puts it all back."
+          }`
+        );
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   /** One step by hand, from the panel's ▸ button while paused. */
   const stepOnce = useCallback(() => {
@@ -1329,6 +1703,20 @@ export default function useDirectorRun({
     willRender,
     /** Why it will not, when it will not — printed verbatim under the tick box. */
     renderWhy: shootDue.why,
+    // -------------------------------------------------------- phases D and E
+    /** `{ cues, sounds, skipped }` — every sound effect this run would lay down. */
+    sfx,
+    /** `{ key, query, mood }` for the one music bed, or null. */
+    music,
+    /** `{ stage, message, … }` while the soundtrack runs, else null. */
+    score,
+    /** Will pressing Run fetch sound effects? Costs nothing — see `sound_pass.js`. */
+    willSfx,
+    /** And music? Also free. Neither belongs on the price line. */
+    willMusic,
+    /** Why they will not, when they will not — printed verbatim under the boxes. */
+    sfxWhy: sfxLot.why,
+    musicWhy: bedLot.why,
     /**
      * `{ done, failed, inFlight, todo, paidUsd }` when a pass was interrupted and
      * can be picked up, else null. The brief popup's resume offer is this.

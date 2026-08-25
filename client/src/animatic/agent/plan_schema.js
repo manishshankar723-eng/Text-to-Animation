@@ -63,6 +63,14 @@ export const INCLUDE_KEYS = [
   "effects",
   "text",
   "shapes",
+  // ⚠ TWO MORE PASSES, AND THEY ARE FREE — which is why they sit here among the
+  // free flags rather than beside `voiceover` and `veo`. Phase D fetches the
+  // sound effects the reading cued and phase E the music bed; both take files
+  // from Freesound, which spends the deployment's shared REQUEST budget and not
+  // a penny of anybody's money. See `sound_pass.js`, and `PAID_PASSES` below for
+  // the line the panel actually draws.
+  "sfx",
+  "music",
   "captions",
   "voiceover",
   "veo",
@@ -121,7 +129,24 @@ export function governingKey(verb) {
  * verbs': by being declared, not by being inferred from a registry it is
  * deliberately not in. See `voice_pass.js`.
  */
-const PASS_GOVERNORS = ["voiceover", "veo"];
+const PASS_GOVERNORS = ["voiceover", "veo", "sfx", "music"];
+
+/**
+ * AND WHICH OF THE PASSES COST MONEY. This is the line the panel draws.
+ *
+ * ⚠ "IS IT A PASS" AND "DOES IT SPEND" ARE TWO DIFFERENT QUESTIONS, and until
+ * phase D they had the same answer, so `paidKeys` was allowed to read
+ * `PASS_GOVERNORS` directly. The sound passes broke that: they are passes in
+ * every structural sense — a server call, a wait, a thing that is not a verb —
+ * and they spend NOTHING. Listing them under "These two spend" would be the panel
+ * telling the user a run costs money when it does not, which is the same class of
+ * lie as the reverse and gets the box un-ticked out of caution.
+ *
+ * So the two questions get two tables. `PASS_GOVERNORS` decides whether a flag is
+ * OFFERED at all (a pass reaches the tick-box column by being declared, since it
+ * is deliberately not in `ACTIONS`); this decides which ROW it is offered in.
+ */
+const PAID_PASSES = ["voiceover", "veo"];
 
 /**
  * The include flags that actually change something in THIS build — the tick
@@ -160,11 +185,11 @@ export function governedKeys() {
  * one row and not the other.
  */
 export function paidKeys() {
-  return INCLUDE_KEYS.filter((key) => PASS_GOVERNORS.includes(key));
+  return INCLUDE_KEYS.filter((key) => PAID_PASSES.includes(key));
 }
 
 export function freeKeys() {
-  return governedKeys().filter((key) => !PASS_GOVERNORS.includes(key));
+  return governedKeys().filter((key) => !PAID_PASSES.includes(key));
 }
 
 const text = (value, fallback = "") =>

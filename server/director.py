@@ -341,8 +341,10 @@ def write_plan(
         provider, model = "", ""
 
     logger.info(
-        "[director %s] %d shot(s) → %d step(s), %d dropped, %d motion prompt(s).",
-        job_id, len(shots), len(result["plan"]["steps"]), len(result["dropped"]), len(result["veo"]),
+        "[director %s] %d shot(s) → %d step(s), %d dropped, %d motion prompt(s), "
+        "%d sound cue(s).",
+        job_id, len(shots), len(result["plan"]["steps"]), len(result["dropped"]),
+        len(result["veo"]), len(result.get("sfx") or []),
     )
     return DirectorPlanResponse(
         provider=provider,
@@ -350,6 +352,11 @@ def write_plan(
         plan=result["plan"],
         analysis=result["analysis"],
         veo=result["veo"],
+        # ⚠ SEARCH TERMS, AND THIS ENDPOINT HAS NOT SEARCHED FOR THEM. The sound
+        # library is not touched until `POST /animatics/{id}/soundtrack`, for the
+        # same reason no Veo render happens here: the user reads the plan first.
+        sfx=result.get("sfx") or [],
+        music=result.get("music") or {},
         dropped=result["dropped"],
         notes=result["notes"],
         cost=_quote_veo(len(result["veo"])),

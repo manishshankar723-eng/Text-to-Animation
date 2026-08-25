@@ -284,6 +284,67 @@ def speech_instruction(brief: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SOUND — the cues phases D and E fetch, written by the call that read the film
+# ---------------------------------------------------------------------------
+# ⚠ A CUE IS A SEARCH TERM, AND THE PROMPT HAS TO SAY SO IN THOSE WORDS. Asked
+# "what does this shot sound like" a model writes prose — "the dull thud of the
+# door closing on everything he was" — which is a lovely sentence and zero
+# results in a stock library. What the pass can actually use is what a sound
+# editor types into a search box: two to five concrete words naming the SOURCE.
+#
+# ⚠ AND IT IS ENGLISH, ALWAYS, for the same reason a Veo motion prompt is: the
+# catalogue is indexed in English, so a Hindi cue is not a more authentic cue, it
+# is an empty result set. `enforce_sound_language` drops one that comes back in
+# another script rather than sending it to be searched for.
+#
+# ⚠ AND MOST SHOTS GET NOTHING. This is the same restraint rule the system block
+# states about dissolves and titles, and it needs restating here because a field
+# per shot is an invitation to fill every one. A film with a sound effect on all
+# forty-eight shots is not a sound design, it is a cartoon — and it also spends
+# the whole shared library budget on one press (see `MAX_SFX_SOUNDS`).
+def sound_instruction() -> str:
+    """Told to the ANALYSE call. Does not depend on the board, unlike `SPEECH`."""
+    return (
+        "SOUND: two fields, and both are SEARCH TERMS FOR A STOCK SOUND LIBRARY "
+        "rather than descriptions.\n"
+        "- ⚠ ONE TO THREE WORDS. NEVER MORE. THIS IS THE RULE THAT DECIDES WHETHER "
+        "THE FILM GETS ANY SOUND AT ALL. The library matches EVERY word you write, "
+        "so each extra word can only cut the results down — and a fourth adjective "
+        "cuts them to nothing. \"door slam\" finds hundreds of doors; \"heavy "
+        "wooden door slams shut\" finds zero, and that shot ends up silent. Write "
+        "what you would type into a search box when you are in a hurry: the SOURCE "
+        "of the sound, and at most one word describing it.\n"
+        "- `shots[].sfx`: the one sound this shot needs. GOOD: \"door slam\", "
+        "\"footsteps gravel\", \"city traffic\", \"piano note\", \"wind chimes\". "
+        "BAD: \"the dull thud of the door closing\" (a sentence), \"melancholy\" (a "
+        "feeling, not a sound), \"light feather rustle\" (three words, and two of "
+        "them are describing the first — \"feather rustle\" is the searchable "
+        "part).\n"
+        "- ⚠ AND MOST SHOTS GET \"\". A sound effect earns its place the same way a "
+        "dissolve does: by being rare. Cue the few moments that actually make a "
+        "NOISE in the story — an impact, an arrival, a door, a phone, a change of "
+        "place — and leave the rest silent. If more than about a quarter of your "
+        "shots carry a cue, you are scoring a cartoon. Repeating one cue's exact "
+        "wording across several shots is GOOD and costs nothing: it is the same "
+        "recording, which is what one room sounds like.\n"
+        "- `music`: ONE bed for the whole film — `query`, `mood`, and `why`. ⚠ THE "
+        "SAME ONE-TO-THREE-WORD RULE, and it is broken here more often than "
+        "anywhere else, because a score is easy to describe and hard to name. "
+        "GOOD: \"ambient piano\", \"soft strings\", \"lo-fi beat\", \"orchestral "
+        "swell\". BAD: \"ambient peaceful piano underscore\" — four words, and it "
+        "finds nothing at all, so the film plays dry. The MOOD goes in `mood`, "
+        "where it is read by a person; `query` is only for the search box.\n"
+        "- One bed, not one per scene: a change of music is the strongest "
+        "punctuation a film has and it is not yours to make. `query` is \"\" for a "
+        "film that should play dry, which is the right answer for a dialogue scene "
+        "or a documentary cut.\n"
+        "- ⚠ BOTH FIELDS ARE ENGLISH IN EVERY LANGUAGE, whatever the film is in. "
+        "They are searched for in an English-indexed catalogue, exactly like the "
+        "`motion` prompts, and a cue in another script simply finds nothing."
+    )
+
+
+# ---------------------------------------------------------------------------
 # THE PROMPTS
 # ---------------------------------------------------------------------------
 _prompt_cache: dict | None = None
@@ -427,8 +488,30 @@ def analyse_schema() -> dict:
                             "type": "string",
                             "description": "The words spoken in this shot, in the film's language.",
                         },
+                        "sfx": {
+                            "type": "string",
+                            "description": (
+                                "A stock-library SEARCH TERM for the one sound this shot "
+                                "needs, or \"\" for silence. English, 2-5 words."
+                            ),
+                        },
                     },
                     "required": ["shot", "beat"],
+                },
+            },
+            # ⚠ ONE BED FOR THE FILM, NOT ONE PER SCENE. See `sound_instruction`.
+            "music": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "A stock-library search term for the score, English, or \"\" "
+                            "for a film that should play dry."
+                        ),
+                    },
+                    "mood": {"type": "string", "description": "What the bed is doing. English."},
+                    "why": {"type": "string", "description": "Why this bed, in a few words."},
                 },
             },
             "title_card": {"type": "string"},
@@ -652,6 +735,58 @@ def enforce_motion_language(shots: list[dict]) -> tuple[list[dict], list[dict]]:
     return kept, dropped
 
 
+def enforce_sound_language(analysis: dict) -> tuple[dict, list[dict]]:
+    """Sound cues stay in English. Returns `(analysis, dropped)`.
+
+    ⚠ THE SAME RULE AS `enforce_motion_language` AND FOR A HARDER REASON. A Veo
+    prompt in Devanagari is a WORSE camera move; a sound cue in Devanagari is
+    NOTHING AT ALL — it is typed into a catalogue indexed in English, so it
+    returns zero results and the shot ends up silent with no explanation on
+    screen. Dropping it here means the preview says "this cue was dropped, and
+    why" before a single request is spent looking for it.
+
+    ⚠ AND A DROPPED CUE IS A SILENT SHOT, NEVER A FAILED RUN. Exactly the trade
+    the whole file makes: the other nine cues still land.
+    """
+    dropped: list[dict] = []
+
+    shots: list[dict] = []
+    for shot in analysis.get("shots") or []:
+        cue = str(shot.get("sfx") or "")
+        if cue.strip() and not in_script(cue, "latin"):
+            found = ", ".join(sorted(scripts_in(cue))) or "a non-Latin script"
+            dropped.append(
+                {
+                    "index": int(shot.get("shot") or 0),
+                    "verb": "sfx_cue",
+                    "why": (
+                        f"the sound cue for shot {shot.get('shot')} is {found} — the sound "
+                        "library is searched in English, so it would find nothing"
+                    ),
+                }
+            )
+            shot = {**shot, "sfx": ""}
+        shots.append(shot)
+
+    music = dict(analysis.get("music") or {})
+    query = str(music.get("query") or "")
+    if query.strip() and not in_script(query, "latin"):
+        found = ", ".join(sorted(scripts_in(query))) or "a non-Latin script"
+        dropped.append(
+            {
+                "index": 0,
+                "verb": "music_cue",
+                "why": (
+                    f"the music cue is {found} — the sound library is searched in "
+                    "English, so it would find nothing"
+                ),
+            }
+        )
+        music["query"] = ""
+
+    return {**analysis, "shots": shots, "music": music}, dropped
+
+
 # ---------------------------------------------------------------------------
 # THE TWO CALLS
 # ---------------------------------------------------------------------------
@@ -669,6 +804,11 @@ def analyse_request(brief: dict) -> JsonRequest:
             # the one thing that decides whether the model is copying a script or
             # writing one. See `speech_instruction`.
             "SPEECH": speech_instruction(brief),
+            # ⚠ CONSTANT, UNLIKE `SPEECH`. What a film should sound like does not
+            # depend on what the board already carries — there is no "the board
+            # already has sound effects" case, because a board carries pictures
+            # and words and nothing else. See `sound_instruction`.
+            "SOUND": sound_instruction(),
         },
     )
     return JsonRequest(
@@ -802,9 +942,22 @@ def _coerce_analysis(raw: dict, brief: dict) -> dict:
                 "emphasis": emphasis if emphasis in ("low", "normal", "high") else "normal",
                 "motion": _clip(item.get("motion"), 400),
                 "dialogue": _clip(item.get("dialogue"), MAX_DIALOGUE_CHARS),
+                # ⚠ CLIPPED HARD, BECAUSE IT IS A QUERY AND NOT PROSE. 80
+                # characters is already four times what a usable search term
+                # needs; a model that wrote a sentence here gets its sentence
+                # searched for, finds nothing, and the shot is silent. The
+                # prompt asks for 2-5 words and this is the fence behind it.
+                "sfx": _clip(item.get("sfx"), 80),
             }
         )
     shots.sort(key=lambda s: s["shot"])
+
+    music_raw = raw.get("music") if isinstance(raw.get("music"), dict) else {}
+    music = {
+        "query": _clip(music_raw.get("query"), 80),
+        "mood": _clip(music_raw.get("mood"), 60),
+        "why": _clip(music_raw.get("why"), 160),
+    }
 
     return {
         "logline": _clip(raw.get("logline"), 300),
@@ -812,6 +965,11 @@ def _coerce_analysis(raw: dict, brief: dict) -> dict:
         "genre": _clip(raw.get("genre"), 60),
         "scenes": scenes,
         "shots": shots,
+        # ⚠ ALWAYS PRESENT, EVEN WHEN EMPTY. `sound_pass.musicCue` reads
+        # `analysis.music.query` and an absent object would make "the model said
+        # nothing" and "the reading is from before this field existed"
+        # indistinguishable — both silent, one of them a bug.
+        "music": music,
         "title_card": _clip(raw.get("title_card"), 80),
         "notes": [_clip(n, 200) for n in (raw.get("notes") or []) if str(n or "").strip()][:12],
     }
@@ -844,6 +1002,10 @@ def direct(
           "analysis": the reading — logline, mood, scenes, per-shot beats,
           "veo":      [{shot, prompt, dialogue}] — the motion prompts, for the
                       pass that spends. NOTHING HERE SPENDS ANYTHING.
+          "sfx":      [{shot, query}] — a stock-library search term per shot that
+                      should make a noise. Phase D fetches these.
+          "music":    {query, mood, why} — ONE bed for the film, or an empty
+                      query for a film that should play dry. Phase E fetches it.
           "dropped":  [{index, verb, why}] — every step thrown away and why,
           "notes":    what the reading wanted the editor to know,
         }
@@ -871,6 +1033,10 @@ def direct(
     analysis = analyse(brief)
     shots, motion_dropped = enforce_motion_language(analysis.get("shots") or [])
     analysis = {**analysis, "shots": shots}
+    # ⚠ THE SOUND CUES GO THROUGH THE SAME GATE, AND FOR A HARDER REASON — a cue
+    # in the wrong script finds nothing at all rather than merely working less
+    # well. See `enforce_sound_language`.
+    analysis, sound_dropped = enforce_sound_language(analysis)
 
     written = polish(brief, analysis, vocabulary, include)
     steps, dropped = fold_steps(written.get("steps"), vocabulary)
@@ -884,10 +1050,18 @@ def direct(
         "include": include,
         "steps": steps,
     }
+    sfx = [
+        {"shot": s["shot"], "query": (s.get("sfx") or "").strip()}
+        for s in analysis.get("shots") or []
+        if (s.get("sfx") or "").strip()
+    ]
     logger.info(
-        "[director] %d shots → %d scene(s), %d step(s) kept, %d dropped (%d for language).",
+        "[director] %d shots → %d scene(s), %d step(s) kept, %d dropped (%d for language); "
+        "%d sfx cue(s), music %s.",
         brief["shot_count"], len(analysis.get("scenes") or []), len(steps),
-        len(dropped) + len(language_dropped) + len(motion_dropped), len(language_dropped),
+        len(dropped) + len(language_dropped) + len(motion_dropped) + len(sound_dropped),
+        len(language_dropped), len(sfx),
+        "yes" if ((analysis.get("music") or {}).get("query") or "").strip() else "no",
     )
     return {
         "plan": plan,
@@ -897,6 +1071,13 @@ def direct(
             for s in analysis.get("shots") or []
             if (s.get("motion") or "").strip()
         ],
-        "dropped": dropped + language_dropped + motion_dropped,
+        # ⚠ WRITTEN NOW AND FETCHED LATER, exactly like `veo` above and for the
+        # same reason: what a moment should sound like is a STORY decision that
+        # belongs beside the beat, and asking a second model at placement time
+        # would ask one that has not read the film. Nothing here fetches anything
+        # — these are search terms on a plan the user reads first.
+        "sfx": sfx,
+        "music": analysis.get("music") or {},
+        "dropped": dropped + language_dropped + motion_dropped + sound_dropped,
         "notes": analysis.get("notes") or [],
     }
