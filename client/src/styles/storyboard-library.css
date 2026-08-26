@@ -269,10 +269,9 @@
   }
 }
 
-/* The form step's lone "back to library" button shouldn't stretch. */
-.sb-form-actions {
-  justify-content: flex-start;
-}
+/* (`.sb-form-actions` lived here — the strip that held the form step's lone
+   "back to library" arrow. That arrow moved into the workflow header, ahead of
+   the icon, and the strip went with it. See `.sb-form .workflow-header`.) */
 .sts-script-label {
   margin-top: 1rem;
 }

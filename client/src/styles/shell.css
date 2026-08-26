@@ -746,6 +746,22 @@
   background: var(--panel-2);
   border: 1px solid var(--border-gold);
 }
+/* The way OUT of a workflow, at the start of the line that names it. It used to
+   sit on the row below, which on the form step meant a lone arrow in an
+   otherwise empty strip.
+   ⚠ IT IS THE SAME BOX AS `.wf-icon`, AND THAT IS THE POINT: they stand side by
+   side, so two different-sized rounded squares read as a mistake rather than as
+   two controls. Every number here is `.wf-icon`'s.
+   ⚠ THREE CLASSES ON PURPOSE — `.btn.back-btn` in base.css sizes every back
+   arrow in the app to 2.5rem, and it has to lose to this one wherever the two
+   stylesheets end up ordered. */
+.btn.back-btn.wf-back {
+  width: 4rem;
+  min-width: 4rem;
+  height: 4rem;
+  border-radius: 16px;
+  font-size: 1.3rem;
+}
 .wf-title {
   font-size: clamp(1.9rem, 2.4vw, 2.6rem);
   font-weight: 750;

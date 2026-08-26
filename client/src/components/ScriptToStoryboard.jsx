@@ -21,7 +21,14 @@ import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
 // The third way into the script box: talk to an assistant instead of arriving
 // with a script already written. See ScriptChat.jsx.
-import ScriptChat from "./ScriptChat.jsx";
+//
+// The two named exports are how the chat is scoped to ONE storyboard: the id
+// says which transcript this form is talking through, and `resetScriptChat`
+// retires it when the form is emptied for a new board.
+import ScriptChat, {
+  currentScriptChatSession,
+  resetScriptChat,
+} from "./ScriptChat.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // Style / aspect / genre lists live in one module so the Profile page's
 // "usual choices" and this form can never offer different options.
@@ -70,11 +77,25 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [step, setStep] = useState("library");
 
   // Form state
-  // Which way into the script box is showing. "ask" is the assistant — the only
-  // one of the three that can produce a script rather than just receive one; it
-  // writes into the same `script` state the other two fill, so everything
-  // downstream (autosave, the breakdown, the review step) is unchanged.
-  const [tab, setTab] = useState("paste"); // "paste" | "upload" | "ask"
+  // Which way into the script box is showing.
+  //
+  // ⚠ THE ASSISTANT IS NOT ONE OF THESE. It was, briefly, and it was wrong:
+  // writing with it and editing what it wrote are the same job, so a tab between
+  // them meant flipping back and forth to read your own script. It now lives
+  // INSIDE the "paste" panel, under the text box, and writes into the same
+  // `script` state — so everything downstream (autosave, the breakdown, the
+  // review step) is unchanged either way.
+  const [tab, setTab] = useState("paste"); // "paste" | "upload"
+  // Which chat transcript this form is talking through. Read from storage on
+  // mount so a refresh keeps the conversation, and replaced by `resetWorkflow`
+  // so a NEW storyboard starts a new one. Also used as the component's React
+  // `key`, which is what makes the swap a clean remount rather than a live
+  // component finding a different transcript underneath it.
+  const [chatSession, setChatSession] = useState(currentScriptChatSession);
+  // What the box held before the assistant last wrote into it: {script, title}.
+  // Non-null = the "✨ AI wrote this script · Undo" line is showing. Null the
+  // moment the user types their own change — see the textarea's onChange.
+  const [aiUndo, setAiUndo] = useState(null);
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
@@ -418,6 +439,32 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     e.preventDefault();
     setDragOver(false);
     pickFile(e.dataTransfer.files?.[0]);
+  }
+
+  // ⚠ WHAT THE BOX HOLDS *NOW*, READ THROUGH A REF ON PURPOSE. `applyAiScript`
+  // is called from inside the chat's async handler, so the closure it was
+  // captured in can be several keystrokes old by the time a reply lands. Undo
+  // built from that closure would restore text from before edits the user made
+  // while waiting — i.e. it would destroy work rather than rescue it.
+  const latestScript = useRef(script);
+  const latestTitle = useRef(title);
+  useEffect(() => {
+    latestScript.current = script;
+  }, [script]);
+  useEffect(() => {
+    latestTitle.current = title;
+  }, [title]);
+
+  /** Put a script the assistant wrote into the box, keeping a way back out. */
+  function applyAiScript(text, scriptTitle) {
+    const clean = (text || "").trim();
+    if (!clean) return;
+    setAiUndo({ script: latestScript.current, title: latestTitle.current });
+    setScript(clean);
+    // Never overwrite a title the user typed themselves — but a blank one is
+    // worth filling, since the board is otherwise named after the script's
+    // opening words.
+    if (scriptTitle && !latestTitle.current.trim()) setTitle(scriptTitle);
   }
 
   // Resolve the script text from the paste box or an uploaded text file.
@@ -770,6 +817,11 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     setCustomAspect("");
     setError("");
     setNotice("");
+    // ⚠ AND THE CHAT GOES WITH IT. Everything above empties the form; leaving
+    // the conversation behind would hand the next storyboard an assistant still
+    // holding the last film in mind, and a log the user has to scroll past.
+    setChatSession(resetScriptChat());
+    setAiUndo(null); // nothing to undo back to — the box was just emptied
   }
 
   // The pre-flight confirmation. Built once and dropped into every step that
@@ -893,10 +945,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         backLabel={boardOrigin === "library" ? "Your Storyboards" : "Back to shots"}
         onBack={() => setStep(boardOrigin)}
         onOpenAnimatic={onOpenAnimatic}
-        onRestart={() => {
-          resetWorkflow();
-          setStep("library");
-        }}
       />
     );
   }
@@ -908,6 +956,21 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     return (
       <div className="workflow-head-wrap sb-review">
         <div className="workflow-header">
+          {/* Back leads the header row, in the same box as the icon beside it —
+              see `.wf-back` in shell.css. */}
+          <button
+            type="button"
+            className="btn back-btn wf-back"
+            title="Back"
+            aria-label="Back"
+            onClick={() => {
+              setNotice("");
+              setError("");
+              setStep("form");
+            }}
+          >
+            ←
+          </button>
           <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
           <div>
             <h1 className="wf-title">Review your shots</h1>
@@ -926,19 +989,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         </div>
 
         <div className="review-actions top-actions">
-          <button
-            type="button"
-            className="btn back-btn"
-            title="Back"
-            aria-label="Back"
-            onClick={() => {
-              setNotice("");
-              setError("");
-              setStep("form");
-            }}
-          >
-            ←
-          </button>
           <div className="review-actions-right">
             {/* Board already drawn from these exact shots → offer to reopen it
                 (keeping the panels) plus a separate Regenerate. Editing any shot
@@ -1147,7 +1197,21 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   // ============================================================== Form step
   return (
     <div className="workflow-head-wrap sb-form">
+      {/* ⚠ BACK SITS IN THE HEADER ROW, AHEAD OF THE ICON. It used to be on a
+          row of its own under the title — a lone arrow in an otherwise empty
+          strip, and one more thing between the heading and the form. In the
+          header it reads as what it is: the way out of this screen, at the
+          start of the line that names the screen. */}
       <div className="workflow-header">
+        <button
+          type="button"
+          className="btn back-btn wf-back"
+          onClick={() => setStep("library")}
+          title="Your Storyboards"
+          aria-label="Your Storyboards"
+        >
+          ←
+        </button>
         <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           <h1 className="wf-title">Script to Storyboard</h1>
@@ -1156,18 +1220,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             then generate.
           </p>
         </div>
-      </div>
-
-      <div className="review-actions top-actions sb-form-actions">
-        <button
-          type="button"
-          className="btn back-btn"
-          onClick={() => setStep("library")}
-          title="Your Storyboards"
-          aria-label="Your Storyboards"
-        >
-          ←
-        </button>
       </div>
 
       <div className="sts-hero-grid">
@@ -1193,7 +1245,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               className={`tab-btn ${tab === "paste" ? "active" : ""}`}
               onClick={() => setTab("paste")}
             >
-              ✍️ Paste script
+              ✍️ Write, paste or ask AI
             </button>
             <button
               type="button"
@@ -1202,33 +1254,72 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             >
               📁 Upload file
             </button>
-            <button
-              type="button"
-              className={`tab-btn ${tab === "ask" ? "active" : ""}`}
-              onClick={() => setTab("ask")}
-            >
-              💬 Ask AI
-            </button>
           </div>
 
           {tab === "paste" && (
             <>
               <textarea
                 className="prompt-textarea sts-script-area"
-                placeholder="Paste or type your script here…"
+                placeholder="Paste or type your script here — or ask the AI below to write it…"
                 value={script}
-                onChange={(e) => setScript(e.target.value)}
+                onChange={(e) => {
+                  setScript(e.target.value);
+                  // Their own typing ends the AI's turn: an Undo offering to
+                  // restore text from before edits they have since made would
+                  // throw away work, not rescue it.
+                  if (aiUndo) setAiUndo(null);
+                }}
               />
-              {/* Quiet confirmation that the typing is safe. Only appears once
-                  something has actually been saved — an idle "not saved" badge
-                  on an empty box is noise. */}
-              {draftSavedAt && (
-                <div className="sts-draft-status" title={draftSavedAt}>
-                  {script === draftLastSaved.current
-                    ? "✓ Draft saved"
-                    : "Saving…"}
-                </div>
-              )}
+              <div className="sts-script-status">
+                {/* What the assistant just did to the box, and the way back out
+                    of it. ⚠ THIS IS WHAT MAKES AUTO-REPLACING SAFE — the
+                    alternative was a confirm() before every rewrite, which asks
+                    people to predict whether they'll like an answer they have
+                    not read yet. */}
+                {aiUndo ? (
+                  <span className="sts-ai-applied">
+                    ✨ AI wrote this script.{" "}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => {
+                        setScript(aiUndo.script);
+                        setTitle(aiUndo.title);
+                        setAiUndo(null);
+                      }}
+                    >
+                      Undo
+                    </button>
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {/* Quiet confirmation that the typing is safe. Only appears once
+                    something has actually been saved — an idle "not saved" badge
+                    on an empty box is noise. */}
+                {draftSavedAt && (
+                  <span className="sts-draft-status" title={draftSavedAt}>
+                    {script === draftLastSaved.current
+                      ? "✓ Draft saved"
+                      : "Saving…"}
+                  </span>
+                )}
+              </div>
+
+              {/* ⚠ THE CHAT IS PART OF THIS BOX, NOT A TAB BESIDE IT. Writing
+                  with the assistant and editing what it wrote are the same job,
+                  so they are one panel: script on top, conversation and composer
+                  underneath. */}
+              <ScriptChat
+                key={chatSession}
+                sessionId={chatSession}
+                script={script}
+                title={title}
+                genre={genre === "custom" ? customGenre : genre}
+                style={style === "custom" ? customStyle : style}
+                aspect={aspect === "custom" ? customAspect : aspect}
+                onApplyScript={applyAiScript}
+              />
             </>
           )}
 
@@ -1266,26 +1357,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             </div>
           )}
 
-          {tab === "ask" && (
-            <ScriptChat
-              script={script}
-              title={title}
-              genre={genre === "custom" ? customGenre : genre}
-              style={style === "custom" ? customStyle : style}
-              aspect={aspect === "custom" ? customAspect : aspect}
-              onUseScript={(text, scriptTitle) => {
-                setScript(text);
-                // Never overwrite a title the user typed themselves — but a
-                // blank one is worth filling, since the board is otherwise
-                // named after the script's opening words.
-                if (scriptTitle && !title.trim()) setTitle(scriptTitle);
-                // Land them ON the script, in the editable box. The assistant
-                // wrote a first draft, not a finished film, and the next thing
-                // anyone does is change a line of it.
-                setTab("paste");
-              }}
-            />
-          )}
           <input
             ref={fileInputRef}
             type="file"

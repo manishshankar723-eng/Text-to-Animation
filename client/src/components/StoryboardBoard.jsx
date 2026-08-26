@@ -43,7 +43,6 @@ export default function StoryboardBoard({
   // it: the button draws that itself, and this is read as a tooltip.
   backLabel,
   onBack,
-  onRestart,
   // Set by App: hands the new animatic's id to the animatics workflow. Absent
   // when the board is rendered somewhere that can't navigate there.
   onOpenAnimatic,
@@ -282,8 +281,8 @@ export default function StoryboardBoard({
 
   // The two "the board is done, what now" actions. A render FUNCTION rather
   // than duplicated JSX, because they sit in the toolbar normally but in the
-  // TOP row in sequenceMode (which has no Start over to compete with) — one
-  // definition, so the two placements can't drift apart.
+  // TOP row in sequenceMode (which has no toolbar) — one definition, so the two
+  // placements can't drift apart.
   function finishActions() {
     if (!okCount) return null;
     return (
@@ -527,6 +526,18 @@ export default function StoryboardBoard({
   return (
     <div className="workflow-head-wrap sb-board">
       <div className="workflow-header">
+        {/* Arrow only, like every other back control in the app — `backLabel`
+            is WHERE it goes, and that reads in the tooltip. It leads the header
+            row in the same box as the icon beside it (`.wf-back`, shell.css). */}
+        <button
+          type="button"
+          className="btn back-btn wf-back"
+          onClick={onBack}
+          title={backLabel || "Back to shots"}
+          aria-label={backLabel || "Back to shots"}
+        >
+          ←
+        </button>
         <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           {/* The board's OWN title, not a generic heading — it's what names the
@@ -539,33 +550,21 @@ export default function StoryboardBoard({
         </div>
       </div>
 
-      <div className="review-actions board-actions top-actions">
-        {/* Arrow only, like every other back control in the app — `backLabel`
-            is now WHERE it goes, and that reads in the tooltip. */}
-        <button
-          type="button"
-          className="btn back-btn"
-          onClick={onBack}
-          title={backLabel || "Back to shots"}
-          aria-label={backLabel || "Back to shots"}
-        >
-          ←
-        </button>
-        {/* "Start over" belongs to the workflow that BUILDS a board (it resets
-            the script→shots flow). In sequenceMode there is nothing to start
-            over — the board is a copy you opened — so the finish actions take
-            that spot instead of leaving it empty. */}
-        {sequenceMode ? (
-          /* Wrapped: `.review-actions` is space-between, so two loose children
-             on the right would spread across the row instead of grouping.
-             `.review-actions-right` is the existing answer to that. */
+      {/* ⚠ THIS ROW EXISTS ONLY IN sequenceMode NOW. It used to hold "Start
+          over" for the normal board, which was a second way out of a screen
+          whose way out is the arrow in the header — and once Back moved up
+          there, the two sat one above the other saying almost the same thing.
+          Everything else on this screen (Download PDF / assets / Make project)
+          lives in `.board-toolbar` below; sequenceMode has no toolbar, so the
+          finish actions come up here instead. */}
+      {sequenceMode && (
+        <div className="review-actions board-actions top-actions">
+          {/* Wrapped so the finish actions group as one block rather than
+              spreading across the row. `.review-actions-right` is the existing
+              answer to that. */}
           <div className="review-actions-right">{finishActions()}</div>
-        ) : (
-          <button type="button" className="btn ghost" onClick={onRestart}>
-            Start over
-          </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Style variants: switch between saved styles, or add a new one.
           Hidden in sequenceMode — this workflow is about drawing the MOTION of

@@ -52,7 +52,6 @@ export default function CreateAnimaticImage({ onOpenAnimatic }) {
         aspect={board.aspect_ratio || "16:9"}
         backLabel="Your Boards"
         onBack={() => setBoard(null)}
-        onRestart={() => setBoard(null)}
         onOpenAnimatic={onOpenAnimatic}
         /* THE workflow: shots stacked in one column, each with a Generate
            button that blocks its motion out as key poses. */

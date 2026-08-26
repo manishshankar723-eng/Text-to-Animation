@@ -141,6 +141,18 @@ export default function StoryboardAssets({
   return (
     <div className="workflow-head-wrap sb-cast">
       <div className="workflow-header">
+        {/* Back leads the header row, in the same box as the icon beside it —
+            see `.wf-back` in shell.css. */}
+        <button
+          type="button"
+          className="btn back-btn wf-back"
+          onClick={onBack}
+          disabled={busy}
+          title="Back"
+          aria-label="Back"
+        >
+          ←
+        </button>
         <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           <h1 className="wf-title">Props &amp; backgrounds</h1>
@@ -153,16 +165,6 @@ export default function StoryboardAssets({
       </div>
 
       <div className="review-actions board-actions top-actions">
-        <button
-          type="button"
-          className="btn back-btn"
-          onClick={onBack}
-          disabled={busy}
-          title="Back"
-          aria-label="Back"
-        >
-          ←
-        </button>
         <button
           type="button"
           className="btn primary"

@@ -660,6 +660,17 @@ export default function PlanAndScript({ onOpenStoryboard }) {
   return (
     <div className="workflow-head-wrap plan-page">
       <div className="workflow-header">
+        {/* Back leads the header row, in the same box as the icon beside it —
+            see `.wf-back` in shell.css. */}
+        <button
+          type="button"
+          className="btn back-btn wf-back"
+          onClick={() => { setStep("library"); loadSessions(); }}
+          title="Your plans"
+          aria-label="Your plans"
+        >
+          ←
+        </button>
         <span className="wf-icon"><WorkflowIcon id="plan-and-script" /></span>
         <div>
           <h1 className="wf-title">{plan?.title || "Plan & Script"}</h1>
@@ -681,14 +692,6 @@ export default function PlanAndScript({ onOpenStoryboard }) {
       </div>
 
       <div className="review-actions top-actions">
-        <button
-          className="btn back-btn"
-          onClick={() => { setStep("library"); loadSessions(); }}
-          title="Your plans"
-          aria-label="Your plans"
-        >
-          ←
-        </button>
         <div className="review-actions-right">
           {/* What this session has spent, where it can be seen while spending
               more. Nothing else in the app showed text-token cost at all, so

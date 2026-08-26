@@ -253,6 +253,12 @@
   margin: 0 0 1.4rem;
   padding-bottom: 1rem;
   border-bottom: 1px solid var(--border);
+  /* ⚠ OVERRIDES `.review-actions`'s space-between, and it has to. Back was the
+     left-hand child of every one of these rows; now that it lives in the header
+     the row holds nothing but its right-hand actions, and space-between would
+     shove a lone button to the far LEFT — under the title, where it reads as
+     belonging to the heading. */
+  justify-content: flex-end;
 }
 /* Tighten the title→buttons gap; the header's own 1.8rem is meant for content. */
 .workflow-header:has(+ .top-actions) {
@@ -779,8 +785,30 @@
   justify-content: center;
   padding: clamp(1rem, 4vh, 3rem) 0;
 }
-.sb-form .workflow-header {
+/* Two screens have no `.top-actions` strip left under the header, so the header
+   carries the rule itself: the FORM (that strip only ever held the back arrow,
+   which is in the header now) and the normal BOARD (its strip only held "Start
+   over", which was a second way out of a screen whose way out is the arrow).
+   The board's strip does come back in sequenceMode, which is what the `:has`
+   guard is for — otherwise that screen would draw two lines.
+   ⚠ SCOPED TO THESE TWO WRAPPERS ON PURPOSE. A bare
+   `.workflow-header:not(:has(+ .top-actions))` would put a rule under every
+   heading in the app, including screens that deliberately have none. */
+.sb-form .workflow-header,
+.sb-board .workflow-header:not(:has(+ .top-actions)) {
   margin-bottom: 1.6rem;
+  padding-bottom: 1.2rem;
+  border-bottom: 1px solid var(--border);
+}
+/* Phone: the header row carries one more box than it used to, so give the gaps
+   back to the title rather than letting it wrap to three lines. */
+@media (max-width: 560px) {
+  .workflow-header {
+    gap: 0.7rem;
+  }
+  .sb-form .workflow-header {
+    padding-bottom: 0.9rem;
+  }
 }
 /* Two-column hero: form on the left, guide panel on the right (fills the width) */
 .sts-hero-grid {
@@ -1070,40 +1098,37 @@
 
 
 /* =========================================================================
-   "ASK AI" — the third tab of the script box (ScriptChat.jsx)
-   Same shapes as the planner's conversation (home.css `.plan-chat*`), scoped
+   THE AI HALF OF THE SCRIPT PANEL (ScriptChat.jsx)
+
+   ⚠ NOT A TAB, AND THE LAYOUT IS THE POINT. Script box on top, conversation
+   under it, one composer at the bottom — because writing with the assistant and
+   editing what it wrote are the same job. It was a third tab for about an hour,
+   and that made you flip away from your own script to ask about it.
+
+   Bubble shapes are the planner's conversation (home.css `.plan-chat*`), scoped
    to `sc-` so the two can diverge without one silently restyling the other.
-   ⚠ NOT height-locked to 160px like the paste box and the dropzone beside it:
-   those two are one control each, this is a conversation, and forcing it into
-   the same box put the input row off-screen the moment a reply arrived.
+   ⚠ NOT height-locked to the 160px the paste box and dropzone share: those are
+   one control each, this is a conversation.
    ========================================================================= */
 .sc-chat {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
 }
+
+/* Only rendered once there ARE messages, so it needs no empty state. */
 .sc-chat-log {
-  min-height: 160px;
-  max-height: 380px;
+  max-height: 320px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
-  padding: 0.85rem;
-  padding-right: 0.55rem;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  padding-right: 0.5rem;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel-2);
-}
-.sc-starters {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
-}
-.sc-starter {
-  text-align: left;
-  white-space: normal;
 }
 .sc-msg {
   display: flex;
@@ -1115,19 +1140,14 @@
   align-self: flex-end;
   align-items: flex-end;
 }
-.sc-msg-who {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
 .sc-msg-text {
-  padding: 0.65rem 0.85rem;
+  padding: 0.6rem 0.8rem;
   border-radius: 12px;
   background: var(--panel);
   border: 1px solid var(--border);
   white-space: pre-wrap;
   line-height: 1.5;
+  font-size: 0.9rem;
 }
 .sc-msg.is-user .sc-msg-text {
   background: var(--gold-grad);
@@ -1138,11 +1158,11 @@
   margin-top: 0.1rem;
 }
 
-/* A script the assistant handed back. Deliberately NOT a chat bubble: it is
-   the thing the form actually wants, so it gets a frame, a monospaced body
-   that keeps the slug lines readable, and the one button that matters. */
+/* The receipt for a script that is already in the box above. Collapsed by
+   default: re-printing the whole script under the box that holds it is just the
+   same text twice. */
 .sc-script-card {
-  margin-top: 0.35rem;
+  margin-top: 0.3rem;
   border: 1px solid var(--border-gold);
   border-radius: 10px;
   background: var(--panel);
@@ -1153,20 +1173,20 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.6rem;
-  padding: 0.5rem 0.7rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
 }
 .sc-script-title {
   font-weight: 650;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
 }
 .sc-script-body {
   margin: 0;
-  padding: 0.65rem 0.7rem;
+  padding: 0.6rem 0.65rem;
   max-height: 260px;
   overflow: auto;
+  border-top: 1px solid var(--border);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1175,22 +1195,90 @@
 .sc-script-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.55rem 0.7rem;
-  border-top: 1px solid var(--border);
+  gap: 0.35rem;
+  padding: 0 0.65rem 0.5rem;
 }
 .sc-chat-error {
   margin: 0;
 }
-.sc-chat-input {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-end;
+
+/* The composer. ONE bordered box with the button inside it, so this and the
+   script box above read as two parts of one panel rather than two controls that
+   happen to sit near each other. */
+.sc-composer {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 0.55rem 0.65rem 0.5rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.sc-chat-input .prompt-textarea {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
+.sc-composer:focus-within {
+  border-color: var(--border-gold);
+  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.12);
+}
+.sc-composer.is-busy {
+  opacity: 0.85;
+}
+/* Borderless on purpose — the BOX is the control; a second frame inside it is
+   the thing that made the first build read as two stacked widgets. */
+.sc-composer-input {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 2.6em;
+  padding: 0.15rem 0.1rem;
+  outline: none;
+}
+.sc-composer-input::placeholder {
+  color: var(--muted);
+}
+.sc-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.35rem;
+}
+.sc-composer-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-generate {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Openers. Chips in a wrapping row, not a stack of full-width sentences — this
+   sits under a script box now and must not push the rest of the form down. */
+.sc-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.sc-starter {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  cursor: pointer;
+  text-align: left;
+  white-space: normal;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sc-starter:hover {
+  color: var(--text);
+  border-color: var(--border-gold);
 }
 .sc-chat-foot {
   display: flex;
@@ -1200,15 +1288,46 @@
   flex-wrap: wrap;
 }
 
-/* Phone: the bubbles get the full width, and the send button drops under the
-   box rather than squeezing it to a slot. Same rule the rest of the app's
-   two-column rows follow — see the Responsive section in AGENTS.md. */
+/* The row under the script box: what the AI just did on the left, the autosave
+   badge on the right. One row so the box has exactly one status line, however
+   many things want to say something there. */
+.sts-script-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.sts-script-status .sts-draft-status {
+  margin-top: 0;
+}
+.sts-ai-applied {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--primary);
+}
+/* A button that has to read as a link: Undo belongs in the sentence, not beside
+   it as another control competing with Generate. */
+.linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Phone: bubbles take the full width, and the composer's hint gives way to the
+   button rather than squeezing it. See the Responsive section in AGENTS.md. */
 @media (max-width: 560px) {
   .sc-msg {
     max-width: 100%;
   }
-  .sc-chat-input {
-    flex-direction: column;
-    align-items: stretch;
+  .sc-composer-hint {
+    display: none;
+  }
+  .sc-composer-foot {
+    justify-content: flex-end;
   }
 }

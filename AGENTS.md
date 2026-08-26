@@ -275,7 +275,7 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-26 — **SCRIPT → STORYBOARD'S SCRIPT BOX NOW HAS A THIRD TAB: ASK AI.** A normal chat in the same panel that answers anything and, when asked for a script, hands one back in its OWN field with a **Use this script** button that fills the box. Stateless route (`POST /script-chat`), transcript lives in the browser, and the script comes out in the exact layout `script_breakdown.py` reads. ⚠ The same session TRUNCATED THIS FILE to zero bytes and ~442 lines of un-committed Work Log entries were lost — read the note at the end of that entry before writing to this file again. See the Work Log.
+**Last updated:** 2026-08-26 — **SCRIPT → STORYBOARD'S SCRIPT BOX NOW TALKS TO AN AI.** ⚠ **AND IT IS NOT A TAB** — the script box, the conversation and one Generate composer are ONE panel, and a generated script lands in the box itself with an Undo. **One chat per storyboard**, retired by `resetWorkflow()`. A normal chat in the same panel that answers anything and, when asked for a script, hands one back in its OWN field with a **Use this script** button that fills the box. Stateless route (`POST /script-chat`), transcript lives in the browser, and the script comes out in the exact layout `script_breakdown.py` reads. ⚠ The same session TRUNCATED THIS FILE to zero bytes and ~442 lines of un-committed Work Log entries were lost — read the note at the end of that entry before writing to this file again. See the Work Log.
 
 **Previously:** 2026-08-26 — **ANIWALA AI STUDIO: THE NAME, THE MARK, AND A
 HERO THAT SHOWS THE FOUR LIVE WORKFLOWS.** The owner already runs `aniwala.com`,
@@ -3461,6 +3461,150 @@ third door is a normal chat, in the same box.
 - Verified: `python tests/script_chat_check.py` — 22 checks, all pass (model
   stubbed, so no quota); `vite build`; and two live `script_agent.chat` calls for
   the language and layout above. **Not yet clicked through in the browser.**
+
+**Then, immediately after: ONE CHAT PER STORYBOARD, NOT ONE PER BROWSER**
+("nayi storyboard banane par purani baat-cheet wahin rahegi … ye kar do").
+
+- The first build stored the transcript under a single global key, so starting a
+  second board carried the first one's conversation over — the assistant still
+  holding the last film in mind while being asked about a new one, and a log the
+  user has to scroll past to reach their own.
+- The transcript is now keyed by a SESSION id
+  (`aniwala.scriptChat.v2.<id>`, with the id itself in
+  `aniwala.scriptChatSession.v1`). ⚠ **THE ID LIVES IN STORAGE, NOT IN REACT
+  STATE** — re-minting it on mount would orphan the very messages it exists to
+  find, which is the whole point of storing them.
+- ⚠ **`resetWorkflow()` IS THE BOUNDARY, AND IT IS THE ONLY HONEST ONE THIS FORM
+  HAS.** There is no board id until a breakdown exists, and by then the script —
+  the thing the chat is about — is already written. So "a different storyboard"
+  means "the moment the form was emptied for a new one", which is exactly what
+  New Storyboard and Duplicate already call.
+- The id is also the component's React `key`, so switching boards REMOUNTS the
+  chat and re-seeds it from the new (empty) session, rather than a live component
+  finding a different transcript underneath it.
+- The reset sweeps EVERY stored transcript, not just the outgoing one, so a key
+  orphaned by a crash or a storage error cannot accumulate; the pre-session key
+  from the first build is dropped on first use.
+- Files: `client/src/components/ScriptChat.jsx` (new exports
+  `currentScriptChatSession` / `resetScriptChat`),
+  `client/src/components/ScriptToStoryboard.jsx`, new
+  `tests/script_chat_session_check.mjs`.
+- Verified: `tests/script_chat_session_check.mjs` — 12 checks, all pass (id
+  survives a refresh, reset changes it and deletes the old transcript, orphans
+  are swept, unrelated keys are left alone, blocked storage is not a crash) —
+  plus `vite build`. ⚠ **It must be bundled with `--jsx=automatic`**: Vite uses
+  the automatic runtime, so nothing imports React by name and esbuild's classic
+  default fails in `Icon.jsx` with "React is not defined" — a failure about a
+  module the test never touches. The command is in the file's header.
+
+**And then the tab was DELETED, an hour after it shipped** ("mai chahta hun ask
+ai aur paste script ek hi jagah pe rahe jaise claude chat kaise hai … dekho
+generate wala kaise hai antigravity mai, like waisa"). The reference is right:
+Antigravity's Generate box writes into the editor you are already looking at.
+
+- ⚠ **"PASTE SCRIPT" AND "ASK AI" WERE THE SAME JOB BEHIND A SWITCH.** Writing
+  with the assistant and editing what it wrote are one activity, so a tab between
+  them meant flipping away from your own script to ask about it, and flipping
+  back to change a line. Two tabs remain — **Write, paste or ask AI** and
+  **Upload file** — and the first one is a single panel: script box on top,
+  conversation under it, one composer at the bottom.
+- **The composer is one bordered box with the button inside it** (`.sc-composer`,
+  `Generate ✨`), not a textarea with a Send button parked beside it. That is the
+  difference between "two parts of one panel" and "two controls that happen to be
+  near each other", and it is the whole of what was being asked for.
+- ⚠ **A GENERATED SCRIPT NOW LANDS IN THE BOX ITSELF.** The old **Use this
+  script** button moved text from the bottom of a panel to the top of the same
+  panel — a step with nothing in it once they are one panel. `applyAiScript`
+  writes it straight in and the box grows a **AI wrote this script · Undo**
+  line. ⚠ **UNDO IS WHAT MAKES AUTO-REPLACING HONEST**, and it replaced a
+  `confirm()` that asked people to predict whether they would like an answer they
+  had not read yet.
+- ⚠ **THE UNDO SNAPSHOT IS READ THROUGH A REF, NOT THE CLOSURE.**
+  `applyAiScript` is called from inside the chat's async handler, so its captured
+  `script` can be several keystrokes old by the time a reply lands — an Undo
+  built from that would restore text from before edits made while waiting, i.e.
+  destroy work rather than rescue it. The user's own typing clears the Undo for
+  the same reason.
+- The reply's script card is now a collapsed **receipt** (title, line count, "in
+  the box above") with **Show** / **Put this one back** / **Copy** — re-printing
+  the script under the box that already holds it is the same text twice, and
+  "put this one back" is how you return to an earlier draft after a rewrite went
+  the wrong way. Starters became chips in a wrapping row rather than a stack of
+  full-width sentences, because they now sit under a script box and must not push
+  the form down.
+- Files: `client/src/components/ScriptChat.jsx`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/styles/storyboard.css` (the whole `.sc-*` block rewritten, plus
+  `.sts-script-status` / `.sts-ai-applied` / `.linklike`).
+- Verified: `vite build`, and both suites still pass. **Still not clicked through
+  in a browser.**
+
+**Then the back arrow moved into the header, on every screen that has one**
+("back button ko Script to Storyboard icon ke pahle rakho", then "sab jagah upar
+karo aur icon ka box ka size match karo kyunki saath mai hai to ek size dikhna
+chahiye").
+
+- ⚠ **A LONE ARROW NEVER JUSTIFIED A ROW OF ITS OWN.** `.top-actions` was
+  "Back on the left, the step's action on the right" — which on the Script to
+  Storyboard FORM meant an otherwise empty strip between the heading and the
+  form. Back now leads the `.workflow-header` row itself, ahead of the workflow
+  icon, on all six: the form and review steps, cast, props, the board, and Plan
+  & Script.
+- ⚠ **IT IS `.wf-icon`'S BOX, NUMBER FOR NUMBER** — 4rem square, 16px radius.
+  They stand side by side, so two different-sized rounded squares read as a
+  mistake rather than as two controls. The rule is
+  `.btn.back-btn.wf-back` in `shell.css`, **three classes on purpose**: base.css
+  sizes every back arrow in the app to 2.5rem with `.btn.back-btn`, and it has
+  to lose here wherever the two stylesheets end up ordered.
+- ⚠ **`.top-actions` NEEDED `justify-content: flex-end`.** It inherits
+  space-between from `.review-actions`, and Back was the left-hand child of every
+  one of those rows — without this a lone "Start over" lands at the far LEFT,
+  under the title, reading as part of the heading.
+- The form step is the only one with nothing left in that strip, so it drops the
+  strip and carries the rule on the header itself
+  (`.sb-form .workflow-header`); every other step still has its own actions down
+  there and keeps both. `.sb-form-actions` is gone.
+- Files: `client/src/styles/shell.css`, `client/src/styles/storyboard.css`,
+  `client/src/styles/storyboard-library.css`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/components/StoryboardBoard.jsx`,
+  `client/src/components/StoryboardCast.jsx`,
+  `client/src/components/StoryboardAssets.jsx`,
+  `client/src/components/PlanAndScript.jsx`.
+- Verified: `vite build`, and the two rules checked in the emitted CSS. ⚠ **The
+  video editor's own top bar (`.an-topbar`) and the final-video toolbar
+  (`.fv-top`) were left alone** — neither uses `.workflow-header`, so this is
+  not yet "every back arrow in the app".
+
+**And "Start over" went with it** ("not need to show start over button, back
+button already place in this page — remove this and agar kahi aur hai to hata
+do").
+
+- ⚠ **IT WAS A SECOND WAY OUT OF A SCREEN THAT NOW HAS ITS WAY OUT IN THE
+  HEADER.** Once Back moved up beside the icon, the two sat one above the other
+  saying almost the same thing. Gone from `StoryboardBoard.jsx`, and with it the
+  `onRestart` prop and both call sites (`ScriptToStoryboard.jsx`,
+  `CreateAnimaticImage.jsx`) — a prop nothing renders is worse than no prop.
+- **The normal board's `.top-actions` row is no longer rendered at all**, because
+  "Start over" was the only thing in it: everything else (Download PDF /
+  assets / Make project) lives in `.board-toolbar` below. The row still appears
+  in **sequenceMode**, which has no toolbar and puts the finish actions up there
+  instead — so `.sb-board .workflow-header:not(:has(+ .top-actions))` carries
+  the rule, and that screen does not end up drawing two lines.
+- ⚠ **RESETTING THE WORKFLOW STILL HAPPENS**, just not from here: leaving the
+  board goes to the library, and **New Storyboard** / **Duplicate** are what call
+  `resetWorkflow()` — which is also what discards the saved draft and retires
+  the script chat. Nothing is left behind by dropping the button.
+- A stale reference in `PanelSequenceStrip.jsx`'s header comment (it named
+  "Start over" as the action that clears key poses; it is Regenerate,
+  `resume=false`) was corrected in passing.
+- Files: `client/src/components/StoryboardBoard.jsx`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/components/CreateAnimaticImage.jsx`,
+  `client/src/components/PanelSequenceStrip.jsx` (comment only),
+  `client/src/styles/storyboard.css`.
+- Verified: `vite build`, the emitted rule checked, and a repo-wide grep for
+  "Start over" / `onRestart` comes back empty.
 
 **Same session, before that** — the **Write a script** panel in Plan & Script
 moved directly under **Your channel (optional)**, above the conversation
@@ -20415,10 +20559,10 @@ still occasionally be safety-filtered.
   cleared cache, not a private window. If that turns out to matter, the fix is a
   store on the server, and at that point the stateless route grows a chat id —
   see the reasoning at the top of `server/script_chat.py` before doing it.
-- ⬜ **One chat, not one per storyboard.** The stored transcript is global to the
-  workflow, so starting a different board carries the last conversation over.
-  That is deliberate for now (there is no board id until a breakdown exists), but
-  it will read as a bug to anyone who works on two scripts in a day.
+- ✅ **One chat per storyboard — done the same day** (asked for straight away:
+  "ye kar do"). The transcript is keyed by a session id in `localStorage`, and
+  `resetWorkflow()` retires it, so a new board starts a new conversation. Pinned
+  by `tests/script_chat_session_check.mjs`.
 
 **Current state:** Full app works end-to-end in the browser (verified live by the
 user against Vertex AI + GCS): Landing → Login → Text-to-Image workflow with

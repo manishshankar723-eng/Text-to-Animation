@@ -20,8 +20,8 @@
 //
 // STOP AND RESUME: stopping leaves the drawings already made on disk, and
 // "Draw the remaining N" continues from there rather than starting over — so a
-// stop never throws away images that were paid for. "Start over" is the
-// separate, explicit action that clears them.
+// stop never throws away images that were paid for. Regenerate (`resume=false`,
+// below) is the separate, explicit action that redraws them.
 //
 // REGENERATE MEANS REDRAW, AND IT HAS TO LOOK LIKE IT (all reported together):
 //
