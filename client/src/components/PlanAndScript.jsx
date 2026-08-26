@@ -5,7 +5,10 @@ import LibrarySection, { LibraryRow, matchesFilter } from "./LibraryList.jsx";
 import PlanExportPreview from "./PlanExportPreview.jsx";
 import PlanQuestions from "./PlanQuestions.jsx";
 import PlanLanguageModal, { LANGUAGES } from "./PlanLanguageModal.jsx";
-import PlanScriptModal, { usageLine } from "./PlanScriptModal.jsx";
+import PlanScriptModal from "./PlanScriptModal.jsx";
+// ONE way to rename a thing, shared with the board and the video workspaces —
+// see TitleInput.jsx on why this stopped being four different interactions.
+import TitleInput from "./TitleInput.jsx";
 // Pure, so node can import it — tests/plan_script_check.py drives it directly.
 import { formatRuntime, secondsFromFormat } from "../plan/script_length.js";
 
@@ -108,6 +111,10 @@ export default function PlanAndScript({ onOpenStoryboard }) {
   // nothing is re-fetched — so someone with a year of plans finds one by name
   // instead of scrolling.
   const [libQuery, setLibQuery] = useState("");
+  // Which library row is being renamed inline, and what is typed in it — the
+  // same two pieces of state every other library here keeps. See saveRename.
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
   const [plan, setPlan] = useState(null); // the open session
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -463,22 +470,50 @@ export default function PlanAndScript({ onOpenStoryboard }) {
     }
   }
 
-  // Renames from the library card (`target` = a summary) and from the open
+  // Renames from the library row (`target` = a summary) and from the open
   // session header (no argument → the session being viewed).
-  async function rename(target) {
+  //
+  // ⚠ IT NO LONGER OPENS `window.prompt()`. That put a grey "localhost:5173
+  // says" browser dialog over the app for the one action every other library in
+  // here does inline — and it was the only unstyleable thing on any screen. The
+  // name is typed where the name IS: `TitleInput` in the header, the same inline
+  // box the other libraries use on a row.
+  //
+  // ⚠ IT THROWS RATHER THAN SWALLOWING. `TitleInput` needs to know a save failed
+  // so it can put the old name back; the page still shows the reason.
+  async function rename(next, target) {
     const subject = target || plan;
-    if (!subject) return;
-    const next = window.prompt("Name this plan", subject.title || "");
-    if (next === null || !next.trim()) return;
+    const title = (next || "").trim();
+    if (!subject || !title) return;
     try {
       // Naming it is intent too — an unsaved session becomes real here.
       const id = subject.job_id || (await ensureSession());
-      const updated = await api.renamePlan(id, next.trim());
+      const updated = await api.renamePlan(id, title);
       // Only re-point the open session if that's what was renamed.
-      if (plan?.job_id === subject.job_id) setPlan(updated);
+      if (plan?.job_id === updated.job_id) setPlan(updated);
       loadSessions();
     } catch (e) {
       setError(e.message);
+      throw e;
+    }
+  }
+
+  // The library row's inline rename — byte for byte the shape StoryboardLibrary,
+  // AnimaticLibrary and FinalVideoLibrary already use, so all four behave the
+  // same: Enter or clicking away saves, Escape closes, nothing changed → no
+  // request.
+  async function saveRename(session) {
+    const title = renameValue.trim();
+    if (!title || title === session.title) {
+      setRenamingId(null);
+      return;
+    }
+    try {
+      await rename(title, session);
+      setRenamingId((id) => (id === session.job_id ? null : id));
+    } catch {
+      // `rename` has already put the reason on the page; leave the box open so
+      // the name that failed is still there to correct.
     }
   }
 
@@ -515,13 +550,27 @@ export default function PlanAndScript({ onOpenStoryboard }) {
         openTitle="Open this plan"
         cover="🗓️"
         name={
-          <div
-            className="lib-title"
-            onClick={() => openSession(s.job_id)}
-            title={s.title}
-          >
-            {s.title}
-          </div>
+          renamingId === s.job_id ? (
+            <input
+              className="lib-rename"
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={() => saveRename(s)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveRename(s);
+                if (e.key === "Escape") setRenamingId(null);
+              }}
+            />
+          ) : (
+            <div
+              className="lib-title"
+              onClick={() => openSession(s.job_id)}
+              title={s.title}
+            >
+              {s.title}
+            </div>
+          )
         }
         meta={
           <>
@@ -553,8 +602,11 @@ export default function PlanAndScript({ onOpenStoryboard }) {
             <button
               type="button"
               className="lib-icon"
-              title="Rename"
-              onClick={() => rename(s)}
+              title="Rename this plan"
+              onClick={() => {
+                setRenameValue(s.title);
+                setRenamingId(s.job_id);
+              }}
             >
               <Icon name="pencil" />
             </button>
@@ -652,9 +704,6 @@ export default function PlanAndScript({ onOpenStoryboard }) {
   const items = built.items || [];
   const channel = plan?.channel || {};
   const scripts = plan?.scripts || [];
-  // The session's running token total — every chat turn, every calendar, every
-  // script, retries included. Summed server-side from what actually happened.
-  const sessionUsage = plan?.usage || {};
   const openScript = scripts.find((s) => s.id === openScriptId) || null;
 
   return (
@@ -672,8 +721,17 @@ export default function PlanAndScript({ onOpenStoryboard }) {
           ←
         </button>
         <span className="wf-icon"><WorkflowIcon id="plan-and-script" /></span>
-        <div>
-          <h1 className="wf-title">{plan?.title || "Plan & Script"}</h1>
+        <div className="wf-head-main">
+          {/* The name IS the field — click it and type, the same as the video
+              editor's title box. This replaced a "Rename" button that opened
+              `window.prompt()`. */}
+          <TitleInput
+            value={plan?.title || ""}
+            placeholder="Untitled plan"
+            ariaLabel="Plan title"
+            className="wf-title-input"
+            onSave={(next) => rename(next)}
+          />
           <p className="muted">
             {items.length > 0
               ? [
@@ -693,19 +751,14 @@ export default function PlanAndScript({ onOpenStoryboard }) {
 
       <div className="review-actions top-actions">
         <div className="review-actions-right">
-          {/* What this session has spent, where it can be seen while spending
-              more. Nothing else in the app showed text-token cost at all, so
-              a long conversation used to be entirely invisible. */}
-          {sessionUsage.total > 0 && (
-            <span className="tiny muted plan-usage" title="Tokens used by this planning session — chat, calendars and scripts, including retries. Cost is an estimate; only Google bills.">
-              {usageLine(sessionUsage)}
-            </span>
-          )}
-          {/* Wrapped, not passed directly: onClick would hand rename() the
-              click Event as its `target` argument. */}
-          <button className="btn ghost" onClick={() => rename()}>
-            Rename
-          </button>
+          {/* ⚠ THE SESSION'S TOKEN/COST LINE WAS HERE, AND IT IS NOT COMING
+              BACK. Token counts and a dollar estimate are OUR accounting, not
+              the customer's — a creator writing a script has no use for "4,108
+              tokens · ~$0.0067 est." and every reason to be unsettled by it.
+              Nothing stopped being MEASURED: every call still goes through
+              `usage_counters.record_tokens` server-side, and the admin panel is
+              where those numbers are read.
+              ("Rename" lived here too. It is the title box above now.) */}
         </div>
       </div>
 
@@ -1089,14 +1142,6 @@ export default function PlanAndScript({ onOpenStoryboard }) {
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
-                {/* Per-script cost, on the card. The session total in the
-                    header is the sum of these, so the two can be checked
-                    against each other. */}
-                {s.usage?.total > 0 && (
-                  <span className="plan-script-tokens tiny muted">
-                    {usageLine(s.usage)}
-                  </span>
-                )}
               </button>
             ))}
           </div>
@@ -1125,11 +1170,6 @@ export default function PlanAndScript({ onOpenStoryboard }) {
                   <span className="plan-chip plan-lang-chip">
                     ✍️ {languageLabel(built.language)}
                   </span>
-                )}
-                {/* What THIS calendar cost, not the session — so the price of a
-                    regenerate is visible as its own number. */}
-                {built.usage?.total > 0 && (
-                  <span className="tiny muted plan-usage">{usageLine(built.usage)}</span>
                 )}
               </div>
               <p>{built.summary}</p>

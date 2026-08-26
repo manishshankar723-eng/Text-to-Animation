@@ -20,24 +20,13 @@
    could be typed in. It now carries the same panel fill and border every other
    input here has; hover and focus still lift it, they are just no longer the
    only states in which it exists. */
+/* ⚠ THE LOOK MOVED TO `.title-input` (shell.css) AND IS NOW SHARED. Renaming
+   used to be four different interactions across the app; this box was the one
+   that was right, so every other screen copies it. What is left here is the one
+   thing that is genuinely local: how wide it is in THIS top bar. */
 .an-title {
   flex: 1 1 14rem;
   min-width: 10rem;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--text);
-  font-size: 1.15rem;
-  font-weight: 650;
-  padding: 0.45rem 0.6rem;
-}
-.an-title:hover {
-  border-color: var(--border-gold);
-}
-.an-title:focus {
-  outline: none;
-  border-color: var(--primary);
-  background: var(--panel);
 }
 .an-save {
   font-size: 0.78rem;

@@ -9894,8 +9894,12 @@ export default function AnimaticEditor({
           ←
         </button>
 
+        {/* ⚠ NOT `TitleInput`, and deliberately: this one saves through the
+            editor's own autosave, so it has to report every keystroke as a
+            change. The LOOK is shared — `.title-input` in shell.css is this
+            box, lifted out so every other screen's rename matches it. */}
         <input
-          className="an-title"
+          className="title-input an-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder={UNTITLED}

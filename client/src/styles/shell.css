@@ -746,6 +746,68 @@
   background: var(--panel-2);
   border: 1px solid var(--border-gold);
 }
+/* =========================================================================
+   THE EDITABLE TITLE — one look, one interaction, everywhere (TitleInput.jsx)
+
+   ⚠ IT IS A FIELD, SO IT IS DRAWN AS ONE. Written for the video editor's top
+   bar, where the name was transparent until hovered and so read as a heading
+   painted onto the workspace — "it merged into the background" and nobody could
+   tell it could be typed in. It carries a panel fill and a border like every
+   other input; hover and focus still lift it, they are just no longer the only
+   states in which it exists.
+
+   ⚠ AND IT IS SHARED NOW, WHICH IS THE POINT. Renaming used to be four separate
+   interactions: this box, a click-to-edit title, an inline box behind a menu,
+   and `window.prompt()`. One of those is a grey browser dialog that says
+   "localhost:5173 says" and cannot be styled at all.
+   ========================================================================= */
+.title-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 650;
+  padding: 0.45rem 0.6rem;
+  min-width: 0;
+  /* ⚠ theme.css sets a global `input { width: 100% }`-ish expectation in some
+     rows; titles size themselves off the row instead, so callers set the width
+     with their own class (`.an-title`, `.wf-title-input`). */
+  width: auto;
+}
+.title-input:hover:not(:disabled) {
+  border-color: var(--border-gold);
+}
+.title-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--panel);
+}
+.title-input:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* The page-heading version: it stands where an `<h1>` used to, so it is that
+   size, and it fills the header row's free width. */
+.wf-title-input {
+  display: block;
+  width: 100%;
+  font-size: clamp(1.5rem, 2vw, 2rem);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  padding: 0.3rem 0.55rem;
+  margin-bottom: 0.25rem;
+}
+
+/* The header's title block: it holds the name and the line under it, and it has
+   to be allowed to SHRINK, or a long name pushes the row's actions off the
+   edge instead of ellipsing. */
+.wf-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* The way OUT of a workflow, at the start of the line that names it. It used to
    sit on the row below, which on the form step meant a lone arrow in an
    otherwise empty strip.

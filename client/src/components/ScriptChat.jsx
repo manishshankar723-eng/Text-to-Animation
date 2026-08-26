@@ -31,7 +31,6 @@
 // `resetScriptChat()` (called from the workflow's own reset) retires it.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
-import { usageLine } from "./PlanScriptModal.jsx";
 
 // Versioned prefixes, so a later change to the message shape can bump them and
 // ignore the old store instead of trying to migrate a chat log.
@@ -99,20 +98,11 @@ export function resetScriptChat() {
 // (and the DOM) from growing without limit in a very long session.
 const MAX_KEPT = 40;
 
-// Openers, split by whether there is already something in the script box.
-// Handing someone "make it shorter" when the box is empty is a dead button.
-const STARTERS_EMPTY = [
-  "Write a 60-second reel script about a chai stall at midnight.",
-  "I have an idea for a short film — help me turn it into a script.",
-  "Suggest 5 story ideas for a 30-second ad about a running shoe.",
-  "What makes a good hook in the first 3 seconds?",
-];
-const STARTERS_WITH_SCRIPT = [
-  "Make my script shorter and punchier.",
-  "Read my script and tell me what's weak about it.",
-  "Rewrite my script for a 30-second version.",
-  "Add a stronger ending to my script.",
-];
+// ⚠ THERE ARE NO STARTER CHIPS. A row of four example prompts used to sit under
+// the composer. It was four sentences of screen for something people either
+// ignore or click once, and it pushed the rest of the form down on the one
+// screen where the script box should be the biggest thing visible. The
+// placeholder already says what this box is for.
 
 function loadStored(sessionId) {
   try {
@@ -169,8 +159,8 @@ export default function ScriptChat({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, sending]);
 
-  async function send(text) {
-    const message = (text ?? draft).trim();
+  async function send() {
+    const message = draft.trim();
     if (!message || sending) return;
 
     // The user's line goes up immediately — waiting for the server to echo it
@@ -197,7 +187,6 @@ export default function ScriptChat({
           text: res?.reply || "",
           script: res?.script || "",
           scriptTitle: res?.title || "",
-          usage: res?.usage || null,
         },
       ]);
       // ⚠ A NEW SCRIPT GOES STRAIGHT INTO THE BOX. This used to be a "Use this
@@ -226,10 +215,6 @@ export default function ScriptChat({
     setErr("");
   }
 
-  // Starters are for the empty state ONLY, and they are chips rather than a
-  // stack of full sentences: this row now sits under a script box in the same
-  // panel, so it has to stay out of the way of the thing people came here for.
-  const starters = script.trim() ? STARTERS_WITH_SCRIPT : STARTERS_EMPTY;
   const idle = messages.length === 0 && !sending;
 
   return (
@@ -288,11 +273,6 @@ export default function ScriptChat({
                     </button>
                   </div>
                 </div>
-              )}
-
-              {/* What this turn cost. Advisory — see usageLine. */}
-              {m.usage?.total > 0 && (
-                <span className="tiny muted sc-msg-usage">{usageLine(m.usage)}</span>
               )}
             </div>
           ))}
@@ -358,23 +338,10 @@ export default function ScriptChat({
         </div>
       </div>
 
-      {/* Openers, and a way out of the conversation. Never both: once there are
-          messages the starters are noise, and until there are, "Clear chat" has
-          nothing to clear. */}
-      {idle ? (
-        <div className="sc-starters">
-          {starters.map((s) => (
-            <button
-              key={s}
-              type="button"
-              className="sc-starter"
-              onClick={() => send(s)}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      ) : (
+      {/* A way out of the conversation, once there is one to leave. Starter
+          chips used to share this slot in the empty state; see the note at the
+          top of this file for why they are gone. */}
+      {!idle && (
         <div className="sc-chat-foot">
           <button type="button" className="btn ghost small" onClick={clearChat}>
             Clear chat

@@ -109,9 +109,16 @@
 .lib-title:hover {
   color: var(--primary);
 }
+/* A row's rename box. The page-heading version is `.title-input` (shell.css) —
+   this is the same interaction at row size, so it borrows the one state the
+   global `input` rule doesn't give it: the gold edge on hover, which is how a
+   rename box says it is a rename box before you click it. */
 .lib-rename {
   width: 100%;
   font-weight: 650;
+}
+.lib-rename:hover {
+  border-color: var(--border-gold);
 }
 .lib-icon {
   border: 1px solid transparent;

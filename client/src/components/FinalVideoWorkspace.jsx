@@ -19,7 +19,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api.js";
 // Rendering is `cap.veo-render`, guarded on POST /final-videos/{id}/render.
 import useCapability from "../useCapability.js";
-import Icon from "./Icon.jsx";
+// ONE way to rename a thing, shared with Plan & Script and the storyboard
+// board — see TitleInput.jsx.
+import TitleInput from "./TitleInput.jsx";
 import FinalVideoArtStep from "./FinalVideoArtStep.jsx";
 import FinalVideoRenderStep from "./FinalVideoRenderStep.jsx";
 import FinalVideoAssembleStep from "./FinalVideoAssembleStep.jsx";
@@ -90,8 +92,6 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
   const [job, setJob] = useState(null);
   const [backend, setBackend] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
-  const [editingTitle, setEditingTitle] = useState(false);
   const media = useAuthedMedia();
   const saveTimer = useRef(null);
   // What the last save sent, so an autosave triggered by the SERVER's own reply
@@ -113,7 +113,6 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
         ]);
         if (!alive) return;
         setProject(p);
-        setTitleDraft(p.title);
         setBackend(b);
         lastSaved.current = JSON.stringify({
           shots: p.shots,
@@ -291,19 +290,15 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
   }, [project, videoId]);
 
   // --- Title ---------------------------------------------------------------
-  async function saveTitle() {
-    const title = titleDraft.trim();
-    setEditingTitle(false);
-    if (!title || title === project?.title) {
-      setTitleDraft(project?.title || "");
-      return;
-    }
+  /** ⚠ THROWS ON FAILURE, on purpose: `TitleInput` needs to hear about it so it
+   *  can put the old name back in the box. The page still shows the reason. */
+  async function saveTitle(title) {
     try {
       const saved = await api.saveFinalVideo(videoId, { title });
       setProject((p) => ({ ...p, title: saved.title }));
     } catch (e) {
       setError(e.message);
-      setTitleDraft(project?.title || "");
+      throw e;
     }
   }
 
@@ -404,34 +399,17 @@ export default function FinalVideoWorkspace({ videoId, onBack, onDeleted }) {
           ←
         </button>
 
-        {editingTitle ? (
-          <input
-            className="fv-title-input"
-            autoFocus
-            value={titleDraft}
-            onChange={(e) => setTitleDraft(e.target.value)}
-            onBlur={saveTitle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") saveTitle();
-              if (e.key === "Escape") {
-                setTitleDraft(project.title);
-                setEditingTitle(false);
-              }
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            className="fv-title"
-            onClick={() => setEditingTitle(true)}
-            title="Rename this project"
-          >
-            {project.title === UNTITLED
-              ? "Untitled final video"
-              : project.title}
-            <Icon name="pencil" size={14} />
-          </button>
-        )}
+        {/* ⚠ IT IS A BOX, NOT A BUTTON THAT BECOMES ONE. Clicking a title to
+            turn it into a field was one of four different renames in this app;
+            they are one now, and the editor's always-a-field version is the one
+            that won. See TitleInput.jsx. */}
+        <TitleInput
+          value={project.title === UNTITLED ? "" : project.title}
+          placeholder="Untitled final video"
+          ariaLabel="Project title"
+          className="fv-title-input"
+          onSave={saveTitle}
+        />
 
         <div className="fv-top-spacer" />
 

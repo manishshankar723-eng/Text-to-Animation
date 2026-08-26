@@ -275,7 +275,13 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-26 — **SCRIPT → STORYBOARD'S SCRIPT BOX NOW TALKS TO AN AI.** ⚠ **AND IT IS NOT A TAB** — the script box, the conversation and one Generate composer are ONE panel, and a generated script lands in the box itself with an Undo. **One chat per storyboard**, retired by `resetWorkflow()`. A normal chat in the same panel that answers anything and, when asked for a script, hands one back in its OWN field with a **Use this script** button that fills the box. Stateless route (`POST /script-chat`), transcript lives in the browser, and the script comes out in the exact layout `script_breakdown.py` reads. ⚠ The same session TRUNCATED THIS FILE to zero bytes and ~442 lines of un-committed Work Log entries were lost — read the note at the end of that entry before writing to this file again. See the Work Log.
+**Last updated:** 2026-08-27 — **THE SCRIPT BOX AND THE AI COMPOSER ARE ONE FRAMED PANEL, AND THE STARTER CHIPS ARE GONE.** Two identical grey boxes stacked on each other made "which one do I type in?" a real question; the frame, the background and the focus glow now live on a `.sts-script-panel` wrapper and everything inside it is borderless. The four example prompts under the composer are deleted. See the Work Log.
+
+**Previously:** 2026-08-27 — **NO TOKEN OR COST NUMBERS ON ANY CUSTOMER-FACING SCREEN.** All five readouts removed and `usageLine()` deleted; the counting itself is untouched and still read in the admin panel. See the Work Log.
+
+**Previously:** 2026-08-27 — **RENAMING IS ONE INTERACTION NOW, ON EVERY SCREEN.** `window.prompt()` is gone from Plan & Script; the video editor's always-editable title box became `TitleInput.jsx` and `.title-input`, and the board, the final-video workspace and Plan & Script all use it. Saves on blur or Enter, Escape reverts. See the Work Log.
+
+**Previously:** 2026-08-26 — **SCRIPT → STORYBOARD'S SCRIPT BOX NOW TALKS TO AN AI.** ⚠ **AND IT IS NOT A TAB** — the script box, the conversation and one Generate composer are ONE panel, and a generated script lands in the box itself with an Undo. **One chat per storyboard**, retired by `resetWorkflow()`. A normal chat in the same panel that answers anything and, when asked for a script, hands one back in its OWN field with a **Use this script** button that fills the box. Stateless route (`POST /script-chat`), transcript lives in the browser, and the script comes out in the exact layout `script_breakdown.py` reads. ⚠ The same session TRUNCATED THIS FILE to zero bytes and ~442 lines of un-committed Work Log entries were lost — read the note at the end of that entry before writing to this file again. See the Work Log.
 
 **Previously:** 2026-08-26 — **ANIWALA AI STUDIO: THE NAME, THE MARK, AND A
 HERO THAT SHOWS THE FOUR LIVE WORKFLOWS.** The owner already runs `aniwala.com`,
@@ -3402,7 +3408,146 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-26 (latest) — THE SCRIPT BOX ONLY TOOK SCRIPTS THAT ALREADY EXISTED. IT NOW HAS A THIRD TAB THAT WRITES ONE (ask: "paste script ke box mai mai AI ka v chating chahta hun … user issi box panel mai AI se baat kar ke script banwa sakta hai … ye chat normal tarike se chalna chahiye jaise ki chatGPT, Claude, gemini")
+### 2026-08-27 (latest) — SCRIPT → STORYBOARD'S SCRIPT BOX AND ITS AI COMPOSER ARE ONE PANEL NOW, AND THE STARTER CHIPS ARE GONE ("ye text hata do aur ask ai and paste box ek mai nhi aa sakta hai kya? do do badhiya nhi lag raha hai", over a screenshot of the two stacked boxes and the four example prompts)
+
+⚠ **TWO IDENTICAL GREY BOXES, ONE JOB.** The script textarea and the AI
+composer each carried their own border, background and focus ring, so the form
+showed the same control twice, one under the other, and asked the user to work
+out which half was theirs. They were already ONE panel conceptually — that is
+the whole point of the note at the top of `ScriptChat.jsx`, which says the chat
+is not a tab — but nothing on screen said so.
+
+The frame moved up to the wrapper:
+
+- `ScriptToStoryboard.jsx` wraps the textarea, the status row and `<ScriptChat>`
+  in a new `.sts-script-panel` div (it was a bare `<>` fragment).
+- `.sts-script-panel` owns the border, the radius, the `--panel-2` background and
+  the `:focus-within` gold glow. Inside it the textarea and `.sc-composer` are
+  borderless and transparent; a single hairline `border-top` on the composer is
+  all that separates the two halves.
+- ⚠ **THE GLOW IS ON THE WRAPPER, NOT ON EITHER HALF** — typing in the script or
+  in the chat lights the same control, which is what makes them read as one.
+- The composer's own `:focus-within` border/shadow is neutralised inside the
+  panel, or the divider would light up on its own and re-split the box.
+- Height is untouched: `.sts-form-wrap .sts-script-area` still locks the paste
+  box and the upload dropzone to the same 160px.
+
+⚠ **AND THE FOUR STARTER CHIPS ARE DELETED, NOT HIDDEN.** "Write a 60-second
+reel script about a chai stall at midnight" and its three siblings were four
+sentences of screen under the composer, on the one page where the script box
+should be the biggest thing visible. `STARTERS_EMPTY`, `STARTERS_WITH_SCRIPT`,
+the `.sc-starters` / `.sc-starter` CSS and the `send(text)` overload that only
+existed to fire them are all gone. `send()` now reads the draft and nothing
+else. "Clear chat" is unaffected — it only ever showed once a conversation
+existed, and it still does.
+
+- Files: `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/components/ScriptChat.jsx`, `client/src/styles/storyboard.css`.
+- Verified: `vite build` clean; `tests/script_chat_session_check.mjs` still all
+  green; a repo-wide grep for `sc-starter` / `STARTERS_` in `client/src`,
+  `server` and `tests` comes back empty. ⚠ NOT verified in a browser — no
+  Playwright run was asked for, so the visual result is unconfirmed on screen.
+
+### 2026-08-27 — THE TOKEN AND COST READOUTS ARE GONE FROM EVERY CUSTOMER-FACING SURFACE ("ye text hata do, user ko nahi dikhna hai", over a screenshot of "4,108 tokens (1,616 in · 2,492 out · 1,366 thinking) · ~$0.0067 est.")
+
+⚠ **THAT NUMBER IS OUR ACCOUNTING, NOT THE CUSTOMER'S.** A creator writing a
+script cannot act on "1,366 thinking tokens", and a fraction-of-a-cent estimate
+beside their work invites exactly one question — "am I being charged for this?"
+— which the number does not answer. It was added when text spend was invisible
+from every side, and it solved that for US; it was never the right place to
+solve it.
+
+Five places printed it, all now removed:
+
+- the planning session's running total, in the Plan & Script header row;
+- the per-script total, on every script card in that workflow;
+- the per-calendar total, on the generated plan's heading;
+- the per-script total in the script modal's footer;
+- the per-turn total under every reply in Script → Storyboard's AI chat.
+
+Notes:
+
+- **`usageLine()` and `formatTokens()` are deleted**, not just unused — a helper
+  with no callers is a helper someone re-adds a display for. The reasoning is
+  left in `PlanScriptModal.jsx` where it lived, so the next person finds the
+  decision instead of the gap.
+- ⚠ **NOTHING STOPPED BEING MEASURED.** `usage` still comes back on every
+  response, every model call still goes through `usage_counters.record_tokens`,
+  and the admin panel is where those numbers are read. This is a display change
+  and only a display change — no route, no counter and no schema was touched.
+- The chat also stops STORING `usage` on each message: it was being written into
+  `localStorage` on every turn for a line nothing renders any more.
+- Their CSS went too (`.plan-usage`, `.plan-script-tokens`, `.sc-msg-usage`, and
+  the `.plan-strategy-head .plan-usage` override).
+- ⚠ **IF A CUSTOMER-FACING NUMBER IS EVER WANTED AGAIN**, it should be a plan
+  allowance — "18 of 50 scripts this month" — not tokens. That is the number a
+  customer can actually do something about. Noted in the file.
+- Files: `client/src/components/PlanScriptModal.jsx`,
+  `client/src/components/PlanAndScript.jsx`,
+  `client/src/components/ScriptChat.jsx`, `client/src/styles/home.css`,
+  `client/src/styles/storyboard.css`.
+- Verified: `vite build`; `tests/script_chat_session_check.mjs` still 12/12; a
+  repo-wide grep for `usageLine` comes back with comments only.
+
+### 2026-08-27 — RENAMING WAS FOUR DIFFERENT INTERACTIONS, AND ONE OF THEM WAS `window.prompt()` (report: a screenshot of the grey "localhost:5173 says · Name this plan" dialog — "rename karne ka ek jaisa rakho sab jagah, editor ke jaisa … production level bana hai yrr, aisa chhota chhota galti hoga to kaise chalega")
+
+Four screens, four ways to name the same kind of thing:
+
+| Screen | How you renamed | |
+|---|---|---|
+| Video editor | an always-editable box in the top bar | ✅ the one that was right |
+| Final video workspace | click the title, it BECOMES a box | |
+| The four libraries | inline box on the row, behind a ✏️ button | consistent with each other |
+| **Plan & Script** | **`window.prompt()`** | ⚠ |
+
+⚠ **`window.prompt()` IS THE ONE THING ON ANY SCREEN THAT CANNOT BE STYLED.** It
+paints a grey browser dialog captioned "localhost:5173 says" over the app — which
+in a deployment reads as the domain name — for the single most ordinary action in
+the product. No amount of CSS reaches it.
+
+- **New `client/src/components/TitleInput.jsx`** — one editable title, used by
+  Plan & Script, the storyboard board and the final-video workspace. Saves on
+  **blur and on Enter**, not per keystroke (a rename is one request per rename,
+  not fourteen); **Escape** puts the old name back; an empty or unchanged name
+  makes no request at all.
+- ⚠ **ESCAPE HAS TO SUPPRESS THE BLUR IT CAUSES.** `setDraft` doesn't apply until
+  the next render, so the `commit()` that blurring triggers would still be
+  reading the abandoned text — and would save exactly what Escape means to throw
+  away. A ref flag swallows that one blur. This is the bug the pattern invites.
+- ⚠ **THE SAVE HANDLERS NOW THROW.** `TitleInput` has to hear that a save failed
+  so it can put the old name back in the box; each page still prints the reason
+  on its own error line. A handler that swallows the error leaves the box
+  claiming a name the server never took.
+- ⚠ **THE LOOK IS SINGLE-SOURCED, NOT COPIED.** `.title-input` in `shell.css` IS
+  the editor's old `.an-title` block, lifted out; `.an-title` and
+  `.fv-title-input` keep only the one thing that is genuinely local — how wide
+  the box is in their own row. The editor's own input keeps its behaviour
+  (it reports every keystroke to the editor's autosave) and only borrows the
+  class, so nothing in that save state machine was touched.
+- **The board can be renamed from the board.** It previously had no rename at all
+  — you went back to the library to do it — even though its name is what titles
+  the PDF and the ZIP. `renameBoard` patches the local job immediately rather
+  than waiting for the next poll, which would leave the old name on screen for up
+  to a poll interval after a save that had already succeeded.
+- **Plan & Script's library row** now renames inline, byte for byte the shape
+  `StoryboardLibrary` / `AnimaticLibrary` / `FinalVideoLibrary` already use, and
+  the header's "Rename" button is gone — the name is typed where the name is.
+- `.lib-rename` picked up the gold hover edge, so a row's rename box says it is
+  one before you click it, like the heading version does.
+- Files: new `client/src/components/TitleInput.jsx`; edited
+  `client/src/components/PlanAndScript.jsx`,
+  `client/src/components/StoryboardBoard.jsx`,
+  `client/src/components/FinalVideoWorkspace.jsx`,
+  `client/src/components/AnimaticEditor.jsx` (class only),
+  `client/src/styles/shell.css`, `client/src/styles/animatic.css`,
+  `client/src/styles/final-video.css`,
+  `client/src/styles/storyboard-library.css`.
+- Verified: `vite build`, the emitted `.title-input` rule checked, and a repo-wide
+  grep for `window.prompt` comes back with comments only. ⚠ **NOT CLICKED THROUGH
+  IN A BROWSER** — and this one changes four screens' primary heading, so it is
+  the first thing to look at.
+
+### 2026-08-26 — THE SCRIPT BOX ONLY TOOK SCRIPTS THAT ALREADY EXISTED. IT NOW HAS A THIRD TAB THAT WRITES ONE (ask: "paste script ke box mai mai AI ka v chating chahta hun … user issi box panel mai AI se baat kar ke script banwa sakta hai … ye chat normal tarike se chalna chahiye jaise ki chatGPT, Claude, gemini")
 
 Script → Storyboard's script box offered **Paste script** and **Upload file** —
 two doors that both assume the user arrived holding a script. Anyone who did not

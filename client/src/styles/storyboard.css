@@ -1154,10 +1154,6 @@
   color: var(--gold-ink);
   border-color: transparent;
 }
-.sc-msg-usage {
-  margin-top: 0.1rem;
-}
-
 /* The receipt for a script that is already in the box above. Collapsed by
    default: re-printing the whole script under the box that holds it is just the
    same text twice. */
@@ -1256,30 +1252,6 @@
   white-space: nowrap;
 }
 
-/* Openers. Chips in a wrapping row, not a stack of full-width sentences — this
-   sits under a script box now and must not push the rest of the form down. */
-.sc-starters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-.sc-starter {
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 0.3rem 0.7rem;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  cursor: pointer;
-  text-align: left;
-  white-space: normal;
-  transition: color 0.15s, border-color 0.15s;
-}
-.sc-starter:hover {
-  color: var(--text);
-  border-color: var(--border-gold);
-}
 .sc-chat-foot {
   display: flex;
   align-items: center;
@@ -1316,6 +1288,63 @@
   color: var(--primary);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* =========================================================================
+   ONE SCRIPT PANEL, NOT TWO BOXES
+
+   ⚠ THE FRAME LIVES ON THE WRAPPER NOW. The script textarea and the AI
+   composer each carried their own border, so the form showed two identical
+   grey boxes stacked on each other and made "which one do I type in?" a real
+   question. The wrapper owns the border, the background and the focus glow;
+   everything inside it is borderless and separated by hairlines instead. The
+   glow is `:focus-within`, so typing in either half lights the whole control.
+   ========================================================================= */
+.sts-script-panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.sts-script-panel:focus-within {
+  border-color: var(--border-gold);
+  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.12);
+}
+/* Borderless inside the frame. Height still comes from the rule that keeps
+   this box and the upload dropzone the same size. */
+.sts-script-panel .sts-script-area {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  outline: none;
+}
+.sts-script-panel .sts-script-status {
+  padding: 0 0.8rem 0.4rem;
+}
+.sts-script-panel .sc-chat {
+  margin-top: 0;
+  gap: 0.5rem;
+}
+.sts-script-panel .sc-chat-log,
+.sts-script-panel .sc-chat-error {
+  margin: 0 0.65rem;
+}
+/* A hairline, not a second frame — the divider is the only thing that has to
+   say "the AI half starts here". */
+.sts-script-panel .sc-composer {
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.55rem 0.8rem 0.55rem;
+}
+.sts-script-panel .sc-composer:focus-within {
+  border-top-color: var(--border);
+  box-shadow: none;
+}
+.sts-script-panel .sc-chat-foot {
+  padding: 0 0.8rem 0.6rem;
 }
 
 /* Phone: bubbles take the full width, and the composer's hint gives way to the

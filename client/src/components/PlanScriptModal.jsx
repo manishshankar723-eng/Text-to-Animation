@@ -20,27 +20,17 @@ import Icon from "./Icon.jsx";
 // problem the creator should see before they shoot it, not after.
 const OVER_RUN_TOLERANCE = 1.3;
 
-function formatTokens(n) {
-  if (!n) return "0";
-  return n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString();
-}
-
-// The cost is an ESTIMATE and every surface that prints it has to say so.
-// `cost_usd` is null — not 0 — when it can't be stated honestly, so a nullish
-// check here is the difference between "we don't know" and "it was free".
-export function usageLine(usage) {
-  if (!usage || !usage.total) return "";
-  const bits = [
-    `${formatTokens(usage.input)} in`,
-    `${formatTokens(usage.output)} out`,
-  ];
-  if (usage.thinking) bits.push(`${formatTokens(usage.thinking)} thinking`);
-  const cost =
-    usage.cost_usd == null
-      ? ""
-      : ` · ~$${usage.cost_usd < 0.01 ? usage.cost_usd.toFixed(4) : usage.cost_usd.toFixed(2)} est.`;
-  return `${formatTokens(usage.total)} tokens (${bits.join(" · ")})${cost}`;
-}
+// ⚠ `usageLine()` LIVED HERE AND HAS BEEN DELETED, ALONG WITH EVERY PLACE THAT
+// PRINTED IT. Token counts and a dollar estimate are OUR accounting, not the
+// customer's: "4,108 tokens (1,616 in · 2,492 out · 1,366 thinking) · ~$0.0067
+// est." told a creator nothing they could act on and quite a lot they had no
+// reason to worry about.
+//
+// ⚠ NOTHING STOPPED BEING MEASURED. `usage` still comes back on every response
+// and every model call still goes through `usage_counters.record_tokens`
+// server-side — the admin panel is where those numbers are read. If a customer-
+// facing number is ever wanted again it should be a plan allowance ("18 of 50
+// scripts this month"), not tokens.
 
 export default function PlanScriptModal({
   script,
@@ -205,9 +195,11 @@ export default function PlanScriptModal({
         </div>
 
         <footer className="export-modal-foot">
-          {/* What this one script cost, next to the buttons that might make
-              another one. */}
-          <span className="tiny muted">{usageLine(script.usage) || " "}</span>
+          {/* ⚠ A TOKEN/COST LINE SAT HERE. It is gone from every customer-facing
+              surface — see the note in PlanAndScript's header row. The empty
+              span stays so the actions keep their place at the END of the row,
+              which is what `space-between` gives them. */}
+          <span />
           <div className="export-modal-actions">
             <button
               className="btn ghost script-danger"

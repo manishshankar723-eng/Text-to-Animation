@@ -1333,21 +1333,13 @@
    card foot that carries the write button, the script list, and the screenplay
    layout inside the modal. */
 
-/* The token/cost readout. Deliberately quiet — it is a fact you can check, not
-   a thing to look at. `tabular-nums` stops the number jittering as it grows. */
-.plan-usage {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+/* (`.plan-usage` was the token/cost readout. Gone — that number is our
+   accounting, not the customer's; see PlanScriptModal.jsx.) */
 .plan-page .review-actions-right {
   display: flex;
   align-items: center;
   gap: 0.7rem;
 }
-.plan-strategy-head .plan-usage {
-  margin-left: auto;
-}
-
 /* --- The write button on a calendar card -------------------------------- */
 /* Pinned below the scrolling detail, so it stays reachable on a card whose
    outline runs long. flex-shrink guards it against the same squeeze that
@@ -1444,10 +1436,6 @@
   color: var(--muted);
   text-transform: capitalize;
 }
-.plan-script-tokens {
-  font-variant-numeric: tabular-nums;
-}
-
 /* --- The script modal ---------------------------------------------------- */
 /* .export-modal-body only CLIPS (see its note above) and expects exactly one
    scroller inside it. Here that is .script-doc. */

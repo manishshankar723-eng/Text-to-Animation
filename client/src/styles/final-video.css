@@ -42,32 +42,16 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-.fv-title,
+/* ⚠ THE LOOK COMES FROM `.title-input` (shell.css) NOW. `.fv-title` was a
+   BUTTON you clicked to turn the name into a field — one of four different
+   renames in this app. They are one interaction now, and the editor's
+   always-a-field version is the one that won. What is left here is how wide the
+   box is in THIS top bar, which is the only part that was ever local. */
 .fv-title-input {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
+  flex: 1 1 18rem;
   font-size: 1.05rem;
   font-weight: 600;
-  color: var(--text);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 0.3rem 0.5rem;
-  cursor: pointer;
-  min-width: 0;
   max-width: min(100%, 34rem);
-}
-.fv-title:hover {
-  border-color: var(--border);
-}
-.fv-title .icon {
-  color: var(--muted);
-}
-.fv-title-input {
-  cursor: text;
-  border-color: var(--border-gold);
-  background: var(--panel-2);
 }
 
 /* The running spend. Always visible — it is the number that can surprise you. */

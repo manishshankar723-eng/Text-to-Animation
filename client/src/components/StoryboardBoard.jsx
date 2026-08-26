@@ -13,6 +13,9 @@ import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
 import PanelVersions from "./PanelVersions.jsx";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
+// ONE way to rename a thing, shared with Plan & Script and the video
+// workspaces — see TitleInput.jsx.
+import TitleInput from "./TitleInput.jsx";
 // Styles the user can re-cast the whole board into (kept as switchable variants).
 const RESTYLE_OPTIONS = [
   { id: "rough-sketch", label: "✏️ Rough Sketch" },
@@ -209,7 +212,23 @@ export default function StoryboardBoard({
   // The board's saved title and source script. Both live on the job record, so
   // they're here whether the board was just generated or reopened from the
   // library. Falls back while the first poll is still in flight.
-  const boardTitle = job?.character_name || "Your storyboard";
+  const boardTitle = job?.character_name || "";
+
+  /** Rename the board from its own heading — the same box the editor uses.
+   *  ⚠ IT PATCHES THE LOCAL JOB IMMEDIATELY. The poll that refreshes this
+   *  screen runs on its own clock, so waiting for it would leave the old name
+   *  on screen for up to a poll interval after a save that had already
+   *  succeeded — which reads as "the rename didn't work". Throws on failure so
+   *  `TitleInput` puts the old name back. */
+  async function renameBoard(next) {
+    try {
+      const updated = await api.renameStoryboard(jobId, next);
+      setJob((j) => (j ? { ...j, character_name: updated.title || next } : j));
+    } catch (e) {
+      setError(e.message);
+      throw e;
+    }
+  }
   const boardScript = job?.params?.script || "";
   // "We don't know yet" is NOT "it is generating". This used to read
   // `|| !status`, so any board whose job could not be fetched — the server
@@ -539,11 +558,18 @@ export default function StoryboardBoard({
           ←
         </button>
         <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
-        <div>
+        <div className="wf-head-main">
           {/* The board's OWN title, not a generic heading — it's what names the
               library card, the PDF and the ZIP, so seeing it here is how you
-              know which board you're looking at. */}
-          <h1 className="wf-title">{boardTitle}</h1>
+              know which board you're looking at. Editable in place, like the
+              editor's: renaming used to mean going back to the library. */}
+          <TitleInput
+            value={boardTitle}
+            placeholder="Your storyboard"
+            ariaLabel="Storyboard title"
+            className="wf-title-input"
+            onSave={renameBoard}
+          />
           <p className="muted">
             {styleLabel} · {aspect} · {total} panel{total === 1 ? "" : "s"}
           </p>

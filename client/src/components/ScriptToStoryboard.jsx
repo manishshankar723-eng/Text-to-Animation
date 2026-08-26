@@ -1257,7 +1257,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           </div>
 
           {tab === "paste" && (
-            <>
+            /* ⚠ ONE BOX, NOT TWO. The script area and the AI composer were two
+               separately-framed controls stacked on each other, which read as
+               two unrelated widgets — "where do I type?" is not a question this
+               form should raise. They share one frame now: script on top, a
+               hairline, then the composer. The frame lights up on focus, so
+               whichever half you are typing in, the whole panel is the control. */
+            <div className="sts-script-panel">
               <textarea
                 className="prompt-textarea sts-script-area"
                 placeholder="Paste or type your script here — or ask the AI below to write it…"
@@ -1320,7 +1326,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 aspect={aspect === "custom" ? customAspect : aspect}
                 onApplyScript={applyAiScript}
               />
-            </>
+            </div>
           )}
 
           {tab === "upload" && (
