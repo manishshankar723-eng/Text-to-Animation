@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+// ⚠ THE FILTER ONLY, NOT THE ROW LIST. Every other workflow's library became a
+// full-width table of rows (LibraryList.jsx); this one cannot, because it lives
+// in the 380px left column beside the job detail pane — four columns do not fit
+// in it and never will. What it DOES share is the Filter box, so finding a job
+// by name works the same way here as it does everywhere else.
+import { matchesFilter } from "./LibraryList.jsx";
 
 const STATUS_CLASS = {
   queued: "badge queued",
@@ -15,6 +21,9 @@ const STATUS_CLASS = {
 // Auto-refreshes while any job is active.
 export default function JobList({ selectedId, onSelect, refreshKey }) {
   const [jobs, setJobs] = useState([]);
+  // What's typed in the Filter box. A pure VIEW of `jobs` — nothing is
+  // re-fetched, and the poll below keeps updating the full list underneath it.
+  const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   // Two-step delete: the row asks for confirmation before anything is removed.
   const [confirmId, setConfirmId] = useState(null);
@@ -57,6 +66,12 @@ export default function JobList({ selectedId, onSelect, refreshKey }) {
     return () => clearInterval(t);
   }, [jobs]);
 
+  // Matched against what a user types looking for a run: the character's name
+  // and the template it was generated from.
+  const shown = jobs.filter((j) =>
+    matchesFilter(query, j.character_name, j.template)
+  );
+
   return (
     <div className="card joblist">
       <div className="joblist-head">
@@ -65,12 +80,53 @@ export default function JobList({ selectedId, onSelect, refreshKey }) {
           Refresh
         </button>
       </div>
+      {/* The same Filter box the project libraries carry, on its own line
+          because this column is too narrow to put it beside the heading. Hidden
+          until there is something to filter — one job and a search box is just
+          furniture. */}
+      {jobs.length > 1 && (
+        <label className="lib-filter joblist-filter">
+          <span className="lib-filter-label">Filter</span>
+          <input
+            type="text"
+            className="lib-filter-input"
+            value={query}
+            placeholder="Filter jobs"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              type="button"
+              className="lib-filter-clear"
+              title="Clear the filter"
+              onClick={() => setQuery("")}
+            >
+              ✕
+            </button>
+          )}
+        </label>
+      )}
       {/* Only surface errors when we have nothing to show — a transient poll
           failure shouldn't hide the jobs we already loaded. */}
       {error && jobs.length === 0 && <div className="error">{error}</div>}
       {!error && jobs.length === 0 && <p className="muted">No jobs yet.</p>}
+      {/* Filtered down to nothing is NOT the same as having nothing — saying
+          "No jobs yet" here would look like the account had been emptied. */}
+      {jobs.length > 0 && shown.length === 0 && (
+        <p className="muted tiny">
+          Nothing matches “{query}”.{" "}
+          <button
+            type="button"
+            className="lib-linkish"
+            onClick={() => setQuery("")}
+          >
+            Clear the filter
+          </button>{" "}
+          to see all {jobs.length}.
+        </p>
+      )}
       <ul>
-        {jobs.map((j) => (
+        {shown.map((j) => (
           <li
             key={j.job_id}
             className={j.job_id === selectedId ? "selected" : ""}

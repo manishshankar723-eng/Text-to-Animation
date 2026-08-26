@@ -440,6 +440,53 @@ class ScriptDraftUpdate(BaseModel):
     title: str = ""
 
 
+class ScriptChatMessage(BaseModel):
+    """One turn of the Script → Storyboard chat.
+
+    `role` is our own vocabulary ("user" / "agent"), not the SDK's, so the
+    transcript stays readable on the wire and in the browser's storage; the
+    translation to the model's "user"/"model" happens in `plan_agent._to_contents`.
+    """
+
+    role: str = Field("user", pattern="^(user|agent)$")
+    text: str = Field(..., min_length=1, max_length=8000)
+
+
+class ScriptChatRequest(BaseModel):
+    """Body for POST /script-chat.
+
+    ⚠ THE WHOLE TRANSCRIPT IS SENT EVERY TURN, on purpose: this route is
+    stateless. There is no chat record on the server to own, expire or scope to
+    a user, and the browser already has the messages on screen. The cap is a
+    runaway guard — `plan_agent` trims to its own history limit again anyway.
+    """
+
+    messages: list[ScriptChatMessage] = Field(..., min_length=1, max_length=80)
+    # The form's current state, so the assistant answers about THIS storyboard
+    # instead of asking for things the user has already picked.
+    genre: str = ""
+    style: str = ""
+    aspect_ratio: str = ""
+    title: str = ""
+    current_script: str = ""
+
+
+class ScriptChatResponse(BaseModel):
+    """One reply.
+
+    `script` is empty on every turn that wasn't a request for a script — which
+    is most of them. When it is filled the client offers "Use this script",
+    which is the only thing that ever writes the form's script box.
+    """
+
+    reply: str = ""
+    script: str = ""
+    title: str = ""
+    # This turn's token count (ai_usage.Usage.as_dict), so the caller can show
+    # what the conversation is costing. Advisory — see ai_usage.
+    usage: dict = Field(default_factory=dict)
+
+
 class WeakDescription(BaseModel):
     """A shot whose description shares almost no wording with the script."""
 
@@ -711,6 +758,13 @@ class StoryboardSummary(BaseModel):
     cover_url: str | None = None
     shared: bool = False
     share_token: str | None = None
+    # Bytes on disk: every panel, upload and rendered file this project
+    # owns. 0 means nothing generated yet, and the client draws that the
+    # same way as "no folder" — both are "nothing here" to a reader.
+    # Measured by `common.dir_bytes`, which caches on the job's
+    # `updated_at` so the library's five-second poll doesn't re-walk the
+    # whole output folder.
+    size_bytes: int = 0
     created_at: str
     updated_at: str
 
@@ -1812,6 +1866,13 @@ class AnimaticSummary(BaseModel):
     audio_count: int = 0
     has_audio: bool = False
     has_video: bool = False
+    # Bytes on disk: every panel, upload and rendered file this project
+    # owns. 0 means nothing generated yet, and the client draws that the
+    # same way as "no folder" — both are "nothing here" to a reader.
+    # Measured by `common.dir_bytes`, which caches on the job's
+    # `updated_at` so the library's five-second poll doesn't re-walk the
+    # whole output folder.
+    size_bytes: int = 0
     created_at: str
     updated_at: str
 
@@ -2146,6 +2207,13 @@ class FinalVideoSummary(BaseModel):
     cover_url: str | None = None
     has_video: bool = False
     spent_usd: float = 0.0
+    # Bytes on disk: every panel, upload and rendered file this project
+    # owns. 0 means nothing generated yet, and the client draws that the
+    # same way as "no folder" — both are "nothing here" to a reader.
+    # Measured by `common.dir_bytes`, which caches on the job's
+    # `updated_at` so the library's five-second poll doesn't re-walk the
+    # whole output folder.
+    size_bytes: int = 0
     created_at: str
     updated_at: str
 

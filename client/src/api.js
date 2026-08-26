@@ -689,6 +689,39 @@ export function clearScriptDraft() {
   return request("/scripts/draft", { method: "DELETE" });
 }
 
+// --- Script assistant (the "Ask AI" tab in the Script → Storyboard form) ---
+// A normal chat that can also hand back a finished script.
+//
+// ⚠ STATELESS ON THE SERVER: the whole transcript goes up every turn and
+// nothing is stored there. The browser owns the conversation (it lives in
+// localStorage, so a refresh keeps it), which is why `messages` is the request
+// rather than a chat id. See server/script_chat.py.
+//
+// The form's current state rides along so the assistant answers about THIS
+// board — it won't ask which genre you want one second after you clicked it.
+// Returns { reply, script, title, usage }; `script` is "" on every turn that
+// wasn't a request for a script, which is most of them.
+export function scriptChat({
+  messages,
+  genre,
+  style,
+  aspectRatio,
+  title,
+  currentScript,
+} = {}) {
+  return request("/script-chat", {
+    method: "POST",
+    body: {
+      messages: (messages || []).map((m) => ({ role: m.role, text: m.text })),
+      genre: genre || "",
+      style: style || "",
+      aspect_ratio: aspectRatio || "",
+      title: title || "",
+      current_script: currentScript || "",
+    },
+  });
+}
+
 // --- Plan & Script ---
 // A planning session is a conversation with the strategist agent plus the
 // calendar it produced. Text quota only — nothing here generates an image.
@@ -950,9 +983,16 @@ export function publicPanelUrl(token, index) {
 // Fetch one generated panel as an object URL (endpoint requires the bearer token,
 // so we can't point an <img src> straight at it). `path` is the panel's own URL
 // (which carries the ?v=<variant> query when the board has style variants).
-export async function fetchStoryboardPanel(jobId, index, path) {
+// `maxEdge` asks for a PROXY, exactly as `fetchAnimaticMedia` does: the same
+// picture, losslessly resized so its long edge is at most that many pixels.
+// ⚠ THE 72px LIST THUMBNAILS ARE WHY IT IS HERE. A drawn panel is ~3.5 MB, and
+// a library page of ten boards was pulling ~35 MB down the wire to fill ten
+// postage stamps. Omit it — which is what the board page and the lightbox do,
+// because they want the real picture — and nothing changes.
+export async function fetchStoryboardPanel(jobId, index, path, maxEdge = 0) {
   const token = getToken();
   let rel = path || `/storyboards/${jobId}/panel/${index}`;
+  if (maxEdge > 0) rel += `${rel.includes("?") ? "&" : "?"}w=${Math.round(maxEdge)}`;
   // Cache-bust so a regenerated panel (same URL, new pixels) isn't served stale.
   rel += `${rel.includes("?") ? "&" : "?"}_=${Date.now()}`;
   const res = await fetch(`${BASE}${rel}`, {

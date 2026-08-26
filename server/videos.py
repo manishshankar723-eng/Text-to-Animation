@@ -44,7 +44,7 @@ from .features import require_feature
 # them they are over. See server/usage.py.
 from .usage import require_quota
 from . import usage as usage_counters
-from .common import get_owned_job, panel_path, variants_of
+from .common import dir_bytes, get_owned_job, panel_path, variants_of
 from .jobs import get_store
 from .schemas import (
     AnimaticFrameSource,
@@ -209,6 +209,10 @@ def _summarise(job: Job) -> FinalVideoSummary:
         cover_url=f"/final-videos/{job.job_id}/shot/{shots[0].id}/image" if shots else None,
         has_video=bool((job.result or {}).get("video")),
         spent_usd=_spent(shots),
+        # The rendered clips and the assembled cut — by far the
+        # heaviest projects in the app. ⚠ Cached on `updated_at`;
+        # see `dir_bytes` in common.py.
+        size_bytes=dir_bytes(_project_dir(job.job_id), job.updated_at),
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

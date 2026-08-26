@@ -43,14 +43,21 @@ export default function AdminSales({ onOpenUser }) {
 
   useEffect(load, [load]);
 
-  async function act(name, fn) {
+  // ⚠ RETURNS THE FAILURE, doesn't only park it in the page-level banner. A
+  // form that fires this off and closes itself regardless throws away every
+  // field that was typed and prints the reason a screenful above where the
+  // person is looking. A caller that can say it beside its own fields passes
+  // `silent`, gets the message back, and stays open on a failure.
+  async function act(name, fn, { silent = false } = {}) {
     setBusy(name);
-    setError("");
+    if (!silent) setError("");
     try {
       await fn();
       load();
+      return "";
     } catch (e) {
-      setError(e.message);
+      if (!silent) setError(e.message);
+      return e.message || "That didn't work.";
     } finally {
       setBusy("");
     }
@@ -98,7 +105,9 @@ export default function AdminSales({ onOpenUser }) {
         tiers={offers.tier_ids}
         currency={currency}
         busy={busy === "new"}
-        onSave={(body) => act("new", () => api.adminCreateSubscription(body))}
+        onSave={(body) =>
+          act("new", () => api.adminCreateSubscription(body), { silent: true })
+        }
       />
 
       <section className="card admin-card admin-table-card">
@@ -211,7 +220,9 @@ export default function AdminSales({ onOpenUser }) {
         data={offers}
         currency={currency}
         busy={busy}
-        onCreate={(body) => act("offer", () => api.adminCreateOffer(body))}
+        onCreate={(body) =>
+          act("offer", () => api.adminCreateOffer(body), { silent: true })
+        }
         onUpdate={(id, fields) => act(id, () => api.adminUpdateOffer(id, fields))}
       />
     </div>
@@ -226,11 +237,27 @@ function RecordForm({ tiers, currency, busy, onSave }) {
   const [code, setCode] = useState("");
   const [note, setNote] = useState("");
   const [ref, setRef] = useState("");
+  const [formError, setFormError] = useState("");
+
+  // ⚠ THE ADDRESS IS THE ONE FIELD THAT CANNOT BE CORRECTED AFTERWARDS.
+  // Everything else on this form describes the payment; the email decides WHOSE
+  // account gets the plan, and a typo puts somebody who paid on nothing while a
+  // subscription sits against an address that does not exist. This is a shape
+  // check only — the server is what decides the account is real.
+  const typo = email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    ? "That doesn't look like an email address — it needs an @ and a domain after it."
+    : "";
 
   if (!open) {
     return (
       <div className="admin-actions admin-record-open">
-        <button className="btn" onClick={() => setOpen(true)}>
+        <button
+          className="btn"
+          onClick={() => {
+            setFormError("");
+            setOpen(true);
+          }}
+        >
           ＋ Record a payment
         </button>
         <span className="muted tiny">
@@ -244,7 +271,13 @@ function RecordForm({ tiers, currency, busy, onSave }) {
     <section className="card admin-card">
       <div className="admin-section-head">
         <h2 className="admin-h2">Record a payment</h2>
-        <button className="btn ghost small" onClick={() => setOpen(false)}>
+        <button
+          className="btn ghost small"
+          onClick={() => {
+            setFormError("");
+            setOpen(false);
+          }}
+        >
           Cancel
         </button>
       </div>
@@ -263,7 +296,11 @@ function RecordForm({ tiers, currency, busy, onSave }) {
           type="email"
           placeholder="Customer's email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setFormError("");
+          }}
+          aria-invalid={typo ? "true" : undefined}
           aria-label="Customer email"
         />
         <select
@@ -295,6 +332,8 @@ function RecordForm({ tiers, currency, busy, onSave }) {
           aria-label="Discount code"
         />
       </div>
+      {(typo || formError) && <p className="error">{typo || formError}</p>}
+
       <div className="admin-filters">
         <input
           className="admin-search"
@@ -312,9 +351,10 @@ function RecordForm({ tiers, currency, busy, onSave }) {
         />
         <button
           className="btn primary"
-          disabled={busy || !email.trim()}
-          onClick={() => {
-            onSave({
+          disabled={busy || !email.trim() || Boolean(typo)}
+          onClick={async () => {
+            setFormError("");
+            const failed = await onSave({
               email: email.trim(),
               tier,
               period,
@@ -322,6 +362,15 @@ function RecordForm({ tiers, currency, busy, onSave }) {
               note: note.trim(),
               provider_ref: ref.trim(),
             });
+            // ⚠ THE FIELDS ARE CLEARED ONLY ONCE THE RECORD EXISTS. Wiping
+            // them regardless is worse here than anywhere else on this screen:
+            // an invoice number and a payment reference are copied in from
+            // somewhere else, and a refused save that empties them sends
+            // somebody back to their bank statement to find them again.
+            if (failed) {
+              setFormError(failed);
+              return;
+            }
             setEmail("");
             setCode("");
             setNote("");
@@ -340,8 +389,32 @@ function RecordForm({ tiers, currency, busy, onSave }) {
   );
 }
 
+// ⚠ CHECKED HERE AS WELL AS ON THE SERVER, and that is not a duplicate. The
+// server does refuse a percentage over 100 — but it refuses it once the form has
+// been submitted, and the only place somebody typing a number is looking is the
+// field they are typing it into. This says it there, before the trip.
+function offerProblem(form) {
+  const value = Number(form.value);
+  if (!Number.isFinite(value) || value < 0) {
+    return "The discount has to be a number, and not a negative one.";
+  }
+  if (value === 0) {
+    return "A discount of zero takes nothing off — put in a number above zero.";
+  }
+  if (form.kind === "percent") {
+    if (!Number.isInteger(value)) {
+      return "A percentage has to be a whole number.";
+    }
+    if (value > 100) {
+      return "A percentage discount can't be more than 100 — at 100% it is already free.";
+    }
+  }
+  return "";
+}
+
 function Offers({ data, currency, busy, onCreate, onUpdate }) {
   const [open, setOpen] = useState(false);
+  const [formError, setFormError] = useState("");
   const [form, setForm] = useState({
     code: "",
     label: "",
@@ -357,6 +430,14 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
     promoted: true,
   });
 
+  // Editing anything clears the last complaint from the server — it was about
+  // the numbers as they were, not as they are now.
+  function update(patch) {
+    setForm((f) => ({ ...f, ...patch }));
+    setFormError("");
+  }
+
+  const problem = offerProblem(form);
   const sales = data.offers.filter((o) => o.is_sale);
   const coupons = data.offers.filter((o) => !o.is_sale);
 
@@ -382,7 +463,10 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
             a ghost, because cancelling is the retreat, not the action. */}
         <button
           className={`btn small ${open ? "ghost" : ""}`}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            setFormError("");
+            setOpen((o) => !o);
+          }}
         >
           {open ? "Cancel" : "＋ New offer"}
         </button>
@@ -396,7 +480,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               className="admin-badge-input"
               value={form.code}
               placeholder="LAUNCH50"
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              onChange={(e) => update({ code: e.target.value })}
             />
           </label>
           <label className="admin-rollout-row">
@@ -405,7 +489,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               className="admin-search"
               value={form.label}
               placeholder="Launch week"
-              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              onChange={(e) => update({ label: e.target.value })}
             />
           </label>
           <label className="admin-rollout-row">
@@ -414,7 +498,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               <select
                 className="admin-select"
                 value={form.kind}
-                onChange={(e) => setForm({ ...form, kind: e.target.value })}
+                onChange={(e) => update({ kind: e.target.value })}
               >
                 <option value="percent">Percent</option>
                 <option value="amount">Fixed amount</option>
@@ -423,8 +507,14 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
                 className="admin-badge-input"
                 type="number"
                 min={0}
+                /* ⚠ THE CAP MOVES WITH THE KIND. 1000 is a nonsense
+                   percentage and a perfectly ordinary fixed amount, so the
+                   ceiling belongs to "percent" and must come off again the
+                   moment the dropdown says "Fixed amount". */
+                max={form.kind === "percent" ? 100 : undefined}
+                aria-invalid={problem ? "true" : undefined}
                 value={form.value}
-                onChange={(e) => setForm({ ...form, value: Number(e.target.value) })}
+                onChange={(e) => update({ value: Number(e.target.value) })}
               />
               <span className="muted tiny">{form.kind === "percent" ? "%" : currency}</span>
             </span>
@@ -434,7 +524,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
             <select
               className="admin-select"
               value={form.period}
-              onChange={(e) => setForm({ ...form, period: e.target.value })}
+              onChange={(e) => update({ period: e.target.value })}
             >
               <option value="both">Both periods</option>
               <option value="monthly">Monthly only</option>
@@ -449,7 +539,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               className="admin-search"
               value={form.banner}
               placeholder="Launch week — 50% off everything"
-              onChange={(e) => setForm({ ...form, banner: e.target.value })}
+              onChange={(e) => update({ banner: e.target.value })}
             />
           </label>
           <label className="admin-rollout-row wide admin-check-row">
@@ -457,7 +547,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               <input
                 type="checkbox"
                 checked={form.promoted}
-                onChange={(e) => setForm({ ...form, promoted: e.target.checked })}
+                onChange={(e) => update({ promoted: e.target.checked })}
               />
               Show this to customers on the pricing page
             </span>
@@ -467,12 +557,16 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
                 : "A sale changes every price whether or not this is ticked; ticking it also prints an offer card saying what the discount is."}
             </span>
           </label>
+          {(problem || formError) && (
+            <p className="error admin-offer-error">{problem || formError}</p>
+          )}
           <div className="admin-actions">
             <button
               className="btn primary"
-              disabled={busy === "offer"}
-              onClick={() => {
-                onCreate({
+              disabled={busy === "offer" || Boolean(problem)}
+              onClick={async () => {
+                setFormError("");
+                const failed = await onCreate({
                   ...form,
                   // ⚠ MINOR UNITS ON THE WIRE. A fixed-amount discount typed as
                   // "5" means five dollars; a percentage means five percent and
@@ -484,10 +578,14 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
                   code: form.code.trim() || null,
                   ends_at: form.ends_at || null,
                 });
-                setOpen(false);
+                // ⚠ ONLY CLOSES WHEN IT WORKED. Closing regardless loses every
+                // field that was filled in, so the person retypes the whole
+                // offer just to find out what was wrong with it.
+                if (failed) setFormError(failed);
+                else setOpen(false);
               }}
             >
-              Create
+              {busy === "offer" ? "Creating…" : "Create"}
             </button>
           </div>
         </div>

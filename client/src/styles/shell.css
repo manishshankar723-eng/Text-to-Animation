@@ -59,10 +59,32 @@
   padding: 1.1rem 0.85rem 1.1rem;
   background: var(--panel);
   border-right: 1px solid var(--border);
+  /* ⚠ THE RAIL HAS TO OUTRANK THE PAGE, and this one line is why the account
+     menu looked like a different control in the Video Editor.
+     `position: sticky` makes the rail a STACKING CONTEXT of its own, so the
+     z-index 40 and 41 further down this file are only ranks INSIDE the rail:
+     they say the switcher sits above the menu, and nothing at all about either
+     of them against the page. Against the page the whole rail was ranked
+     `auto`, i.e. 0, and it is painted BEFORE `.shell-main` in the grid — so
+     anything positioned on the page carrying a z-index of its own painted over
+     it. On Home nothing over there is positioned and the menu looked right; the
+     editor's panes, pinned section headings and preview all carry z-index 2..60,
+     so the account menu — and worse the "Switch accounts" flyout, which opens
+     rightward INTO the page — came out half-buried there. Same component, same
+     CSS, different neighbours.
+     100 clears every one of the editor's layers (the highest is the fullscreen
+     card menu at 60) and stays far below the modals and the lightbox at
+     9999/10000, which must still cover the rail. */
+  z-index: 100;
 }
 @media (max-width: 820px) {
   .sidebar {
-    position: static;
+    /* ⚠ `relative` AND NOT `static`, which is what this was: with no offsets
+       set the rail lays out identically either way, but `static` throws away the
+       z-index above — and at this width the rail is a full-width block sitting
+       ON TOP of the page, so the menu opening out of it has page content
+       directly underneath and needs the rank more here than anywhere. */
+    position: relative;
     height: auto;
   }
 }

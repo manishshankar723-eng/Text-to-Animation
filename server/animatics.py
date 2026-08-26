@@ -48,6 +48,7 @@ from .usage import require_quota
 from . import usage as usage_counters
 from .common import (
     board_dir,
+    dir_bytes,
     get_owned_job,
     panel_for_index,
     panel_path,
@@ -746,6 +747,11 @@ def _summarise(job: Job, boards: dict | None = None) -> AnimaticSummary:
         audio_count=len(_audio_tracks_of(job)),
         has_audio=bool(_audio_tracks_of(job)),
         has_video=bool((job.result or {}).get("video")),
+        # Uploads plus any exported video. ⚠ Cached on `updated_at`,
+        # so this is a disk walk once per edit and not once per poll
+        # — and this library polls every five seconds while an
+        # export is running. See `dir_bytes` in common.py.
+        size_bytes=dir_bytes(_animatic_dir(job.job_id), job.updated_at),
         created_at=job.created_at,
         updated_at=job.updated_at,
     )

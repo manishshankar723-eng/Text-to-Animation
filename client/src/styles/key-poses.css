@@ -184,10 +184,18 @@
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
+/* ⚠ THE RATIO IS THE BOARD'S, NOT 16:9. It was hard-coded, and with
+   `object-fit: cover` over it a 9:16 board's key poses were shown as a
+   horizontal slice out of the middle of each tall drawing — the same bug the
+   library row thumbnails had ("9;16 mai hai ye iamge full nhi dikh rah ahai"),
+   and in the one place it matters most, because judging the MOTION is the whole
+   point of this strip. `--seq-ratio` is set on `.seq-frames` by
+   PanelSequenceStrip from the board's own aspect; the 16:9 default is what an
+   older caller that doesn't pass one still gets. */
 .seq-frame img,
 .seq-frame-loading {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--seq-ratio, 16 / 9);
   object-fit: cover;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -267,7 +275,7 @@
    image's aspect-ratio, so the two line up exactly. */
 .seq-frame .redraw-veil {
   bottom: auto;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: var(--seq-ratio, 16 / 9);
 }
 .view-fig .redraw-veil {
   bottom: auto;

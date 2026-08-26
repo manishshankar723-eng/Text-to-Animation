@@ -1,11 +1,18 @@
-/* storyboard-library — The `.lib-*` card grid shared by BOTH project libraries, and the token-gated public board view. */
+/* storyboard-library — The `.lib-*` list every project library is drawn with, and the token-gated public board view. */
 
 /* =========================================================================
    STORYBOARD LIBRARY ("Your Storyboards" — step 1 of Script → Storyboard)
    ========================================================================= */
-/* Shared by BOTH project libraries — "Your Storyboards" and "Your Animatics".
-   Every `.lib-*` rule below is used by both pages on purpose, so the two
-   workflows read as one product; change a card here and it changes in both. */
+/* Shared by EVERY project library — storyboards, animatics, final videos and
+   plans. Every `.lib-*` rule below is used by all of them on purpose, so the
+   workflows read as one product; change a row here and it changes in all.
+
+   ⚠ THE CARD RULES ARE GONE, NOT MOVED. The libraries were grids of tall
+   cards until the list view replaced them; `.lib-card`, `.lib-cover`,
+   `.lib-body`, `.lib-meta`, `.lib-foot` and `.lib-actions` had no callers left
+   in `client/src` and were deleted rather than left to look load-bearing.
+   `.lib-grid` and `.lib-new*` survive because they still draw the "New …"
+   tiles above every list. */
 .sb-library {
   max-width: 2200px;
   margin: 0 auto;
@@ -14,11 +21,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 1.2rem;
-  /* STRETCH, not start: with `start` each card took its natural height, so one
-     card with an extra row of chips stood taller than the ones beside it and
-     the row looked broken. Every card in a row is now the same height, and
-     `.lib-foot` is pushed to the bottom so the dates and actions line up too.
-     Shared by every library (storyboards, animatics, plans). */
+  /* STRETCH, not start: the two ways in ("New Project" / "From a Storyboard")
+     must be the same height even when one of them has a longer subtitle under
+     it. This grid holds ONLY those tiles now — the saved projects below it are
+     rows. */
   align-items: stretch;
 }
 @media (max-width: 640px) {
@@ -77,43 +83,6 @@
   font-size: 0.95rem;
 }
 
-/* ---- A saved storyboard card ---- */
-.lib-card {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.lib-cover {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  background: var(--panel-2);
-  cursor: pointer;
-  overflow: hidden;
-  /* Holds its 16:9 shape in a stretched card — the slack belongs to the body,
-     not to a squashed or letterboxed thumbnail. */
-  flex-shrink: 0;
-}
-.lib-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  transition: transform 0.25s ease;
-}
-.lib-cover:hover img {
-  transform: scale(1.03);
-}
-.lib-cover-empty {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
-  font-size: 2rem;
-  color: var(--muted);
-}
 .lib-badge {
   position: absolute;
   top: 0.6rem;
@@ -129,15 +98,6 @@
   color: #fff;
   background: var(--fail);
 }
-.lib-body {
-  padding: 0.9rem 1rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  /* Takes the slack in a stretched card, so the extra height goes into empty
-     space above the footer rather than stretching the cover image. */
-  flex: 1;
-}
 .lib-title {
   font-weight: 650;
   font-size: 1.02rem;
@@ -152,27 +112,6 @@
 .lib-rename {
   width: 100%;
   font-weight: 650;
-}
-.lib-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-.lib-meta .chip {
-  margin: 0;
-}
-.lib-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  /* Pinned to the bottom of the card, so the date and the ✏️/🗑 buttons sit on
-     one line across the whole row however many chips a card carries. */
-  margin-top: auto;
-}
-.lib-actions {
-  display: flex;
-  gap: 0.15rem;
 }
 .lib-icon {
   border: 1px solid transparent;
@@ -240,13 +179,8 @@
   background: var(--fail);
   color: #fff;
 }
-.lib-empty {
-  margin: 0;
-  padding: 1.6rem 0;
-  text-align: center;
-}
 
-/* ---- Folder-style sections: Recent Storyboards / All Storyboards ---- */
+/* ---- The section heading above each list ("Recent Storyboards") ---- */
 .lib-new-row {
   margin-bottom: 2rem;
 }
@@ -268,7 +202,7 @@
   letter-spacing: -0.01em;
 }
 
-/* ---- Dimmed placeholder ("ghost") cards for an empty / loading section ---- */
+/* ---- Dimmed placeholder ("ghost") pieces for a still-loading section ---- */
 .lib-ghost {
   pointer-events: none;
   opacity: 0.55;
@@ -277,11 +211,6 @@
   display: grid;
   place-items: center;
   cursor: default;
-}
-.lib-ghost-ico {
-  font-size: 1.9rem;
-  opacity: 0.4;
-  filter: grayscale(1);
 }
 .lib-ghost-line,
 .lib-ghost-chip {
@@ -298,19 +227,6 @@
   width: 3.2rem;
   height: 1.15rem;
   border-radius: 999px;
-}
-/* Empty-state card: mirrors the "New Storyboard" tile — icon + text stacked and
-   centered in the middle of a dashed card. */
-.lib-ghost-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.7rem;
-  min-height: 280px;
-  padding: 1.5rem;
-  text-align: center;
-  border-style: dashed;
 }
 .lib-empty-ico {
   font-size: 2.4rem;
@@ -392,3 +308,382 @@
   gap: 0.8rem;
 }
 
+/* =========================================================================
+   LIST VIEW — one long row per project ("Recent …" is now the ONLY section)
+   =========================================================================
+   The libraries used to be a grid of tall cards, drawn TWICE per page: a
+   "Recent X" section holding the newest project and an "All X" section holding
+   the same list again underneath it. The owner asked for the shape a file
+   browser uses (Premiere's Recent panel was the reference): one line per
+   project, a small thumbnail on the left — the reference has no picture at all,
+   this does — the name beside it, and a Filter box for finding one project
+   among many.
+
+   ⚠ THE `.lib-card` RULES ABOVE ARE STILL LIVE. They draw the "New …" tiles
+   (`.lib-new`), which did not change. Only the saved-project galleries became
+   rows.
+
+   ⚠ THE COLUMN WIDTHS ARE ONE CUSTOM PROPERTY, `--lib-cols`, SET ON `.lib-list`
+   AND READ BY BOTH THE HEADER AND EVERY ROW. Two grid templates that have to
+   match by hand is exactly how a column header ends up over the wrong column at
+   the one width nobody tested. Change the widths in ONE place. */
+
+/* ---- The Filter box, in the section heading beside the count ---- */
+.lib-head-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+/* ⚠ `display: flex`, because this is a <label> and the global rule in theme.css
+   makes every label a block with 0.75rem of top margin — which pushed the
+   Filter box a line below the heading it belongs to. */
+.lib-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+.lib-filter-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+/* Underlined rather than boxed, like the reference: the section heading already
+   carries a rule under it, and a filled input box on that line read as a form
+   the user was supposed to fill in before the list would appear. */
+.lib-filter-input {
+  width: 15rem;
+  max-width: 42vw;
+  padding: 0.32rem 0.15rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.85rem;
+}
+.lib-filter-input:focus {
+  outline: none;
+  border-bottom-color: var(--primary);
+  box-shadow: none;
+}
+.lib-filter-clear {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.25rem 0.3rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lib-filter-clear:hover {
+  color: var(--primary);
+  background: var(--panel-2);
+}
+
+/* ---- The list itself ---- */
+.lib-list {
+  --lib-cols: minmax(0, 2.4fr) minmax(0, 1.9fr) 8.5rem 9.5rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+/* With a Size column — storyboards, animatics and final videos, the three that
+   own files on disk. A plan has none, so its list keeps the four-column shape
+   rather than showing a column of em dashes. */
+.lib-list.has-size {
+  --lib-cols: minmax(0, 2.3fr) minmax(0, 1.7fr) 8rem 6rem 9.5rem;
+}
+.lib-list:not(.has-size) .lib-cell-size {
+  display: none;
+}
+.lib-list-head,
+.lib-row-main {
+  display: grid;
+  grid-template-columns: var(--lib-cols);
+  align-items: center;
+  gap: 1rem;
+}
+.lib-list-head {
+  padding: 0.55rem 1rem;
+  background: var(--panel-2);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* One border per boundary: each row draws the line ABOVE itself, which also
+   separates the first row from the header. A `border-bottom` on the header too
+   would double it up. */
+.lib-row {
+  border-top: 1px solid var(--border);
+}
+.lib-row:hover {
+  background: var(--panel-2);
+}
+.lib-row-main {
+  padding: 0.5rem 1rem;
+}
+/* Rule 3 of the responsive rules: every grid/flex child gets min-width: 0, or a
+   long project name refuses to ellipsize and stretches the whole column. */
+.lib-cell {
+  min-width: 0;
+}
+.lib-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.lib-name {
+  flex: 1;
+  min-width: 0;
+}
+.lib-name .lib-title {
+  font-size: 0.95rem;
+}
+/* The rename field takes the global input padding (0.65rem), which on a card
+   was fine and in a row made that one line 20px taller than its neighbours —
+   the list visibly jumped as you clicked Rename. */
+.lib-name .lib-rename {
+  padding: 0.3rem 0.5rem;
+  font-size: 0.95rem;
+}
+/* ⚠ CAPPED AT TWO LINES OF CHIPS, AND THE CHIPS ARE SMALLER THAN A CARD'S.
+   An animatic can carry six of them (length, aspect, frames, texts, audio,
+   video); at card size they wrapped to four lines and that ONE row stood three
+   times taller than the ones around it — which is the same "the row looks
+   broken" report that put `align-items: stretch` on the old grid. Two lines is
+   the ceiling; anything past it is still on the project's own page. */
+.lib-cell-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  max-height: 2.9rem;
+  overflow: hidden;
+}
+.lib-cell-meta .chip {
+  margin: 0;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.72rem;
+}
+.lib-cell-date {
+  white-space: nowrap;
+}
+/* Right-aligned, like the reference and like every file browser: sizes are
+   numbers you compare down a column, and comparing them is what the alignment
+   is for. */
+.lib-cell-size {
+  white-space: nowrap;
+  text-align: right;
+}
+.lib-cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.15rem;
+}
+
+/* ---- The small thumbnail ---- */
+/* The one thing the reference does NOT have and the owner asked for by name:
+   "mere image v dikhe small size mai". 40px tall — the row stays a row (a
+   taller picture turns the list back into cards) and the frame is still
+   recognisable.
+
+   ⚠ TWO BOXES, AND THE REASON IS PORTRAIT PROJECTS. This was one box, fixed at
+   72×40 with `object-fit: cover` on the image, so a 9:16 board was shown as a
+   thin horizontal slice out of the middle of a tall picture — reported as
+   "9;16 mai hai ye iamge full nhi dikh rah ahai". `contain` would have fixed
+   the crop and left grey bars either side of every portrait row, which is the
+   same ugliness by a different route.
+
+   So: `.lib-thumb` is the SLOT. It is a fixed 86×48 whatever shape the project
+   is, which is what keeps every name in the column starting at the same x.
+   `.lib-thumb-pic` is the PICTURE. It is 48px tall and takes the project's OWN
+   ratio from `--lib-thumb-ar` (set inline by `aspectStyle` in LibraryList.jsx,
+   defaulting to 16:9 when a project doesn't say), so a 9:16 board is drawn
+   27×48, whole, with no bars and no crop.
+
+   ⚠ THE TWO NUMBERS ARE NOT INDEPENDENT: THE WIDTH IS WHAT 16:9 NEEDS AT THAT
+   HEIGHT. 48 × 16/9 = 85.3, so the slot is 86. Raise the height on its own and
+   the widest ratio no longer fits its own slot — `max-width` clamps it and
+   `object-fit: cover` crops it, which is the exact bug this markup exists to
+   avoid, reintroduced from the other end. It started at 40px tall, where a
+   portrait board came out 22px wide and read as a smudge rather than a
+   picture. */
+.lib-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 48px;
+  cursor: pointer;
+  /* The library rows draw this as a <div>; Home's dashboard draws it as a
+     <button>, because there it is the only thing on the row that opens the
+     project and it should be reachable by keyboard. The reset costs the div
+     nothing and stops the button arriving with a browser border and padding. */
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+.lib-thumb-pic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  /* Belt and braces for a ratio wider than the slot (nothing ships one today):
+     the picture clamps to the slot and `object-fit: cover` takes it from there,
+     rather than spilling over the name beside it. */
+  max-width: 86px;
+  aspect-ratio: var(--lib-thumb-ar, 16 / 9);
+  border-radius: 6px;
+  background: var(--panel-2);
+  overflow: hidden;
+  font-size: 1.25rem;
+  color: var(--muted);
+}
+.lib-thumb-pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.lib-row:hover .lib-thumb-pic {
+  outline: 1px solid var(--border-gold);
+}
+/* A status flag on an 86px picture has to be tiny or it covers the picture. The
+   readable version of the same news is a chip in the Details column — this is
+   only the glance. */
+.lib-thumb-pic .lib-badge {
+  top: 2px;
+  left: 2px;
+  padding: 0.05rem 0.28rem;
+  border-radius: 4px;
+  font-size: 0.58rem;
+}
+.lib-thumb-pic .spinner {
+  /* The ring is 20px; the box is 48px tall now, so it can afford to be read as
+     a spinner rather than as a dot. */
+  transform: scale(0.75);
+}
+
+/* The full-width strip under a row: the share link, or the delete confirm.
+   Outside the grid on purpose, so a confirmation gets the whole width instead
+   of being squeezed into the actions column. */
+.lib-row-below {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0 1rem 0.75rem;
+}
+.lib-row-below .lib-confirm,
+.lib-row-below .lib-share {
+  margin-left: calc(86px + 0.7rem);
+}
+
+/* ---- Empty and "nothing matches your filter" ---- */
+.lib-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 2.4rem 1rem;
+  text-align: center;
+}
+/* Wider than the card version's 22ch — a row of text across a full-width list
+   shouldn't be a narrow column floating in the middle. */
+.lib-list-empty .lib-empty-text {
+  max-width: 46ch;
+}
+.lib-linkish {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- Loading placeholders, in the row shape ---- */
+.lib-ghost-row {
+  pointer-events: none;
+  opacity: 0.55;
+}
+.lib-ghost-row .lib-thumb {
+  cursor: default;
+}
+.lib-ghost-row .lib-ghost-title {
+  width: 60%;
+  margin: 0;
+}
+.lib-ghost-row .lib-cell-date .lib-ghost-line,
+.lib-ghost-row .lib-cell-size .lib-ghost-line {
+  display: block;
+  height: 0.8rem;
+  width: 70%;
+}
+/* Right-aligned like the real Size cell, so the skeleton doesn't shift when the
+   answer lands. */
+.lib-ghost-row .lib-cell-size .lib-ghost-line {
+  margin-left: auto;
+  width: 55%;
+}
+
+/* ---- Narrow screens: drop columns rather than squash them ---- */
+/* The date is the first to go — it is the column a user scans least — and the
+   chips move onto a second line under the name rather than disappearing, so
+   nothing is actually lost on a phone. */
+@media (max-width: 1100px) {
+  .lib-list {
+    --lib-cols: minmax(0, 2.4fr) minmax(0, 1.6fr) 9.5rem;
+  }
+  .lib-list.has-size {
+    --lib-cols: minmax(0, 2.4fr) minmax(0, 1.5fr) 5.5rem 9.5rem;
+  }
+  .lib-cell-date {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .lib-list,
+  .lib-list.has-size {
+    --lib-cols: minmax(0, 1fr) auto;
+  }
+  .lib-list.has-size .lib-cell-size {
+    display: none;
+  }
+  .lib-row-main {
+    row-gap: 0.4rem;
+  }
+  .lib-list-head .lib-cell-meta {
+    display: none;
+  }
+  .lib-row .lib-cell-meta {
+    grid-column: 1 / -1;
+    /* Lines the chips up under the name. Tied to the slot width
+       below — change one and change the other. */
+    padding-left: calc(64px + 0.7rem);
+  }
+  /* Same rule as the full-width slot: 36 × 16/9 = 64. */
+  .lib-thumb {
+    width: 64px;
+    height: 36px;
+  }
+  .lib-thumb-pic {
+    max-width: 64px;
+  }
+  .lib-row-below .lib-confirm,
+  .lib-row-below .lib-share {
+    margin-left: 0;
+  }
+  .lib-filter-input {
+    width: 10rem;
+  }
+}

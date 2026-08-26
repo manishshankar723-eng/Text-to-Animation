@@ -79,6 +79,13 @@ export default function PanelSequenceStrip({
   boardBusy,
   // The board's live progress, so this strip can show its own shot's counter.
   progress,
+  // ⚠ THE BOARD'S ASPECT ("16:9", "9:16"), AND THE TILES ARE CROPPED WITHOUT
+  // IT. A key pose is drawn at the board's shape; the strip used to draw every
+  // tile 16:9 with `object-fit: cover` over it, so on a portrait board each
+  // drawing was shown as a horizontal slice out of its own middle — in the one
+  // strip whose entire job is letting you judge the motion. Omit it and the
+  // tiles fall back to 16:9, which is what they always were.
+  ratio,
   onError,
   onStarted
 }) {
@@ -498,7 +505,12 @@ export default function PanelSequenceStrip({
           flipbook of drawings.
         </p>
       ) : (
-        <div className="seq-frames">
+        <div
+          className="seq-frames"
+          /* Read by every tile AND by the redraw veil over it, so the two can
+             never disagree about the shape. See key-poses.css. */
+          style={ratio ? { "--seq-ratio": ratio.replace(":", " / ") } : undefined}
+        >
           {Array.from({ length: slots }).map((_, n) => {
             const path = byPose[n];
             const src = path ? urls[path] : null;

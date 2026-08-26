@@ -46,6 +46,7 @@ from . import usage as usage_counters
 from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
+from .script_chat import router as script_chat_router
 from .director import router as director_router
 from .plans import router as plans_router
 from .sounds import router as sounds_router
@@ -54,6 +55,7 @@ from .videos import router as videos_router
 # modules don't have to import each other. Aliased to the names used below.
 from .common import (
     board_dir as _board_dir,
+    dir_bytes as _dir_bytes,
     get_owned_job as _get_owned_job,
     regenerate_board_panel as _regenerate_board_panel,
     sequence_summary as _sequence_summary,
@@ -165,6 +167,11 @@ app.include_router(animatics_router)
 # Autosaved script drafts (/scripts/draft) — what the user is typing, kept safe
 # from a page refresh. Spends no AI quota.
 app.include_router(drafts_router)
+# The assistant inside the script box (/script-chat) — a normal chat that can
+# also hand back a finished script, so a user with no script doesn't have to
+# leave the Script → Storyboard form to get one. Stateless; the browser owns the
+# transcript. Spends TEXT quota only. See server/script_chat.py.
+app.include_router(script_chat_router)
 # Plan & Script (/plans/…) — the conversational content planner that sits BEFORE
 # the storyboard workflow. Spends text quota only, never image quota.
 app.include_router(plans_router)
@@ -933,6 +940,9 @@ def _summarise_board(job: Job) -> StoryboardSummary:
         cover_url=drawn[0][1] if drawn else None,
         shared=bool(token),
         share_token=token,
+        # ⚠ CACHED ON `updated_at`, so this is a disk walk once per
+        # edit and not once per poll. See `dir_bytes` in common.py.
+        size_bytes=_dir_bytes(_board_dir(job.job_id), job.updated_at),
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
@@ -1264,17 +1274,39 @@ def get_storyboard_panel(
     job_id: str,
     index: int,
     v: int = 0,
+    w: int = 0,
     current: CurrentUser = Depends(get_current_user),
 ):
     """Serve one generated storyboard panel PNG (owner-scoped).
 
     `v` selects the style variant (0 = board root; N = the vN/ subfolder).
+
+    `w` asks for a PROXY: a lossless copy whose long edge is at most that many
+    pixels, cached on disk (`proxies.py`), rounded up to the nearest rung.
+    ⚠ THE THUMBNAILS ARE WHY IT EXISTS HERE. A drawn panel is ~3.5 MB, and the
+    libraries and the dashboard now draw them 72px wide: a page of ten boards
+    was pulling 35 MB down the wire to fill ten postage stamps. Omit it — which
+    is what the board page, the lightbox and everything that predates this do —
+    and the source file is served untouched, exactly as before.
+
+    The cache lives INSIDE the board's own folder, so `delete_storyboard`'s
+    existing `rmtree` collects it and there is no separate garbage collector to
+    forget about. It is excluded from the project's reported size for the same
+    reason it is safe to delete: it is derived data. See `dir_bytes`.
     """
+    import proxies
+
     _get_owned_job(job_id, current)  # 404 if missing or not owned
+    board = _board_dir(job_id)
     subdir = "" if not v else f"v{v}"
-    path = os.path.join(config.OUTPUT_DIR, "_storyboards", job_id, subdir, f"panel_{index:02d}.png")
+    path = os.path.join(board, subdir, f"panel_{index:02d}.png")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
+    if w > 0:
+        # Rule 4 in proxies.py: a miss is not an error — `proxy_for` hands back
+        # the source path for every reason it might fail, so there is no "did it
+        # work" branch to write here.
+        path = proxies.proxy_for(path, os.path.join(board, "_proxies"), w)
     return FileResponse(path, media_type="image/png")
 
 

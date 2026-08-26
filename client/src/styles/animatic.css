@@ -512,12 +512,27 @@
 }
 .tl-inner {
   position: relative;
-  /* NO `min-width: 100%`. It used to stretch the tracks to fill the pane
-     whenever the timeline was shorter than it — but the time mapping is
-     `x / pxPerSec`, which does NOT stretch. The lanes were then drawn wider
-     than the time they represent: a click at the visual half-way point landed
-     at 0:44 of 0:59, and the playhead could never reach the right-hand edge.
-     The timeline is now exactly as wide as the time it shows. */
+  /* ⚠ `min-width: 100%` IS BACK, AND THE OLD OBJECTION TO IT DOES NOT HOLD.
+     It was taken out because stretching this box drew "the lanes wider than the
+     time they represent" — a fair complaint about the LOOK of the box, but never
+     about the arithmetic. Nothing on this bar measures time against this
+     element's width: the mapping is `x / pxPerSec`, and `msFromEvent` clamps to
+     the span on top of that, so a press past the end of the film still scrubs to
+     the end of the film and a dropped asset still lands there. `playheadX` is
+     clamped to the TIME width for the same reason — the playhead stopping where
+     the film stops is the correct answer, not the bug it was written up as. The
+     ruler's ticks are generated up to the span as well, so the stretch past the
+     end carries no clock and reads as what it is: empty.
+
+     What NOT having it cost was reported as "layer ka timeline bg box half hai —
+     jitna clip hai utna hi": whenever the film was shorter than the pane at the
+     current zoom, every lane's panel stopped in mid-air and the rest of the pane
+     was a hole straight through to the background — and it "fixed itself" the
+     moment the zoom made the content wider than the pane, which is what gave it
+     away. This is the same reasoning `.tl-lane.tl-bars` in `animatic-lanes.css`
+     is written under: a row is a surface you work on, and a row with no surface
+     under part of it is not a shorter row, it is a missing one. */
+  min-width: 100%;
 }
 /* PINNED to the top of the scroller: it scrolls sideways with the tracks (that
    is what `sticky` leaves alone) but stays put when the lanes scroll down, so

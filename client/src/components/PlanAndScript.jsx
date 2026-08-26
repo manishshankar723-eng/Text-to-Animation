@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+import LibrarySection, { LibraryRow, matchesFilter } from "./LibraryList.jsx";
 import PlanExportPreview from "./PlanExportPreview.jsx";
 import PlanQuestions from "./PlanQuestions.jsx";
 import PlanLanguageModal, { LANGUAGES } from "./PlanLanguageModal.jsx";
@@ -9,12 +10,14 @@ import PlanScriptModal, { usageLine } from "./PlanScriptModal.jsx";
 import { formatRuntime, secondsFromFormat } from "../plan/script_length.js";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
-// Same shape as the storyboard library: "Recent" highlights the newest, "All"
-// lists everything (including that one).
-const RECENT_COUNT = 1;
-// Dimmed placeholder cards while loading, so the page reads as a gallery
-// waiting to be filled rather than bare text.
-const GHOST_COUNT = { recent: 1, all: 3 };
+// Same shape as every other library — and that shape is now ONE section of
+// rows, not two grids of cards. "Recent Plans" used to hold the newest plan
+// and "All Plans" repeated the whole list underneath it. The heading stays;
+// it lists EVERY plan, newest first. See LibraryList.jsx.
+//
+// Dimmed placeholder rows while loading, so the page reads as a list waiting
+// to be filled rather than bare text.
+const GHOST_ROWS = 5;
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -101,6 +104,10 @@ const SCRIPT_LENGTHS = [
 export default function PlanAndScript({ onOpenStoryboard }) {
   const [step, setStep] = useState("library");
   const [sessions, setSessions] = useState([]);
+  // What's typed in the library's Filter box. Purely a VIEW of `sessions` —
+  // nothing is re-fetched — so someone with a year of plans finds one by name
+  // instead of scrolling.
+  const [libQuery, setLibQuery] = useState("");
   const [plan, setPlan] = useState(null); // the open session
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -490,32 +497,34 @@ export default function PlanAndScript({ onOpenStoryboard }) {
   }
 
   // ---- Library ------------------------------------------------------------
-  // Deliberately the SAME furniture as Your Storyboards and the animatic
-  // library: New row, then "Recent", then "All", with the same cards, ghosts
-  // and empty state. A workflow that invents its own gallery makes the app feel
-  // like three apps.
+  // Deliberately the SAME furniture as every other library: the New tile, then
+  // one "Recent …" section of rows with a Filter box in its heading. A workflow
+  // that invents its own gallery makes the app feel like three apps.
   //
-  // renderSection is a render FUNCTION, not a nested component — a component
-  // declared in here would get a new identity every render and remount the
-  // section on each keystroke (the same reason StoryboardLibrary does it).
-  function renderPlanCard(s, section) {
+  // ⚠ ONLY WHAT IS DIFFERENT LIVES HERE — a plan's chips and its two icon
+  // buttons. The row SHAPE belongs to LibraryList.jsx.
+  //
+  // A plan has no picture to show, so its thumbnail is the workflow's own glyph
+  // rather than an empty grey box: the column still reads as "this is the thing
+  // you clicked", which is what the picture does on the other libraries.
+  function renderPlanCard(s) {
     return (
-      <div className="card lib-card" key={`${section}:${s.job_id}`}>
-        <div
-          className="lib-cover"
-          onClick={() => openSession(s.job_id)}
-          title="Open this plan"
-        >
-          <div className="lib-cover-empty">🗓️</div>
-          {s.item_count > 0 && <span className="lib-badge">{s.item_count} uploads</span>}
-        </div>
-
-        <div className="lib-body">
-          <div className="lib-title" onClick={() => openSession(s.job_id)} title={s.title}>
+      <LibraryRow
+        key={s.job_id}
+        onOpen={() => openSession(s.job_id)}
+        openTitle="Open this plan"
+        cover="🗓️"
+        name={
+          <div
+            className="lib-title"
+            onClick={() => openSession(s.job_id)}
+            title={s.title}
+          >
             {s.title}
           </div>
-
-          <div className="lib-meta">
+        }
+        meta={
+          <>
             {s.months > 0 && (
               <span className="chip">
                 {s.months} month{s.months === 1 ? "" : "s"}
@@ -529,79 +538,45 @@ export default function PlanAndScript({ onOpenStoryboard }) {
                 ✍️ {s.script_count} script{s.script_count === 1 ? "" : "s"}
               </span>
             )}
+            {s.item_count > 0 && (
+              <span className="chip">{s.item_count} uploads</span>
+            )}
             {s.channel_title && <span className="chip">📺 {s.channel_title}</span>}
             {s.item_count === 0 && s.script_count === 0 && (
               <span className="chip">no plan yet</span>
             )}
-          </div>
-
-          <div className="lib-foot">
-            <span className="tiny muted">{formatDate(s.created_at)}</span>
-            <div className="lib-actions">
-              <button
-                type="button"
-                className="lib-icon"
-                title="Rename"
-                onClick={() => rename(s)}
-              >
-                <Icon name="pencil" />
-              </button>
-              <button
-                type="button"
-                className="lib-icon"
-                title="Delete this plan"
-                onClick={() => remove(s.job_id)}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+        date={formatDate(s.created_at)}
+        actions={
+          <>
+            <button
+              type="button"
+              className="lib-icon"
+              title="Rename"
+              onClick={() => rename(s)}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              title="Delete this plan"
+              onClick={() => remove(s.job_id)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+      />
     );
   }
 
-  function renderSection(section, title, hint, items) {
-    const ghosts = GHOST_COUNT[section] || 1;
-    return (
-      <section className="lib-section" key={section}>
-        <div className="lib-section-head">
-          <h2 className="lib-section-title">{title}</h2>
-          <span className="tiny muted">{hint}</span>
-        </div>
-        {loading ? (
-          <div className="lib-grid lib-ghosts is-loading">
-            {Array.from({ length: ghosts }, (_, i) => (
-              <div className="card lib-card lib-ghost" key={i} aria-hidden="true">
-                <div className="lib-cover lib-ghost-cover" />
-                <div className="lib-body">
-                  <div className="lib-ghost-line lib-ghost-title" />
-                  <div className="lib-meta">
-                    <span className="lib-ghost-chip" />
-                    <span className="lib-ghost-chip" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : items.length === 0 ? (
-          <div className="lib-grid">
-            <div className="card lib-card lib-ghost-empty">
-              <span className="lib-empty-ico">🗓️</span>
-              <p className="lib-empty-text">
-                No plans yet — hit <strong>New Plan</strong> and tell the agent
-                what you make.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="lib-grid">{items.map((s) => renderPlanCard(s, section))}</div>
-        )}
-      </section>
-    );
-  }
-
-  const recent = sessions.slice(0, RECENT_COUNT);
+  // What the Filter box leaves standing. Matched against the two things a user
+  // types looking for a plan: its name and the channel it was built for.
+  const shownPlans = sessions.filter((s) =>
+    matchesFilter(libQuery, s.title, s.channel_title)
+  );
 
   if (step === "library") {
     return (
@@ -632,13 +607,29 @@ export default function PlanAndScript({ onOpenStoryboard }) {
           </button>
         </div>
 
-        {renderSection("recent", "Recent Plans", recent.length ? "Your latest plan" : "", recent)}
-        {renderSection(
-          "all",
-          "All Plans",
-          sessions.length ? `${sessions.length} in total` : "",
-          sessions
-        )}
+        {/* ONE section. "All Plans" used to repeat this list underneath. */}
+        <LibrarySection
+          title="Recent Plans"
+          hint={sessions.length ? `${sessions.length} in total` : ""}
+          query={libQuery}
+          onQuery={setLibQuery}
+          placeholder="Filter plans"
+          loading={loading}
+          ghosts={GHOST_ROWS}
+          total={sessions.length}
+          shown={shownPlans.length}
+          metaLabel="Details"
+          dateLabel="Created"
+          emptyIcon="🗓️"
+          emptyText={
+            <>
+              No plans yet — hit <strong>New Plan</strong> and tell the agent
+              what you make.
+            </>
+          }
+        >
+          {shownPlans.map(renderPlanCard)}
+        </LibrarySection>
       </div>
     );
   }
@@ -763,6 +754,76 @@ export default function PlanAndScript({ onOpenStoryboard }) {
             . Exact subscriber counts need a YouTube API key.
           </p>
         )}
+      </section>
+
+      {/* Write a script — the "& Script" half.
+          Its own box rather than only a button on the calendar, because plenty
+          of scripts are never on a calendar: a one-off, a client brief, an idea
+          that arrived this morning. The planner's conversation is still used as
+          background, so a script asked for here knows who the audience is. */}
+      <section className="card plan-script-ask">
+        <h2>Write a script</h2>
+        <p className="muted tiny">
+          For anything not on the calendar. Everything said above is used as
+          background — who you make for, and how you sound.
+          {items.length > 0 &&
+            " For a planned upload, use the button on its card instead."}
+        </p>
+        <div className="plan-script-row">
+          <label className="field plan-script-brief">
+            <span className="field-label">What is the video?</span>
+            <input
+              value={scriptBrief}
+              placeholder="e.g. a 3-minute horror short about a lift that stops on floor 7"
+              maxLength={4000}
+              onChange={(e) => setScriptBrief(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && scriptBrief.trim()) {
+                  writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds });
+                }
+              }}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Length</span>
+            <select
+              value={String(scriptSeconds)}
+              onChange={(e) => setScriptSeconds(Number(e.target.value))}
+            >
+              {SCRIPT_LENGTHS.map(([value, label]) => (
+                <option key={value} value={String(value)}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="field plan-actions-field">
+            <span className="field-label" aria-hidden="true">
+              &nbsp;
+            </span>
+            <button
+              className="btn primary"
+              disabled={writingFor !== null || !scriptBrief.trim()}
+              onClick={() =>
+                writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds })
+              }
+              title={
+                !scriptBrief.trim() ? "Describe the video first" : undefined
+              }
+            >
+              {writingFor === "brief" ? (
+                <>
+                  <span className="spinner-inline" /> Writing in{" "}
+                  {languageLabel(language)}…
+                </>
+              ) : (
+                <>
+                  <Icon name="text" /> Write script
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* Conversation */}
@@ -994,76 +1055,6 @@ export default function PlanAndScript({ onOpenStoryboard }) {
         onDownload={confirmDownload}
         downloading={Boolean(exporting)}
       />
-
-      {/* Write a script — the "& Script" half.
-          Its own box rather than only a button on the calendar, because plenty
-          of scripts are never on a calendar: a one-off, a client brief, an idea
-          that arrived this morning. The planner's conversation is still used as
-          background, so a script asked for here knows who the audience is. */}
-      <section className="card plan-script-ask">
-        <h2>Write a script</h2>
-        <p className="muted tiny">
-          For anything not on the calendar. Everything said above is used as
-          background — who you make for, and how you sound.
-          {items.length > 0 &&
-            " For a planned upload, use the button on its card instead."}
-        </p>
-        <div className="plan-script-row">
-          <label className="field plan-script-brief">
-            <span className="field-label">What is the video?</span>
-            <input
-              value={scriptBrief}
-              placeholder="e.g. a 3-minute horror short about a lift that stops on floor 7"
-              maxLength={4000}
-              onChange={(e) => setScriptBrief(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && scriptBrief.trim()) {
-                  writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds });
-                }
-              }}
-            />
-          </label>
-          <label className="field">
-            <span className="field-label">Length</span>
-            <select
-              value={String(scriptSeconds)}
-              onChange={(e) => setScriptSeconds(Number(e.target.value))}
-            >
-              {SCRIPT_LENGTHS.map(([value, label]) => (
-                <option key={value} value={String(value)}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="field plan-actions-field">
-            <span className="field-label" aria-hidden="true">
-              &nbsp;
-            </span>
-            <button
-              className="btn primary"
-              disabled={writingFor !== null || !scriptBrief.trim()}
-              onClick={() =>
-                writeScript({ brief: scriptBrief.trim(), seconds: scriptSeconds })
-              }
-              title={
-                !scriptBrief.trim() ? "Describe the video first" : undefined
-              }
-            >
-              {writingFor === "brief" ? (
-                <>
-                  <span className="spinner-inline" /> Writing in{" "}
-                  {languageLabel(language)}…
-                </>
-              ) : (
-                <>
-                  <Icon name="text" /> Write script
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </section>
 
       {/* Every script written in this session. Newest first, same order the
           server keeps them in. */}

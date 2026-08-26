@@ -13,6 +13,11 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+import LibrarySection, {
+  LibraryRow,
+  matchesFilter,
+  THUMB_EDGE,
+} from "./LibraryList.jsx";
 import { formatTime } from "./Timeline.jsx";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
@@ -36,12 +41,14 @@ export function isUntitled(title) {
   return !t || t === UNTITLED || LEGACY_UNTITLED.includes(t);
 }
 
-// "Recent Animatics" highlights just the single newest one; everything
-// (including that one) is listed under "All Animatics" below.
-const RECENT_COUNT = 1;
-// Dimmed placeholder cards while a section loads, so the page reads as a real
-// gallery waiting to be filled rather than bare text.
-const GHOST_COUNT = { recent: 1, all: 3 };
+// ⚠ ONE SECTION NOW, NOT TWO. "Recent Projects" used to hold the single
+// newest project and "All Projects" repeated the whole list underneath it, so
+// the newest project was drawn on the page twice. The heading stays; it lists
+// EVERY project, newest first, as rows. See LibraryList.jsx.
+//
+// Dimmed placeholder rows while the list loads, so the page reads as a real
+// list waiting to be filled rather than bare text.
+const GHOST_ROWS = 5;
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -61,14 +68,18 @@ export default function AnimaticLibrary({ onOpen }) {
   // job_id → object URL of the cover frame (fetched with the bearer token).
   const [covers, setCovers] = useState({});
   const [picking, setPicking] = useState(false);
-  // Per-card transient UI is keyed by a CARD id ("<section>:<job_id>"), not by
-  // job_id: the same animatic renders in both Recent and All, and with a shared
-  // key both copies would open a rename input and steal focus from each other.
+  // What's typed in the Filter box. Purely a VIEW of `items` — nothing is
+  // re-fetched — so a user with a hundred projects finds one by name instead
+  // of scrolling.
+  const [query, setQuery] = useState("");
+  // Per-row transient UI, keyed by job_id. (It used to be keyed by
+  // "<section>:<job_id>" because the same project was drawn in both Recent and
+  // All and the two copies fought over focus. There is one section now.)
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmId, setConfirmId] = useState(null);
-  // busyId stays keyed by job_id on purpose, so an in-flight action disables
-  // that animatic's buttons in BOTH sections and can't be fired twice.
+  // Which project has an action in flight, so its icon buttons disable
+  // together and can't be fired twice.
   const [busyId, setBusyId] = useState(null);
   const coverUrls = useRef([]);
 
@@ -119,7 +130,7 @@ export default function AnimaticLibrary({ onOpen }) {
     for (const item of items) {
       if (!item.cover_url || covers[item.job_id]) continue;
       api
-        .fetchAnimaticMedia(item.cover_url)
+        .fetchAnimaticMedia(item.cover_url, THUMB_EDGE)
         .then((url) => {
           if (!alive) {
             URL.revokeObjectURL(url);
@@ -220,42 +231,48 @@ export default function AnimaticLibrary({ onOpen }) {
     }
   }
 
-  // One project card. Shared by both sections below, so "Recent" and "All"
-  // can never drift apart.
-  function renderItem(a, section) {
-    const uid = `${section}:${a.job_id}`;
-    const busy = busyId === a.job_id;
+  // One saved project, drawn as a ROW.
+  //
+  // ⚠ ONLY WHAT IS DIFFERENT LIVES HERE — this project's chips and its four
+  // icon buttons. The row SHAPE (small thumbnail, name, the Details / Created /
+  // Actions columns) belongs to LibraryList.jsx, so this list and the
+  // storyboard one line up column for column instead of drifting apart the way
+  // the hand-copied card layouts did.
+  function renderItem(a) {
+    const uid = a.job_id;
+    const busy = busyId === uid;
     // ONLY `running` is an export in progress. `queued` means "a draft that has
     // never been exported" for an animatic — unlike a storyboard, where queued
     // really is work waiting to start. Treating them the same made every
     // un-exported animatic claim "Exporting…" forever.
     const running = a.status === "running";
     return (
-      <div className="card lib-card" key={uid}>
-        <div
-          className="lib-cover"
-          onClick={() => onOpen(a.job_id)}
-          title="Open this project"
-        >
-          {covers[a.job_id] ? (
-            <img src={covers[a.job_id]} alt={a.title} />
+      <LibraryRow
+        key={uid}
+        onOpen={() => onOpen(uid)}
+        openTitle="Open this project"
+        /* So a 9:16 project is drawn as a 9:16 thumbnail instead of
+           a slice out of the middle of one. See LibraryList.jsx. */
+        aspect={a.aspect_ratio}
+        size={a.size_bytes}
+        cover={
+          covers[uid] ? (
+            <img src={covers[uid]} alt={a.title} />
+          ) : running ? (
+            <span className="spinner" />
           ) : (
-            <div className="lib-cover-empty">
-              {running ? <span className="spinner" /> : "🎬"}
-            </div>
-          )}
-          {running && <span className="lib-badge">Exporting…</span>}
-          {a.status === "failed" && <span className="lib-badge failed">Failed</span>}
-          {/* Length on the thumbnail — the one video-specific thing a
-              storyboard card has no equivalent for, and the convention every
-              video tile follows. */}
-          {a.duration_ms > 0 && (
-            <span className="lib-badge time">{formatTime(a.duration_ms)}</span>
-          )}
-        </div>
-
-        <div className="lib-body">
-          {renamingId === uid ? (
+            "🎬"
+          )
+        }
+        badges={
+          a.status === "failed" ? (
+            <span className="lib-badge failed" title="This export failed">
+              !
+            </span>
+          ) : null
+        }
+        name={
+          renamingId === uid ? (
             <input
               className="lib-rename"
               autoFocus
@@ -269,12 +286,21 @@ export default function AnimaticLibrary({ onOpen }) {
               }}
             />
           ) : (
-            <div className="lib-title" onClick={() => onOpen(a.job_id)} title={a.title}>
+            <div className="lib-title" onClick={() => onOpen(uid)} title={a.title}>
               {a.title}
             </div>
-          )}
-
-          <div className="lib-meta">
+          )
+        }
+        /* ⚠ THE LENGTH IS A CHIP NOW, NOT A FLAG ON THE THUMBNAIL. On a 280px
+           cover "0:08" sat in a corner; on a 72px one it covered the frame. The
+           same is true of "Exporting…" and "Failed". */
+        meta={
+          <>
+            {running && <span className="chip">Exporting…</span>}
+            {a.status === "failed" && <span className="chip">Failed</span>}
+            {a.duration_ms > 0 && (
+              <span className="chip">{formatTime(a.duration_ms)}</span>
+            )}
             {a.aspect_ratio && <span className="chip">{a.aspect_ratio}</span>}
             {a.frame_count > 0 && (
               <span className="chip">
@@ -288,56 +314,56 @@ export default function AnimaticLibrary({ onOpen }) {
             )}
             {a.has_audio && <span className="chip">♪ audio</span>}
             {a.has_video && <span className="chip">🎬 video</span>}
-          </div>
-
-          <div className="lib-foot">
-            <span className="tiny muted">{formatDate(a.created_at)}</span>
-            <div className="lib-actions">
-              {a.has_video && (
-                <button
-                  type="button"
-                  className="lib-icon"
-                  disabled={busy}
-                  title="Download the exported MP4"
-                  onClick={() => download(a)}
-                >
-                  <Icon name="download" />
-                </button>
-              )}
+          </>
+        }
+        date={formatDate(a.created_at)}
+        actions={
+          <>
+            {a.has_video && (
               <button
                 type="button"
                 className="lib-icon"
                 disabled={busy}
-                title="Open in the editor"
-                onClick={() => onOpen(a.job_id)}
+                title="Download the exported MP4"
+                onClick={() => download(a)}
               >
-                <Icon name="play" />
+                <Icon name="download" />
               </button>
-              <button
-                type="button"
-                className="lib-icon"
-                disabled={busy}
-                title="Rename this project"
-                onClick={() => {
-                  setRenameValue(a.title);
-                  setRenamingId(uid);
-                }}
-              >
-                <Icon name="pencil" />
-              </button>
-              <button
-                type="button"
-                className="lib-icon danger"
-                disabled={busy}
-                title="Delete this project"
-                onClick={() => setConfirmId(uid)}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          </div>
-
-          {confirmId === uid && (
+            )}
+            <button
+              type="button"
+              className="lib-icon"
+              disabled={busy}
+              title="Open in the editor"
+              onClick={() => onOpen(uid)}
+            >
+              <Icon name="play" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon"
+              disabled={busy}
+              title="Rename this project"
+              onClick={() => {
+                setRenameValue(a.title);
+                setRenamingId(uid);
+              }}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              disabled={busy}
+              title="Delete this project"
+              onClick={() => setConfirmId(uid)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+        below={
+          confirmId === uid ? (
             <div className="lib-confirm">
               <span className="tiny">
                 Delete “{a.title}”? Its uploads and exported video go for good —
@@ -362,59 +388,18 @@ export default function AnimaticLibrary({ onOpen }) {
                 </button>
               </div>
             </div>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
     );
   }
 
-  // A folder-style section: its own heading, then its cards — or the empty note
-  // when there's nothing in it yet.
-  //
-  // Deliberately a render FUNCTION, not a nested component: a component declared
-  // in here gets a new identity every render, so React would remount the section
-  // on each keystroke and the rename field would lose focus.
-  function renderSection(section, title, hint, list) {
-    const ghosts = GHOST_COUNT[section] || 1;
-    return (
-      <section className="lib-section" key={section}>
-        <div className="lib-section-head">
-          <h2 className="lib-section-title">{title}</h2>
-          <span className="tiny muted">{hint}</span>
-        </div>
-        {loading ? (
-          <div className="lib-grid lib-ghosts is-loading">
-            {Array.from({ length: ghosts }, (_, i) => (
-              <div className="card lib-card lib-ghost" key={i} aria-hidden="true">
-                <div className="lib-cover lib-ghost-cover" />
-                <div className="lib-body">
-                  <div className="lib-ghost-line lib-ghost-title" />
-                  <div className="lib-meta">
-                    <span className="lib-ghost-chip" />
-                    <span className="lib-ghost-chip" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : list.length === 0 ? (
-          <div className="lib-grid">
-            <div className="card lib-card lib-ghost-empty">
-              <span className="lib-empty-ico">🎬</span>
-              <p className="lib-empty-text">
-                No projects yet — hit <strong>New Project</strong>, or build one{" "}
-                <strong>From a Storyboard</strong>.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="lib-grid">{list.map((a) => renderItem(a, section))}</div>
-        )}
-      </section>
-    );
-  }
-
-  const recent = items.slice(0, RECENT_COUNT);
+  // What the Filter box leaves standing. A pure VIEW of `items` — nothing is
+  // re-fetched — matched against what a user actually types looking for a
+  // project: its name and its aspect ratio.
+  const shown = items.filter((a) =>
+    matchesFilter(query, a.title, a.aspect_ratio)
+  );
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -465,18 +450,30 @@ export default function AnimaticLibrary({ onOpen }) {
         </button>
       </div>
 
-      {renderSection(
-        "recent",
-        "Recent Projects",
-        recent.length > 0 ? "Your latest project" : "",
-        recent
-      )}
-      {renderSection(
-        "all",
-        "All Projects",
-        items.length > 0 ? `${items.length} in total` : "",
-        items
-      )}
+      {/* ONE section. "All Projects" used to repeat this list underneath. */}
+      <LibrarySection
+        title="Recent Projects"
+        hint={items.length > 0 ? `${items.length} in total` : ""}
+        query={query}
+        onQuery={setQuery}
+        placeholder="Filter projects"
+        loading={loading}
+        ghosts={GHOST_ROWS}
+        total={items.length}
+        shown={shown.length}
+        metaLabel="Details"
+        dateLabel="Created"
+        sizeLabel="Size"
+        emptyIcon="🎬"
+        emptyText={
+          <>
+            No projects yet — hit <strong>New Project</strong>, or build one{" "}
+            <strong>From a Storyboard</strong>.
+          </>
+        }
+      >
+        {shown.map(renderItem)}
+      </LibrarySection>
 
       {picking && (
         <div className="modal-overlay" onClick={() => setPicking(false)}>

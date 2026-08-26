@@ -2,12 +2,17 @@
 // Script → Storyboard workflow (its step 1).
 //
 // A saved project IS a storyboard job: the backend already persists every
-// generated board per user, so this grid is a view over `GET /storyboards`
-// rather than a second store. Each card can be opened, renamed, duplicated,
+// generated board per user, so this list is a view over `GET /storyboards`
+// rather than a second store. Each row can be opened, renamed, duplicated,
 // shared via a public link, or deleted.
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+import LibrarySection, {
+  LibraryRow,
+  matchesFilter,
+  THUMB_EDGE
+} from "./LibraryList.jsx";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // Chip labels for the ids stored on a board. Unknown ids fall through as-is,
@@ -31,12 +36,14 @@ const GENRE_LABELS = {
   thriller: "Thriller"
 };
 
-// "Recent Storyboards" highlights just the single newest board; every board
-// (including that one) is listed under "All Storyboards" below.
-const RECENT_COUNT = 1;
-// How many dimmed placeholder cards to show in an empty / still-loading section,
-// so the page reads as a real gallery waiting to be filled rather than bare text.
-const GHOST_COUNT = { recent: 1, all: 3 };
+// ⚠ ONE SECTION NOW, NOT TWO. "Recent Storyboards" used to hold the single
+// newest board and "All Storyboards" repeated the entire list underneath — so
+// the newest board was drawn on the page twice. The heading stays; it lists
+// EVERY board, newest first, as rows. See LibraryList.jsx.
+//
+// How many dimmed placeholder rows to draw while the list is still loading, so
+// the page reads as a real list waiting to be filled rather than bare text.
+const GHOST_ROWS = 5;
 
 function titleCase(s) {
   return s.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -95,17 +102,20 @@ export default function StoryboardLibrary({
   const [error, setError] = useState("");
   // jobId → object URL of the cover panel (fetched with the bearer token).
   const [covers, setCovers] = useState({});
-  // Per-card transient UI. Keyed by a CARD id ("<section>:<job_id>"), not by
-  // job_id, because the same board is rendered in both Recent and All: with a
-  // shared key both copies opened a rename input, the second one's autoFocus
-  // stole focus from the first, and the first's onBlur then saved-and-closed
-  // both — so renaming looked like it did nothing at all.
+  // What's typed in the Filter box. Purely a VIEW of `boards` — nothing is
+  // re-fetched — so a user with a hundred boards finds one by name instead of
+  // scrolling.
+  const [query, setQuery] = useState("");
+  // Per-row transient UI, keyed by job_id. (It used to be keyed by
+  // "<section>:<job_id>" because the same board was drawn in both Recent and
+  // All and the two copies fought over focus. There is one section now, so the
+  // job_id IS the row id.)
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmId, setConfirmId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
-  // busyId stays keyed by job_id on purpose, so an in-flight action disables
-  // that board's buttons in BOTH sections and can't be fired twice.
+  // Which board has an action in flight, so its four icon buttons disable
+  // together and can't be fired twice.
   const [busyId, setBusyId] = useState(null);
   const coverUrls = useRef([]);
 
@@ -164,7 +174,7 @@ export default function StoryboardLibrary({
       if (b.cover_index === null || b.cover_index === undefined) continue;
       if (covers[b.job_id]) continue;
       api
-        .fetchStoryboardPanel(b.job_id, b.cover_index, b.cover_url)
+        .fetchStoryboardPanel(b.job_id, b.cover_index, b.cover_url, THUMB_EDGE)
         .then((url) => {
           if (!alive) {
             URL.revokeObjectURL(url);
@@ -269,36 +279,45 @@ export default function StoryboardLibrary({
     }
   }
 
-  // One project card. Shared by both sections below, so "Recent" and "All"
-  // can never drift apart.
-  function renderBoard(b, section) {
-    // Identifies THIS rendered instance of the board (see the state comment).
-    const uid = `${section}:${b.job_id}`;
-    const busy = busyId === b.job_id;
+  // One saved board, drawn as a ROW.
+  //
+  // ⚠ ONLY WHAT IS DIFFERENT LIVES HERE - this board's chips, its four icon
+  // buttons and its confirm strip. The row SHAPE (small thumbnail, name, the
+  // Details / Created / Actions columns) belongs to LibraryList.jsx, so every
+  // workflow's list lines up column for column instead of drifting apart the
+  // way the four hand-copied card layouts did.
+  function renderBoard(b) {
+    const uid = b.job_id;
+    const busy = busyId === uid;
     const running = b.status === "queued" || b.status === "running";
     const genre = genreLabel(b.genre);
     return (
-      <div className="card lib-card" key={uid}>
-        <div
-          className="lib-cover"
-          onClick={() => onOpen(b)}
-          title="Open this storyboard"
-        >
-          {covers[b.job_id] ? (
-            <img src={covers[b.job_id]} alt={b.title} />
+      <LibraryRow
+        key={uid}
+        onOpen={() => onOpen(b)}
+        openTitle="Open this storyboard"
+        /* So a 9:16 board is drawn as a 9:16 thumbnail instead of a
+           slice out of the middle of one. See LibraryList.jsx. */
+        aspect={b.aspect_ratio}
+        size={b.size_bytes}
+        cover={
+          covers[uid] ? (
+            <img src={covers[uid]} alt={b.title} />
+          ) : running ? (
+            <span className="spinner" />
           ) : (
-            <div className="lib-cover-empty">
-              {running ? <span className="spinner" /> : "🎞️"}
-            </div>
-          )}
-          {running && <span className="lib-badge">Generating…</span>}
-          {b.status === "failed" && (
-            <span className="lib-badge failed">Failed</span>
-          )}
-        </div>
-
-        <div className="lib-body">
-          {renamingId === uid ? (
+            "🎞️"
+          )
+        }
+        badges={
+          b.status === "failed" ? (
+            <span className="lib-badge failed" title="This board failed">
+              !
+            </span>
+          ) : null
+        }
+        name={
+          renamingId === uid ? (
             <input
               className="lib-rename"
               autoFocus
@@ -312,174 +331,129 @@ export default function StoryboardLibrary({
               }}
             />
           ) : (
-            <div
-              className="lib-title"
-              onClick={() => onOpen(b)}
-              title={b.title}
-            >
+            <div className="lib-title" onClick={() => onOpen(b)} title={b.title}>
               {b.title}
             </div>
-          )}
-
-          <div className="lib-meta">
+          )
+        }
+        /* ⚠ STATUS IS A CHIP HERE, NOT A FLAG OVER THE PICTURE. On the old
+           card the thumbnail was 280px wide and "Generating…" fitted across a
+           corner of it; the row's thumbnail is 72px, where the same label
+           covered the very frame it was describing. */
+        meta={
+          <>
+            {running && <span className="chip">Generating…</span>}
+            {b.status === "failed" && <span className="chip">Failed</span>}
             {genre && <span className="chip">{genre}</span>}
             {b.aspect_ratio && <span className="chip">{b.aspect_ratio}</span>}
             {b.panel_count > 0 && (
               <span className="chip">{b.panel_count} panels</span>
             )}
-          </div>
-
-          <div className="lib-foot">
-            <span className="tiny muted">{formatDate(b.created_at)}</span>
-            <div className="lib-actions">
-              <button
-                type="button"
-                className={`lib-icon ${b.shared ? "on" : ""}`}
-                disabled={busy}
-                title={
-                  b.shared
-                    ? "Shared — click to stop sharing"
-                    : "Share a public link"
-                }
-                onClick={() => toggleShare(b, uid)}
-              >
-                <Icon name="link" />
-              </button>
-              {onDuplicate && (
-                <button
-                  type="button"
-                  className="lib-icon"
-                  disabled={busy}
-                  title="Duplicate — start a new storyboard from these shots"
-                  onClick={() => duplicate(b)}
-                >
-                  <Icon name="copy" />
-                </button>
-              )}
+          </>
+        }
+        date={formatDate(b.created_at)}
+        actions={
+          <>
+            <button
+              type="button"
+              className={`lib-icon ${b.shared ? "on" : ""}`}
+              disabled={busy}
+              title={
+                b.shared
+                  ? "Shared — click to stop sharing"
+                  : "Share a public link"
+              }
+              onClick={() => toggleShare(b, uid)}
+            >
+              <Icon name="link" />
+            </button>
+            {onDuplicate && (
               <button
                 type="button"
                 className="lib-icon"
                 disabled={busy}
-                title="Rename this storyboard"
-                onClick={() => {
-                  setRenameValue(b.title);
-                  setRenamingId(uid);
-                }}
+                title="Duplicate — start a new storyboard from these shots"
+                onClick={() => duplicate(b)}
               >
-                <Icon name="pencil" />
+                <Icon name="copy" />
               </button>
-              <button
-                type="button"
-                className="lib-icon danger"
-                disabled={busy}
-                title="Delete this storyboard"
-                onClick={() => setConfirmId(uid)}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          </div>
-
-          {b.shared && b.share_token && (
-            <div className="lib-share">
-              <input readOnly value={api.shareUrl(b.share_token)} />
-              <button
-                type="button"
-                className="btn small"
-                onClick={() => copyLink(uid, b.share_token)}
-              >
-                {copiedId === uid ? "Copied" : "Copy"}
-              </button>
-            </div>
-          )}
-
-          {confirmId === uid && (
-            <div className="lib-confirm">
-              <span className="tiny">
-                Delete “{b.title}”? Its panels are removed for good.
-              </span>
-              <div className="lib-confirm-btns">
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={busy}
-                  onClick={() => setConfirmId(null)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn small lib-delete"
-                  disabled={busy}
-                  onClick={() => doDelete(b)}
-                >
-                  {busy ? "Deleting…" : "Delete"}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // A folder-style section: its own heading, then its cards — or the empty
-  // note when there's nothing in it yet.
-  //
-  // Deliberately a render FUNCTION, not a nested component: a component
-  // declared in here gets a new identity every render, so React would remount
-  // the section on each keystroke and the rename field would lose focus.
-  function renderSection(section, title, hint, items) {
-    const empty = items.length === 0;
-    const ghosts = GHOST_COUNT[section] || 1;
-    return (
-      <section className="lib-section" key={section}>
-        <div className="lib-section-head">
-          <h2 className="lib-section-title">{title}</h2>
-          <span className="tiny muted">{hint}</span>
-        </div>
-        {loading ? (
-          // Shimmering skeletons shaped like real cards while the list loads.
-          <div className="lib-grid lib-ghosts is-loading">
-            {Array.from({ length: ghosts }, (_, i) => (
-              <div
-                className="card lib-card lib-ghost"
-                key={i}
-                aria-hidden="true"
-              >
-                <div className="lib-cover lib-ghost-cover" />
-                <div className="lib-body">
-                  <div className="lib-ghost-line lib-ghost-title" />
-                  <div className="lib-meta">
-                    <span className="lib-ghost-chip" />
-                    <span className="lib-ghost-chip" />
+            )}
+            <button
+              type="button"
+              className="lib-icon"
+              disabled={busy}
+              title="Rename this storyboard"
+              onClick={() => {
+                setRenameValue(b.title);
+                setRenamingId(uid);
+              }}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              disabled={busy}
+              title="Delete this storyboard"
+              onClick={() => setConfirmId(uid)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+        below={
+          (b.shared && b.share_token) || confirmId === uid ? (
+            <>
+              {b.shared && b.share_token && (
+                <div className="lib-share">
+                  <input readOnly value={api.shareUrl(b.share_token)} />
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() => copyLink(uid, b.share_token)}
+                  >
+                    {copiedId === uid ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              )}
+              {confirmId === uid && (
+                <div className="lib-confirm">
+                  <span className="tiny">
+                    Delete “{b.title}”? Its panels are removed for good.
+                  </span>
+                  <div className="lib-confirm-btns">
+                    <button
+                      type="button"
+                      className="btn small"
+                      disabled={busy}
+                      onClick={() => setConfirmId(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn small lib-delete"
+                      disabled={busy}
+                      onClick={() => doDelete(b)}
+                    >
+                      {busy ? "Deleting…" : "Delete"}
+                    </button>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : empty ? (
-          // Genuinely empty — one centered placeholder card in the same style as
-          // the "New Storyboard" tile: icon + hint stacked in the middle.
-          <div className="lib-grid">
-            <div className="card lib-card lib-ghost-empty">
-              <span className="lib-empty-ico">🎬</span>
-              <p className="lib-empty-text">
-                No storyboards yet — hit <strong>New Storyboard</strong> and
-                your board appears here.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="lib-grid">
-            {items.map((b) => renderBoard(b, section))}
-          </div>
-        )}
-      </section>
+              )}
+            </>
+          ) : null
+        }
+      />
     );
   }
 
-  const recent = boards.slice(0, RECENT_COUNT);
+  // What the Filter box leaves standing. A pure VIEW of `boards` - nothing is
+  // re-fetched - matched against the three things a user actually types when
+  // hunting for a board: its name, its genre and its aspect ratio.
+  const shown = boards.filter((b) =>
+    matchesFilter(query, b.title, genreLabel(b.genre), b.aspect_ratio)
+  );
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -496,13 +470,13 @@ export default function StoryboardLibrary({
       {slow && (
         <div className="fv-banner warn">
           <strong>Still loading your storyboards.</strong> The backend has
-          accepted the request but hasn't answered — usually a database it needs
-          (MongoDB) being unreachable. Check the uvicorn log; the request gives
-          up on its own after two minutes.
+          accepted the request but hasn't answered — usually a database it
+          needs (MongoDB) being unreachable. Check the uvicorn log; the request
+          gives up on its own after two minutes.
         </div>
       )}
 
-      {/* New storyboard — first, so starting a story is one click. Only where
+      {/* New storyboard - first, so starting a story is one click. Only where
           boards can actually be created; see the props comment. */}
       {onNew && (
         <div className="lib-grid lib-new-row">
@@ -520,18 +494,30 @@ export default function StoryboardLibrary({
         </div>
       )}
 
-      {renderSection(
-        "recent",
-        "Recent Storyboards",
-        recent.length > 0 ? "Your latest board" : "",
-        recent
-      )}
-      {renderSection(
-        "all",
-        "All Storyboards",
-        boards.length > 0 ? `${boards.length} in total` : "",
-        boards
-      )}
+      {/* ONE section. "All Storyboards" used to repeat this list underneath. */}
+      <LibrarySection
+        title="Recent Storyboards"
+        hint={boards.length > 0 ? `${boards.length} in total` : ""}
+        query={query}
+        onQuery={setQuery}
+        placeholder="Filter storyboards"
+        loading={loading}
+        ghosts={GHOST_ROWS}
+        total={boards.length}
+        shown={shown.length}
+        metaLabel="Details"
+        dateLabel="Created"
+        sizeLabel="Size"
+        emptyIcon="🎬"
+        emptyText={
+          <>
+            No storyboards yet — hit <strong>New Storyboard</strong> and your
+            board appears here.
+          </>
+        }
+      >
+        {shown.map(renderBoard)}
+      </LibrarySection>
     </div>
   );
 }

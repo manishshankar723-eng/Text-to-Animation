@@ -1376,6 +1376,15 @@ label.cap-off {
   margin-left: 0;
   margin-bottom: 1rem;
 }
+/* ⚠ ITS OWN ROW, DIRECTLY ABOVE Create. The offer form's trouble used to be
+   printed in the page banner at the very top of the tab — a screenful above the
+   field it was about, on a page you have to scroll to reach the form at all.
+   `flex: 1 1 100%` breaks it onto a full-width line inside the wrapping form so
+   it lands between the fields and the button that was refused. */
+.admin-offer-error {
+  flex: 1 1 100%;
+  margin: 0;
+}
 /* The offer form's one checkbox spans the row and keeps its explanation beside
    it — "show this to customers" is the field on this form somebody is most
    likely to get backwards, so it is the one that gets a sentence. */

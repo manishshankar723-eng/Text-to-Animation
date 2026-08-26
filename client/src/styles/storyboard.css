@@ -1068,3 +1068,147 @@
   }
 }
 
+
+/* =========================================================================
+   "ASK AI" — the third tab of the script box (ScriptChat.jsx)
+   Same shapes as the planner's conversation (home.css `.plan-chat*`), scoped
+   to `sc-` so the two can diverge without one silently restyling the other.
+   ⚠ NOT height-locked to 160px like the paste box and the dropzone beside it:
+   those two are one control each, this is a conversation, and forcing it into
+   the same box put the input row off-screen the moment a reply arrived.
+   ========================================================================= */
+.sc-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sc-chat-log {
+  min-height: 160px;
+  max-height: 380px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.85rem;
+  padding-right: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.sc-starters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.sc-starter {
+  text-align: left;
+  white-space: normal;
+}
+.sc-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 88%;
+}
+.sc-msg.is-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.sc-msg-who {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.sc-msg-text {
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.sc-msg.is-user .sc-msg-text {
+  background: var(--gold-grad);
+  color: var(--gold-ink);
+  border-color: transparent;
+}
+.sc-msg-usage {
+  margin-top: 0.1rem;
+}
+
+/* A script the assistant handed back. Deliberately NOT a chat bubble: it is
+   the thing the form actually wants, so it gets a frame, a monospaced body
+   that keeps the slug lines readable, and the one button that matters. */
+.sc-script-card {
+  margin-top: 0.35rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.sc-script-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.sc-script-title {
+  font-weight: 650;
+  font-size: 0.88rem;
+}
+.sc-script-body {
+  margin: 0;
+  padding: 0.65rem 0.7rem;
+  max-height: 260px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.sc-script-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.sc-chat-error {
+  margin: 0;
+}
+.sc-chat-input {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+.sc-chat-input .prompt-textarea {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+}
+.sc-chat-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* Phone: the bubbles get the full width, and the send button drops under the
+   box rather than squeezing it to a slot. Same rule the rest of the app's
+   two-column rows follow — see the Responsive section in AGENTS.md. */
+@media (max-width: 560px) {
+  .sc-msg {
+    max-width: 100%;
+  }
+  .sc-chat-input {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

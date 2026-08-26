@@ -934,6 +934,9 @@ export default function StoryboardBoard({
                     label={`Scene ${p.scene_number ?? 1} · Shot ${p.shot_number ?? p.index + 1}`}
                     boardBusy={running}
                     progress={progress}
+                    /* The same shape the panels above are drawn at — a 9:16
+                       board's key poses were being cropped to a 16:9 slice. */
+                    ratio={aspect || "16:9"}
                     onError={setPdfError}
                     onStarted={() => setPollNonce((n) => n + 1)}
                   />

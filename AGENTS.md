@@ -275,7 +275,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-26 — **ANIWALA AI STUDIO: THE NAME, THE MARK, AND A
+**Last updated:** 2026-08-26 — **SCRIPT → STORYBOARD'S SCRIPT BOX NOW HAS A THIRD TAB: ASK AI.** A normal chat in the same panel that answers anything and, when asked for a script, hands one back in its OWN field with a **Use this script** button that fills the box. Stateless route (`POST /script-chat`), transcript lives in the browser, and the script comes out in the exact layout `script_breakdown.py` reads. ⚠ The same session TRUNCATED THIS FILE to zero bytes and ~442 lines of un-committed Work Log entries were lost — read the note at the end of that entry before writing to this file again. See the Work Log.
+
+**Previously:** 2026-08-26 — **ANIWALA AI STUDIO: THE NAME, THE MARK, AND A
 HERO THAT SHOWS THE FOUR LIVE WORKFLOWS.** The owner already runs `aniwala.com`,
 a 2D/3D game-art studio, so this app is a second door on an existing brand rather
 than a new one: **Aniwala** (the artists) and **Aniwala AI Studio** (the tool).
@@ -3400,7 +3402,84 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-26 (latest) — ANIWALA AI STUDIO: THE NAME, THE MARK, AND A HERO THAT SHOWS THE FOUR LIVE WORKFLOWS (ask: "mai chahta hun ki yum mujhe ek name suggest karo mera ye live four workflow ke hisaab se … ye four workflow ke hisab se image/icone ek ek mai dikhe" + "Start name with Aniwala AI Studio ye logo hai iasia hi kuch icon bano Ai ke sath related lage")
+### 2026-08-26 (latest) — THE SCRIPT BOX ONLY TOOK SCRIPTS THAT ALREADY EXISTED. IT NOW HAS A THIRD TAB THAT WRITES ONE (ask: "paste script ke box mai mai AI ka v chating chahta hun … user issi box panel mai AI se baat kar ke script banwa sakta hai … ye chat normal tarike se chalna chahiye jaise ki chatGPT, Claude, gemini")
+
+Script → Storyboard's script box offered **Paste script** and **Upload file** —
+two doors that both assume the user arrived holding a script. Anyone who did not
+have one had to leave the workflow, write it somewhere else, and come back. The
+third door is a normal chat, in the same box.
+
+- **New tab: Ask AI** (`client/src/components/ScriptChat.jsx`). Message log,
+  Enter-to-send / Shift+Enter-for-newline, starter buttons, spinner bubble — the
+  same shapes as the planner's conversation (`home.css` `.plan-chat*`), scoped to
+  `sc-` so the two can diverge without one silently restyling the other.
+- ⚠ **IT IS A GENERAL CHAT, NOT A "WRITE SCRIPT" BUTTON.** Ask it anything and it
+  answers — story structure, a title, a fact, an opinion. The specialisation lives
+  in the system prompt (`script_agent.py`), not in a gate in the UI, because a
+  chat that refuses ordinary questions stops being trusted with the ones it *is*
+  for.
+- ⚠ **A RETURNED SCRIPT COMES BACK IN ITS OWN FIELD, NOT IN THE PROSE.** The
+  response is `{reply, script, title}`: the reply is chat and scrolls away, the
+  script is what the form actually wants. It renders as a framed card with **Use
+  this script**, which fills the same `script` state the other two tabs fill and
+  flips to the Paste tab — so the next thing anyone does, edit a line, is where
+  they already are. Select-and-copy out of a chat bubble is exactly the friction
+  this was added to remove.
+- ⚠ **THE SCRIPT'S LAYOUT IS A CONTRACT, NOT A STYLE.** The prompt demands the
+  same plain-text shape `plan_agent.script_to_text` emits — `SCENE n. INT./EXT.
+  PLACE - TIME` alone on a line, one beat per line, `NAME:` / `NAME (V.O.):` for
+  speech, a `CAST` block with appearances — because `script_breakdown.py` reads
+  scene boundaries and dialogue off that layout. Otherwise the same story breaks
+  into a different board depending on which door it came through.
+- **The form's state rides along**: genre, style, aspect ratio, title and the text
+  already in the box (`script_agent.build_context`). That is what stops "which
+  genre would you like?" one second after the user clicked Mythology, what makes
+  "make it shorter" mean *this* script, and what adds a tight-staging note on
+  9:16.
+- **It answers in the user's own language**, Hinglish in Latin script included —
+  verified against the live model: "hi, tum kya kar sakte ho?" came back in
+  Hinglish, and a 45-second Shiva reel came back in the required layout.
+- ⚠ **THE ROUTE IS STATELESS AND THE TRANSCRIPT IS THE BROWSER'S.** `POST
+  /script-chat` stores nothing; the whole conversation is posted each turn and
+  kept in `localStorage` (`aniwala.scriptChat.v1`). Everything else in the app
+  that holds a conversation (Plan & Script) does so because the conversation *is*
+  the product; here the product is the script, and the script already has a
+  durable home in the autosaved draft (`server/drafts.py`). A failed turn **rolls
+  the user's message back out of the log** and puts it back in the box — the
+  planner's rule, for the same reason: otherwise the next turn re-sends a
+  question that was never answered.
+- **Gated and metered like everything else**: `require_feature(
+  'workflow.script-to-storyboard')` — the same key as the workflow it lives
+  inside, so switching that off switches this off — and every turn's tokens go
+  through `usage_counters.record_tokens`.
+- Files: new `script_agent.py`, `server/script_chat.py`,
+  `client/src/components/ScriptChat.jsx`, `tests/script_chat_check.py`; edited
+  `server/schemas.py` (`ScriptChatMessage` / `ScriptChatRequest` /
+  `ScriptChatResponse`), `server/main.py` (router), `client/src/api.js`
+  (`scriptChat`), `client/src/components/ScriptToStoryboard.jsx` (third tab), and
+  `client/src/styles/storyboard.css` (`.sc-*`).
+- Verified: `python tests/script_chat_check.py` — 22 checks, all pass (model
+  stubbed, so no quota); `vite build`; and two live `script_agent.chat` calls for
+  the language and layout above. **Not yet clicked through in the browser.**
+
+**Same session, before that** — the **Write a script** panel in Plan & Script
+moved directly under **Your channel (optional)**, above the conversation
+(`client/src/components/PlanAndScript.jsx`; JSX moved, nothing else changed).
+
+⚠ **ALSO THIS SESSION, AND IT COST REAL WORK: `AGENTS.md` WAS TRUNCATED TO ZERO
+BYTES BY THE AGENT** — a Python patch script opened it `'w'` and then threw on a
+`UnicodeEncodeError` (a lone surrogate in an emoji escape) *after* the truncate
+and *before* the write. The file was restored from the last commit, which is
+22,020 lines; the working copy had been 22,462, so roughly **442 lines of
+un-committed Work Log entries dated 2026-08-26 are gone** (the dashboard
+thumbnails fix, the panel-proxy thumbnails, portrait projects, the one-list
+libraries, the timeline row width, the account-menu z-index, and the 1000%
+discount fix). `git fsck` was checked — no dangling blob or commit holds a newer
+copy — and the owner chose to carry on rather than restore from OneDrive version
+history. **The rule this breaks is already in this file: build the new bytes,
+write a temp file, rename. Never open the target for writing first.**
+
+### 2026-08-26 — ANIWALA AI STUDIO: THE NAME, THE MARK, AND A HERO THAT SHOWS THE FOUR LIVE WORKFLOWS (ask: "mai chahta hun ki yum mujhe ek name suggest karo mera ye live four workflow ke hisaab se … ye four workflow ke hisab se image/icone ek ek mai dikhe" + "Start name with Aniwala AI Studio ye logo hai iasia hi kuch icon bano Ai ke sath related lage")
 
 **The name was the smallest part of this. The real finding is that the page was
 selling a workflow that is switched off.** `text-to-image` (Text to Turnaround
@@ -20323,6 +20402,23 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+**⬜ Newest follow-ups — Script → Storyboard's "Ask AI" tab (2026-08-26):**
+
+- ⬜ **It has never been clicked in a browser.** The route, the gate, the token
+  accounting and `build_context` are pinned by `tests/script_chat_check.py`, the
+  bundle is pinned by `vite build`, and the prompt was exercised against the live
+  model twice — but nobody has opened the tab, sent a message and pressed **Use
+  this script**.
+- ⬜ **The transcript is `localStorage` only** (`aniwala.scriptChat.v1`). It
+  survives a refresh on THIS browser and nothing more: not another device, not a
+  cleared cache, not a private window. If that turns out to matter, the fix is a
+  store on the server, and at that point the stateless route grows a chat id —
+  see the reasoning at the top of `server/script_chat.py` before doing it.
+- ⬜ **One chat, not one per storyboard.** The stored transcript is global to the
+  workflow, so starting a different board carries the last conversation over.
+  That is deliberate for now (there is no board id until a breakdown exists), but
+  it will read as a bug to anyone who works on two scripts in a day.
 
 **Current state:** Full app works end-to-end in the browser (verified live by the
 user against Vertex AI + GCS): Landing → Login → Text-to-Image workflow with

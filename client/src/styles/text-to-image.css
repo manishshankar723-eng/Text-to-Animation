@@ -220,6 +220,18 @@
   justify-content: space-between;
   align-items: center;
 }
+/* The shared Filter box (`.lib-*`, styles/storyboard-library.css) on its own
+   line: this pane is the 380px left column, so it cannot sit beside the heading
+   the way it does on the full-width libraries. */
+.joblist-filter {
+  margin-top: 0.7rem;
+}
+.joblist-filter .lib-filter-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
 .joblist ul {
   list-style: none;
   padding: 0;

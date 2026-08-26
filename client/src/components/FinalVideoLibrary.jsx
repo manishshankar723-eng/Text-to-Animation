@@ -12,14 +12,22 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
+import LibrarySection, {
+  LibraryRow,
+  matchesFilter,
+  THUMB_EDGE
+} from "./LibraryList.jsx";
 import { formatTime } from "./Timeline.jsx";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // The placeholder title a new project carries until it is saved with a real one.
 export const UNTITLED = "Untitled final video";
 
-const RECENT_COUNT = 1;
-const GHOST_COUNT = { recent: 1, all: 3 };
+// ⚠ ONE SECTION NOW, NOT TWO. "Recent Final Videos" used to hold the single
+// newest project and "All Final Videos" repeated the whole list underneath
+// it. The heading stays; it lists EVERY project, newest first, as rows.
+// See LibraryList.jsx.
+const GHOST_ROWS = 5;
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -40,13 +48,18 @@ export default function FinalVideoLibrary({ onOpen }) {
   // Which picker is open: "storyboard" | null. Kept as a name rather than a
   // boolean so another source can be added without reworking the state.
   const [picking, setPicking] = useState(null);
-  // Keyed by CARD id ("<section>:<job_id>"): the same project renders in both
-  // Recent and All, and a shared key would let both copies fight for focus.
+  // What's typed in the Filter box. Purely a VIEW of `items` — nothing is
+  // re-fetched — so a user with a hundred projects finds one by name instead
+  // of scrolling.
+  const [query, setQuery] = useState("");
+  // Per-row transient UI, keyed by job_id. (It used to be keyed by
+  // "<section>:<job_id>" because the same project was drawn in both Recent and
+  // All and the two copies fought over focus. There is one section now.)
   const [renamingId, setRenamingId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmId, setConfirmId] = useState(null);
-  // busyId stays keyed by job_id, so an in-flight action disables that
-  // project's buttons in BOTH sections and can't be fired twice.
+  // Which project has an action in flight, so its icon buttons disable
+  // together and can't be fired twice.
   const [busyId, setBusyId] = useState(null);
   const coverUrls = useRef([]);
 
@@ -96,7 +109,7 @@ export default function FinalVideoLibrary({ onOpen }) {
     for (const item of items) {
       if (!item.cover_url || covers[item.job_id]) continue;
       api
-        .fetchFinalVideoMedia(item.cover_url)
+        .fetchFinalVideoMedia(item.cover_url, THUMB_EDGE)
         .then((url) => {
           if (!alive) {
             URL.revokeObjectURL(url);
@@ -186,37 +199,45 @@ export default function FinalVideoLibrary({ onOpen }) {
     }
   }
 
-  function renderItem(v, section) {
-    const uid = `${section}:${v.job_id}`;
-    const busy = busyId === v.job_id;
+  // One saved project, drawn as a ROW.
+  //
+  // ⚠ ONLY WHAT IS DIFFERENT LIVES HERE — this project's chips (including the
+  // one nothing else in the app has: what it has SPENT) and its four icon
+  // buttons. The row SHAPE belongs to LibraryList.jsx, so every workflow's list
+  // lines up column for column.
+  function renderItem(v) {
+    const uid = v.job_id;
+    const busy = busyId === uid;
     // Only `running` is work in progress. `queued` means "a project that has
-    // never been assembled" here — the same distinction an animatic card makes.
+    // never been assembled" here — the same distinction an animatic row makes.
     const running = v.status === "running";
     return (
-      <div className="card lib-card" key={uid}>
-        <div
-          className="lib-cover"
-          onClick={() => onOpen(v.job_id)}
-          title="Open this project"
-        >
-          {covers[v.job_id] ? (
-            <img src={covers[v.job_id]} alt={v.title} />
+      <LibraryRow
+        key={uid}
+        onOpen={() => onOpen(uid)}
+        openTitle="Open this project"
+        /* So a 9:16 project is drawn as a 9:16 thumbnail instead of
+           a slice out of the middle of one. See LibraryList.jsx. */
+        aspect={v.aspect_ratio}
+        size={v.size_bytes}
+        cover={
+          covers[uid] ? (
+            <img src={covers[uid]} alt={v.title} />
+          ) : running ? (
+            <span className="spinner" />
           ) : (
-            <div className="lib-cover-empty">
-              {running ? <span className="spinner" /> : "🎞️"}
-            </div>
-          )}
-          {running && <span className="lib-badge">Working…</span>}
-          {v.status === "failed" && (
-            <span className="lib-badge failed">Failed</span>
-          )}
-          {v.duration_ms > 0 && (
-            <span className="lib-badge time">{formatTime(v.duration_ms)}</span>
-          )}
-        </div>
-
-        <div className="lib-body">
-          {renamingId === uid ? (
+            "🎞️"
+          )
+        }
+        badges={
+          v.status === "failed" ? (
+            <span className="lib-badge failed" title="This project failed">
+              !
+            </span>
+          ) : null
+        }
+        name={
+          renamingId === uid ? (
             <input
               className="lib-rename"
               autoFocus
@@ -230,16 +251,21 @@ export default function FinalVideoLibrary({ onOpen }) {
               }}
             />
           ) : (
-            <div
-              className="lib-title"
-              onClick={() => onOpen(v.job_id)}
-              title={v.title}
-            >
+            <div className="lib-title" onClick={() => onOpen(uid)} title={v.title}>
               {v.title}
             </div>
-          )}
-
-          <div className="lib-meta">
+          )
+        }
+        /* ⚠ THE LENGTH AND THE STATUS ARE CHIPS NOW, NOT FLAGS ON THE PICTURE:
+           the row's thumbnail is 72px wide, where a label covers the very frame
+           it is describing. */
+        meta={
+          <>
+            {running && <span className="chip">Working…</span>}
+            {v.status === "failed" && <span className="chip">Failed</span>}
+            {v.duration_ms > 0 && (
+              <span className="chip">{formatTime(v.duration_ms)}</span>
+            )}
             {v.aspect_ratio && <span className="chip">{v.aspect_ratio}</span>}
             {v.shot_count > 0 && (
               <span className="chip">
@@ -247,7 +273,7 @@ export default function FinalVideoLibrary({ onOpen }) {
               </span>
             )}
             {v.has_video && <span className="chip">🎞️ cut</span>}
-            {/* The only card in the app that shows money, because these are the
+            {/* The only row in the app that shows money, because these are the
                 only projects that spend any. */}
             {v.spent_usd > 0 && (
               <span
@@ -257,56 +283,56 @@ export default function FinalVideoLibrary({ onOpen }) {
                 ~${v.spent_usd.toFixed(2)}
               </span>
             )}
-          </div>
-
-          <div className="lib-foot">
-            <span className="tiny muted">{formatDate(v.created_at)}</span>
-            <div className="lib-actions">
-              {v.has_video && (
-                <button
-                  type="button"
-                  className="lib-icon"
-                  disabled={busy}
-                  title="Download the final MP4"
-                  onClick={() => download(v)}
-                >
-                  <Icon name="download" />
-                </button>
-              )}
+          </>
+        }
+        date={formatDate(v.created_at)}
+        actions={
+          <>
+            {v.has_video && (
               <button
                 type="button"
                 className="lib-icon"
                 disabled={busy}
-                title="Open this project"
-                onClick={() => onOpen(v.job_id)}
+                title="Download the final MP4"
+                onClick={() => download(v)}
               >
-                <Icon name="play" />
+                <Icon name="download" />
               </button>
-              <button
-                type="button"
-                className="lib-icon"
-                disabled={busy}
-                title="Rename this project"
-                onClick={() => {
-                  setRenameValue(v.title);
-                  setRenamingId(uid);
-                }}
-              >
-                <Icon name="pencil" />
-              </button>
-              <button
-                type="button"
-                className="lib-icon danger"
-                disabled={busy}
-                title="Delete this project"
-                onClick={() => setConfirmId(uid)}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
-          </div>
-
-          {confirmId === uid && (
+            )}
+            <button
+              type="button"
+              className="lib-icon"
+              disabled={busy}
+              title="Open this project"
+              onClick={() => onOpen(uid)}
+            >
+              <Icon name="play" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon"
+              disabled={busy}
+              title="Rename this project"
+              onClick={() => {
+                setRenameValue(v.title);
+                setRenamingId(uid);
+              }}
+            >
+              <Icon name="pencil" />
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              disabled={busy}
+              title="Delete this project"
+              onClick={() => setConfirmId(uid)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+        below={
+          confirmId === uid ? (
             <div className="lib-confirm">
               <span className="tiny">
                 Delete “{v.title}”? Its rendered clips go for good — including
@@ -332,63 +358,18 @@ export default function FinalVideoLibrary({ onOpen }) {
                 </button>
               </div>
             </div>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
     );
   }
 
-  // A render FUNCTION, not a nested component: a component declared in here
-  // gets a new identity each render, so React would remount the section on
-  // every keystroke and the rename field would lose focus.
-  function renderSection(section, title, hint, list) {
-    const ghosts = GHOST_COUNT[section] || 1;
-    return (
-      <section className="lib-section" key={section}>
-        <div className="lib-section-head">
-          <h2 className="lib-section-title">{title}</h2>
-          <span className="tiny muted">{hint}</span>
-        </div>
-        {loading ? (
-          <div className="lib-grid lib-ghosts is-loading">
-            {Array.from({ length: ghosts }, (_, i) => (
-              <div
-                className="card lib-card lib-ghost"
-                key={i}
-                aria-hidden="true"
-              >
-                <div className="lib-cover lib-ghost-cover" />
-                <div className="lib-body">
-                  <div className="lib-ghost-line lib-ghost-title" />
-                  <div className="lib-meta">
-                    <span className="lib-ghost-chip" />
-                    <span className="lib-ghost-chip" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : list.length === 0 ? (
-          <div className="lib-grid">
-            <div className="card lib-card lib-ghost-empty">
-              <span className="lib-empty-ico">🎞️</span>
-              <p className="lib-empty-text">
-                No final videos yet — start one{" "}
-                <strong>From a Storyboard</strong> to get your prompts filled in
-                already.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="lib-grid">
-            {list.map((v) => renderItem(v, section))}
-          </div>
-        )}
-      </section>
-    );
-  }
-
-  const recent = items.slice(0, RECENT_COUNT);
+  // What the Filter box leaves standing. A pure VIEW of `items` — nothing is
+  // re-fetched — matched against what a user actually types looking for a
+  // project: its name and its aspect ratio.
+  const shown = items.filter((v) =>
+    matchesFilter(query, v.title, v.aspect_ratio)
+  );
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -431,18 +412,31 @@ export default function FinalVideoLibrary({ onOpen }) {
         </button>
       </div>
 
-      {renderSection(
-        "recent",
-        "Recent Final Videos",
-        recent.length > 0 ? "Your latest project" : "",
-        recent
-      )}
-      {renderSection(
-        "all",
-        "All Final Videos",
-        items.length > 0 ? `${items.length} in total` : "",
-        items
-      )}
+      {/* ONE section. "All Final Videos" used to repeat this list below. */}
+      <LibrarySection
+        title="Recent Final Videos"
+        hint={items.length > 0 ? `${items.length} in total` : ""}
+        query={query}
+        onQuery={setQuery}
+        placeholder="Filter final videos"
+        loading={loading}
+        ghosts={GHOST_ROWS}
+        total={items.length}
+        shown={shown.length}
+        metaLabel="Details"
+        dateLabel="Created"
+        sizeLabel="Size"
+        emptyIcon="🎞️"
+        emptyText={
+          <>
+            No final videos yet — start one{" "}
+            <strong>From a Storyboard</strong> to get your prompts filled in
+            already.
+          </>
+        }
+      >
+        {shown.map(renderItem)}
+      </LibrarySection>
 
       {picking === "storyboard" && (
         <div className="modal-overlay" onClick={() => setPicking(null)}>

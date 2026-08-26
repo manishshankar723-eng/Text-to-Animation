@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import * as api from "../api.js";
 import * as cache from "../session_cache.js";
 import Avatar from "./Avatar.jsx";
@@ -7,6 +7,11 @@ import Avatar from "./Avatar.jsx";
 // the only way they could learn one existed was to open the Upgrade modal and
 // notice it. See OfferCard.jsx.
 import { OfferStrip } from "./OfferCard.jsx";
+// ⚠ THE SAME THUMBNAIL THE LIBRARIES DRAW, not a second one that resembles
+// it. `aspectStyle` is what stops a 9:16 project being shown as a slice out
+// of its own middle, and `THUMB_EDGE` is what stops a 72px picture costing a
+// 3.5 MB download — both are worth exactly as much here as they are there.
+import { aspectStyle, formatBytes, THUMB_EDGE } from "./LibraryList.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Home — the DASHBOARD: who you are, your plan, and the latest work from EVERY
@@ -54,6 +59,81 @@ function statusClass(status) {
 // How many ghost rows a group shows while it waits. Matches PER_WORKFLOW so the
 // skeleton is the same height as the thing replacing it and nothing jumps.
 const GHOST_ROWS = PER_WORKFLOW;
+
+/**
+ * Fetch each row's cover picture once, as an authed object URL.
+ *
+ * ⚠ THIS IS NOT THE THING THE MODULE HEADER FORBIDS. What that note is about is
+ * the seven LIST requests this screen used to fire on mount, which blanked the
+ * dashboard until they answered. These are pictures for content that is already
+ * on screen: nothing waits for them, a failure leaves the workflow's own icon in
+ * place, and they are asked for at `THUMB_EDGE` rather than full size.
+ *
+ * ⚠ `asked` IS WHAT MAKES IT ONCE. `items` is a fresh array on every render, so
+ * the effect re-runs constantly; the set is what stops a re-render becoming a
+ * re-fetch.
+ *
+ * ⚠ AND THE REVOKE IS TIED TO UNMOUNT, NOT TO THE EFFECT RE-RUNNING. Revoking
+ * on every cleanup would throw away the URL of a fetch that started one render
+ * ago — and because `asked` already holds its key, nothing would ever ask for
+ * that picture again and the row would keep the placeholder for ever.
+ *
+ * ⚠ AND THE UNMOUNT PATH HAS TO UNDO **ALL THREE** PIECES OF STATE, BECAUSE OF
+ * `React.StrictMode` (main.jsx). In development it mounts, tears down, and
+ * mounts again — with the component's state kept. The first version of this
+ * hook only ever set its `live` flag to FALSE on the way out and never back to
+ * true, so on the second, real mount:
+ *
+ *   · `live` was still false, so every picture that arrived was revoked and
+ *     thrown away, and
+ *   · `asked` still held every key, so nothing was ever requested again.
+ *
+ * Result: not one cover ever appeared on the dashboard — reported as "see not
+ * view image". So the setup RE-ARMS `live`, and the cleanup forgets what was
+ * asked for AND clears `urls`: state survives a StrictMode remount, so leaving
+ * the map in place would leave `<img src>` pointing at blobs that were just
+ * revoked, which is a broken picture rather than a missing one.
+ *
+ * The cost in dev is that each picture is fetched twice. That is what
+ * StrictMode is FOR — it is the same double-fetch it forces on every other
+ * effect in the app, and it does not happen in a production build.
+ */
+function useCovers(items) {
+  const [urls, setUrls] = useState({});
+  const made = useRef([]);
+  const asked = useRef(new Set());
+  const live = useRef(true);
+
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+      made.current.forEach((u) => URL.revokeObjectURL(u));
+      made.current = [];
+      asked.current = new Set();
+      setUrls({});
+    };
+  }, []);
+
+  useEffect(() => {
+    for (const it of items) {
+      if (!it.loadCover || asked.current.has(it.key)) continue;
+      asked.current.add(it.key);
+      it.loadCover()
+        .then((url) => {
+          if (!live.current) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          made.current.push(url);
+          setUrls((m) => ({ ...m, [it.key]: url }));
+        })
+        .catch(() => {}); // a missing cover just leaves the workflow's icon
+    }
+  }, [items]);
+
+  return urls;
+}
 
 // `/jobs` answers with a bare array; one older shape wrapped it. Normalised in
 // one place rather than at each use.
@@ -238,6 +318,18 @@ export default function Home({
         title: b.title || "Storyboard",
         status: b.status,
         meta: b.panel_count ? `${b.panel_count} panels` : "",
+        aspect: b.aspect_ratio,
+        size: b.size_bytes,
+        loadCover:
+          b.cover_index === null || b.cover_index === undefined
+            ? null
+            : () =>
+                api.fetchStoryboardPanel(
+                  b.job_id,
+                  b.cover_index,
+                  b.cover_url,
+                  THUMB_EDGE
+                ),
         date: b.created_at
       }))
     },
@@ -254,6 +346,18 @@ export default function Home({
         title: b.title || "Storyboard",
         status: b.status,
         meta: b.panel_count ? `${b.panel_count} panels` : "",
+        aspect: b.aspect_ratio,
+        size: b.size_bytes,
+        loadCover:
+          b.cover_index === null || b.cover_index === undefined
+            ? null
+            : () =>
+                api.fetchStoryboardPanel(
+                  b.job_id,
+                  b.cover_index,
+                  b.cover_url,
+                  THUMB_EDGE
+                ),
         date: b.updated_at || b.created_at
       }))
     },
@@ -271,6 +375,11 @@ export default function Home({
         meta: v.shot_count
           ? `${v.rendered_count}/${v.shot_count} rendered`
           : "",
+        aspect: v.aspect_ratio,
+        size: v.size_bytes,
+        loadCover: v.cover_url
+          ? () => api.fetchFinalVideoMedia(v.cover_url, THUMB_EDGE)
+          : null,
         date: v.updated_at || v.created_at
       }))
     },
@@ -285,6 +394,11 @@ export default function Home({
         status: a.status,
         // Same shape of hint as the others: how much is in it.
         meta: a.frame_count ? `${a.frame_count} frames` : "",
+        aspect: a.aspect_ratio,
+        size: a.size_bytes,
+        loadCover: a.cover_url
+          ? () => api.fetchAnimaticMedia(a.cover_url, THUMB_EDGE)
+          : null,
         date: a.updated_at || a.created_at
       }))
     }
@@ -308,6 +422,11 @@ export default function Home({
   const shownGroups = visibleWorkflows
     ? groups.filter((g) => visibleWorkflows.includes(g.id))
     : groups;
+
+  // Exactly the rows on screen — a hidden workflow's pictures are not worth
+  // fetching, and neither is the third item of a group that shows two.
+  const drawnItems = shownGroups.flatMap((g) => g.items.slice(0, PER_WORKFLOW));
+  const covers = useCovers(drawnItems);
   const hinted = cache.hintTotal();
   const totalItems = hinted === null ? groupTotal : hinted;
 
@@ -422,6 +541,9 @@ export default function Home({
                 <ul className="wf-list wf-ghosts is-loading" aria-hidden="true">
                   {Array.from({ length: GHOST_ROWS }, (_, i) => (
                     <li className="wf-item wf-ghost" key={i}>
+                      <span className="lib-thumb">
+                        <span className="lib-thumb-pic lib-ghost-cover" />
+                      </span>
                       <span className="wf-open">
                         <span className="wf-ghost-line wf-ghost-name" />
                         <span className="wf-ghost-line wf-ghost-meta" />
@@ -438,6 +560,31 @@ export default function Home({
                 <ul className="wf-list">
                   {g.items.slice(0, PER_WORKFLOW).map((it) => (
                     <li key={it.key} className="wf-item">
+                      {/* The library's thumbnail, class for class: the slot is
+                          fixed so the names line up, the picture inside takes
+                          the project's own aspect so a 9:16 one isn't cropped.
+                          A workflow with no picture to show (a plan, a
+                          character run) falls back to its own icon rather than
+                          to an empty grey box. */}
+                      <button
+                        type="button"
+                        className="lib-thumb"
+                        onClick={() =>
+                          it.onOpen ? it.onOpen() : onNavigate?.(g.id)
+                        }
+                        title={`Open ${it.title}`}
+                      >
+                        <span
+                          className="lib-thumb-pic"
+                          style={aspectStyle(it.aspect)}
+                        >
+                          {covers[it.key] ? (
+                            <img src={covers[it.key]} alt="" />
+                          ) : (
+                            <WorkflowIcon id={g.id} fallback={g.icon} />
+                          )}
+                        </span>
+                      </button>
                       <button
                         className="wf-open"
                         onClick={() =>
@@ -449,6 +596,14 @@ export default function Home({
                         <span className="wf-sub">
                           {it.meta && (
                             <span className="muted tiny">{it.meta}</span>
+                          )}
+                          {/* Only where there is one — a workflow with no files
+                              of its own would otherwise print an em dash here
+                              and look like it had lost something. */}
+                          {it.size > 0 && (
+                            <span className="muted tiny">
+                              {formatBytes(it.size)}
+                            </span>
                           )}
                           {it.date && (
                             <span className="muted tiny">
@@ -478,25 +633,18 @@ export default function Home({
         </div>
       </section>
 
-      {/* Account settings live on the Profile page — Home shows status, Profile
-          is where you change things. */}
-      <section className="card home-card account-card">
-        <h2>Account</h2>
-        <p className="muted tiny">
-          Your details, storyboard defaults, 3D API keys and password all live
-          on your profile.
-        </p>
-        <div className="home-card-foot">
-          {onOpenProfile && (
-            <button className="btn small" onClick={onOpenProfile}>
-              Open profile
-            </button>
-          )}
-          <p className="muted tiny">
-            To log out, click your name at the bottom of the sidebar.
-          </p>
-        </div>
-      </section>
+      {/* ⚠ THE "ACCOUNT" CARD THAT USED TO SIT HERE IS GONE ON PURPOSE, AND IT
+          IS NOT LOST — every single thing it offered is already somewhere the
+          user looks first. "Open profile" is the button on the profile card at
+          the top of this very page; the sidebar's account menu opens the same
+          profile and is where Log out actually lives; and the sentence about
+          details / storyboard defaults / 3D keys / password was a description
+          of the Profile page written on a different page. A whole card whose
+          only content is a second copy of a button eight inches above it is a
+          card that teaches people to scroll past the bottom of the dashboard.
+          ("remove Account panel from home page not need to show here already
+          show many place".) `onOpenProfile` is still a prop — the profile
+          card's own button is the one that uses it. */}
     </div>
   );
 }

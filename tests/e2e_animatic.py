@@ -447,12 +447,18 @@ with sync_playwright() as pw:
     page.click("text=← Your Animatics")
     page.wait_for_selector(".lib-new", timeout=15000)
     page.wait_for_timeout(900)
-    badges = page.locator(".lib-badge").all_inner_texts()
+    # ⚠ THE STATUS MOVED FROM THE THUMBNAIL TO THE DETAILS COLUMN when the
+    # libraries became lists of rows: on a 72px thumbnail the word "Exporting…"
+    # covered the very frame it described. Read the CHIPS, not `.lib-badge` —
+    # that is now only the tiny "!" a failed job carries — or this check passes
+    # by finding nothing rather than by finding nothing wrong.
+    chips = page.locator(".lib-cell-meta .chip").all_inner_texts()
     # `queued` means "draft, never exported" for an animatic — the library used
-    # to read it as work-in-progress and every card said "Exporting…" forever.
-    check("no card falsely says 'Exporting…'",
-          not any("Export" in t for t in badges), f"badges: {badges}")
-    check("no spinner stuck on a cover", page.locator(".lib-cover .spinner").count() == 0)
+    # to read it as work-in-progress and every row said "Exporting…" forever.
+    check("no row falsely says 'Exporting…'",
+          not any("Export" in t for t in chips), f"chips: {chips}")
+    check("no spinner stuck on a thumbnail",
+          page.locator(".lib-thumb-pic .spinner").count() == 0)
 
     print("\n=== 13. library at phone width ===")
     # Already on the library — 12b navigated back to it.

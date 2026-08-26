@@ -35,6 +35,75 @@ def board_dir(job_id: str) -> str:
     return os.path.join(config.OUTPUT_DIR, "_storyboards", job_id)
 
 
+# ---------------------------------------------------------------------------
+# How much disk a project is using — the library list's Size column
+# ---------------------------------------------------------------------------
+# ⚠ THIS IS A DIRECTORY WALK AND IT RUNS ONCE PER ROW OF THE LIBRARY LIST. A
+# board with 42 panels and three style variants is ~130 files; a page of 100
+# boards is therefore ~13,000 stat calls, which is fine on a local disk and is
+# NOT fine to repeat every five seconds — which is exactly what the libraries do
+# while any job is running.
+#
+# Hence the cache, and hence its key: `(path, version)` where the caller passes
+# the job's `updated_at`. A project whose record has not changed cannot have
+# grown, so the walk happens once per project per edit rather than once per
+# poll. ⚠ THE VERSION IS A CACHE KEY, NOT AN INPUT TO THE ANSWER — pass a job's
+# own `updated_at` and nothing else, or two projects will share an entry.
+_SIZE_CACHE: dict[tuple[str, str], int] = {}
+# Cleared wholesale rather than evicted one at a time: this is a size readout,
+# not a hot path, and an LRU would be more machinery than the problem deserves.
+_SIZE_CACHE_MAX = 2048
+
+# ⚠ DERIVED CACHES ARE NOT PART OF A PROJECT'S SIZE, and leaving them in would
+# have produced a genuinely confusing number: a proxy is written the first time
+# a thumbnail is LOOKED AT, so simply opening your library would have made your
+# projects grow. Worse, the cache above is keyed on `updated_at`, so the growth
+# would not even appear until the next unrelated edit. These folders can be
+# deleted at any moment without losing anything (that is what makes them a
+# cache), so what they hold is not the user's work and is not reported as it.
+_DERIVED_DIRS = frozenset({"_proxies", "_stills"})
+
+
+def dir_bytes(path: str, version: str = "") -> int:
+    """Total size in bytes of every file under `path`. Missing directory → 0.
+
+    Zero is also what a project that has generated nothing yet returns, and the
+    client draws both the same way ("—"): "no files" and "no folder" are the
+    same news to someone reading a library.
+
+    Errors are swallowed per DIRECTORY, not for the whole walk — one unreadable
+    subfolder should cost that subfolder, not turn a 400 MB project into 0.
+    """
+    key = (path, version)
+    hit = _SIZE_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    total = 0
+    stack = [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if entry.name not in _DERIVED_DIRS:
+                                stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        # A file deleted between the listing and the stat, or a
+                        # broken link. Skip it; the rest of the folder is real.
+                        continue
+        except OSError:
+            continue
+
+    if len(_SIZE_CACHE) >= _SIZE_CACHE_MAX:
+        _SIZE_CACHE.clear()
+    _SIZE_CACHE[key] = total
+    return total
+
+
 def variants_of(result: dict) -> tuple[list[dict], int]:
     """Return (variants, active_index) for a storyboard result.
 

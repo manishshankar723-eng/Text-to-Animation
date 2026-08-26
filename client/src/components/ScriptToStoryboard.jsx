@@ -19,6 +19,9 @@ import ScriptLineBox from "./ScriptLineBox.jsx";
 import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
+// The third way into the script box: talk to an assistant instead of arriving
+// with a script already written. See ScriptChat.jsx.
+import ScriptChat from "./ScriptChat.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // Style / aspect / genre lists live in one module so the Profile page's
 // "usual choices" and this form can never offer different options.
@@ -67,7 +70,11 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [step, setStep] = useState("library");
 
   // Form state
-  const [tab, setTab] = useState("paste"); // "paste" | "upload"
+  // Which way into the script box is showing. "ask" is the assistant — the only
+  // one of the three that can produce a script rather than just receive one; it
+  // writes into the same `script` state the other two fill, so everything
+  // downstream (autosave, the breakdown, the review step) is unchanged.
+  const [tab, setTab] = useState("paste"); // "paste" | "upload" | "ask"
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
@@ -1195,9 +1202,16 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             >
               📁 Upload file
             </button>
+            <button
+              type="button"
+              className={`tab-btn ${tab === "ask" ? "active" : ""}`}
+              onClick={() => setTab("ask")}
+            >
+              💬 Ask AI
+            </button>
           </div>
 
-          {tab === "paste" ? (
+          {tab === "paste" && (
             <>
               <textarea
                 className="prompt-textarea sts-script-area"
@@ -1216,7 +1230,9 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 </div>
               )}
             </>
-          ) : (
+          )}
+
+          {tab === "upload" && (
             <div
               className={`dropzone ${dragOver ? "over" : ""}`}
               onClick={() => fileInputRef.current?.click()}
@@ -1248,6 +1264,27 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 </>
               )}
             </div>
+          )}
+
+          {tab === "ask" && (
+            <ScriptChat
+              script={script}
+              title={title}
+              genre={genre === "custom" ? customGenre : genre}
+              style={style === "custom" ? customStyle : style}
+              aspect={aspect === "custom" ? customAspect : aspect}
+              onUseScript={(text, scriptTitle) => {
+                setScript(text);
+                // Never overwrite a title the user typed themselves — but a
+                // blank one is worth filling, since the board is otherwise
+                // named after the script's opening words.
+                if (scriptTitle && !title.trim()) setTitle(scriptTitle);
+                // Land them ON the script, in the editable box. The assistant
+                // wrote a first draft, not a finished film, and the next thing
+                // anyone does is change a line of it.
+                setTab("paste");
+              }}
+            />
           )}
           <input
             ref={fileInputRef}

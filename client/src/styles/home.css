@@ -161,6 +161,28 @@
   border: 1px solid var(--border);
   border-radius: 9px;
 }
+/* ---- The row's picture: the SAME `.lib-thumb` the libraries draw ---- */
+/* Deliberately their classes and not a second set that resembles them. What
+   comes with them is the thing that matters: the outer slot is fixed so every
+   name in the group starts at the same x, and the inner picture takes the
+   PROJECT'S own aspect — so a 9:16 project is shown whole here too, rather than
+   as a horizontal slice out of its middle.
+   Smaller than the libraries' 86×48 because a dashboard group is a 320px card,
+   not a full-width table — but the two numbers still go together, because the
+   width is what 16:9 needs at that height (40 × 16/9 = 71.1, so 72). Raise the
+   height alone and the widest ratio stops fitting its own slot and gets cropped
+   by `max-width`, which is the bug the markup exists to avoid. */
+.wf-item .lib-thumb {
+  width: 72px;
+  height: 40px;
+}
+.wf-item .lib-thumb-pic {
+  max-width: 72px;
+  font-size: 1.05rem;
+}
+.wf-item:hover .lib-thumb-pic {
+  outline: 1px solid var(--border-gold);
+}
 .wf-open {
   flex: 1;
   min-width: 0;
@@ -188,6 +210,10 @@
 .wf-sub {
   display: flex;
   gap: 0.5rem;
+  /* Three things can sit under a name now — what is in it, how big it is, and
+     when it was last touched — and a dashboard group is a 320px card, so they
+     wrap rather than pushing the row wider than the card holding it. */
+  flex-wrap: wrap;
 }
 .wf-actions {
   display: flex;
@@ -254,8 +280,12 @@
   border-radius: 999px;
   flex-shrink: 0;
 }
+/* `.lib-ghost-cover` is in here because the ghost row's picture is the
+   LIBRARY's thumbnail, class for class — see `.wf-item .lib-thumb` above. Its
+   own shimmer rule keys off `.lib-ghosts`, which this list is not. */
 .wf-ghosts.is-loading .wf-ghost-line,
-.wf-ghosts.is-loading .wf-ghost-chip {
+.wf-ghosts.is-loading .wf-ghost-chip,
+.wf-ghosts.is-loading .lib-ghost-cover {
   background: linear-gradient(
     90deg,
     var(--panel-2) 25%,
@@ -271,7 +301,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .wf-ghosts.is-loading .wf-ghost-line,
-  .wf-ghosts.is-loading .wf-ghost-chip {
+  .wf-ghosts.is-loading .wf-ghost-chip,
+  .wf-ghosts.is-loading .lib-ghost-cover {
     animation: none;
   }
 }
@@ -361,13 +392,6 @@
   font-size: 1.15rem;
 }
 
-.account-card h2 {
-  font-size: 1.15rem;
-}
-.account-btn {
-  width: 100%;
-  margin-top: 0.6rem;
-}
 .api-keys-block {
   margin-top: 1.1rem;
   padding-top: 0.9rem;
