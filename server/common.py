@@ -224,6 +224,11 @@ def regenerate_board_panel(
             job_id=job.job_id,
             panel=panel,
             style=variant_style,
+            # The board's genre, so a redrawn panel is lit like its neighbours.
+            genre=(job.params or {}).get("genre") or "",
+            # ⚠ AND ITS BRAND, or the redrawn panel is the one shot in the film
+            # carrying a magenta square instead of the logo.
+            brand=(job.params or {}).get("brand") or {},
             aspect_ratio=(job.params or {}).get("aspect_ratio", "16:9"),
             output_dir=config.OUTPUT_DIR,
             character_ref_paths=(job.params or {}).get("character_ref_paths") or {},

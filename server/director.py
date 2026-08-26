@@ -318,6 +318,17 @@ def write_plan(
     if not shots:
         raise HTTPException(status_code=400, detail="There is nothing on the timeline to edit yet.")
 
+    # ⚠ THE AUDIENCE ALREADY ANSWERED THIS ONCE. If the 🎬 popup was left on
+    # "no language set", fall back to the language of the market this project's
+    # board was drawn for, rather than to English-by-omission — the captions
+    # would otherwise come back in a different language from the signage in the
+    # very panels they sit over. An explicit pick still wins; this only fills a
+    # blank, and it is NOT written back onto the project, so choosing "none"
+    # later still means none.
+    language = (body.language or "").strip()
+    if not language:
+        language = ((job.params or {}).get("market") or {}).get("language") or ""
+
     _save_language(job, body.language)
 
     try:
@@ -325,7 +336,7 @@ def write_plan(
             board=body.board or {},
             vocabulary=body.capabilities or {},
             include=body.include or {},
-            language=body.language,
+            language=language,
             brief_text=body.brief,
         )
     except DirectorError as e:

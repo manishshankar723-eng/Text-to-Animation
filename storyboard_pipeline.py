@@ -387,6 +387,41 @@ def conform_to_style(image: "Image.Image", style: str) -> "Image.Image":
     return image.convert("L").convert("RGB")
 
 
+def stamp_brand(image: "Image.Image", brand: dict | None, style: str) -> "Image.Image":
+    """Swap the drawn placeholder for the brand's real logo file.
+
+    `brand["logo_path"]` is resolved by the SERVER, not here — the pipeline has
+    no business knowing where `_references/` lives, and it is the same division
+    `character_ref_paths` already uses.
+
+    ⚠ EVERY FAILURE PATH ENDS WITH A PANEL, NEVER AN EXCEPTION. This runs after
+    a picture has been drawn and paid for; losing it to a compositing bug would
+    be the most expensive kind of crash in the pipeline. And a missing logo does
+    NOT mean "leave it as drawn" — the prompt asked for a magenta placeholder on
+    the promise that something would replace it, so an unfulfilled promise is
+    erased rather than shipped. See brand.erase_markers().
+    """
+    import brand as brand_mod
+
+    data = brand or {}
+    path = str(data.get("logo_path") or "")
+    try:
+        if path and os.path.isfile(path):
+            return brand_mod.stamp(image, path, style)
+        # ⚠ ONLY ERASE A PLACEHOLDER THIS BOARD ACTUALLY ASKED FOR. `logo_ref_id`
+        # is what put the marker instruction in the prompt, so it is also the
+        # only thing that licenses repainting magenta out of the picture. On an
+        # unbranded board nothing asked for a marker, and any magenta in frame is
+        # something the shot genuinely contains — a neon sign, a lit screen, a
+        # jacket. Greying that out would be us breaking the panel, not saving it.
+        if data.get("logo_ref_id"):
+            return brand_mod.erase_markers(image, style)
+        return image
+    except Exception:  # noqa: BLE001 — a drawn panel must survive this
+        logger.exception("[storyboard] brand stamping failed — panel kept as drawn.")
+        return image
+
+
 def conform_to_reference(image: "Image.Image", reference: "Image.Image") -> "Image.Image":
     """Make a key pose match its source panel's palette.
 
@@ -758,6 +793,8 @@ def draw_loose_shot(
     description: str,
     *,
     style: str = "custom",
+    genre: str = "",
+    brand: dict | None = None,
     aspect_ratio: str = "16:9",
     output_dir: str = "output",
     characters: list | None = None,
@@ -822,6 +859,8 @@ def draw_loose_shot(
     image = generate_storyboard_panel(
         description=description,
         style=style,
+        genre=genre,
+        brand=brand,
         aspect_ratio=aspect_ratio,
         characters=characters or [],
         location="",
@@ -841,16 +880,27 @@ def draw_loose_shot(
     )
     if image is None:
         return None
-    # Normalised and conformed exactly as a panel is, so a shot generated into
-    # the middle of a board reads as one of its pictures rather than standing
-    # out as a differently-shaped, differently-graded one.
-    return conform_to_style(normalise_panel(image, aspect_ratio), style)
+    # Normalised, conformed and branded exactly as a panel is, so a shot
+    # generated into the middle of a board reads as one of its pictures rather
+    # than standing out as a differently-shaped, differently-graded one — or,
+    # worse, as the one shot carrying a magenta square where its logo should be.
+    # ⚠ WRITTEN AS THREE STEPS, NOT NESTED, and the order is the point: the
+    # colour pass runs BEFORE the stamp, so a greyscale board cannot desaturate
+    # the brand's own logo into a grey smudge. The other two panel paths read
+    # the same way for the same reason — see run_storyboard and
+    # regenerate_panel, and `tests/board_brand_check.py`, which pins it.
+    image = normalise_panel(image, aspect_ratio)
+    image = conform_to_style(image, style)
+    image = stamp_brand(image, brand, style)
+    return image
 
 
 def regenerate_panel(
     job_id: str,
     panel: dict,
     style: str = "custom",
+    genre: str = "",
+    brand: dict | None = None,
     aspect_ratio: str = "16:9",
     output_dir: str = "output",
     character_ref_paths: dict | None = None,
@@ -895,6 +945,8 @@ def regenerate_panel(
         image = generate_storyboard_panel(
             description=description,
             style=style,
+            genre=genre,
+            brand=brand,
             aspect_ratio=aspect_ratio,
             characters=panel.get("characters", []) or [],
             location=panel.get("location", "") or "",
@@ -917,7 +969,13 @@ def regenerate_panel(
         # Normalise BEFORE saving so a redrawn panel matches the rest of the
         # board rather than standing out as a differently-sized picture — in
         # shape and, via conform_to_style, in palette.
-        image = conform_to_style(normalise_panel(image, aspect_ratio), style)
+        image = normalise_panel(image, aspect_ratio)
+        image = conform_to_style(image, style)
+        # ⚠ AND THE LOGO GOES BACK ON. A redraw is the easiest way to lose it:
+        # this panel asked for the placeholder like every other, so skipping the
+        # stamp here would ship a magenta square on the one shot the user cared
+        # enough about to redraw.
+        image = stamp_brand(image, brand, style)
         # Archived as a new version, NOT written over the old one — a redraw you
         # don't like must not destroy the picture you had.
         n = save_panel_version(image, board_dir, variant, i)
@@ -935,6 +993,8 @@ def run_storyboard(
     job_id: str,
     shots: list[dict],
     style: str = "custom",
+    genre: str = "",
+    brand: dict | None = None,
     aspect_ratio: str = "16:9",
     output_dir: str = "output",
     provider: str | None = None,
@@ -962,7 +1022,11 @@ def run_storyboard(
                `dialogue` is carried onto the panel for the board/PDF to show,
                and is deliberately kept OUT of the image prompt: asked to draw
                a line of speech, an image model letters it into the panel.
-        style / aspect_ratio: chosen on the input page.
+        style / genre / aspect_ratio: chosen on the input page. ⚠ `genre` used
+            to stop at the script breakdown and never reach a picture, so
+            Documentary and Commercial drew identical frames; it is art
+            direction now too. See gemini_client.build_genre_context() — it
+            changes lighting and staging only, never the art style.
         output_dir: base output directory.
         provider: image backend ("vertex" | "gemini"); defaults to IMAGE_PROVIDER.
         character_ref_paths: {character_name: image_path} — reference images fed
@@ -1074,6 +1138,8 @@ def run_storyboard(
             image = generate_storyboard_panel(
                 description=description,
                 style=style,
+                genre=genre,
+                brand=brand,
                 aspect_ratio=aspect_ratio,
                 characters=panel["characters"],
                 location=panel["location"],
@@ -1102,6 +1168,15 @@ def run_storyboard(
             # the board this was traced from — and a board that changes medium
             # half way through is the "colours change" report.
             image = conform_to_style(image, style)
+            # ⚠ AND THE REAL LOGO GOES ON HERE, NOT IN THE MODEL. The panel came
+            # back with a flat magenta placeholder where the brand mark belongs;
+            # this swaps it for the user's own PNG. Every panel gets the SAME
+            # file, so the logo in shot 22 is bit-for-bit the logo in shot 5 —
+            # which is the only way to get that, because an image model redraws
+            # a mark from its description every time and never twice the same.
+            # A no-op when there is no logo, no placeholder, or a greyscale
+            # style. See brand.py.
+            image = stamp_brand(image, brand, style)
             # Version 0 of this panel. Every later redraw appends rather than
             # overwriting — see save_panel_version.
             n = save_panel_version(image, board_dir, variant, i)

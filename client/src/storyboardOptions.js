@@ -72,6 +72,96 @@ export const MORE_GENRES = [
 
 export const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 
+// WHO THE FILM IS FOR — the country and the language on screen.
+//
+// ⚠ THIS IS NOT A DISPLAY SETTING, IT DECIDES WHAT IS DRAWN. Picking India puts
+// ₹ on the price tags and Hindi on the shop signs; picking nothing puts NO
+// money and NO readable text on any screen in the film, which is deliberate —
+// see market.py. An Indian creator's app promo came back priced in dollars
+// because there was nowhere to say this.
+//
+// ⚠ KEEP `MARKET_COUNTRIES` IN STEP WITH `COUNTRIES` IN market.py. The server
+// is the authority: it looks the currency and the units up from the code, and
+// a code it does not recognise is passed through as free text rather than
+// rejected — so a list that drifts loses the money, not the request.
+export const MARKET_COUNTRIES = [
+  { id: "", label: "Not set — show no prices" },
+  { id: "IN", label: "🇮🇳 India" },
+  { id: "PK", label: "🇵🇰 Pakistan" },
+  { id: "BD", label: "🇧🇩 Bangladesh" },
+  { id: "LK", label: "🇱🇰 Sri Lanka" },
+  { id: "NP", label: "🇳🇵 Nepal" },
+  { id: "US", label: "🇺🇸 United States" },
+  { id: "CA", label: "🇨🇦 Canada" },
+  { id: "GB", label: "🇬🇧 United Kingdom" },
+  { id: "AU", label: "🇦🇺 Australia" },
+  { id: "NZ", label: "🇳🇿 New Zealand" },
+  { id: "AE", label: "🇦🇪 United Arab Emirates" },
+  { id: "SA", label: "🇸🇦 Saudi Arabia" },
+  { id: "EG", label: "🇪🇬 Egypt" },
+  { id: "SG", label: "🇸🇬 Singapore" },
+  { id: "MY", label: "🇲🇾 Malaysia" },
+  { id: "ID", label: "🇮🇩 Indonesia" },
+  { id: "PH", label: "🇵🇭 Philippines" },
+  { id: "TH", label: "🇹🇭 Thailand" },
+  { id: "VN", label: "🇻🇳 Vietnam" },
+  { id: "JP", label: "🇯🇵 Japan" },
+  { id: "KR", label: "🇰🇷 South Korea" },
+  { id: "CN", label: "🇨🇳 China" },
+  { id: "DE", label: "🇩🇪 Germany" },
+  { id: "FR", label: "🇫🇷 France" },
+  { id: "ES", label: "🇪🇸 Spain" },
+  { id: "IT", label: "🇮🇹 Italy" },
+  { id: "NL", label: "🇳🇱 Netherlands" },
+  { id: "PL", label: "🇵🇱 Poland" },
+  { id: "SE", label: "🇸🇪 Sweden" },
+  { id: "TR", label: "🇹🇷 Türkiye" },
+  { id: "RU", label: "🇷🇺 Russia" },
+  { id: "IL", label: "🇮🇱 Israel" },
+  { id: "BR", label: "🇧🇷 Brazil" },
+  { id: "MX", label: "🇲🇽 Mexico" },
+  { id: "AR", label: "🇦🇷 Argentina" },
+  { id: "ZA", label: "🇿🇦 South Africa" },
+  { id: "NG", label: "🇳🇬 Nigeria" },
+  { id: "KE", label: "🇰🇪 Kenya" },
+];
+
+// The language on-screen text is written in. Leaving it blank is fine — the
+// server falls back to the country's own language, so picking India alone
+// already means Hindi signage. Values are sent as plain names, so an unlisted
+// language typed by hand would work too if a free-text box is ever added.
+//
+// ⚠ HINGLISH IS FIRST-CLASS HERE, not a novelty: it is what Indian creators
+// actually caption reels in. `plan_agent.LANGUAGES` describes it as Hindi and
+// English mixed in LATIN script, and the video half already honours that.
+export const MARKET_LANGUAGES = [
+  { id: "", label: "Country's own language" },
+  { id: "English", label: "English" },
+  { id: "Hindi", label: "Hindi" },
+  { id: "Hinglish", label: "Hinglish" },
+  { id: "Bengali", label: "Bengali" },
+  { id: "Tamil", label: "Tamil" },
+  { id: "Telugu", label: "Telugu" },
+  { id: "Marathi", label: "Marathi" },
+  { id: "Gujarati", label: "Gujarati" },
+  { id: "Kannada", label: "Kannada" },
+  { id: "Malayalam", label: "Malayalam" },
+  { id: "Punjabi", label: "Punjabi" },
+  { id: "Urdu", label: "Urdu" },
+  { id: "Arabic", label: "Arabic" },
+  { id: "Spanish", label: "Spanish" },
+  { id: "Portuguese", label: "Portuguese" },
+  { id: "French", label: "French" },
+  { id: "German", label: "German" },
+  { id: "Italian", label: "Italian" },
+  { id: "Russian", label: "Russian" },
+  { id: "Turkish", label: "Turkish" },
+  { id: "Indonesian", label: "Indonesian" },
+  { id: "Japanese", label: "Japanese" },
+  { id: "Korean", label: "Korean" },
+  { id: "Chinese", label: "Chinese" },
+];
+
 // Roles offered on the profile. Free text is allowed too ("Other"), but a short
 // list covers most of a storyboard team and keeps the data comparable.
 export const ROLES = [

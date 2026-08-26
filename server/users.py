@@ -196,6 +196,12 @@ PROFILE_FIELDS = frozenset(
         "default_style",
         "default_aspect_ratio",
         "default_genre",
+        # ⚠ WHO THIS CREATOR MAKES FILMS FOR. Not a display preference — it is
+        # the top of `market.resolve()`'s fallback chain, so it decides the
+        # money and the on-screen language in every board this account draws
+        # unless that board's own form says otherwise. See market.py.
+        "default_country",
+        "default_language",
         "timezone",
     }
 )

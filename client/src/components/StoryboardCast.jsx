@@ -25,6 +25,15 @@ export default function StoryboardCast({
   // The script's region/period/culture — sent with every reference so the cast
   // is drawn as people of the story's world, not the model's default.
   world,
+  // ⚠ THE BOARD'S ART STYLE, AND IT HAS TO COME DOWN HERE. A cast sheet is not
+  // a neutral identity photo — it becomes a look reference inside every panel
+  // this character appears in, so a sheet drawn in the wrong medium takes those
+  // panels with it. Without this the sheet was ALWAYS a Pixar cartoon, and a
+  // Cinematic board came back with cartoon people in half its shots.
+  style,
+  // The audience. A T-pose on white shows no prices, but the country still
+  // says who these people are and what is written on anything they carry.
+  market,
   onBack,
   onGenerate,
   busy,
@@ -66,7 +75,7 @@ export default function StoryboardCast({
     patch(i, { busy: true, error: "" });
     try {
       const prompt = item.description.trim() || `A character named ${item.name}`;
-      const res = await api.generateReference(prompt, world);
+      const res = await api.generateReference(prompt, world, style, market);
       // Fetch the generated image as an authed blob for preview.
       const token = api.getToken();
       const imgRes = await fetch(api.getReferenceImageUrl(res.reference_id), {

@@ -367,15 +367,21 @@ def render_one_shot(job_id: str, shot_id: str, progress_cb=None, cancel_check=No
         raise VideoGenerationError("This shot has an unusable id.")
     os.makedirs(_clips_dir(job_id), exist_ok=True)
 
+    # ⚠ THE SAME AUDIENCE BLOCK THE ANIMATE BUTTON ADDS. Two render paths, one
+    # film: a long-video shot priced in dollars beside an animate-button shot
+    # priced in rupees would be the bug back again, split down the middle.
+    from .animatics import _localise_veo
+
+    veo_prompt, veo_negative = _localise_veo(shot.prompt, render.negative_prompt, job)
     data = render_shot(
         image,
-        shot.prompt,
+        veo_prompt,
         tier=render.tier,
         aspect_ratio=settings.aspect_ratio,
         resolution=render.resolution,
         duration_seconds=render.duration_seconds,
         generate_audio=render.generate_audio,
-        negative_prompt=render.negative_prompt or None,
+        negative_prompt=veo_negative or None,
         reference_images=references or None,
         last_frame=last_frame,
         label=shot.label or shot_id,

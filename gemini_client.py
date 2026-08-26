@@ -499,6 +499,57 @@ def build_world_context(world: dict | None) -> str:
     return "WORLD OF THIS STORY — " + " ".join(lines) + " " + _WORLD_RULE
 
 
+def build_market_context(world: dict | None) -> str:
+    """Who this film is FOR, and what may be written or priced inside the frame.
+
+    ⚠ SEPARATE FROM `build_world_context`, AND THE DISTINCTION IS LOAD-BEARING.
+    The world is what the STORY is — Ancient India, a stone temple, a dhoti.
+    The market is who the FILM is for — India, Hindi, ₹. Usually they agree, and
+    for a period piece they must not be confused: a rupee note does not belong
+    in a Puranic temple, which is why `market.on_screen_text_rule()` is phrased
+    as "WHERE a price appears at all" rather than "put prices in".
+    ⚠ THEY TRAVEL IN THE SAME DICT for the ordinary reason that `world` was
+    already threaded into every generator and every stored job; the server
+    composes the two with `market.resolve()` before anything is drawn.
+
+    ⚠ NEVER RETURNS "" — an unset market gets the no-money rule, not silence.
+    A caller that skipped this block for an unset market would be handing the
+    shot straight back to the model's American default, which is the bug this
+    exists to close: `$4.50` on an Indian creator's food-delivery app.
+
+    Deliberately NOT used on the character T-pose sheet: that is one figure on
+    white with "no text, no labels" already in its prompt, so a paragraph about
+    price tags is noise. Panels and prop/background references get it — those
+    are where a phone screen, a shop sign or packaging actually appears.
+    """
+    import market as market_mod
+
+    return market_mod.context(world if isinstance(world, dict) else {})
+
+
+def build_brand_context(brand: dict | None, style: str = "") -> str:
+    """The brand block: what this film is selling, and what NOT to draw for it.
+
+    ⚠ NEVER RETURNS "" — an unbranded film gets "invent no logo", which is the
+    half that fixes the reported bug on its own. A model given a brand name and
+    no instruction draws a mark for it, and draws a DIFFERENT mark next shot;
+    one film came back with four unrelated "Lickyeat" logos in it.
+
+    With an uploaded logo this asks for a flat magenta placeholder instead of
+    the mark itself, because a placeholder is the one thing a model can draw
+    identically every time — there is nothing in it to get wrong. `brand.stamp()`
+    swaps it for the real PNG after the panel is drawn, so the logo in shot 22
+    is bit-for-bit the logo in shot 5.
+
+    `style` is here only to suppress the placeholder on greyscale styles, whose
+    panels are desaturated after generation — a grey marker is a marker nothing
+    can find. Those boards get the "invent no logo" wording instead.
+    """
+    import brand as brand_mod
+
+    return brand_mod.prompt_context(brand if isinstance(brand, dict) else {}, style)
+
+
 # ---------------------------------------------------------------------------
 # The written continuity bible
 #
@@ -671,15 +722,110 @@ def build_flow_context(story_context: dict | None) -> str:
     )
 
 
-# System-level wrapper that steers Gemini toward producing a clean T-pose
-# character reference image suitable for the turnaround pipeline.
-_REFERENCE_PROMPT_TEMPLATE = (
-    "Generate a 3D animated Pixar-style character in T-pose (arms extended "
-    "straight out to the sides, palms facing down) on a pure white background. "
-    "Full body, front view, standing upright, clean studio lighting, no shadows "
-    "on the background. The character should be centered in the frame with head "
-    "to toe visible. Character description: {description}"
+# ---------------------------------------------------------------------------
+# The character reference sheet (Stage B, "Set up your cast")
+#
+# ⚠ THIS USED TO SAY "3D animated Pixar-style character", FULL STOP — no style
+# argument, no way to pass one. That is a reported bug, and a loud one: a board
+# set to Cinematic got a Pixar cartoon on the cast page, and because the cast
+# sheet is then fed into every panel that character appears in as a look
+# reference, the CARTOON WON. One reported board came back with shots 1 and 3
+# photoreal (no cast ref matched) and shots 2 and 19–22 as 3D cartoons (cast ref
+# matched) — the same film in two mediums. The reference is not a neutral
+# identity document; it is art direction, and it out-votes the panel's own
+# style line because a picture beats a sentence.
+#
+# So the sheet is drawn in the BOARD'S medium now. What stays fixed is the
+# POSE and the framing — that is what makes it usable as a reference — and what
+# varies is the medium it is drawn in.
+# ---------------------------------------------------------------------------
+_REFERENCE_POSE = (
+    "in T-pose (arms extended straight out to the sides, palms facing down) on "
+    "a plain pure-white background. Full body, front view, standing upright, "
+    "clean even lighting, no shadows on the background. Centered in frame with "
+    "head to toe visible. This is a character reference sheet: ONE figure and "
+    "nothing else — no props, no scenery, no second view, no turnaround strip, "
+    "no colour swatches, no text and no labels of any kind."
 )
+
+# Mediums that need saying in their own words rather than borrowing the panel
+# style line. A panel style reads "photorealistic cinematic film still, shallow
+# depth of field" — correct for a shot, wrong for a T-pose on white, where it
+# buys a blurred background and a moody grade on what should be a flat sheet.
+# Every other style falls through to its panel wording, which is what keeps this
+# table short and keeps a newly added style working without being listed here.
+_REFERENCE_MEDIUM = {
+    "cinematic": (
+        "A photographic character reference of a REAL human being — an actual "
+        "person photographed in a studio: real skin with real texture and pores, "
+        "real hair, real fabric that hangs and creases. Sharp and evenly lit, "
+        "front to back in focus. NOT an illustration, NOT a 3D render, NOT a "
+        "cartoon, NOT stylised in any way"
+    ),
+    "realistic": (
+        "A photographic character reference of a REAL human being — an actual "
+        "person photographed in a studio: real skin texture, real hair, real "
+        "fabric. Sharp and evenly lit. NOT an illustration, NOT a 3D render, "
+        "NOT a cartoon"
+    ),
+    "photo-commercial": (
+        "A clean commercial studio photograph of a REAL person, bright even "
+        "lighting, crisp and sharp, catalogue quality. NOT an illustration, "
+        "NOT a 3D render, NOT a cartoon"
+    ),
+    "animation-3d": (
+        "A polished Pixar-style 3D animated character render, soft global "
+        "illumination, expressive stylised features"
+    ),
+    "3d-animation": (
+        "A polished Pixar-style 3D animated character render, soft global "
+        "illumination, expressive stylised features"
+    ),
+}
+
+# The greyscale styles get a MODEL SHEET, which is what an animation department
+# actually pins to the wall: line first, tone second. Their panel wording is
+# written for a staging thumbnail ("only the background elements the shot needs",
+# "faces suggested with a few marks") and a face suggested with a few marks is
+# useless as the reference every later panel matches a face against.
+_REFERENCE_LINE_MEDIUM = (
+    "A hand-drawn black-and-white character MODEL SHEET in pencil and ink — "
+    "clean confident linework, flat grey tone in two or three values at most, "
+    "no colour anywhere. Unlike a quick staging thumbnail this one is DRAWN "
+    "PROPERLY: the face, hair, hands and clothing are clear and specific enough "
+    "that another artist could draw this same person again from it"
+)
+
+
+def _reference_medium(style: str) -> str:
+    """How the cast sheet is DRAWN, for this board's style."""
+    key = (style or "").strip().lower()
+    special = _REFERENCE_MEDIUM.get(key)
+    if special:
+        return special
+    if key in GREYSCALE_STYLES:
+        return _REFERENCE_LINE_MEDIUM
+    panel_txt = _STORYBOARD_STYLE_PROMPTS.get(key)
+    if not panel_txt:
+        # An unknown non-empty value is the user's own freeform style text
+        # ("Add Your Own Style"); empty falls back to the neutral wording.
+        panel_txt = (style or "").strip() or _STORYBOARD_STYLE_PROMPTS["custom"]
+    return f"A character reference sheet drawn in exactly this medium: {panel_txt}"
+
+
+def build_reference_prompt(description: str, style: str = "") -> str:
+    """The full cast-sheet prompt: medium, then pose, then who it is.
+
+    ⚠ GENRE IS DELIBERATELY NOT IN HERE. Genre is tone — lighting, pacing, how a
+    moment is staged — and none of that survives on a T-pose against white. What
+    a genre would otherwise contribute (period clothing, a costume, a uniform)
+    is already in `description`, which the breakdown wrote. Adding it a second
+    time here only gives the model something to interpret twice.
+    """
+    return (
+        f"{_reference_medium(style)}, {_REFERENCE_POSE} "
+        f"Character description: {description}"
+    )
 
 
 # Asset references (Stage B2) — a clean, reusable image of a prop or a
@@ -811,6 +957,94 @@ def is_greyscale_style(style: str) -> bool:
     return (style or "").strip().lower() in GREYSCALE_STYLES
 
 
+# ---------------------------------------------------------------------------
+# Genre → art direction
+#
+# ⚠ GENRE NEVER REACHED A PICTURE BEFORE THIS. It was collected on the form,
+# stored on the job, and spent entirely on the TEXT breakdown's tone and pacing
+# (script_breakdown.break_down_script). The image side never saw it, so picking
+# "Documentary" and picking "Commercial" produced identically-lit frames — a
+# reported complaint, and a fair one, since the form implies otherwise.
+#
+# ⚠ AND GENRE IS NOT STYLE. Style is what the picture is MADE OF (pencil, film
+# stock, 3D render); genre is how the moment is LIT AND STAGED. They have to be
+# able to combine — "Documentary" in charcoal is a real answer — so every hint
+# below is written in staging and lighting words only, and `_GENRE_RULE` says
+# out loud which one wins if the model tries to read a genre as a medium.
+#
+# Keys are NORMALISED (see `_norm_genre`), so both the client's ids
+# ("music-video", "sci-fi") and the readable labels it actually sends
+# ("Music Video", "Science Fiction") land on the same entry. `effectiveGenre()`
+# in ScriptToStoryboard.jsx sends the label; older saved jobs hold ids.
+# ---------------------------------------------------------------------------
+_GENRE_IMAGE_HINTS = {
+    "animation": "staged like an animated film — bold readable silhouettes, clear expressive acting, generous poses",
+    "commercial": "staged like a polished advert — hero framing on the person or product, bright clean light, aspirational and uncluttered",
+    "documentary": "staged like observational documentary footage — available light, eye-level handheld framing, unposed real moments, nothing glamorised",
+    "educational": "clear explanatory staging — uncluttered frame, the subject unmistakable, calm even light",
+    "mythology": "epic mythological staging — grand scale, reverent framing, dramatic directional light",
+    "action": "kinetic action staging — dynamic angles, strong sense of motion, tension held in the body",
+    "comedy": "bright comic staging — open readable faces, the moment caught mid-beat",
+    "drama": "intimate dramatic staging — close human framing, soft directional light, the weight carried on the face",
+    "fantasy": "fantastical staging — otherworldly scale and light, rich imaginative detail",
+    "horror": "unsettling staging — deep shadow, uneasy negative space, something withheld just out of frame",
+    "music video": "performance-led staging — rhythmic bold framing, saturated stylised light",
+    "mystery": "withholding staging — partial views, shadow concealing as much as it reveals",
+    "romance": "warm intimate staging — soft light, close two-shots, tenderness in the space between people",
+    "sci fi": "science-fiction staging — engineered surfaces, considered technology, cool precise light",
+    "science fiction": "science-fiction staging — engineered surfaces, considered technology, cool precise light",
+    "thriller": "tense staging — tight framing, hard shadow, a frame that feels watched",
+}
+# The genres that mean "no genre bias". The form sends "" for Default, but a
+# saved job or a hand-built request can carry the id through.
+_GENRE_NEUTRAL = frozenset(("", "default", "none", "custom"))
+_GENRE_RULE = (
+    "This is the film's GENRE, not its medium: it decides mood, lighting and "
+    "how the moment is staged. It must NOT change the art style described "
+    "above — the picture is still made of exactly that material."
+)
+
+
+def _norm_genre(genre: str) -> str:
+    """A genre reduced to something an id and a label can agree on."""
+    return " ".join(t for t in _NAME_SPLIT_RE.split(str(genre or "").lower()) if t)
+
+
+def build_genre_context(genre: str) -> str:
+    """One line of genre art direction, or "" when there is no genre bias.
+
+    An unrecognised, non-empty value is the user's own typed genre ("Add Your
+    Own"), and is passed through as-is — the same courtesy a freeform style
+    gets, and better than dropping it silently.
+    """
+    key = _norm_genre(genre)
+    if key in _GENRE_NEUTRAL:
+        return ""
+    hint = _GENRE_IMAGE_HINTS.get(key)
+    if not hint:
+        hint = f"staged to fit the genre: {str(genre).strip()}"
+    return f"GENRE OF THIS FILM — {hint}. {_GENRE_RULE}"
+
+
+# ⚠ ONE PICTURE OF ONE MOMENT — AND THE SECOND HALF OF THIS IS A REPORTED BUG.
+# A shot written as "she holds her smartphone, frowning at the screen which
+# displays a food delivery app" came back as a woman holding a phone AND a
+# second, much larger phone floating beside her with the app on it. Nothing
+# asked for that: advertising layouts are everywhere in the training data, so
+# any shot involving a screen, a product or an app pulls the model toward a
+# composite. "Single frame" did not cover it — the model does not read a
+# floating device inset as a second FRAME, it reads it as one design.
+_SINGLE_FRAME_RULE = (
+    "ONE photograph of ONE moment, from ONE camera. No text, captions, speech "
+    "bubbles, borders or watermarks. No collage, no montage, no split screen, "
+    "no inset, no picture-in-picture, no floating enlarged screen or device "
+    "mockup beside the subject, no before/after layout, no advertising-poster "
+    "arrangement. Every object appears exactly ONCE: if a character is holding "
+    "a phone, there is exactly ONE phone in the picture, at its real size in "
+    "their hand — never a second enlarged copy of it in the same frame."
+)
+
+
 # Aspect-ratio phrasing (the image is also post-cropped to the exact ratio).
 _STORYBOARD_ASPECT_HINTS = {
     "21:9": "ultra-wide 21:9 cinemascope framing",
@@ -824,6 +1058,8 @@ _STORYBOARD_ASPECT_HINTS = {
 def generate_storyboard_panel(
     description: str,
     style: str = "custom",
+    genre: str = "",
+    brand: dict | None = None,
     aspect_ratio: str = "16:9",
     characters: list[str] | None = None,
     location: str = "",
@@ -844,7 +1080,11 @@ def generate_storyboard_panel(
     """Generate ONE storyboard panel image from a shot description.
 
     Uses the IMAGE backend (IMAGE_PROVIDER / `provider` arg) — panels are images.
-    Style + aspect + camera + location are woven into the prompt. Optional
+    Style + genre + aspect + camera + location are woven into the prompt.
+    ⚠ `style` and `genre` answer DIFFERENT questions and both are needed: style
+    is what the picture is made of, genre is how the moment is lit and staged.
+    See `build_genre_context()` — genre reached no picture at all before it.
+    Optional
     `reference_images` (character references) and `asset_reference_images`
     (prop / background references) are passed alongside so the depicted
     characters, key props and backgrounds stay visually consistent across panels
@@ -900,11 +1140,27 @@ def generate_storyboard_panel(
         f"itself with NO border, NO frame and NO box drawn around it: {style_txt}.",
         f"{aspect_txt}.",
     ]
+    # Genre comes straight after the style it must not overrule, so the two are
+    # read together rather than as two unrelated instructions pages apart.
+    genre_txt = build_genre_context(genre)
+    if genre_txt:
+        parts.append(genre_txt)
     # The story's world comes BEFORE the shot detail, so the model has the
     # culture in hand while it reads what to draw.
     world_txt = build_world_context(world)
     if world_txt:
         parts.append(world_txt)
+    # ⚠ APPENDED UNCONDITIONALLY, world or no world. With a market set this says
+    # which language and which money belong on a screen or a sign; with none set
+    # it says to show neither. Skipping it when nothing is known is exactly how
+    # `$4.50` reached an Indian creator's app promo.
+    parts.append(build_market_context(world))
+    # ⚠ AND SO IS THE BRAND BLOCK, for the same reason. With an uploaded logo it
+    # asks for a flat magenta PLACEHOLDER, which `brand.stamp()` then replaces
+    # with the real file; with none it forbids inventing a logo at all. Left
+    # out, the model draws a different mark for the same brand in every shot —
+    # four different "Lickyeat" logos in one 28-panel film, as reported.
+    parts.append(build_brand_context(brand, style))
     # The written continuity bible, BEFORE the shot description. These people
     # and places are fixed for the whole film; the shot only says what they are
     # doing right now.
@@ -1002,7 +1258,7 @@ def generate_storyboard_panel(
                 "described above. Do not change the layout or what is happening."
             )
     parts.append(f"Scene: {description}")
-    parts.append("Single frame. No text, captions, speech bubbles, borders or watermarks.")
+    parts.append(_SINGLE_FRAME_RULE)
     # Asked for one panel, the model otherwise oscillates between drawing edge to
     # edge and dropping a small sketch onto a big blank page — measured at 64% to
     # 96% frame coverage across one board, which is what made a finished board
@@ -1254,6 +1510,7 @@ def generate_character_reference(
     provider: str | None = None,
     world: dict | None = None,
     variation: int | None = 0,
+    style: str = "",
 ) -> Image.Image | None:
     """
     Generate a single T-pose character reference image from a text description.
@@ -1268,6 +1525,11 @@ def generate_character_reference(
         world: The script's region/period/culture block (see build_world_context).
                Without it the model draws its default — which is how an ancient
                Indian hunter came back looking Western.
+        style: THE BOARD'S STYLE ID, and it is not cosmetic — this sheet becomes
+               a look reference inside every panel the character appears in, so a
+               sheet drawn in the wrong medium drags those panels into that
+               medium with it. Empty falls back to the neutral wording, which is
+               the old behaviour minus the hardcoded Pixar.
 
     Returns:
         PIL Image of the character in T-pose on white background,
@@ -1277,7 +1539,7 @@ def generate_character_reference(
     client = get_client(provider)
     model_id = _model_id(provider)
     world_txt = build_world_context(world)
-    prompt = _REFERENCE_PROMPT_TEMPLATE.format(description=description)
+    prompt = build_reference_prompt(description, style)
     if world_txt:
         prompt = f"{world_txt} {prompt}"
 
@@ -1407,6 +1669,11 @@ def generate_asset_reference(
     world_txt = build_world_context(world)
     if world_txt:
         prompt = f"{world_txt} {prompt}"
+    # ⚠ A PROP OR A SET IS EXACTLY WHERE MONEY AND SIGNAGE LIVE — a phone, a
+    # menu, packaging, a shop front. The reference is drawn ONCE and then fed
+    # into every panel the object appears in, so a `$` priced into it here is a
+    # `$` on the whole board, in a picture the panel prompt cannot argue with.
+    prompt = f"{prompt} {build_market_context(world)}"
 
     last_reason = "Unknown error generating the asset reference image."
     redraw = 0  # bumped only when a returned image is REJECTED — see _seed_for

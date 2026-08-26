@@ -915,6 +915,50 @@ def _panel_frames_only(board: Job, default_duration_ms: int) -> list[AnimaticFra
     ]
 
 
+def _board_market(board: Job) -> dict:
+    """The audience a storyboard was drawn for, ready to store on a project.
+
+    ⚠ IT LIVES INSIDE THE BOARD'S `world`, not beside it — see schemas.World for
+    why the two travel in one dict. This pulls the market half back out so the
+    video side can carry it without inheriting the story's wardrobe notes, which
+    describe a picture Veo is not drawing.
+    """
+    import market
+
+    return market.coerce((board.params or {}).get("world") or {})
+
+
+def _project_market(job: Job) -> dict:
+    """This project's audience, or {} — the {} being a real answer (no money)."""
+    return dict((job.params or {}).get("market") or {})
+
+
+def _localise_veo(prompt: str, negative: str | None, job: Job) -> tuple[str, str | None]:
+    """Put the project's audience into a Veo call.
+
+    ⚠ THE SAME BUG CROSSES THE HANDOFF. The reported board was re-rendered with
+    Veo and the app UI came back priced in dollars again — the storyboard half
+    had been taught the market and the video half had not, so the one film was
+    made twice in two currencies.
+
+    ⚠ THE RULE IS APPENDED IN ENGLISH, and so is the rest of the motion prompt.
+    `director.language_instruction()` already settled this and for a measured
+    reason: Veo follows English instructions better, so the INSTRUCTION stays
+    English while what appears on screen takes the audience's language. This
+    only ever describes what may be written in frame; it never translates the
+    camera move.
+    """
+    import market
+
+    audience = _project_market(job)
+    rule = market.on_screen_text_rule(audience)
+    unwanted = market.negative_terms(audience)
+    return (
+        f"{prompt}\n\n{rule}",
+        ", ".join(p for p in ((negative or "").strip(), unwanted) if p),
+    )
+
+
 def _frames_from_board(board: Job, default_duration_ms: int) -> list[AnimaticFrame]:
     """A board, in order, as animatic frames — a shot's KEY POSES where it has
     them, otherwise the single panel.
@@ -1041,6 +1085,13 @@ def create_animatic(
             "transitions": [],
             "audio_tracks": [],
             "source_storyboard_id": source_id,
+            # ⚠ THE BOARD'S AUDIENCE, CARRIED ACROSS THE HANDOFF. Without this
+            # the video half starts from nothing again: the panels were drawn in
+            # ₹ and the Veo re-render of the same shot came back in `$`, in the
+            # same film. Copied rather than looked up so the project keeps
+            # working if the board is later deleted, and so editing the board's
+            # market cannot silently relight a video already being cut.
+            "market": _board_market(board) if source_id else {},
         },
     )
     os.makedirs(_media_dir(job.job_id), exist_ok=True)
@@ -2568,9 +2619,15 @@ def render_frame_clip(
             update={"duration_seconds": record.seconds}
         )
 
+    # The audience block rides on the prompt, and the other markets' currency
+    # signs ride on the negative prompt — belt and braces, because a `$` on a
+    # phone screen is the single most-reported thing Veo gets wrong here.
+    veo_prompt, veo_negative = _localise_veo(
+        record.prompt, settings_render.negative_prompt, job
+    )
     data = render_shot(
         image,
-        record.prompt,
+        veo_prompt,
         # ⚠ ASKED FOR ON PURPOSE, never inferred from `image` being None. The
         # refusal in `render_shot` is what stops a still that failed to load
         # turning into a paid text-to-video render of the motion notes; this
@@ -2582,7 +2639,7 @@ def render_frame_clip(
         resolution=settings_render.resolution,
         duration_seconds=settings_render.duration_seconds,
         generate_audio=settings_render.generate_audio,
-        negative_prompt=settings_render.negative_prompt or None,
+        negative_prompt=veo_negative or None,
         label=label,
         progress_cb=progress_cb,
         cancel_check=cancel_check,
@@ -4464,6 +4521,10 @@ def generate_neighbour_shot(
             board.job_id,
             body.description,
             style=variant_style,
+            # The board's genre, so an inserted shot matches the film's look.
+            genre=params.get("genre") or "",
+            # …and its brand, so the new shot carries the same logo file.
+            brand=params.get("brand") or {},
             aspect_ratio=aspect,
             output_dir=config.OUTPUT_DIR,
             characters=characters,

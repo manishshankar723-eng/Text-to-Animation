@@ -65,6 +65,93 @@
   color: var(--primary);
   box-shadow: inset 0 0 0 1px var(--primary);
 }
+/* A dropdown wearing the chip's pill, for the two answers that have too many
+   options to be chips — country and language. ⚠ THE `width: auto` IS NOT
+   COSMETIC: `theme.css` sets a global `select { width: 100% }`, which stacks
+   these two full-width and breaks the row they are supposed to share. That one
+   line has caused this bug more than once — see the note in AGENTS.md. */
+.opt-select {
+  width: auto;
+  max-width: 100%;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+.opt-select:hover {
+  border-color: var(--border-gold);
+}
+.opt-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+/* The line under the audience row that says what an unset market means. It sits
+   tighter than a normal paragraph because it belongs to the control above it.
+   Shared with the brand row, which has the same job to do. */
+.sts-audience-note {
+  margin: 0 0 0.5rem;
+}
+
+/* The brand row: name on the left, logo on the right, wrapping to two lines on
+   a narrow screen. */
+.sts-brand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.15rem 0 0.3rem;
+}
+.sts-brand-name {
+  flex: 1 1 240px;
+  min-width: 0;
+  /* `margin-top: 0` because the card's bare `input` rule spaces inputs that sit
+     under their own label; this one sits in a row. */
+  margin-top: 0;
+}
+.sts-brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sts-brand-logo .btn {
+  margin-top: 0;
+}
+/* ⚠ THE CHEQUERBOARD IS THE POINT, not decoration: a logo is uploaded for its
+   TRANSPARENCY, and against a flat tile a white-on-transparent mark looks
+   identical to a white-on-white one. Here you can see which you uploaded. */
+.sts-brand-preview,
+.sts-brand-empty {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background-color: var(--panel-2);
+  background-image:
+    linear-gradient(45deg, rgba(128, 128, 128, 0.18) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.18) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.18) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.18) 75%);
+  background-size: 10px 10px;
+  background-position: 0 0, 0 5px, 5px -5px, -5px 0;
+  object-fit: contain;
+  flex: none;
+}
+.sts-brand-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-align: center;
+}
+
 .opt-chip-note {
   font-size: 0.72rem;
   font-weight: 500;

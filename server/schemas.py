@@ -119,13 +119,60 @@ class MeshyRequest(BaseModel):
     api_key: str | None = None
 
 
+class Brand(BaseModel):
+    """The brand this film is for — and, above all, its LOGO FILE.
+
+    ⚠ THE LOGO IS UPLOADED, NEVER GENERATED, and that is not a preference. An
+    image model reconstructs a mark from its description every time it draws
+    one, and two reconstructions are never the same picture: one reported
+    28-panel promo came back with four unrelated "Lickyeat" logos in it. So the
+    model draws a flat placeholder and `brand.stamp()` pastes this file in
+    afterwards, which is bit-identical by construction.
+
+    ⚠ AND `name` IS CONTEXT, NOT LETTERFORMS. It tells the model what the
+    product IS; the prompt then forbids lettering it anywhere in the picture,
+    because a mis-spelt brand is worse than an absent one.
+    """
+
+    name: str = Field("", max_length=80)
+    # An id from POST /brand/logo. ⚠ NOT the character-reference upload: that
+    # one flattens to RGB and would give every logo a white box around it.
+    logo_ref_id: str = Field("", max_length=64)
+    primary_color: str = Field("", max_length=40)
+    secondary_color: str = Field("", max_length=40)
+
+
+class Market(BaseModel):
+    """Who the finished film is FOR — the audience picked on the form.
+
+    Only the two fields a person can sensibly answer. The currency and the
+    units are looked up from the country by `market.resolve()` rather than
+    asked for: making someone type "₹" after picking India is inviting a typo
+    into every price in the film.
+    """
+
+    country: str = Field("", max_length=60)  # code ("IN") or name ("India")
+    language: str = Field("", max_length=60)
+
+
 class World(BaseModel):
-    """The story's visual world, read from the script by the breakdown.
+    """The story's visual world, read from the script by the breakdown — plus
+    the MARKET the finished film is for, which the user chooses.
 
     Carried into EVERY image prompt — character references, prop/background
     references and each panel — so a Shiva Purana script draws Indian people and
     Indian architecture instead of the image model's Western default. All fields
     are optional: an empty world leaves prompts exactly as they were.
+
+    ⚠ THE LAST FOUR ARE A DIFFERENT KIND OF FACT, AND THEY RIDE HERE ON PURPOSE.
+    The first six are what the STORY is and are inferred from the script; the
+    market is who the FILM IS FOR and comes from the user (their account
+    default, or this board's form), with the breakdown's guess only as a
+    fallback. They share this model because `world` was ALREADY threaded into
+    every generator and stored on every job — a second parallel dict would have
+    meant touching twenty call sites to carry one more fact to the same place.
+    The server composes them with `market.resolve()` before anything is drawn;
+    see market.py for why a wrong currency is worse than none.
     """
 
     setting: str = ""  # place + period
@@ -134,6 +181,11 @@ class World(BaseModel):
     wardrobe: str = ""
     environment: str = ""  # architecture, landscape, everyday objects
     notes: str = ""  # iconography, rituals, symbols, colours
+    # --- the market (market.MARKET_FIELDS) ---
+    country: str = ""  # readable name once resolved, e.g. "India"
+    language: str = ""  # what on-screen text is written in
+    currency: str = ""  # symbol + name, e.g. "₹ (Indian rupee)"
+    units: str = ""  # "metric" | "imperial"
 
 
 class ReferenceRequest(BaseModel):
@@ -147,6 +199,22 @@ class ReferenceRequest(BaseModel):
     world: World | None = Field(
         None,
         description="Story world (region/period/culture) to draw this character within.",
+    )
+    # Carried for symmetry with the board and the asset route, so all three
+    # resolve the market the same way — see main._resolve_market. A T-pose on
+    # white shows no prices, but the country still says who these people are.
+    market: Market | None = Field(
+        None, description="Audience picked on the form: country + language."
+    )
+    # ⚠ NOT COSMETIC. The sheet this produces becomes a look reference inside
+    # every panel the character appears in, so a sheet drawn in the wrong medium
+    # drags those panels with it — a Cinematic board whose cast came back as
+    # Pixar cartoons is the bug this field exists to fix. Optional so an older
+    # client still works; empty just means "no style opinion".
+    style: str = Field(
+        "",
+        max_length=200,
+        description="The board's style id (e.g. 'cinematic'), or free text for a custom style.",
     )
     provider: str | None = Field(
         None,
@@ -177,6 +245,13 @@ class AssetReferenceRequest(BaseModel):
     world: World | None = Field(
         None,
         description="Story world (region/period/culture) this prop/location belongs to.",
+    )
+    # ⚠ THIS ONE MATTERS MOST OF THE THREE. A prop is a phone, a menu, a price
+    # tag, a shop front — the exact surfaces money and signage live on — and the
+    # reference is drawn ONCE and then fed into every panel the object appears
+    # in. A `$` baked in here is a `$` on the whole board.
+    market: Market | None = Field(
+        None, description="Audience picked on the form: country + language."
     )
     provider: str | None = Field(
         None,
@@ -222,6 +297,13 @@ class ScriptBreakdownRequest(BaseModel):
         min_length=20,
     )
     genre: str | None = Field(None, description="Optional genre — shapes tone/pacing.")
+    # ⚠ ONLY THE NAME IS USED HERE, and only to kill placeholders. A film that
+    # went out with "That's why [Your App Name] is built for speed" burnt into
+    # its captions is why: the writer's bracket was copied into a shot
+    # description and then read aloud. The logo has no part in a text breakdown.
+    brand: Brand | None = Field(
+        None, description="Brand — only `name` is read, to replace placeholders."
+    )
     style: str | None = Field(None, description="Chosen visual style (passed through).")
     aspect_ratio: str | None = Field(None, description="Chosen aspect ratio (passed through).")
     provider: str | None = Field(
@@ -625,6 +707,20 @@ class StoryboardCreateRequest(BaseModel):
     # stays true to the story's region, period and culture.
     world: World | None = Field(
         None, description="Story world (region/period/culture) for every panel."
+    )
+    # ⚠ SENT SEPARATELY FROM `world` EVEN THOUGH IT ENDS UP INSIDE IT. What the
+    # user picked on THIS board's form has to arrive distinguishable from what
+    # the breakdown GUESSED off the script, because they sit at opposite ends of
+    # `market.resolve()`'s precedence — merged into one dict by the client, the
+    # server could not tell a deliberate choice from a lucky guess. Absent or
+    # empty means "the form said nothing", not "no market".
+    market: Market | None = Field(
+        None, description="Audience picked on the form: country + language."
+    )
+    # The brand this film sells, if any. Stored on the job so a redraw months
+    # later stamps the SAME logo file the rest of the board is carrying.
+    brand: Brand | None = Field(
+        None, description="Brand name, uploaded logo and colours."
     )
     # The source script. Not used for drawing — kept so a re-opened or duplicated
     # board can still show the writer the text its shots were traced from.

@@ -49,6 +49,8 @@ import {
   GENRES,
   MORE_GENRES,
   ALL_GENRES,
+  MARKET_COUNTRIES,
+  MARKET_LANGUAGES,
 } from "../storyboardOptions.js";
 
 // A shot's position WITHIN its scene, derived from the current list rather than
@@ -102,6 +104,26 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [dragOver, setDragOver] = useState(false);
   const [genre, setGenre] = useState("default"); // "default" = no bias
   const [customGenre, setCustomGenre] = useState("");
+  // WHO THIS FILM IS FOR. ⚠ "" IS A REAL ANSWER, NOT AN UNSET FIELD: it means
+  // the film shows no prices and no readable on-screen text at all, which is
+  // the correct output when nobody has said who is watching. Guessing a market
+  // is how an Indian creator's app promo came back priced in dollars.
+  const [country, setCountry] = useState("");
+  const [language, setLanguage] = useState("");
+  // THE BRAND THIS FILM SELLS, if it sells one.
+  //
+  // ⚠ THE LOGO IS UPLOADED AND NEVER GENERATED, and that is not a preference —
+  // an image model redraws a mark from its description every time and never
+  // twice the same. One reported 28-panel promo came back with four unrelated
+  // "Lickyeat" logos in it. With a file here, the model draws a flat
+  // placeholder and the server pastes this exact PNG into every panel; with
+  // none, it is told to invent nothing and leave app icons blank.
+  const [brandName, setBrandName] = useState("");
+  const [brandLogoId, setBrandLogoId] = useState("");
+  const [brandLogoPreview, setBrandLogoPreview] = useState(null);
+  const [brandBusy, setBrandBusy] = useState(false);
+  const [brandError, setBrandError] = useState("");
+  const brandFileRef = useRef(null);
   const [style, setStyle] = useState(DEFAULT_STYLE);
   const [customStyle, setCustomStyle] = useState("");
   const [aspect, setAspect] = useState(DEFAULT_ASPECT);
@@ -171,6 +193,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         if (p?.default_aspect_ratio)
           setAspect((cur) => (cur === DEFAULT_ASPECT ? p.default_aspect_ratio : cur));
         if (p?.default_genre) setGenre((cur) => (cur === "default" ? p.default_genre : cur));
+        // ⚠ THE AUDIENCE IS PREFILLED HERE TOO, and it is the one default that
+        // changes what is DRAWN rather than how it looks: it decides the money
+        // on a price tag and the language on a shop sign. Prefilled so a
+        // creator who always makes films for one market never has to say so
+        // twice — and still overridable on this form, board by board.
+        if (p?.default_country) setCountry((cur) => (cur === "" ? p.default_country : cur));
+        if (p?.default_language) setLanguage((cur) => (cur === "" ? p.default_language : cur));
         profileDefaultsApplied.current = true;
       } catch {
         // No profile / offline — the built-in defaults are already in place.
@@ -364,6 +393,55 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     return style;
   }
 
+  // The audience, as the server wants it. ⚠ ALWAYS AN OBJECT, NEVER NULL, even
+  // when both halves are blank: the server has to be able to tell "the form
+  // said nothing" (this, all empty) from "the form was never asked" (an older
+  // client sending no field at all), because only the first one is allowed to
+  // stop the account default being applied. The country is sent as its CODE —
+  // the server owns the currency lookup, so nobody here has to know that India
+  // means ₹.
+  function effectiveMarket() {
+    return { country: country.trim(), language: language.trim() };
+  }
+
+  // The brand, as the server wants it. Always an object — an empty one is a
+  // real answer meaning "this film sells nothing, invent no logo".
+  function effectiveBrand() {
+    return { name: brandName.trim(), logo_ref_id: brandLogoId };
+  }
+
+  async function uploadLogo(file) {
+    if (!file || brandBusy) return;
+    setBrandBusy(true);
+    setBrandError("");
+    try {
+      const res = await api.uploadBrandLogo(file);
+      setBrandLogoId(res.reference_id);
+      // ⚠ PREVIEWED FROM THE LOCAL FILE, not by fetching the saved one back.
+      // The preview route needs the auth header, so an <img src> pointed at it
+      // renders a broken icon — the same reason the cast page previews from a
+      // blob. Revoked on replace so a long session doesn't leak object URLs.
+      setBrandLogoPreview((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return URL.createObjectURL(file);
+      });
+    } catch (e) {
+      setBrandError(e.message);
+    } finally {
+      setBrandBusy(false);
+    }
+  }
+
+  function clearLogo() {
+    setBrandLogoId("");
+    setBrandError("");
+    setBrandLogoPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
+    if (brandFileRef.current) brandFileRef.current.value = "";
+  }
+
   // Does the chosen style skip the cast + props steps? (Rough Sketch does — see
   // REFERENCE_FREE_STYLES.) Read from the EFFECTIVE style, so switching style
   // at any point — including inside the pre-flight modal — changes the flow.
@@ -500,6 +578,8 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         style: effectiveStyle(),
         aspectRatio: effectiveAspect(),
         genre: effectiveGenre(),
+        // For the NAME only — so "[Your App Name]" never reaches a shot.
+        brand: effectiveBrand(),
         title: effectiveTitle(),
       });
       // Hold the result and let the ring finish to 100%. finishBreakdown()
@@ -667,6 +747,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
       aspect: effectiveAspect(),
       // Editing the world changes every panel, so it must invalidate the board.
       world,
+      // ⚠ AND SO DOES THE AUDIENCE. Switching from India to the US changes the
+      // money on every price tag and the language on every sign; a board left
+      // marked "up to date" through that would show the old market's film.
+      market: effectiveMarket(),
+      // ⚠ AND THE BRAND. Swapping the logo file, or removing it, changes every
+      // panel that shows the mark — a board still marked "up to date" through
+      // that would be carrying the previous brand's film.
+      brand: effectiveBrand(),
     });
   }
   // True when a board exists and nothing that affects the panels has changed.
@@ -760,6 +848,8 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         assetRefs: assetRefs || {},
         assetCategories,
         world,
+        market: effectiveMarket(),
+        brand: effectiveBrand(),
         script: scriptText,
         // Promote the draft this board was reviewed as, rather than leaving it
         // behind as a second record of the same work.
@@ -908,6 +998,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           saved={savedCastRefs}
           onSave={(name, fields) => saveRefFields(setSavedCastRefs, name, fields)}
           world={world}
+          // ⚠ THE SAME STYLE THE PANELS WILL BE DRAWN IN. A cast sheet is a
+          // look reference for every panel its character appears in, so this
+          // has to be the board's real style — not left out, which is what made
+          // every sheet a Pixar cartoon regardless of what was picked.
+          style={effectiveStyle()}
+          // The sheet shows no prices, but the audience still says who these
+          // people are and what language is on anything they carry.
+          market={effectiveMarket()}
           busy={busy}
           onBack={() => setStep("review")}
           onGenerate={handleCastNext}
@@ -926,6 +1024,11 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           saved={savedAssetRefs}
           onSave={(name, fields) => saveRefFields(setSavedAssetRefs, name, fields)}
           world={world}
+          // ⚠ THIS IS THE STEP THAT MATTERS MOST. A prop is a phone, a menu, a
+          // price tag; the reference is drawn once and baked into every panel
+          // the object appears in, so the wrong currency here is the wrong
+          // currency on the whole board.
+          market={effectiveMarket()}
           busy={busy}
           onBack={() => setStep(computeCast().length > 0 ? "cast" : "review")}
           onGenerate={(assetRefs) => requestLaunch(characterRefs, assetRefs)}
@@ -1370,6 +1473,126 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             hidden
             onChange={(e) => pickFile(e.target.files?.[0])}
           />
+
+          {/* --- Audience ---
+              ⚠ TWO DROPDOWNS, NOT CHIPS, and not because chips would be
+              prettier — there are thirty-eight countries and twenty-five
+              languages, and a chip row that long buries the Genre and Style
+              rows that matter on every single board. They wear the same pill
+              the board's "Add a style" select does, so the row still reads as
+              part of the same family of controls. */}
+          <label>
+            Audience{" "}
+            <span className="label-optional">
+              · decides the money and the on-screen language
+            </span>
+          </label>
+          <div className="opt-chips sts-audience">
+            <select
+              className="opt-select"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              title="The country this film is made for"
+            >
+              {MARKET_COUNTRIES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="opt-select"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              title="The language written on screens and signs"
+            >
+              {MARKET_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {/* ⚠ SAID OUT LOUD, because "no prices" looks like a bug otherwise.
+              A blank app screen in a finished panel is a deliberate choice and
+              the user deserves to know it was theirs. */}
+          <p className="tiny muted sts-audience-note">
+            {country
+              ? "Prices, signs and app screens will match this market."
+              : "No market set — screens and signs will show no prices or readable text."}
+          </p>
+
+          {/* --- Brand ---
+              ⚠ THE LOGO IS UPLOADED, NEVER GENERATED, and the copy below says
+              so plainly because it is the thing people will otherwise ask for.
+              An image model rebuilds a mark from its description every time it
+              draws one, so four panels of one brand come back as four different
+              logos. With a file here the model draws a flat placeholder and the
+              server pastes this exact PNG in; with none, it is told to invent
+              nothing at all. */}
+          <label>
+            Brand{" "}
+            <span className="label-optional">
+              · only if this film sells a product
+            </span>
+          </label>
+          <div className="sts-brand">
+            <input
+              className="sts-brand-name"
+              value={brandName}
+              placeholder="Brand or app name, e.g. Lickyeat"
+              maxLength={80}
+              onChange={(e) => setBrandName(e.target.value)}
+            />
+            <div className="sts-brand-logo">
+              {brandLogoPreview ? (
+                <img
+                  src={brandLogoPreview}
+                  alt="Your logo"
+                  className="sts-brand-preview"
+                />
+              ) : (
+                <span className="sts-brand-empty">No logo</span>
+              )}
+              <input
+                ref={brandFileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                hidden
+                onChange={(e) => {
+                  uploadLogo(e.target.files?.[0]);
+                  e.target.value = ""; // allow re-selecting the same file
+                }}
+              />
+              <button
+                type="button"
+                className="btn ghost small"
+                disabled={brandBusy}
+                onClick={() => brandFileRef.current?.click()}
+              >
+                {brandBusy ? (
+                  <>
+                    <span className="spinner-inline" /> Uploading…
+                  </>
+                ) : brandLogoId ? (
+                  "Replace logo"
+                ) : (
+                  "📁 Upload logo"
+                )}
+              </button>
+              {brandLogoId && (
+                <button type="button" className="btn ghost small" onClick={clearLogo}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+          {brandError && <div className="error">{brandError}</div>}
+          <p className="tiny muted sts-audience-note">
+            {brandLogoId
+              ? "Your logo will be pasted onto every panel that shows it — the same file each time, never redrawn."
+              : "No logo uploaded — app icons and signs will be drawn blank. We never invent a logo, because it would come out different in every panel."}
+          </p>
 
           {/* --- Genre --- */}
           <label>Genre <span className="label-optional">· shapes the tone</span></label>

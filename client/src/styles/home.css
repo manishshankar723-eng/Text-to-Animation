@@ -1279,6 +1279,17 @@
   gap: 0.9rem 1.1rem;
   margin-top: 0.9rem;
 }
+/* A second heading INSIDE a settings card, for a group that belongs to the card
+   but answers a different question — "who your films are for" under the
+   storyboard defaults. Sized between the card's h2 and its field labels so it
+   divides without looking like a new card. */
+.profile-subhead {
+  margin: 1.4rem 0 0;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.98rem;
+  font-weight: 650;
+}
 .field {
   display: flex;
   flex-direction: column;

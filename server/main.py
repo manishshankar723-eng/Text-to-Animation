@@ -331,6 +331,72 @@ def list_templates(current: CurrentUser = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# The market, resolved in ONE place
+#
+# ⚠ IT HAS TO HAPPEN AT EVERY DRAWING ROUTE, NOT ONLY AT BOARD CREATE. The
+# Script → Storyboard flow draws the cast sheets and the prop/background
+# references BEFORE the board job exists — script → breakdown → review → cast →
+# props → generate. A market resolved only at the last step would leave the
+# references, which are then baked into every panel, priced in dollars while the
+# panels around them were priced correctly. That is a worse bug than the one
+# being fixed, because a reference IMAGE cannot be argued with by a later prompt.
+#
+# Three layers, most specific first. See market.py for why an all-empty answer
+# is correct rather than a hole to be filled with a guess.
+# ---------------------------------------------------------------------------
+def _resolve_brand(chosen) -> dict:
+    """The brand, with its uploaded logo resolved to a path on disk.
+
+    ⚠ THE `logo_ref_id` IS DROPPED WHEN THE FILE IS NOT THERE, and that pairing
+    is the whole safety of this feature. The id is what makes the prompt ask for
+    a magenta placeholder; the path is what fills it in. Keeping an id whose
+    file has gone would put a placeholder on every panel with nothing to replace
+    it — a bright magenta square on the phone, which is a far louder bug than
+    the drifting logo all of this exists to fix. `brand.erase_markers()` is the
+    net under this; this is the reason it should rarely have to catch anything.
+    """
+    import brand as brand_mod
+
+    data = brand_mod.coerce(chosen.model_dump() if chosen else {})
+    ref_id = data.get("logo_ref_id") or ""
+    if not ref_id:
+        return {k: v for k, v in data.items() if v}
+
+    path = os.path.join(config.UPLOAD_DIR, "_references", ref_id, "reference.png")
+    if not os.path.isfile(path):
+        logger.warning(
+            "[brand] logo %s has no file on disk — drawing this board with no "
+            "logo rather than with an unfillable placeholder.", ref_id,
+        )
+        data["logo_ref_id"] = ""
+        return {k: v for k, v in data.items() if v}
+
+    data["logo_path"] = path
+    return {k: v for k, v in data.items() if v}
+
+
+def _resolve_market(world: dict | None, chosen, email: str) -> dict:
+    """`world` with the film's market merged in. Never returns None."""
+    import market
+
+    out = dict(world or {})
+    account = users.get_user_by_email(email) or {}
+    out.update(
+        market.resolve(
+            chosen.model_dump() if chosen else {},
+            {
+                "country": account.get("default_country") or "",
+                "language": account.get("default_language") or "",
+            },
+            # The breakdown's guess off the script — the weakest layer, and it
+            # arrives already inside `world`.
+            {"country": out.get("country"), "language": out.get("language")},
+        )
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Step 0 — Generate character reference image from text
 # ---------------------------------------------------------------------------
 @app.post("/characters/reference", response_model=ReferenceResponse)
@@ -358,8 +424,18 @@ def generate_reference(
         image = generate_character_reference(
             description=body.prompt,
             provider=body.provider,
-            # Draw them as a person of the script's world, not the model's default.
-            world=body.world.model_dump() if body.world else None,
+            # Draw them as a person of the script's world, not the model's
+            # default, and of the market this film is for.
+            world=_resolve_market(
+                body.world.model_dump() if body.world else {},
+                body.market,
+                current.email,
+            ),
+            # ⚠ AND IN THE BOARD'S MEDIUM. This sheet is fed into every panel
+            # the character appears in; drawn in the wrong medium it takes those
+            # panels with it, which is how a Cinematic board came back with
+            # cartoon people in half its shots.
+            style=body.style,
             # Unseeded: calling this again with the same description IS how the
             # user asks for a different-looking character. Consistency later
             # comes from the SAVED reference image, not from redrawing it.
@@ -378,6 +454,15 @@ def generate_reference(
             status_code=502,
             detail="Reference generation returned no image. Try rephrasing your description.",
         )
+
+    # ⚠ THE SAME COLOUR ENFORCEMENT THE PANELS GET, for the same reason: the
+    # greyscale styles say "no colour" in words and the model ignores it often
+    # enough to matter, and a COLOURED cast sheet is worse than a coloured panel
+    # — it is the reference every later panel matches itself against, so one
+    # slip re-colours the whole board. Free, instant, cannot fail.
+    from storyboard_pipeline import conform_to_style
+
+    image = conform_to_style(image, body.style)
 
     # Save the generated reference image under a unique reference id.
     reference_id = uuid.uuid4().hex[:12]
@@ -419,8 +504,13 @@ def generate_asset_reference_image(
             description=body.prompt,
             category=body.category,
             provider=body.provider,
-            # A hut, a cooking pot and a temple all differ by culture.
-            world=body.world.model_dump() if body.world else None,
+            # A hut, a cooking pot and a temple all differ by culture — and so
+            # do the money on a price tag and the language on a shop sign.
+            world=_resolve_market(
+                body.world.model_dump() if body.world else {},
+                body.market,
+                current.email,
+            ),
             # Unseeded — same re-roll reasoning as /characters/reference above.
             variation=None,
         )
@@ -497,6 +587,65 @@ async def upload_reference(
     )
 
 
+@app.post("/brand/logo", response_model=ReferenceResponse)
+async def upload_brand_logo(
+    image: UploadFile = File(..., description="The brand's logo, ideally a transparent PNG."),
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Upload a brand logo. Saved with its TRANSPARENCY INTACT.
+
+    ⚠ THIS IS NOT `POST /characters/reference/upload` WITH A DIFFERENT NAME, and
+    that route cannot be reused: it normalises every upload with `.convert("RGB")`,
+    which is correct for a character photo and destroys a logo. Flattening the
+    alpha channel fills the transparent background with black, so the mark would
+    be pasted onto every panel inside a hard rectangle — the exact thing a
+    designer supplies a transparent PNG to avoid.
+
+    ⚠ IT IS NOT GATED ON `cap.image-generate` EITHER, and must not be: nothing is
+    drawn here, the file is the customer's own, and this is precisely the path
+    that STOPS an image being generated. Same reasoning as the character-
+    reference upload beside it.
+
+    Stored under the same `_references/{id}/` layout, so the existing preview
+    route serves it and the board's stored id resolves the same way.
+    """
+    if image.content_type not in config.ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type '{image.content_type}'. "
+            f"Allowed: {sorted(config.ALLOWED_IMAGE_TYPES)}",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Logo too large ({len(contents)} bytes). Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+
+    reference_id = uuid.uuid4().hex[:12]
+    ref_dir = os.path.join(config.UPLOAD_DIR, "_references", reference_id)
+    os.makedirs(ref_dir, exist_ok=True)
+    image_path = os.path.join(ref_dir, "reference.png")
+
+    import io as _io
+    from PIL import Image as PILImage
+
+    try:
+        # RGBA, not RGB. A JPEG logo has no alpha to keep and converts cleanly;
+        # a PNG or WEBP one keeps every transparent pixel it arrived with.
+        PILImage.open(_io.BytesIO(contents)).convert("RGBA").save(image_path, "PNG")
+    except Exception as e:  # noqa: BLE001 — bad/corrupt upload
+        raise HTTPException(status_code=400, detail=f"Couldn't read that logo: {e}")
+
+    _mark_ref_source(ref_dir, "brand-logo")
+    logger.info("[brand %s] saved uploaded logo for %s", reference_id, current.email)
+    return ReferenceResponse(
+        reference_id=reference_id,
+        image_url=f"/characters/reference/{reference_id}/image",
+        message="Logo uploaded successfully.",
+    )
+
+
 @app.get("/characters/reference/{reference_id}/image")
 def get_reference_image(
     reference_id: str,
@@ -562,7 +711,14 @@ def breakdown_script(
     from script_breakdown import break_down_script, ScriptBreakdownError
 
     try:
-        result = break_down_script(body.script, provider=body.provider, genre=body.genre)
+        result = break_down_script(
+            body.script,
+            provider=body.provider,
+            genre=body.genre,
+            # So a writer's "[Your App Name]" never reaches a shot description.
+            # It was reaching the finished video's burnt-in captions.
+            brand_name=(body.brand.name if body.brand else ""),
+        )
     except ScriptBreakdownError as e:
         logger.warning("[breakdown] failed: %s", e)
         raise HTTPException(status_code=502, detail=f"Script breakdown failed: {e}")
@@ -779,10 +935,29 @@ def create_storyboard(
     # The script's world rides along with every panel prompt, and is stored so a
     # later re-style / single-panel redraw stays in the same culture and period.
     world = body.world.model_dump() if body.world else {}
+    # ⚠ AND THE MARKET IS RESOLVED ONCE, HERE, BEFORE ANYTHING IS DRAWN. Three
+    # layers, most specific first: this board's form, then the account default,
+    # then whatever the breakdown could read off the script. It is stored INTO
+    # `world` because that dict is already carried into every generator and
+    # every later redraw — so a panel drawn months from now is priced the same
+    # way as the ones drawn today, even if the account default has changed since.
+    #
+    # ⚠ ALL THREE EMPTY IS A REAL ANSWER, NOT A HOLE. It leaves the market
+    # fields unset, and `gemini_client.build_market_context()` then asks for no
+    # prices and no currency at all — which is the correct output for a film
+    # whose audience nobody has stated. See market.py.
+    world = _resolve_market(world, body.market, current.email)
+    # ⚠ RESOLVED TO A PATH ONCE, HERE, AND STORED. Every later redraw stamps the
+    # SAME file, which is the entire point — a logo that is re-uploaded or
+    # re-resolved per panel is a logo that can differ between panels again.
+    brand = _resolve_brand(body.brand)
     params = {
         "style": body.style,
         "aspect_ratio": body.aspect_ratio,
-        # Not used for drawing — labels the card in the storyboard library.
+        # ⚠ USED FOR DRAWING NOW, not just for the library card. It shapes the
+        # breakdown's tone AND every panel's lighting and staging — see
+        # gemini_client.build_genre_context(). Stored so a re-style, a redraw or
+        # an inserted shot months later is lit like the rest of the film.
         "genre": body.genre,
         "count": len(body.shots),
         "provider": body.provider,
@@ -799,6 +974,7 @@ def create_storyboard(
         "cast": cast_dicts,
         "assets": asset_dicts,
         "world": world,
+        "brand": brand,
         # Display only. Capped so a pasted novel can't bloat the job record
         # (Firestore documents have a hard size limit).
         "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
@@ -842,6 +1018,8 @@ def create_storyboard(
     kwargs = {
         "shots": shot_dicts,
         "style": body.style,
+        "genre": body.genre,
+        "brand": brand,
         "aspect_ratio": body.aspect_ratio,
         "output_dir": config.OUTPUT_DIR,
         "provider": body.provider,
@@ -1782,6 +1960,14 @@ def restyle_storyboard(
     kwargs = {
         "shots": shots,
         "style": body.style,
+        # ⚠ THE BOARD'S GENRE, NOT THE BODY'S — a re-style changes the art
+        # style and nothing else. Documentary lighting is part of what this
+        # film IS; dropping it here would quietly relight the whole board.
+        "genre": job.params.get("genre") or "",
+        # A re-style changes the art style; the brand on the packaging is not a
+        # style, and the logo file must not change between two versions of the
+        # same board.
+        "brand": job.params.get("brand") or {},
         "aspect_ratio": job.params.get("aspect_ratio", "16:9"),
         "output_dir": config.OUTPUT_DIR,
         "provider": job.params.get("provider"),

@@ -30,6 +30,12 @@ export default function StoryboardAssets({
   // The script's region/period/culture — a hut, a pot and a temple all differ
   // by culture, so every prop/background reference carries it too.
   world,
+  // ⚠ WHO THE FILM IS FOR, AND ON THIS STEP IT IS LOAD-BEARING. A prop is a
+  // phone, a menu, a price tag, a shop front — the surfaces money and signage
+  // live on — and this reference is drawn ONCE and then fed into every panel
+  // the object appears in. A `$` baked in here is a `$` on the whole board, in
+  // a picture no later prompt can argue with. See market.py.
+  market,
   onBack,
   onGenerate,
   busy,
@@ -72,7 +78,7 @@ export default function StoryboardAssets({
     patch(i, { busy: true, error: "" });
     try {
       const prompt = item.description.trim() || item.name;
-      const res = await api.generateAssetReference(prompt, item.category, world);
+      const res = await api.generateAssetReference(prompt, item.category, world, market);
       // Fetch the generated image as an authed blob for preview.
       const token = api.getToken();
       const imgRes = await fetch(api.getReferenceImageUrl(res.reference_id), {

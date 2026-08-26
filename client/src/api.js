@@ -864,10 +864,24 @@ export function discardStoryboardDraft(jobId) {
 // Also returns `draft_job_id`: the breakdown is saved as a DRAFT job so the
 // review step is backed by the database. Pass `title` so the saved draft is
 // named something better than its opening words.
-export function breakdownScript(script, { style, aspectRatio, genre, provider, title } = {}) {
+// `brand` is sent for its NAME only — the breakdown is text, and the name is
+// what stops a writer's "[Your App Name]" being copied into a shot description
+// and then burnt into the finished video's captions, which is what happened.
+export function breakdownScript(
+  script,
+  { style, aspectRatio, genre, brand, provider, title } = {}
+) {
   return request("/storyboards/breakdown", {
     method: "POST",
-    body: { script, style, aspect_ratio: aspectRatio, genre, provider, title },
+    body: {
+      script,
+      style,
+      aspect_ratio: aspectRatio,
+      genre,
+      brand: brand || null,
+      provider,
+      title,
+    },
   });
 }
 
@@ -886,6 +900,8 @@ export function createStoryboard({
   assetRefs,
   assetCategories,
   world,
+  market,
+  brand,
   script,
   provider,
   draftJobId,
@@ -911,6 +927,14 @@ export function createStoryboard({
       draft_job_id: draftJobId || null,
       // The script's region/period/culture — prefixed onto every panel prompt.
       world: world || null,
+      // ⚠ WHO THE FILM IS FOR, SENT APART FROM `world` EVEN THOUGH THE SERVER
+      // merges it in. What the user PICKED and what the breakdown GUESSED sit
+      // at opposite ends of the precedence chain; folded into one dict here,
+      // the server could not tell a decision from a lucky guess. See market.py.
+      market: market || null,
+      // The brand this film sells. Stored on the board so a redraw months later
+      // stamps the SAME logo file the rest of the panels are carrying.
+      brand: brand || null,
       // Saved so a re-opened / duplicated board can still show the source script.
       script: script || null,
       character_refs: characterRefs || {},
@@ -2085,21 +2109,44 @@ export function health() {
 // --- Jobs ---
 // `world` is the script's region/period/culture (from the breakdown). Passing it
 // is what stops the model drawing its Western default for a non-Western story.
-export function generateReference(prompt, world, provider) {
+// ⚠ `style` IS THE BOARD'S STYLE, AND IT IS NOT DECORATION. The sheet this
+// returns is fed into every panel the character appears in as a look reference,
+// so a sheet drawn in the wrong medium pulls those panels into that medium: a
+// Cinematic board whose cast came back as Pixar cartoons is the reported bug
+// this argument fixes. Omitting it draws in a neutral medium, not a cartoon.
+export function generateReference(prompt, world, style, market, provider) {
   const body = { prompt };
   if (world) body.world = world;
+  if (style) body.style = style;
+  if (market) body.market = market;
   if (provider) body.provider = provider;
   return request("/characters/reference", { method: "POST", body });
 }
 // Generate a prop / background reference image (Stage B2 asset consistency).
 // `category` is "prop" or "background". Returns { reference_id, image_url }.
-export function generateAssetReference(prompt, category = "prop", world, provider) {
+// ⚠ `market` MATTERS MOST ON THIS ONE. A prop is a phone, a menu, a price tag,
+// a shop front — the surfaces money and signage actually live on — and the
+// reference is drawn ONCE and then fed into every panel the object appears in.
+// A `$` baked in here is a `$` on the whole board, in a picture no later prompt
+// can argue with.
+export function generateAssetReference(prompt, category = "prop", world, market, provider) {
   const body = { prompt, category };
   if (world) body.world = world;
+  if (market) body.market = market;
   if (provider) body.provider = provider;
   return request("/assets/reference", { method: "POST", body });
 }
 // Upload your own image as a character reference. Returns { reference_id, ... }.
+// ⚠ A LOGO GOES THROUGH ITS OWN ROUTE, NOT `uploadReference`. That one
+// normalises uploads with `.convert("RGB")` — right for a character photo,
+// destroying for a logo, because flattening the alpha fills the transparent
+// background with black and every panel would carry the mark inside a hard
+// rectangle. `POST /brand/logo` keeps the transparency.
+export function uploadBrandLogo(file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request("/brand/logo", { method: "POST", body: fd, isForm: true });
+}
 export function uploadReference(file) {
   const fd = new FormData();
   fd.append("image", file);

@@ -275,7 +275,13 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **THE SCRIPT BOX AND THE AI COMPOSER ARE ONE FRAMED PANEL, AND THE STARTER CHIPS ARE GONE.** Two identical grey boxes stacked on each other made "which one do I type in?" a real question; the frame, the background and the focus glow now live on a `.sts-script-panel` wrapper and everything inside it is borderless. The four example prompts under the composer are deleted. See the Work Log.
+**Last updated:** 2026-08-27 — **PHASE 3 OF THE PRODUCTION BRIEF: THE LOGO IS NEVER DRAWN BY THE MODEL — IT IS PASTED ON AFTERWARDS.** New `brand.py`. The model draws a flat magenta PLACEHOLDER, `stamp()` finds it and pastes the user's uploaded PNG in, so the mark is bit-identical in every panel because it IS the same file. ⚠ No upload means NO logo, not a generated one: an image model rebuilds a mark from its description every time and never twice the same, which is why one 28-panel promo carried four different "Lickyeat" logos. Only Phase 4 (the QA gate) is left. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 2 OF THE PRODUCTION BRIEF: A FILM IS PRICED IN ITS AUDIENCE'S MONEY, AND AN UNSET ONE SHOWS NO PRICE AT ALL.** New `market.py` resolves country/language/currency from three layers — this board's form, the account default, the breakdown's guess — and every image prompt, every prop reference and BOTH Veo render paths now carry it. ⚠ When nobody has said who the film is for, the rule asks for no legible price and no currency symbol anywhere: a wrong `$` is worse than none. Phase 3 (brand kit, the drifting logo) is still UNTOUCHED. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 1 OF THE PRODUCTION BRIEF: THE CAST SHEET IS DRAWN IN THE BOARD'S OWN MEDIUM, GENRE FINALLY REACHES A PICTURE, AND A ONE-PHONE SHOT GETS ONE PHONE.** The cast sheet was hardcoded to "Pixar-style" and, being a look reference inside every panel, dragged half a Cinematic board into cartoon with it. ⚠ Phase 2 (market/locale, the `$` prices) and Phase 3 (brand kit, the drifting logo) are UNTOUCHED. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE SCRIPT BOX AND THE AI COMPOSER ARE ONE FRAMED PANEL, AND THE STARTER CHIPS ARE GONE.** Two identical grey boxes stacked on each other made "which one do I type in?" a real question; the frame, the background and the focus glow now live on a `.sts-script-panel` wrapper and everything inside it is borderless. The four example prompts under the composer are deleted. See the Work Log.
 
 **Previously:** 2026-08-27 — **NO TOKEN OR COST NUMBERS ON ANY CUSTOMER-FACING SCREEN.** All five readouts removed and `usageLine()` deleted; the counting itself is untouched and still read in the admin panel. See the Work Log.
 
@@ -3408,7 +3414,311 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — SCRIPT → STORYBOARD'S SCRIPT BOX AND ITS AI COMPOSER ARE ONE PANEL NOW, AND THE STARTER CHIPS ARE GONE ("ye text hata do aur ask ai and paste box ek mai nhi aa sakta hai kya? do do badhiya nhi lag raha hai", over a screenshot of the two stacked boxes and the four example prompts)
+### 2026-08-27 (latest) — FOUR DIFFERENT "LICKYEAT" LOGOS IN ONE 28-PANEL FILM ("logo har jagah change hua ek jaisa hona chahiye tha agar user nahi diya hai to")
+
+Phase 3 of the **Production Brief** plan (see Current State). New module:
+**`brand.py`**.
+
+⚠ **NO PROMPT CAN FIX THIS, WHICH IS WHY THE FIX IS NOT A PROMPT.** An image
+model reconstructs a mark from its description every time it draws one, and two
+reconstructions of the same description are never the same picture. Across the
+reported board "Lickyeat" came back as a fork-and-spoon roundel (shot 5), a
+stylised L (shot 6), a noodle bowl (shot 11) and a grinning mouth (shot 12).
+Asking more firmly buys a different wrong logo.
+
+So the model is taken out of the job entirely:
+
+1. Where a logo would go it is told to draw a **PLAIN FLAT SOLID MAGENTA**
+   shape with nothing on it — a placeholder, which is the one thing it can draw
+   identically every time because there is nothing inside it to get wrong.
+2. `brand.stamp()` finds that magenta and pastes the user's uploaded PNG in.
+
+The mark is bit-identical in every panel because it IS the same file.
+
+⚠ **AND WITH NO UPLOAD, THE ANSWER IS NO LOGO — not a generated one.** The
+prompt then tells the model to leave every app icon, sign and package blank,
+**and says why**, because "no logo" reads as a limitation until you know a
+made-up one changes between shots. That half of the fix is free and carries no
+risk; it is what the user's own "agar user nahi diya hai to" asks for.
+
+⚠ **THE MARKER'S OWN PIXELS ARE REPAINTED, NEVER ITS BOUNDING BOX.** The model
+draws the placeholder as the shape the icon really is — a rounded square, and on
+a tilted phone a rounded square IN PERSPECTIVE. Repainting the box would square
+off those corners and leave four bright nubs against the scene. Recolouring the
+pixels keeps the shape the model drew, which is how a flat paste ends up sitting
+correctly on a tilted screen at all.
+
+**A placeholder scheme fails LOUDER than the bug it replaces**, so each way it
+could do that has a named guard, and each guard is pinned by the test:
+
+- ⚠ **The logo file goes missing** between the board being set up and a panel
+  being drawn → the panel would ship with a bright magenta square on the phone.
+  `erase_markers()` repaints it as a plain neutral tile, which is exactly what
+  an unbranded board would have got. `_resolve_brand()` is the belt to that
+  braces: it drops `logo_ref_id` when the file is not on disk, so the prompt
+  never asks for a placeholder nothing can fill.
+- ⚠ **The board has no brand and the shot genuinely contains something
+  magenta** — a neon sign, a lit screen, a jacket. Erasing that would be US
+  breaking the panel. Only a board that ASKED for a marker may have magenta
+  repainted; an unbranded one is returned untouched.
+- ⚠ **The model paints something large magenta** — a wall, the whole phone.
+  Pasting a logo across a quarter of the frame is worse than no logo, so it
+  refuses and logs rather than stamping. A speck is treated as noise.
+- ⚠ **The stamp raises.** It runs after a picture has been drawn and PAID FOR,
+  so every failure path ends with a panel and never an exception.
+
+Details worth keeping:
+
+- ⚠ **A logo needs its own upload route.** `POST /characters/reference/upload`
+  normalises with `.convert("RGB")` — right for a character photo, destroying
+  for a logo, because flattening the alpha fills the transparent background with
+  black and the mark would be pasted onto every panel inside a hard rectangle.
+  `POST /brand/logo` saves RGBA. Like the character upload beside it, it is NOT
+  gated on `cap.image-generate`: nothing is drawn, and this is the path that
+  STOPS an image being generated.
+- ⚠ **A white logo gets a dark tile.** Plenty of brands ship white-on-transparent
+  PNGs, and a white tile would swallow one whole. The tile is chosen from the
+  logo's own weight, judged on its OPAQUE pixels only — averaging in the
+  transparent background would call every logo dark.
+- ⚠ **Greyscale styles are skipped entirely**, marker and paste. Their panels
+  are desaturated after generation, so a marker would be a grey square nothing
+  could find and a logo would be a grey smudge. They get the "invent nothing"
+  wording instead. The three panel paths are now written as three statements
+  rather than nested calls so that `conform_to_style` → `stamp_brand` order is
+  visible, and the test pins it in all three.
+- **The brand NAME is context, never letterforms.** It tells the model what the
+  product is; the prompt then forbids lettering it anywhere, because an image
+  model mis-spells a wordmark about as often as it gets it right.
+- ⚠ **AND THE PLACEHOLDER IN THE SCRIPT DIES TOO.** The reported film went out
+  with "That's why [Your App Name] is built for speed" burnt into its captions —
+  the writer's bracket, copied faithfully into a shot description and then read
+  aloud. The breakdown is now given the real name and told to replace any
+  bracketed placeholder with it.
+- The brand is stored on the board, so a re-style, a single-panel redraw and a
+  shot inserted between two others all stamp the same file. ⚠ A re-style keeps
+  the board's brand: a logo on the packaging is not an art style.
+- The form shows the logo on a **chequerboard**, which is not decoration — a
+  logo is uploaded for its transparency, and against a flat tile a
+  white-on-transparent mark looks identical to a white-on-white one.
+- Files: `brand.py` (new), `gemini_client.py`, `storyboard_pipeline.py`,
+  `script_breakdown.py`, `server/main.py`, `server/schemas.py`,
+  `server/common.py`, `server/animatics.py`, `client/src/api.js`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/styles/storyboard.css`, `tests/board_brand_check.py` (new).
+- Verified: `tests/board_brand_check.py` 40/40, including a real end-to-end
+  paste on a synthesised panel (marker found, logo pasted, **zero magenta
+  pixels left**, rounded corner still scene, two markers in one shot both
+  filled, white logo given a dark tile); `board_look_check` and
+  `board_market_check` still green; `panel_border_check`,
+  `panel_normalise_check`, `storyboard_draft_check`, `asset_fields_check` pass;
+  `vite build` clean; the server imports.
+- ⚠ **NOT verified against the real image model.** The paste is exercised
+  against a synthesised panel, which proves the compositing but NOT the thing
+  the whole scheme rests on: that Gemini actually draws a flat magenta
+  placeholder when asked. **That is the one thing to look at on the next real
+  branded board** — if it draws the logo anyway, or shades the placeholder, the
+  marker wording is where to work, and `erase_markers()` is what stops that
+  failing visibly in the meantime.
+
+### 2026-08-27 — AN INDIAN CREATOR'S APP PROMO WAS PRICED IN DOLLARS, AND `world` COULD NOT FIX IT ("is duniya mai bahut religion, language hai kaise gemini samjhega ki kis desh ka hai to uske hisab se hi sab dikhna chahiye … video mai $ dikhne laga")
+
+Phase 2 of the **Production Brief** plan (see Current State). New module:
+**`market.py`**.
+
+⚠ **THE MISSING FACT WAS NEVER IN THE SCRIPT.** `world` is read OUT of the
+script, and the reported script said "food delivery app" and never said India —
+so there was no cultural signal to find, and an image model handed no signal
+draws its default. The default is America: `$4.50` on the phone, an English app
+UI, and the same `$` again when the shot was re-rendered with Veo. Who a film is
+FOR is not a property of its text; only the creator knows it. So it is now
+ASKED for, and guessed only as a last resort.
+
+**Three layers, most specific first** (`market.resolve`), merged FIELD BY FIELD
+rather than layer by layer — so someone whose account says India can pick
+English on one board without restating the country:
+
+1. what this board's form said;
+2. the account default ("I make films for India");
+3. what the breakdown could read off the script.
+
+⚠ **AND THE FOURTH ANSWER IS SILENCE.** All three empty resolves to nothing, and
+`on_screen_text_rule()` then asks for **no legible price and no currency symbol
+anywhere** — naming `$`, `€` and `£` so the refusal is not abstract — and says
+what to draw instead: a clean interface with no readable words. An app screen
+with no price reads as a design choice; a `$` on an Indian film reads as a
+mistake, and only one of those gets reported. The breakdown is told the same
+thing in its own prompt: **"LEAVE IT EMPTY otherwise"**.
+
+⚠ **THE MONEY RULE IS A CONDITIONAL, AND THAT IS THE WHOLE CRAFT OF IT.**
+"Prices are in ₹" would invite the model to ADD a price to a shot that never had
+one — a mythology board set to India growing rupee signs inside a Puranic
+temple. It reads "WHERE a price or a currency appears at all", which only
+corrects money the shot already called for. This is also why market is kept
+conceptually apart from `world`: the world is what the STORY is, the market is
+who the FILM is for, and for a period piece they must not be confused.
+
+⚠ **THE CURRENCY IS LOOKED UP, NEVER TYPED.** `Market` (the request model) asks
+for country and language only; `resolve()` fills in the currency and the units
+from the country and turns a code into its readable name, so a prompt never says
+"Country: IN". Making someone type "₹" after picking India is inviting a typo
+into every price in the film. An unknown country passes through as free text —
+the same courtesy a custom style gets.
+
+Where it reaches:
+
+- **Every panel**, appended unconditionally — `build_market_context()` never
+  returns "", which is what stops an unset market falling back to the US default.
+- ⚠ **Every PROP / BACKGROUND reference**, which matters most: a prop IS a
+  phone, a menu, a price tag, a shop front, and the reference is drawn ONCE and
+  fed into every panel the object appears in. A `$` baked in there is a `$` on
+  the whole board, in a picture no later prompt can argue with.
+- **NOT the character T-pose sheet** — one figure on white whose prompt already
+  says "no text, no labels" has no price tag to get wrong.
+- ⚠ **RESOLVED AT EVERY DRAWING ROUTE, not only at board create.** The flow
+  draws cast sheets and prop references BEFORE the board job exists (script →
+  breakdown → review → cast → props → generate), so a board-only fix would have
+  left the references priced in dollars while the panels around them were
+  correct. One resolver, `main._resolve_market`, three call sites.
+- ⚠ **Both Veo paths** — the animate button and the long-video render — through
+  one `_localise_veo()`. The audience block goes on the prompt and every OTHER
+  market's currency sign goes on the negative prompt. One film coming out in two
+  currencies split down the middle is the bug back again, halved.
+- **The Director's captions** fall back to the audience's language when the 🎬
+  popup left it blank, so captions are not in a different language from the
+  signage in the panels they sit over. An explicit choice still wins, and the
+  fallback is NOT written back onto the project.
+- ⚠ **A project made from a board COPIES the board's market**, rather than
+  looking it up later: editing the board must not relight a video already being
+  cut, and the project must keep working if the board is deleted.
+
+⚠ **THE MARKET RIDES INSIDE THE `world` DICT, AND THAT IS DELIBERATE.** `world`
+was already threaded into every generator and stored on every job; a second
+parallel dict would have meant touching twenty call sites to carry one more fact
+to the same place. The two are composed by the server before anything is drawn.
+What is NOT merged is the request: the form's pick and the breakdown's guess
+arrive as separate fields, because folded together the server could not tell a
+decision from a lucky guess — and they sit at opposite ends of the precedence
+chain.
+
+- Where the user says it: an **account default** on the Profile page ("Who your
+  films are for") and an **Audience row** on the storyboard form, two pill
+  dropdowns wearing the same shape as the Genre and Style chips. Thirty-eight
+  countries and twenty-five languages is too many for a chip row — it would
+  bury the rows that matter on every board. ⚠ The form prints what an unset
+  market MEANS, so a blank app screen in a finished panel does not read as a bug.
+  ⚠ Hinglish is offered as a first-class option: it is what Indian creators
+  actually caption reels in, and the video half already honoured it.
+- ⚠ **Changing the audience invalidates the board.** Switching India to the US
+  changes the money on every price tag; a board left marked "up to date" through
+  that would be showing the previous market's film.
+- ⚠ `.opt-select` sets `width: auto` **on purpose** — `theme.css`'s global
+  `select { width: 100% }` would otherwise stack the two dropdowns and break
+  the row. That one line is in the Work Log more than once.
+- Files: `market.py` (new), `gemini_client.py`, `script_breakdown.py`,
+  `server/main.py`, `server/schemas.py`, `server/auth.py`, `server/users.py`,
+  `server/animatics.py`, `server/videos.py`, `server/director.py`,
+  `client/src/storyboardOptions.js`, `client/src/api.js`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/components/StoryboardCast.jsx`,
+  `client/src/components/StoryboardAssets.jsx`,
+  `client/src/components/Profile.jsx`, `client/src/styles/storyboard.css`,
+  `client/src/styles/home.css`, `tests/board_market_check.py` (new).
+- Verified: `tests/board_market_check.py` 44/44; `board_look_check` still green
+  (two of its assertions pinned call signatures this widened, and were updated
+  to match rather than loosened); `storyboard_draft_check`, `asset_fields_check`,
+  `admin_fields_check`, `capability_check`, `panel_border_check` all pass;
+  `vite build` clean; the server imports and `_localise_veo` was exercised
+  directly. ⚠ **NOT verified against the real image or video model** — no board
+  and no Veo shot were generated, so the pictures themselves are unconfirmed.
+- ⚠ **STILL BROKEN, ON PURPOSE — Phase 3 is untouched.** The logo is still
+  redrawn differently in every panel, because an image model cannot reproduce
+  the same logo twice; the agreed fix is upload + Pillow composite, never
+  generation. See Current State.
+
+### 2026-08-27 — THE CAST SHEET WAS ALWAYS A PIXAR CARTOON, AND IT DRAGGED HALF THE BOARD WITH IT (report: five screenshots of a real 28-panel mobile-app promo — "set your cast page mai … cartoon character ka image dene laga jabki maine visual mai cinematic choose kiya tha … shot 3 mai do do phone dikh raha hai, only haath mai phone hona chahiye")
+
+Phase 1 of the **Production Brief** plan (see Current State). Three faults, and
+the first one causes the second.
+
+⚠ **`_REFERENCE_PROMPT_TEMPLATE` OPENED WITH "Generate a 3D animated
+Pixar-style character in T-pose", AND THERE WAS NO WAY TO OVERRIDE IT.**
+`generate_character_reference()` had no style argument, the route had no field,
+the client sent none. Every board's cast page produced Pixar cartoons.
+
+⚠ **AND A CAST SHEET IS NOT A PASSPORT PHOTO.** It is fed into every panel that
+character appears in as a look reference, and a picture beats a sentence — the
+cartoon sheet out-voted the panel's own "photorealistic cinematic film still"
+line. That is why the reported board came back in TWO MEDIUMS: shots whose
+characters had a sheet were 3D cartoons (2, 19–22), shots whose characters had
+none were photoreal (1, 3). Same film, same style setting, two looks. The
+screenshots show it plainly and it is the single most visible bug on the board.
+
+Now: `build_reference_prompt(description, style)` splits the sheet into a fixed
+POSE (T-pose, white ground, one figure, no props/text/second view — that is what
+makes it usable as a reference) and a per-style MEDIUM. Photographic styles say
+"a REAL human being … NOT a cartoon, NOT a 3D render"; `animation-3d` keeps the
+Pixar wording it always had; greyscale styles get a proper pencil-and-ink MODEL
+SHEET rather than their panel wording, because a panel thumbnail's "faces
+suggested with a few marks" is useless as the thing every later panel matches a
+face against. Anything else falls through to its own panel style line, so a
+newly added style works without being listed.
+
+- ⚠ **The sheet now gets the same colour enforcement the panels get**
+  (`conform_to_style` on the route). A coloured sheet is worse than a coloured
+  panel — it re-colours the whole board through the reference.
+- ⚠ **`style` is threaded end to end**: `ScriptToStoryboard` → `StoryboardCast`
+  → `api.generateReference` → `ReferenceRequest` → the generator. Optional
+  everywhere, so an older client still works; empty means neutral wording, NOT
+  a cartoon.
+
+⚠ **GENRE HAD NEVER REACHED A PICTURE.** It was collected on the form, stored on
+the job, and spent entirely on the TEXT breakdown's tone and pacing —
+`generate_storyboard_panel()` had no genre parameter at all, so Documentary and
+Commercial drew identically-lit frames. New `build_genre_context()` gives each
+genre one line of staging/lighting direction, keyed on a NORMALISED name so the
+form's labels ("Music Video") and older jobs' ids ("music-video") land on the
+same entry, and a typed custom genre passes through instead of being dropped.
+
+- ⚠ **GENRE IS NOT STYLE, AND THE PROMPT SAYS SO OUT LOUD.** Style is what the
+  picture is made of, genre is how the moment is lit and staged — "Documentary
+  in charcoal" is a real answer. Every hint is written in staging words only and
+  `_GENRE_RULE` states that the art style wins.
+- ⚠ **A RE-STYLE READS THE BOARD'S GENRE, NOT THE REQUEST'S.** Changing the art
+  style must not relight the film. Same for a single-panel redraw and for a shot
+  inserted between two others — all three go through the stored value.
+- Genre is deliberately NOT in the cast sheet: on a T-pose against white it has
+  nothing to change, and what it would otherwise contribute (costume, period
+  dress) is already in the description the breakdown wrote.
+- The key-pose flipbook path (`panel_sequence`) is deliberately left alone —
+  it re-poses an existing panel, so its look is already anchored to that
+  picture, and genre staging words there would invite a restage.
+
+⚠ **AND "Single frame" DID NOT STOP TWO PHONES.** "She holds her smartphone,
+frowning at the screen which displays a food delivery app" came back as a woman
+holding a phone AND a second, much larger phone floating beside her with the app
+on it. The model honoured "single frame" — it does not read a floating device
+inset as a second FRAME. `_SINGLE_FRAME_RULE` now names the shapes the failure
+actually takes (collage, montage, split screen, inset, picture-in-picture,
+floating enlarged screen or device mockup, before/after, advertising-poster
+arrangement) and bans duplicate objects outright: "if a character is holding a
+phone, there is exactly ONE phone in the picture".
+
+- Files: `gemini_client.py`, `storyboard_pipeline.py`, `server/main.py`,
+  `server/common.py`, `server/animatics.py`, `server/schemas.py`,
+  `client/src/api.js`, `client/src/components/StoryboardCast.jsx`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `tests/board_look_check.py` (new).
+- Verified: `tests/board_look_check.py` 33/33; `panel_border_check`,
+  `panel_normalise_check`, `storyboard_draft_check`, `asset_fields_check` all
+  still pass; `vite build` clean. ⚠ **NOT verified against the real image
+  model** — no board was generated, so the actual pictures are unconfirmed. The
+  prompts are what changed and the prompts are what is checked.
+- ⚠ **STILL BROKEN, ON PURPOSE — this was Phase 1 of 4.** The `$` prices, the
+  English app UI and the Western default (Phase 2, market/locale) and the logo
+  redrawn differently in every panel (Phase 3, brand kit) are UNTOUCHED. See
+  Current State.
+
+### 2026-08-27 — SCRIPT → STORYBOARD'S SCRIPT BOX AND ITS AI COMPOSER ARE ONE PANEL NOW, AND THE STARTER CHIPS ARE GONE ("ye text hata do aur ask ai and paste box ek mai nhi aa sakta hai kya? do do badhiya nhi lag raha hai", over a screenshot of the two stacked boxes and the four example prompts)
 
 ⚠ **TWO IDENTICAL GREY BOXES, ONE JOB.** The script textarea and the AI
 composer each carried their own border, background and focus ring, so the form
@@ -20691,6 +21001,64 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+**🎬 THE PRODUCTION BRIEF — PHASES 1, 2 AND 3 OF 4 ARE BUILT (2026-08-27).
+ONLY PHASE 4 IS LEFT.**
+
+Reported over five screenshots of a real 28-panel mobile-app promo: a Cinematic
+board whose cast came back as Pixar cartoons, panels drifting between two
+mediums, `$4.50` on an Indian creator's app UI, a different "Lickyeat" logo in
+every panel, two phones in a one-phone shot, and Genre having no visible effect
+at all.
+
+⚠ **THE CAUSE IS ARCHITECTURAL, NOT SIX SEPARATE PROMPT BUGS.** Cast, panel and
+Veo each reason on their own today, so a fix in one does not reach the others —
+`world` already rides into every panel and still could not beat the cast sheet's
+hardcoded "Pixar-style", because a reference IMAGE out-votes a sentence. The
+agreed shape is ONE `Production Brief` — `{world, market, look, brand, policy}`
+— saved with the storyboard and injected into all three stages.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | **Look**: style-aware cast sheet, genre → art direction, anti-collage / one-object rule | ✅ built, `tests/board_look_check.py` |
+| 2 | **Market**: country + language + currency, on-screen-text rule, carried into panels AND Veo | ✅ built, `market.py` + `tests/board_market_check.py` |
+| 3 | **Brand**: logo/name/colours uploaded, composited with Pillow, never generated | ✅ built, `brand.py` + `tests/board_brand_check.py` |
+| 4 | **QA gate**: automated wrong-currency / logo-drift checks after generation | ⬜ not built |
+
+Decisions already taken with the user, so they do not need re-litigating:
+
+- ✅ **Market comes from BOTH an account default AND a per-board override**, with
+  script auto-detection kept only as a fallback. BUILT — `market.resolve()`. ⚠ When the market is genuinely
+  unknown, show NO currency and NO legible on-screen prices — a wrong `$` is
+  worse than nothing. `WORLD_FIELDS` gains `country, language, script, currency,
+  units`; `director.language_instruction()` already solves half of this for the
+  video editor and should be joined to the brief rather than duplicated.
+- ✅ **A logo is UPLOADED and composited onto the finished panel with Pillow —
+  never generated.** BUILT — the model draws a flat magenta placeholder and
+  `brand.stamp()` pastes the real PNG into it, repainting the MARKER PIXELS
+  rather than their bounding box, so a rounded icon drawn on a tilted phone
+  stays rounded and tilted. Image models cannot reproduce the same logo twice, which is
+  the whole reported bug. The model is told to leave a blank/neutral app icon.
+  No upload means no logo in frame at all. The flat-paste version comes first;
+  matching the phone's perspective is a later refinement.
+- ⬜ **ALL THREE BUILT PHASES ARE UNVERIFIED AGAINST THE REAL MODELS.** What
+  changed is prompts, and prompts are what the three `tests/board_*_check.py`
+  suites check; no board and no Veo shot have been generated since. The next
+  real board is the actual test.
+
+  ⚠ **THE RISKIEST ASSUMPTION IS PHASE 3.** The whole logo scheme rests on
+  Gemini actually drawing a FLAT MAGENTA PLACEHOLDER when asked, and that has
+  never been observed — only the compositing around it is tested, against a
+  synthesised panel. `brand.erase_markers()` is what stops a failure there
+  being VISIBLE (the panel gets a blank icon instead of a magenta square), but
+  if the model draws the logo anyway or shades the placeholder, the wording in
+  `brand._MARKER_RULE` is where to work.
+
+  Look at, in this order, on the next real board:
+  1. does a branded panel come back with a flat magenta shape where the icon is;
+  2. does a Cinematic cast sheet come back photographic rather than cartoon;
+  3. does an app screen on an India board show ₹ — or, with no market set, no
+     price at all.
 
 **⬜ Newest follow-ups — Script → Storyboard's "Ask AI" tab (2026-08-26):**
 

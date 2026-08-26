@@ -396,6 +396,13 @@ _PROMPT_TEMPLATE = (
     "symbols, colours)\n"
     "If the script genuinely gives no cultural signal, say so plainly in `setting` "
     "rather than inventing one.\n"
+    "  - country: the country/market this film is FOR, but ONLY if the script "
+    "actually says — a named city, a currency, a festival, a phone number "
+    "format, a language the dialogue is written in. ⚠ LEAVE IT EMPTY otherwise. "
+    "An empty answer is correct and useful; a guess puts the wrong money and the "
+    "wrong signage on every screen in the film, which is worse than none.\n"
+    "  - language: the language the audience reads on screen, on the same terms "
+    "— only if the script shows it. Leave empty if unsure.\n"
     "Also return `characters`: every NAMED character in the script, each with a "
     "concise VISUAL description (age, build, hair, clothing, distinguishing "
     "features) an artist could draw consistently. EVERY character description "
@@ -468,6 +475,12 @@ def _breakdown_schema() -> types.Schema:
                     "wardrobe": types.Schema(type=types.Type.STRING),
                     "environment": types.Schema(type=types.Type.STRING),
                     "notes": types.Schema(type=types.Type.STRING),
+                    # The market, guessed from the script — the LOWEST-priority
+                    # of the three layers (see market.resolve). Left blank
+                    # unless the script actually says; a guess here would be the
+                    # very "American by default" behaviour this is fixing.
+                    "country": types.Schema(type=types.Type.STRING),
+                    "language": types.Schema(type=types.Type.STRING),
                 },
             ),
             "characters": types.Schema(
@@ -877,12 +890,31 @@ def _coerce_characters(raw) -> list[dict]:
 # order it reads in a prompt and in the UI.
 WORLD_FIELDS = ("setting", "culture", "ethnicity", "wardrobe", "environment", "notes")
 
+# ⚠ THE BREAKDOWN'S MARKET GUESS IS THE WEAKEST OF THREE LAYERS, and it is kept
+# separate from WORLD_FIELDS because it is a different kind of claim: the world
+# is what the story IS, the market is who the film is FOR. The user's account
+# default and this board's form both outrank it — see market.resolve(). Only
+# `country` and `language` are guessable; currency and units are looked up from
+# the country rather than asked for, so the model cannot invent a mismatch.
+GUESSED_MARKET_FIELDS = ("country", "language")
+
 
 def _coerce_world(raw) -> dict:
-    """Normalise the world block to {field: str} over WORLD_FIELDS only."""
+    """Normalise the world block to {field: str} over the fields we recognise.
+
+    Market fields are carried through when present and simply absent when not,
+    so the server can tell "the script said nothing" (no key) apart from a
+    positive answer — the difference between falling back to the account
+    default and overriding it with an empty string.
+    """
     if not isinstance(raw, dict):
         return {}
-    return {f: str(raw.get(f, "") or "").strip() for f in WORLD_FIELDS}
+    out = {f: str(raw.get(f, "") or "").strip() for f in WORLD_FIELDS}
+    for f in GUESSED_MARKET_FIELDS:
+        value = str(raw.get(f, "") or "").strip()
+        if value:
+            out[f] = value
+    return out
 
 
 # Categories we recognise for a locked asset. Anything else → "prop".
@@ -1124,6 +1156,7 @@ def break_down_script(
     provider: str | None = None,
     max_shots: int = MAX_SHOTS,
     genre: str | None = None,
+    brand_name: str | None = None,
 ) -> dict:
     """Break a raw script into a storyboard shot list + a cast list.
 
@@ -1182,6 +1215,19 @@ def break_down_script(
         prompt = (
             f"Genre: {genre.strip()}. Shape the tone, pacing and shot choices to "
             f"fit this genre.\n\n" + prompt
+        )
+    # ⚠ THE BRAND'S REAL NAME, BECAUSE A PLACEHOLDER SURVIVES ALL THE WAY TO THE
+    # SCREEN. One reported film went out with "That's why [Your App Name] is
+    # built for speed" burnt into its captions — the writer's placeholder,
+    # copied faithfully into a shot description and then read aloud. If we know
+    # the name, the breakdown has no excuse to keep the brackets.
+    if brand_name and brand_name.strip():
+        prompt = (
+            f'The product this film advertises is called "{brand_name.strip()}". '
+            f"Wherever the script uses a placeholder for it — [Your App Name], "
+            f"[Brand], YOUR_APP or similar — write the real name instead. Never "
+            f"carry a bracketed placeholder into a shot description or a line of "
+            f"dialogue.\n\n" + prompt
         )
 
     last_reason = "Unknown error breaking down the script."

@@ -2,7 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 import Avatar from "./Avatar.jsx";
-import { ALL_STYLES, ASPECTS, ALL_GENRES, ROLES } from "../storyboardOptions.js";
+import {
+  ALL_STYLES,
+  ASPECTS,
+  ALL_GENRES,
+  MARKET_COUNTRIES,
+  MARKET_LANGUAGES,
+  ROLES,
+} from "../storyboardOptions.js";
 
 // Profile — everything about the person using the app, in one place.
 //
@@ -29,6 +36,8 @@ const EMPTY = {
   default_style: "",
   default_aspect_ratio: "",
   default_genre: "",
+  default_country: "",
+  default_language: "",
   timezone: "",
 };
 
@@ -432,9 +441,56 @@ export default function Profile({
             </select>
           </label>
         </div>
+
+        {/* ⚠ THE AUDIENCE IS A SEPARATE BLOCK BECAUSE IT IS A DIFFERENT KIND OF
+            SETTING. The three above change how a board LOOKS; these two change
+            what is DRAWN — the money on a price tag, the language on a shop
+            sign. Set once by a creator who always makes films for one market,
+            and left blank the films simply show no prices, which is the right
+            answer when nobody has said who is watching. See market.py. */}
+        <h3 className="profile-subhead">Who your films are for</h3>
+        <p className="muted tiny">
+          Sets the currency and the on-screen language in every board you draw.
+          Leave it blank and screens and signs are drawn with no prices and no
+          readable text — better than the wrong country&rsquo;s.
+        </p>
+        <div className="profile-grid">
+          <label className="field">
+            <span className="field-label">Country / market</span>
+            <select
+              value={form.default_country}
+              onChange={(e) => set("default_country", e.target.value)}
+            >
+              {MARKET_COUNTRIES.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id ? c.label : "Ask me each time"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">On-screen language</span>
+            <select
+              value={form.default_language}
+              onChange={(e) => set("default_language", e.target.value)}
+            >
+              {MARKET_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.id ? l.label : "Country's own language"}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <SaveRow
           name="defaults"
-          fields={["default_style", "default_aspect_ratio", "default_genre"]}
+          fields={[
+            "default_style",
+            "default_aspect_ratio",
+            "default_genre",
+            "default_country",
+            "default_language",
+          ]}
         />
       </section>
 

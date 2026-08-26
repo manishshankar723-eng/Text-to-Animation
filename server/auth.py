@@ -171,6 +171,13 @@ class UserProfile(BaseModel):
     default_style: str = ""
     default_aspect_ratio: str = ""
     default_genre: str = ""
+    # --- who this creator's films are FOR ---
+    # ⚠ NOT A DISPLAY PREFERENCE. These decide the currency, the on-screen
+    # language and the signage in every board this account draws, unless that
+    # board's own form overrides them — see market.resolve(). Left empty, the
+    # films show no prices at all rather than guessing a market.
+    default_country: str = ""
+    default_language: str = ""
     # --- locale ---
     timezone: str = ""
     # --- read-only ---
@@ -203,6 +210,8 @@ class UserProfileUpdate(BaseModel):
     default_style: str | None = Field(None, max_length=60)
     default_aspect_ratio: str | None = Field(None, max_length=20)
     default_genre: str | None = Field(None, max_length=60)
+    default_country: str | None = Field(None, max_length=60)
+    default_language: str | None = Field(None, max_length=60)
     timezone: str | None = Field(None, max_length=60)
 
 
@@ -373,6 +382,8 @@ def _to_profile(user: dict) -> UserProfile:
         default_style=user.get("default_style") or "",
         default_aspect_ratio=user.get("default_aspect_ratio") or "",
         default_genre=user.get("default_genre") or "",
+        default_country=user.get("default_country") or "",
+        default_language=user.get("default_language") or "",
         timezone=user.get("timezone") or "",
         created_at=user.get("created_at"),
         disabled=user.get("disabled", False),
