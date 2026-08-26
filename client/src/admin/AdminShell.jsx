@@ -57,7 +57,7 @@ export default function AdminShell({
             rather than a page that failed to draw its sidebar. */}
         <span className="admin-brand">
           <span className="admin-brand-ico">🛡️</span>
-          <span className="admin-brand-name">Character Studio</span>
+          <span className="admin-brand-name">Aniwala AI Studio</span>
           <span className="admin-brand-tag">Admin</span>
         </span>
 
@@ -109,7 +109,7 @@ export default function AdminShell({
                 onPick={closeMenu}
                 onOpenAccount={onOpenAccount}
                 onLogout={onLogout}
-                helpSubject="Help with Character Studio"
+                helpSubject="Help with Aniwala AI Studio"
               />
             )}
           </span>

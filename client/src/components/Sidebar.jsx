@@ -8,6 +8,8 @@
 import { useCallback, useState } from "react";
 import Avatar from "./Avatar.jsx";
 import Icon from "./Icon.jsx";
+import Logo from "./Logo.jsx";
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // ⚠ THE SAME MENU THE EDITOR'S ⚙ OPENS, not a second list that looks like it.
 // See AccountMenu.jsx.
 import AccountMenu, { useMenuDismiss } from "./AccountMenu.jsx";
@@ -117,8 +119,10 @@ export default function Sidebar({
       {/* Brand + the account avatar. The avatar sits here because the top-left
           is where people look for "me" — clicking it opens the profile. */}
       <div className="sb-brand">
-        <span className="sb-logo">🎭</span>
-        <span className="sb-brand-name">Character Studio</span>
+        <span className="sb-logo">
+          <Logo />
+        </span>
+        <span className="sb-brand-name">Aniwala AI Studio</span>
         <button
           type="button"
           className={`sb-brand-avatar ${active === "profile" ? "active" : ""}`}
@@ -189,7 +193,9 @@ export default function Sidebar({
                 : w.label
             }
           >
-            <span className="sb-ico">{w.icon}</span>
+            <span className="sb-ico">
+              <WorkflowIcon id={w.id} fallback={w.icon} />
+            </span>
             <span className="sb-item-label">{w.label}</span>
             {w.status === "soon" && <span className="sb-badge-soon">Soon</span>}
             {/* ⚠ LOCKED IS NOT HIDDEN, ON PURPOSE. A feature nobody can see is a
@@ -260,7 +266,7 @@ export default function Sidebar({
               onOpenPricing={onUpgrade}
               onOpenAdmin={onOpenAdmin}
               onLogout={onLogout}
-              helpSubject="Help with Character Studio"
+              helpSubject="Help with Aniwala AI Studio"
               accounts={accounts}
               activeEmail={email}
               onSwitchAccount={onSwitchAccount}

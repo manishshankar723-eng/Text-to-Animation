@@ -94,7 +94,7 @@ export default function CreateAnimaticImage({ onOpenAnimatic }) {
       {error && <div className="error">{error}</div>}
 
       <StoryboardLibrary
-        icon="🖼️"
+        workflowId="create-animatic-image"
         title="Image to Animatic Image"
         subtitle="Your own copies of a board, safe to redraw. Changes here never touch the original storyboard."
         workflow={WORKFLOW}

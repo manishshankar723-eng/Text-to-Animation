@@ -545,6 +545,59 @@ def _tier_name(tier_id: str) -> str:
 # ===========================================================================
 # Routes
 # ===========================================================================
+@router.get("/public/workflows")
+def public_workflows() -> dict:
+    """The workflow list for somebody who has NOT signed in — the landing page.
+
+    ⚠ THIS EXISTS BECAUSE THE MARKETING PAGE WAS LYING BY A DAY. The rail reads
+    `/auth/me/entitlements` and is correct the moment an administrator flips a
+    switch; the landing page kept a hand-written copy of the same list, so
+    hiding a workflow left it advertised to every stranger who visited, and
+    launching one left it unmentioned. Same fix as the price list: this page
+    already fetches `/billing/tiers` without a token, and for the same reason —
+    what you SELL is public by nature.
+
+    ⚠ NO AUTHENTICATION, AND THEREFORE NO ACCOUNT. It answers for a visitor with
+    no email, no tier and no overrides, which is exactly right for a shop
+    window: `resolve("")` applies the kill switch and the rollout rules, and an
+    allow-list or a percentage rollout simply does not match. That is the
+    conservative answer — something still being staged to 10% of accounts is not
+    something to put on the front page.
+
+    ⚠ IT LISTS WHAT IS *VISIBLE*, NOT WHAT IS *ON*, so a workflow gated behind a
+    paid plan still appears — with `locked` set. A feature nobody can see is a
+    feature nobody upgrades for, and that rule has to hold on the way IN as well
+    as inside the app.
+
+    ⚠ AND IT LEAKS NOTHING AN ANONYMOUS VISITOR SHOULD NOT HAVE: the label, the
+    icon and the status are what the page prints. No counts, no emails, no
+    rollout percentages, no per-account state — there is no account.
+
+    Fails OPEN like everything else in this module: on any error the browser is
+    told nothing and keeps its built-in list, which is a stale page rather than
+    an empty one.
+    """
+    feats = all_features()
+    resolved = resolve("", is_admin=False)
+
+    workflows = []
+    for key, state in resolved.items():
+        feat = feats.get(key) or {}
+        if feat.get("group") != GROUP_WORKFLOW or not state["visible"]:
+            continue
+        workflows.append(
+            {
+                "id": key.split(".", 1)[1],
+                "label": feat.get("label") or key,
+                "icon": feat.get("icon") or "\u2022",
+                "status": state["status"],
+                "locked": state["source"] == "tier",
+            }
+        )
+    workflows.sort(key=lambda w: (_order_of(feats, w["id"]), w["label"]))
+    return {"workflows": workflows}
+
+
 @router.get("/auth/me/entitlements")
 def my_entitlements(current: CurrentUser = Depends(get_current_user)) -> dict:
     """What THIS account may see and use — the one call the client makes on boot.

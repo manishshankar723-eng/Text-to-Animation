@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Chip labels for the ids stored on a board. Unknown ids fall through as-is,
 // which is what "Add your own style" / custom genre text needs.
 const GENRE_LABELS = {
@@ -66,7 +67,11 @@ export default function StoryboardLibrary({
   onNew,
   onOpen,
   onDuplicate,
-  icon = "🎬",
+  // ⚠ A WORKFLOW ID, NOT A GLYPH. This library is rendered by two different
+  // workflows and each wants its own face on the header; passing the id rather
+  // than the picture keeps the drawing in one file. Defaults to Script to
+  // Storyboard, whose library this originally was.
+  workflowId = "script-to-storyboard",
   title = "Your Storyboards",
   subtitle = "All your stories in one place.",
   // What the create tile says. `newHint` is given the board COUNT because only
@@ -479,7 +484,7 @@ export default function StoryboardLibrary({
   return (
     <div className="workflow-head-wrap sb-library">
       <div className="workflow-header">
-        <span className="wf-icon">{icon}</span>
+        <span className="wf-icon"><WorkflowIcon id={workflowId} /></span>
         <div>
           <h1 className="wf-title">{title}</h1>
           <p className="muted">{subtitle}</p>

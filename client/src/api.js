@@ -486,6 +486,15 @@ export function entitlements() {
   return request("/auth/me/entitlements"); // → { features, states, workflows, account_role }
 }
 
+// ⚠ PUBLIC, no token — the logged-out landing page calls it. Answers with the
+// workflows a STRANGER should be shown: the kill switch and the rollout rules
+// applied, tier-gated ones included and flagged `locked`. Same bargain as
+// `tiers()` below: what you sell is public, so the page stops keeping its own
+// copy of the list and going stale the day an admin flips a switch.
+export function publicWorkflows() {
+  return request("/public/workflows"); // \u2192 { workflows: [{id,label,icon,status,locked}] }
+}
+
 // --- Billing tiers ---
 // ⚠ `tiers()` IS PUBLIC — no token required. A price list is public by nature,
 // and the logged-out landing page can therefore show the real prices instead of

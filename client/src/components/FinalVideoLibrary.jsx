@@ -14,6 +14,7 @@ import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 import { formatTime } from "./Timeline.jsx";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // The placeholder title a new project carries until it is saved with a real one.
 export const UNTITLED = "Untitled final video";
 
@@ -392,7 +393,7 @@ export default function FinalVideoLibrary({ onOpen }) {
   return (
     <div className="workflow-head-wrap sb-library">
       <div className="workflow-header">
-        <span className="wf-icon">🎞️</span>
+        <span className="wf-icon"><WorkflowIcon id="animatics-to-video" /></span>
         <div>
           <h1 className="wf-title">Your Final Videos</h1>
           <p className="muted">

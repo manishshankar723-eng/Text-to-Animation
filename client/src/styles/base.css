@@ -95,15 +95,37 @@
   margin-bottom: 1.2rem;
   box-shadow: var(--shadow);
 }
+/* ---- The brand lock-up: the mark (Logo.jsx) + the product name ----
+   ⚠ THE NAME IS `--text` NOW, NOT `--primary`, AND THAT IS NOT A TASTE CHANGE.
+   The mark's sparkles ARE gold — that is the one element carrying "AI" — and
+   `currentColor` is what paints the rest of the mark. Gold text meant
+   currentColor WAS gold, so the sparkles landed gold-on-gold and vanished; the
+   mark read as a plain letterform with a smudge on it. Colouring the word
+   instead of the mark also matches the company logo, which is a black wordmark
+   with the sparkle as its only accent. */
 .brand {
   font-size: 1.5rem;
-  color: var(--primary);
+  color: var(--text);
   font-weight: 700;
 }
 .brand.small {
   font-size: 1.05rem;
   font-weight: 700;
-  color: var(--primary);
+  color: var(--text);
+}
+/* Sits on the text baseline rather than hanging off it — an inline SVG is
+   treated as a character, and a 1em box aligned to the baseline floats a
+   quarter of its height above the letters next to it. */
+.brand-mark {
+  vertical-align: -0.15em;
+  flex-shrink: 0;
+}
+/* Every drawn workflow glyph (WorkflowIcon.jsx). Same baseline nudge as the
+   brand mark and for the same reason — these sit inline, in a rail row and in a
+   dashboard heading, next to text they have to line up with. */
+.wf-glyph {
+  vertical-align: -0.15em;
+  flex-shrink: 0;
 }
 
 .topbar {

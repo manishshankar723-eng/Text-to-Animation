@@ -12,6 +12,7 @@ import DialogueBox from "./DialogueBox.jsx";
 import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
 import PanelVersions from "./PanelVersions.jsx";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Styles the user can re-cast the whole board into (kept as switchable variants).
 const RESTYLE_OPTIONS = [
   { id: "rough-sketch", label: "✏️ Rough Sketch" },
@@ -526,7 +527,7 @@ export default function StoryboardBoard({
   return (
     <div className="workflow-head-wrap sb-board">
       <div className="workflow-header">
-        <span className="wf-icon">🎬</span>
+        <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           {/* The board's OWN title, not a generic heading — it's what names the
               library card, the PDF and the ZIP, so seeing it here is how you

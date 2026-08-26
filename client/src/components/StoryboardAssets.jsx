@@ -11,6 +11,7 @@ import ImageLightbox from "./ImageLightbox.jsx";
 // not — see the note there.
 import useCapability from "../useCapability.js";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Small labelled badge so props and backgrounds are visually distinct.
 const CATEGORY_META = {
   prop: { label: "Prop", icon: "🎒" },
@@ -140,7 +141,7 @@ export default function StoryboardAssets({
   return (
     <div className="workflow-head-wrap sb-cast">
       <div className="workflow-header">
-        <span className="wf-icon">🎬</span>
+        <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           <h1 className="wf-title">Props &amp; backgrounds</h1>
           <p className="muted">

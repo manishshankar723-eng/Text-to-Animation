@@ -387,6 +387,12 @@
   color: var(--muted);
 }
 .pricing-offer-side {
+  /* ⚠ ONE CONTROL HEIGHT FOR THE WHOLE ROW. The code stub sized itself off a
+     0.95rem monospace line and the button off `.btn.small`'s 0.8rem one, so the
+     two slabs standing side by side came out ~38px and ~30px — close enough to
+     look like a mistake rather than a choice. Both take this variable now; edit
+     it here and they move together. */
+  --offer-ctl-h: 2.4rem;
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -396,15 +402,23 @@
      rather than a second frame. */
   padding-left: 1.1rem;
   border-left: 1px dashed var(--border-gold);
-  min-height: 2.6rem;
+  min-height: var(--offer-ctl-h);
 }
 /* The code, as a tear-off stub. Dashed, monospaced and click-to-copy: a code
    somebody has to select by hand with a mouse is a code they mistype. */
-.pricing-offer-code {
+.pricing-offer-side .pricing-offer-code {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.55rem;
-  padding: 0.4rem 0.7rem;
+  /* Height from the row's variable, not from the line box — see
+     `.pricing-offer-side`. Vertical padding would fight it. */
+  height: var(--offer-ctl-h, 2.4rem);
+  min-height: var(--offer-ctl-h, 2.4rem);
+  padding: 0 0.8rem;
+  margin: 0;
+  align-self: center;
+  line-height: 1;
   border: 1px dashed var(--border-gold);
   border-radius: 8px;
   background: rgba(229, 193, 88, 0.1);
@@ -430,10 +444,25 @@
   text-transform: uppercase;
   color: var(--muted);
 }
-/* trap 2 — `.btn.primary` carries `margin-top: 1.1rem` for sitting under a
-   form field, and this one sits in a ROW. */
-.pricing-offer-apply {
-  margin-top: 0;
+/* ⚠ TRAP 2, AND IT WON TWICE BEFORE THIS SELECTOR WAS WIDE ENOUGH. The element
+   carries `btn small primary`, so `.btn.primary { margin-top: 1.1rem }` (for
+   sitting under a form field) and `.btn.small { padding: 0.4rem 0.75rem }` are
+   TWO-class rules — a one-class `.pricing-offer-apply` loses to both on
+   SPECIFICITY, no matter how late `pricing.css` is imported. That inherited top
+   margin is what sat the button lower than the code stub beside it, and that
+   inherited vertical padding is what made it the taller of the two. Three
+   classes here, so the row wins. Do not shorten this selector. */
+.pricing-offer-side .pricing-offer-apply.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Same slab as the code stub beside it — see `.pricing-offer-side`. */
+  height: var(--offer-ctl-h, 2.4rem);
+  min-height: var(--offer-ctl-h, 2.4rem);
+  padding: 0 1rem;
+  margin: 0;
+  align-self: center;
+  line-height: 1;
   white-space: nowrap;
 }
 .pricing-offer-auto {

@@ -36,6 +36,11 @@
 // rather than starting a checkout — Phase 4/6 of the admin panel plan.
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
+// ⚠ THE CARD IS SHARED WITH THE LANDING PAGE AND THE DASHBOARD. It used to be
+// declared at the bottom of this file, which meant the offer a customer sees
+// before signing in and the one they see after were two components that only
+// happened to agree. See OfferCard.jsx.
+import { OfferCard } from "./OfferCard.jsx";
 
 // Minor units → what a person reads. `$28`, not `$28.00`, when it is whole:
 // the pricing page is marketing copy and trailing zeroes read as fine print.
@@ -44,38 +49,6 @@ function money(minor, currency) {
   const symbol = { USD: "$", INR: "₹", EUR: "€", GBP: "£" }[currency] || "";
   const shown = Number.isInteger(major) ? major : major.toFixed(2);
   return symbol ? `${symbol}${shown}` : `${shown} ${currency}`;
-}
-
-// "Ends in 6 days". ⚠ AN OFFER THAT HAS ALREADY ENDED RETURNS "" RATHER THAN A
-// NEGATIVE COUNT — the server has stopped sending expired offers, so anything
-// this function sees should still be running; if the two clocks disagree, saying
-// nothing is better than saying "ends in -3 hours".
-function timeLeft(iso) {
-  if (!iso) return "";
-  const ms = new Date(iso).getTime() - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return "";
-  const hrs = Math.floor(ms / 3600000);
-  if (hrs < 1) return `Ends in ${Math.max(1, Math.floor(ms / 60000))} min`;
-  if (hrs < 24) return `Ends in ${hrs} hour${hrs === 1 ? "" : "s"}`;
-  const days = Math.floor(hrs / 24);
-  return `Ends in ${days} day${days === 1 ? "" : "s"}`;
-}
-
-// What an offer covers, in one line. ⚠ AN EMPTY `applies_to` MEANS EVERY PLAN,
-// not none — the same reading the server uses (`offers.applies_to`). Getting it
-// backwards here would print "no plans" on a site-wide discount.
-function scopeOf(offer, tiers) {
-  const names = (offer.applies_to || [])
-    .map((id) => tiers.find((t) => t.id === id)?.name || id)
-    .filter(Boolean);
-  const where = names.length ? names.join(", ") : "every plan";
-  const when =
-    offer.period === "monthly"
-      ? "monthly billing"
-      : offer.period === "yearly"
-        ? "yearly billing"
-        : "monthly or yearly";
-  return `${where} · ${when}`;
 }
 
 // The shape the server sends, as a last resort. Kept byte-compatible with
@@ -268,10 +241,14 @@ export default function PricingModal({ onClose, currentTier = "" }) {
                 tiers={tiers}
                 busy={checking}
                 applied={!!appliedCode && appliedCode === offer.code}
-                onApply={() => {
+                ctaLabel="Apply"
+                onCta={() => {
                   setCode(offer.code);
                   applyCode(offer.code);
                 }}
+                /* ⚠ A SALE IS ALREADY IN THE NUMBERS BELOW, so it gets a
+                   sentence rather than a button that could not do anything. */
+                saleNote="✓ Already applied to the prices below"
               />
             ))}
           </div>
@@ -410,86 +387,5 @@ export default function PricingModal({ onClose, currentTier = "" }) {
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * One promoted offer, as a card above the plans.
- *
- * ⚠ A SALE AND A COUPON GET DIFFERENT RIGHT-HAND SIDES, because they ask
- * different things of the reader. A sale is already in the prices below and
- * needs no action — an "Apply" button for it would invite somebody to press a
- * button that cannot do anything. A coupon needs its code, and it needs it in a
- * form that can be both COPIED (for a friend, or for a checkout later) and
- * APPLIED here in one press.
- */
-function OfferCard({ offer, tiers, applied, busy, onApply }) {
-  const [copied, setCopied] = useState(false);
-  const ends = timeLeft(offer.ends_at);
-  const capped = offer.remaining !== null && offer.remaining !== undefined;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(offer.code);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // No clipboard permission — the code is on screen and selectable, which
-      // is the whole reason it is rendered as text and not as an image.
-    }
-  }
-
-  return (
-    <article className={`pricing-offer ${applied ? "on" : ""}`}>
-      <span className="pricing-offer-flag">
-        {offer.is_sale ? "Sale" : "Limited offer"}
-      </span>
-
-      <div className="pricing-offer-main">
-        <span className="pricing-offer-cut">{offer.summary}</span>
-        <span className="pricing-offer-name">
-          {offer.label || (offer.is_sale ? "Site-wide sale" : "Discount code")}
-        </span>
-        <span className="pricing-offer-scope">{scopeOf(offer, tiers)}</span>
-      </div>
-
-      <div className="pricing-offer-side">
-        {offer.is_sale ? (
-          <span className="pricing-offer-auto">
-            ✓ Already applied to the prices below
-          </span>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="pricing-offer-code"
-              onClick={copy}
-              title="Copy this code"
-              aria-label={`Copy the code ${offer.code}`}
-            >
-              <span className="pricing-offer-code-text">{offer.code}</span>
-              <span className="pricing-offer-copy">{copied ? "Copied" : "Copy"}</span>
-            </button>
-            <button
-              type="button"
-              className="btn small primary pricing-offer-apply"
-              disabled={busy || applied}
-              onClick={onApply}
-            >
-              {applied ? "✓ Applied" : busy ? "Applying…" : "Apply"}
-            </button>
-          </>
-        )}
-      </div>
-
-      {(ends || capped) && (
-        <div className="pricing-offer-meta">
-          {ends && <span className="pricing-offer-clock">⏳ {ends}</span>}
-          {/* ⚠ NOT THE REDEEMED COUNT. How many are LEFT is the customer's
-              question; how many have gone is the business's. */}
-          {capped && <span>{offer.remaining} left</span>}
-        </div>
-      )}
-    </article>
   );
 }

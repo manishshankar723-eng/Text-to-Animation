@@ -6,8 +6,14 @@
 .shell {
   display: grid;
   /* 264px until the brand row grew a collapse toggle beside the avatar — at
-     264 "Character Studio" ellipsised, and the app's own name is the one label
-     that must never be clipped. */
+     264 the app's own name ellipsised, and that name is the one label that must
+     never be clipped.
+     ⚠ AND IT WAS RE-MEASURED WHEN THE APP WAS RENAMED. "Aniwala AI Studio" is
+     wider than the "Character Studio" this 280 was originally cut for, and
+     `.sb-brand-name` trims with an ellipsis — so a name that stopped fitting
+     would lose its last letters SILENTLY, with nothing on screen to say so.
+     `tests/brand_landing_check.py` measures it in Chromium now (scrollWidth
+     against clientWidth) rather than leaving it to somebody's eye. */
   grid-template-columns: 280px 1fr;
   /* dvh tracks the REAL viewport as mobile browser chrome slides away; the vh
      line above it is the fallback for browsers that don't know dvh. */
@@ -65,8 +71,8 @@
   display: flex;
   align-items: center;
   /* Tighter than the 0.55rem it was: the row gained the collapse toggle, and
-     these three gaps are part of what "Character Studio" needed back (the rest
-     came from the 16px added to the rail). */
+     these three gaps are part of what the brand name needed back (the rest came
+     from the 16px added to the rail). */
   gap: 0.35rem;
   padding: 0.4rem 0.3rem 0.8rem;
 }

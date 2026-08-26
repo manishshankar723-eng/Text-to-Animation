@@ -9,8 +9,9 @@
 //
 // A tier does NOT store a list of features. See the note at the top of
 // `server/billing.py` for why that would be two places to answer one question.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
+import { GrowText } from "./fields.jsx";
 import { formatDateTime, num } from "./format.js";
 
 // Minor units ↔ what an administrator types. ⚠ THE FIELD IS IN MAJOR UNITS
@@ -28,55 +29,35 @@ function toMinor(major) {
 
 const SYMBOLS = { USD: "$", INR: "₹", EUR: "€", GBP: "£" };
 
-// A one-line-looking field that is really a textarea, and grows to fit its text.
-//
-// ⚠ A PLAIN `<input>` HERE WOULD HIDE THE END OF THE COPY. Each editable column is
-// about 180px of a 440px card, and the lines in them already wrap on the
-// real pricing card — "Unlimited image generations" takes two lines on the card
-// in the screenshot. A single-line field would have shown an administrator a
-// trimmed version of the very sentence a customer reads in full, with nothing on
-// screen to say it had been trimmed. `rows={1}` plus the effect below means the
-// box is exactly as tall as what is in it.
-//
-// ⚠ ENTER COMMITS, IT DOES NOT INSERT A NEWLINE. This is one line of a card, not
-// a paragraph, and a stored "\n" would reach the pricing page as a line the
-// layout never planned for.
-function GrowText({ value, ...rest }) {
-  const ref = useRef(null);
-
-  // ⚠ `scrollHeight` ALONE IS TWO PIXELS SHORT, and the two it is short by are
-  // the borders: `theme.css` puts `box-sizing: border-box` on everything, so a
-  // height of exactly `scrollHeight` gives the text a content box 2px smaller
-  // than the text — and `overflow: hidden` then eats the bottom of the last
-  // line. `offsetHeight - clientHeight` is that border, measured rather than
-  // guessed, so the field stays right if the border ever changes.
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
-  }, [value]);
-
-  return (
-    <textarea
-      ref={ref}
-      rows={1}
-      value={value}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          e.currentTarget.blur();
-        }
-      }}
-      {...rest}
-    />
-  );
-}
-
 // ⚠ THE SERVER REFUSES A THIRTEENTH — `TierUpdate.bullets` in `admin.py` is
 // `max_length=12`, so the button has to stop where the route stops rather than
 // let somebody type a line that comes back as a 422.
 const MAX_BULLETS = 12;
+
+// ⚠ A PLAN IS A RUNG, NOT A BASKET, AND THESE TWO FUNCTIONS ARE THE WHOLE
+// REASON THE DERIVED COLUMN CAN BE EDITED AT ALL. A feature names the LOWEST
+// tier that gets it (`min_tier`), so every tier above that one gets it too —
+// which means "put this in Starter" and "take this out of Starter" are both a
+// single write of `min_tier`, and both of them ripple:
+//
+//   adding    → min_tier = this tier   → in this tier AND every dearer one
+//   removing  → min_tier = the next tier up → out of this tier AND every cheaper one
+//
+// ⚠ ADDING TO THE CHEAPEST TIER CLEARS THE REQUIREMENT INSTEAD OF NAMING IT.
+// "no requirement" is not the same as "requires the lowest tier": the lowest
+// tier can be archived or re-ranked later, and a feature pinned to it would
+// then follow it rather than staying free. The Features screen's picker says
+// the same thing in its own comment.
+function addTierFor(ladder, tierId) {
+  return ladder[0] === tierId ? "" : tierId;
+}
+
+// The tier one rung up, or "" when there isn't one — the top tier cannot have a
+// feature taken off it this way, because there is no higher requirement to set.
+function nextTierUp(ladder, tierId) {
+  const i = ladder.indexOf(tierId);
+  return i >= 0 && i + 1 < ladder.length ? ladder[i + 1] : "";
+}
 
 // One marketing bullet, in the shape the wire uses, with both flags filled in.
 // ⚠ THE SEEDED CATALOGUE LEAVES `strong` OFF ENTIRELY on most lines and `ok`
@@ -162,6 +143,26 @@ export default function AdminPricing() {
     }
   }
 
+  // ⚠ ONE WRITE, EVERY CARD CHANGES, SO THIS RELOADS RATHER THAN PATCHING A ROW.
+  // `includes` is derived from `min_tier` for every tier at once (see the note
+  // on `addTierFor`), so there is no honest way to mend the four lists in place
+  // — the screen would be showing four answers to a question the server has one
+  // answer to. `load()` keeps `data`, so nothing blanks while it runs.
+  async function setMinTier(key, tierId) {
+    setBusy("*");
+    setError("");
+    try {
+      await api.adminSetMinTier(key, tierId);
+      load();
+    } catch (e) {
+      setError(e.message);
+      setRev((r) => r + 1);
+      load();
+    } finally {
+      setBusy("");
+    }
+  }
+
   if (loading && !data) {
     return (
       <div className="admin-body">
@@ -185,6 +186,23 @@ export default function AdminPricing() {
   }
 
   const symbol = SYMBOLS[data.currency] || "";
+  // Cheapest first, archived left out — `/admin/tiers` already sorts by rank,
+  // and `tier_ids` is the same list the Features screen's picker offers.
+  const ladder = (data.tiers || []).filter((t) => !t.archived).map((t) => t.id);
+  const tierNames = Object.fromEntries((data.tiers || []).map((t) => [t.id, t.name]));
+  // ⚠ ASSEMBLED FROM WHAT THE TIERS ALREADY ANSWERED, not from a second request
+  // to `/admin/features`. The top tier meets every requirement, so the union of
+  // the four `includes` lists IS the catalogue as far as this screen is
+  // concerned — and it cannot disagree with the lists drawn beside it.
+  const catalog = [];
+  const seen = new Set();
+  for (const t of data.tiers || [])
+    for (const f of t.includes || [])
+      if (!seen.has(f.key)) {
+        seen.add(f.key);
+        catalog.push(f);
+      }
+  catalog.sort((a, b) => a.label.localeCompare(b.label));
 
   return (
     <div className="admin-body">
@@ -206,9 +224,13 @@ export default function AdminPricing() {
             symbol={symbol}
             currency={data.currency}
             isDefault={t.id === data.default_tier}
-            busy={busy === t.id}
+            busy={busy === t.id || busy === "*"}
+            ladder={ladder}
+            tierNames={tierNames}
+            catalog={catalog}
             onSave={save}
             onRenameFeature={renameFeature}
+            onSetMinTier={setMinTier}
           />
         ))}
       </div>
@@ -216,7 +238,19 @@ export default function AdminPricing() {
   );
 }
 
-function TierCard({ tier, symbol, currency, isDefault, busy, onSave, onRenameFeature }) {
+function TierCard({
+  tier,
+  symbol,
+  currency,
+  isDefault,
+  busy,
+  ladder,
+  tierNames,
+  catalog,
+  onSave,
+  onRenameFeature,
+  onSetMinTier,
+}) {
   const [monthly, setMonthly] = useState(toMajor(tier.monthly));
   const [yearly, setYearly] = useState(toMajor(tier.yearly));
   const [compare, setCompare] = useState(toMajor(tier.compare_at));
@@ -272,6 +306,13 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave, onRenameFea
 
   const saving =
     tier.monthly > 0 ? Math.round((1 - tier.yearly / tier.monthly) * 100) : 0;
+
+  // What the derived column's two controls write. `upOne` is "" on the dearest
+  // plan, which is what disables its remove buttons.
+  const upOne = nextTierUp(ladder, tier.id);
+  const addTier = addTierFor(ladder, tier.id);
+  const here = new Set((tier.includes || []).map((f) => f.key));
+  const missing = catalog.filter((f) => !here.has(f.key));
 
   return (
     <section className={`card admin-tier ${tier.archived ? "archived" : ""}`}>
@@ -454,11 +495,11 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave, onRenameFea
         </div>
         <div>
           <h4 className="admin-h4">Actually unlocks</h4>
-          {/* ⚠ WHICH LINES APPEAR HERE IS DERIVED FROM `min_tier` ON EACH FEATURE
-              and is not stored on the tier — add or remove one on the Features
-              screen. The TEXT is editable, because it is the feature's own name;
-              see the note on `UnlockName` for why that is not the same thing as
-              editing this card. */}
+          {/* ⚠ STILL DERIVED. Nothing on this side is stored on the tier: every
+              line here is a feature whose `min_tier` this tier meets, and the
+              three controls all write that one field on the FEATURE. That is
+              why they ripple to the other cards, and why the note underneath
+              says so in the words an administrator will think in. */}
           <ul className="admin-tier-unlocks">
             {tier.includes.length === 0 ? (
               <li className="muted tiny">Nothing — every feature needs a higher tier.</li>
@@ -466,15 +507,60 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave, onRenameFea
               tier.includes.map((f) => (
                 <li key={f.key} className="muted tiny">
                   <UnlockName feature={f} disabled={busy} onRename={onRenameFeature} />
+                  <span className="admin-unlock-tools">
+                    <button
+                      type="button"
+                      className="admin-bullet-btn"
+                      disabled={busy || !upOne}
+                      onClick={() => onSetMinTier(f.key, upOne)}
+                      title={
+                        upOne
+                          ? `Take "${f.label}" off ${tier.name} — it will need ` +
+                            `${tierNames[upOne] || upOne}, so it also goes from every cheaper plan.`
+                          : `${tier.name} is the dearest plan, so there is no higher ` +
+                            `requirement to give this. Hide the feature on Features instead.`
+                      }
+                      aria-label={`Take ${f.label} off ${tier.name}`}
+                    >
+                      ✕
+                    </button>
+                  </span>
                 </li>
               ))
             )}
           </ul>
+
+          {/* One control, and it applies on pick — the same "a switch that needs
+              confirming is a switch people leave half-thrown" rule the Features
+              screen is built on. It resets to its own label because it is an
+              ACTION, not a value: what this tier holds is the list above it. */}
+          {missing.length > 0 && (
+            <select
+              className="admin-select admin-unlock-add"
+              value=""
+              disabled={busy}
+              onChange={(e) => e.target.value && onSetMinTier(e.target.value, addTier)}
+              aria-label={`Add a feature to ${tier.name}`}
+            >
+              <option value="">+ Add a feature to this plan…</option>
+              {missing.map((f) => (
+                <option value={f.key} key={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          )}
+
           <p className="muted tiny">
-            Which lines these are is set on{" "}
-            <strong>Features → which tier unlocks it</strong>. Renaming one here
-            renames that feature <strong>everywhere in the app</strong> — it is the
-            feature's own name, not copy belonging to this card.
+            {/* ⚠ THE RIPPLE IS THE FIRST THING TO SAY, NOT A FOOTNOTE. Somebody
+                taking a line off Starter to sell it dearer needs to know before
+                they click that Trial loses it too. */}
+            A plan is a rung, not a basket: <strong>adding</strong> puts a feature
+            in this plan and every dearer one, <strong>taking one off</strong>{" "}
+            removes it from this plan and every cheaper one. Renaming a line
+            renames that feature <strong>everywhere in the app</strong> — it is
+            the feature's own name, not copy belonging to this card. All three
+            write what <strong>Features → Needs at least</strong> reads.
           </p>
         </div>
       </div>

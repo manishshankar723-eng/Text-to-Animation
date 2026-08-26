@@ -8,6 +8,7 @@ import PlanScriptModal, { usageLine } from "./PlanScriptModal.jsx";
 // Pure, so node can import it — tests/plan_script_check.py drives it directly.
 import { formatRuntime, secondsFromFormat } from "../plan/script_length.js";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Same shape as the storyboard library: "Recent" highlights the newest, "All"
 // lists everything (including that one).
 const RECENT_COUNT = 1;
@@ -606,7 +607,7 @@ export default function PlanAndScript({ onOpenStoryboard }) {
     return (
       <div className="workflow-head-wrap sb-library">
         <div className="workflow-header">
-          <span className="wf-icon">🗓️</span>
+          <span className="wf-icon"><WorkflowIcon id="plan-and-script" /></span>
           <div>
             <h1 className="wf-title">Plan &amp; Script</h1>
             <p className="muted">
@@ -668,7 +669,7 @@ export default function PlanAndScript({ onOpenStoryboard }) {
   return (
     <div className="workflow-head-wrap plan-page">
       <div className="workflow-header">
-        <span className="wf-icon">🗓️</span>
+        <span className="wf-icon"><WorkflowIcon id="plan-and-script" /></span>
         <div>
           <h1 className="wf-title">{plan?.title || "Plan & Script"}</h1>
           <p className="muted">

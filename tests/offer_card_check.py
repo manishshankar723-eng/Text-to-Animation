@@ -10,6 +10,14 @@ watched the panel list it as live, and no customer could ever have found it.
 the offer existed on one side of the app and not the other, so a test that looked
 at the admin panel would have passed throughout.
 
+⚠ AND IT WALKS ALL THREE PLACES THE CARD IS DRAWN, INCLUDING THE ONE WITH NO
+SESSION. The landing page is where a coupon has to reach somebody who has NOT
+signed up — that is the whole point of promoting a code — so the first browser
+context here carries no token at all. The dashboard is the second, because a
+signed-in customer is the one most likely to actually spend a coupon and the
+only way they used to learn one existed was to open the Upgrade modal and
+notice. The modal is the third and the only one where Apply exists.
+
 What it asserts, in rough order of how much it would hurt to get wrong:
 
   THE CARD IS THERE AND THE CODE IS READABLE. A coupon reaches a customer as
@@ -67,6 +75,8 @@ CLIENT = os.path.join(ROOT, "client")
 # gold wash that reads as a highlight on #13161f can read as a stain on white.
 SHOT = os.path.join(ROOT, "output", "offer_card.png")
 SHOT_LIGHT = os.path.join(ROOT, "output", "offer_card_light.png")
+SHOT_LANDING = os.path.join(ROOT, "output", "offer_card_landing.png")
+SHOT_HOME = os.path.join(ROOT, "output", "offer_card_home.png")
 
 ADMIN = "boss@example.com"
 CUSTOMER = "cust@example.com"
@@ -108,6 +118,48 @@ MEASURE_JS = r"""
   const modal = document.querySelector(".pricing-modal");
   if (modal && modal.scrollWidth > modal.clientWidth + 1) {
     bad.push(`.pricing-modal scrolls sideways: ${modal.scrollWidth} > ${modal.clientWidth}`);
+  }
+  return bad;
+}
+"""
+
+
+# ⚠ TWO BUTTONS IN A ROW ARE ONE BOX TWICE. Reported as "dekho dono ek saath box
+# hai to hamesha … barabar size ka ho": the landing hero's "Get started" is a
+# `<button>` and "See the workflows" is an `<a>`, and they were drawing two
+# different-sized slabs — `.btn.primary` carries `margin-top: 1.1rem` for sitting
+# under a form field, which in a flex ROW pushed one down and let the other
+# stretch over the margin.
+#
+# ⚠ THE RULE IS SIBLINGS, NOT "EVERY BUTTON ON THE PAGE". Buttons in different
+# containers are allowed to differ (a nav CTA is deliberately smaller than a hero
+# CTA); two that sit inside the same row are not, because a reader sees them as
+# a pair. Half a pixel of slack absorbs sub-pixel rounding.
+BUTTON_ROWS_JS = r"""
+() => {
+  const bad = [];
+  const seen = (el) => el.offsetParent !== null || el.getClientRects().length > 0;
+  const rows = new Set();
+  for (const b of document.querySelectorAll(".btn")) {
+    if (seen(b) && b.parentElement) rows.add(b.parentElement);
+  }
+  for (const row of rows) {
+    const kids = [...row.children].filter(
+      (el) => el.classList.contains("btn") && seen(el)
+    );
+    if (kids.length < 2) continue;
+    const boxes = kids.map((el) => el.getBoundingClientRect());
+    const heights = boxes.map((b) => b.height);
+    const tops = boxes.map((b) => b.top);
+    const spread = Math.max(...heights) - Math.min(...heights);
+    const drift = Math.max(...tops) - Math.min(...tops);
+    const label = (row.className || row.tagName).toString().trim();
+    if (spread > 0.5) {
+      bad.push(`${label}: heights ${heights.map((h) => h.toFixed(1)).join(" vs ")}`);
+    } else if (drift > 0.5) {
+      // Equal height but not on the same line — a stray margin on one of them.
+      bad.push(`${label}: tops ${tops.map((t) => t.toFixed(1)).join(" vs ")}`);
+    }
   }
   return bad;
 }
@@ -228,9 +280,14 @@ def seed(base):
 
 
 def prices(page):
-    """{tier name → the number on its card}, off the screen."""
+    """{tier name → the number on its card}, off the screen.
+
+    ⚠ SCOPED TO THE MODAL. The dashboard behind it draws an offer card of its
+    own now, so a bare `.pricing-offer*` selector finds the one under the
+    overlay — which Playwright then refuses to click, correctly.
+    """
     out = {}
-    cards = page.locator(".pricing-card")
+    cards = page.locator(".pricing-modal .pricing-card")
     for i in range(cards.count()):
         card = cards.nth(i)
         name = card.locator(".pricing-name").inner_text().strip()
@@ -276,10 +333,97 @@ def main():
                 # in would never have been the one measured.
                 "localStorage.setItem('cas_theme', 'dark');"
             )
+            # ===============================================================
+            print("\n--- THE LANDING PAGE, WITH NO SESSION AT ALL ---")
+            # ===============================================================
+            # ⚠ ITS OWN CONTEXT, CARRYING NO TOKEN. A coupon is promoted so that
+            # somebody who has NOT signed up can find it; a logged-out visitor is
+            # the reader this card was added for.
+            out = browser.new_context(viewport={"width": 1440, "height": 1000})
+            out.add_init_script("localStorage.setItem('cas_theme', 'dark');")
+            lp = out.new_page()
+            lp_errors = []
+            lp.on("pageerror", lambda e: lp_errors.append(str(e)))
+            lp.goto(f"http://127.0.0.1:{vite_port}/")
+            lp.wait_for_selector(".landing", timeout=30000)
+            lp.wait_for_timeout(1200)
+
+            strip = lp.locator(".hero-offer .pricing-offer").first
+            check("the landing page draws the offer card",
+                  strip.count() > 0 and strip.is_visible())
+            if strip.count():
+                text = strip.inner_text()
+                check("…with the code a visitor has to type later", CODE in text, text[:120])
+                check("…and the discount", f"{PERCENT}% off" in text, text[:120])
+                # ⚠ NO APPLY BUTTON HERE, AND THAT IS THE POINT.
+                # `POST /billing/coupon` is signed-in only, so an Apply on this
+                # page would 401 in front of a prospect.
+                # ⚠ NO BUTTON ON THIS CARD AT ALL. An Apply would 401
+                # (`POST /billing/coupon` is signed-in only), and a second
+                # "Get started" two centimetres under the hero’s own is noise.
+                check("…and no Apply button that would 401", "Apply" not in text, text[:120])
+                check("…and it can be copied",
+                      strip.locator(".pricing-offer-code").count() > 0)
+                # ⚠ ABOVE THE FOLD. The hero is `min-height: 100vh`, so a card in
+                # a band BELOW it starts one whole screen down — a promotion
+                # nobody scrolls to is the bug this card exists to fix, moved
+                # rather than solved.
+                box = strip.bounding_box()
+                # ⚠ AND IT IS NOT WELDED TO THE BUTTON ABOVE IT. `pricing.css`
+                # is imported AFTER `landing.css` and states its own margin on
+                # `.pricing-offers`, so a single-class rule in landing.css loses
+                # on ORDER alone — which is how the card first shipped with a
+                # 2px gap under the CTA. Pins the gap, not the rule.
+                btn = lp.locator(".hero-actions .btn").first.bounding_box()
+                check("…and it clears the button above it",
+                      box and btn and box["y"] - (btn["y"] + btn["height"]) >= 8,
+                      f"gap {box['y'] - (btn['y'] + btn['height']):.1f}px" if box and btn else "no box")
+                check("…and it is on the first screen, not below the fold",
+                      box and box["y"] + box["height"] <= 1000,
+                      f"bottom at {box['y'] + box['height']:.0f}px of a 1000px viewport" if box else "no box")
+
+            # ⚠ THE REPORTED BUG. Two buttons in one row must be one box twice.
+            hero_bad = lp.evaluate(BUTTON_ROWS_JS)
+            check("every pair of buttons sharing a row is the same size",
+                  not hero_bad, "; ".join(hero_bad[:4]))
+            hero = lp.locator(".hero-actions .btn")
+            check("…and the hero really has the two that were reported",
+                  hero.count(), 2)
+            if hero.count() == 2:
+                a, b = hero.nth(0).bounding_box(), hero.nth(1).bounding_box()
+                check("…both the same height",
+                      abs(a["height"] - b["height"]) <= 0.5,
+                      f"{a['height']:.1f} vs {b['height']:.1f}")
+                check("…and on the same line",
+                      abs(a["y"] - b["y"]) <= 0.5, f"{a['y']:.1f} vs {b['y']:.1f}")
+
+            check("the landing page does not scroll sideways",
+                  lp.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"))
+            lp.screenshot(path=SHOT_LANDING, full_page=False)
+            check("nothing reached window.onerror on the landing page",
+                  not lp_errors, "; ".join(lp_errors[:3]))
+            out.close()
+
             page = ctx.new_page()
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(f"http://127.0.0.1:{vite_port}/")
+
+            # ===============================================================
+            print("\n--- THE DASHBOARD, SIGNED IN ---")
+            # ===============================================================
+            page.wait_for_selector(".home", timeout=30000)
+            page.wait_for_timeout(1200)
+            dash = page.locator(".home-offers .pricing-offer").first
+            check("the dashboard draws the offer card too",
+                  dash.count() > 0 and dash.is_visible())
+            if dash.count():
+                text = dash.inner_text()
+                check("…with the code on it", CODE in text, text[:120])
+                # The dashboard knows neither the plan nor the period, so it
+                # sends them to the screen that asks both.
+                check("…and a button into the plans", "View plans" in text, text[:120])
+            page.screenshot(path=SHOT_HOME, full_page=False)
 
             print("\n--- the customer opens the pricing modal ---")
             page.wait_for_selector(".sb-upgrade", timeout=30000)
@@ -290,7 +434,7 @@ def main():
             # ===============================================================
             print("\n--- THE OFFER IS ON THE CUSTOMER'S SCREEN ---")
             # ===============================================================
-            card = page.locator(".pricing-offer").first
+            card = page.locator(".pricing-modal .pricing-offer").first
             check("an offer card is drawn", card.count() > 0 and card.is_visible())
             if card.count():
                 text = card.inner_text()
@@ -302,8 +446,8 @@ def main():
                 check("…and a way to copy it",
                       card.locator(".pricing-offer-code").count() > 0)
             check("the banner is above the plans",
-                  CODE in page.locator(".pricing-banner").inner_text()
-                  if page.locator(".pricing-banner").count() else False)
+                  CODE in page.locator(".pricing-modal .pricing-banner").inner_text()
+                  if page.locator(".pricing-modal .pricing-banner").count() else False)
 
             page.screenshot(path=SHOT, full_page=True)
             # ⚠ STAMPED ON <html>, NOT CLICKED. The theme switch lives in the
@@ -314,13 +458,13 @@ def main():
             page.screenshot(path=SHOT_LIGHT, full_page=True)
             page.evaluate("document.documentElement.dataset.theme = 'dark'")
             page.wait_for_timeout(400)
-            print(f"  (screenshots: {SHOT}, {SHOT_LIGHT})")
+            print(f"  (screenshots: {SHOT}, {SHOT_LIGHT}, {SHOT_LANDING}, {SHOT_HOME})")
 
             # ===============================================================
             print("\n--- APPLYING IT MOVES EVERY PLAN IT COVERS ---")
             # ===============================================================
             before = prices(page)
-            page.locator(".pricing-offer-apply").first.click()
+            page.locator(".pricing-modal .pricing-offer-apply").first.click()
             page.wait_for_timeout(1400)
             after = prices(page)
             moved = [n for n, v in after.items() if v < before.get(n, 0)]
@@ -335,14 +479,14 @@ def main():
                 # rounded DOWN in minor units and the card drops a trailing zero.
                 check(f"…{name} is within a cent of {PERCENT}% off",
                       abs(after[name] - want) <= 0.02, f"{before[name]} → {after[name]}")
-            tags = page.locator(".pricing-sale-tag")
+            tags = page.locator(".pricing-modal .pricing-sale-tag")
             applied = sum(
                 1 for i in range(tags.count()) if CODE in tags.nth(i).inner_text()
             )
             check("…and every discounted card says which code did it",
                   applied == len(moved), f"{applied} tags for {len(moved)} cards")
             check("…and the card says it is applied",
-                  "Applied" in page.locator(".pricing-offer").first.inner_text())
+                  "Applied" in page.locator(".pricing-modal .pricing-offer").first.inner_text())
 
             # ===============================================================
             print("\n--- the period toggle does not leave a stale price ---")
@@ -351,13 +495,13 @@ def main():
             # The modal opens on Yearly, so this switches to Monthly and watches
             # the discounted number move with it.
             yearly_prices = prices(page)
-            page.locator('.pricing-toggle button:has-text("Monthly")').click()
+            page.locator('.pricing-modal .pricing-toggle button:has-text("Monthly")').click()
             page.wait_for_timeout(1400)
             monthly_prices = prices(page)
             check("switching period re-prices the discount",
                   any(monthly_prices[n] != yearly_prices.get(n) for n in monthly_prices),
                   f"{yearly_prices} → {monthly_prices}")
-            still = page.locator(".pricing-sale-tag")
+            still = page.locator(".pricing-modal .pricing-sale-tag")
             check("…and the code is still applied afterwards",
                   any(CODE in still.nth(i).inner_text() for i in range(still.count())))
 
@@ -366,6 +510,9 @@ def main():
             # ===============================================================
             bad = page.evaluate(MEASURE_JS)
             check("no text in the modal is cut off", not bad, "; ".join(bad[:5]))
+            rows = page.evaluate(BUTTON_ROWS_JS)
+            check("…and every pair of buttons in the modal matches too",
+                  not rows, "; ".join(rows[:4]))
 
             print("\n--- the console ---")
             check("nothing reached window.onerror", not errors, "; ".join(errors[:3]))

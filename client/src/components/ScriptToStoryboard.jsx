@@ -19,6 +19,7 @@ import ScriptLineBox from "./ScriptLineBox.jsx";
 import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Style / aspect / genre lists live in one module so the Profile page's
 // "usual choices" and this form can never offer different options.
 //
@@ -900,7 +901,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     return (
       <div className="workflow-head-wrap sb-review">
         <div className="workflow-header">
-          <span className="wf-icon">🎞️</span>
+          <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
           <div>
             <h1 className="wf-title">Review your shots</h1>
             <p className="muted">
@@ -1140,7 +1141,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   return (
     <div className="workflow-head-wrap sb-form">
       <div className="workflow-header">
-        <span className="wf-icon">📝</span>
+        <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           <h1 className="wf-title">Script to Storyboard</h1>
           <p className="muted">

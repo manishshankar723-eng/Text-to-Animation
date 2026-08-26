@@ -6,7 +6,9 @@
 import { useEffect, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
+import Logo from "./Logo.jsx";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 export default function PublicStoryboard({ token, onExit }) {
   const [board, setBoard] = useState(null);
   const [error, setError] = useState("");
@@ -51,7 +53,7 @@ export default function PublicStoryboard({ token, onExit }) {
             sharing it.
           </p>
           <button type="button" className="btn primary" onClick={onExit}>
-            Go to Character Asset Studio
+            Go to Aniwala AI Studio
           </button>
         </div>
       </div>
@@ -63,7 +65,9 @@ export default function PublicStoryboard({ token, onExit }) {
   return (
     <div className="public-wrap">
       <div className="public-topbar">
-        <span className="brand small">🎭 Character Asset Studio</span>
+        <span className="brand small">
+          <Logo /> Aniwala AI Studio
+        </span>
         <button type="button" className="btn small" onClick={onExit}>
           Make your own →
         </button>
@@ -71,7 +75,7 @@ export default function PublicStoryboard({ token, onExit }) {
 
       <div className="workflow-head-wrap sb-board public-board">
         <div className="workflow-header">
-          <span className="wf-icon">🎬</span>
+          <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
           <div>
             <h1 className="wf-title">{board.title}</h1>
             <p className="muted">

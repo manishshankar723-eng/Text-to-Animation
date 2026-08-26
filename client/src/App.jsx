@@ -32,6 +32,7 @@ import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
 
+import WorkflowIcon from "./components/WorkflowIcon.jsx";
 // ⚠ THE "SOON" BRANCH IS BACK, AND IT HAD TO BE. The note that used to sit here
 // warned that a `status: "soon"` workflow would navigate to a blank page unless
 // this branch was restored — and Phase 2 made "soon" something an administrator
@@ -499,7 +500,17 @@ export default function App() {
     if (authView === "login") {
       return <Login onAuthed={onAuthed} onBack={() => setAuthView("landing")} />;
     }
-    return <Landing onGetStarted={() => setAuthView("login")} />;
+    return (
+      <Landing
+        onGetStarted={() => setAuthView("login")}
+        /* ⚠ THE SAME SWITCH THE SIDEBAR AND THE ADMIN BAR CARRY, and it is here
+           because the landing page is the ONE screen a visitor can reach with
+           no rail to flip it from. `applyTheme` stamps <html>, so the choice a
+           prospect makes here is still theirs after they sign in. */
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+      />
+    );
   }
 
   // ---- Main content by nav ----
@@ -524,6 +535,13 @@ export default function App() {
     content = (
       <Home
         email={email}
+        /* Which workflow groups Recent work may draw. ⚠ THE RAIL WAS FILTERED
+           AND THE DASHBOARD WAS NOT: an administrator hid two workflows and
+           they vanished from the sidebar while keeping their own column on
+           Home — with a "View all →" that navigated to a room with no door.
+           `null` means "nobody has told this browser yet", and Home fails OPEN
+           on it, exactly like the rail does. */
+        visibleWorkflows={railKnown ? workflows.map((w) => w.id) : null}
         onOpenJob={openJobInWorkflow}
         onUpgrade={() => setUpgradeOpen(true)}
         onOpenProfile={() => setNav("profile")}
@@ -607,7 +625,7 @@ export default function App() {
     content = (
       <div className="workflow-head-wrap">
         <WorkflowHeader
-          icon="🖼️"
+          workflowId="text-to-image"
           title="Text to Turnaround Image"
           subtitle="Generate turnaround character asset sheets from a prompt or photo."
         />
@@ -755,10 +773,18 @@ export default function App() {
   );
 }
 
-function WorkflowHeader({ icon, title, subtitle }) {
+// ⚠ `workflowId`, NOT AN EMOJI. Every screen in the app used to print its own
+// glyph as text, which meant the same workflow wore a different face in the rail,
+// on the landing page and at the top of its own page — and on Windows all three
+// were drawn by the OS rather than by us. `WorkflowIcon` takes the nav id and
+// draws the one glyph that workflow owns everywhere. `icon` still works for the
+// handful of headers that are not a workflow at all (the admin shield).
+function WorkflowHeader({ workflowId, icon, title, subtitle }) {
   return (
     <div className="workflow-header">
-      <span className="wf-icon">{icon}</span>
+      <span className="wf-icon">
+        {workflowId ? <WorkflowIcon id={workflowId} /> : icon}
+      </span>
       <div>
         <h1 className="wf-title">{title}</h1>
         <p className="muted">{subtitle}</p>

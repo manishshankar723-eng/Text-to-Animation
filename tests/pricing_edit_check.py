@@ -26,7 +26,15 @@ What it covers, in order:
   6. renaming a line in "Actually unlocks" — ⚠ WHICH RENAMES THE FEATURE, so
      the check is that the OTHER cards showing that feature change too, and that
      `/admin/features` agrees
-  7. the footer's alignment, because the reason the columns were touched at all
+  7. TAKING a feature off a plan, and PUTTING one back — ⚠ BOTH OF WHICH RIPPLE.
+     A plan is a rung, not a basket: `min_tier` names the cheapest tier that gets
+     a feature, so removing it from Starter takes it off Trial as well, and
+     adding it to Starter gives it to Pro and Production too. The assertions are
+     deliberately about the OTHER cards, because a control that only fixed the
+     card it was clicked on would pass anything weaker.
+  8. renaming a feature from the Features screen, which is where the name
+     actually belongs
+  9. the footer's alignment, because the reason the columns were touched at all
      was a screenshot of the badge box sitting 3.6px above the words beside it
 
 ⚠ THE ALIGNMENT ASSERTION IS ARITHMETIC ON `getBoundingClientRect`, not an image
@@ -291,7 +299,94 @@ def main():
                   bool(still) and still[0].get("label") == RENAMED,
                   json.dumps(still[0].get("label") if still else None))
 
-            # --- 7. the footer and the price row -----------------------------
+            # --- 7. taking a feature off a plan, and putting it back ---------
+            # ⚠ THE POINT OF EVERY ASSERTION HERE IS THE OTHER CARDS. `min_tier`
+            # is the CHEAPEST tier that gets a feature, so one write moves it on
+            # every card at once — which is the behaviour a control drawn on one
+            # card has to be proved to have.
+            def listed_on(tier_id):
+                return page.evaluate(
+                    """(id) => {
+                      const c = [...document.querySelectorAll('.admin-tier')]
+                        .find(e => (e.querySelector('code')?.textContent || '').trim() === id);
+                      return [...c.querySelectorAll('.admin-unlock-name')].map(e => e.value);
+                    }""",
+                    tier_id,
+                )
+
+            def min_tier_of(k):
+                for f in get(api_base, "/admin/features", token)["features"]:
+                    if f["key"] == k:
+                        return f.get("min_tier") or ""
+                return None
+
+            check("with nothing missing, no add control is drawn",
+                  starter.locator(".admin-unlock-add").count() == 0
+                  or min_tier_of(key) != "",
+                  "the seeded catalogue puts every feature in every tier")
+
+            # The first row is the one renamed above — `includes` is sorted by
+            # KEY, not by label, so renaming it did not move it.
+            row = starter.locator(".admin-tier-unlocks li").first
+            row.hover()
+            row.locator(".admin-unlock-tools .admin-bullet-btn").click()
+            page.wait_for_timeout(1200)
+            check("the ✕ raises the feature's requirement one rung",
+                  min_tier_of(key) == "pro", f"min_tier is {min_tier_of(key)!r}")
+            check("it leaves the plan it was clicked on",
+                  RENAMED not in listed_on(TIER), str(listed_on(TIER)[:3]))
+            check("and the CHEAPER plan loses it too — a rung, not a basket",
+                  RENAMED not in listed_on("trial"), str(listed_on("trial")[:3]))
+            check("while the dearer plans keep it",
+                  RENAMED in listed_on("pro") and RENAMED in listed_on("production"),
+                  str(listed_on("pro")[:3]))
+
+            # ⚠ ADDING IS THE SAME WRITE IN THE OTHER DIRECTION. Starter is not
+            # the cheapest tier, so it names Starter — and Trial, below it, must
+            # NOT get it back. (Adding on the cheapest tier clears the
+            # requirement instead; that is `addTierFor` in the component.)
+            add = starter.locator(".admin-unlock-add")
+            check("an add control appears once something is missing",
+                  add.count() == 1, f"{add.count()} controls")
+            add.select_option(key)
+            page.wait_for_timeout(1200)
+            check("picking it from the list puts it back on this plan",
+                  min_tier_of(key) == TIER and RENAMED in listed_on(TIER),
+                  f"min_tier {min_tier_of(key)!r}")
+            check("the dearer plans have it as well",
+                  RENAMED in listed_on("pro") and RENAMED in listed_on("production"),
+                  str(listed_on("production")[:3]))
+            check("and the cheaper plan still does NOT — adding did not undo the rung",
+                  RENAMED not in listed_on("trial"), str(listed_on("trial")[:3]))
+
+            # --- 8. the same name, edited where it belongs -------------------
+            tab(page, "Features")
+            page.wait_for_selector(".admin-feature", timeout=15000)
+            named = page.locator(f'.admin-feature-label[aria-label="Name of {key}"]').first
+            check("the Features row shows the name in an editable box",
+                  named.count() == 1 and named.input_value() == RENAMED,
+                  named.input_value() if named.count() else "no box")
+            FEATURES_NAME = "Veo renders"
+            named.fill(FEATURES_NAME)
+            named.blur()
+            page.wait_for_timeout(900)
+            after_name = [f for f in get(api_base, "/admin/features", token)["features"]
+                          if f["key"] == key]
+            check("renaming it there is stored on the feature",
+                  bool(after_name) and after_name[0].get("label") == FEATURES_NAME,
+                  json.dumps(after_name[0].get("label") if after_name else None))
+            named.fill("")
+            named.blur()
+            page.wait_for_timeout(600)
+            check("an empty name is refused there too",
+                  named.input_value() == FEATURES_NAME, named.input_value())
+
+            tab(page, "Pricing")
+            page.wait_for_selector(".admin-tier", timeout=15000)
+            check("and Pricing shows the name the Features screen wrote",
+                  FEATURES_NAME in listed_on(TIER), str(listed_on(TIER)[:3]))
+
+            # --- 9. the footer and the price row -----------------------------
             # ⚠ 2400 WIDE, BECAUSE THAT IS THE SCREEN IT WAS REPORTED ON — four
             # cards across a monitor is ~590px each, wide enough that neither row
             # wraps and "they don't line up" means something. The 1440 pass after

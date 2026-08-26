@@ -275,7 +275,30 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-26 — **🖼 ANIMATIC IMAGES: THE FLIPBOOK, IN THE
+**Last updated:** 2026-08-26 — **ANIWALA AI STUDIO: THE NAME, THE MARK, AND A
+HERO THAT SHOWS THE FOUR LIVE WORKFLOWS.** The owner already runs `aniwala.com`,
+a 2D/3D game-art studio, so this app is a second door on an existing brand rather
+than a new one: **Aniwala** (the artists) and **Aniwala AI Studio** (the tool).
+⚠ **"CHARACTER ASSET STUDIO" WAS NAMED AFTER A WORKFLOW THAT IS SWITCHED OFF**
+— Text to Turnaround Image — and so were the 🎭 logo, the hero illustration, half
+the features list and two of the six workflow cards. Four workflows are live; the
+page now sells four. New `Logo.jsx` and `WorkflowIcon.jsx` replace every emoji
+that was carrying brand weight. ⚠ **AND `Home` WAS NEVER FILTERED BY
+ENTITLEMENTS** — a hidden workflow kept its Recent-work column and a "View all
+→" that navigated to a room with no door.
+
+⚠ **AND THIS FILE WAS DESTROYED AND RESTORED DURING THAT WORK.** A patch script
+failed on an emoji AFTER opening the output file, and the `mv` behind it was not
+chained to the script's exit code, so a zero-byte file was moved over
+`AGENTS.md`. Recovered with `git show HEAD:AGENTS.md`, which brings back
+everything COMMITTED — 21,812 lines — but not the four entries that were
+uncommitted at the time. The two written by this session are restored below from
+their own source. **TWO ARE STILL MISSING** and are not this session's to
+rewrite: "THE COUPON IS ON THE LANDING PAGE AND THE DASHBOARD", and another
+session's "THE DASHBOARD'S TWO CARDS STOPPED BEING MOSTLY AIR". The repository
+lives in OneDrive — its version history is the way back to them.
+
+**Previously:** 2026-08-26 — **🖼 ANIMATIC IMAGES: THE FLIPBOOK, IN THE
 EDITOR.** Asked for as "image to Animatic images workflow jaise images generate
 hota tha waise editor mai ho … ek button banao make video button ke side mai aur
 uska name Animatic images rakho … generate ho kar Animatic image ke layer mai aa
@@ -3377,7 +3400,192 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-26 (latest) — 🖼 ANIMATIC IMAGES IS A 🎬 TICK BOX NOW (PHASE C2) (ask: "Animatic image buttun function make video butun mai v rahe automatic … check box tik kar ke generet karne ka type so agar kisi user ko Animatics image chahiye to choose … waise hi aa jaye jaise veo video aata hi")
+### 2026-08-26 (latest) — ANIWALA AI STUDIO: THE NAME, THE MARK, AND A HERO THAT SHOWS THE FOUR LIVE WORKFLOWS (ask: "mai chahta hun ki yum mujhe ek name suggest karo mera ye live four workflow ke hisaab se … ye four workflow ke hisab se image/icone ek ek mai dikhe" + "Start name with Aniwala AI Studio ye logo hai iasia hi kuch icon bano Ai ke sath related lage")
+
+**The name was the smallest part of this. The real finding is that the page was
+selling a workflow that is switched off.** `text-to-image` (Text to Turnaround
+Image) and `animatics-to-video` (Image to AI Video) are hidden in the admin
+panel; four workflows are live. Everything below followed from that one fact.
+
+**Naming.** Researched first: the descriptive names in this space are gone —
+Storyflow (twice), Framewise, Framelab, Shotflow, Reelcraft (dead). The owner
+already holds `aniwala.com`, a 2D/3D game-art studio whose services list already
+includes storyboarding and video editing, so a second brand would have split one
+small team's SEO and trust for nothing. **One house, two doors**: Aniwala (the
+artists) and **Aniwala AI Studio** (the tool). Renamed in `index.html`,
+`Landing.jsx` ×2, `Login.jsx`, `PublicStoryboard.jsx` ×2, `Sidebar.jsx`,
+`AdminShell.jsx`, and both `helpSubject` strings.
+
+- **`client/src/components/Logo.jsx`** (new) — the company mark at glyph size:
+  the A-frame, the film ribbon, two sparkles. ⚠ **THE SPROCKET HOLES ARE PUNCHED
+  WITH A MASK, NOT PAINTED** — the mark sits on `--panel`, on `--bg` and on
+  white, and holes painted one surface colour are a smear on the other two.
+  ⚠ **ONE MASK ID PER INSTANCE** (`useId`): the landing page draws the mark
+  twice, and two `<mask id="film">` in one document silently resolve to the first.
+- ⚠ **`.brand` HAD TO STOP BEING GOLD.** It was `color: var(--primary)`, so
+  `currentColor` inside the mark WAS gold — the gold sparkles landed
+  gold-on-gold and vanished. The word is `--text` now and the mark carries the
+  accent, which is also how the company's own logo is built.
+- **`client/public/favicon.svg`** (new) + the `<link>` and a `<meta
+  description>`. ⚠ Its colours are FROZEN copies: a browser tab has no CSS
+  variables and no fixed background, so `currentColor` cannot work there.
+- **`client/src/components/WorkflowIcon.jsx`** (new) — a drawn glyph per
+  workflow **id**, with the server's emoji as the fallback for ids this build
+  does not know (the icon is admin-editable DATA — see `features.py`).
+  ⚠ **SILHOUETTE FIRST**: tall page / four-up grid / wide filmstrip / stack of
+  bars, because at 17px in the rail only the outline survives. ⚠ **SIX ENTRIES,
+  NOT FOUR** — the two hidden workflows are one toggle from returning. Wired into
+  `Sidebar.jsx`, `Home.jsx`, and both the cards and the stages on `Landing.jsx`.
+  Two workflows shared 🖼️ in the rail before this.
+- **`Landing.jsx` — the hero art is four tiles now**, in pipeline order: script
+  page, board, filmstrip of key poses, timeline. It was a 2×2 character
+  turnaround sheet — the biggest picture on the page was the output of the one
+  workflow you cannot use.
+- **`Landing.jsx` — the copy, everywhere it named the dead workflow.** "Six
+  workflows" → four; "generate the characters" out of the hero sub; "Characters"
+  out of the `lp-flow` line; three of six FEATURES replaced. ⚠ **THIS ARRAY GOES
+  STALE WHEN AN ADMIN FLIPS A SWITCH** — there is no PUBLIC entitlements call, so
+  it is hand-maintained until there is.
+- **`Home.jsx` + `App.jsx` — Recent work is filtered now.** New
+  `visibleWorkflows` prop, `null` = not answered yet = **fail open**, the same
+  rule as the rail. `groupTotal` deliberately still counts every group: it is the
+  fallback for the account's project count and the server's hint counts every
+  record too.
+
+**— REVISION, same session, after the user saw it.** Two things came back wrong,
+and the reasoning that produced them is what is worth recording:
+
+- ⚠ **THE OVERHANGING POSE STRIP SHOULD NOT HAVE BEEN DELETED.** Removed for
+  looking redundant beside the new key-poses tile — same figures twice — and
+  asked for straight back ("first ye small wal kyun hataya ye achha lag rah tha
+  boxes"). The judgement graded it as EXPLANATION when its job is COMPOSITION:
+  it is the only element that breaks the frame's rectangle, and without it the
+  hero art is one flat card. Back at its own angle, with an SVG play triangle
+  instead of the "▶" character (a different width and baseline in every font,
+  inside a 28px circle). `.lp-art-stack` padding-bottom back to 4rem to clear it.
+- ⚠ **FOUR BOXES OF GREY BARS IS NOT AN ILLUSTRATION.** Rejected on sight, and
+  rightly: a page of identical lines is not a script and four identical panels
+  are not a board. Redrawn around INTERNAL VARIETY — the script tile indented
+  like a screenplay (scene heading hard left, character name centred, dialogue
+  under it); the board's four panels four DIFFERENT shots (wide / close-up /
+  two-hander / one with a camera move), which is what a board is FOR; the poses
+  raising their arms far enough to read as motion (the first version's 7-unit
+  step on a third-scale figure was under a pixel of travel); and the timeline's
+  clips sitting INSIDE tracks, because three coloured bars on white is a bar
+  chart and the empty lane is most of what makes it a timeline.
+- ⚠ **AND THE CHIP HAD AN EMOJI IN IT** — "🎬 Final cut · MP4" drew as a grey
+  tofu box on Windows, the one place on the page where the OS picked the
+  artwork. It is the brand's own sparkle and "Made with AI" now.
+- ⚠ **AND THE STRIP'S FOUR CELLS WERE STILL STICK FIGURES.** Asked for
+  directly — "ye four ka v icon live workflow se match karna". They were left
+  over from the strip's old life as a pose reel, which is the same mistake the
+  turnaround sheet was: art on the hero that belongs to ONE workflow rather than
+  to the product. The cells now map straight off the `WORKFLOWS` array and draw
+  that workflow's `WorkflowIcon`, so the strip, the cards below and the rail
+  cannot disagree about what is live. Sliced to four — the strip is a
+  fixed-width floating element with a play button on its end, and a fifth
+  workflow must grow the CARDS, not push this off the frame. `.lp-art-cell` sets
+  `color` and `font-size` and that is the entire wiring: `WorkflowIcon` strokes
+  in `currentColor` and sizes in `em`, so one glyph serves a 24px rail row and a
+  22px drawing on white paper with no second copy of it. `Figure` and
+  `.art-figure` had no callers left and are gone.
+
+**— THE OPEN ITEMS, CLOSED (same session, "jo v dikat lag raha hai usko sahi
+karo jo tumne remaining mai bol rhe ho").** Four of the five things left open
+above are done, and two of them turned out to be real faults rather than chores:
+
+- ⚠ **`GET /public/workflows` — THE MARKETING PAGE STOPS KEEPING ITS OWN LIST.**
+  New route in `features.py`, no authentication, answering `resolve("")` — a
+  visitor with no email, no tier and no overrides. That is the conservative
+  read on purpose: the kill switch and the rollout rules apply, so something
+  staged to 10% of accounts is not on the front page, while a tier-gated
+  workflow IS listed and flagged `locked`, because a feature nobody can see is a
+  feature nobody upgrades for. `Landing.jsx` joins it against local COPY through
+  `useLiveWorkflows()`, which **fails open in both directions**: no answer yet,
+  or a failed call, draws `FALLBACK`.
+- ⚠ **AND THE COPY ARRAY HAD TO GO BACK UP TO SIX.** Cutting it to the four live
+  workflows was the same bug as hard-coding six, in the other direction: the
+  browser test hid nothing, served 6 and rendered 4, because the page silently
+  drops an id it has no paragraph for. So a workflow the owner LAUNCHES would
+  have stayed invisible. Every workflow that exists now has its pitch written;
+  the server decides which get read out. `FALLBACK_IDS` (the four live today) is
+  the one hand-maintained list left, and it is reached only while the API is
+  down — guessing SMALL there is a stale page, guessing big is the original bug.
+- **The workflow headers.** `WorkflowHeader` takes `workflowId` now, and the ten
+  screens that printed their own emoji (`PlanAndScript` ×2, `ScriptToStoryboard`
+  ×2, both libraries, `StoryboardLibrary` — via a `workflowId` prop replacing
+  `icon`, since two workflows render it — `StoryboardBoard`, `StoryboardAssets`,
+  `StoryboardCast`, `PublicStoryboard`) draw the glyph. The admin shield stays
+  an emoji: it is not a workflow.
+- ⚠ **AND THE STALE COMMENTS IN `shell.css` WERE A TRAP, NOT A TYPO.** Two of
+  them explained the 280px rail in terms of "Character Studio" fitting at 264 —
+  advice about a name the app no longer has, next to a `.sb-brand-name` that
+  trims with an **ellipsis**, so a name that stopped fitting would lose its last
+  letters with nothing on screen to say so. Rewritten to name the measurement
+  instead of the old string.
+
+**`tests/brand_landing_check.py`** (new, 19 checks, all passing) is what closes
+the last one. Same boot as `admin_fields_check.py` — temp stores, real uvicorn,
+real Vite, no Mongo. ⚠ **THE CENTRAL ASSERTION IS A ROUND TRIP**: count the
+cards a logged-out visitor sees, hide `workflow.create-animatic-image` through
+`PATCH /admin/features/{key}`, reload, count again. A test that only read the
+endpoint would still pass if the page ignored it, which is the exact bug. It
+also pins the two mask ids on the two marks, the theme switch surviving a
+reload, the renumbering of the How-it-works steps, and — the open question from
+the entry above — **`.sb-brand-name`'s `scrollWidth` against its `clientWidth`**,
+which is the only way to catch an ellipsis. It fits. ⚠ **AND ITS FIRST RUN
+CAUGHT THE TEST ITSELF**: `page.content()` sees Vite's dev-inlined stylesheets,
+comments and all, so a CSS comment about the old name failed the rename check.
+It reads `inner_text` now — the question a visitor would ask.
+
+**Verified:** `npx vite build` clean after every step, and
+`python tests/brand_landing_check.py` — 19/19 in Chromium, screenshots in
+`output/brand_check/`. **STILL NOT verified:** the rest of the Playwright suite
+was not re-run, and nothing here was checked at a phone width.
+
+⚠ **AND THIS FILE WAS DESTROYED AND RESTORED MID-TASK — READ THIS BEFORE WRITING
+A PATCH SCRIPT.** A Python patch raised `UnicodeEncodeError` on a surrogate pair
+(`"\ud83c\udfac"` — use `"\U0001f3ac"`) AFTER `io.open(..., "w")` had already
+truncated the output file, and the `mv` on the next line was separated by a
+NEWLINE rather than `&&`, so it ran anyway and moved a zero-byte file over
+`AGENTS.md`. Two rules, both cheap: **chain the swap to the script's exit code**,
+and **assert the new file is bigger than the old one before swapping**. Recovered
+with `git show HEAD:AGENTS.md`; the two entries uncommitted at the time that
+belong to other sessions are gone from the working copy — OneDrive version
+history is the way back to them.
+
+### 2026-08-26 — THE LANDING PAGE CAN TURN THE LIGHTS ON (ask: "light to dark mode landing page pe bhi daal do user is page se abhi change kar sakta hai")
+
+**Nothing about the theme was broken — the page just had no switch on it.**
+`theme.js` stamps the choice on `<html data-theme>` and `styles/theme.css`
+redefines the whole palette under it, which is why screens outside the sidebar
+(landing, login, the shared board) were already re-skinning correctly. But a
+control to flip it existed in only two places, both behind a door:
+`Sidebar.jsx`'s row (signed in) and `AdminShell.jsx`'s icon (admin role). A
+visitor reading the marketing page on a white desk could not turn it down.
+
+- **`client/src/components/Landing.jsx`** — takes `theme` / `onToggleTheme` and
+  draws a `.lp-theme` button in `.landing-nav-links`, before the gold CTA.
+  Icon-only, the same call `AdminShell` makes: a nav bar has no room for a word.
+  Rendered only when a handler is passed, so the component still stands alone.
+- **`client/src/App.jsx`** — the logged-out branch passes `Landing` the same
+  `theme` + toggle pair `Sidebar` and `AdminShell` already get. One owner of the
+  state: `applyTheme` writes `cas_theme`, so a prospect who picks light on the
+  landing page is still in light after they sign up.
+- **`client/src/styles/landing.css`** — `.lp-theme` is an outlined circle on
+  `--panel`, **not** `.btn small`: the plain button surface is `--panel-2`, and a
+  filled grey box two centimetres from the gold "Get started" reads as a second,
+  weaker CTA.
+- ⚠ **AND THE HERO ART WAS INVISIBLE IN LIGHT MODE, WHICH IS WHY THE SWITCH
+  COULD NOT JUST BE ADDED.** The turnaround cells are hardcoded `#fff` and should
+  be — they are a picture of printed paper. But `.art-figure` was filled
+  `var(--panel-2)`, a palette token: `#1b1e2b` in dark (ink on paper, correct),
+  `#eceff5` in light (white on white, four blank cells). The sheet now carries
+  its own constants, `--lp-sheet` / `--lp-sheet-ink`, that do not flip with the
+  theme. General rule: **a surface that stays one colour in both themes cannot
+  take its contrast partner from the palette.**
+
+### 2026-08-26 — 🖼 ANIMATIC IMAGES IS A 🎬 TICK BOX NOW (PHASE C2) (ask: "Animatic image buttun function make video butun mai v rahe automatic … check box tik kar ke generet karne ka type so agar kisi user ko Animatics image chahiye to choose … waise hi aa jaye jaise veo video aata hi")
 
 **What it is.** 🎬 Make Video's preview has a new tick box, **Animatic images**,
 in the same spending row as Voiceover and Veo renders. Tick it and every

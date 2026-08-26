@@ -713,6 +713,23 @@
   font-weight: 600;
   font-size: 0.94rem;
 }
+/* ⚠ TWO CLASSES, ON PURPOSE, AND IT IS NOT TIDINESS. The name is a
+   `.admin-quiet-field` now, and that rule's `font: inherit` is LATER in this
+   file — a shorthand, so it resets weight and size both. One extra class out-
+   specifies it and hands the row's name back the 600 it has always had.
+   The negative margin cancels the field's own padding, so the name still starts
+   on the same pixel as the `<code>` key underneath it. */
+.admin-feature-name .admin-feature-label {
+  font-weight: 600;
+  font-size: 0.94rem;
+  margin-left: -0.35rem;
+  /* ⚠ CAPPED, BECAUSE `.admin-feature-name` IS `flex: 1` ON A FULL-WIDTH ROW.
+     Left to fill it, the hover box became a bar most of the way across the
+     screen for a two-word name — the field should look like the name it holds,
+     not like the space the row happens to have. A longer name still fits: the
+     box wraps and grows, the same as everywhere else `GrowText` is used. */
+  max-width: 30ch;
+}
 .admin-feature-key {
   font-size: 0.74rem;
   color: var(--muted);
@@ -968,26 +985,30 @@
 .admin-bullet-ic:disabled {
   cursor: default;
 }
-.admin-bullet-text,
-.admin-unlock-name {
-  /* ⚠ BOTH OF THESE ARE TEXTAREAS PRETENDING TO BE ONE-LINE FIELDS — see the
-     note on `GrowText`. These four declarations are what makes the pretence
-     hold: no drag handle, no scrollbar of its own (the height is set from
-     `scrollHeight`, so an inner scroll would fight it), and a line-height that
-     is stated rather than `normal`, because that measurement is what the height
-     is computed from. */
+/* ⚠ ONE FIELD, THREE SCREENS — the pricing card's copy, the names in its
+   derived column, and the feature's own name on the switchboard. Every one of
+   them edits text that has to keep reading like the thing it controls, so none
+   of them may look like a form until you go near it. The component behind it is
+   `GrowText` in `admin/fields.jsx`.
+   ⚠ ALL OF THEM ARE TEXTAREAS PRETENDING TO BE ONE-LINE FIELDS. These four
+   declarations are what makes the pretence hold: no drag handle, no scrollbar
+   of its own (the height is set from `scrollHeight`, so an inner scroll would
+   fight it), and a line-height that is STATED rather than `normal`, because
+   that measurement is what the height is computed from.
+   ⚠ `font`/`color: inherit`, NOT tokens of their own. `.pricing-features li.no`
+   greys its whole line, and a colour here would leave a struck-out promise
+   looking exactly like a kept one; `font: inherit` is what lets one class sit
+   inside an 0.84rem bullet and a 0.94rem feature name. Anything that wants its
+   own weight or size must therefore out-specify this rule — see
+   `.admin-feature-name .admin-feature-label` below. */
+.admin-quiet-field {
+  width: 100%;
+  min-width: 0;
   resize: none;
   overflow: hidden;
   line-height: 1.35;
   display: block;
-}
-.admin-bullet-text {
-  flex: 1;
-  min-width: 0;
   font: inherit;
-  /* ⚠ `inherit`, NOT `var(--text)` — `.pricing-features li.no` greys its whole
-     line, and a colour of its own here would leave a struck-out promise looking
-     exactly like a kept one. */
   color: inherit;
   background: none;
   border: 1px solid transparent;
@@ -995,13 +1016,16 @@
   /* No fixed height, so trap 5 cannot bite: the box grows with the text. */
   padding: 0.2rem 0.35rem;
 }
-.admin-bullet-text.strong {
-  font-weight: 700;
-}
-.admin-bullet-text:hover,
-.admin-bullet-text:focus {
+.admin-quiet-field:hover,
+.admin-quiet-field:focus {
   border-color: var(--border);
   background: var(--panel-2);
+}
+.admin-bullet-text {
+  flex: 1;
+}
+.admin-bullet-text.strong {
+  font-weight: 700;
 }
 /* ⚠ OVER THE ROW, NOT IN IT, AND ONLY WHILE THE ROW IS TOUCHED. This column is
    half of a ~440px card, so it is about 180px wide, and two 21px buttons parked
@@ -1076,24 +1100,48 @@
 }
 .admin-tier-unlocks li {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  /* The remove button sits over the end of the line — same reason as the
+     bullets: this column is ~180px wide and the names in it are long. */
+  position: relative;
 }
-/* The same quiet field as the bullets, and deliberately quieter than they are:
-   what it renames is the feature itself, everywhere, so it should not invite a
-   casual edit. `font`/`color: inherit` take the `muted tiny` off the `<li>`. */
+/* Deliberately quieter than the bullets beside it: what this renames is the
+   feature itself, everywhere, so it should not invite a casual edit. */
 .admin-unlock-name {
-  width: 100%;
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 7px;
   padding: 0.1rem 0.3rem;
 }
 .admin-unlock-name:hover,
 .admin-unlock-name:focus {
-  border-color: var(--border);
-  background: var(--panel-2);
   color: var(--text);
+}
+.admin-unlock-tools {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  padding-left: 0.9rem;
+  background: linear-gradient(to right, transparent, var(--panel) 0.9rem);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.admin-tier-unlocks li:hover .admin-unlock-tools,
+.admin-tier-unlocks li:focus-within .admin-unlock-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* ⚠ FULL WIDTH, AND `min-width: 0` AGAINST `.admin-select`. A select sizes
+   itself to its longest option, and the longest feature name is wider than this
+   column — `.admin-main` is `overflow-x: hidden`, so it would have been trimmed
+   with nothing to reveal it. */
+.admin-unlock-add {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0.45rem 0 0.35rem;
+  font-size: 0.78rem;
 }
 .admin-tier-foot {
   display: flex;

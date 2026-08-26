@@ -4,6 +4,27 @@
    LANDING PAGE
    ========================================================================= */
 .landing {
+  /* ⚠ THE TURNAROUND SHEET IN THE HERO IS PAPER, AND PAPER IS WHITE IN BOTH
+     THEMES — it is a picture of a printed 4-view sheet, not a panel of the app.
+     So its ink is its own pair of constants: the figure used to be filled
+     `--panel-2`, which is near-white in light mode and left the stick figures
+     invisible on their cells the moment the lights went on. */
+  --lp-sheet: #ffffff;
+  --lp-sheet-ink: #1b1e2b;
+  /* The two lighter weights of that same ink — body copy on the script tile,
+     panel outlines on the board tile. Written as alphas of the ink so they
+     stay in the same family if it is ever retuned. */
+  --lp-sheet-soft: rgba(27, 30, 43, 0.3);
+  --lp-sheet-line: rgba(27, 30, 43, 0.22);
+  /* Gold that reads on WHITE. ⚠ Not `--primary`: the dark theme's #e5c158 is
+     1.7:1 on white and disappears on these tiles, and the light theme's is a
+     different value again — a fixed tile needs a fixed gold. */
+  --lp-sheet-gold: #bd8d1e;
+  /* An empty timeline lane, and a sprocket hole. Both are "a hole in the
+     paper" — barely there on purpose, because the moment either one competes
+     with the clip sitting in it the tile stops reading as a timeline. */
+  --lp-sheet-track: rgba(27, 30, 43, 0.07);
+  --lp-sheet-hole: rgba(27, 30, 43, 0.16);
   min-height: 100vh;
   min-height: 100dvh;
   background:
@@ -36,6 +57,37 @@
 }
 .nav-cta {
   margin-top: 0 !important;
+}
+/* ---- Light / dark switch in the nav ----
+   ⚠ NOT `.btn small` REUSED. The plain button surface is `--panel-2`, which on
+   this page sits on a gradient-washed `--bg` and reads as a second, mismatched
+   CTA two centimetres from the gold one. This one is a quiet outlined circle,
+   sized to the CTA's height so the bar stays level. */
+.lp-theme {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+.lp-theme:hover {
+  border-color: var(--border-gold);
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.lp-theme:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.18);
 }
 @media (max-width: 640px) {
   .landing-nav-links a:not(.nav-cta) {
@@ -105,10 +157,32 @@
     margin-right: auto;
   }
 }
+/* ⚠ TWO BUTTONS IN A ROW ARE ONE BOX TWICE, AND THIS ROW WAS NOT.
+   "Get started" is a `<button>`, "See the workflows" is an `<a>`, and they were
+   drawing two different-sized slabs. TWO causes, both fixed here:
+
+   1. **trap 2 — `.btn.primary` carries `margin-top: 1.1rem`** so it can sit
+      under the last field of a form. In a ROW that margin pushes the gold button
+      DOWN, and because a flex row stretches its items to the tallest line, the
+      OTHER button grew to cover the margin as well — which is why the outlined
+      one looked taller than the gold one it is meant to match.
+   2. **An `<a>` and a `<button>` are not the same box by default** (inline vs
+      inline-block, and an anchor does not centre its own text vertically), so
+      even with the margin gone the two would not have agreed.
+
+   `align-items: stretch` is then doing the work it should: both are exactly as
+   tall as the taller one, whatever either says. */
 .hero-actions {
   display: flex;
+  align-items: stretch;
   gap: 0.8rem;
   flex-wrap: wrap;
+}
+.hero-actions .btn {
+  margin-top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .btn.lg {
   padding: 0.85rem 1.5rem;
@@ -126,6 +200,37 @@
 }
 .hero-note {
   margin-top: 1.2rem;
+}
+
+/* The offer card inside the hero. ⚠ IT BORROWS `.pricing-offers` /
+   `.pricing-offer` FROM pricing.css RATHER THAN RESTATING THEM — the card a
+   visitor sees here and the one they see in the pricing modal after signing in
+   have to be the same object, and two stylesheets describing one card is how
+   they stop being. All this states is where it sits.
+
+   ⚠ `min-width: 0` ON A GRID CHILD IS NOT OPTIONAL. `.pricing-offers` is a grid
+   whose column is `minmax(min(420px, 100%), 1fr)`, and the hero column it now
+   lives in is narrower than 420px on a small laptop — without this the card
+   would refuse to shrink and push the whole hero sideways.
+
+   ⚠ TWO CLASSES IN THE SELECTOR, AND IT HAS TO BE TWO. `pricing.css` is
+   imported AFTER this file in `index.css` and states `margin: 0 0 1.3rem` on
+   `.pricing-offers`; a single-class rule here has the same specificity and
+   therefore LOSES on order alone — which is exactly how the card ended up
+   welded to the button above it, with no gap, in the first browser pass.
+*/
+.pricing-offers.hero-offer {
+  margin: 1.5rem 0 0;
+  max-width: 560px;
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  /* The hero centres itself under 900px; so does its offer. */
+  .pricing-offers.hero-offer {
+    margin-left: auto;
+    margin-right: auto;
+    text-align: left;
+  }
 }
 
 /* Pipeline line under the hero buttons — Plan → Characters → … → Video. A list
@@ -184,36 +289,117 @@
 .art-frame:hover {
   transform: rotate(0deg);
 }
-.art-grid {
+/* ---- The four workflow tiles in the hero (PipelineArt in Landing.jsx) ----
+   Two-up on every width. ⚠ NOT `auto-fit`/`minmax`: at one column the four
+   drawings stack into a strip taller than the hero itself, and at three the
+   pipeline stops reading left-to-right, top-to-bottom. Four things in
+   order want a 2×2. */
+.lp-art-steps {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.6rem;
+  gap: 0.7rem;
 }
-.art-cell {
+.lp-art-step {
   position: relative;
-  background: #fff;
-  border-radius: 10px;
-  aspect-ratio: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
 }
-.art-figure {
-  width: 62%;
-  height: 78%;
-  fill: var(--panel-2);
-}
-.art-label {
+/* The step number, over the tile's top-left corner. It is what makes the four
+   tiles read as a SEQUENCE rather than as a set of four unrelated pictures. */
+.lp-art-step-n {
   position: absolute;
-  bottom: 0.4rem;
-  right: 0.5rem;
+  z-index: 2;
+  top: -0.35rem;
+  left: -0.35rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--gold-grad);
+  color: var(--gold-ink);
   font-size: 0.62rem;
-  color: var(--muted);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 800;
+  box-shadow: var(--gold-glow);
 }
+/* The tile itself — a sheet of output. White in both themes; see the
+   `--lp-sheet*` note at the top of this file. */
+.lp-art-sheet {
+  background: var(--lp-sheet);
+  border-radius: 9px;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  padding: 0.3rem;
+}
+.lp-art-step-label {
+  font-size: 0.63rem;
+  font-weight: 650;
+  text-align: center;
+  color: var(--muted);
+  letter-spacing: 0.03em;
+  /* A long label must shorten rather than widen its column — the grid is 1fr
+     1fr and a word that will not wrap pushes the other tile narrow. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lp-art-svg {
+  width: 100%;
+  height: 100%;
+}
+/* The ink weights the tile drawings use. Classes rather than inline fills, so
+   the whole set retunes from the four tokens above. */
+.lp-fill-ink {
+  fill: var(--lp-sheet-ink);
+}
+.lp-fill-soft {
+  fill: var(--lp-sheet-soft);
+}
+.lp-fill-gold {
+  fill: var(--lp-sheet-gold);
+}
+.lp-stroke-soft {
+  fill: none;
+  stroke: var(--lp-sheet-line);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+/* The playhead — the one line on the timeline tile that is not furniture, so
+   it is the ink weight and not the line weight. */
+.lp-stroke-head {
+  fill: none;
+  stroke: var(--lp-sheet-gold);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.lp-fill-track {
+  fill: var(--lp-sheet-track);
+}
+.lp-fill-hole {
+  fill: var(--lp-sheet-hole);
+}
+/* The frame seams on the filmstrip. Fainter than `.lp-stroke-soft` — they
+   divide the poses, they are not part of any of them. */
+.lp-stroke-frame {
+  fill: none;
+  stroke: var(--lp-sheet-track);
+  stroke-width: 1.4;
+}
+/* The camera-move arrow on one storyboard panel. Gold, because it is a
+   DIRECTION rather than a drawn thing — the one mark on that tile a director
+   added rather than an artist. */
+.lp-stroke-move {
+  fill: none;
+  stroke: var(--lp-sheet-gold);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .art-caption {
   text-align: center;
   color: var(--muted);
@@ -230,15 +416,26 @@
   position: relative;
   width: 100%;
   max-width: 460px;
-  padding-bottom: 4.5rem;
+  /* Clears the pose strip, which overhangs the frame's bottom edge and would
+     otherwise sit on top of the section below. ⚠ It went to 0.5rem for one
+     revision, while the strip was deleted — if the strip is ever removed again,
+     this has to come down with it or the hero grows 4rem of nothing. */
+  padding-bottom: 4rem;
 }
 .lp-art-stack .art-frame {
   max-width: none;
 }
+/* ---- The pose strip that hangs off the frame ----
+   ⚠ THIS EXISTS FOR THE COMPOSITION, NOT FOR THE EXPLANATION. It was deleted
+   once for looking redundant beside the key-poses tile and asked for straight
+   back: it is the only element that breaks the frame's rectangle, and without
+   it the whole hero art reads as one flat card. Rotated the opposite way to the
+   frame, and both straighten on hover. */
 .lp-art-strip {
   position: absolute;
+  z-index: 2;
   right: -0.5rem;
-  bottom: 0.5rem;
+  bottom: 0.4rem;
   display: flex;
   align-items: center;
   gap: 0.35rem;
@@ -253,31 +450,43 @@
 .lp-art-stack:hover .lp-art-strip {
   transform: rotate(0deg);
 }
+/* Each cell holds one workflow's glyph. ⚠ IT SETS `color`, AND THAT IS THE
+   WHOLE WIRING: `WorkflowIcon` strokes itself in `currentColor` and sizes itself
+   in `em`, so the cell's colour and font-size are what make a 24px rail icon
+   into a 22px drawing on white paper — no second copy of the glyph, and no
+   rule inside the icon that knows about this strip. */
 .lp-art-cell {
   width: 44px;
   height: 44px;
-  background: #fff;
+  background: var(--lp-sheet);
+  color: var(--lp-sheet-ink);
+  font-size: 1.35rem;
   border-radius: 7px;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
-.lp-art-cell .art-figure {
-  width: 66%;
-  height: 80%;
-}
+/* ⚠ AN SVG TRIANGLE, NOT THE "▶" CHARACTER. That glyph is a different width,
+   weight and baseline in every font on every platform, and it was sitting
+   inside a 28px circle where a millimetre of drift is visible. */
 .lp-art-play {
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
+  flex-shrink: 0;
   margin-left: 0.15rem;
   border-radius: 50%;
   background: var(--gold-grad);
   color: var(--gold-ink);
-  font-size: 0.62rem;
   box-shadow: var(--gold-glow);
 }
+.lp-art-play svg {
+  width: 0.7rem;
+  height: 0.7rem;
+  fill: currentColor;
+}
+
 .lp-art-chip {
   position: absolute;
   z-index: 2;
@@ -294,10 +503,30 @@
 .lp-art-chip-a {
   top: -0.6rem;
   left: -0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+/* The brand's own sparkle, at label size. Replaced an emoji that drew as a
+   grey box on Windows — see the note in Landing.jsx. */
+.lp-chip-spark {
+  width: 0.62rem;
+  height: 0.62rem;
+  fill: currentColor;
+  flex-shrink: 0;
 }
 @media (max-width: 460px) {
-  /* The strip is the first thing to run out of room on a phone — it stops
-     overhanging and tucks under the sheet instead. */
+  /* The tiles are the first thing to run out of room on a phone. The LABELS go
+     before the drawings do — a four-tile grid at 300px still reads, a caption
+     under it at 6px does not. */
+  .lp-art-step-label {
+    font-size: 0.58rem;
+  }
+  .lp-art-steps {
+    gap: 0.5rem;
+  }
+  /* The strip stops overhanging the right edge and centres under the frame —
+     at this width its overhang is off the screen, not off the card. */
   .lp-art-strip {
     right: 50%;
     transform: translateX(50%) rotate(2deg);
@@ -399,6 +628,17 @@
   color: var(--ok);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+/* A workflow an administrator has staged rather than launched. ⚠ MUTED AND
+   OUTLINED, NOT GREEN — it borrows the rail's own "Soon" pill (`.sb-badge-soon`
+   in shell.css) so the badge a visitor reads here is the badge they meet on the
+   nav row after signing in. */
+.lp-wf-soon {
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.08rem 0.45rem;
+  font-size: 0.64rem;
 }
 .lp-wf-dot {
   width: 6px;

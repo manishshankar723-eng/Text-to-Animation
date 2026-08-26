@@ -12,6 +12,7 @@ import ImageLightbox from "./ImageLightbox.jsx";
 // account without generation still gets a consistent cast.
 import useCapability from "../useCapability.js";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // Fields worth keeping when the user steps away from this page (see `saved`).
 // `uploaded` rides along so "Generate all" keeps skipping the user's own images
 // even after they leave and come back.
@@ -135,7 +136,7 @@ export default function StoryboardCast({
   return (
     <div className="workflow-head-wrap sb-cast">
       <div className="workflow-header">
-        <span className="wf-icon">🎭</span>
+        <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
         <div>
           <h1 className="wf-title">Set up your cast</h1>
           <p className="muted">

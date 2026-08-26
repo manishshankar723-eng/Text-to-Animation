@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Character Asset Studio</title>
+    <!-- ⚠ THE SAME MARK AS `Logo.jsx`, WITH ITS COLOURS FROZEN. A tab has no
+         CSS variables and no fixed background — it is white on one platform and
+         near-black on another — so the favicon cannot use `currentColor` the way
+         the in-app mark does. Gold is the one value in the palette that holds on
+         both. If the mark's geometry is ever retuned, retune this too: the paths
+         are copies, not a shared file. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Aniwala AI Studio</title>
+    <meta name="description" content="Aniwala AI Studio — plan the story, draw the storyboard, block the motion and render the video. From a sentence to a finished animated cut." />
   </head>
   <body>
     <div id="root"></div>

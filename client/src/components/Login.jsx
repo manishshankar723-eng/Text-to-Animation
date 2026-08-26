@@ -1,6 +1,7 @@
 import { useState } from "react";
 import * as api from "../api.js";
 import * as cache from "../session_cache.js";
+import Logo from "./Logo.jsx";
 
 // Combined login / register screen. On success, stores the token and calls
 // onAuthed(email) so the app can switch to the dashboard. onBack returns to the
@@ -68,7 +69,9 @@ export default function Login({ onAuthed, onBack }) {
           </button>
         )}
 
-        <h1 className="brand">🎭 Character Asset Studio</h1>
+        <h1 className="brand">
+          <Logo /> Aniwala AI Studio
+        </h1>
         <p className="muted">
           {mode === "login" ? "Sign in to continue" : "Create an account"}
         </p>

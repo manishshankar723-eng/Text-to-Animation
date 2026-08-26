@@ -15,6 +15,7 @@ import * as api from "../api.js";
 import Icon from "./Icon.jsx";
 import { formatTime } from "./Timeline.jsx";
 
+import WorkflowIcon from "./WorkflowIcon.jsx";
 // The placeholder title a new project carries until it is saved with a real
 // one. Exported so the editor knows when to ask for a name.
 export const UNTITLED = "Untitled Project";
@@ -418,7 +419,7 @@ export default function AnimaticLibrary({ onOpen }) {
   return (
     <div className="workflow-head-wrap sb-library">
       <div className="workflow-header">
-        <span className="wf-icon">🎬</span>
+        <span className="wf-icon"><WorkflowIcon id="storyboard-to-animatics" /></span>
         <div>
           <h1 className="wf-title">Your Projects</h1>
           <p className="muted">

@@ -13,6 +13,7 @@
 // feature don't overwrite each other.
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
+import { GrowText } from "./fields.jsx";
 import { formatDateTime } from "./format.js";
 
 // What each status MEANS, in the words of what the user experiences — not
@@ -182,7 +183,7 @@ function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, 
       <div className="admin-feature-head">
         <span className="admin-feature-ico">{feature.icon}</span>
         <span className="admin-feature-name">
-          <span className="admin-feature-label">{feature.label}</span>
+          <FeatureName feature={feature} busy={busy} onSave={onSave} />
           <code className="admin-feature-key">{feature.key}</code>
           {feature.note && <span className="muted tiny">{feature.note}</span>}
         </span>
@@ -260,6 +261,49 @@ function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, 
         />
       )}
     </div>
+  );
+}
+
+// The feature's name, editable in place.
+//
+// ⚠ THIS IS WHERE THE NAME BELONGS, and until now it was the one thing on the
+// row that could not be changed from the screen that owns everything else about
+// it — status, order, rollout and `min_tier` were all editable here while the
+// label was a `<span>`. Admin → Pricing had grown a box for it first, in the
+// "Actually unlocks" column, which had it backwards: that column is derived,
+// this row is the feature.
+//
+// ⚠ IT IS THE SAME STRING EVERYWHERE. The sidebar prints it, every "you need a
+// higher plan" refusal names it, and both pricing columns list it — so this is
+// a rename, not a caption, and the empty case is refused rather than saved (the
+// server falls back to the raw key, which is a name nobody chose).
+function FeatureName({ feature, busy, onSave }) {
+  const [text, setText] = useState(feature.label);
+
+  // Follows the row: the same feature can be renamed from Admin → Pricing, and
+  // a saved row arrives here as new props.
+  useEffect(() => setText(feature.label), [feature.label]);
+
+  function commit() {
+    const next = text.trim();
+    if (!next) {
+      setText(feature.label);
+      return;
+    }
+    if (next !== feature.label) onSave(feature.key, { label: next });
+  }
+
+  return (
+    <GrowText
+      className="admin-feature-label"
+      value={text}
+      maxLength={80}
+      disabled={busy}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      aria-label={`Name of ${feature.key}`}
+      title="What this feature is called, everywhere in the app"
+    />
   );
 }
 

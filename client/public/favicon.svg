@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Aniwala AI Studio</title>
+  <defs>
+    <path id="s" d="M0 -1 C 0.13 -0.38, 0.38 -0.13, 1 0 C 0.38 0.13, 0.13 0.38, 0 1 C -0.13 0.38, -0.38 0.13, -1 0 C -0.38 -0.13, -0.13 -0.38, 0 -1 Z"/>
+    <mask id="f">
+      <rect width="64" height="64" fill="black"/>
+      <path d="M4 43 C 12 31, 28 20, 50 15 C 32 26, 19 38, 9 49 Z" fill="white"/>
+      <path d="M9 45 C 17 35, 30 26, 47 18" fill="none" stroke="black" stroke-width="4.6" stroke-dasharray="2.6 5" stroke-linecap="butt"/>
+    </mask>
+  </defs>
+  <path d="M31 7 L54 57 H43.5 L31 28.5 L18.5 57 H8 Z" fill="#e5c158"/>
+  <path d="M4 43 C 12 31, 28 20, 50 15 C 32 26, 19 38, 9 49 Z" fill="#e5c158" mask="url(#f)"/>
+  <use href="#s" transform="translate(56 9) scale(7)" fill="#f3d67b"/>
+  <use href="#s" transform="translate(45.5 5) scale(3.4)" fill="#f3d67b"/>
+</svg>

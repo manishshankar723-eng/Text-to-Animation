@@ -2,6 +2,12 @@ import { useEffect, useReducer, useState } from "react";
 import * as api from "../api.js";
 import * as cache from "../session_cache.js";
 import Avatar from "./Avatar.jsx";
+// ⚠ THE SAME CARD THE LANDING PAGE AND THE PRICING MODAL DRAW. A signed-in
+// customer is the one most likely to actually spend a coupon, and before this
+// the only way they could learn one existed was to open the Upgrade modal and
+// notice it. See OfferCard.jsx.
+import { OfferStrip } from "./OfferCard.jsx";
+import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Home — the DASHBOARD: who you are, your plan, and the latest work from EVERY
 // workflow. Anything you CHANGE (details, storyboard defaults, 3D keys,
@@ -116,6 +122,9 @@ function useDashboard() {
 
 export default function Home({
   email,
+  // The ids of the workflows this account may SEE, or `null` while nobody has
+  // said. See the note where App passes it.
+  visibleWorkflows = null,
   onOpenJob,
   onUpgrade,
   onOpenProfile,
@@ -287,6 +296,18 @@ export default function Home({
   // before this change — the old dashboard capped every list at 100 and called
   // the sum "Projects" too. Falls back to the visible sum when there is no hint.
   const groupTotal = groups.reduce((n, g) => n + g.items.length, 0);
+
+  // ⚠ WHAT IS DRAWN, AND ONLY WHAT IS DRAWN. `groupTotal` above deliberately
+  // still counts every group: it is the fallback for "how many projects does
+  // this account have", the server's own hint counts every record too, and the
+  // two answers disagreeing by a hidden workflow would be worse than either.
+  // Hiding is about the SHELF, not about the count.
+  //
+  // Fails open on `null` — same rule as the rail: not knowing yet must never
+  // read as "this account has nothing".
+  const shownGroups = visibleWorkflows
+    ? groups.filter((g) => visibleWorkflows.includes(g.id))
+    : groups;
   const hinted = cache.hintTotal();
   const totalItems = hinted === null ? groupTotal : hinted;
 
@@ -301,8 +322,24 @@ export default function Home({
 
       {error && <div className="error">{error}</div>}
 
+      {/* A live discount, if there is one — above the fold, because a coupon
+          nobody is shown is a coupon nobody spends. ⚠ THE BUTTON OPENS THE
+          PRICING MODAL RATHER THAN APPLYING THE CODE HERE: applying it needs the
+          plan and the billing period, and both of those are questions this
+          screen does not ask. Renders nothing when no offer is running. */}
+      <OfferStrip
+        className="home-offers"
+        ctaLabel="View plans →"
+        onCta={onUpgrade}
+      />
+
       {/* Top row: two equal-height cards. */}
       <div className="home-grid">
+        {/* ⚠ BOTH CARDS' ACTION SITS IN THE TOP ROW, NOT IN A FOOT. Pinned to
+            the bottom of a stretched card, the button left a hand's width of
+            empty panel under the content — the shorter card was mostly air.
+            Opposite the thing it acts on (the name here, the plan badge next
+            door) it reads as "edit THIS", and the pair keeps one silhouette. */}
         <section className="card home-card profile-card">
           <div className="profile-top">
             <Avatar size={56} initial={initial === "?" ? "" : initial} />
@@ -311,10 +348,8 @@ export default function Home({
               <p className="muted tiny">{email}</p>
               <p className="muted tiny">Member since {memberSince}</p>
             </div>
-          </div>
-          <div className="home-card-foot">
             {onOpenProfile && (
-              <button className="btn small" onClick={onOpenProfile}>
+              <button className="btn small card-top-btn" onClick={onOpenProfile}>
                 Edit profile
               </button>
             )}
@@ -324,6 +359,12 @@ export default function Home({
         <section className="card home-card plan-card">
           <div className="plan-head">
             <span className="plan-badge">Free plan</span>
+            <button
+              className="btn small card-top-btn upgrade-inline"
+              onClick={onUpgrade}
+            >
+              ⚡ Upgrade plan
+            </button>
           </div>
           <div className="credit-row">
             <div className="credit-stat">
@@ -335,14 +376,9 @@ export default function Home({
               <span className="muted tiny">Projects</span>
             </div>
           </div>
-          <div className="home-card-foot">
-            <button className="btn small upgrade-inline" onClick={onUpgrade}>
-              ⚡ Upgrade plan
-            </button>
-            <p className="muted tiny plan-note">
-              Usage-based billing &amp; credits are coming soon.
-            </p>
-          </div>
+          <p className="muted tiny plan-note">
+            Usage-based billing &amp; credits are coming soon.
+          </p>
         </section>
       </div>
 
@@ -360,11 +396,13 @@ export default function Home({
         </div>
 
         <div className="wf-grid">
-          {groups.map((g) => (
+          {shownGroups.map((g) => (
             <div className="wf-group" key={g.id}>
               <div className="wf-group-head">
                 <span className="wf-group-title">
-                  <span className="wf-group-ico">{g.icon}</span>
+                  <span className="wf-group-ico">
+                    <WorkflowIcon id={g.id} fallback={g.icon} />
+                  </span>
                   {g.label}
                 </span>
                 <button

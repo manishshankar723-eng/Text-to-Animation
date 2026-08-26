@@ -9,6 +9,21 @@
 .home-head h1 {
   font-size: 1.8rem;
 }
+/* The offer strip above the dashboard’s first row. ⚠ SAME CARD AS THE PRICING
+   MODAL AND THE LANDING PAGE — it borrows `.pricing-offers` / `.pricing-offer`
+   from pricing.css rather than restating them, because two stylesheets
+   describing one card is how one card becomes three. Only the gap under it is
+   stated here, so it sits in the same rhythm as `.home-grid`. */
+/*
+   ⚠ TWO CLASSES IN THE SELECTOR, AND IT HAS TO BE TWO. `pricing.css` is
+   imported AFTER this file in `index.css` and states `margin: 0 0 1.3rem` on
+   `.pricing-offers`; a single-class rule here has the same specificity and
+   therefore LOSES on order alone — which is exactly how the card ended up
+   welded to the button above it, with no gap, in the first browser pass.
+*/
+.pricing-offers.home-offers {
+  margin: 0 0 1.2rem;
+}
 .home-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -44,6 +59,46 @@
 }
 .home-card-foot .btn {
   margin-top: 0;
+}
+/* The one action on each of the two top cards, parked at the top RIGHT opposite
+   the thing it acts on. ⚠ NOT `.home-card-foot` — see the note in `Home.jsx`.
+   ⚠ AND THE SELECTOR CARRIES `.btn` ON PURPOSE: these buttons are written
+   `btn small card-top-btn`, so `.btn.small`'s padding and `.btn.primary`'s
+   `margin-top: 1.1rem` are TWO-class rules that beat a one-class override on
+   SPECIFICITY regardless of import order — the same trap that sat the offer
+   card's CTA below its code stub. One stated height for both, so "⚡ Upgrade
+   plan" and "Edit profile" are the same slab even though only one has an emoji
+   inflating its line box. */
+.home-grid .card-top-btn.btn {
+  --card-btn-h: 2.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--card-btn-h);
+  padding: 0 0.85rem;
+  line-height: 1;
+  margin: 0 0 0 auto;
+  align-self: flex-start;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* ⚠ TOP-ALIGNED, SO THE TWO BUTTONS SIT ON ONE LINE. The grid stretches both
+   cards to the taller one (the plan card), and centring the shorter card's
+   content dropped its button ~14px below its neighbour's — measured, and it
+   reads as a misalignment rather than as balance. */
+.home-grid .profile-card,
+.home-grid .plan-card {
+  justify-content: flex-start;
+  padding: 1.2rem 1.3rem;
+}
+/* ⚠ AND THE PROFILE BLOCK TAKES THE SLACK RATHER THAN LEAVING A HOLE UNDER IT.
+   `flex: 1` stretches the row to the card's full height; `align-items: center`
+   (already on `.profile-top`) then centres the avatar and the name inside it,
+   while the button's own `align-self: flex-start` keeps it pinned to the top
+   edge beside the plan card's. Balanced content AND aligned actions, which
+   `justify-content` alone cannot give you at the same time. */
+.profile-card .profile-top {
+  flex: 1;
 }
 .profile-who {
   min-width: 0;
@@ -232,7 +287,11 @@
 }
 
 .plan-head {
-  margin-bottom: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.85rem;
 }
 .plan-badge {
   display: inline-block;
@@ -247,7 +306,7 @@
 .credit-row {
   display: flex;
   gap: 1.5rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0;
 }
 .credit-stat {
   display: flex;
@@ -264,7 +323,11 @@
   color: var(--gold-ink);
   border: 1px solid var(--primary);
   font-weight: 650;
-  width: 100%;
+  /* ⚠ AUTO, NOT `width: 100%`. Full-bleed it was the widest slab on the page —
+     louder than the plan it was selling — and it forced the card into a row of
+     its own. Sized to its words, up beside the badge, it still carries the gold
+     and the card gets ~40px shorter. */
+  width: auto;
   box-shadow: var(--gold-glow);
 }
 .upgrade-inline:hover {
@@ -274,7 +337,17 @@
   box-shadow: 0 6px 20px rgba(229, 193, 88, 0.45);
 }
 .plan-note {
-  margin: 0.6rem 0 0;
+  margin: 0.75rem 0 0;
+}
+/* Narrow: the action drops under the name / badge rather than squeezing it. */
+@media (max-width: 520px) {
+  .profile-card .profile-top,
+  .plan-head {
+    flex-wrap: wrap;
+  }
+  .card-top-btn {
+    margin-left: 0;
+  }
 }
 
 .recent-head {
