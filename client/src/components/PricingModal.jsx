@@ -10,10 +10,27 @@
 // money path is ever a float; the division happens once, here, at the moment of
 // display.
 //
+// ⚠ THE OFFER CARDS AT THE TOP ARE THE ONLY PLACE A COUPON IS VISIBLE. A SALE
+// reaches a customer as a changed number on a plan card, so it announces itself.
+// A COUPON CHANGES NOTHING UNTIL SOMEBODY TYPES IT — so a coupon that is not
+// printed somewhere is a discount that exists only in the admin panel, which is
+// exactly the bug these cards fix. `GET /billing/tiers` sends the promoted ones
+// in `offers`; a code an administrator meant to email to one customer is not
+// promoted and never appears here.
+//
+// ⚠ A COUPON IS CHECKED AGAINST EVERY PAID TIER, NOT ONE. "20% off every plan"
+// applied to a single card is a discount somebody has to hunt for by clicking
+// each plan in turn, and it leaves the other three cards quoting a price that is
+// no longer true for them. One request per paid tier is four requests; a copy of
+// the discount arithmetic in JavaScript is a second answer that can disagree
+// with the server's, and the one people believe is the one on screen.
+//
 // ⚠ THE FALLBACK BELOW IS NOT DEAD CODE. If the request fails, a customer who
 // clicked Upgrade must still see a price list — an empty modal is a lost sale
 // and looks like a broken app. It is the same shape the server seeds from, so
-// the two agree until somebody edits the real one.
+// the two agree until somebody edits the real one. ⚠ IT CARRIES NO OFFERS: an
+// offer we could not read is a discount nobody is currently entitled to, and
+// inventing one gives money away (the same fail-CLOSED rule as `offers.py`).
 //
 // Payments aren't wired up yet, so the Upgrade CTAs show a "coming soon" note
 // rather than starting a checkout — Phase 4/6 of the admin panel plan.
@@ -29,10 +46,43 @@ function money(minor, currency) {
   return symbol ? `${symbol}${shown}` : `${shown} ${currency}`;
 }
 
+// "Ends in 6 days". ⚠ AN OFFER THAT HAS ALREADY ENDED RETURNS "" RATHER THAN A
+// NEGATIVE COUNT — the server has stopped sending expired offers, so anything
+// this function sees should still be running; if the two clocks disagree, saying
+// nothing is better than saying "ends in -3 hours".
+function timeLeft(iso) {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const hrs = Math.floor(ms / 3600000);
+  if (hrs < 1) return `Ends in ${Math.max(1, Math.floor(ms / 60000))} min`;
+  if (hrs < 24) return `Ends in ${hrs} hour${hrs === 1 ? "" : "s"}`;
+  const days = Math.floor(hrs / 24);
+  return `Ends in ${days} day${days === 1 ? "" : "s"}`;
+}
+
+// What an offer covers, in one line. ⚠ AN EMPTY `applies_to` MEANS EVERY PLAN,
+// not none — the same reading the server uses (`offers.applies_to`). Getting it
+// backwards here would print "no plans" on a site-wide discount.
+function scopeOf(offer, tiers) {
+  const names = (offer.applies_to || [])
+    .map((id) => tiers.find((t) => t.id === id)?.name || id)
+    .filter(Boolean);
+  const where = names.length ? names.join(", ") : "every plan";
+  const when =
+    offer.period === "monthly"
+      ? "monthly billing"
+      : offer.period === "yearly"
+        ? "yearly billing"
+        : "monthly or yearly";
+  return `${where} · ${when}`;
+}
+
 // The shape the server sends, as a last resort. Kept byte-compatible with
 // `_CATALOG` in `server/billing.py`.
 const FALLBACK = {
   currency: "USD",
+  offers: [],
   tiers: [
     { id: "trial", name: "Trial", blurb: "Explore the studio for free — bring a script to life in minutes.", monthly: 0, yearly: 0, compare_at: 0, badge: "", highlight: false,
       bullets: [{ text: "2 projects", ok: true }, { text: "9 shots per project", ok: true }, { text: "50 image generations", ok: true }, { text: "Export with watermark", ok: true }, { text: "No commercial use", ok: false }] },
@@ -57,11 +107,13 @@ export default function PricingModal({ onClose, currentTier = "" }) {
   const [yearly, setYearly] = useState(true);
   const [notice, setNotice] = useState("");
   const [data, setData] = useState(null);
-  // The coupon box. ⚠ CHECKING A CODE REDEEMS NOTHING — the server counts a
-  // redemption only when a subscription is actually recorded against it, so
-  // somebody can try a code, change their mind, and try it again tomorrow.
+  // The coupon box and the offer cards' Apply buttons share this one piece of
+  // state. ⚠ CHECKING A CODE REDEEMS NOTHING — the server counts a redemption
+  // only when a subscription is actually recorded against it, so somebody can
+  // try a code, change their mind, and try it again tomorrow.
   const [code, setCode] = useState("");
   const [coupon, setCoupon] = useState(null);
+  const [rejected, setRejected] = useState(false);
   const [checking, setChecking] = useState(false);
 
   useEffect(() => {
@@ -80,24 +132,68 @@ export default function PricingModal({ onClose, currentTier = "" }) {
   }, []);
 
   const { tiers, currency, banner } = data || FALLBACK;
+  // ⚠ FROM `data`, NEVER FROM `FALLBACK` — fail closed, see the file header.
+  const promos = data?.offers || [];
+  const appliedCode = coupon?.code || "";
 
-  // ⚠ THE COUPON IS CHECKED AGAINST ONE TIER, so it is re-checked when the
-  // period toggles: "20% off yearly" is not a discount on the monthly price,
-  // and showing the old figure after the toggle would quote a price that does
-  // not exist.
-  async function check(tierId) {
-    const trimmed = code.trim();
+  /**
+   * Check `raw` against every paid tier for the period on screen, and remember
+   * what each one becomes.
+   *
+   * ⚠ ONE REQUEST PER TIER, ON PURPOSE. The route answers for ONE plan, because
+   * an offer can be limited to some of them; asking once and reusing the figure
+   * would quote the Starter discount on the Production card.
+   *
+   * ⚠ IT IS "VALID" IF ANY TIER TOOK IT. "20% off Starter only" is a real code
+   * that three of the four cards must refuse — treating those refusals as a bad
+   * code would tell the customer their working coupon does not exist.
+   */
+  async function applyCode(raw) {
+    const trimmed = (raw || "").trim();
     if (!trimmed) return;
     setChecking(true);
+    setRejected(false);
+    const period = yearly ? "yearly" : "monthly";
+    const paid = tiers.filter((t) => (t.monthly || 0) > 0 || (t.yearly || 0) > 0);
     try {
-      const r = await api.checkCoupon(trimmed, tierId, yearly ? "yearly" : "monthly");
-      setCoupon(r?.valid ? { ...r, tier: tierId } : { valid: false });
-    } catch {
-      setCoupon({ valid: false });
+      const results = await Promise.all(
+        paid.map((t) =>
+          api.checkCoupon(trimmed, t.id, period).then(
+            (r) => [t.id, r],
+            () => [t.id, null], // one tier's failure is not the code's failure
+          ),
+        ),
+      );
+      const byTier = {};
+      let label = "";
+      let confirmed = "";
+      for (const [id, r] of results) {
+        if (!r?.valid) continue;
+        byTier[id] = { now: r.now, was: r.was, discount: r.discount };
+        label = label || r.label || "";
+        confirmed = confirmed || r.code || "";
+      }
+      if (Object.keys(byTier).length === 0) {
+        setCoupon(null);
+        setRejected(true);
+      } else {
+        setCoupon({ code: confirmed || trimmed.toUpperCase(), label, byTier });
+        setRejected(false);
+      }
     } finally {
       setChecking(false);
     }
   }
+
+  // ⚠ THE PERIOD TOGGLE RE-CHECKS AN APPLIED CODE. "20% off yearly" is not a
+  // discount on the monthly price, and leaving the old figure on screen after
+  // the toggle quotes a price that does not exist. Deliberately keyed on
+  // `yearly` alone — adding `appliedCode` would re-run this on the answer it
+  // just stored, and loop.
+  useEffect(() => {
+    if (appliedCode) applyCode(appliedCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yearly]);
 
   function onUpgrade(tier) {
     setNotice(`Checkout for ${tier.name} is coming soon — hang tight!`);
@@ -163,14 +259,31 @@ export default function PricingModal({ onClose, currentTier = "" }) {
         {banner && <div className="info-msg pricing-notice pricing-banner">{banner}</div>}
         {notice && <div className="info-msg pricing-notice">{notice}</div>}
 
+        {promos.length > 0 && (
+          <div className="pricing-offers" role="region" aria-label="Current offers">
+            {promos.map((offer) => (
+              <OfferCard
+                key={offer.id || offer.code}
+                offer={offer}
+                tiers={tiers}
+                busy={checking}
+                applied={!!appliedCode && appliedCode === offer.code}
+                onApply={() => {
+                  setCode(offer.code);
+                  applyCode(offer.code);
+                }}
+              />
+            ))}
+          </div>
+        )}
+
         <div className="pricing-grid">
           {tiers.map((tier) => {
             // The server has already applied any site-wide sale to these
             // numbers; a coupon is per-customer and applies on top of what is
             // shown, which is why it is worked out here and not folded in.
             const listed = yearly ? tier.yearly : tier.monthly;
-            const applied =
-              coupon?.valid && coupon.tier === tier.id ? coupon : null;
+            const applied = coupon?.byTier?.[tier.id] || null;
             const price = applied ? applied.now : listed;
             // ⚠ WHICH CARD IS "YOURS" IS TOLD TO US, not guessed from the
             // price being zero — that assumption is what made Trial the
@@ -217,7 +330,9 @@ export default function PricingModal({ onClose, currentTier = "" }) {
                   <div className="pricing-sale-tag">{tier.sale}</div>
                 )}
                 {applied && (
-                  <div className="pricing-sale-tag">{applied.code} applied</div>
+                  <div className="pricing-sale-tag">
+                    {coupon.code} applied · save {money(applied.discount, currency)}
+                  </div>
                 )}
                 {price > 0 && (
                   <div className="pricing-per">
@@ -251,6 +366,9 @@ export default function PricingModal({ onClose, currentTier = "" }) {
           })}
         </div>
 
+        {/* Still here even when an offer card is on screen: a code somebody was
+            emailed is not promoted and is on no card, so there has to be a box
+            to type it into. */}
         <div className="pricing-coupon">
           <input
             value={code}
@@ -259,32 +377,27 @@ export default function PricingModal({ onClose, currentTier = "" }) {
             onChange={(e) => {
               setCode(e.target.value);
               setCoupon(null);
+              setRejected(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applyCode(code);
             }}
           />
           <button
             type="button"
             className="btn small"
             disabled={checking || !code.trim()}
-            /* Checked against the FEATURED tier, or the first paid one — the
-               card somebody is most likely looking at. Switching plan or period
-               re-checks, so the figure on screen is always for what is on
-               screen. */
-            onClick={() =>
-              check(
-                (tiers.find((t) => t.highlight) || tiers.find((t) => t.monthly > 0) || tiers[0])
-                  .id
-              )
-            }
+            onClick={() => applyCode(code)}
           >
             {checking ? "Checking…" : "Apply"}
           </button>
-          {coupon && !coupon.valid && (
-            <span className="muted tiny">That code isn't valid.</span>
-          )}
-          {coupon?.valid && (
+          {rejected && <span className="muted tiny">That code isn't valid.</span>}
+          {coupon && (
             <span className="muted tiny">
-              {coupon.label} — {money(coupon.discount, currency)} off {" "}
-              {tiers.find((t) => t.id === coupon.tier)?.name}
+              {coupon.label || coupon.code} applied to{" "}
+              {Object.keys(coupon.byTier).length === 1
+                ? tiers.find((t) => t.id === Object.keys(coupon.byTier)[0])?.name
+                : `${Object.keys(coupon.byTier).length} plans`}
             </span>
           )}
         </div>
@@ -297,5 +410,86 @@ export default function PricingModal({ onClose, currentTier = "" }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * One promoted offer, as a card above the plans.
+ *
+ * ⚠ A SALE AND A COUPON GET DIFFERENT RIGHT-HAND SIDES, because they ask
+ * different things of the reader. A sale is already in the prices below and
+ * needs no action — an "Apply" button for it would invite somebody to press a
+ * button that cannot do anything. A coupon needs its code, and it needs it in a
+ * form that can be both COPIED (for a friend, or for a checkout later) and
+ * APPLIED here in one press.
+ */
+function OfferCard({ offer, tiers, applied, busy, onApply }) {
+  const [copied, setCopied] = useState(false);
+  const ends = timeLeft(offer.ends_at);
+  const capped = offer.remaining !== null && offer.remaining !== undefined;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(offer.code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // No clipboard permission — the code is on screen and selectable, which
+      // is the whole reason it is rendered as text and not as an image.
+    }
+  }
+
+  return (
+    <article className={`pricing-offer ${applied ? "on" : ""}`}>
+      <span className="pricing-offer-flag">
+        {offer.is_sale ? "Sale" : "Limited offer"}
+      </span>
+
+      <div className="pricing-offer-main">
+        <span className="pricing-offer-cut">{offer.summary}</span>
+        <span className="pricing-offer-name">
+          {offer.label || (offer.is_sale ? "Site-wide sale" : "Discount code")}
+        </span>
+        <span className="pricing-offer-scope">{scopeOf(offer, tiers)}</span>
+      </div>
+
+      <div className="pricing-offer-side">
+        {offer.is_sale ? (
+          <span className="pricing-offer-auto">
+            ✓ Already applied to the prices below
+          </span>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="pricing-offer-code"
+              onClick={copy}
+              title="Copy this code"
+              aria-label={`Copy the code ${offer.code}`}
+            >
+              <span className="pricing-offer-code-text">{offer.code}</span>
+              <span className="pricing-offer-copy">{copied ? "Copied" : "Copy"}</span>
+            </button>
+            <button
+              type="button"
+              className="btn small primary pricing-offer-apply"
+              disabled={busy || applied}
+              onClick={onApply}
+            >
+              {applied ? "✓ Applied" : busy ? "Applying…" : "Apply"}
+            </button>
+          </>
+        )}
+      </div>
+
+      {(ends || capped) && (
+        <div className="pricing-offer-meta">
+          {ends && <span className="pricing-offer-clock">⏳ {ends}</span>}
+          {/* ⚠ NOT THE REDEEMED COUNT. How many are LEFT is the customer's
+              question; how many have gone is the business's. */}
+          {capped && <span>{offer.remaining} left</span>}
+        </div>
+      )}
+    </article>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import * as api from "../api.js";
+import * as cache from "../session_cache.js";
 
 // Combined login / register screen. On success, stores the token and calls
 // onAuthed(email) so the app can switch to the dashboard. onBack returns to the
@@ -25,6 +26,20 @@ export default function Login({ onAuthed, onBack }) {
       const fn = mode === "login" ? api.login : api.register;
       const res = await fn(email.trim(), password);
       api.setSession(res.access_token, res.email);
+      // ⚠ THE DASHBOARD'S DATA IS ASKED FOR *HERE*, one line after the token
+      // exists and one line BEFORE React is told anything has changed. It used
+      // to be asked for by Home, which meant nothing was requested until the
+      // dashboard had already been drawn empty - so a returning customer's
+      // first sight of the app was six "Loading..." labels on their own work.
+      // Started now, the answers are usually back before the page finishes
+      // mounting and there is nothing to load at all.
+      //
+      // `res.counts` is the server's `{kind: n}` hint, which is what lets a
+      // BRAND-NEW account skip these requests entirely and paint its real
+      // empty dashboard instantly. See session_cache.prefetch.
+      //
+      // Deliberately NOT awaited: sign-in must not wait on the dashboard.
+      cache.prefetch({ email: res.email, counts: res.counts });
       onAuthed(res.email);
     } catch (err) {
       setError(err.message);

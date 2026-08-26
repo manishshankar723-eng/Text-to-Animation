@@ -134,6 +134,18 @@
   --tool-edge: #4f9c63;
   --tool-tint: rgba(120, 200, 140, 0.11);
   --tool-ink: #93d6a6;
+  /* --- 🎬 MAKE VIDEO IS THE ONE BLUE BUTTON IN THAT GREEN ROW --------
+     Asked for straight out: "Make video buttun color change green to pestal
+     blue color". Everything else in `.tl-add-tools` keeps the tree green; this
+     one steps out of the set because it is the only press that cuts the WHOLE
+     timeline, and it now leads the row.
+     ⚠ IT IS *NOT* `--pane-ink`, and must not be collapsed into it. The pane
+     blue is CHROME — the head strip this button bar sits under is painted in
+     it — and a control in exactly the chrome colour disappears into its own
+     panel. This one is a shade warmer and a shade stronger so the button still
+     reads as a button on top of a blue-headed pane. */
+  --tool-blue-edge: #6f9fd8;
+  --tool-blue-tint: rgba(140, 180, 235, 0.14);
   --disabled-opacity: 0.45;
   /* Plain-button surface — see the .btn comment. */
   --btn-bg: var(--panel-2);
@@ -260,6 +272,11 @@
   --tool-edge: #1f7a3d;
   --tool-tint: rgba(31, 122, 61, 0.09);
   --tool-ink: #14612f;
+  /* 🎬 Make Video's pastel blue, light theme. Deeper than the dark set for
+     the same reason the greens are: it sits on a white panel. See the dark
+     block. */
+  --tool-blue-edge: #3f6fb5;
+  --tool-blue-tint: rgba(63, 111, 181, 0.10);
   /* 0.45 washes a disabled button out to nothing on a light surface. */
   --disabled-opacity: 0.6;
   --btn-bg: var(--panel);

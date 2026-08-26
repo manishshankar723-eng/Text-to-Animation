@@ -888,6 +888,35 @@ def _panel_indexes(job: Job) -> list[int]:
     return [i for i, _ in _drawn_panels(job)]
 
 
+# WHAT A BOARD CARD DOES NOT READ. Measured: a storyboard averages 7.8 KB and
+# `result` is 54% of it, essentially all `panels` - of which `description` alone
+# is ~29% of the panel array, with `location`, `characters`, `camera`,
+# `dialogue`, `assets` and `versions` behind it. The card needs `url` and
+# `failed`, and nothing else, because all it draws is the first drawn panel.
+#
+# ⚠ BOTH RESULT SHAPES ARE LISTED. A board written before restyling has flat
+# `result.panels`; one written after has `result.variants[].panels` (17 of 69
+# live boards today). `variants_of` synthesises the first shape from the second,
+# so a drop list that named only one would silently keep shipping the other.
+#
+# ⚠ GUARDED, NOT TRUSTED — `tests/summary_projection_check.py` builds every real
+# board's card from the full document and from the slimmed one and fails if they
+# differ. See the same note over `SUMMARY_DROP` in animatics.py.
+_PANEL_UNREAD = (
+    "description", "location", "characters", "camera",
+    "dialogue", "assets", "versions",
+)
+BOARD_SUMMARY_DROP = (
+    # The script and the cast/asset references belong to the EDITOR, not to a
+    # card that prints a title, a style and a panel count.
+    "params.script",
+    "params.cast",
+    "params.assets",
+    *(f"result.panels.{f}" for f in _PANEL_UNREAD),
+    *(f"result.variants.panels.{f}" for f in _PANEL_UNREAD),
+)
+
+
 def _summarise_board(job: Job) -> StoryboardSummary:
     params = job.params or {}
     drawn = _drawn_panels(job)
@@ -935,15 +964,43 @@ def list_storyboards(
     downstream workflows (animatics, video) ask for: a board refined in Image
     to Animatic Image is exactly the thing you then want to animate, and
     filtering it out would make the copies a dead end.
+
+    ⚠ BOTH CONDITIONS GO INTO THE QUERY, NOT INTO A LIST COMPREHENSION AFTER IT,
+    and that is a correctness fix rather than a speed one. `limit` is applied by
+    the STORE. Sorting out drafts and other workflows' copies afterwards
+    therefore filtered an ALREADY-TRUNCATED page: ask for the newest 8 boards of
+    an account whose last 8 are all Image-to-Animatic copies, and Script to
+    Storyboard was told it had none. It never bit while every caller asked for
+    100, which is exactly the kind of bug that waits for someone to tune a
+    number. See `where` in jobs.py.
     """
-    # Filtered in the store, so a burst of character-generation jobs can't push
-    # older boards out of the page before they're even considered.
+    where: dict = {"status": {"$ne": JobStatus.DRAFT.value}}
+    if workflow != "*":
+        # ⚠ THE UNTAGGED BOARDS ARE `$in [None, ""]`, NOT `== ""`. Script to
+        # Storyboard's own boards were written before the tag existed and simply
+        # have no `workflow` key; in Mongo a missing field reads as null, so
+        # matching the empty string alone would hide every board made before the
+        # copy feature shipped. `_matches` mirrors this for the other backends.
+        where["params.workflow"] = (
+            {"$in": [None, ""]} if not workflow else workflow
+        )
     jobs = get_store().list(
-        limit=limit, owner=current.email, kinds=[JobKind.STORYBOARD]
+        limit=limit,
+        owner=current.email,
+        kinds=[JobKind.STORYBOARD],
+        where=where,
+        # ⚠ THE LIST ROUTE ONLY. `GET /storyboards/{id}/project` and the public
+        # share view still read the whole board. See BOARD_SUMMARY_DROP.
+        drop=BOARD_SUMMARY_DROP,
     )
     # DRAFT jobs are storyboards-in-progress sitting on the review step — no
     # panels drawn, nothing to show on a card. They're resumed via
     # GET /storyboards/draft, not listed here as if they were finished boards.
+    #
+    # ⚠ THE SAME TWO CONDITIONS AGAIN, ON PURPOSE. `where` is what makes the
+    # limit land on the right rows; this is what guarantees the RESPONSE is
+    # right whatever a backend does with the filter. Against Mongo it removes
+    # nothing — and the day it does, the bug is in the query, not on screen.
     return [
         _summarise_board(j)
         for j in jobs
@@ -2088,6 +2145,16 @@ def list_jobs(
     `kind` is a comma-separated filter (e.g. `generate,meshy`) that keeps the two
     workflows apart: the Text-to-Image job list asks for the character kinds, so
     storyboards stay in "Your Storyboards" where they belong. Omitted = all kinds.
+
+    ⚠ `params` IS NOT SENT, and this is the one list route that can say that
+    honestly. Every reader of this list — the job rail, Home's "Recent work",
+    the final-video art picker — prints `character_name`, `status`, `template`,
+    `kind` and `created_at`, and reaches for `result.zip`; not one of them opens
+    `params`. What `params` DOES hold is the whole run's inputs, reference
+    images included, so shipping it made the list heavier the more work an
+    account had done — which is exactly backwards, and was most of why a
+    long-standing account waited on a dashboard a new one got instantly.
+    Anything that needs the inputs asks for the one job: `GET /jobs/{id}`.
     """
     kinds = None
     if kind:
@@ -2104,7 +2171,9 @@ def list_jobs(
                     detail=f"Unknown job kind '{value}'. Use one of "
                     f"{[k.value for k in JobKind]}.",
                 )
-    return get_store().list(limit=limit, owner=current.email, kinds=kinds or None)
+    return get_store().list(
+        limit=limit, owner=current.email, kinds=kinds or None, drop=("params",)
+    )
 
 
 @app.get("/jobs/{job_id}", response_model=Job)

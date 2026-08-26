@@ -402,7 +402,11 @@ def main():
             sweep(page, "Sales")
             if click_if(page, ".admin-record-open .btn", "Record a payment"):
                 sweep(page, "Sales — record a payment")
-            if click_if(page, ".admin-section-head .btn.ghost", "New offer"):
+            # ⚠ MATCHED BY ITS WORDS, NOT BY `.ghost`. The New offer button was
+            # a ghost button when this was written and is not any more; a
+            # selector that stopped matching made this sweep measure an unopened
+            # form and pass by having nothing on screen to measure.
+            if click_if(page, '.admin-section-head .btn:has-text("New offer")', 'New offer'):
                 sweep(page, "Sales — the offer form")
 
             tab(page, "Activity")

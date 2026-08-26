@@ -874,6 +874,13 @@
 .admin-price-row {
   display: flex;
   flex-wrap: wrap;
+  /* ⚠ THE BOXES LINE UP, THE LABELS ABOVE THEM DO NOT HAVE TO. Each field is a
+     label stacked on a box, and "Was (struck through)" is long enough to wrap
+     onto a second line as soon as the card narrows — which pushed that one box
+     a line lower than the other two while the row still looked wide enough to
+     be fine. Aligning the ENDS pins the three boxes to one baseline whatever
+     the labels do; at full width nothing moves, because no label wraps there. */
+  align-items: flex-end;
   gap: 0.6rem;
   margin: 0.8rem 0 0.4rem;
 }
@@ -934,6 +941,131 @@
   margin: 0;
   font-size: 0.8rem;
 }
+/* ⚠ THE MARKETING COLUMN IS A FORM NOW, AND IT STILL HAS TO READ LIKE THE CARD
+   IT CONTROLS. The whole point of this screen is the two columns being
+   comparable at a glance (see the header of AdminPricing.jsx), and five visible
+   input boxes stacked on the left destroys that. So the text is a borderless
+   field that only draws its box when you go near it — the same trick
+   `.admin-tier-name` uses on the title. */
+.admin-tier-bullets li {
+  /* Was inherited as `flex-start` from `.pricing-features li`, which is right
+     for a line of text beside a tick and wrong for a 24px-tall field. */
+  align-items: center;
+  position: relative;
+}
+.admin-bullet-ic {
+  /* A button, because the tick is a TOGGLE: this is where a line becomes the
+     one the card prints as not included. Colour is left to `.pricing-ic` and
+     `li.no .pricing-ic` so the two states stay the card's own green and red. */
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.admin-bullet-ic:disabled {
+  cursor: default;
+}
+.admin-bullet-text,
+.admin-unlock-name {
+  /* ⚠ BOTH OF THESE ARE TEXTAREAS PRETENDING TO BE ONE-LINE FIELDS — see the
+     note on `GrowText`. These four declarations are what makes the pretence
+     hold: no drag handle, no scrollbar of its own (the height is set from
+     `scrollHeight`, so an inner scroll would fight it), and a line-height that
+     is stated rather than `normal`, because that measurement is what the height
+     is computed from. */
+  resize: none;
+  overflow: hidden;
+  line-height: 1.35;
+  display: block;
+}
+.admin-bullet-text {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  /* ⚠ `inherit`, NOT `var(--text)` — `.pricing-features li.no` greys its whole
+     line, and a colour of its own here would leave a struck-out promise looking
+     exactly like a kept one. */
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  /* No fixed height, so trap 5 cannot bite: the box grows with the text. */
+  padding: 0.2rem 0.35rem;
+}
+.admin-bullet-text.strong {
+  font-weight: 700;
+}
+.admin-bullet-text:hover,
+.admin-bullet-text:focus {
+  border-color: var(--border);
+  background: var(--panel-2);
+}
+/* ⚠ OVER THE ROW, NOT IN IT, AND ONLY WHILE THE ROW IS TOUCHED. This column is
+   half of a ~440px card, so it is about 180px wide, and two 21px buttons parked
+   in the flow took a quarter of that away from the copy — "5 projects per month"
+   started wrapping onto two lines in the editor while the real card prints it on
+   one, which defeats the point of the editor looking like the card. Taking them
+   out of the flow gives the text the full width at rest; hovering the line, or
+   putting the caret in it, brings them back.
+   ⚠ THE GRADIENT IS LOAD-BEARING. They now sit ON TOP of the end of a long line,
+   and without a fade to the card's own background the two would overlap into
+   something unreadable. */
+.admin-bullet-tools {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 0.2rem;
+  padding-left: 0.9rem;
+  background: linear-gradient(to right, transparent, var(--panel) 0.9rem);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.admin-tier-bullets li:hover .admin-bullet-tools,
+.admin-tier-bullets li:focus-within .admin-bullet-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+.admin-bullet-btn {
+  width: 21px;
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.admin-bullet-btn:hover:not(:disabled) {
+  border-color: var(--border);
+  color: var(--text);
+}
+.admin-bullet-btn.on {
+  border-color: var(--border-gold);
+  color: var(--primary);
+}
+.admin-bullet-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+/* trap 2 — `.btn` carries a `margin-top` for the bottom of a form. */
+.admin-bullet-add .btn {
+  margin-top: 0;
+}
 .admin-tier-unlocks {
   list-style: none;
   margin: 0 0 0.35rem;
@@ -941,6 +1073,27 @@
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+}
+.admin-tier-unlocks li {
+  min-width: 0;
+}
+/* The same quiet field as the bullets, and deliberately quieter than they are:
+   what it renames is the feature itself, everywhere, so it should not invite a
+   casual edit. `font`/`color: inherit` take the `muted tiny` off the `<li>`. */
+.admin-unlock-name {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0.1rem 0.3rem;
+}
+.admin-unlock-name:hover,
+.admin-unlock-name:focus {
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--text);
 }
 .admin-tier-foot {
   display: flex;
@@ -952,10 +1105,24 @@
   padding-top: 0.7rem;
   border-top: 1px solid var(--border);
 }
+/* ⚠ TRAP 2 AGAIN, AND THIS TIME THE CULPRIT WAS A `<label>`. `theme.css` gives
+   every label a form-field margin — `margin: 0.75rem 0 0.3rem` — because a label
+   normally sits ABOVE the field it names. These two labels sit BESIDE their
+   checkboxes in a centred row, so that 12px on top and 4.8px underneath made
+   each one a 32.8px margin box around 16px of text, while `.admin-badge-input`
+   next to it is 30px with no margin at all. `align-items: center` then centred
+   the two margin boxes, which left the TEXT sitting 3.6px below the middle of
+   the box beside it: "Badge button box text ke align nhi hai thora uper hai",
+   with a screenshot. Zeroing the margin is the fix; the `min-height` makes the
+   label and the badge field literally the same 30px box, so the two share one
+   centre line instead of happening to agree. Measured, not eyeballed — every
+   number above came from `getBoundingClientRect` in Chromium. */
 .admin-check {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  margin: 0;
+  min-height: 30px;
   color: var(--muted);
   cursor: pointer;
 }
@@ -1160,6 +1327,34 @@ label.cap-off {
 .admin-offer-form {
   margin-left: 0;
   margin-bottom: 1rem;
+}
+/* The offer form's one checkbox spans the row and keeps its explanation beside
+   it — "show this to customers" is the field on this form somebody is most
+   likely to get backwards, so it is the one that gets a sentence. */
+.admin-check-row {
+  gap: 0.15rem;
+}
+/* The Offers blurb explains three things (sale vs coupon vs shown), and at the
+   shared 62ch it wrapped into a narrow column beside a metre of empty card. It
+   is the one section blurb long enough to need the room. */
+.admin-offers-blurb {
+  max-width: 96ch;
+}
+.admin-check-row .muted {
+  max-width: 78ch;
+}
+/* ⚠ TWO BUTTONS AND A STATE CHIP, AND THE CLUSTER MUST NOT SHRINK. It sits
+   after `.admin-feed-text`, which is `flex: 1` with `overflow-wrap: anywhere` —
+   without `flex: none` a long label pushes "Hide" and "Switch off" into two
+   lines of one-word buttons. */
+.admin-offer-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.admin-offer-acts .btn {
+  margin-top: 0; /* trap 2 — a button in a ROW */
 }
 
 /* ---- Usage ----------------------------------------------------------------- */

@@ -476,6 +476,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ----------------------------------------- PHASE C2: the animatic images */
+/* ⚠ IT IS `.dir-shoot` WITH A DIFFERENT COLUMN WIDTH, AND NOTHING ELSE. Phase
+   C2 makes the same kind of promise phase C does — "here is what the paid pass
+   will do, read it before you tick it" — and it sits directly underneath it, so
+   a surface of its own would say the two are different kinds of thing when the
+   only difference is what they buy.
+   ⚠ THE ONE CHANGE IS THE LENGTH COLUMN. Phase C writes "8s"; this writes
+   "24 drawings", which does not fit 5.5rem and wrapped mid-number — so the
+   column is wider here and tabular for the same reason it is there: a column of
+   counts has to read as a column. */
+.dir-block .dir-shoot-len {
+  flex: 0 0 8.5rem;
+}
+
 /* Phase C's line and its own rail, above the step rail — see the JSX. */
 .dir-shootrun {
   margin: 0.9rem 0 0;

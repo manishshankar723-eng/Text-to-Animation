@@ -121,6 +121,21 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     email: EmailStr
+    # ⚠ HOW MUCH WORK THIS ACCOUNT ALREADY HAS, ANSWERED AT SIGN-IN — `{kind: n}`,
+    # kinds with nothing omitted. It is here and not on a route of its own for
+    # one reason: the browser has to decide what to DRAW the instant the token
+    # lands, and a second round trip to find out would cost exactly the delay
+    # this is meant to remove.
+    #
+    # A brand-new account gets `{}`, and that is the whole point — the app can
+    # then paint the empty dashboard immediately and skip the five list requests
+    # that were only ever going to answer "nothing". An account with work gets
+    # the shape of it, so the skeletons can be drawn the right size while the
+    # prefetch that started in the same breath comes back.
+    #
+    # ⚠ A HINT, NEVER A PERMISSION, AND NEVER THE DATA. It says how many, not
+    # what; every list is still fetched and still owner-scoped server-side.
+    counts: dict[str, int] = Field(default_factory=dict)
 
 
 # What a profile holds, and why each field earns its place. Kept deliberately
@@ -261,6 +276,24 @@ def get_current_user(
     return current
 
 
+def _work_counts(email: str) -> dict[str, int]:
+    """`{kind: how many}` for this account — see `TokenResponse.counts`.
+
+    ⚠ IT MUST NEVER BE ABLE TO FAIL A SIGN-IN. This is a hint that saves the
+    dashboard a round trip; a slow or unhappy store must cost the user a
+    slightly slower first paint, not the ability to log in. Hence the bare
+    `except` and the empty dict — which the client reads as "no hint", not as
+    "new account", precisely so a swallowed error can't hide somebody's work.
+    """
+    try:
+        from .jobs import get_store
+
+        return {k: int(v) for k, v in (get_store().count_by_kind(owner=email) or {}).items()}
+    except Exception as e:  # noqa: BLE001 — a hint is never worth a failed login
+        logger.warning("Could not count work for %s: %s", email, e)
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -280,7 +313,9 @@ def register(req: RegisterRequest, request: Request):
     events.record(
         events.TYPE_REGISTERED, user["email"], **events.request_context(request)
     )
-    return TokenResponse(access_token=token, email=user["email"])
+    # No counting call: an account that did not exist a moment ago has no work,
+    # and `{}` here is the truth rather than a missing hint.
+    return TokenResponse(access_token=token, email=user["email"], counts={})
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -310,7 +345,11 @@ def login(req: LoginRequest, request: Request):
     token = security.create_access_token(subject=user["email"])
     users.record_login(user["email"])
     events.record(events.TYPE_LOGIN, user["email"], **ctx)
-    return TokenResponse(access_token=token, email=user["email"])
+    return TokenResponse(
+        access_token=token,
+        email=user["email"],
+        counts=_work_counts(user["email"]),
+    )
 
 
 @router.get("/me", response_model=UserProfile)

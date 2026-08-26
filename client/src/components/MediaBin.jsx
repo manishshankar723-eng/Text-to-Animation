@@ -22,8 +22,8 @@
 // See `animatic/assets.js` for what an asset is and why the library exists.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Icon from "./Icon.jsx";
-import { assetOrigin } from "../animatic/assets.js";
-import { isVeoRender } from "../animatic/scene.js";
+import { assetOrigin, isBoardAsset } from "../animatic/assets.js";
+import { isSavable, isVeoRender } from "../animatic/scene.js";
 
 /** A source's natural length, or "" when the server could not measure it. */
 function naturalLength(asset) {
@@ -32,9 +32,10 @@ function naturalLength(asset) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** Which Media section a card is listed under — the four `assetOrigin` names. */
+/** Which Media section a card is listed under — the `assetOrigin` names. */
 const SECTION_NAME = {
   board: "Storyboard Frames",
+  poses: "Animatic Images",
   video: "Video",
   image: "Images",
   audio: "Audio",
@@ -75,7 +76,15 @@ function assetFacts(asset, used) {
   } else if (src.kind === "panel" || src.kind === "pose") {
     // ONE-BASED, like every other panel number on screen. The stored index counts
     // from zero and printing it raw makes the first shot read as shot 0.
-    rows.push(["From", `Storyboard panel ${Number(src.index ?? 0) + 1}`]);
+    // ⚠ A KEY POSE SAYS WHICH DRAWING IT IS. Sixteen cards off one panel are
+    // otherwise sixteen identical "From: Storyboard panel 4" rows, and this pane
+    // is where you go to find out which card is which.
+    rows.push([
+      "From",
+      src.kind === "pose"
+        ? `Storyboard panel ${Number(src.index ?? 0) + 1} · key pose ${Number(src.frame ?? 0) + 1}`
+        : `Storyboard panel ${Number(src.index ?? 0) + 1}`,
+    ]);
   }
   const file = kind === "audio" ? asset?.upload_id || "" : src.upload_id || "";
   if (file) rows.push(["File id", file]);
@@ -107,10 +116,14 @@ function assetFacts(asset, used) {
  *                  for directly ("when user cilck x buttun so clip in media
  *                  panel so direct delele fuction no dropdwon delete and cancel
  *                  option not need here"), so there is no confirm step.
- * @param onDownload SAVE THE FILE TO DISK. ⚠ DRAWN ON A VEO RENDER AND ON NOTHING
- *                  ELSE — see the button below for why, and `isVeoRender` in
- *                  `scene.js` for what counts as one. Optional: without it no card
- *                  offers it, which is what every other list of these cards wants.
+ * @param onDownload SAVE THE FILE TO DISK. ⚠ DRAWN ON WHAT THIS APP MADE, and on
+ *                  nothing else — a storyboard panel, a key pose, a Veo render.
+ *                  NOT on a file the user dropped in, which is already on their
+ *                  machine: "only generated cheezon par dikhe ye ⬇ icone".
+ *                  `isSavable` in `scene.js` is the gate and carries the whole of
+ *                  why it is drawn where it is. Optional: without it no card
+ *                  offers it, which is what every other list of these cards
+ *                  wants.
  * @param onRename  COMMIT A NEW NAME for one source — `(asset, name) => void`.
  *                  Asked for as "user go and double click on clip text so uver
  *                  get rename option … or user right click of moue on clip so
@@ -329,7 +342,7 @@ export default function MediaBin({
                    CAME FROM has to be on the clipboard too, or a lane cannot tell
                    them apart until after the drop. `cardRowKind(kind, true)` is
                    what reads it (`laneTakes` in Timeline.jsx). */
-                if (assetOrigin(asset) === "board") {
+                if (isBoardAsset(asset)) {
                   e.dataTransfer.setData("application/x-anim-board", "");
                 }
               }}
@@ -426,12 +439,20 @@ export default function MediaBin({
                       thing that varies is whether a third icon hangs off to the
                       left of them, which is what a card having MORE to offer
                       should look like. */}
-                  {onDownload && isVeoRender(asset) && (
+                  {onDownload && isSavable(asset) && (
                     <button
                       type="button"
                       className="fs-tool"
-                      title={`Save “${asset.label || "this render"}” to your computer — it is a Veo render, so this is the only copy`}
-                      aria-label="Download this Veo video"
+                      title={
+                        isVeoRender(asset)
+                          ? `Save “${asset.label || "this render"}” to your computer — it is a Veo render, so this is the only copy`
+                          : `Save “${asset.label || "this picture"}” to your computer`
+                      }
+                      aria-label={
+                        isVeoRender(asset)
+                          ? "Download this Veo video"
+                          : "Download this picture"
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
                         onDownload(asset);
@@ -538,7 +559,12 @@ export default function MediaBin({
                       : undefined
                   }
                 >
-                  {asset.label || (assetOrigin(asset) === "board" ? "Panel" : "Untitled")}
+                  {asset.label ||
+                    (assetOrigin(asset) === "poses"
+                      ? "Key pose"
+                      : isBoardAsset(asset)
+                        ? "Panel"
+                        : "Untitled")}
                 </div>
               )}
             </div>
@@ -666,10 +692,10 @@ export default function MediaBin({
                     : "Select its clips"}
                 </button>
               )}
-              {/* ⚠ THE SAME GATE AS THE CARD'S ⬇, deliberately: a menu line
-                  offering to download a storyboard panel would promise a file that
-                  is not this editor's to give. See the button above. */}
-              {onDownload && isVeoRender(menuAsset) && (
+              {/* ⚠ THE SAME GATE AS THE CARD'S ⬇, deliberately: two controls for
+                  one act must not disagree about when it is available. See
+                  `isSavable` in `scene.js` for what has bytes behind it. */}
+              {onDownload && isSavable(menuAsset) && (
                 <button
                   type="button"
                   role="menuitem"
@@ -678,7 +704,11 @@ export default function MediaBin({
                     setMenu(null);
                     onDownload(menuAsset);
                   }}
-                  title="Save this Veo render to your computer — deleting the project will not lose it then"
+                  title={
+                    isVeoRender(menuAsset)
+                      ? "Save this Veo render to your computer — deleting the project will not lose it then"
+                      : "Save this picture to your computer"
+                  }
                 >
                   <span className="tl-layer-menu-ico">
                     <Icon name="download" />

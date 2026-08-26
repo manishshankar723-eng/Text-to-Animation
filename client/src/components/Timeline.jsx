@@ -93,6 +93,7 @@ import {
   frameOrigin,
   frameSpans,
   frameTrack,
+  isSavable,
   isVeoRender,
 } from "../animatic/scene.js";
 import { CAPTION_LAYER_ID } from "../animatic/captions.js";
@@ -174,6 +175,12 @@ const KEY_KIND = { frames: "frame", text: "text", shape: "shape", image: "overla
 // record naming one is read as a plain video row before it ever reaches here.
 const LANE_HUE = {
   board_image: "image",
+  // ⚠ THE KEY-POSE ROW IS PINK TOO, and deliberately the same pink. The question
+  // these colours answer is "is this moving?" — see the note above — and a key
+  // pose is a still exactly as a board panel is. Where it came from is the Media
+  // pane's filing, not a fourth hue; what tells the two rows apart is the label
+  // in the gutter, which is what a label is for.
+  board_poses: "image",
   board_video: "veo",
   video: "video",
 };
@@ -3116,7 +3123,10 @@ export default function Timeline({
    */
   const clipMenuOffers = (frame) => {
     if (!frame) return null;
-    const download = !!onDownloadClip && isVeoRender(frame);
+    // ⚠ NOT `isVeoRender` ANY MORE. A key pose is drawn from inside this
+    // editor and is as worth saving as a render; `isSavable` is the one place
+    // that question is answered, shared with the Media pane's ⬇.
+    const download = !!onDownloadClip && isSavable(frame);
     // A storyboard STILL. Not a take (that is footage of a shot that already
     // exists) and not a dropped file (there is no board look to draw in).
     const generate = !!onGenerateShot && clipRowKind(frame) === "board_image";

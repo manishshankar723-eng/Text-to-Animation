@@ -866,6 +866,11 @@ class OfferBody(BaseModel):
     active: bool = True
     max_redemptions: int | None = Field(None, ge=1, le=1_000_000)
     banner: str = Field("", max_length=160)
+    # ⚠ DEFAULTS TO TRUE, DELIBERATELY. An offer nobody is shown is a discount
+    # that only exists in this panel; somebody creating one has, by default,
+    # decided customers should hear about it. Untick it for a code you intend to
+    # email to one person — it still works when typed, it is just not printed.
+    promoted: bool = True
 
 
 class OfferUpdate(BaseModel):
@@ -879,15 +884,24 @@ class OfferUpdate(BaseModel):
     active: bool | None = None
     max_redemptions: int | None = Field(None, ge=1, le=1_000_000)
     banner: str | None = Field(None, max_length=160)
+    promoted: bool | None = None
 
 
 def _offer_row(offer: dict) -> dict:
-    """One offer plus the two facts the table needs that aren't stored."""
+    """One offer plus the facts the table needs that aren't stored.
+
+    ⚠ `promoted` IS RESOLVED HERE, NOT PASSED THROUGH. The stored row may not
+    carry the key at all (every offer predates it), and `offers.is_promoted`
+    reads that absence as YES — so the checkbox in the panel must be fed the
+    same answer the pricing page is, or the two disagree about a row nobody
+    edited.
+    """
     return {
         **offer,
         "live": offers.is_live(offer),
         "summary": offers.summary(offer),
         "is_sale": not offer.get("code"),
+        "promoted": offers.is_promoted(offer),
     }
 
 

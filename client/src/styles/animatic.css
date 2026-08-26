@@ -1293,6 +1293,24 @@
   font-size: 0.76rem;
   white-space: nowrap;
 }
+/* A ROW THAT IS A READING, NOT A CHOICE. The shot list in the Animatic images
+   dialog wears `.an-pick-row` because it is the same object — a named thing with
+   a fact on the right — but nothing happens when you press it, and a hand cursor
+   over something inert is the control telling a lie about itself. */
+.an-pick-row.is-static {
+  cursor: default;
+}
+.an-pick-row.is-static:hover {
+  border-color: var(--border);
+}
+/* Inside a priced confirm card the list is one item in a flex column that already
+   spaces its children, and the card has a footer under it that must stay on
+   screen — so the list gives its own margin back and takes a shorter cap than the
+   half-viewport it gets in the picker modal. */
+.fv-confirm .an-pick-list {
+  margin-top: 0;
+  max-height: 34vh;
+}
 
 @media (max-width: 720px) {
   .an-screen {

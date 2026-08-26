@@ -4,6 +4,15 @@
 // offers are what shaped the numbers in it. Reading either without the other
 // leaves you asking a question the neighbouring table answers.
 //
+// ⚠ AN OFFER HAS TWO SWITCHES AND THEY ARE NOT THE SAME QUESTION. "Switch
+// on/off" is whether the discount WORKS. "Show/Hide" is whether a customer is
+// TOLD about it — a live coupon that is hidden still works when typed and
+// appears nowhere, which is a code you email to one person. A live coupon that
+// is SHOWN is printed on the pricing page as an offer card with its code on it,
+// and that is the only way somebody who was never emailed can ever use it. Every
+// row says which of the two it is, because a discount nobody can find looks
+// exactly like a broken one.
+//
 // ⚠ NOTHING ON THIS SCREEN TAKES MONEY, AND IT SAYS SO IN THREE PLACES. Every
 // row is a bookkeeping entry an administrator typed after a bank transfer or an
 // invoice. A table of amounts that looks like revenue and isn't is the single
@@ -342,6 +351,10 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
     applies_to: [],
     banner: "",
     ends_at: "",
+    // ⚠ TICKED BY DEFAULT. An offer nobody is shown is a discount that only
+    // exists in this panel; somebody creating one has, by default, decided
+    // customers should hear about it.
+    promoted: true,
   });
 
   const sales = data.offers.filter((o) => o.is_sale);
@@ -352,14 +365,25 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
       <div className="admin-section-head">
         <div>
           <h2 className="admin-h2">Offers</h2>
-          <p className="muted tiny admin-group-blurb">
+          <p className="muted tiny admin-group-blurb admin-offers-blurb">
             A <strong>sale</strong> has no code and applies to everyone
             automatically — it changes the price on the pricing page and strikes
             through the old one. A <strong>coupon</strong> applies to nobody until
-            somebody types it.
+            somebody types it, so it only reaches a customer if you also{" "}
+            <strong>show</strong> it — that prints it on the pricing page as an
+            offer card with the code on it and an Apply button. Hide it instead
+            for a code you mean to email to one person.
           </p>
         </div>
-        <button className="btn ghost small" onClick={() => setOpen((o) => !o)}>
+        {/* ⚠ NOT A GHOST WHEN IT IS THE ACTION. `.btn.ghost` is transparent and
+            borderless, which in a section head beside a heading reads as a
+            label rather than a button — the one thing an administrator comes to
+            this section to press was the least visible thing in it. Cancel stays
+            a ghost, because cancelling is the retreat, not the action. */}
+        <button
+          className={`btn small ${open ? "ghost" : ""}`}
+          onClick={() => setOpen((o) => !o)}
+        >
           {open ? "Cancel" : "＋ New offer"}
         </button>
       </div>
@@ -419,7 +443,7 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
           </label>
           <label className="admin-rollout-row wide">
             <span className="muted tiny">
-              Banner above the pricing cards (sales only, optional)
+              Banner above the pricing cards (optional)
             </span>
             <input
               className="admin-search"
@@ -427,6 +451,21 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
               placeholder="Launch week — 50% off everything"
               onChange={(e) => setForm({ ...form, banner: e.target.value })}
             />
+          </label>
+          <label className="admin-rollout-row wide admin-check-row">
+            <span className="admin-check">
+              <input
+                type="checkbox"
+                checked={form.promoted}
+                onChange={(e) => setForm({ ...form, promoted: e.target.checked })}
+              />
+              Show this to customers on the pricing page
+            </span>
+            <span className="muted tiny">
+              {form.code.trim()
+                ? "Prints an offer card with this code on it and an Apply button. Untick it for a code you'll email to one person — it still works when typed."
+                : "A sale changes every price whether or not this is ticked; ticking it also prints an offer card saying what the discount is."}
+            </span>
           </label>
           <div className="admin-actions">
             <button
@@ -507,13 +546,42 @@ function OfferTable({ title, rows, empty, busy, onUpdate }) {
                     " · fully redeemed"}
                 </span>
               </span>
-              <button
-                className="btn ghost small"
-                disabled={busy === o.id}
-                onClick={() => onUpdate(o.id, { active: !o.active })}
-              >
-                {o.active ? "Switch off" : "Switch on"}
-              </button>
+              {/* ⚠ TWO SWITCHES, AND THE ROW NAMES BOTH. "Switch off" stops the
+                  discount working; "Hide" only stops customers being TOLD about
+                  it. Collapsing them into one control is how a live coupon ends
+                  up working perfectly and reaching nobody. */}
+              <span className="admin-offer-acts">
+                <span
+                  className={`badge ${o.promoted && o.live ? "ok" : ""}`}
+                  title={
+                    o.is_sale
+                      ? "A sale changes every price whether or not it has a card. This only controls the offer card above the plans."
+                      : o.promoted
+                        ? "Customers see this code as an offer card on the pricing page."
+                        : "This only works for somebody who already has the code — it is printed nowhere."
+                  }
+                >
+                  {o.promoted && o.live
+                    ? "On the pricing page"
+                    : o.promoted
+                      ? "Shown when live"
+                      : "Hidden"}
+                </span>
+                <button
+                  className="btn ghost small"
+                  disabled={busy === o.id}
+                  onClick={() => onUpdate(o.id, { promoted: !o.promoted })}
+                >
+                  {o.promoted ? "Hide" : "Show"}
+                </button>
+                <button
+                  className="btn ghost small"
+                  disabled={busy === o.id}
+                  onClick={() => onUpdate(o.id, { active: !o.active })}
+                >
+                  {o.active ? "Switch off" : "Switch on"}
+                </button>
+              </span>
             </li>
           ))}
         </ul>

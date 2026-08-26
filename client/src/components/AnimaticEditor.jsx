@@ -34,12 +34,15 @@ import {
   ANIMATABLE,
   LOOK_KINDS,
   TEXT_DEFAULTS,
+  alignPoseRuns,
   defaultFor,
   belongsOnImageLane,
   cardRowKind,
+  clipKind,
   clipRowKind,
   dominantRowKind,
   isBoardRow,
+  isSavable,
   isVeoRender,
   rowKindOrLegacy,
   ROW_TAKES,
@@ -47,6 +50,7 @@ import {
   frameSpans,
   frameTrack,
   insertShotBeside,
+  poseRunAcross,
   lookProps,
   lookPropParts,
   lookValueOf,
@@ -172,6 +176,9 @@ import useCapability from "../useCapability.js";
 // 🎬 Make Video — the auto-editor. Everything it can do lives in `agent/`, and
 // none of it touches state directly: see `agent/actions.js`.
 import useDirectorRun from "../animatic/agent/useDirectorRun.js";
+// ⚠ ONE ARITHMETIC FOR THE 🖼 PRICE, shared with the Director's own preview so
+// the 🖼 dialog and the 🎬 tick box can never quote one pass at two numbers.
+import { poseTally } from "../animatic/agent/poses_pass.js";
 import { fitTakeToHold, shotRow } from "../animatic/agent/veo_pass.js";
 // ⚠ ONLY THE TWO LANE NAMES. Every number in `sound_pass.js` — the levels, the
 // fades, the loop ceiling — is decided there and arrives ON the clips, because the
@@ -236,6 +243,7 @@ import {
   assetOrigin,
   assetUrl,
   clipFromAsset,
+  isBoardAsset,
   libraryFromProject,
   mergeAssets,
 } from "../animatic/assets.js";
@@ -304,6 +312,18 @@ const ROW_KIND = {
     takes: ROW_TAKES.board_image,
     hint: "Storyboard panels",
     add: "Import a storyboard",
+  },
+  // ⚠ THE KEY-POSE ROW. Filled by ✨ Animatic images in the timeline's tool row
+  // and by nothing else — it takes no file, exactly as the two rows either side
+  // of it take none. Its clips are `src.kind: "pose"` references to drawings
+  // that live on the STORYBOARD, so deleting them costs nothing and re-running
+  // the pass gets them back without paying twice.
+  board_poses: {
+    name: "Animatic images",
+    short: "Anim..Image",
+    takes: ROW_TAKES.board_poses,
+    hint: "Key poses",
+    add: "Generate animatic images ✨",
   },
   board_video: {
     name: "Storyboard video",
@@ -381,6 +401,36 @@ const SHOT_GEN_DEFAULT_SECONDS = 8;
 // lane it lands on matters more than matching the other dialog — the first thing
 // you compare it to is the clip beside it, not a dialog you closed.
 const IMG_GEN_DEFAULT_SECONDS = 2;
+
+// --- ✨ Animatic images: the arithmetic, in one place ----------------------
+// ⚠ TWIN OF `panel_sequence.KEY_POSES_PER_SECOND` (4 → 2s = 8 drawings, 4s =
+// 16). The SERVER decides how many drawings a shot actually gets; this number
+// exists so the dialog can PRICE the pass before anything is spent, and so the
+// two agree about what was bought. Change one and change the other.
+const KEY_POSES_PER_SECOND = 4;
+
+/**
+ * WHICH SHOT LENGTH TO BLOCK A HOLD OUT AS — the ladder, not the millisecond.
+ *
+ * The key-pose planner only accepts `SHOT_GEN_SECONDS` (2/4/6/8/10 — it is
+ * `panel_sequence.ALLOWED_DURATIONS`), and a clip on the timeline is whatever
+ * length the cut made it: 3.2s, 4.0s, 9.8s. So the hold is rounded to the
+ * NEAREST rung, and ties go up — a shot is better over-blocked (a drawing spare)
+ * than under-blocked (a stretch of the shot with no drawing carrying it).
+ *
+ * ⚠ THE POSES ARE THEN LAID ACROSS THE CLIP'S REAL LENGTH, not across the rung.
+ * A 3.2-second shot blocked as 4s still gets its sixteen drawings spread over
+ * exactly 3.2 seconds, because what has to line up on screen is the poses and
+ * the shot underneath them — "har shot ke uper uska lenth ke hisab se".
+ */
+function poseSecondsFor(holdMs) {
+  const want = Math.max(0, Number(holdMs) || 0) / 1000;
+  let best = SHOT_GEN_SECONDS[0];
+  for (const rung of SHOT_GEN_SECONDS) {
+    if (Math.abs(rung - want) < Math.abs(best - want)) best = rung;
+  }
+  return best;
+}
 
 const newId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -1007,6 +1057,7 @@ export default function AnimaticEditor({
   const veoHandledRef = useRef(new Set());
   const framesRef = useRef([]);
   const layersRef = useRef([]);
+  const assetsRef = useRef([]);
   // The picture row and the audio as they stood when a voiceover run was
   // submitted. That pass moves shots on the SERVER, so this is the only record of
   // where they were — and without it there is nothing to measure the shift
@@ -1081,6 +1132,29 @@ export default function AnimaticEditor({
   const [reblockFor, setReblockFor] = useState(null); // frame id, or null
   const [reblockJob, setReblockJob] = useState(null); // the BOARD's job id
   const [reblockProgress, setReblockProgress] = useState(null);
+
+  // --- ✨ Animatic images: every board shot on the timeline, blocked out -----
+  // ⚠ IT RUNS ON THE STORYBOARD'S JOB, one shot at a time, for exactly the
+  // reason the re-block above does — the drawings belong to the board. A board
+  // draws ONE sequence at a time (`submit_sequence_run` 409s on a busy board),
+  // so this is a QUEUE and not a fan-out, and each shot's poses land on the
+  // timeline the moment that shot finishes rather than all at the end.
+  //
+  // ⚠ NOT PART OF `serverBusy`. This animatic is never the job that is running,
+  // so the autosave carries on and the cut stays editable while the drawings
+  // arrive — the same deal `reblockJob` gets.
+  const [posesOpen, setPosesOpen] = useState(false);   // the priced dialog
+  const [posesBusy, setPosesBusy] = useState(false);   // pricing / starting
+  const [posesError, setPosesError] = useState("");    // inside the dialog
+  // What the dialog is pricing: `{ shots: [...], drawings, already }`.
+  const [posesPlan, setPosesPlan] = useState(null);
+  // The run in flight: `{ total, at, label, added, boardId }`, or null.
+  const [posesRun, setPosesRun] = useState(null);
+  const [posesProgress, setPosesProgress] = useState(null);
+  // Latched by Stop. Read by the loop between shots — the drawing already in
+  // flight cannot be un-sent, so the shot being drawn finishes and the queue
+  // stops there, with everything drawn so far kept.
+  const posesStop = useRef(false);
 
   // Auto-reframe. Two steps like every other paid path here: a panel that
   // spends nothing, then a priced confirmation, then the call.
@@ -2211,7 +2285,7 @@ export default function AnimaticEditor({
    * rather than moving to Video the moment it is animated.
    */
   const library = useMemo(() => {
-    const groups = { board: [], video: [], image: [], audio: [] };
+    const groups = { board: [], poses: [], video: [], image: [], audio: [] };
     for (const asset of assets) (groups[assetOrigin(asset)] || groups.image).push(asset);
     return groups;
   }, [assets]);
@@ -4458,6 +4532,13 @@ export default function AnimaticEditor({
         openBoardImport(lane.track || 0);
         return;
       }
+      if (rowKind === "board_poses") {
+        // The row's ＋ opens the thing that FILLS it, exactly as the storyboard
+        // row's ＋ opens the import. It takes no file, so a file picker here
+        // would be a door into the mixing the strict rows exist to stop.
+        openPoses();
+        return;
+      }
       if (rowKind === "board_video") {
         setNotice(
           "This row holds Veo renders — pick a storyboard panel and press ✨ Animate to fill it."
@@ -4804,29 +4885,52 @@ export default function AnimaticEditor({
    * destroys it. `isVeoRender` is the same question the timeline already asks to
    * paint these bars purple — see `scene.js`, and do not add a second one.
    *
-   * ⚠ IT TAKES A CLIP *OR* A LIBRARY CARD. Both carry `src.upload_id`, because a
+   * ⚠ IT TAKES A CLIP *OR* A LIBRARY CARD. Both carry the same `src`, because a
    * card is built from the clip by `assetFromFrame`, so one handler serves both
    * places and they cannot come to disagree about which file they save.
+   *
+   * ⚠ AND IT IS NOT JUST VEO ANY MORE. ✨ Animatic images draws key poses from
+   * inside this editor, and they arrived in Media with no way to get them out —
+   * "media panel mai generated image nhi dikh raha hai … aur dikhe to download
+   * kar sakta hun veo video jaisa hi fuction". `isSavable` is the gate now, and
+   * it lets through everything with bytes behind it; what differs per kind is
+   * only WHICH URL those bytes come from and what extension the file gets.
+   *
+   *   · an upload / a Veo render → `/media/<upload_id>`, and `.mp4` for footage
+   *   · a board panel or one key pose → `/panel/<board>/<index>[?frame=n]`, PNG,
+   *     which is content-addressed and therefore savable even for a card whose
+   *     last clip has been deleted. `assetUrl` builds it; asking it rather than
+   *     writing the path again here is what stops the pane showing one picture
+   *     and the ⬇ saving another.
    *
    * ⚠ AND IT SAYS SOMETHING BEFORE IT STARTS. A Veo render is tens of megabytes
    * fetched as an authed blob — there is no browser download bar until the whole
    * file has landed, so without the first notice the press looks like it did
    * nothing for several seconds.
    */
-  async function downloadVeoClip(item) {
-    const uploadId = item?.src?.upload_id || "";
-    if (!isVeoRender(item) || !uploadId) return;
+  async function downloadClip(item) {
+    if (!isSavable(item)) return;
+    const src = item.src || {};
+    const video = clipKind(item) === "video";
+    // ⚠ THROUGH `assetUrl`, WHICH TAKES AN ASSET-SHAPED THING. A clip carries
+    // `kind` and `src` exactly as a card does, which is the whole reason one
+    // handler can serve both — see `assetFromFrame`.
+    const path = src.upload_id
+      ? `/animatics/${animaticId}/media/${src.upload_id}`
+      : assetUrl(animaticId, { kind: item.kind || "image", src });
+    if (!path) return;
+    const ext = video ? "mp4" : "png";
     const label = (item.label || "").trim();
     // Windows refuses \ / : * ? " < > | in a file name, and a name that the OS
     // rejects is a download that fails after the bytes have already been fetched.
     const base =
       label.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim().slice(0, 80) ||
-      "veo-clip";
+      (video ? "veo-clip" : "picture");
     setError("");
-    setNotice(`Saving “${base}.mp4”…`);
+    setNotice(`Saving “${base}.${ext}”…`);
     try {
-      await api.downloadAnimaticMedia(animaticId, uploadId, `${base}.mp4`);
-      setNotice(`Saved “${base}.mp4” to your downloads.`);
+      await api.downloadAnimaticFile(path, `${base}.${ext}`);
+      setNotice(`Saved “${base}.${ext}” to your downloads.`);
     } catch (e) {
       setError(e.message);
       setNotice("");
@@ -4857,7 +4961,7 @@ export default function AnimaticEditor({
     // `dropAsset`, so the four doors into "add this picture" cannot disagree.
     // A card can still be DRAGGED onto the Video row to put it in the cut — that
     // is aiming at a row, which is a different act from pressing ＋ on the card.
-    if (belongsOnImageLane(asset.kind || "image", assetOrigin(asset) === "board")) {
+    if (belongsOnImageLane(asset.kind || "image", isBoardAsset(asset))) {
       const lane = lanes.find((l) => l.kind === "image" && !l.layerId);
       if (!lane) return;
       if (laneIsLocked(lane)) {
@@ -4874,7 +4978,14 @@ export default function AnimaticEditor({
     // written out by hand and the drop rule was written out again in `dropAsset`,
     // and the two disagreed: ＋ put a Veo card on the Storyboard video row while a
     // DRAG of the same card was refused there.
-    const wantKind = cardRowKind(asset.kind || "image", assetOrigin(asset) === "board");
+    // ⚠ THE THIRD ARGUMENT IS "IS IT A KEY POSE?", and leaving it off is how a
+    // pose card's ＋ would put it on the Storyboard images row instead of the
+    // Animatic images one. Same three facts `clipRowKind` reads off a clip.
+    const wantKind = cardRowKind(
+      asset.kind || "image",
+      isBoardAsset(asset),
+      asset.src?.kind === "pose"
+    );
     const row = rowOfKind(wantKind);
     let track = row ? row.track : addPictureTrack(wantKind, { quiet: true });
     if (track === null) return; // no room; addPictureTrack said so
@@ -5005,7 +5116,7 @@ export default function AnimaticEditor({
       // clip, so a card and the clip made from it can never disagree about where
       // it belongs — and it is the same answer `laneTakes` lit the row up with.
       const rowKind = lane.rowKind || "video";
-      const want = cardRowKind(kind, assetOrigin(card) === "board");
+      const want = cardRowKind(kind, isBoardAsset(card), card.src?.kind === "pose");
       if (rowKind !== want) {
         setNotice(
           `“${card.label || "Media"}” belongs on ${ROW_KIND[want].name} — ` +
@@ -6711,6 +6822,29 @@ export default function AnimaticEditor({
     (payload) => api.directorVeoState(animaticId, payload),
     [animaticId]
   );
+  // ----------------------------------------------------------------- phase C2
+  // 🖼 ANIMATIC IMAGES, AS A TICK BOX ON 🎬 — asked for as "Animatic image
+  // buttun function make video butun mai v rahe … check box tik kar ke generet
+  // karne ka type … waise hi aa jaye jaise veo video aata hi".
+  //
+  // ⚠ BOTH ARE THUNKS THROUGH REFS, for the two reasons every other pass here is:
+  // the runner must always call the CURRENT render's closure (`readPosesPlan`
+  // closes over `posesShots`, which is recomputed every time a clip moves), and
+  // both functions live further down this file beside the 🖼 dialog they share
+  // every line of their behaviour with — naming them here would read a `const`
+  // before it exists.
+  //
+  // ⚠ AND THERE IS NO SECOND IMPLEMENTATION BEHIND THEM. `blockOutPoses` is the
+  // 🖼 button's own queue, unforked: one shot at a time because a board can only
+  // draw one, each run laid across its shot the moment it lands, a failed shot
+  // leaving the rest of the queue alone, and a Stop that keeps everything drawn.
+  const directorPosesRef = useRef(null);
+  const directorBlockRef = useRef(null);
+  const directorReadPoses = useCallback(() => directorPosesRef.current(), []);
+  const directorBlockPoses = useCallback(
+    (payload) => directorBlockRef.current(payload),
+    []
+  );
   // ---------------------------------------------------------- phases D and E
   // ⚠ FREE, AND THE PANEL MUST KEEP SAYING SO. Finding a film's sound spends the
   // deployment's shared Freesound budget — 60 requests a minute for everybody —
@@ -6762,6 +6896,14 @@ export default function AnimaticEditor({
     // steps have finished moving the shots their cues have to land on.
     buildSoundtrack: directorSoundtrack,
     placeSoundtrack: directorPlaceSound,
+    // ------------------------------------------------------------- phase C2
+    // ⚠ IT RUNS LAST OF THE PAID PASSES AND THAT IS NOT AN ORDERING WHIM. How
+    // many drawings a shot buys is four per second of the length it ENDS UP
+    // holding, and the voiceover and the Veo pass both rewrite the lengths — so
+    // blocked out first, a shot stretched to carry its line gets a slideshow.
+    // See the header of `poses_pass.js`.
+    readPoses: directorReadPoses,
+    blockPoses: directorBlockPoses,
   });
 
   // Which languages have a description written for them, and which backend is
@@ -6847,6 +6989,39 @@ export default function AnimaticEditor({
     framesRef.current = frames;
   }, [frames]);
 
+  /**
+   * ⚠ THE KEY POSES FOLLOW THEIR SHOTS, WHATEVER MOVED THEM.
+   *
+   * Asked for as "ye apne aap ho jayen kar do waisa". A run of drawings on the
+   * Animatic images row is laid across the shot it was blocked out from, and a
+   * dozen ordinary edits move that shot afterwards: a Veo take pushes everything
+   * after it along, a shot is generated into the middle of the cut, the
+   * voiceover stretches a hold, or the panel is dragged or trimmed by hand. Each
+   * of those is a different code path, and hooking the poses into all of them
+   * would be a list to keep in step for ever — so it is ONE RULE, applied to the
+   * picture list itself: a run sits over its panel. See `alignPoseRuns`.
+   *
+   * ⚠ IT IS SAFE TO RUN ON EVERYTHING, WHICH IS WHY IT CAN BE AN EFFECT:
+   *   · Idempotent — its own output is already correct, so it hands back the
+   *     SAME array and this effect stops after one pass. It cannot loop.
+   *   · Undo-exact — a snapshot is already consistent, so a restore is looked at
+   *     and left alone. A pass that diffed against the previous render would
+   *     shift the poses a second time and Ctrl+Z would not give back what it
+   *     took.
+   *   · Free when there is nothing to do — `alignPoseRuns` returns on the first
+   *     scan when no clip is a key pose, which is almost every project.
+   *
+   * ⚠ AND IT COSTS NO SECOND UNDO ENTRY. `useUndoStack` records on a SIGNATURE
+   * change, coalescing everything inside a pointer gesture and everything within
+   * half a second of the last push — so this correction lands in the same entry
+   * as the edit that caused it, and one Ctrl+Z takes both back together.
+   */
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const aligned = alignPoseRuns(frames);
+    if (aligned !== frames) setFrames(aligned);
+  }, [frames, setFrames, loadedRef]);
+
   // The row records, for the same reason and read by the same callback. ⚠ THE VEO
   // POLL KEYS ON `animating` ALONE (see the note on that state), so the
   // `reconcileVeoClips` it holds can be several renders old — reading rows out of
@@ -6855,6 +7030,23 @@ export default function AnimaticEditor({
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
+
+  // ⚠ AND THE LIBRARY, FOR THE ✨ ANIMATIC IMAGES QUEUE AND NOTHING ELSE. That
+  // pass runs for minutes across many renders and adds a card per drawing as each
+  // shot lands, in the SAME write as the clips (`placePoses`) — so it needs the
+  // list as it is now, not as it was when the run started. `attachVeoClip`'s
+  // functional `setAssets` is still the right shape for a one-shot edit; this is
+  // the long-running one, and it is the same argument that gives `layersRef` its
+  // existence.
+  //
+  // ⚠ IT DOES NOT REOPEN THE DOOR THE NOTE BELOW CLOSES. The refs that were
+  // removed were read to RIPPLE lists — where an empty or stale one is a silent
+  // no-op that looks exactly like "nothing needed to move". This one is only ever
+  // APPENDED to, after the project has loaded, and what it produces is handed
+  // straight to `flush`, which would fail loudly rather than quietly.
+  useEffect(() => {
+    assetsRef.current = assets;
+  }, [assets]);
 
   // ⚠ THERE IS DELIBERATELY NO REF FOR THE REST OF THE DOCUMENT. There was one,
   // filled by an effect, and `attachVeoClip` read the captions, the shapes, the
@@ -8018,16 +8210,33 @@ export default function AnimaticEditor({
     // therefore always a gap and never a choice, which is exactly what re-deriving
     // the WHOLE library gets wrong and why that one is spelled `== null`.
     //
-    // ⚠ AUDIO ONLY, deliberately. The same sweep over `frames` would mint a junk
-    // card for every clip whose `src` is empty — a colour card is the shape that has
-    // no file — and there is no add path for pictures that skips the library: they
-    // all go through `addToLibrary`. Widen it when one appears, not before.
+    // ⚠ AUDIO, AND KEY POSES. It was audio only, with a note saying to widen it
+    // "when an add path for pictures that skips the library appears, not before".
+    // One appeared: the first build of ✨ Animatic images placed its drawings on
+    // the timeline and deliberately did NOT card them, on the grounds that sixteen
+    // cards a shot is clutter. Every project blocked out under that build carries
+    // a row of drawings the Media pane cannot show — and it opens that way every
+    // time, because a project WITH a library is never re-derived. Reported exactly
+    // as the voiceover was: "i can't see animatic images in midea".
+    //
+    // ⚠ POSES ONLY, NOT ALL OF `frames`, and the original note is the reason: a
+    // blanket sweep would mint a junk card for every clip whose `src` names no
+    // file — a colour card is that shape — and every OTHER picture path already
+    // goes through `addToLibrary`. This is the one gap, so this is the one repair.
     if (p.assets != null) {
       const have = new Set((p.assets || []).map(assetKey));
       const missing = [];
       for (const track of p.audio_tracks || []) {
         if (!track?.upload_id) continue;
         const card = assetFromAudio(track, newId());
+        const key = assetKey(card);
+        if (have.has(key)) continue;
+        have.add(key);
+        missing.push(card);
+      }
+      for (const frame of p.frames || []) {
+        if (frame?.src?.kind !== "pose" || !frame.src.storyboard_id) continue;
+        const card = assetFromFrame(frame, newId());
         const key = assetKey(card);
         if (have.has(key)) continue;
         have.add(key);
@@ -8580,6 +8789,15 @@ export default function AnimaticEditor({
   directorSpeakRef.current = runDirectorVoiceover;
   directorScriptRef.current = readDirectorScript;
   directorRenderRef.current = runDirectorVeoPass;
+  // ⚠ PHASE C2 BINDS THE SAME WAY, AND THE FUNCTIONS IT NAMES LIVE FURTHER DOWN.
+  // They are function DECLARATIONS, so they are hoisted and this assignment during
+  // render is reading a name that already exists — the same shape as the three
+  // above it. What the ref buys is that the runner, which holds these for the
+  // length of a run, always calls the closure from the CURRENT render:
+  // `readPosesPlan` reads `posesShots`, which is recomputed every time a clip is
+  // re-timed or dragged.
+  directorPosesRef.current = readPosesPlan;
+  directorBlockRef.current = blockOutPoses;
 
   // ⚠ KEYED ON `speechRunning` ALONE, for the reason written out above the Veo
   // poll: an effect that restarts on what its own poll writes cancels itself
@@ -8782,6 +9000,501 @@ export default function AnimaticEditor({
     });
     return built.length;
   }
+
+  // ------------------------------------- Animatic images (the key poses)
+  /**
+   * THE FLIPBOOK, IN THE EDITOR - what "Image to Animatic Image" does to one
+   * shot at a time on the board, done to EVERY shot on this timeline at once.
+   *
+   * Asked for as: "mai chahta hun ki image to Animatics images workflow jaise
+   * images generate hota tha waise editor mai ho ... ek button banao make video
+   * button ke side mai ... ye same Story..Video layer jaisa kaam karega ...
+   * generate ho kar Animatic image ke layer mai aa jaye aur har shot ke uper
+   * uska length ke hisab se sab image set ho jaye".
+   *
+   * So, in the three parts that matter:
+   *
+   *   1. WHICH SHOTS - every clip on the timeline that IS a board panel
+   *      (`posesShots`). A pose, an upload, a video clip and a colour card are
+   *      not shots of the board and have no panel to block out.
+   *   2. HOW MANY DRAWINGS - from the length the shot is CUT to, not from a
+   *      number typed into a dialog. 2s -> 8 key poses, 4s -> 16, at the
+   *      planner's own four-per-second (`KEY_POSES_PER_SECOND`).
+   *   3. WHERE THEY GO - a row of their own, `board_poses` / "Animatic images",
+   *      sitting over the board's stills exactly as the Veo row does; and within
+   *      that row each shot's drawings divide THAT SHOT'S OWN SPAN, so the eight
+   *      poses of a 2-second shot are eight 250ms clips that start where the
+   *      shot starts and end where it ends. Mini keyframes, under their shot.
+   *
+   * WARNING: THE DRAWINGS ARE THE BOARD'S, AND SO IS THE RUN. Every one of them
+   * is made by `submit_sequence_run` on the storyboard job - the same call the
+   * board's own Generate makes - so a pose redrawn on the board updates this
+   * timeline with nothing to re-import, and a pose deleted here costs nothing to
+   * get back. It also means a board draws ONE shot at a time: this is a queue.
+   *
+   * WARNING: THE ROW LOOKS AFTER ITSELF FROM HERE. Re-time a shot, drag it,
+   * generate one into the middle of the cut, or animate one with Veo so the
+   * shots after it are pushed along - the drawings go with their shot, because
+   * `alignPoseRuns` states the rule once (a run sits over its panel) and an
+   * effect applies it to every change. What that pass will NOT do is buy more
+   * drawings: stretch a 4s shot to 8s and its sixteen poses each hold twice as
+   * long. Pressing this button again re-blocks it at the new length and draws
+   * only the tail, which is the deliberate way to spend.
+   */
+  const posesShots = useMemo(() => {
+    const spans = pictureSpans.spans;
+    const out = [];
+    frames.forEach((f, i) => {
+      // PANELS ONLY. A generated in-between shot carries the board reference but
+      // has no `index` (see `AnimaticFrameSource.shot_id`), and there is no panel
+      // behind it for the planner to block out - the server would refuse it with
+      // a reason nobody asked to see. A pose is already a drawing OF a shot, and
+      // a Veo take is the shot finished.
+      if ((f.kind || "image") !== "image") return;
+      const src = f.src || {};
+      if (src.kind !== "panel" || !src.storyboard_id) return;
+      if (src.index === null || src.index === undefined) return;
+      const span = spans[i];
+      if (!span) return;
+      const holdMs = Math.max(MIN_MS, span.end - span.start);
+      const seconds = poseSecondsFor(holdMs);
+      out.push({
+        frameId: f.id,
+        boardId: src.storyboard_id,
+        index: Number(src.index),
+        label: f.label || `Shot ${Number(src.index) + 1}`,
+        startMs: span.start,
+        holdMs,
+        seconds,
+        poses: seconds * KEY_POSES_PER_SECOND,
+      });
+    });
+    return out;
+  }, [frames, pictureSpans]);
+
+  /**
+   * WHICH TRACK THE ANIMATIC IMAGES ROW IS - and the record for it when there is
+   * none yet, RETURNED RATHER THAN ADDED.
+   *
+   * WARNING: THE SAME SPLIT `pictureLane` MAKES, AND FOR THE SAME REASON: the
+   * row and the clips that sit on it have to reach the server in ONE write, or
+   * the row loses its name to the debounce. See `doBoardImport`.
+   *
+   * WARNING: AND IT READS THE REFS, never this render's `layers` / `frames`. It
+   * is called from inside a queue that runs for minutes across many renders, so
+   * the closure's idea of which rows exist is not to be trusted - the same rule
+   * `boardVideoTrack` follows.
+   */
+  function posesLane() {
+    const rows = layersRef.current || [];
+    const existing = rows.find((l) => l.kind === "board_poses");
+    if (existing && Number.isInteger(Number(existing.track))) {
+      return { track: Number(existing.track), lane: null };
+    }
+    const used = [
+      ...pictureTracks(framesRef.current),
+      ...rows.filter((l) => ROW_KIND[l.kind]).map((l) => Number(l.track) || 0),
+    ];
+    const next = Math.max(...used) + 1;
+    if (next > MAX_PICTURE_TRACK) {
+      // SAY THE DRAWINGS ARE SAFE. They are on the board and paid for; what
+      // failed is finding them a row on this timeline.
+      setError(
+        "The drawings are safe on the storyboard, but there is no room for an " +
+          `${ROW_KIND.board_poses.name} row - a project can hold ` +
+          `${MAX_PICTURE_TRACK + 1} picture rows.`
+      );
+      return null;
+    }
+    return {
+      track: next,
+      lane: {
+        id: newId(),
+        kind: "board_poses",
+        name: rowKindName("board_poses", 0),
+        track: next,
+      },
+    };
+  }
+
+  /**
+   * ONE SHOT'S DRAWINGS, LAID ACROSS THAT SHOT'S OWN SPAN.
+   *
+   * WARNING: THE SPAN IS THE CLIP'S, NOT THE RUNG'S. The planner was asked for
+   * 2/4/6/8 or 10 seconds because those are the only lengths it accepts, but the
+   * clip on the timeline is whatever the cut made it - so the drawings divide
+   * the REAL hold and the last one ends exactly where the shot ends. Rounding
+   * each boundary off the same total (rather than adding up a fixed step) is
+   * what stops eight roundings drifting the run off the end of its shot.
+   *
+   * WARNING: IT REPLACES, IT DOES NOT PILE UP. Running the pass twice over a
+   * shot that already has its drawings must leave one run of poses, not two
+   * stacked on the same row - so this row's poses FOR THIS SHOT are cleared
+   * first. Poses on other rows, and poses of other shots, are never touched.
+   *
+   * WARNING: NOTHING REACHES STATE UNTIL THE SAVE HAS LANDED. A pose is served
+   * from `/animatics/{id}/frame/{frameId}`, which resolves by looking the clip
+   * up in the SAVED project - so a url handed out before the write can only 404,
+   * and the fetch effect neither caches a failure nor retries it. Word for word
+   * the lesson `doBoardImport` is built around.
+   */
+  async function placePoses(shot, seq) {
+    // WHICH POSE EACH DRAWING IS. A refused pose leaves a hole, so drawing 6 is
+    // not necessarily pose 6 - the server says which is which. Same rule
+    // `PanelSequenceStrip.pathsByPose` follows.
+    const numbers = seq?.frame_numbers?.length
+      ? seq.frame_numbers
+      : Array.from({ length: Number(seq?.frames) || 0 }, (_, k) => k);
+    if (!numbers.length) return 0;
+
+    const seat = posesLane();
+    if (!seat) return 0;
+    const { track, lane } = seat;
+
+    // WHERE EACH DRAWING SITS. The arithmetic is `poseRunAcross` in `scene.js` —
+    // pure, and driven by node in `tests/animatic_images_check.py`, because "the
+    // run ends exactly where its shot ends" is the kind of claim a screenshot
+    // cannot settle. What is left here is turning its answer into clips.
+    const laid = poseRunAcross(shot.startMs, shot.holdMs, numbers);
+    if (!laid.length) return 0;
+
+    const built = laid.map((slot, i) => {
+      const id = newId();
+      return {
+        id,
+        kind: "image",
+        // REFERENCED, NEVER COPIED - the same `src` the import writes
+        // (`_frames_from_board`), so redrawing this pose on the board updates
+        // the timeline with nothing to re-import.
+        src: {
+          kind: "pose",
+          storyboard_id: shot.boardId,
+          index: shot.index,
+          frame: slot.frame,
+        },
+        duration_ms: slot.duration_ms,
+        start_ms: slot.start_ms,
+        track,
+        label: `${shot.label} - ${i + 1}`,
+        // `url` is dropped by `frameForSave`, so carrying it changes nothing
+        // about what is sent - and it means the drawings arrive on screen
+        // already pointing at a route that answers.
+        url: `/animatics/${animaticId}/frame/${id}`,
+      };
+    });
+
+    const stale = new Set(
+      framesRef.current
+        .filter(
+          (f) =>
+            frameTrack(f) === track &&
+            f.src?.kind === "pose" &&
+            f.src.storyboard_id === shot.boardId &&
+            f.src.index === shot.index
+        )
+        .map((f) => f.id)
+    );
+    const next = [...framesRef.current.filter((f) => !stale.has(f.id)), ...built];
+    const lanes = lane ? [...(layersRef.current || []), lane] : null;
+
+    // ⚠ EVERY DRAWING GETS A MEDIA CARD, IN THE SAME WRITE AS ITS CLIP. The first
+    // build left them out — 16 cards a shot looked like clutter — and that was
+    // the wrong call twice over, reported as "media panel mai generated image nhi
+    // dikh raha hai … aur dikhe to download kar sakta hun veo video jaisa hi
+    // fuction":
+    //
+    //   · A card is how you SAVE one (`isSavable` → the ⬇), how you drag one back
+    //     after deleting its clip, and how you find out which pose it is. Without
+    //     a card the drawings existed only as bars on a row.
+    //   · And the library is the one list a deletion must not empty (see the
+    //     header of `assets.js`) — the whole reason it is a separate list.
+    //
+    // ⚠ `mergeAssets` KEYS ON THE SOURCE (`assetKey` knows `pose:` already), so
+    // re-running the pass over a shot re-uses the cards it made last time instead
+    // of doubling them — the same reason `stale` clears that shot's clips above.
+    const cards = mergeAssets(
+      assetsRef.current || [],
+      built.map((f) => assetFromFrame(f, newId()))
+    );
+    await flush({ frames: next, assets: cards, ...(lanes ? { layers: lanes } : {}) });
+    if (lanes) {
+      layersRef.current = lanes;
+      setLayers(lanes);
+      seatNewLaneRef.current?.(layerTokenOf(lane));
+    }
+    assetsRef.current = cards;
+    setAssets(cards);
+    framesRef.current = next;
+    setFrames(next);
+    return built.length;
+  }
+
+  /**
+   * THE PRICE, AS A VALUE — which shots, how many drawings each, and how many of
+   * those the storyboard already has.
+   *
+   * ⚠ IT IS SPLIT OUT OF THE DIALOG BECAUSE 🎬 MAKE VIDEO ASKS THE SAME
+   * QUESTION. 🖼 Animatic images is a tick box on the Director now (phase C2, see
+   * `poses_pass.js`), and its preview has to be able to say what ticking it would
+   * cost — exactly as the Veo box does. Two functions asking this two ways is two
+   * prices for one pass, so there is one, and the dialog reads it too.
+   *
+   * ⚠ IT COSTS NOTHING TO ASK, and asking is the whole point: a run resumes
+   * (`submit_sequence_run(resume=True)`), so a shot whose poses are already on
+   * the board is free the second time. Pricing the pass at "every shot x every
+   * drawing" would quote a bill nobody is going to be charged. One free read per
+   * shot, pooled, is what makes the number on the button true.
+   */
+  async function readPosesPlan() {
+    if (!posesShots.length) return [];
+    // The server finds each clip in the SAVED project, so save first - the
+    // same reason `relengthShot` and `askForSpeech` flush before they ask.
+    await flush();
+    const shots = posesShots.map((x) => ({ ...x, have: 0 }));
+    await runPooled(shots, 4, async (shot) => {
+      try {
+        const seq = await api.getFrameSequence(animaticId, shot.frameId);
+        shot.have = Math.min(Number(seq?.frames) || 0, shot.poses);
+      } catch {
+        /* a shot whose sequence can't be read is priced as un-drawn */
+      }
+    });
+    return shots;
+  }
+
+  /**
+   * OPEN THE PRICED DIALOG - and price it against what is ALREADY DRAWN.
+   *
+   * The arithmetic is `poseTally` in `poses_pass.js`, shared with the Director's
+   * own preview, so the two can never quote one pass at two numbers.
+   */
+  async function openPoses() {
+    if (posesRun) return;
+    setPosesOpen(true);
+    setPosesError("");
+    setPosesPlan(null);
+    if (!posesShots.length) return;
+    setPosesBusy(true);
+    try {
+      const shots = await readPosesPlan();
+      const tally = poseTally(shots);
+      setPosesPlan({
+        shots,
+        drawings: tally.drawings,
+        already: tally.already,
+        toDraw: tally.toDraw,
+      });
+    } catch (e) {
+      setPosesError(e.message);
+    } finally {
+      setPosesBusy(false);
+    }
+  }
+
+  /**
+   * WAIT FOR ONE SHOT'S RUN TO FINISH ON THE BOARD.
+   *
+   * WARNING: IT POLLS THE STORYBOARD'S JOB, not this animatic's. Same as the
+   * re-block poll above, and for the same reason - these drawings are the
+   * board's. `at` / `total` turn the board's own percentage for THIS shot into a
+   * percentage for the whole queue, so one bar means one thing all the way
+   * through instead of restarting at every shot.
+   */
+  function waitForShot(jobId, shot, at, total, report) {
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        // The editor has gone: give up on the wait. The run itself is not
+        // cancelled by this - the pose in flight finishes and stays on the board.
+        if (posesStop.current === "gone") {
+          resolve(null);
+          return;
+        }
+        try {
+          const job = await api.getJob(jobId);
+          if (job.status === "running") {
+            const within = Math.max(
+              0,
+              Math.min(100, Number(job.progress?.percent) || 0)
+            );
+            const said = job.progress?.message || `${shot.label} - drawing key poses...`;
+            setPosesProgress({
+              percent: Math.round(((at + within / 100) / total) * 100),
+              message: said,
+            });
+            // 🎬 THE DIRECTOR'S OWN RAIL, fed the same poll. `done` is WHOLE shots
+            // and `percent` is how far through THIS one - the split the render rail
+            // already keeps, and for the same reason: a queue of three shots that
+            // each take a minute is a bar that would otherwise move three times.
+            if (report) report({ done: at, percent: within, message: said });
+            setTimeout(tick, 1500);
+            return;
+          }
+          if (job.error) reject(new Error(job.error));
+          else resolve(job);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      setTimeout(tick, 1200);
+    });
+  }
+
+  /**
+   * RUN THE QUEUE - one shot, drawn and placed, then the next.
+   *
+   * WARNING: TWO BUTTONS DRIVE THIS ONE QUEUE. 🖼 Animatic images in the tool row
+   * (through `runPoses` below) and the 🎬 Make Video tick box (through
+   * `blockPoses` in `useDirectorRun`, phase C2) both land here, because there is
+   * exactly one implementation of "block a shot out as key poses" in this app and
+   * a second one would be a second set of these warnings to keep true.
+   *
+   * WARNING: IT REPORTS RATHER THAN NOTIFIES. It returns
+   * `{ drawn, shots, failed, stopped, gone }` and writes no notice of its own -
+   * the 🖼 dialog puts that in the status strip, the Director puts it on its own
+   * rail, and a queue that did both would talk over itself.
+   *
+   * WARNING: ONE SHOT AT A TIME BECAUSE A BOARD CAN ONLY DRAW ONE.
+   * `submit_sequence_run` answers 409 on a board that is already busy, so firing
+   * all sixteen at once would land one run and fifteen refusals.
+   *
+   * WARNING: AND EACH SHOT IS PLACED THE MOMENT IT FINISHES rather than all of
+   * them at the end. A twelve-shot pass takes many minutes; watching the row
+   * fill in is what makes that legible, and it means a Stop halfway through
+   * leaves half a flipbook on the timeline rather than nothing at all.
+   */
+  async function blockOutPoses({ shots, onProgress, shouldStop } = {}) {
+    const queue = shots || [];
+    if (!queue.length) {
+      return { drawn: 0, shots: 0, failed: 0, stopped: false, gone: false };
+    }
+    posesStop.current = false;
+    setPosesRun({ total: queue.length, at: 0, boardId: queue[0].boardId });
+    setPosesProgress({ percent: 0, message: `${queue[0].label} - starting...` });
+    let added = 0;
+    let drew = 0;
+    let failed = 0;
+    let stopped = false;
+    let gone = false;
+    try {
+      for (let i = 0; i < queue.length; i += 1) {
+        // 🎬 THE DIRECTOR RAISES ITS OWN FLAG, AND THIS TURNS IT INTO THE BOARD'S
+        // STOP - once. `stopPoses` is what asks the storyboard to wind up the run
+        // in flight, so a Director Stop and a ⏹ Stop end the same way instead of
+        // the first one meaning "wait out the whole shot".
+        if (shouldStop && shouldStop() && !posesStop.current) await stopPoses();
+        if (posesStop.current) {
+          stopped = posesStop.current !== "gone";
+          gone = posesStop.current === "gone";
+          break;
+        }
+        const shot = queue[i];
+        setPosesRun((r) => (r ? { ...r, at: i, boardId: shot.boardId } : r));
+        const said = `${shot.label} - ${shot.poses} key poses over ${shot.seconds}s...`;
+        setPosesProgress({
+          percent: Math.round((i / queue.length) * 100),
+          message: said,
+        });
+        if (onProgress) onProgress({ done: i, percent: 0, message: said });
+        try {
+          const res = await api.relengthFrameSequence(
+            animaticId,
+            shot.frameId,
+            shot.seconds
+          );
+          await waitForShot(res.job_id, shot, i, queue.length, onProgress);
+          if (posesStop.current === "gone") {
+            gone = true;
+            break;
+          }
+          const seq = await api.getFrameSequence(animaticId, shot.frameId);
+          const n = await placePoses(shot, seq);
+          if (n > 0) drew += 1;
+          added += n;
+          if (onProgress) {
+            onProgress({
+              done: i + 1,
+              percent: 0,
+              message: `${shot.label} - ${n} drawing${n === 1 ? "" : "s"} placed.`,
+            });
+          }
+        } catch (e) {
+          // ONE SHOT FAILING DOES NOT ABANDON THE QUEUE. A model refusal on shot
+          // 4 is not a reason to leave shots 5 to 12 undrawn, and the drawings
+          // already made are already paid for.
+          failed += 1;
+          setError(`${shot.label}: ${e.message}`);
+        }
+      }
+    } finally {
+      if (posesStop.current !== "gone") {
+        setPosesRun(null);
+        setPosesProgress(null);
+        posesStop.current = false;
+      }
+    }
+    return { drawn: added, shots: drew, failed, stopped, gone };
+  }
+
+  /**
+   * THE 🖼 BUTTON'S OWN RUN - the queue above, and the sentence at the end of it.
+   *
+   * WARNING: THE QUEUE ITSELF IS NOT HERE ANY MORE, and that is the point:
+   * 🎬 Make Video runs the same one (phase C2, `blockPoses` in `useDirectorRun`).
+   * What is left here is what belongs to the DIALOG - closing it, and reporting
+   * the result in the status strip, which the Director reports in its own rail.
+   */
+  async function runPoses() {
+    if (posesRun || !posesPlan?.shots?.length) return;
+    setPosesOpen(false);
+    setError("");
+    const res = await blockOutPoses({ shots: posesPlan.shots });
+    // THE EDITOR HAS GONE. Nothing to report to, and the drawings carry on being
+    // made on the board - they are paid for, and the next pass resumes onto them.
+    if (!res || res.gone) return;
+    setNotice(
+      res.drawn
+        ? `${res.drawn} animatic image${res.drawn === 1 ? "" : "s"} across ${res.shots} shot` +
+            `${res.shots === 1 ? "" : "s"} - on the ${ROW_KIND.board_poses.name} row, ` +
+            "each shot's drawings spread across that shot." +
+            (res.failed
+              ? ` ${res.failed} shot${res.failed === 1 ? "" : "s"} could not be drawn.`
+              : "")
+        : "Nothing was drawn - the storyboard refused every shot."
+    );
+  }
+
+  /**
+   * STOP AFTER THE SHOT BEING DRAWN NOW.
+   *
+   * The drawing already in flight cannot be un-sent, so the shot finishes, its
+   * poses are placed, and the queue stops there - everything drawn so far is
+   * kept, exactly as the board's own Stop promises.
+   */
+  async function stopPoses() {
+    if (!posesRun || posesStop.current) return;
+    posesStop.current = true;
+    setPosesProgress((p) => ({
+      percent: p?.percent ?? 0,
+      message: "Stopping after this shot - everything drawn is kept...",
+    }));
+    try {
+      if (posesRun.boardId) await api.stopStoryboard(posesRun.boardId);
+    } catch {
+      /* the queue stops after this shot either way */
+    }
+  }
+
+  // THE QUEUE OUTLIVES THE COMPONENT UNLESS IT IS TOLD NOT TO. It is a plain
+  // async loop, not an effect, so an editor closed mid-pass would go on polling
+  // and calling `setState` on something that is gone. "gone" is a stop that also
+  // says "do not report" - the drawings carry on being made on the board, which
+  // is right: they are paid for, and the next pass resumes onto them.
+  useEffect(
+    () => () => {
+      posesStop.current = "gone";
+    },
+    []
+  );
 
   // ------------------------------------------------------ auto-reframe
   // ⚠ WHAT COMES BACK IS `scale` / `x` / `y` ON THE FRAMES — ordinary
@@ -9668,6 +10381,13 @@ export default function AnimaticEditor({
                 heading on a board that has none is a row of furniture. */}
             {[
               { id: "media:frames", title: "Storyboard Frames", list: library.board },
+              /* ⚠ ITS OWN SECTION, DIRECTLY UNDER THE PANELS IT WAS DRAWN FROM.
+                 ✨ Animatic images adds a card per DRAWING, so on any real board
+                 they would bury the panels inside Storyboard Frames — which is a
+                 section people keep folded shut, and folding it shut is exactly
+                 what made them look missing: "media panel mai generted iamge nhi
+                 dikh rah ahai". See `assetOrigin`. */
+              { id: "media:poses", title: "Animatic Images", list: library.poses },
               { id: "media:video", title: "Video", list: library.video },
               { id: "media:images", title: "Images", list: library.image },
               { id: "media:audio", title: "Audio", list: library.audio },
@@ -9682,7 +10402,7 @@ export default function AnimaticEditor({
                     usedCount={assetUsedCount}
                     onPlace={placeAsset}
                     onDelete={deleteAsset}
-                    onDownload={downloadVeoClip}
+                    onDownload={downloadClip}
                     /* Double-click the NAME, or right-click the card — one
                        handler for both, because they are one promise. */
                     onRename={renameAsset}
@@ -10379,6 +11099,67 @@ export default function AnimaticEditor({
             onManageEffects={manageEffects}
             addTools={
               <>
+                {/* ⚠ SPENDS NOTHING, AND SAYS SO. FIRST IN THE ROW now, ahead
+                    of 🎙 Voiceover — asked for in that order ("Make video,
+                    voiceover, Animate with veo, Animatic images, text and colour
+                    card"), and it earns the front: it is the one press that cuts
+                    the WHOLE timeline for you.
+
+                    It sits directly beside 🎙 Voiceover, which does spend, so
+                    the two must not read alike: this one keeps the
+                    `an-add-director` weight of the Text / Colour card pair it
+                    belongs to — the buttons that make something out of nothing
+                    for free — and it is the only button in the row wearing the
+                    PASTEL BLUE stroke instead of the tool green (asked for as
+                    "Make video buttun color change green to pestal blue"). Green
+                    is the row's shared "makes something" colour; blue lifts the
+                    one control that acts on everything at once out of it. See
+                    `--tool-blue-*` in theme.css.
+
+                    Everything behind it is rules (`agent/house_style.js`); no
+                    model is called and no network request is made. The panel it
+                    opens is a PREVIEW — the timeline is not touched until Run is
+                    pressed in there, and Revert puts it all back afterwards. */}
+                <button
+                  type="button"
+                  className="btn small an-add-director"
+                  disabled={!frames.length}
+                  onClick={openDirector}
+                  title={
+                    frames.length
+                      ? "Cut it for me"
+                      : "Add some pictures first"
+                  }
+                >
+                  🎬 Make Video
+                </button>
+                {/* ⚠ SPENDS QUOTA — but only through the priced panel it opens,
+                    like ✨ Animate. The lines come from the board this animatic
+                    was made from, timed to the shots that reference them, so
+                    there is nothing to type: that is the whole reason it lives
+                    in here.
+
+                    Plain `btn small`, and deliberately NOT the `.an-add-text` /
+                    `.an-add-card` weight: those two are a pair that makes a clip
+                    out of nothing and costs nothing. This one spends, and
+                    reading as one of them would be a lie about it. */}
+                {voiceCap.visible && (
+                  <button
+                    type="button"
+                    className={`btn small ${voiceCap.on ? "" : "cap-off"}`}
+                    disabled={!voiceCap.on || !hasBoardFrames || serverBusy}
+                    onClick={openVoiceover}
+                    title={
+                      !voiceCap.on
+                        ? voiceCap.reason
+                        : hasBoardFrames
+                          ? "Read the dialogue aloud"
+                          : "Needs board panels"
+                    }
+                  >
+                    {voiceCap.on ? "🎙 Voiceover" : "🔒 Voiceover"}
+                  </button>
+                )}
                 {/* ⚠ SPENDS MONEY — and like the Properties pane's copy it renders
                     nothing itself: it opens the dialog that prices the job first.
                     It is a SECOND way to the same door, asked for as "Animate
@@ -10387,10 +11168,14 @@ export default function AnimaticEditor({
                     the shot, finding the Footage group and scrolling to it —
                     while the thing you were animating was right under the
                     playhead.
-                    FIRST IN THE ROW, before Text, because that is the order it
-                    was asked for ("+ add layer, Animate with Veo and text, colour
-                    card and Voiceover") and because it is the one control here
-                    that changes the PICTURE rather than adding something over it.
+                    THIRD IN THE ROW — after 🎬 Make Video and 🎙 Voiceover,
+                    ahead of 🖼 Animatic images, Text and Colour card. That is
+                    the order it was last asked for ("Make video, voiceover,
+                    Animate with veo, Animatic images, text and colour card"), and
+                    it groups sensibly: the three that act on the whole film sit
+                    first, then the two free "make a clip out of nothing" buttons.
+                    It is also the one control here that changes the PICTURE
+                    rather than adding something over it.
                     Plain `btn small`, deliberately NOT the `.an-add-text` /
                     `.an-add-card` weight: those two are the pair that makes a clip
                     out of nothing and costs nothing. This one spends, and reading
@@ -10429,6 +11214,49 @@ export default function AnimaticEditor({
                           : "✨ Animate with Veo"}
                   </button>
                 )}
+                {/* SPENDS QUOTA - one image per key drawing - and so, like every
+                    other spending control in this row, it is a plain `btn small`
+                    and it opens a PRICED dialog rather than drawing anything
+                    itself. Reading as the free `.an-add-text` / `.an-add-card` /
+                    `.an-add-director` weight would be a lie about what it does.
+
+                    IT FOLLOWS ✨ Animate with Veo and closes the "acts on the
+                    whole film" group that 🎬 Make Video opens — the row order
+                    asked for last ("Make video, voiceover, Animate with veo,
+                    Animatic images, text and colour card"). It was first put
+                    beside Make Video ("ek button banao make video button ke side
+                    mai aur uska name Animatic images rakho") for the same
+                    reason the two still travel together: both are one act over
+                    the WHOLE timeline rather than over the shot you happen to
+                    have selected.
+
+                    GONE, NOT GREYED, when the capability is not visible at all -
+                    the same rule the two buttons above it follow. */}
+                {imageCap.visible && (
+                  <button
+                    type="button"
+                    className={`btn small ${imageCap.on ? "" : "cap-off"}`}
+                    disabled={!imageCap.on || !posesShots.length || !!posesRun}
+                    onClick={openPoses}
+                    title={
+                      !imageCap.on
+                        ? imageCap.reason
+                        : posesRun
+                          ? "Already blocking the shots out"
+                          : posesShots.length
+                            ? `Block all ${posesShots.length} storyboard shot${
+                                posesShots.length === 1 ? "" : "s"
+                              } out as key poses, on a row of their own`
+                            : "Needs storyboard shots on the timeline"
+                    }
+                  >
+                    {!imageCap.on
+                      ? "🔒 Animatic images"
+                      : posesRun
+                        ? "🖼 Blocking out…"
+                        : "🖼 Animatic images"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn small an-add-text"
@@ -10456,56 +11284,6 @@ export default function AnimaticEditor({
                   title="Add a colour card"
                 >
                   <Icon name="card" /> Colour card
-                </button>
-                {/* ⚠ SPENDS QUOTA — but only through the priced panel it opens,
-                    like ✨ Animate. The lines come from the board this animatic
-                    was made from, timed to the shots that reference them, so
-                    there is nothing to type: that is the whole reason it lives
-                    in here.
-
-                    Plain `btn small`, and deliberately NOT the `.an-add-text` /
-                    `.an-add-card` weight: those two are a pair that makes a clip
-                    out of nothing and costs nothing. This one spends, and
-                    reading as one of them would be a lie about it. */}
-                {voiceCap.visible && (
-                  <button
-                    type="button"
-                    className={`btn small ${voiceCap.on ? "" : "cap-off"}`}
-                    disabled={!voiceCap.on || !hasBoardFrames || serverBusy}
-                    onClick={openVoiceover}
-                    title={
-                      !voiceCap.on
-                        ? voiceCap.reason
-                        : hasBoardFrames
-                          ? "Read the dialogue aloud"
-                          : "Needs board panels"
-                    }
-                  >
-                    {voiceCap.on ? "🎙 Voiceover" : "🔒 Voiceover"}
-                  </button>
-                )}
-                {/* ⚠ SPENDS NOTHING, AND SAYS SO. It sits next to 🎙 Voiceover,
-                    which does spend, so the two must not read alike: this one is
-                    `an-add-director`, weighted with the Text / Colour card pair
-                    it belongs to — the buttons that make something out of
-                    nothing for free.
-
-                    Everything behind it is rules (`agent/house_style.js`); no
-                    model is called and no network request is made. The panel it
-                    opens is a PREVIEW — the timeline is not touched until Run is
-                    pressed in there, and Revert puts it all back afterwards. */}
-                <button
-                  type="button"
-                  className="btn small an-add-director"
-                  disabled={!frames.length}
-                  onClick={openDirector}
-                  title={
-                    frames.length
-                      ? "Cut it for me"
-                      : "Add some pictures first"
-                  }
-                >
-                  🎬 Make Video
                 </button>
               </>
             }
@@ -10589,6 +11367,13 @@ export default function AnimaticEditor({
                       ico: "🖼",
                       label: "Storyboard images",
                       note: "Import a storyboard",
+                    },
+                    {
+                      kind: "board_poses",
+                      row: true,
+                      ico: "🖼",
+                      label: "Animatic images",
+                      note: "Where 🖼 Animatic images key poses go",
                     },
                     {
                       kind: "board_video",
@@ -10688,7 +11473,7 @@ export default function AnimaticEditor({
                never lit up, a bar that did not move. A locked row is the first
                that looks like nothing happening, so it needs the status strip. */
             onNotice={setNotice}
-            onDownloadClip={downloadVeoClip}
+            onDownloadClip={downloadClip}
             /* Right-click a storyboard still → draw the shot missing either side
                of it. Opens the dialog and nothing else; nothing is drawn until
                the button in it is pressed. */
@@ -10722,7 +11507,7 @@ export default function AnimaticEditor({
           the Long workspace's flex column; the Reel workspace places it by name
           (`stat`), so its grid template moved it too. */}
       {(error || notice || exporting || animating || speechRunning ||
-        reframeRunning || reblockJob || imgGenBusy) && (
+        reframeRunning || reblockJob || imgGenBusy || posesRun) && (
         <div className="an-statusbar">
           {error && <span className="an-status-error">{error}</span>}
           {!error && notice && <span className="an-status-note">{notice}</span>}
@@ -10805,6 +11590,35 @@ export default function AnimaticEditor({
                 <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
               </span>
               {reblockProgress?.percent ?? 0}%
+            </span>
+          )}
+          {/* 🖼 ANIMATIC IMAGES. Minutes long and made of many shots, so it says
+              which shot it is on and how far through the WHOLE queue it is - one
+              bar meaning one thing, rather than a bar that restarts every shot.
+              It carries its own Stop for the same reason the board's strip does:
+              a pass you can already see going wrong at shot 2 should not have to
+              be watched to the end. Like the re-block above it, the drawings are
+              the STORYBOARD's, so this animatic stays fully editable while it
+              runs. */}
+          {posesRun && (
+            <span className="an-status-export">
+              <span className="spinner-inline" />
+              Shot {Math.min(posesRun.at + 1, posesRun.total)} of {posesRun.total}
+              {" — "}
+              {posesProgress?.message || "Drawing key poses on the storyboard…"}
+              <span className="an-status-bar">
+                <span style={{ width: `${posesProgress?.percent ?? 0}%` }} />
+              </span>
+              {posesProgress?.percent ?? 0}%
+              <button
+                type="button"
+                className="btn danger-btn small"
+                disabled={!!posesStop.current}
+                title="Stop after the shot being drawn now — everything already drawn is kept"
+                onClick={stopPoses}
+              >
+                {posesStop.current ? "Stopping…" : "⏹ Stop"}
+              </button>
             </span>
           )}
         </div>
@@ -12072,6 +12886,139 @@ export default function AnimaticEditor({
                 {animateBusy
                   ? "Starting…"
                   : `Animate — ~$${animateConfirm.estimate.usd.toFixed(2)}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- 🖼 Animatic images: the price, then the queue ------------------ */}
+      {/* ONE DIALOG, NOT TWO, and that is deliberate. Everywhere else here that
+          spends is "panel, then price" because the panel has choices in it - a
+          voice, a tier, a sentence to write. This one has NO choices: which
+          shots, how long each is and therefore how many drawings each gets are
+          all read off the timeline, which is the whole point of it being one
+          press. So the panel IS the price, and there is nothing to confirm
+          twice. It is `.fv-confirm`, the card every priced step in this app
+          wears. */}
+      {posesOpen && (
+        <div className="modal-overlay" onClick={() => !posesBusy && setPosesOpen(false)}>
+          <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setPosesOpen(false)}
+            >
+              ✕
+            </button>
+            <h2>Animatic images</h2>
+
+            {posesError && <div className="error">{posesError}</div>}
+
+            {!posesShots.length && (
+              <p className="muted">
+                There are no storyboard shots on this timeline to block out. Import
+                a board first — key poses are drawings OF a panel, so there has to
+                be a panel behind them.
+              </p>
+            )}
+
+            {!!posesShots.length && (
+              <>
+                {/* WHAT IT IS, in the animator's own arithmetic - the same
+                    sentence the board's own dialog makes, because it is the
+                    thing that makes the feature make sense: this is not a video
+                    and not every frame, it is what you would pin up to check the
+                    timing works. */}
+                <p className="muted">
+                  Every storyboard shot on the timeline is blocked out as key
+                  poses — {KEY_POSES_PER_SECOND} drawings per second of its own
+                  length — and they land on the{" "}
+                  <strong>{ROW_KIND.board_poses.name}</strong> row, spread across
+                  the shot they came from.
+                </p>
+
+                {posesBusy && !posesPlan && (
+                  <p className="tiny muted">
+                    <span className="spinner-inline" /> Reading what each shot
+                    already has…
+                  </p>
+                )}
+
+                {posesPlan && (
+                  <>
+                    <div className="fv-confirm-price">
+                      <span className="fv-confirm-usd">
+                        {Math.max(0, posesPlan.drawings - posesPlan.already)}
+                      </span>
+                      <span className="tiny muted">images to draw</span>
+                    </div>
+
+                    <p className="muted">
+                      {posesPlan.shots.length} shot
+                      {posesPlan.shots.length === 1 ? "" : "s"} ·{" "}
+                      {posesPlan.drawings} key drawing
+                      {posesPlan.drawings === 1 ? "" : "s"} in all
+                      {posesPlan.already > 0 && (
+                        <>
+                          , of which <strong>{posesPlan.already}</strong> are
+                          already drawn on the storyboard and are not paid for
+                          again
+                        </>
+                      )}
+                      .
+                    </p>
+
+                    {/* SHOT BY SHOT, because the one thing a person wants to
+                        check before spending is that the LENGTHS are right - a
+                        shot cut to 4s buys twice what a 2s shot does, and that is
+                        visible here rather than after the bill. */}
+                    <div className="an-pick-list">
+                      {posesPlan.shots.map((shot) => (
+                        <div key={shot.frameId} className="an-pick-row is-static">
+                          <span className="an-pick-title">{shot.label}</span>
+                          <span className="muted">
+                            {(shot.holdMs / 1000).toFixed(1)}s → {shot.poses}{" "}
+                            drawings
+                            {shot.have > 0 ? ` · ${shot.have} already drawn` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p className="tiny muted">
+                      The drawings are made on the storyboard, one shot at a time,
+                      and this timeline stays editable while they arrive. Nothing
+                      already drawn is drawn again, and you can stop after any
+                      shot without losing what came before it.
+                    </p>
+                  </>
+                )}
+              </>
+            )}
+
+            <div className="an-name-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => setPosesOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={posesBusy || !posesPlan || !posesPlan.shots.length}
+                onClick={runPoses}
+              >
+                {posesBusy
+                  ? "Checking…"
+                  : posesPlan
+                    ? `✨ Generate ${Math.max(
+                        0,
+                        posesPlan.drawings - posesPlan.already
+                      )} images`
+                    : "✨ Generate"}
               </button>
             </div>
           </div>

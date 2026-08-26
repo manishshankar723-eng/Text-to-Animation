@@ -298,3 +298,178 @@
   padding-bottom: 0;
   box-sizing: border-box;
 }
+
+/* --- The offer cards above the plans ----------------------------------------
+   ⚠ THIS IS THE ONLY PLACE A COUPON IS VISIBLE TO A CUSTOMER. A sale reaches
+   somebody as a changed number on a plan card; a coupon changes nothing until it
+   is typed, so a coupon that is not drawn here is a discount only the admin
+   panel knows about. See the header of PricingModal.jsx.
+
+   ⚠ IT IS A TICKET, NOT A BANNER, and the shape is doing work: a banner is
+   something people have learnt to skip, whereas a coupon with a tear-off stub
+   reads as a thing to USE. The stub is a DASHED DIVIDER, not a pair of punched
+   notches — notches were tried as transparent circles in a `radial-gradient`
+   and, with a 1px border running through them, rendered as two white pimples on
+   the edge of the card. A dash of the same colour as the border says "tear here"
+   without fighting the frame. */
+.pricing-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: 0.8rem;
+  margin: 0 0 1.3rem;
+}
+.pricing-offer {
+  position: relative;
+  display: grid;
+  /* ⚠ THE RIGHT COLUMN IS `auto`, NOT A FRACTION. The code chip and its Apply
+     button must never be squeezed by a long label — the label wraps, the action
+     does not. */
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 1rem 1.2rem 0.9rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 14px;
+  /* A gold wash that fades out across the card, over the panel colour — enough
+     to separate an offer from the plan cards below without becoming a second
+     gold slab competing with the featured plan. */
+  background:
+    linear-gradient(100deg, rgba(229, 193, 88, 0.13) 0%, rgba(229, 193, 88, 0) 58%),
+    var(--panel-2);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+/* The gold hairline across the top — the same bar the app uses for a "this is
+   the paid thing" accent, so an offer reads as part of the product, not an ad. */
+.pricing-offer::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--gold-bar);
+}
+.pricing-offer.on {
+  border-color: var(--ok);
+}
+.pricing-offer-flag {
+  grid-column: 1 / -1;
+  justify-self: start;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+  background: var(--gold-fill);
+  padding: 0.15rem 0.5rem;
+  border-radius: 5px;
+}
+.pricing-offer-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.pricing-offer-cut {
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--primary);
+}
+.pricing-offer-name {
+  font-size: 0.94rem;
+  font-weight: 650;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.pricing-offer-scope {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.pricing-offer-side {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  /* The tear-off stub. Dashed, in the border colour, so it reads as a perforation
+     rather than a second frame. */
+  padding-left: 1.1rem;
+  border-left: 1px dashed var(--border-gold);
+  min-height: 2.6rem;
+}
+/* The code, as a tear-off stub. Dashed, monospaced and click-to-copy: a code
+   somebody has to select by hand with a mouse is a code they mistype. */
+.pricing-offer-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px dashed var(--border-gold);
+  border-radius: 8px;
+  background: rgba(229, 193, 88, 0.1);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.pricing-offer-code:hover {
+  background: rgba(229, 193, 88, 0.2);
+  border-color: var(--primary);
+}
+.pricing-offer-code-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.pricing-offer-copy {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* trap 2 — `.btn.primary` carries `margin-top: 1.1rem` for sitting under a
+   form field, and this one sits in a ROW. */
+.pricing-offer-apply {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.pricing-offer-auto {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ok);
+  text-align: right;
+}
+.pricing-offer-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--border);
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.pricing-offer-clock {
+  color: var(--warn);
+  font-weight: 600;
+}
+/* Narrow: the action drops under the copy rather than being crushed beside it. */
+@media (max-width: 560px) {
+  .pricing-offer {
+    grid-template-columns: 1fr;
+  }
+  .pricing-offer-side {
+    justify-content: flex-start;
+    /* Stacked, the perforation runs across rather than down. */
+    padding: 0.7rem 0 0;
+    border-left: 0;
+    border-top: 1px dashed var(--border-gold);
+    min-height: 0;
+  }
+  .pricing-offer-auto {
+    text-align: left;
+  }
+}

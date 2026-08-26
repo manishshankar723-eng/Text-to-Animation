@@ -427,6 +427,14 @@ def list_tiers() -> dict:
     arithmetic decides what somebody is charged; a copy of it in JavaScript is a
     second answer that can disagree with the first, and the one people would
     believe is the one on screen.
+
+    ⚠ `offers` IS THE OTHER HALF OF THE ANSWER, AND WITHOUT IT A COUPON IS
+    INVISIBLE. A sale reaches a customer as a changed number on a card, so it
+    needs no announcement. A COUPON CHANGES NOTHING UNTIL IT IS TYPED — so a
+    coupon nobody is shown is a discount that exists only in the admin panel.
+    This list is what the pricing page prints as offer cards; it carries only the
+    promoted ones (`offers.promoted_offers`), so a code emailed to one customer
+    stays private.
     """
     from . import offers
 
@@ -436,14 +444,32 @@ def list_tiers() -> dict:
             continue
         out.append(_public(t, with_sale=True))
 
-    # The banner above the cards — the first live sale that bothered to write one.
+    promos = offers.promoted_offers()
+
+    # The banner above the cards — the first live offer that bothered to write
+    # one. ⚠ SALES ARE ASKED FIRST, THEN PROMOTED COUPONS. A sale is already
+    # changing every price on the screen, so its own sentence is the one that
+    # explains what the customer is looking at; a coupon's banner is an extra.
     banner = ""
-    for o in offers.all_offers():
-        if not o.get("code") and offers.is_live(o) and o.get("banner"):
+    for want_sale in (True, False):
+        for o in offers.all_offers():
+            if bool(o.get("code")) is want_sale:
+                continue
+            if not o.get("banner") or not offers.is_live(o):
+                continue
+            if not want_sale and not offers.is_promoted(o):
+                continue
             banner = o["banner"]
             break
+        if banner:
+            break
 
-    return {"tiers": out, "currency": config.BILLING_CURRENCY, "banner": banner}
+    return {
+        "tiers": out,
+        "currency": config.BILLING_CURRENCY,
+        "banner": banner,
+        "offers": promos,
+    }
 
 
 def _public(tier: dict, with_sale: bool = False) -> dict:

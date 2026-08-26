@@ -211,6 +211,10 @@ const INCLUDE_LABEL = {
   music: "Background music",
   voiceover: "Voiceover",
   veo: "Veo renders",
+  // ⚠ IT IS CALLED WHAT THE BUTTON IN THE TOOL ROW IS CALLED. This tick box runs
+  // 🖼 Animatic images — the same pass, the same queue, the same row — and a
+  // second name for it ("Key poses", "Flipbook") would read as a second feature.
+  poses: "Animatic images",
 };
 
 export default function DirectorPanel({ run, frames, languages = [], onClose }) {
@@ -222,12 +226,21 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
   const directorCap = useCapability("director");
   const voiceoverCap = useCapability("tts-voiceover");
   const veoCap = useCapability("veo-render");
-  const capFor = { voiceover: voiceoverCap, veo: veoCap };
+  // ⚠ THE SAME CAPABILITY 🖼 ANIMATIC IMAGES IN THE TOOL ROW IS GATED BY, and it
+  // has to be the same one: this box runs that pass, so an account that may not
+  // generate images must not be offered it here as a way round the button.
+  const imageCap = useCapability("image-generate");
+  const capFor = { voiceover: voiceoverCap, veo: veoCap, poses: imageCap };
   const {
     phase, plan, totals, dropped, trimmed, log, index, missingApi,
     source, why, analysis, veo, cost, include, hasModel,
     script, speech, willSpeak, speechWhy,
     shoot, quote, footage, willRender, renderWhy, pending, resuming,
+    // ⚠ RENAMED ON THE WAY IN. `blocking` is already this component's name for
+    // "is phase C2 the thing happening", and the runner's `blocking` is the
+    // PROGRESS object — which survives the phase, exactly as `footage` does, so
+    // the finished sentence is still on screen afterwards. Two meanings, two names.
+    poses, blocking: blockRun, willBlock, blockWhy,
     sfx, music, score, willSfx, willMusic, sfxWhy, musicWhy,
   } = run;
   // ⚠ UN-TICKED, NOT JUST GREYED. A disabled box that is still CHECKED would
@@ -240,7 +253,16 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
   useEffect(() => {
     if (!voiceoverCap.on && include.voiceover !== false) setInclude("voiceover", false);
     if (!veoCap.on && include.veo !== false) setInclude("veo", false);
-  }, [voiceoverCap.on, veoCap.on, include.voiceover, include.veo, setInclude]);
+    if (!imageCap.on && include.poses !== false) setInclude("poses", false);
+  }, [
+    voiceoverCap.on,
+    veoCap.on,
+    imageCap.on,
+    include.voiceover,
+    include.veo,
+    include.poses,
+    setInclude,
+  ]);
 
   // ⚠ `speaking` IS IN FLIGHT BUT NOT STEPPABLE. Phase B is one server call that
   // has already been paid for by the time it starts, so there is nothing honest
@@ -260,7 +282,12 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
   // has finished moving — so it is the one phase where a full step rail sits
   // above a pass that is still working, which is exactly right: the edit IS done.
   const scoring = phase === "scoring";
-  const inFlight = stepping || speaking || rendering || scoring;
+  // ⚠ `blocking` IS IN FLIGHT AND IT SPENDS THE IMAGE QUOTA, but unlike phase C
+  // its Stop is honest between every SHOT rather than every pass: a shot is one
+  // storyboard run, the board's own Stop winds it up, and everything drawn so far
+  // stays on the timeline. See `poses_pass.js`.
+  const blocking = phase === "blocking";
+  const inFlight = stepping || speaking || rendering || blocking || scoring;
   const finished = phase === "done" || phase === "stopped";
   const notes = plan.steps.filter((s) => s.verb === "note");
   const rows = byShot(plan, frames);
@@ -282,6 +309,17 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
         : ((footage?.done || 0) / Math.max(1, footage?.total || 1)) * 100
     )
   );
+  // The same arithmetic for phase C2's rail, and the same fallback: `frac` when
+  // the queue has reported one, whole shots when it has not.
+  const blockPct = Math.max(
+    0,
+    Math.min(
+      100,
+      blockRun && typeof blockRun.frac === "number"
+        ? blockRun.frac * 100
+        : ((blockRun?.done || 0) / Math.max(1, blockRun?.total || 1)) * 100
+    )
+  );
 
   function tryClose() {
     // ⚠ THE ONE PLACE THE ✕ IS NOT IMMEDIATE. See the note at the top: closing
@@ -296,7 +334,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
     // receive them: the attach, the re-anchor, the steps and Revert all hang off
     // their answers. Phase C additionally has passes still to submit, and
     // closing over it would abandon them without stopping them.
-    if (speaking || rendering) {
+    if (speaking || rendering || blocking) {
       setConfirmClose(true);
       return;
     }
@@ -685,7 +723,11 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 voiceover's case, takes the subtitles with it. So they are
                 labelled as what they are. */}
             <div className="dir-include dir-include-paid">
-              <span className="an-exp-label">These two spend</span>
+              {/* ⚠ IT SAID "These two spend" AND THERE ARE THREE OF THEM NOW.
+                  🖼 Animatic images joined the row when it became a 🎬 pass, and a
+                  heading that counts is a heading that goes wrong every time this
+                  list changes — so it stops counting. */}
+              <span className="an-exp-label">These spend</span>
               {paidKeys().map((key) => {
                 // ⚠ THE BOX STAYS ON SCREEN WHEN IT IS LOCKED, un-ticked and
                 // wearing the reason. Removing it would leave a panel that
@@ -722,7 +764,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               {/* ⚠ THE REASON IS PRINTED, NOT ONLY HOVERED. A `title` is
                   invisible on a touchscreen and invisible to anyone who does
                   not think to hover a control they have already been refused. */}
-              {[voiceoverCap, veoCap]
+              {[voiceoverCap, veoCap, imageCap]
                 .filter((c) => c.visible && !c.on)
                 .map((c) => (
                   <span className="tiny muted dir-include-note" key={c.reason}>
@@ -854,6 +896,78 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               </details>
             )}
 
+            {/* ----------------------------------- PHASE C2: the key poses */}
+            {/* ⚠ THE SECOND BOX IN THIS PANEL THAT STARTS UN-TICKED, and the only
+                other one that spends without a dollar figure behind it. It buys
+                FOUR DRAWINGS PER SECOND of film out of the account's image quota —
+                a 32-second animatic is 128 pictures — so the count is on screen
+                before the box is ticked, for exactly the reason the Veo prices
+                are: a number that appears only after you have agreed to it is not
+                a price. `poses` is worked out whether or not the box is on,
+                because a switch has to be able to say what flicking it would do.
+                ⚠ AND THE SHOTS VEO IS TAKING ARE ALREADY OUT OF IT. `poseWork`
+                hands them back — a take sits over the drawings, so blocking those
+                shots out buys pictures nobody sees — and the reason is printed
+                under the list rather than left as a count that quietly shrank. */}
+            {(poses.shots.length > 0 || poses.skipped.length > 0) && (
+              <details className="dir-shoot dir-block" open={willBlock}>
+                <summary>
+                  {willBlock ? "Blocks" : "Would block"} {poses.shots.length} shot
+                  {poses.shots.length === 1 ? "" : "s"} out as animatic images
+                  {poses.toDraw > 0 ? ` — ${poses.toDraw} drawings` : ""}
+                </summary>
+                {/* ⚠ THE ARITHMETIC, SAID ONCE, WHERE THE NUMBERS ARE. Nobody would
+                    guess four-per-second from a table, and it is the whole reason
+                    a 2-second shot costs 8 and a 6-second shot costs 24. */}
+                <p className="tiny muted">
+                  Every storyboard shot on the timeline is drawn as key poses — four
+                  drawings per second of its own length — and they land on the{" "}
+                  <strong>Animatic images</strong> row, spread across the shot they
+                  came from. This runs LAST, after the voiceover and the renders,
+                  because those two change how long a shot holds and the hold is
+                  what decides how many drawings it buys.
+                </p>
+                <ul className="dir-shoot-lines">
+                  {poses.shots.map((row) => (
+                    <li key={row.frameId}>
+                      <span className="dir-script-shot">{row.label}</span>
+                      <span className="dir-shoot-len">
+                        {row.poses} drawings
+                        {row.holdMs > 0 && (
+                          <span className="tiny muted"> over {secs(row.holdMs)}</span>
+                        )}
+                      </span>
+                      <span className="dir-script-text">
+                        {row.have > 0
+                          ? `${row.have} already on the storyboard — not drawn again`
+                          : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {/* ⚠ WHAT IS ALREADY DRAWN IS NOT CHARGED FOR AGAIN, and saying so
+                    is what stops the summary's number looking wrong. The pass
+                    resumes onto the storyboard's own sequence, so a shot blocked
+                    out yesterday costs nothing today — it still goes through the
+                    queue, because the drawings have to be LAID on this timeline. */}
+                {poses.already > 0 && (
+                  <p className="tiny muted">
+                    {poses.drawings} drawings in all, of which{" "}
+                    <strong>{poses.already}</strong> are already on the storyboard and
+                    are not paid for a second time.
+                  </p>
+                )}
+                {poses.skipped.length > 0 && (
+                  <ul className="dir-notes">
+                    {poses.skipped.map((row, i) => (
+                      <li key={i}>{row.why}</li>
+                    ))}
+                  </ul>
+                )}
+                {!willBlock && blockWhy && <p className="tiny muted">{blockWhy}</p>}
+              </details>
+            )}
+
             {/* ------------------------------ PHASES D AND E: the soundtrack */}
             {/* ⚠ THE CUES ARE SHOWN AS THE SEARCH TERMS THEY ARE, not dressed up
                 as sounds. Nobody can audition these before the run — the pass
@@ -964,8 +1078,17 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 verb and still is; phase B is not a verb. A price line that keeps
                 saying "Free" with a paid pass ticked below it is the single
                 worst sentence this dialog could contain. */}
-            <p className={willSpeak || willRender ? "dir-cost dir-cost-spends" : "dir-cost"}>
-              {willSpeak || willRender ? (
+            {/* ⚠ THREE PASSES CAN SPEND NOW, SO THE SENTENCE IS BUILT RATHER THAN
+                WRITTEN. 🖼 Animatic images has no dollar figure — it spends the
+                account's IMAGE quota — so its clause is a count of drawings, and
+                "run"/"runs" and "either"/"any of them" are picked off how many are
+                actually ticked instead of assuming two. */}
+            <p
+              className={
+                willSpeak || willRender || willBlock ? "dir-cost dir-cost-spends" : "dir-cost"
+              }
+            >
+              {willSpeak || willRender || willBlock ? (
                 <>
                   <strong>This one spends.</strong> Every edit in the table is free — the
                   cost is the {[
@@ -976,12 +1099,24 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                       ? `${shoot.shots.length} shot${shoot.shots.length === 1 ? "" : "s"} rendered with Veo` +
                         (quote.total?.usd > 0 ? ` (about $${quote.total.usd.toFixed(2)})` : "")
                       : "",
+                    willBlock
+                      ? `${poses.toDraw} animatic image${poses.toDraw === 1 ? "" : "s"} drawn ` +
+                        `across ${poses.shots.length} shot${poses.shots.length === 1 ? "" : "s"}`
+                      : "",
                   ]
                     .filter(Boolean)
                     .join(" and the ")}
-                  , which {willSpeak && willRender ? "run" : "runs"} before the edit is
-                  applied. Un-tick {willSpeak && willRender ? "either" : "it"} to run the
-                  edit alone.
+                  , which{" "}
+                  {[willSpeak, willRender, willBlock].filter(Boolean).length > 1
+                    ? "run"
+                    : "runs"}{" "}
+                  before the edit is applied. Un-tick{" "}
+                  {[willSpeak, willRender, willBlock].filter(Boolean).length > 2
+                    ? "any of them"
+                    : [willSpeak, willRender, willBlock].filter(Boolean).length > 1
+                      ? "either"
+                      : "it"}{" "}
+                  to run the edit alone.
                 </>
               ) : (
                 <>
@@ -1070,6 +1205,43 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                   <p className="tiny muted">
                     Stopping when this pass lands — it is already paid for, so it is being
                     waited for rather than thrown away.
+                  </p>
+                )}
+              </div>
+            )}
+            {/* ⚠ PHASE C2 GETS ITS OWN LINE AND ITS OWN RAIL, drawn exactly like
+                phase C's above it and for the same reason: a shot here is a whole
+                storyboard run and most of a minute, so a bar shared with the 90ms
+                steps would put the entire wait into a sliver of the width. The
+                rail reads `frac`, which creeps INSIDE a shot as well as between
+                shots (the board's own job reports a percentage); the count beside
+                it stays whole shots, because "2.4 of 7 blocked out" is a number
+                about nothing. */}
+            {(blocking || blockRun) && (
+              <div className={`dir-shootrun dir-shootrun-${blockRun?.stage || "blocking"}`}>
+                <p className="dir-speech">
+                  {blockRun?.message || "Blocking the shots out as key poses…"}
+                </p>
+                {(blockRun?.total || 0) > 0 && (
+                  <>
+                    <div className="dir-rail dir-rail-passes" aria-label="Blocking-out progress">
+                      <div className="dir-rail-fill" style={{ width: `${blockPct}%` }} />
+                    </div>
+                    <p className="dir-progress">
+                      {blockRun.done || 0} of {blockRun.total || 0} shot
+                      {(blockRun.total || 0) === 1 ? "" : "s"} blocked out
+                      {blockRun.detail ? ` — ${blockRun.detail}` : ""}
+                    </p>
+                  </>
+                )}
+                {/* ⚠ SAID WHILE IT IS STILL TRUE, exactly as the render's Stop is.
+                    The shot in flight is one storyboard run that cannot be
+                    un-sent, so it is being finished and its drawings will be laid
+                    down; the shots after it are never asked for. */}
+                {blockRun?.stopping && blockRun.stage === "blocking" && (
+                  <p className="tiny muted">
+                    Stopping after this shot — it is already being drawn, so it is
+                    finished and kept. The shots after it cost nothing.
                   </p>
                 )}
               </div>
@@ -1171,7 +1343,9 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                 ? "The edit starts when the sound has landed."
                 : phase === "rendering"
                   ? "The edit starts when the footage has landed."
-                  : phase === "anchoring"
+                  : phase === "blocking"
+                    ? "The edit starts when the drawings have landed."
+                    : phase === "anchoring"
                     ? "Re-anchoring the edit onto the film that came back…"
                     : scoring
                       ? "The edit is done — laying the sound on the finished film…"
@@ -1272,11 +1446,13 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               <button
                 type="button"
                 className="btn primary"
-                disabled={!edits && !willSpeak && !willRender && !willSfx && !willMusic}
+                disabled={
+                  !edits && !willSpeak && !willRender && !willBlock && !willSfx && !willMusic
+                }
                 onClick={run.start}
               >
                 <Icon name="play" />{" "}
-                {edits || willSpeak || willRender || willSfx || willMusic
+                {edits || willSpeak || willRender || willBlock || willSfx || willMusic
                   ? [
                       edits ? `Run this plan · ${edits} edit${edits === 1 ? "" : "s"}` : "Run this plan",
                       // ⚠ THE SPEND IS ON THE BUTTON ITSELF, IN MONEY WHERE THERE
@@ -1289,6 +1465,14 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                         ? quote.total?.usd > 0
                           ? `$${quote.total.usd.toFixed(2)} of footage`
                           : `${shoot.shots.length} rendered`
+                        : "",
+                      // ⚠ A COUNT OF DRAWINGS, NEVER A PRICE, because there is no
+                      // dollar figure to give: this pass spends the account's image
+                      // quota. `toDraw` and not `drawings` — what the storyboard
+                      // already has is not charged for again, and a button quoting
+                      // the bigger number would be quoting a bill nobody is sent.
+                      willBlock
+                        ? `${poses.toDraw} animatic image${poses.toDraw === 1 ? "" : "s"}`
                         : "",
                       // ⚠ A COUNT, NEVER A PRICE. The two segments above are
                       // about money; these two are about work that costs none, so
@@ -1339,6 +1523,24 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
               title="The pass in flight is already paid for and will be waited for"
             >
               {footage?.stopping ? "Stopping after this pass…" : "Stop after this pass"}
+            </button>
+          )}
+
+          {/* ⚠ PHASE C2's ONE CONTROL, AND IT IS PER SHOT RATHER THAN PER PASS.
+              That is the honest difference between this and the render's Stop: a
+              shot here is a single storyboard run, so stopping saves every shot
+              after it rather than every submission after it — and everything
+              already drawn stays on the timeline, exactly as the 🖼 button's own
+              ⏹ Stop promises. */}
+          {phase === "blocking" && (
+            <button
+              type="button"
+              className="btn small dir-danger"
+              disabled={Boolean(blockRun?.stopping)}
+              onClick={run.stop}
+              title="The shot being drawn now is finished and kept — the rest are never asked for"
+            >
+              {blockRun?.stopping ? "Stopping after this shot…" : "Stop after this shot"}
             </button>
           )}
 

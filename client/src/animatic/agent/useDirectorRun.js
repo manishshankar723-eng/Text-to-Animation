@@ -157,6 +157,7 @@ import {
   veoDue,
   veoShots,
 } from "./veo_pass.js";
+import { poseTally, poseWork, posesDue } from "./poses_pass.js";
 
 /**
  * How long between steps.
@@ -183,6 +184,9 @@ const NO_QUOTE = { batch: 0, passes: [], total: NO_COST };
 
 /** Nothing cued, and the shape `sfxCues` returns. */
 const NO_SFX = { cues: [], sounds: [], skipped: [] };
+
+/** Nothing to block out, and the shape `poseWork` + `poseTally` come back as. */
+const NO_POSES = { shots: [], skipped: [], count: 0, drawings: 0, already: 0, toDraw: 0 };
 
 /**
  * THE FILM AS THE DIRECTOR COUNTS IT, out of anything the server hands back.
@@ -272,6 +276,21 @@ export default function useDirectorRun({
   //                     the whole soundtrack back as one thing.
   buildSoundtrack,
   placeSoundtrack,
+  // ⚠ PHASE C2, AND BOTH ARE OPTIONAL FOR THE SAME REASON EVERYTHING ELSE HERE
+  // IS. Handed neither, nothing is blocked out and the tick box says why —
+  // `tests/director_guardrails_check.py` and the whole rules-only path supply
+  // neither of them.
+  //
+  //   `readPoses`  FREE. Which shots on this timeline are board panels, how many
+  //                key drawings each one's length is worth, and how many of those
+  //                the storyboard ALREADY has — so the panel can say what the
+  //                pass would cost before it is ticked. One read per shot, and
+  //                reading costs nothing.
+  //   `blockPoses` SPENDS THE IMAGE QUOTA. The editor's own 🖼 queue, unforked:
+  //                one shot drawn on the storyboard at a time, each run laid
+  //                across its shot the moment it lands. See `blockOutPoses`.
+  readPoses,
+  blockPoses,
 }) {
   const [phase, setPhase] = useState("closed");
   // ⚠ AND AS A REF, for `stop` alone. Stop means two different things depending
@@ -351,6 +370,20 @@ export default function useDirectorRun({
   // The shots as the RUN resolved them, which is not always what the preview
   // priced: phase B can stretch a shot up a size. See `resolveShoot`.
   const shootRef = useRef([]);
+
+  // ------------------------------------------------------------ phase C2
+  // WHAT 🖼 ANIMATIC IMAGES WOULD BUY. Worked out at PREVIEW time like the
+  // script and the quote, and for the same reason: the Run button has to be able
+  // to say "· 128 animatic images" before it is pressed.
+  const [poses, setPoses] = useState(NO_POSES);
+  // ⚠ THE RAW SHOT LIST, READ ONCE PER PLAN AND KEPT. `readPoses` is a save plus
+  // one server read per shot; a tick box that re-ran it would make un-ticking
+  // Effects cost a round trip per shot, and the whole promise of the include
+  // column is that re-costing is instant and free. What a tick box changes here
+  // is only WHICH of these shots survive — pure arithmetic, see `resolvePoses`.
+  const posesRawRef = useRef([]);
+  // What phase C2 is doing, while it does it: `{ stage, message, done, total }`.
+  const [blocking, setBlocking] = useState(null);
 
   // --------------------------------------------------------- phases D and E
   // WHAT THE FILM SHOULD SOUND LIKE, read off the analyse call that already ran.
@@ -572,16 +605,77 @@ export default function useDirectorRun({
       setShoot({ shots: priced, skipped: next.skipped });
       if (!quoteVeo || !priced.length) {
         setQuote(NO_QUOTE);
-        return;
+        // ⚠ RETURNED AS WELL AS SET, because phase C2 depends on it: a shot this
+        // run is about to render with Veo must not also be blocked out as key
+        // poses (the take sits over the drawings), and reading that off the
+        // `shoot` STATE would read the list from before this call. Same reason
+        // `loadScript` returns its script.
+        return priced;
       }
       try {
         setQuote(await quoteVeo({ shots: priced, render: veoRender }));
       } catch {
         setQuote(NO_QUOTE);
       }
+      return priced;
     },
     [quoteVeo, readCtx, veoRender]
   );
+
+  /**
+   * WHICH SHOTS PHASE C2 COULD BLOCK OUT, AND WHAT THAT COSTS. One save and one
+   * read per shot, and reading costs nothing at all.
+   *
+   * ⚠ ASKED FOR ONCE PER PLAN, and asked for even when the box is un-ticked,
+   * because the tick box has to be able to say what ticking it would DO. It is
+   * the second most expensive box in this panel and it is the other one that
+   * starts un-ticked; a count that appears only after you have agreed to spend
+   * it is not a price.
+   *
+   * ⚠ AND A FAILURE HERE IS NOT AN ERROR. No list means the pass is not due,
+   * `posesDue` says why under the box, and the plan still runs — exactly the
+   * contract `loadScript` and `loadShoot` keep.
+   */
+  const loadPoses = useCallback(async () => {
+    if (!readPoses) {
+      posesRawRef.current = [];
+      return [];
+    }
+    try {
+      posesRawRef.current = (await readPoses()) || [];
+    } catch {
+      posesRawRef.current = [];
+    }
+    return posesRawRef.current;
+  }, [readPoses]);
+
+  /**
+   * THE SAME LIST, MINUS THE SHOTS VEO IS TAKING. Pure, instant, and free —
+   * which is what lets a tick box re-cost it.
+   *
+   * ⚠ IT DROPS THE OVERLAP IN BOTH DIRECTIONS: a shot that ALREADY has a paid
+   * take (the user animated it by hand, or a previous 🎬 run did) and a shot
+   * THIS run is about to render. Key poses drawn under a take are drawings nobody
+   * will ever see — `board_video` sits above `board_poses` — bought out of the
+   * image quota on a run that also paid for the footage. See `poseWork`.
+   */
+  const resolvePoses = useCallback((shootShots, nextInclude) => {
+    const covered = new Set(
+      (veoClipsRef.current || [])
+        .filter((c) => c && c.status === "ready" && c.upload_id && c.frame_id)
+        .map((c) => c.frame_id)
+    );
+    // ⚠ ONLY WHEN THE RENDER IS ACTUALLY GOING TO HAPPEN. Un-ticking Veo hands
+    // those shots back to this pass, and the count on the button has to move with
+    // it or the preview is not a preview.
+    if (!nextInclude || nextInclude.veo !== false) {
+      for (const row of shootShots || []) if (row && row.frame_id) covered.add(row.frame_id);
+    }
+    const work = poseWork({ shots: posesRawRef.current, rendered: covered });
+    const next = { ...work, ...poseTally(work.shots) };
+    setPoses(next);
+    return next;
+  }, []);
 
   /**
    * ⚠ THE HOUSE PLANNER IS RE-RUN, THE MODEL'S PLAN IS RE-READ, and the
@@ -604,10 +698,17 @@ export default function useDirectorRun({
       // it; with the sound off, nothing will, and those shots drop back to what
       // their holds actually ask for. The price on screen has to move when the
       // box that changes it moves, or the preview is not a preview.
-      loadShoot(veoRef.current, spokenOver(nextInclude, scriptRef.current));
+      // ⚠ AND IT RE-RESOLVES PHASE C2 OFF THE SAME ANSWER, for the same kind of
+      // reason one flag over: un-ticking Veo hands its shots back to 🖼 Animatic
+      // images, and the count on the Run button has to move when the box that
+      // changes it moves. No network — `posesRawRef` was read once, when the plan
+      // was made, and this is arithmetic over it.
+      loadShoot(veoRef.current, spokenOver(nextInclude, scriptRef.current)).then((priced) =>
+        resolvePoses(priced, nextInclude)
+      );
       return adopt(raw, nextInclude);
     },
-    [adopt, loadShoot, readCtx, spokenOver]
+    [adopt, loadShoot, readCtx, resolvePoses, spokenOver]
   );
 
   const setInclude = useCallback(
@@ -649,6 +750,13 @@ export default function useDirectorRun({
       // `sfxDue` and `musicDue` then say so under the two tick boxes rather than
       // leaving them looking like switches that do nothing.
       loadCues(null);
+      // ⚠ AND PHASE C2 NEEDS NO PLANNER AT ALL, which is why it works identically
+      // on this door and on the AI one. What to block out is not a story
+      // decision: it is every board shot on the timeline, four drawings per
+      // second of its own length. Arithmetic is the whole input, so "Just the
+      // rhythm" can offer it in full.
+      setPoses(NO_POSES);
+      posesRawRef.current = [];
       loadScript(null).then(async (next) => {
         let said = [];
         if (readPanels) {
@@ -662,11 +770,24 @@ export default function useDirectorRun({
         const prompts = housePrompts(readCtx().frames || [], said);
         veoRef.current = prompts;
         setVeo(prompts);
-        loadShoot(prompts, spokenOver(nextInclude, next));
+        const priced = await loadShoot(prompts, spokenOver(nextInclude, next));
+        await loadPoses();
+        resolvePoses(priced, nextInclude);
       });
       return out;
     },
-    [adopt, include, loadCues, loadScript, loadShoot, readCtx, readPanels, spokenOver]
+    [
+      adopt,
+      include,
+      loadCues,
+      loadPoses,
+      loadScript,
+      loadShoot,
+      readCtx,
+      readPanels,
+      resolvePoses,
+      spokenOver,
+    ]
   );
 
   /**
@@ -729,9 +850,13 @@ export default function useDirectorRun({
         // Nothing is fetched here; these are search terms on a plan the user
         // reads before pressing anything.
         loadCues(answer.analysis || null);
-        loadScript(answer.analysis || null).then((next) =>
-          loadShoot(veoRef.current, spokenOver(nextInclude, next))
-        );
+        setPoses(NO_POSES);
+        posesRawRef.current = [];
+        loadScript(answer.analysis || null).then(async (next) => {
+          const priced = await loadShoot(veoRef.current, spokenOver(nextInclude, next));
+          await loadPoses();
+          resolvePoses(priced, nextInclude);
+        });
         return out;
       } catch (err) {
         const out = buildHousePlan({ include: nextInclude });
@@ -746,9 +871,11 @@ export default function useDirectorRun({
       buildHousePlan,
       include,
       loadCues,
+      loadPoses,
       loadScript,
       loadShoot,
       readCtx,
+      resolvePoses,
       spokenOver,
       tongue,
     ]
@@ -794,6 +921,9 @@ export default function useDirectorRun({
     setShoot(NO_SHOOT);
     setQuote(NO_QUOTE);
     setFootage(null);
+    setPoses(NO_POSES);
+    posesRawRef.current = [];
+    setBlocking(null);
     setPhase("brief");
   }, []);
 
@@ -815,6 +945,20 @@ export default function useDirectorRun({
   // only by accident, and only until someone makes the tick box live mid-run.
   const willRenderRef = useRef(false);
   willRenderRef.current = willRender;
+  /**
+   * ⚠ PHASE C2, AND THE SAME CONTRACT AGAIN: A REASON, NOT A FLAG.
+   *
+   * `poses.shots` is what is LEFT after the shots Veo is taking have been handed
+   * back — see `resolvePoses` — so ticking both boxes on a film where Veo covers
+   * every shot leaves this one with nothing to do, and `posesDue` says exactly
+   * that under the box rather than letting it sit ticked and silent.
+   */
+  const poseLot = posesDue(include, poses.shots);
+  const willBlock = Boolean(blockPoses) && poseLot.due;
+  // As a ref, for the reason written over `willRenderRef`: two effects decide
+  // where to go next from inside promise chains that started minutes ago.
+  const willBlockRef = useRef(false);
+  willBlockRef.current = willBlock;
 
   /**
    * ⚠ PHASES D AND E, AND THE SAME CONTRACT: A REASON, NOT A FLAG.
@@ -841,7 +985,7 @@ export default function useDirectorRun({
   willScoreRef.current = willScore;
 
   const start = useCallback(() => {
-    if (!plan.steps.length && !willSpeak && !willRender && !willScore) return;
+    if (!plan.steps.length && !willSpeak && !willRender && !willBlock && !willScore) return;
     // ⚠ THE SNAPSHOT IS TAKEN HERE, not when the panel opened. Between opening
     // the preview and pressing Run the user can still edit — and reverting to
     // the document as it was before they did would throw away work the Director
@@ -868,14 +1012,20 @@ export default function useDirectorRun({
     setIndex(0);
     setSpeech(null);
     setFootage(null);
+    setBlocking(null);
     setScore(null);
     spokeRef.current = false;
     // ⚠ THE PAID PASSES FIRST, ALWAYS, AND B BEFORE C. See the header for why
     // neither may follow the steps and why C may not precede B. The SOUND passes
     // are the other way round — they go last, after the steps have finished
     // moving the shots their cues have to land on. See `sound_pass.js`.
-    setPhase(willSpeak ? "speaking" : willRender ? "rendering" : "running");
-  }, [plan, docRef, readCtx, shoot, willSpeak, willRender, willScore]);
+    // ⚠ AND C2 IS LAST OF THE THREE, NEVER FIRST. How many drawings a shot buys
+    // is four per second of the length it ends up holding, and both passes above
+    // rewrite the lengths — see the header of `poses_pass.js`.
+    setPhase(
+      willSpeak ? "speaking" : willRender ? "rendering" : willBlock ? "blocking" : "running"
+    );
+  }, [plan, docRef, readCtx, shoot, poses, willSpeak, willRender, willBlock, willScore]);
 
   const pause = useCallback(() => {
     clearTimer();
@@ -903,6 +1053,24 @@ export default function useDirectorRun({
         onNotice(
           "Stopping after this pass. The renders already submitted are paid for either " +
             "way, so they are being waited for rather than thrown away."
+        );
+      }
+      return;
+    }
+    // ⚠ MID-BLOCKING, STOP IS A REQUEST TOO, AND THE PROMISE IS THE BOARD'S OWN.
+    // The drawing in flight is one storyboard run: it cannot be un-sent, so it is
+    // finished, its poses are laid on their shot, and the queue stops there —
+    // everything drawn so far is kept, which is exactly what the 🖼 button's own
+    // Stop promises. The shots never asked for cost nothing.
+    if (phaseRef.current === "blocking") {
+      stopRef.current = true;
+      setBlocking((was) =>
+        was ? { ...was, stopping: true } : { stage: "blocking", stopping: true }
+      );
+      if (onNotice) {
+        onNotice(
+          "Stopping after the shot being drawn now. Everything already drawn is kept, " +
+            "and the shots that were never asked for cost nothing."
         );
       }
       return;
@@ -948,8 +1116,8 @@ export default function useDirectorRun({
       onNotice(
         spentRef.current
           ? "Reverted — the timeline is exactly as it was before the Director ran. " +
-              "What was paid for is still paid for: running again reads the dialogue " +
-              "and renders the footage a second time."
+              "What was paid for is still paid for: running again reads the dialogue, " +
+              "renders the footage and draws the key poses a second time."
           : "Reverted — the timeline is exactly as it was before the Director ran."
       );
     }
@@ -1117,7 +1285,13 @@ export default function useDirectorRun({
       // re-ask the rules planner against a film phase C is about to change again,
       // and re-validate the model's steps against a document that is one pass
       // stale. One pass of arithmetic over both is the whole point of the phase.
-      setPhase(willRenderRef.current ? "rendering" : "anchoring");
+      setPhase(
+        willRenderRef.current
+          ? "rendering"
+          : willBlockRef.current
+            ? "blocking"
+            : "anchoring"
+      );
     })();
 
     return () => {
@@ -1166,7 +1340,9 @@ export default function useDirectorRun({
           stage: "done",
           message: "Every shot with a motion prompt already has a take — nothing was rendered.",
         });
-        setPhase(resumingRef.current ? "done" : "anchoring");
+        setPhase(
+          resumingRef.current ? "done" : willBlockRef.current ? "blocking" : "anchoring"
+        );
         return;
       }
 
@@ -1187,7 +1363,9 @@ export default function useDirectorRun({
             `The render pass could not be opened (${err?.message || "the server did not answer"}), ` +
             "so nothing was submitted. Nothing has been spent.",
         });
-        setPhase(resumingRef.current ? "done" : "anchoring");
+        setPhase(
+          resumingRef.current ? "done" : willBlockRef.current ? "blocking" : "anchoring"
+        );
         return;
       }
 
@@ -1327,7 +1505,171 @@ export default function useDirectorRun({
                 "The edit itself was never saved, so 🎬 has to be asked for it again."
         );
       }
-      setPhase(resumingRef.current ? "done" : "anchoring");
+      setPhase(
+          resumingRef.current ? "done" : willBlockRef.current ? "blocking" : "anchoring"
+        );
+    })();
+
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // ------------------------------------------------------------- PHASE C2
+  /**
+   * THE FLIPBOOK. 🖼 Animatic images, run over every board shot at once.
+   *
+   * ⚠ ONE EFFECT, KEYED ON THE PHASE ALONE — the same rule phases B and C follow,
+   * and here for the same reason as C: an effect that restarted on something its
+   * own queue writes would tear the queue down mid-shot, leaving drawings paid
+   * for on the storyboard and nothing on this timeline holding them.
+   *
+   * ⚠ IT RE-RESOLVES BEFORE IT SPENDS, AGAINST THE FILM PHASES B AND C LEFT
+   * BEHIND. Both rewrite the holds, and four-drawings-per-second of a hold that
+   * has changed is a different number — which is the entire reason this pass runs
+   * last. `readPoses` is asked again rather than trusted from the preview, so the
+   * shot stretched to 9.3s by its voiceover buys the drawings it now needs
+   * instead of the eight it needed when the panel was drawn.
+   *
+   * ⚠ AND THE QUEUE IS THE EDITOR'S OWN, UNFORKED. `blockPoses` is
+   * `blockOutPoses` — the same function the 🖼 button in the tool row calls — so
+   * every rule written for it governs this for free: one shot at a time because a
+   * board can only draw one, each run laid across its shot the moment it lands, a
+   * shot that fails leaving the rest of the queue alone, and a Stop that keeps
+   * everything drawn so far.
+   */
+  useEffect(() => {
+    if (phase !== "blocking") return undefined;
+    let alive = true;
+
+    (async () => {
+      // ⚠ A STOP PRESSED DURING THE RENDER STOPS THIS PASS TOO, AND BEFORE IT
+      // STARTS. `stopRef` is the run's one hard stop and it is not cleared between
+      // phases, which is right: somebody who pressed "Stop after this pass" while
+      // money was moving meant the SPENDING to stop, not just that one submission.
+      // Caught here rather than one line into the queue, because starting the
+      // queue and immediately stopping it would still reach the storyboard with a
+      // stop request and still say "0 of 7 shots blocked out" on the rail.
+      if (stopRef.current) {
+        setBlocking({
+          stage: "stopped",
+          message:
+            "Skipped — you stopped the run while it was spending, so the shots were " +
+            "never blocked out. Nothing was drawn and nothing was charged for.",
+        });
+        setPhase("anchoring");
+        return;
+      }
+
+      // ⚠ RE-READ, NOT TAKEN FROM THE PREVIEW. See the note above — and this is
+      // also the only way a shot Veo just rendered gets handed the right answer:
+      // its take is on the server now, so `resolvePoses` drops it by name.
+      const fresh = await loadPoses();
+      const paid = new Set(
+        (veoClipsRef.current || [])
+          .filter((c) => c && c.status === "ready" && c.upload_id && c.frame_id)
+          .map((c) => c.frame_id)
+      );
+      const work = poseWork({ shots: fresh, rendered: paid });
+      const tally = poseTally(work.shots);
+      if (!alive) return;
+      setPoses({ ...work, ...tally });
+
+      if (!work.shots.length) {
+        setBlocking({
+          stage: "done",
+          message:
+            "There was nothing left to block out — every board shot on the timeline " +
+            "already carries a rendered take.",
+        });
+        setPhase("anchoring");
+        return;
+      }
+
+      setBlocking({
+        stage: "blocking",
+        done: 0,
+        total: work.shots.length,
+        frac: 0,
+        images: tally.toDraw,
+        message:
+          `Blocking ${work.shots.length} shot${work.shots.length === 1 ? "" : "s"} out as ` +
+          `key poses — ${tally.toDraw} drawing${tally.toDraw === 1 ? "" : "s"} on the ` +
+          "storyboard, one shot at a time.",
+      });
+
+      let result = null;
+      let failed = "";
+      try {
+        result = await blockPoses({
+          shots: work.shots,
+          // ⚠ THE STOP IS READ BETWEEN SHOTS, and unlike phase C that is honest
+          // rather than a compromise: a shot in flight is one storyboard run, the
+          // board's own Stop ends it, and everything already drawn is kept. See
+          // `stopPoses`.
+          shouldStop: () => stopRef.current,
+          onProgress: (info) =>
+            setBlocking((was) => {
+              if (!was) return was;
+              const total = was.total || work.shots.length;
+              const landed = Math.min(total, Number(info && info.done) || 0);
+              const within = Math.max(0, Math.min(100, Number(info && info.percent) || 0)) / 100;
+              return {
+                ...was,
+                detail: (info && info.message) || "",
+                done: landed,
+                // The bar creeps INSIDE a shot as well as between shots, for the
+                // reason the render rail carries `frac`: a queue of three shots
+                // that each take a minute is a bar that would otherwise move
+                // three times in three minutes.
+                frac: total ? Math.min(1, (landed + within) / total) : 0,
+              };
+            }),
+        });
+      } catch (err) {
+        failed = err?.message || "the drawings could not be reached";
+      }
+      // ⚠ THE EDITOR HAS GONE. `blockOutPoses` says so rather than throwing, and
+      // the queue carries on drawing on the STORYBOARD, which is right: those
+      // drawings are paid for and the next pass resumes onto them. There is
+      // nothing left here to report to.
+      if (!alive || (result && result.gone)) return;
+
+      const drawn = Number(result && result.drawn) || 0;
+      const shotsDone = Number(result && result.shots) || 0;
+      const lost = Number(result && result.failed) || 0;
+      const stopped = Boolean(result && result.stopped);
+      if (drawn > 0) {
+        // ⚠ SET ONLY WHEN SOMETHING ACTUALLY LANDED. From this moment the notices
+        // stop saying "nothing was spent", and Revert stops being able to claim it
+        // puts everything back — it puts the TIMELINE back; the images are drawn.
+        spentRef.current = true;
+        setCanRevert(true);
+      }
+      const left = work.shots.length - shotsDone;
+      setBlocking({
+        stage: failed ? "failed" : stopped ? "stopped" : "done",
+        done: shotsDone,
+        total: work.shots.length,
+        frac: work.shots.length ? shotsDone / work.shots.length : 0,
+        images: drawn,
+        message: failed
+          ? `The blocking-out stopped (${failed}). ${drawn} drawing${drawn === 1 ? "" : "s"} ` +
+            `across ${shotsDone} shot${shotsDone === 1 ? "" : "s"} are on the timeline; ` +
+            `${left} shot${left === 1 ? " was" : "s were"} never asked for, so ` +
+            `${left === 1 ? "it" : "they"} cost nothing.`
+          : stopped
+            ? `Stopped after ${shotsDone} shot${shotsDone === 1 ? "" : "s"}. ` +
+              `${drawn} drawing${drawn === 1 ? "" : "s"} are on the timeline; the remaining ` +
+              `${left} shot${left === 1 ? "" : "s"} were never asked for and cost nothing. ` +
+              "Reopen 🎬, or press 🖼, to finish them."
+            : `${drawn} animatic image${drawn === 1 ? "" : "s"} across ${shotsDone} shot` +
+              `${shotsDone === 1 ? "" : "s"} — on their own row, each shot's drawings spread ` +
+              "across that shot." +
+              (lost ? ` ${lost} shot${lost === 1 ? "" : "s"} could not be drawn.` : ""),
+      });
+      setPhase("anchoring");
     })();
 
     return () => {
@@ -1456,7 +1798,7 @@ export default function useDirectorRun({
                 "The edit itself was never saved, so 🎬 has to be asked for it again."
             : spentRef.current
               ? `The Director spent on this film and made ${edits} edits around what it bought. ` +
-                  "Revert puts the timeline back — the voiceover and the renders have been paid for."
+                  "Revert puts the timeline back — what it bought has been paid for."
               : `The Director made ${edits} edits. Nothing was spent — Revert puts it all back.`
         );
       }
@@ -1703,6 +2045,20 @@ export default function useDirectorRun({
     willRender,
     /** Why it will not, when it will not — printed verbatim under the tick box. */
     renderWhy: shootDue.why,
+    // ------------------------------------------------------------ phase C2
+    /**
+     * `{ shots, skipped, drawings, already, toDraw }` — what 🖼 Animatic images
+     * would block out, what it would cost in drawings, and which shots were
+     * handed back to Veo. `toDraw` is the only one of those numbers that is
+     * SPENT; see `poseTally`.
+     */
+    poses,
+    /** `{ stage, message, done, total, frac, … }` while C2 runs, else null. */
+    blocking,
+    /** Will pressing Run block the film out? The button's label reads this. */
+    willBlock,
+    /** Why it will not, when it will not — printed verbatim under the tick box. */
+    blockWhy: poseLot.why,
     // -------------------------------------------------------- phases D and E
     /** `{ cues, sounds, skipped }` — every sound effect this run would lay down. */
     sfx,

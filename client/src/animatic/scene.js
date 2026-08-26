@@ -613,7 +613,14 @@ export function frameOrigin(frame) {
  * the render row show the board again underneath) and footage you dropped in
  * draws over both.
  */
-export const ROW_KINDS = ["board_image", "board_video", "video"];
+// ⚠ `board_poses` IS THE KEY-POSE ROW — "Animatic images" — and it sits BETWEEN
+// the board's stills and its Veo renders on purpose. A key pose is a drawing OF
+// the panel underneath it, so it must draw OVER that panel (👁 on this row shows
+// the plain board again, exactly as it does for the render row); and a Veo take
+// of the same shot is the finished thing, so it draws over both. Asked for as
+// "ek buttun banao make video buttun ke side mai … uska name Animatis images
+// rakho … so generet ho kar Animatic image ke layer mai aa jaye".
+export const ROW_KINDS = ["board_image", "board_poses", "board_video", "video"];
 
 /** Is this a row that holds clips from `frames` — as opposed to text/shape/audio? */
 export const isCutRow = (kind) => ROW_KINDS.includes(kind);
@@ -654,6 +661,7 @@ export const rowKindOrLegacy = (kind) =>
  */
 export const ROW_TAKES = {
   board_image: [],
+  board_poses: [],
   board_video: [],
   video: ["video", "image"],
 };
@@ -679,7 +687,15 @@ export const ROW_TAKES = {
  * you can DO next; it is not a rule that rejects work already done.
  */
 export function clipRowKind(frame) {
-  return cardRowKind(clipKind(frame), !!frame?.src?.storyboard_id);
+  return cardRowKind(
+    clipKind(frame),
+    !!frame?.src?.storyboard_id,
+    // ⚠ THE THIRD QUESTION IS "IS IT A KEY POSE?", and like the other two it is
+    // already on the clip: `src.kind === "pose"` is what `_frames_from_board`
+    // and the ✨ Animatic images pass both write, and nothing else carries it.
+    // So the poses row needs no new field and no migration either.
+    frame?.src?.kind === "pose"
+  );
 }
 
 /**
@@ -703,9 +719,13 @@ export function clipRowKind(frame) {
  *                  clip or a card; the `application/x-anim-board` marker on a
  *                  drag, which is all a lane can read during `dragover`)
  */
-export function cardRowKind(kind, fromBoard) {
+export function cardRowKind(kind, fromBoard, pose = false) {
   const video = clipKind({ kind }) === "video";
-  if (fromBoard) return video ? "board_video" : "board_image";
+  // ⚠ A POSE ONLY COUNTS WHILE IT IS STILL A DRAWING. Animate one with Veo and
+  // `attachVeoClip` keeps the whole `src` underneath the video source, so the
+  // take would still answer "pose" — and a take belongs on the render row with
+  // every other take. Video is therefore tested first.
+  if (fromBoard) return video ? "board_video" : pose ? "board_poses" : "board_image";
   // ⚠ A PLAIN PICTURE ANSWERS "video" NOW, and that is not a mistake: this
   // question is "which row in the CUT does this clip sit on", and since the
   // Stills row went there is only one row left that is neither the board's nor
@@ -739,7 +759,9 @@ export const belongsOnImageLane = (kind, fromBoard) =>
 
 /** Is this one of the two rows the storyboard owns? */
 export const isBoardRow = (rowKind) =>
-  rowKind === "board_image" || rowKind === "board_video";
+  rowKind === "board_image" ||
+  rowKind === "board_poses" ||
+  rowKind === "board_video";
 
 /**
  * IS THIS A VEO RENDER? — asked of a CLIP or of a MEDIA-LIBRARY CARD alike.
@@ -765,6 +787,47 @@ export const isBoardRow = (rowKind) =>
 export function isVeoRender(item) {
   if (!item) return false;
   return cardRowKind(item.kind || "image", !!item.src?.storyboard_id) === "board_video";
+}
+
+/**
+ * DID THIS APP MAKE IT? — the ⬇ gate, asked of a CLIP or of a MEDIA-LIBRARY CARD
+ * alike, exactly as `isVeoRender` is.
+ *
+ * ⚠ THE QUESTION IS "IS IT GENERATED", NOT "ARE THERE BYTES". Those are two
+ * different rules and this has now been both. It began as `isVeoRender` — a Veo
+ * render was the only thing this editor MADE, so it was the only thing worth
+ * saving out. ✨ Animatic images broke that: a key pose costs an image credit
+ * and had no way out of the Media pane ("media panel mai generted iamge nhi dikh
+ * rah ahai aur dikhe to download kar sakta hun veo video jaisa hi fuction"). The
+ * fix over-corrected to "anything with a file behind it", which put a ⬇ on the
+ * user's own uploads — files already sitting on their machine — and was sent
+ * straight back: "only generated cheezon par dikhe ye ⬇ icone".
+ *
+ * ⚠ SO THE LINE IS THE BOARD REFERENCE, and it is exact rather than
+ * approximate. `src.storyboard_id` is carried by every picture this app drew and
+ * by nothing a person dropped in: a panel, one key pose of a panel, a Veo take
+ * of either (`attachVeoClip` keeps the board reference underneath the video
+ * source — which is also why the renders keep the ⬇ they have always had), and a
+ * shot generated into the board's row, which has no panel index and carries the
+ * board anyway for exactly this kind of question. An upload, a dropped MP4, a
+ * colour card and an audio file all answer no, and all four are things the user
+ * already has.
+ *
+ * ⚠ IT IS NOT `isBoardAsset`, though it reads like it. That one asks "which ROW
+ * may a drag of this land on" and is derived from `assetOrigin`; this one asks
+ * "may this be saved". They agree today and there is no reason they must — a
+ * generated picture that never touched a storyboard would belong to this one and
+ * not to that one.
+ *
+ * @param item a picture clip from `frames`, or an asset from the Media library.
+ */
+export function isSavable(item) {
+  if (!item) return false;
+  // ⚠ EXPLICIT, THOUGH A COLOUR CARD COULD NOT CARRY A BOARD REFERENCE ANYWAY:
+  // there are no bytes behind one — it is a hex value the renderers fill a
+  // rectangle with — so a ⬇ on one could only ever fail, whatever else changes.
+  if ((item.kind || "image") === "color") return false;
+  return Boolean(item.src?.storyboard_id);
 }
 
 /**
@@ -994,6 +1057,225 @@ export function stackAt(spans, t) {
     }
   }
   return [...byTrack.keys()].sort((a, b) => a - b).map((track) => byTrack.get(track));
+}
+
+/**
+ * ONE SHOT'S KEY POSES, DIVIDED ACROSS THAT SHOT'S OWN SPAN.
+ *
+ * ✨ Animatic images asks the board to block a shot out at 2/4/6/8/10 seconds —
+ * the only lengths the pose planner accepts — and gets back a run of drawings.
+ * This is where those drawings become CLIPS: laid end to end from where the shot
+ * starts to where the shot ends, so the flipbook plays over its own shot and
+ * nothing either side of it has to move.
+ *
+ * ⚠ THE SPAN IS THE CLIP'S, NOT THE RUNG THE PLANNER WAS ASKED FOR. A shot cut
+ * to 3.2s is blocked out as 4s because that is the nearest rung, and its sixteen
+ * drawings still divide 3.2 seconds — what has to line up on screen is the poses
+ * and the shot underneath them: "har shot ke uper uska lenth ke hisab se".
+ *
+ * ⚠ EVERY BOUNDARY IS ROUNDED OFF THE SAME TOTAL, never accumulated from a fixed
+ * step. `round(hold * i / n)` gives back exactly `hold` at `i === n`; adding up
+ * `round(hold / n)` sixteen times does not, and the drift is a run that ends
+ * short of its shot (or over the next one) by a few frames.
+ *
+ * ⚠ AS MANY AS THE SHOT IS LONG ENOUGH TO SHOW. A clip can never be shorter than
+ * `MIN_FRAME_MS`, so a very short shot cannot hold forty drawings — and clamping
+ * each one to the minimum instead would run the tail of the flipbook off the end
+ * of its shot, which is the one thing this layout must not do. The extras are
+ * dropped rather than squeezed; they stay on the board, and lengthening the shot
+ * and running the pass again brings them in.
+ *
+ * @param startMs where the shot starts on the timeline
+ * @param holdMs  how long the shot is, in ms
+ * @param numbers the POSE NUMBERS that have a drawing, in play order — a refused
+ *                pose leaves a hole, so drawing 6 is not necessarily pose 6
+ * @returns `[{ frame, start_ms, duration_ms }]`, `frame` being the pose number
+ */
+export function poseRunAcross(startMs, holdMs, numbers) {
+  const list = Array.isArray(numbers) ? numbers : [];
+  if (!list.length) return [];
+  const hold = Math.max(MIN_FRAME_MS, Math.round(Number(holdMs) || 0));
+  const at = Math.max(0, Math.round(Number(startMs) || 0));
+  const room = Math.max(1, Math.floor(hold / MIN_FRAME_MS));
+  const use = list.slice(0, Math.min(list.length, room));
+  const n = use.length;
+  return use.map((frame, i) => {
+    const from = at + Math.round((hold * i) / n);
+    const to = at + Math.round((hold * (i + 1)) / n);
+    return {
+      frame,
+      start_ms: from,
+      duration_ms: Math.max(MIN_FRAME_MS, to - from),
+    };
+  });
+}
+
+/**
+ * WHICH BOARD SHOT A CLIP IS OF, IGNORING WHICH DRAWING OF IT — the pair that
+ * ties a run of key poses to the panel it was blocked out from.
+ *
+ * ⚠ NOT `shotKey`. That one keeps a pose APART from its panel (`frame` is in the
+ * key) because a Veo take of pose 7 must not pair with the panel sitting under
+ * it. This is the opposite question — "which shot do these drawings belong to?" —
+ * and the answer has to be the SAME for the panel and for every pose of it.
+ * Two questions, two keys; folding them into one is how a take would end up
+ * credited to the wrong picture.
+ *
+ * "" for a clip that is not a board shot, which is how everything else — an
+ * upload, a colour card, a generated in-between shot with no panel index — opts
+ * out of the alignment pass below.
+ */
+function poseShotKey(src) {
+  if (!src?.storyboard_id) return "";
+  if (src.index === null || src.index === undefined) return "";
+  return `${src.storyboard_id}:${src.index}`;
+}
+
+/**
+ * THE KEY POSES FOLLOW THEIR SHOT — automatically, whatever moved it.
+ *
+ * Asked for directly, after the first build shipped with this as a documented
+ * limitation: "ye apne aap ho jayen kar do waisa".
+ *
+ * A run of drawings on the Animatic images row is laid across the shot it was
+ * blocked out from. Then the shot MOVES — a Veo take lands and pushes everything
+ * after it along (`spreadPanelsForRenders`), a shot is generated into the middle
+ * of the cut, the voiceover stretches a hold, or the panel is simply dragged or
+ * trimmed by hand — and the flipbook is left sitting over the wrong seconds of
+ * the film. This puts it back.
+ *
+ * ⚠ IT IS A RULE, NOT A DIFF, AND THAT IS THE WHOLE DESIGN. It compares the run
+ * against the PANEL IT REFERENCES — nothing else, and in particular not against
+ * a previous render of the document. Three things fall out of that, and all
+ * three are the reason it is written this way:
+ *
+ *   · UNDO IS EXACT. A pass that remembered "where the panels were last render"
+ *     would treat the restored snapshot as a move and shift the poses a second
+ *     time — so Ctrl+Z would not give back what you had. A snapshot is already
+ *     consistent, so this pass looks at it and does nothing.
+ *   · IT CANNOT LOOP. The answer is idempotent: run it on its own output and
+ *     every clip already holds the value it would be given, so the SAME array
+ *     comes back and the effect that called it stops.
+ *   · THERE IS NOTHING TO KEEP IN STEP. No stored offset, no "owner" field, no
+ *     second list — the reference is already on the clip (`src.storyboard_id` +
+ *     `src.index`), exactly as it is for the row it lives on.
+ *
+ * ⚠ IT MAPS, IT DOES NOT RE-SPREAD. The run's boundaries are carried over
+ * proportionally, so a pose somebody lengthened by hand stays longer than its
+ * neighbours after the shot moves. Re-spreading evenly would be correct about
+ * the pictures and would quietly throw away every edit made to them — the same
+ * argument `rebuildPoseRun` makes for reusing pose clips rather than rebuilding
+ * the run.
+ *
+ * ⚠ NO DRAWING IS EVER DROPPED, even by a shot too short to hold them. Below
+ * `MIN_FRAME_MS` each, the run is laid at the floor and allowed to OVERHANG the
+ * shot rather than losing its tail: a clip is a drawing that was paid for, and
+ * an automatic pass that deletes one is a far worse failure than a flipbook that
+ * runs a little long. (Pressing ✨ Animatic images again re-blocks the shot at
+ * its new length, which is the deliberate way to change how many there are.)
+ *
+ * ⚠ A RUN WHOSE PANEL IS NOT ON THE TIMELINE IS LEFT ALONE. That covers the
+ * import (`_frames_from_board` lays poses down INSTEAD of the panel, so those
+ * poses ARE the cut and must not be dragged about by anything) and it covers a
+ * shot whose panel has been deleted — the drawings stay where they are rather
+ * than being silently binned along with it.
+ *
+ * ⚠ PER TRACK. Poses split across two rows align to the same panel independently,
+ * which is the only answer that does not make one row's layout depend on the
+ * other's.
+ *
+ * ⚠ AND THE PANEL IS THE EARLIEST ONE OF THAT SHOT. Duplicating a panel makes
+ * two clips with the same reference; the copy must not be able to steal the
+ * original's flipbook, and "the one that plays first" is the stable answer that
+ * needs no extra field to express.
+ */
+export function alignPoseRuns(frames) {
+  const list = frames || [];
+  // ⚠ THE FAST PATH IS THE ORDINARY CASE. Almost no project has key poses on a
+  // row of its own, and this runs on EVERY change to the picture list — so the
+  // cost of "nothing to do" has to be one scan and no allocation.
+  let anyPose = false;
+  for (const frame of list) {
+    if (frame?.src?.kind === "pose") {
+      anyPose = true;
+      break;
+    }
+  }
+  if (!anyPose) return list;
+
+  const { spans } = frameSpans(list);
+
+  // The panel each shot is cut to, earliest first.
+  const panelOf = new Map();
+  list.forEach((frame, i) => {
+    if (frame?.src?.kind !== "panel") return;
+    const key = poseShotKey(frame.src);
+    if (!key) return;
+    const held = panelOf.get(key);
+    if (!held || spans[i].start < held.start) panelOf.set(key, spans[i]);
+  });
+  if (!panelOf.size) return list;
+
+  // The drawings of each shot, per row.
+  const runs = new Map();
+  list.forEach((frame, i) => {
+    if (frame?.src?.kind !== "pose") return;
+    const key = poseShotKey(frame.src);
+    if (!key || !panelOf.has(key)) return;
+    const id = `${spans[i].track}|${key}`;
+    if (!runs.has(id)) runs.set(id, { key, at: [] });
+    runs.get(id).at.push(i);
+  });
+  if (!runs.size) return list;
+
+  const patch = new Map();
+  for (const { key, at } of runs.values()) {
+    const want = panelOf.get(key);
+    at.sort((a, b) => spans[a].start - spans[b].start || a - b);
+    const n = at.length;
+    const from = spans[at[0]].start;
+    const to = spans[at[n - 1]].end;
+    // ⚠ A RUN OF ZERO WIDTH CANNOT BE MAPPED PROPORTIONALLY — there is no shape
+    // to carry over — so it is spread evenly instead, which is what it would
+    // have been given when it was laid down.
+    const runLen = to - from;
+    const width = Math.max(MIN_FRAME_MS, want.end - want.start);
+
+    // Every boundary of the run, carried into the shot's span. The LAST one is
+    // the shot's end and the FIRST is its start, written exactly rather than
+    // rounded there, so the run finishes with its shot to the millisecond.
+    const edge = new Array(n + 1);
+    for (let k = 0; k < n; k++) {
+      edge[k] =
+        runLen > 0
+          ? want.start + Math.round(((spans[at[k]].start - from) * width) / runLen)
+          : want.start + Math.round((k * width) / n);
+    }
+    edge[n] = want.start + width;
+    edge[0] = want.start;
+    // Monotonic, and never under the floor. This can only push a boundary
+    // LATER, so the run may end up longer than its shot — see the note above on
+    // why that is the right failure.
+    for (let k = 1; k <= n; k++) {
+      if (edge[k] < edge[k - 1] + MIN_FRAME_MS) edge[k] = edge[k - 1] + MIN_FRAME_MS;
+    }
+
+    for (let k = 0; k < n; k++) {
+      const i = at[k];
+      const start = edge[k];
+      const hold = edge[k + 1] - edge[k];
+      // ⚠ COMPARED AGAINST THE EVALUATED SPAN, not against `start_ms` — a clip
+      // that has never carried one plays where its neighbour ended, and reading
+      // the field would call that a change on every single pass.
+      if (spans[i].start === start && spans[i].end - spans[i].start === hold) continue;
+      patch.set(i, { start_ms: start, duration_ms: hold });
+    }
+  }
+  if (!patch.size) return list;
+  return list.map((frame, i) => {
+    const fix = patch.get(i);
+    return fix ? { ...frame, ...fix } : frame;
+  });
 }
 
 /** Every picture track the project uses, lowest first. Always includes 0. */
@@ -1244,9 +1526,14 @@ export function spreadPanelsForRenders(frames) {
   // The panels in the order they PLAY, not the order they are stored: a drag on
   // the timeline moves a clip without touching the list, so list order says
   // nothing about which shot comes first.
+  // ⚠ KEY POSES COUNT AS PANELS HERE. A pose is a still OFF the board and a take
+  // can be made of one (`shotKey` keeps the two apart by `frame`), so a run of
+  // poses has to be pushed clear of a render exactly as a panel is. Leaving them
+  // out would let a 6-second take sit over a flipbook that never moved for it.
   const panels = [];
   for (let i = 0; i < list.length; i++) {
-    if (clipRowKind(list[i]) === "board_image") panels.push(i);
+    const kind = clipRowKind(list[i]);
+    if (kind === "board_image" || kind === "board_poses") panels.push(i);
   }
   panels.sort((a, b) => spans[a].start - spans[b].start || a - b);
 

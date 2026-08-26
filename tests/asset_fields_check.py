@@ -340,8 +340,16 @@ else:
           f'{ident["video"]} vs {ident["upload"]}')
 
     # --- which section ----------------------------------------------------
+    # ⚠ A KEY POSE IS FILED APART FROM THE PANELS. It used to answer "board" with
+    # them, and that was right while poses only ever arrived with the import.
+    # ✨ Animatic images adds a card per DRAWING — sixteen for a four-second shot
+    # — so filed together they bury the panels inside a section people keep
+    # folded shut, which is how they came to look missing at all: "media panel
+    # mai generted iamge nhi dikh rah ahai". See `assetOrigin`, and note that
+    # "which section" and "did it come off a board" are two questions now
+    # (`isBoardAsset` is the second).
     want_origin = {
-        "panel": "board", "pose": "board", "video": "video",
+        "panel": "board", "pose": "poses", "video": "video",
         "upload": "image", "color": "image", "audio": "audio",
     }
     wrong = {k: got["origin"][k] for k, v in want_origin.items() if got["origin"][k] != v}

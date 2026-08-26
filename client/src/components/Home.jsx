@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import * as api from "../api.js";
+import * as cache from "../session_cache.js";
 import Avatar from "./Avatar.jsx";
 
 // Home — the DASHBOARD: who you are, your plan, and the latest work from EVERY
@@ -10,6 +11,22 @@ import Avatar from "./Avatar.jsx";
 // workflows invisible from the front page. It now shows the newest couple of
 // items per workflow with a "View all" into that workflow, so the dashboard
 // answers "what am I working on?" rather than "what did Text-to-Image do?".
+//
+// ⚠ THIS SCREEN NO LONGER FETCHES ANYTHING ON MOUNT, and that is the point.
+// It used to own a `load()` that fired seven requests from a `useEffect` — so
+// nothing was even ASKED FOR until the dashboard had been drawn, and the first
+// thing a customer with a library saw was their own work replaced by the word
+// "Loading…". Worse, it ran again every time they came back to Home.
+//
+// The requests now start at sign-in, from `Login`, before this component
+// exists — see session_cache.js. Home READS that cache, synchronously, so its
+// very first render normally has the real content in it. What is left here is
+// the two things a dashboard should do when it genuinely has nothing yet:
+//
+//   - an account we KNOW is new (the server counted at login) gets its real
+//     empty state immediately, with no loader of any kind;
+//   - anyone else gets skeletons shaped like the rows that are coming, in the
+//     same shimmer the storyboard library already uses.
 
 // How many items each workflow shows here. Two is enough to recognise where you
 // left off; more turns the dashboard into four half-libraries.
@@ -28,6 +45,75 @@ function statusClass(status) {
   return "queued";
 }
 
+// How many ghost rows a group shows while it waits. Matches PER_WORKFLOW so the
+// skeleton is the same height as the thing replacing it and nothing jumps.
+const GHOST_ROWS = PER_WORKFLOW;
+
+// `/jobs` answers with a bare array; one older shape wrapped it. Normalised in
+// one place rather than at each use.
+function asList(value) {
+  if (Array.isArray(value)) return value;
+  if (value && Array.isArray(value.jobs)) return value.jobs;
+  return [];
+}
+
+/**
+ * The number to print in "View all (N)", or `null` for "we can't say".
+ *
+ * ⚠ THE DASHBOARD ONLY FETCHES A PAGE NOW (`DASH_LIMIT`), so the length of the
+ * list it holds is NOT the size of the library — and quietly printing it would
+ * turn "View all (40)" into "View all (8)" for the busiest accounts, which is
+ * the sort of wrong number nobody reports and everybody half-notices.
+ *
+ * Two ways to be sure, and if neither applies we print no number at all:
+ *   - the page came back SHORT of the limit, so the page is everything;
+ *   - the login hint counts these job kinds exactly (see TokenResponse.counts).
+ *
+ * `kinds` is empty for the two storyboard groups on purpose: both are made of
+ * `storyboard` records and the hint cannot tell an original from a copy, so a
+ * full page of either is honestly unknown.
+ */
+function totalFor(list, kinds) {
+  if (list.length < cache.DASH_LIMIT) return list.length;
+  const counts = cache.hint();
+  if (counts && kinds.length) {
+    const n = kinds.reduce((sum, k) => sum + (Number(counts[k]) || 0), 0);
+    if (n >= list.length) return n;
+  }
+  return null;
+}
+
+/**
+ * Subscribe to the session cache and re-render whenever it changes.
+ *
+ * ⚠ IT READS SYNCHRONOUSLY AND ONLY THEN ASKS FOR A REFRESH. That order is what
+ * removes the loader: by the time this runs the prefetch started at sign-in has
+ * usually landed, so the first paint is real content and the refresh is a
+ * silent top-up behind it. Nothing here can start a duplicate request — the
+ * cache joins whatever is already in flight.
+ *
+ * ⚠ AND IT IS `refresh`, NOT `ensure` — the lists are re-read on EVERY mount,
+ * staleness window ignored. This screen has no router: leaving Home unmounts it
+ * and coming back mounts it again, and the commonest reason to come back is
+ * that you just made something. A cache that answered "still fresh, I read this
+ * forty seconds ago" would show a customer a dashboard with their new project
+ * missing from it — which is a worse bug than the slowness this all started as.
+ *
+ * It costs what it should: five small requests that nobody waits for, because
+ * what is already cached stays on screen throughout. That is the difference
+ * from the version this replaced, which made the same requests and BLANKED THE
+ * PAGE until they answered.
+ */
+function useDashboard() {
+  const [, bump] = useReducer((n) => n + 1, 0);
+  useEffect(() => cache.subscribe(bump), []);
+  useEffect(() => {
+    // `me` / `entitlements` are deliberately not in here — the shell owns those
+    // and they do not change while you are signed in.
+    cache.refresh(cache.LIST_KEYS);
+  }, []);
+}
+
 export default function Home({
   email,
   onOpenJob,
@@ -35,51 +121,47 @@ export default function Home({
   onOpenProfile,
   onNavigate
 }) {
-  const [profile, setProfile] = useState(null);
-  const [jobs, setJobs] = useState([]);
-  const [boards, setBoards] = useState([]);
+  useDashboard();
+
+  // Every one of these is a synchronous read of an answer that, on the ordinary
+  // path, arrived while this component was still being mounted.
+  const profile = cache.read("me") || null;
+  const jobs = asList(cache.read("jobs"));
+  const boards = asList(cache.read("boards"));
   // Image to Animatic Image's own copies — a different set from `boards`.
-  const [copiedBoards, setCopiedBoards] = useState([]);
-  const [animatics, setAnimatics] = useState([]);
-  const [videos, setVideos] = useState([]);
-  const [plans, setPlans] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const copiedBoards = asList(cache.read("copiedBoards"));
+  const animatics = asList(cache.read("animatics"));
+  const videos = asList(cache.read("videos"));
+  const plans = asList(cache.read("plans"));
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      // One workflow being unreachable must not blank the whole dashboard, so
-      // each list settles on its own and falls back to empty.
-      // TWO board lists, because the two board workflows own different sets:
-      // Script to Storyboard has the originals (untagged), Image to Animatic
-      // Image has its independent copies. See list_storyboards' `workflow`.
-      const [p, j, b, cb, a, v, pl] = await Promise.all([
-        api.me().catch(() => null),
-        api.listJobs(api.CHARACTER_JOB_KINDS).catch(() => []),
-        api.listStoryboards().catch(() => []),
-        api.listStoryboards("animatic-image").catch(() => []),
-        api.listAnimatics().catch(() => []),
-        api.listFinalVideos().catch(() => []),
-        api.listPlans().catch(() => [])
-      ]);
-      setProfile(p);
-      setJobs(Array.isArray(j) ? j : j.jobs || []);
-      setBoards(Array.isArray(b) ? b : []);
-      setCopiedBoards(Array.isArray(cb) ? cb : []);
-      setAnimatics(Array.isArray(a) ? a : []);
-      setVideos(Array.isArray(v) ? v : []);
-      setPlans(Array.isArray(pl) ? pl : []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // ⚠ "NOTHING HAS ARRIVED YET" — NOT "A REQUEST IS RUNNING". A background
+  // refresh of a dashboard that is already on screen is not a loading state and
+  // must not be drawn as one; that was the old behaviour and it made every
+  // return to Home look like a fresh, empty start.
+  const waiting = !cache.LIST_KEYS.every((k) => cache.hasLanded(k));
+  // A request is genuinely in the air. Distinct from `waiting`: this is true
+  // during the top-up on every mount as well as when the button is pressed, and
+  // it drives NOTHING but the button's own label — the content stays put.
+  const refreshing = cache.LIST_KEYS.some((k) => cache.isPending(k));
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // ⚠ AND A NEW ACCOUNT NEVER WAITS. The server counted this account's work
+  // when it handed out the token; if the answer was "none", there is nothing to
+  // wait for and the honest empty dashboard can be drawn on the first frame.
+  // `isNewAccount()` is false when we simply have no hint, so the old
+  // behaviour — skeletons until the lists land — is what happens by default.
+  const showGhosts = waiting && !cache.isNewAccount();
+
+  // Every list keeps its last good value through a failed refresh, so an error
+  // here is only worth showing when it left us with nothing to show instead.
+  const loadError = waiting
+    ? cache.LIST_KEYS.map((k) => cache.errorOf(k)).find(Boolean) || ""
+    : "";
+  // Something the user PRESSED went wrong - today only the asset ZIP. Kept
+  // apart from `loadError` because the two need opposite handling: a failed
+  // download is worth saying out loud and then forgetting, while a failed load
+  // is a state the screen is currently IN.
+  const [actionError, setActionError] = useState("");
+  const error = actionError || loadError;
 
   const memberSince = profile?.created_at
     ? new Date(profile.created_at).toLocaleDateString(undefined, {
@@ -101,6 +183,7 @@ export default function Home({
       id: "plan-and-script",
       icon: "🗓️",
       label: "Plan & Script",
+      total: totalFor(plans, ["plan"]),
       items: plans.map((p) => ({
         key: p.job_id,
         title: p.title || "Untitled plan",
@@ -112,6 +195,8 @@ export default function Home({
       id: "text-to-image",
       icon: "🖼️",
       label: "Text to Turnaround Image",
+      // Both character kinds land in this one list — see CHARACTER_JOB_KINDS.
+      total: totalFor(jobs, ["generate", "meshy"]),
       items: jobs.map((j) => ({
         key: j.job_id,
         title: j.character_name || "Untitled",
@@ -128,7 +213,7 @@ export default function Home({
                     `${j.character_name}_assets.zip`,
                     j.result?.zip
                   )
-                  .catch((e) => setError(e.message))
+                  .catch((e) => setActionError(e.message))
             : null
       }))
     },
@@ -136,6 +221,9 @@ export default function Home({
       id: "script-to-storyboard",
       icon: "📝",
       label: "Script to Storyboard",
+      // No kinds: originals and copies are both `storyboard` records, so the
+      // hint cannot separate them. See totalFor.
+      total: totalFor(boards, []),
       items: boards.map((b) => ({
         key: b.job_id,
         title: b.title || "Storyboard",
@@ -151,6 +239,7 @@ export default function Home({
       id: "create-animatic-image",
       icon: "🖼️",
       label: "Image to Animatic Image",
+      total: totalFor(copiedBoards, []),
       items: copiedBoards.map((b) => ({
         key: b.job_id,
         title: b.title || "Storyboard",
@@ -163,6 +252,7 @@ export default function Home({
       id: "animatics-to-video",
       icon: "🎞️",
       label: "Image to AI Video",
+      total: totalFor(videos, ["final_video"]),
       items: videos.map((v) => ({
         key: v.job_id,
         title: v.title || "Final video",
@@ -179,6 +269,7 @@ export default function Home({
       id: "storyboard-to-animatics",
       icon: "🎬",
       label: "Video Editor",
+      total: totalFor(animatics, ["animatic"]),
       items: animatics.map((a) => ({
         key: a.job_id,
         title: a.title || "Project",
@@ -190,7 +281,14 @@ export default function Home({
     }
   ];
 
-  const totalItems = groups.reduce((n, g) => n + g.items.length, 0);
+  // ⚠ THE HINT WINS HERE, because it is the only EXACT number available: it is
+  // a count of every record this account owns, made by the database at sign-in.
+  // Adding up what is on screen counts a PAGE of each workflow, and did so long
+  // before this change — the old dashboard capped every list at 100 and called
+  // the sum "Projects" too. Falls back to the visible sum when there is no hint.
+  const groupTotal = groups.reduce((n, g) => n + g.items.length, 0);
+  const hinted = cache.hintTotal();
+  const totalItems = hinted === null ? groupTotal : hinted;
 
   return (
     <div className="home">
@@ -252,8 +350,12 @@ export default function Home({
       <section className="card home-card recent-card">
         <div className="recent-head">
           <h2>Recent work</h2>
-          <button className="btn ghost small" onClick={load} disabled={loading}>
-            ↻ {loading ? "Loading…" : "Refresh"}
+          <button
+            className="btn ghost small"
+            onClick={() => cache.refresh(cache.LIST_KEYS)}
+            disabled={refreshing}
+          >
+            ↻ {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
 
@@ -270,13 +372,29 @@ export default function Home({
                   onClick={() => onNavigate?.(g.id)}
                   title={`Open ${g.label}`}
                 >
-                  View all{g.items.length ? ` (${g.items.length})` : ""} →
+                  {/* No number rather than a wrong one — see totalFor. */}
+                  View all{g.total ? ` (${g.total})` : ""} →
                 </button>
               </div>
 
-              {g.items.length === 0 ? (
+              {showGhosts ? (
+                /* Shimmering rows the shape of the ones that are coming, in the
+                   same `is-loading` idiom the storyboard library uses. Hidden
+                   from assistive tech: it is a placeholder, not content. */
+                <ul className="wf-list wf-ghosts is-loading" aria-hidden="true">
+                  {Array.from({ length: GHOST_ROWS }, (_, i) => (
+                    <li className="wf-item wf-ghost" key={i}>
+                      <span className="wf-open">
+                        <span className="wf-ghost-line wf-ghost-name" />
+                        <span className="wf-ghost-line wf-ghost-meta" />
+                      </span>
+                      <span className="wf-ghost-chip" />
+                    </li>
+                  ))}
+                </ul>
+              ) : g.items.length === 0 ? (
                 <button className="wf-empty" onClick={() => onNavigate?.(g.id)}>
-                  {loading ? "Loading…" : `Nothing yet — start your first`}
+                  Nothing yet — start your first
                 </button>
               ) : (
                 <ul className="wf-list">

@@ -170,7 +170,7 @@ got = run_node()
 
 LOGIC = [
     "there is no 'stills' row kind left",
-    "the three that are left are the board's two and Video",
+    "the four that are left are the board's three and Video",
     "an uploaded picture is routed to the Images lane",
     "…and footage is not",
     "…and a colour card is not, because it takes up time in the cut",
@@ -179,7 +179,7 @@ LOGIC = [
     "a picture already in the cut still names a row that exists",
     "a board clip is still pinned to its own row",
     "the Video row takes footage AND full-frame stills",
-    "…and both board rows still take no file at all",
+    "…and every board row still takes no file at all",
     "a legacy 'stills' record reads as a plain video row",
     "…while a kind that never existed reads as no row",
     "…and 'stills' is no longer a cut row in its own right",
@@ -191,9 +191,13 @@ if got is None:
         skip(label, "node not available")
 else:
     check(LOGIC[0], "stills" not in got["rowKinds"], str(got["rowKinds"]))
+    # ⚠ `board_poses` IS THE THIRD BOARD ROW — "Animatic images", the key poses
+    # blocked out from the timeline (see `tests/animatic_images_check.py`). It
+    # sits between the stills and the renders because a pose draws OVER the panel
+    # it was made from and UNDER a Veo take of the same shot.
     check(
         LOGIC[1],
-        got["rowKinds"] == ["board_image", "board_video", "video"],
+        got["rowKinds"] == ["board_image", "board_poses", "board_video", "video"],
         str(got["rowKinds"]),
     )
     ov = got["overlay"]
@@ -221,7 +225,9 @@ else:
     )
     check(
         LOGIC[10],
-        takes.get("board_image") == [] and takes.get("board_video") == [],
+        takes.get("board_image") == []
+        and takes.get("board_poses") == []
+        and takes.get("board_video") == [],
         str(takes),
     )
     legacy = got["legacy"]

@@ -24,6 +24,16 @@ percentage of an integer number of cents is not an integer. Rounding down means
 the customer is never charged a cent more than the sign said, which is the only
 direction that is safe to be wrong in.
 
+⚠ **`promoted` IS WHETHER A CUSTOMER IS *TOLD* ABOUT IT, AND IT IS A SEPARATE
+QUESTION FROM WHETHER IT WORKS.** A coupon that is live but not promoted still
+works when it is typed and appears nowhere — that is a code you email to one
+customer. A coupon that is promoted is printed on the pricing page as an offer
+card with its code on it, which is the only way somebody who was never emailed
+can use it. ⚠ **AN ABSENT `promoted` READS AS TRUE** (`is_promoted`): every
+offer predates the field, and an offer an administrator went to the trouble of
+creating is one they meant people to see. Hiding one is a single click in the
+panel; a discount nobody can find is the failure this flag exists to end.
+
 ⚠ **NOTHING HERE TAKES MONEY.** An offer changes a displayed price and is
 recorded against a subscription when one is entered by hand. Charging a card is
 Phase 6.
@@ -63,6 +73,7 @@ _CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{1,31}$")
 EDITABLE = frozenset({
     "label", "kind", "value", "applies_to", "period",
     "starts_at", "ends_at", "active", "max_redemptions", "banner",
+    "promoted",
 })
 
 
@@ -214,6 +225,7 @@ def create_offer(fields: dict, actor: str = "") -> dict:
         **clean,
     }
     row.setdefault("active", True)
+    row.setdefault("promoted", True)
 
     if _use_local():
         with _lock:
@@ -364,8 +376,77 @@ def apply_to_price(price_minor: int, offer: dict | None) -> int:
     return max(0, price_minor - discount_on(offer, price_minor))
 
 
+# The symbol for the one currency this deployment prices in. ⚠ NOT A
+# CONVERSION TABLE — `config.BILLING_CURRENCY` is the only currency any price is
+# stored in, so this maps that one code to the glyph a person reads.
+_SYMBOLS = {"USD": "$", "INR": "₹", "EUR": "€", "GBP": "£"}
+
+
 def summary(offer: dict) -> str:
-    """"20% off" / "$5 off" — one phrase, for a banner or a table cell."""
+    """"20% off" / "$5 off" — one phrase, for a banner or a table cell.
+
+    ⚠ THE AMOUNT KIND CARRIES ITS SYMBOL. It used to render "5 off", which
+    beside a percentage discount reads as five percent — a bare number next to
+    a price is the one place ambiguity costs money.
+    """
     if offer.get("kind") == KIND_PERCENT:
         return f"{offer.get('value', 0)}% off"
-    return f"{(offer.get('value') or 0) / 100:g} off"
+    major = (offer.get("value") or 0) / 100
+    symbol = _SYMBOLS.get(config.BILLING_CURRENCY, "")
+    return f"{symbol}{major:g} off" if symbol else f"{major:g} {config.BILLING_CURRENCY} off"
+
+
+def is_promoted(offer: dict) -> bool:
+    """Whether this offer is advertised on the pricing page.
+
+    ⚠ ABSENT MEANS YES — see the module docstring. Only an explicit `False`
+    hides an offer, so an administrator who never heard of this flag still gets
+    the behaviour they expected when they created a discount.
+    """
+    return bool(offer.get("promoted", True))
+
+
+def public_offer(offer: dict) -> dict:
+    """One offer as the PRICING PAGE may see it. Public — no token needed.
+
+    ⚠ THIS IS AN ALLOW-LIST, NOT A DELETE-LIST. The stored row carries
+    `created_by`, `updated_by` and the raw redemption count; a public route that
+    spread the row and popped three keys would leak the fourth one somebody adds
+    later. Every field here was chosen to be on a poster.
+
+    ⚠ `remaining` IS SENT, `redeemed` IS NOT. "34 left" is the scarcity a
+    customer is entitled to; "1,266 people already used this" is a business
+    metric, and the two are the same two numbers seen from different sides.
+    """
+    cap = offer.get("max_redemptions")
+    remaining = max(0, int(cap) - int(offer.get("redeemed") or 0)) if cap else None
+    return {
+        "id": offer.get("id") or "",
+        # A SALE HAS NO CODE and must not be given an empty box to type into.
+        "code": offer.get("code") or "",
+        "label": offer.get("label") or "",
+        "summary": summary(offer),
+        "kind": offer.get("kind") or KIND_PERCENT,
+        "value": int(offer.get("value") or 0),
+        "period": offer.get("period") or PERIOD_BOTH,
+        "applies_to": list(offer.get("applies_to") or []),
+        "ends_at": offer.get("ends_at") or "",
+        "banner": offer.get("banner") or "",
+        "is_sale": not offer.get("code"),
+        "remaining": remaining,
+    }
+
+
+def promoted_offers() -> list[dict]:
+    """The offers the pricing page should advertise, deepest discount first.
+
+    ⚠ LIVE **AND** PROMOTED, BOTH CHECKED. `is_live` is "does this work";
+    `is_promoted` is "do we say so". An expired offer still on the page is a
+    promise the checkout would break.
+    """
+    rows = [o for o in all_offers() if is_live(o) and is_promoted(o)]
+    # Deepest discount at the front: if two are on offer, the one worth reading
+    # about is the bigger one, and a card order that depends on which was typed
+    # first is not an order anybody chose.
+    rows.sort(key=lambda o: discount_on(o, 100_000_00), reverse=True)
+    return [public_offer(o) for o in rows]

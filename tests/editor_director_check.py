@@ -916,23 +916,41 @@ def main():
             # bother with.
             print(NL + "⚠ UN-TICKING A PHASE RE-COSTS THE PLAN AND RELABELS THE BUTTON" + NL)
             boxes = page.evaluate("() => window.__probe.includeBoxes()")
+            # ⚠ THE FREE ROW FIRST, THEN THE SPENDING ROW, both in INCLUDE_KEYS
+            # order — the list is DERIVED (`freeKeys` / `paidKeys`), so a flag no
+            # verb and no pass answers to is never offered and this list is the
+            # only place the two rows are written out by hand. It has been wrong
+            # twice by being left behind: once when phases D and E added the two
+            # sound boxes, and again when 🖼 Animatic images became a pass.
+            OFFERED = [
+                "Transitions", "Effects", "Text", "Shapes",
+                "Sound effects", "Background music",
+                "Voiceover", "Veo renders", "Animatic images",
+            ]
+            # The two boxes that start OFF, and both for the same reason: they are
+            # the ones that spend enough for a default-on box to be a box nobody
+            # reads until it is on an invoice.
+            OFF_AT_FIRST = {"Veo renders", "Animatic images"}
             check("the preview offers a tick box per treatment, and per PASS",
-                  [b["label"] for b in boxes]
-                  == ["Transitions", "Effects", "Text", "Shapes", "Voiceover", "Veo renders"],
-                  json.dumps(boxes))
+                  [b["label"] for b in boxes] == OFFERED, json.dumps(boxes))
             check("⚠ ...AND `veo` IS OFFERED SINCE PHASE 4, because a pass answers to "
                   "it now — the list is derived (`governedKeys`), so a switch that "
                   "does nothing is never shown",
                   any(b["label"] == "Veo renders" for b in boxes), json.dumps(boxes))
             check("...while Voiceover is offered for the same reason (phase B)",
                   any(b["label"] == "Voiceover" for b in boxes), json.dumps(boxes))
+            check("⚠ ...AND SO IS `poses` (phase C2) — 🖼 Animatic images is a tick "
+                  "box on 🎬 now, running the very same queue the tool-row button "
+                  "runs rather than a second copy of it",
+                  any(b["label"] == "Animatic images" for b in boxes), json.dumps(boxes))
             check("every treatment starts ticked",
-                  all(b["on"] for b in boxes if b["label"] != "Veo renders"),
+                  all(b["on"] for b in boxes if b["label"] not in OFF_AT_FIRST),
                   json.dumps(boxes))
-            check("⚠ ...AND `veo` IS THE ONE THAT STARTS OFF. It is the only box here "
-                  "that costs tens of dollars, and a default-on box is a box nobody "
-                  "reads until it is on an invoice",
-                  not next(b for b in boxes if b["label"] == "Veo renders")["on"],
+            check("⚠ ...AND THE TWO BIG SPENDERS ARE THE ONES THAT START OFF. Veo "
+                  "costs tens of dollars and Animatic images buys four drawings per "
+                  "second of film out of the image quota; a default-on box is a box "
+                  "nobody reads until it is on an invoice",
+                  all(not b["on"] for b in boxes if b["label"] in OFF_AT_FIRST),
                   json.dumps(boxes))
 
             label_before = page.evaluate("() => window.__probe.runLabel()")

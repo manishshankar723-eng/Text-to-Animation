@@ -1,6 +1,6 @@
-"""DOWNLOADING A VEO RENDER — offered on a paid render, and on nothing else.
+"""SAVING A CLIP OUT OF AN ANIMATIC — the ⬇ on the card and in the clip menu.
 
-The report:
+The report this began as:
 
     "i want you add download icon in media panel of only Veo video so user
      download video in local. because if user want delete project so user first
@@ -8,29 +8,37 @@ The report:
      on clip in timeline so user get side of clip dropdown Download text buttun
      so user download both place … only add fuction when user generte Veo video"
 
-A Veo render is the one asset in an animatic that CANNOT be got back. An upload
-came off the user's machine and a panel is still on the storyboard; re-rendering
-this costs money. So deleting the project must stop being the thing that destroys
-it, and there are now two ways out: the ⬇ on its Media card, and Download in the
+A Veo render is an asset in an animatic that CANNOT be got back. An upload came
+off the user's machine and a panel is still on the storyboard; re-rendering this
+costs money. So deleting the project must stop being the thing that destroys it,
+and there are two ways out: the ⬇ on its Media card, and Download in the
 right-click menu on its timeline bar.
 
 ---------------------------------------------------------------------------
-⚠ WHAT THIS FILE IS ACTUALLY GUARDING: THE WORD "ONLY"
+⚠ "ONLY VEO" WAS NARROWED OUT OF DATE, AND THIS FILE RECORDS WHY
 ---------------------------------------------------------------------------
-"Only Veo" is the whole requirement, and it is the half that rots silently. The
-button appearing on a panel or on an upload is not a crash and not a visible
-mistake — it is a Download that fetches a poster PNG, or one offered on a file
-the user already has. So the question `isVeoRender` answers is pinned here
-against every other kind of source in the library, including the two that look
-closest: a board panel (same storyboard, not footage) and a dropped video (same
-footage, no storyboard).
+The original requirement was "only Veo", and it held for as long as a render was
+the only thing this editor MADE. ✨ Animatic images changed that: the key poses
+are drawn from inside the editor, they cost an image credit each, and they landed
+in the Media pane with no way to get them out —
 
-⚠ AND IT IS ONE QUESTION, NOT THREE. `isVeoRender` is `cardRowKind(...) ===
-"board_video"` — the SAME derivation that paints these bars pastel purple and
-pins them to the Storyboard video row. The second half of this file asserts that
-both call sites go through it rather than re-deriving "is this a render" from
-`kind === "video"` on their own, because two definitions is how the ⬇ and the
-purple come to disagree about the same clip.
+    "media panel mai generted iamge nhi dikh rah ahai aur dikhe to download kar
+     sakta hun veo video jaisa hi fuction chek karo fix karo"
+
+Drawing the ⬇ on the poses and NOT on the panels sitting beside them in the same
+Media group would read as a bug, so the gate is now the simple rule in
+`isSavable`: **if this editor can show it, this editor can save it** — everything
+with bytes behind it, and nothing else. A colour card has no file; an audio card
+keeps its file somewhere this question does not look. `animatic_images_check.py`
+pins that truth table.
+
+⚠ WHAT DID NOT CHANGE IS THE PROPERTY THIS FILE EXISTS FOR: **one question, asked
+in one place, by both entry points.** The card and the clip menu must consult the
+same predicate and call the same handler, and the handler must re-ask it rather
+than trusting its caller — because two definitions is how a ⬇ comes to be offered
+on something that cannot be fetched. `isVeoRender` is still pinned below: it is
+what paints these bars pastel purple, what pins them to the Storyboard video row,
+and what still decides the .mp4 extension and the wording of the tooltip.
 
     python tests/veo_download_check.py
 
@@ -240,9 +248,9 @@ editor = (ROOT / "client/src/components/AnimaticEditor.jsx").read_text(encoding=
 api = (ROOT / "client/src/api.js").read_text(encoding="utf-8")
 
 check(
-    "the Media card's download is behind isVeoRender",
-    "isVeoRender(asset)" in media_bin,
-    "MediaBin no longer guards the download button on isVeoRender",
+    "the Media card's download is behind isSavable",
+    "isSavable(asset)" in media_bin,
+    "MediaBin no longer guards the download button on isSavable",
 )
 # ⚠ IT USED TO SAY "AND IT IS THE ONLY THING THAT DRAWS ONE THERE", counting the
 # icon and requiring exactly 1. That was the right property written as the wrong
@@ -254,10 +262,10 @@ DOWNLOAD_ICON = 'name="download"'
 
 
 def unguarded_downloads(source, window=900):
-    """Every `Icon name="download"` with no `isVeoRender(` guard above it."""
+    """Every `Icon name="download"` with no `isSavable(` guard above it."""
     return [
         m.start() for m in re.finditer(re.escape(DOWNLOAD_ICON), source)
-        if "isVeoRender(" not in source[max(0, m.start() - window):m.start()]
+        if "isSavable(" not in source[max(0, m.start() - window):m.start()]
     ]
 
 
@@ -281,9 +289,9 @@ check(
     len(offers) == 2, "clipMenuOffers is gone",
 )
 check(
-    "...and the download it offers is behind isVeoRender",
-    len(offers) == 2 and "isVeoRender(frame)" in offers[1].split("};", 1)[0],
-    "clipMenuOffers no longer asks isVeoRender",
+    "...and the download it offers is behind isSavable",
+    len(offers) == 2 and "isSavable(frame)" in offers[1].split("};", 1)[0],
+    "clipMenuOffers no longer asks isSavable",
 )
 # ⚠ THE GUARD MUST RETURN *BEFORE* `preventDefault`, or every bar on the timeline
 # swallows the browser's own menu and offers nothing in its place — which is
@@ -299,18 +307,39 @@ check(
 )
 check(
     "both places call one handler",
-    editor.count("downloadVeoClip") >= 3,  # the definition + two call sites
-    f"{editor.count('downloadVeoClip')} references in AnimaticEditor",
+    editor.count("downloadClip") >= 3,  # the definition + two call sites
+    f"{editor.count('downloadClip')} references in AnimaticEditor",
 )
+# ⚠ THE HANDLER IS THE LAST GATE AND MUST NOT TRUST ITS CALLER. Two controls
+# reach it, a third could be added tomorrow, and the failure of an ungated one is
+# a fetch of a URL that does not exist — reported as a download that does nothing.
 check(
-    "the handler refuses anything that is not a render",
-    "if (!isVeoRender(item) || !uploadId) return;" in editor,
-    "downloadVeoClip must not trust its caller — it is the last gate",
+    "the handler re-asks the question rather than trusting its caller",
+    "if (!isSavable(item)) return;" in editor,
+    "downloadClip must re-check isSavable — it is the last gate",
+)
+# ⚠ AND IT STILL KNOWS A RENDER FROM A PICTURE, because the two do not save the
+# same way: footage is `.mp4` off `/media/<upload_id>`, a board still is `.png`
+# off the content-addressed panel route. Losing this is a Veo take saved as
+# `something.png`.
+check(
+    "...and it still tells footage from a picture, for the extension",
+    'const ext = video ? "mp4" : "png";' in editor,
+    "the saved file's extension no longer follows what the clip IS",
 )
 # ⚠ THE MEDIA ROUTE IS OWNER-CHECKED AND NEEDS A BEARER TOKEN. An <a href> sends
 # no headers, so a plain link would land on a 401 instead of a file.
-fn = api.split("export async function downloadAnimaticMedia", 1)
-check("the download exists in the api layer", len(fn) == 2, "downloadAnimaticMedia is gone")
+# ⚠ ONE SAVER, TAKING A PATH. Not every picture is an upload: a panel and a key
+# pose are content-addressed on the BOARD and have no upload id at all, so a saver
+# that could only speak `/media/<upload_id>` could not save them.
+fn = api.split("export async function downloadAnimaticFile", 1)
+check("the download exists in the api layer", len(fn) == 2, "downloadAnimaticFile is gone")
+check(
+    "...and the upload-id saver is still there, delegating to it",
+    "export function downloadAnimaticMedia" in api
+    and "downloadAnimaticFile(" in api.split("export function downloadAnimaticMedia", 1)[-1],
+    "downloadAnimaticMedia must survive for its existing callers",
+)
 if len(fn) == 2:
     body = fn[1].split("\nexport ", 1)[0]
     check(
@@ -322,6 +351,11 @@ if len(fn) == 2:
         "...and it revokes the object URL it made",
         "revokeObjectURL" in body,
         "a Veo render is tens of megabytes — leaking one per press is real memory",
+    )
+    check(
+        "...and it puts the caller's query string through untouched",
+        "${BASE}${path}" in body,
+        "a key pose is `?frame=n` on the panel route — dropping it saves the panel",
     )
 
 print()

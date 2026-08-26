@@ -5,6 +5,11 @@ import { applyTheme, getTheme } from "./theme.js";
 // inside the workflows — ✨ Animate, 🎙 Voiceover, the 3D popup. See
 // `entitlements.js`; it is a module store, so nothing is threaded as a prop.
 import { clearEntitlements, setEntitlements } from "./entitlements.js";
+// The boot reads - profile, entitlements, and every dashboard list - fetched
+// ONCE at authentication and kept for the session. See session_cache.js for
+// what that replaced and why the fetch starts before this component knows
+// anything has happened.
+import * as cache from "./session_cache.js";
 import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -116,6 +121,11 @@ export default function App() {
   // back on its first page. Nothing is lost by that: drafts, plans, boards and
   // jobs all live server-side and are re-read on mount.
   const [navResetKey, setNavResetKey] = useState(0);
+  // Bumped whenever the SIGNED-IN ACCOUNT changes without `authed` changing -
+  // switching accounts, or adding one. It is the dependency that re-runs the
+  // boot effect in exactly the case that used to be covered by listing `nav`
+  // there, and in no other case. See that effect's closing comment.
+  const [authRun, setAuthRun] = useState(0);
   const [selectedId, setSelectedId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Set by the board's "Make animatic" button: the animatic already exists, so
@@ -147,20 +157,50 @@ export default function App() {
   // It rides along on the `me()` call the shell already makes — see below.
   const [isAdmin, setIsAdmin] = useState(false);
   // What this account may SEE and USE, from `/auth/me/entitlements`.
-  // ⚠ `workflows` STARTS AS THE BUILT-IN LIST, not as empty. The rail is drawn
-  // on the very first paint, before any request has answered, and an empty array
-  // there is a blank sidebar every single time the app opens. See Sidebar.jsx.
-  const [workflows, setWorkflows] = useState(WORKFLOWS);
+  //
+  // ⚠ THE FIRST PAINT STARTS FROM THE LAST ANSWER THIS ACCOUNT GOT, not from the
+  // built-in list. This used to be `useState(WORKFLOWS)` — every workflow that
+  // EXISTS — under a note explaining that the alternative was a blank rail. What
+  // that note missed is the third option, and the bug it was hiding: an
+  // administrator who had HIDDEN two workflows watched both of them reappear
+  // for about a second on every reload, because the built-in list still
+  // contains them. A hidden feature that flashes up on every refresh is not
+  // hidden. See `rememberEntitlements` in api.js.
+  //
+  // Three states now, and the rail draws each one differently:
+  //   - a remembered answer → draw it; correct on frame one, nothing flashes.
+  //   - nothing remembered  → draw SKELETON rows, so a wrong row is never shown.
+  //                           (First sign-in on a new browser, and only then.)
+  //   - the request FAILED with nothing remembered → the built-in list, because
+  //                           fail-open still beats a rail nobody can use.
+  const [workflows, setWorkflows] = useState(
+    () => cache.rememberedEntitlements()?.workflows || WORKFLOWS
+  );
   // ⚠ "HAS THE SERVER ANSWERED?" IS A DIFFERENT QUESTION FROM "WHAT DID IT SAY?"
   // and both are needed. A workflow missing from `workflows` means *hidden* only
-  // if the list is the server's; while it is still the built-in fallback, a
+  // if the list came from the server; while it is the built-in fallback, a
   // missing entry means nothing at all — and treating those the same would show
   // "not available" for a second on every cold start.
-  const [entitled, setEntitled] = useState(false);
+  //
+  // ⚠ A REMEMBERED ANSWER COUNTS AS ANSWERED. It IS what the server said — just
+  // not in this second.
+  const [entitled, setEntitled] = useState(
+    () => Boolean(cache.rememberedEntitlements())
+  );
+  // ⚠ AND THIS IS WHAT THE RAIL DRAWS SKELETONS FROM. It differs from `entitled`
+  // in exactly one case, which is the case that matters: a first sign-in on a
+  // browser, nothing remembered, no answer yet. `entitled` is about what a
+  // MISSING entry means; this is about whether the list on screen may be shown
+  // at all.
+  const [railKnown, setRailKnown] = useState(
+    () => Boolean(cache.rememberedEntitlements())
+  );
   // Which tier this account is on. ⚠ IT COMES FROM THE ENTITLEMENTS CALL, NOT
   // FROM THE PRICE LIST — `/billing/tiers` is public and knows nothing about
   // who is asking, which is exactly what lets a logged-out page show prices.
-  const [tier, setTier] = useState("");
+  const [tier, setTier] = useState(
+    () => cache.rememberedEntitlements()?.tier || ""
+  );
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -197,12 +237,40 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // ⚠ THE PREFETCH GETS ITS OWN EFFECT, KEYED ON THE ACCOUNT AND NOT ON
+  // `nav`. It is the "go and fetch the dashboard" trigger, and the dashboard
+  // does not become more out of date because somebody opened the Video Editor.
+  // Folded into the effect below - which DOES depend on `nav`, deliberately -
+  // it would have re-run every list on a timer for as long as anyone kept
+  // clicking, which is the shape of the problem this set out to remove.
+  //
+  // This is the RELOAD path: the token was already in storage, so `Login` never
+  // ran and nothing has been asked for yet. A sign-in has already started the
+  // same prefetch a moment earlier and this is idempotent, so that path pays
+  // nothing for passing through here.
+  useEffect(() => {
+    if (!authed) return;
+    cache.prefetch({ email: api.getEmail() });
+    // ⚠ THE SAME FLASH, ONE LAYER DOWN. `clearEntitlements()` leaves the
+    // capability store saying "we don't know", and that is fail-OPEN — so the
+    // Animate, Voiceover and 3D controls draw as AVAILABLE until the answer
+    // lands, including on an account where an administrator has switched them
+    // off. Seeding from the remembered answer closes that window, for exactly
+    // the reason the rail's was closed.
+    const last = cache.rememberedEntitlements();
+    if (last) setEntitlements(last);
+  }, [authed, authRun]);
+
   useEffect(() => {
     if (!authed) {
       setDisplayName("");
       setIsAdmin(false);
       setWorkflows(WORKFLOWS);
       setEntitled(false);
+      // ⚠ BACK TO UNKNOWN, so the next account's first paint waits for its own
+      // answer instead of inheriting this one's. `WORKFLOWS` above is only what
+      // gets drawn if that answer never comes at all.
+      setRailKnown(false);
       setTier("");
       // ⚠ CLEARED IS "WE DON'T KNOW", NOT "NOTHING IS ALLOWED" — the module
       // goes back to fail-open, exactly as the rail goes back to WORKFLOWS.
@@ -212,10 +280,11 @@ export default function App() {
       return;
     }
     let cancelled = false;
-    api
-      .me()
+
+    cache
+      .ensure("me")
       .then((p) => {
-        if (cancelled) return;
+        if (cancelled || !p) return;
         const name = p?.display_name || p?.full_name || "";
         setDisplayName(name);
         setIsAdmin(p?.account_role === "admin");
@@ -228,21 +297,23 @@ export default function App() {
         }
       })
       .catch(() => {
-        // Cosmetic only — the sidebar falls back to the email.
+        // Cosmetic only - the sidebar falls back to the email.
       });
 
     // ⚠ A SEPARATE, INDEPENDENTLY-FAILING REQUEST. Chaining it onto `me()` would
     // mean one failure took out both, and these two have very different blast
     // radii: a missing display name is cosmetic, a missing workflow list is the
-    // whole navigation. Its own `.catch` KEEPS whatever is already on screen —
-    // never replaces it with nothing.
-    api
-      .entitlements()
+    // whole navigation. Its own `.catch` KEEPS whatever is already on screen -
+    // never replaces it with nothing. (The cache preserves that: a failed
+    // refresh keeps the last good answer and records the message beside it.)
+    cache
+      .ensure("entitlements")
       .then((e) => {
-        if (cancelled) return;
+        if (cancelled || !e) return;
         if (e?.workflows?.length) {
           setWorkflows(e.workflows);
           setEntitled(true);
+          setRailKnown(true);
         }
         setTier(e?.tier || "");
         // ⚠ OUTSIDE THE `workflows.length` BRANCH ON PURPOSE. The two answers
@@ -252,13 +323,35 @@ export default function App() {
         setEntitlements(e);
       })
       .catch(() => {
-        // Leave the last good list (or the built-in one) in place.
+        if (cancelled) return;
+        // ⚠ FAIL OPEN, AND SAY SO. Whatever is on screen stays — a remembered
+        // rail is still the best answer available. But if nothing was
+        // remembered the rail is currently drawing SKELETONS, and leaving it
+        // that way would be a permanent shimmer where the navigation should be.
+        // Marking it known lets the built-in list through: briefly out of date
+        // beats unusable, which is the rule this file has always followed.
+        setRailKnown(true);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [authed, nav]);
+    // ⚠ `nav` IS STILL A DEPENDENCY, AND IT NO LONGER COSTS ANYTHING. This
+    // effect used to run two REQUESTS on every single click in the rail - who
+    // are you, what may you use - for two answers that had not changed since
+    // sign-in, and that was a large part of "there is a delay whenever I move
+    // around". The fix was never to stop re-checking; it was to stop re-asking.
+    // `ensure` hands back the cached answer without touching the network until
+    // it is a minute old, so what used to be a round trip per click is now at
+    // most one per minute, per feed.
+    //
+    // Keeping `nav` is what preserves the thing that behaviour was BUYING: an
+    // administrator turning a workflow on for this account shows up while they
+    // are still using the app, rather than waiting for them to reload. It also
+    // covers switching account while already on Home - though `authRun` covers
+    // that explicitly, because a switch must re-read IMMEDIATELY and not on
+    // whatever the staleness window says.
+  }, [authed, nav, authRun]);
 
   // Stable identity: children list this in effect deps, so a fresh function on
   // every render would re-fire those effects (and, for the one that calls back
@@ -275,6 +368,10 @@ export default function App() {
 
   function logout() {
     api.clearSession();
+    // ⚠ THE CACHE GOES WITH THE TOKEN. It holds this person's profile and
+    // every list on their dashboard; leaving it in memory for whoever signs in
+    // next on this browser is not a staleness bug, it is a leak.
+    cache.reset();
     setAccounts(api.listAccounts());
     setAuthed(false);
     setEmail(null);
@@ -306,6 +403,19 @@ export default function App() {
     // don't know yet", which is fail-open; kept, it is one customer's locks on
     // another customer's screen.
     clearEntitlements();
+    // ⚠ AND THE RAIL FOLLOWS THE ACCOUNT. Two accounts do not have the same
+    // workflows, so showing the previous one's rail until the new one answers
+    // is the same flash, one customer over.
+    const theirs = api.getRememberedEntitlements(now);
+    setWorkflows(theirs?.workflows || WORKFLOWS);
+    setEntitled(Boolean(theirs));
+    setRailKnown(Boolean(theirs));
+    // Same reason as logout: none of what is cached belongs to the account now
+    // signed in. `prefetch` in the boot effect refills it for the new one, and
+    // `authRun` is what makes that effect run - `authed` has not changed.
+    cache.reset();
+    cache.prefetch({ email: now });
+    setAuthRun((k) => k + 1);
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -322,7 +432,20 @@ export default function App() {
     setDisplayName("");
     setIsAdmin(false);
     // It IS a switch — same reason as `switchAccount`, same reset.
+    //
+    // ⚠ AND YET NO `cache.reset()` HERE, unlike the switch above. `Login` has
+    // ALREADY started this account's prefetch, hint and all, before calling
+    // back — and `prefetch` clears a cache belonging to a different account
+    // itself. Resetting again from here would throw away the eight requests
+    // that are in the air on this account's behalf and start them over, which
+    // is the exact delay this whole change exists to remove.
     clearEntitlements();
+    // Same as `switchAccount` above — it IS a switch, so the rail switches too.
+    const theirs = api.getRememberedEntitlements(mail);
+    setWorkflows(theirs?.workflows || WORKFLOWS);
+    setEntitled(Boolean(theirs));
+    setRailKnown(Boolean(theirs));
+    setAuthRun((k) => k + 1);
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
@@ -574,6 +697,7 @@ export default function App() {
         active={nav}
         onNavigate={navigate}
         workflows={workflows}
+        workflowsKnown={railKnown}
         email={email}
         displayName={displayName}
         theme={theme}

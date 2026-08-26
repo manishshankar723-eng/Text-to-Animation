@@ -74,20 +74,39 @@ export const INCLUDE_KEYS = [
   "captions",
   "voiceover",
   "veo",
+  // ⚠ AND THE THIRD SPENDING PASS — 🖼 Animatic images, blocking every board
+  // shot out as key poses. It spends the account's IMAGE quota rather than
+  // dollars, which is why it has a count on the Run button where the other two
+  // have a price; it is a spend all the same, so it sits down here with them and
+  // it starts un-ticked. See `poses_pass.js`.
+  "poses",
 ];
 
 /**
- * What the preview opens with: everything on EXCEPT the Veo pass.
+ * THE FLAGS THAT START OFF, AND THEY ARE OFF BECAUSE OF WHAT THEY COST.
  *
- * ⚠ THE ONE FLAG THAT STARTS OFF, AND IT IS OFF BECAUSE OF WHAT IT COSTS. Every
- * other key here is either free or cents; `veo` renders every shot in the film
- * and a 48-shot board runs to tens of dollars. A default-on tick box is a box
- * most people never look at, and the first time anyone looked at this one it
- * would be on an invoice. So the Director writes the motion prompts, prices
- * them, shows the price — and waits to be asked.
+ * ⚠ A DEFAULT-ON TICK BOX IS A BOX MOST PEOPLE NEVER LOOK AT, and the first
+ * time anyone looked at one of these it would be on an invoice. `veo` renders
+ * every shot in the film — a 48-shot board runs to tens of dollars — and
+ * `poses` buys four drawings per second of film out of the account's image
+ * quota, which on the same board is over a thousand pictures. Both are things a
+ * person asks for on purpose.
+ *
+ * ⚠ THE VOICEOVER IS NOT IN THIS LIST, AND THAT IS NOT AN OVERSIGHT. It is
+ * cents, it is what makes an animatic watchable, and it writes the captions.
+ */
+const OFF_BY_DEFAULT = ["veo", "poses"];
+
+/**
+ * What the preview opens with: everything on except the two big spenders.
+ *
+ * So the Director writes the motion prompts, prices them, shows the price — and
+ * waits to be asked.
  */
 export function defaultInclude() {
-  return Object.fromEntries(INCLUDE_KEYS.map((key) => [key, key !== "veo"]));
+  return Object.fromEntries(
+    INCLUDE_KEYS.map((key) => [key, !OFF_BY_DEFAULT.includes(key)])
+  );
 }
 
 /**
@@ -129,10 +148,10 @@ export function governingKey(verb) {
  * verbs': by being declared, not by being inferred from a registry it is
  * deliberately not in. See `voice_pass.js`.
  */
-const PASS_GOVERNORS = ["voiceover", "veo", "sfx", "music"];
+const PASS_GOVERNORS = ["voiceover", "veo", "sfx", "music", "poses"];
 
 /**
- * AND WHICH OF THE PASSES COST MONEY. This is the line the panel draws.
+ * AND WHICH OF THE PASSES SPEND. This is the line the panel draws.
  *
  * ⚠ "IS IT A PASS" AND "DOES IT SPEND" ARE TWO DIFFERENT QUESTIONS, and until
  * phase D they had the same answer, so `paidKeys` was allowed to read
@@ -146,7 +165,15 @@ const PASS_GOVERNORS = ["voiceover", "veo", "sfx", "music"];
  * OFFERED at all (a pass reaches the tick-box column by being declared, since it
  * is deliberately not in `ACTIONS`); this decides which ROW it is offered in.
  */
-const PAID_PASSES = ["voiceover", "veo"];
+/**
+ * ⚠ "SPENDS" IS THE TEST, NOT "IS BILLED IN DOLLARS". 🖼 Animatic images joined
+ * this list without a price: it draws four pictures per second of film out of
+ * the account's IMAGE quota, which is a spend a user has to agree to in exactly
+ * the way the other two are — and putting it in the free row beside Transitions
+ * would be the panel calling a thousand generated images an edit. What it gets
+ * on the Run button is a COUNT rather than a figure in dollars; see the button.
+ */
+const PAID_PASSES = ["voiceover", "veo", "poses"];
 
 /**
  * The include flags that actually change something in THIS build — the tick

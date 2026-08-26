@@ -681,8 +681,52 @@ def _project_of(job: Job) -> AnimaticProject:
     )
 
 
-def _summarise(job: Job) -> AnimaticSummary:
+# WHAT A LIBRARY CARD DOES NOT READ — measured against the live collection, not
+# guessed. An animatic averages 4.8 KB and HALF of that is `params.frames`; of a
+# frame, `src` + `mask` + `keyframes` are ~70% of the bytes and only `src` is
+# ever printed. One library page (100 rows) was ~500 KB of documents to draw a
+# hundred titles, counts and thumbnails.
+#
+# ⚠ THIS LIST AND `_summarise` ARE ONE THING IN TWO PLACES, which is a hazard,
+# so it is guarded rather than trusted: `tests/summary_projection_check.py`
+# rebuilds every real animatic's summary from the full document AND from the
+# slimmed one and fails if the two differ. Add a field to `_summarise` that is
+# named here and the suite says so on the next run.
+#
+# ⚠ ONLY OPTIONAL FIELDS MAY APPEAR HERE. A dropped field arrives as its model
+# default, so dropping a REQUIRED one makes `Job(**doc)` raise for every row.
+# `AnimaticFrame` requires `id` and `src`; `AnimaticTextClip` requires `id`.
+SUMMARY_DROP = (
+    # Per-frame, and the bulk of the saving: the mask shape, the animation
+    # curves and the effect chain. A card prints a count, a length and one
+    # thumbnail - it has never opened any of these.
+    "params.frames.mask",
+    "params.frames.keyframes",
+    "params.frames.effects",
+    # Text clips are COUNTED, never read, so everything but the id could go;
+    # the curves are the only part big enough to be worth naming.
+    "params.texts.keyframes",
+    # Whole arrays nothing on a card touches.
+    "params.overlays",
+    "params.transitions",
+)
+
+
+def _summarise(job: Job, boards: dict | None = None) -> AnimaticSummary:
+    """One library card.
+
+    ⚠ `boards` IS NOT OPTIONAL WHEN YOU ARE IN A LOOP. The cover's version token
+    is `_frame_version`, and for a frame that came from a storyboard that means
+    reading the board record. Called with `boards=None`, every card starts a
+    FRESH cache and therefore pays its own round trip to the job store — so a
+    library of fifty projects made fifty sequential trips to Atlas inside one
+    request, which is most of what "the dashboard is slow once I have work in
+    it" was. `list_animatics` passes ONE dict for the whole page; a board shared
+    by several projects is then read once, not once per card.
+    """
     frames = _frames_of(job)
+    if boards is None:
+        boards = {}
     return AnimaticSummary(
         job_id=job.job_id,
         title=job.character_name or "Project",
@@ -694,7 +738,7 @@ def _summarise(job: Job) -> AnimaticSummary:
         # redrawn shot stops being the one picture on screen that never updates.
         cover_url=(
             f"/animatics/{job.job_id}/frame/{frames[0].id}"
-            f"?v={_frame_version(job, frames[0])}"
+            f"?v={_frame_version(job, frames[0], boards)}"
             if frames
             else None
         ),
@@ -1007,9 +1051,20 @@ def list_animatics(
     limit: int = 100,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """The caller's saved animatics, newest first (the library grid)."""
-    jobs = get_store().list(limit=limit, owner=current.email, kinds=[JobKind.ANIMATIC])
-    return [_summarise(j) for j in jobs]
+    """The caller's saved animatics, newest first (the library grid).
+
+    ⚠ ONE `boards` CACHE FOR THE WHOLE PAGE, not one per card — see `_summarise`.
+    """
+    jobs = get_store().list(
+        limit=limit,
+        owner=current.email,
+        kinds=[JobKind.ANIMATIC],
+        # ⚠ THE EDITOR STILL GETS EVERYTHING — this is the LIST route, and
+        # `GET /animatics/{id}` is untouched. See SUMMARY_DROP.
+        drop=SUMMARY_DROP,
+    )
+    boards: dict = {}
+    return [_summarise(j, boards) for j in jobs]
 
 
 # ---------------------------------------------------------------------------

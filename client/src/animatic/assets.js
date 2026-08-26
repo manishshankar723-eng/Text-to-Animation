@@ -71,10 +71,41 @@ export function assetKey(asset) {
  */
 export function assetOrigin(asset) {
   if ((asset?.kind || "image") === "audio") return "audio";
+  // ⚠ A KEY POSE GETS A SECTION OF ITS OWN, and it is not a nicety. ✨ Animatic
+  // images adds a card per DRAWING — sixteen for one four-second shot — so on a
+  // board of any size they would bury the panels they were made from inside
+  // Storyboard Frames, which is a section people keep folded shut. Reported the
+  // moment the cards existed at all: "media panel mai generted iamge nhi dikh
+  // rah ahai". A named section is the difference between "they are in there
+  // somewhere" and "there they are".
+  //
+  // ⚠ A VEO TAKE OF A POSE IS NOT ONE. `attachVeoClip` keeps the pose's `src`
+  // underneath the video source, so such a card still carries `frame` — but its
+  // `src.kind` is "video" by then, and it belongs with the renders in Storyboard
+  // Frames exactly as a take of a panel does. Same ordering rule as
+  // `cardRowKind`: what it IS now wins over what it was made from.
+  if (asset?.src?.kind === "pose" && asset?.src?.storyboard_id) return "poses";
   if (asset?.src?.storyboard_id) return "board";
   if ((asset?.kind || "image") === "video") return "video";
   return "image";
 }
+
+/**
+ * DID THIS CARD COME OUT OF A STORYBOARD? — a panel, a key pose, or a Veo take
+ * of either.
+ *
+ * ⚠ IT EXISTS BECAUSE "which section is it filed under" AND "did it come off a
+ * board" STOPPED BEING THE SAME QUESTION the moment key poses got a section of
+ * their own. Four places asked `assetOrigin(card) === "board"` to mean the
+ * second — the drag's `x-anim-board` marker, the ＋ on a card, the drop rule and
+ * the overlay routing — and every one of them would have quietly started
+ * answering "no" for a key pose, which routes a board picture onto the overlay
+ * Images lane. This is the question those four actually meant.
+ */
+export const isBoardAsset = (asset) => {
+  const origin = assetOrigin(asset);
+  return origin === "board" || origin === "poses";
+};
 
 /**
  * Serve path for one card's picture, or "" when it has none (a colour card).

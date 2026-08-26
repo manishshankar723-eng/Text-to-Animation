@@ -9,7 +9,7 @@
 //
 // A tier does NOT store a list of features. See the note at the top of
 // `server/billing.py` for why that would be two places to answer one question.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api.js";
 import { formatDateTime, num } from "./format.js";
 
@@ -28,11 +28,81 @@ function toMinor(major) {
 
 const SYMBOLS = { USD: "$", INR: "₹", EUR: "€", GBP: "£" };
 
+// A one-line-looking field that is really a textarea, and grows to fit its text.
+//
+// ⚠ A PLAIN `<input>` HERE WOULD HIDE THE END OF THE COPY. Each editable column is
+// about 180px of a 440px card, and the lines in them already wrap on the
+// real pricing card — "Unlimited image generations" takes two lines on the card
+// in the screenshot. A single-line field would have shown an administrator a
+// trimmed version of the very sentence a customer reads in full, with nothing on
+// screen to say it had been trimmed. `rows={1}` plus the effect below means the
+// box is exactly as tall as what is in it.
+//
+// ⚠ ENTER COMMITS, IT DOES NOT INSERT A NEWLINE. This is one line of a card, not
+// a paragraph, and a stored "\n" would reach the pricing page as a line the
+// layout never planned for.
+function GrowText({ value, ...rest }) {
+  const ref = useRef(null);
+
+  // ⚠ `scrollHeight` ALONE IS TWO PIXELS SHORT, and the two it is short by are
+  // the borders: `theme.css` puts `box-sizing: border-box` on everything, so a
+  // height of exactly `scrollHeight` gives the text a content box 2px smaller
+  // than the text — and `overflow: hidden` then eats the bottom of the last
+  // line. `offsetHeight - clientHeight` is that border, measured rather than
+  // guessed, so the field stays right if the border ever changes.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      {...rest}
+    />
+  );
+}
+
+// ⚠ THE SERVER REFUSES A THIRTEENTH — `TierUpdate.bullets` in `admin.py` is
+// `max_length=12`, so the button has to stop where the route stops rather than
+// let somebody type a line that comes back as a 422.
+const MAX_BULLETS = 12;
+
+// One marketing bullet, in the shape the wire uses, with both flags filled in.
+// ⚠ THE SEEDED CATALOGUE LEAVES `strong` OFF ENTIRELY on most lines and `ok`
+// off on all of them, and a control bound to `undefined` is a React warning and
+// a toggle that needs two clicks the first time. Trimmed here as well as on the
+// way out, so "did this change?" compares like with like.
+function normaliseBullets(list) {
+  return (list || []).map((b) => ({
+    text: (b.text || "").trim(),
+    ok: b.ok !== false,
+    strong: !!b.strong,
+  }));
+}
+
 export default function AdminPricing() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  // ⚠ BUMPED WHEN A SAVE FAILS, AND USED AS PART OF EVERY CARD'S `key`, WHICH
+  // REMOUNTS THEM. Each card keeps what is being typed in local state, so a
+  // rejected PATCH would otherwise leave a line on screen that the server does
+  // not have — the reload puts the truth in `data` and nothing shows it. A
+  // remount is the whole recovery: local state is thrown away and every field
+  // goes back to what came off the wire.
+  const [rev, setRev] = useState(0);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -60,9 +130,35 @@ export default function AdminPricing() {
       }));
     } catch (e) {
       setError(e.message);
+      setRev((r) => r + 1);
       load();
     } finally {
       setBusy("");
+    }
+  }
+
+  // ⚠ THIS RENAMES THE FEATURE, NOT A LINE ON ONE CARD. The right-hand column
+  // is derived: what it prints is each feature's own `label`, the same string the
+  // workflow rail and every refusal message use. So the rename is saved by the
+  // SCREEN and written into every tier that lists that feature — patching only
+  // the card it was typed on would leave the other three showing the old name
+  // until a reload, and make it look like a per-tier caption, which it is not.
+  async function renameFeature(key, label) {
+    setError("");
+    try {
+      const saved = await api.adminUpdateFeature(key, { label });
+      const now = saved?.label || label;
+      setData((d) => ({
+        ...d,
+        tiers: d.tiers.map((t) => ({
+          ...t,
+          includes: t.includes.map((f) => (f.key === key ? { ...f, label: now } : f)),
+        })),
+      }));
+    } catch (e) {
+      setError(e.message);
+      setRev((r) => r + 1);
+      load();
     }
   }
 
@@ -105,13 +201,14 @@ export default function AdminPricing() {
       <div className="admin-tier-grid">
         {data.tiers.map((t) => (
           <TierCard
-            key={t.id}
+            key={`${t.id}:${rev}`}
             tier={t}
             symbol={symbol}
             currency={data.currency}
             isDefault={t.id === data.default_tier}
             busy={busy === t.id}
             onSave={save}
+            onRenameFeature={renameFeature}
           />
         ))}
       </div>
@@ -119,13 +216,14 @@ export default function AdminPricing() {
   );
 }
 
-function TierCard({ tier, symbol, currency, isDefault, busy, onSave }) {
+function TierCard({ tier, symbol, currency, isDefault, busy, onSave, onRenameFeature }) {
   const [monthly, setMonthly] = useState(toMajor(tier.monthly));
   const [yearly, setYearly] = useState(toMajor(tier.yearly));
   const [compare, setCompare] = useState(toMajor(tier.compare_at));
   const [name, setName] = useState(tier.name);
   const [blurb, setBlurb] = useState(tier.blurb);
   const [badge, setBadge] = useState(tier.badge || "");
+  const [bullets, setBullets] = useState(() => normaliseBullets(tier.bullets));
   const [local, setLocal] = useState("");
 
   // Saved on blur, one field per PATCH — the same rule the Features screen
@@ -144,6 +242,32 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave }) {
   function commitText(field, value, was) {
     const next = value.trim();
     if (next !== (was || "")) onSave(tier.id, { [field]: next });
+  }
+
+  // ⚠ THE BULLETS ARE ONE FIELD, NOT ONE FIELD PER LINE. `bullets` is a list on
+  // the tier, so "line 3 changed" is not something the route can be told — the
+  // only patch it takes is the whole list. Hence the local copy above: typing
+  // edits it, and a tick, a bold, a delete or leaving a text box posts all of it.
+  //
+  // Empty lines are dropped on the way out. A row you added and never typed into
+  // is not copy, and the server counts it against the twelve.
+  function commitBullets(next) {
+    setBullets(next);
+    const clean = next
+      .map((b) => ({ ...b, text: b.text.trim() }))
+      .filter((b) => b.text);
+    if (JSON.stringify(clean) !== JSON.stringify(normaliseBullets(tier.bullets)))
+      onSave(tier.id, { bullets: clean });
+  }
+
+  // Local only — every keystroke would otherwise be a PATCH of the whole list.
+  function editBullet(i, patch) {
+    setBullets((list) => list.map((b, n) => (n === i ? { ...b, ...patch } : b)));
+  }
+
+  // A flag is a decision, not a draft, so these save the moment they are clicked.
+  function toggleBullet(i, patch) {
+    commitBullets(bullets.map((b, n) => (n === i ? { ...b, ...patch } : b)));
   }
 
   const saving =
@@ -249,32 +373,108 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave }) {
       <div className="admin-tier-cols">
         <div>
           <h4 className="admin-h4">Says on the card</h4>
+          {/* ⚠ FREE TEXT, AND THE ONLY WORDS A CUSTOMER ACTUALLY READS. Nothing
+              checks a line here against what the flags grant — that is what the
+              column on the right is for. The tick is a toggle, not a decoration:
+              a line with a cross is the one the card prints as NOT included. */}
           <ul className="pricing-features admin-tier-bullets">
-            {(tier.bullets || []).map((b, i) => (
+            {bullets.map((b, i) => (
               <li key={i} className={b.ok ? "" : "no"}>
-                <span className="pricing-ic">{b.ok ? "✓" : "✕"}</span>
-                <span className={b.strong ? "strong" : ""}>{b.text}</span>
+                <button
+                  type="button"
+                  className="pricing-ic admin-bullet-ic"
+                  disabled={busy}
+                  onClick={() => toggleBullet(i, { ok: !b.ok })}
+                  title={
+                    b.ok
+                      ? "Printed as included. Click for a cross."
+                      : "Printed as NOT included. Click for a tick."
+                  }
+                >
+                  {b.ok ? "✓" : "✕"}
+                </button>
+                <GrowText
+                  className={`admin-bullet-text ${b.strong ? "strong" : ""}`}
+                  value={b.text}
+                  maxLength={120}
+                  disabled={busy}
+                  placeholder="Type what the card should say…"
+                  onChange={(e) => editBullet(i, { text: e.target.value })}
+                  onBlur={() => commitBullets(bullets)}
+                  aria-label={`Card line ${i + 1}`}
+                />
+                <span className="admin-bullet-tools">
+                  <button
+                    type="button"
+                    className={`admin-bullet-btn ${b.strong ? "on" : ""}`}
+                    disabled={busy}
+                    onClick={() => toggleBullet(i, { strong: !b.strong })}
+                    title="Print this line in bold on the pricing card"
+                    aria-pressed={b.strong}
+                  >
+                    B
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-bullet-btn"
+                    disabled={busy}
+                    onClick={() => commitBullets(bullets.filter((_, n) => n !== i))}
+                    title="Remove this line from the card"
+                    aria-label={`Remove card line ${i + 1}`}
+                  >
+                    ✕
+                  </button>
+                </span>
               </li>
             ))}
           </ul>
+          <div className="admin-bullet-add">
+            <button
+              className="btn ghost small"
+              disabled={busy || bullets.length >= MAX_BULLETS}
+              onClick={() =>
+                setBullets((list) => [...list, { text: "", ok: true, strong: false }])
+              }
+              title={
+                bullets.length >= MAX_BULLETS
+                  ? `${MAX_BULLETS} lines is the most a card takes.`
+                  : "Add another line to this card"
+              }
+            >
+              + Add a line
+            </button>
+            {/* The bold and remove buttons only appear on the line you are
+                pointing at, so the sentence that says so is not optional. */}
+            <span className="muted tiny">
+              {bullets.length >= MAX_BULLETS
+                ? `${MAX_BULLETS} lines is the most a card takes.`
+                : "Saved when you click away. Point at a line for bold and remove. An empty line isn’t saved."}
+            </span>
+          </div>
         </div>
         <div>
           <h4 className="admin-h4">Actually unlocks</h4>
-          {/* ⚠ DERIVED FROM `min_tier` ON EACH FEATURE, not stored here. Set it
-              on the Features screen; this only reports the result. */}
+          {/* ⚠ WHICH LINES APPEAR HERE IS DERIVED FROM `min_tier` ON EACH FEATURE
+              and is not stored on the tier — add or remove one on the Features
+              screen. The TEXT is editable, because it is the feature's own name;
+              see the note on `UnlockName` for why that is not the same thing as
+              editing this card. */}
           <ul className="admin-tier-unlocks">
             {tier.includes.length === 0 ? (
               <li className="muted tiny">Nothing — every feature needs a higher tier.</li>
             ) : (
               tier.includes.map((f) => (
                 <li key={f.key} className="muted tiny">
-                  {f.label}
+                  <UnlockName feature={f} disabled={busy} onRename={onRenameFeature} />
                 </li>
               ))
             )}
           </ul>
           <p className="muted tiny">
-            Set on <strong>Features → which tier unlocks it</strong>.
+            Which lines these are is set on{" "}
+            <strong>Features → which tier unlocks it</strong>. Renaming one here
+            renames that feature <strong>everywhere in the app</strong> — it is the
+            feature's own name, not copy belonging to this card.
           </p>
         </div>
       </div>
@@ -339,5 +539,47 @@ function TierCard({ tier, symbol, currency, isDefault, busy, onSave }) {
         </span>
       </div>
     </section>
+  );
+}
+
+// One line of the derived column, as an editable box.
+//
+// ⚠ WHAT THIS EDITS IS THE FEATURE'S OWN `label` — the string the workflow rail
+// prints, the one every "you need a higher plan" message names — NOT a caption
+// that belongs to this tier. Two tiers listing the same feature therefore show
+// the same words and both change when either is typed into, which is why the
+// PATCH is the screen's job (`renameFeature`) and not the card's.
+//
+// ⚠ AND IT FOLLOWS `feature.label` AFTERWARDS. Rename "Veo video renders" on the
+// Starter card and the same line on Pro is a different `UnlockName` with its own
+// state; without the effect below it would keep showing the old name until the
+// page was reloaded.
+function UnlockName({ feature, disabled, onRename }) {
+  const [text, setText] = useState(feature.label);
+
+  useEffect(() => setText(feature.label), [feature.label]);
+
+  function commit() {
+    const next = text.trim();
+    // A feature with no name is unreadable on every screen that prints it, and
+    // the server falls back to the raw key. Put the old name back instead.
+    if (!next) {
+      setText(feature.label);
+      return;
+    }
+    if (next !== feature.label) onRename(feature.key, next);
+  }
+
+  return (
+    <GrowText
+      className="admin-unlock-name"
+      value={text}
+      maxLength={80}
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      aria-label={`Name of ${feature.label}`}
+      title="The feature's name, as the whole app shows it"
+    />
   );
 }

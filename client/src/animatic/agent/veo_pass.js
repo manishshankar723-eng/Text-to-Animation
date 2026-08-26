@@ -92,6 +92,10 @@
 // hard stop — and this owns every decision it leads to.
 
 import { shiftsOf } from "./voice_pass.js";
+// ⚠ ONE DIRECTION ONLY: `poses_pass.js` imports nothing from here. `shotRow`
+// is the film as the Director counts it and a KEY POSE is no more a shot than
+// a take is — see `isPose` for what goes wrong when it is counted as one.
+import { isPose } from "./poses_pass.js";
 
 /** The include flag phase C answers to. One name, and it is in `INCLUDE_KEYS`. */
 export const VEO_KEY = "veo";
@@ -133,7 +137,27 @@ export function isTake(frame) {
 }
 
 /**
- * THE FILM AS THE DIRECTOR COUNTS IT — the shots, with the takes taken out.
+ * IS THIS CLIP SOMETHING THE DIRECTOR MADE *OF* A SHOT, RATHER THAN A SHOT?
+ *
+ * ⚠ TWO KINDS OF DERIVED PICTURE SIT OVER THE BOARD'S STILLS, and neither is a
+ * shot: a Veo TAKE on `board_video` (`isTake`) and a KEY POSE on `board_poses`
+ * (`isPose`). Both are clips on the picture list, both reference the panel they
+ * came from, and both would be counted as shots by anything that simply reads
+ * `frames`.
+ *
+ * ⚠ THE POSE HALF WAS MISSING UNTIL 🖼 ANIMATIC IMAGES BECAME A 🎬 PASS, and
+ * it was already wrong before that — a user who pressed 🖼 and then 🎬 was
+ * handing the Director eight panels and a hundred and twenty-eight drawings.
+ * A pose run is FOUR CLIPS PER SECOND, so it does not merely inflate the count
+ * the way a take does, it drowns it.
+ */
+function isDerived(frame) {
+  return isTake(frame) || isPose(frame);
+}
+
+/**
+ * THE FILM AS THE DIRECTOR COUNTS IT — the shots, with the takes and the key
+ * poses taken out.
  *
  * ⚠ `starts` IS FILTERED AT THE SAME INDICES, never recomputed. The editor's
  * `starts` come from `frameSpans`, which knows about tracks, explicit
@@ -147,11 +171,11 @@ export function isTake(frame) {
 export function shotRow(frames, starts) {
   const list = frames || [];
   const at = starts || [];
-  if (!list.some(isTake)) return { frames: list, starts: at };
+  if (!list.some(isDerived)) return { frames: list, starts: at };
   const keptFrames = [];
   const keptStarts = [];
   list.forEach((frame, i) => {
-    if (isTake(frame)) return;
+    if (isDerived(frame)) return;
     keptFrames.push(frame);
     keptStarts.push(at[i] ?? 0);
   });
@@ -270,7 +294,10 @@ export function housePrompts(frames, said) {
   );
   const out = [];
   (frames || []).forEach((frame, i) => {
-    if (!frame || isTake(frame)) return;
+    // ⚠ A KEY POSE IS REFUSED HERE TOO, not only by `shotRow`. This is normally
+    // handed a row that has already been filtered — but it is exported, the free
+    // planner calls it, and a drawing quoted as a shot to animate is money.
+    if (!frame || isTake(frame) || isPose(frame)) return;
     const kind = (frame.src && frame.src.kind) || "";
     if (kind === "video" || kind === "color") return;
     const board = String((wording.get(frame.id) || {}).description || "").trim();

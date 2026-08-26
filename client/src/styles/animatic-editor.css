@@ -1521,7 +1521,7 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* --- AND ALL FOUR ARE GREEN --------------------------------------------- */
+/* --- AND THE ROW IS GREEN (bar one) ------------------------------------- */
 /* ✨ Animate with Veo · T Text · ▣ Colour card · 🎙 Voiceover. Asked for as one
    set — "Animate with veo, text, colour card and Voiceover buttun strock same of
    tree like green" — and they are styled as one: a green stroke, a faint green
@@ -1567,6 +1567,41 @@
 .tl-add-tools .btn:disabled {
   /* `.btn:disabled` only fades; the green would still be legible enough to look
      pressable, so the stroke goes neutral as well as faint. */
+  border-color: var(--border);
+  background: var(--btn-bg);
+  color: var(--muted);
+}
+
+/* --- … EXCEPT 🎬 MAKE VIDEO, WHICH IS PASTEL BLUE ---------------------- */
+/* Asked for as "Make video buttun color change green to pestal blue color",
+   together with the row order it now leads (Make Video · Voiceover · Animate
+   with Veo · Animatic images · Text · Colour card).
+
+   ⚠ THE SELECTOR CARRIES `.btn` ON PURPOSE. `.tl-add-tools .btn` above is two
+   classes and paints every tool green; `.tl-add-tools .btn.an-add-director` is
+   three, so it wins wherever it lands in the file. Dropping the `.btn` would
+   tie this to source order and the green would come back on the next reshuffle.
+
+   ⚠ AND IT NEEDS ITS OWN `:disabled`, WHICH IS NOT A COPY-PASTE SLIP. The row's
+   grey-out rule is `.tl-add-tools .btn:disabled` — three units, exactly TIED with
+   the blue rule above, and the blue is written later, so without the repeat here
+   an empty animatic would show a disabled button still wearing a pressable blue
+   stroke. The declarations are deliberately identical to the row's.
+   `--tool-blue-*` lives in theme.css and has a light-theme pair. */
+.tl-add-tools .btn.an-add-director {
+  border-color: var(--tool-blue-edge);
+  background: var(--tool-blue-tint);
+  color: var(--text);
+}
+.tl-add-tools .btn.an-add-director:hover:not(:disabled) {
+  border-color: var(--tool-blue-edge);
+  background: var(--tool-blue-tint);
+  color: var(--text);
+  /* Same hover shape as the green tools — a ring outside the button, in its
+     own colour — so only the hue tells them apart. */
+  box-shadow: 0 0 0 2px var(--tool-blue-tint);
+}
+.tl-add-tools .btn.an-add-director:disabled {
   border-color: var(--border);
   background: var(--btn-bg);
   color: var(--muted);

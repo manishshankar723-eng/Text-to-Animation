@@ -42,6 +42,94 @@ def _new_job_id() -> str:
     return uuid.uuid4().hex
 
 
+# ---------------------------------------------------------------------------
+# `where` - the small subset of a Mongo filter every backend can honour
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS: `limit` is applied by the STORE, and any filtering the caller
+# does afterwards therefore runs on an already-truncated page. That is not a
+# tidiness problem, it is a WRONG ANSWER: the storyboard library asks for the
+# boards with no workflow tag, and if the newest N boards all happen to be
+# tagged copies it is handed an empty list and prints "nothing yet" over a
+# library full of work. The same trap swallows drafts. The only fix is for the
+# condition to travel WITH the query, so the limit lands after it.
+#
+# Deliberately three operators and no more - equality, `$in`, `$ne`. Mongo gets
+# them for free (they are its own syntax); the memory and Firestore backends
+# implement them below in a dozen lines. Anything richer would mean writing a
+# query engine twice, which is how two backends start disagreeing.
+_WHERE_OPS = ("$in", "$ne")
+
+
+def _dotted(doc: dict, path: str):
+    """`doc["a"]["b"]` for `"a.b"`, or None if any hop is missing."""
+    cur = doc
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def _prune(node, parts: list[str]) -> None:
+    """Remove the dotted `parts` path from `node`, IN PLACE, THROUGH ARRAYS.
+
+    ⚠ WALKING INTO A LIST IS THE WHOLE REASON THIS EXISTS. The fields worth not
+    fetching are not top-level ones — they are `params.frames.keyframes` and
+    `result.panels.description`: a field of every element of an array. Mongo's
+    exclusion projection does exactly this for free, and this is the same rule
+    written out for the backends that have no projection, so the two agree.
+
+    Only ever called on a FRESH dict (see `_slim`), never on a stored record.
+    """
+    if isinstance(node, list):
+        for item in node:
+            _prune(item, parts)
+        return
+    if not isinstance(node, dict):
+        return
+    head, rest = parts[0], parts[1:]
+    if not rest:
+        node.pop(head, None)
+        return
+    _prune(node.get(head), rest)
+
+
+def _slim(job: "Job", drop: "tuple[str, ...]") -> "Job":
+    """A COPY of `job` with `drop`'s paths removed.
+
+    ⚠ A COPY. `MemoryJobStore` hands out the objects it is storing, so pruning
+    one in place would delete the customer's timeline out of the running
+    process. There is a test for precisely that.
+    """
+    doc = job.model_dump(mode="json")
+    for path in drop:
+        _prune(doc, path.split("."))
+    return Job(**doc)
+
+
+def _matches(job: "Job", where: dict | None) -> bool:
+    """Does this job satisfy `where`? Mongo's semantics, for the other stores.
+
+    MISSING AND None ARE THE SAME VALUE HERE, because that is what Mongo does
+    and the whole point is that the backends agree. `{"params.workflow": None}`
+    matching a document with no `workflow` key at all is not a quirk to work
+    around - it is exactly how "the untagged boards" is expressed.
+    """
+    if not where:
+        return True
+    doc = job.model_dump(mode="json")
+    for path, cond in where.items():
+        value = _dotted(doc, path)
+        if isinstance(cond, dict) and any(op in cond for op in _WHERE_OPS):
+            if "$in" in cond and value not in cond["$in"]:
+                return False
+            if "$ne" in cond and value == cond["$ne"]:
+                return False
+        elif value != cond:
+            return False
+    return True
+
+
 class JobStore:
     """Abstract job store interface."""
 
@@ -66,6 +154,8 @@ class JobStore:
         limit: int = 50,
         owner: str | None = None,
         kinds: "list[JobKind] | tuple[JobKind, ...] | None" = None,
+        drop: "tuple[str, ...] | None" = None,
+        where: dict | None = None,
     ) -> list[Job]:
         """Newest-first jobs, optionally restricted to an owner and to `kinds`.
 
@@ -74,6 +164,29 @@ class JobStore:
         runs. Filtering here (rather than in the caller) means the `limit` is
         applied AFTER the filter, so a long run of one kind can't push the other
         kind off the end of the list.
+
+        `drop` NAMES FIELDS THE CALLER DOES NOT READ, dotted, and reaching
+        THROUGH ARRAYS — `params.frames.keyframes` drops that key from every
+        frame. It exists because a job document is not small and a library card
+        is: measured against the live collection, an animatic averages 4.8 KB of
+        which HALF is `params.frames`, and most of a frame is `mask`, `keyframes`
+        and `effects` — none of which any card has ever printed. One library page
+        was ~500 KB of documents to draw a hundred titles and thumbnails.
+
+        Anything dropped comes back as its model default, so the record is still
+        a valid `Job` — but a dropped field READS AS EMPTY, which is why this is
+        opt-in per call site and never the default.
+
+        ⚠ NEVER DROP A FIELD THE SUMMARY READS, and do not trust your memory for
+        it. Each caller keeps its drop list NEXT TO its summariser, and
+        `tests/summary_projection_check.py` rebuilds every real document's
+        summary both ways and fails if they differ — so a summariser that starts
+        reading a dropped field is caught, rather than quietly shipping blank
+        cards.
+
+        `where` is an extra condition applied BEFORE the limit - see the
+        `_matches` block above for why that ordering is the whole point, and for
+        the three operators it supports.
         """
         raise NotImplementedError
 
@@ -186,7 +299,7 @@ class MemoryJobStore(JobStore):
             self._save_locked()
             return job
 
-    def list(self, limit=50, owner=None, kinds=None):
+    def list(self, limit=50, owner=None, kinds=None, drop=None, where=None):
         with self._lock:
             jobs = list(self._jobs.values())
         if owner is not None:
@@ -194,8 +307,18 @@ class MemoryJobStore(JobStore):
         if kinds:
             wanted = set(kinds)
             jobs = [j for j in jobs if j.kind in wanted]
+        if where:
+            jobs = [j for j in jobs if _matches(j, where)]
         jobs.sort(key=lambda j: j.created_at, reverse=True)
-        return jobs[:limit]
+        jobs = jobs[:limit]
+        if drop:
+            # ⚠ COPIES, NEVER THE STORED OBJECT. These Jobs ARE the store, so
+            # pruning one in place would lose the project out of the running
+            # process. `_slim` dumps first for that reason. The Mongo backend
+            # gets the same result for free — its documents are already copies
+            # off the wire, and it simply never sends the field.
+            jobs = [_slim(j, drop) for j in jobs]
+        return jobs
 
     def count_by_kind(self, owner=None):
         with self._lock:
@@ -274,7 +397,7 @@ class FirestoreJobStore(JobStore):
         doc.set(job.model_dump(mode="json"))
         return job
 
-    def list(self, limit=50, owner=None, kinds=None):
+    def list(self, limit=50, owner=None, kinds=None, drop=None, where=None):
         from google.cloud import firestore
 
         query = self._col
@@ -285,7 +408,7 @@ class FirestoreJobStore(JobStore):
         # created_at ordering needs another composite index, which would fail at
         # runtime on any deployment that hasn't created it. Instead we over-fetch
         # and trim, so the caller still gets a full page of the kind it asked for.
-        fetch = min(limit * 4, 500) if kinds else limit
+        fetch = min(limit * 4, 500) if (kinds or where) else limit
         query = query.order_by(
             "created_at", direction=firestore.Query.DESCENDING
         ).limit(fetch)
@@ -293,7 +416,16 @@ class FirestoreJobStore(JobStore):
         if kinds:
             wanted = set(kinds)
             jobs = [j for j in jobs if j.kind in wanted]
-        return jobs[:limit]
+        if where:
+            jobs = [j for j in jobs if _matches(j, where)]
+        jobs = jobs[:limit]
+        if drop:
+            # Firestore has no server-side field mask on this path, so the read
+            # is the same size — this only keeps the RESPONSE identical to what
+            # Mongo would have sent, which is what stops a deployment on this
+            # backend behaving differently from the one in production.
+            jobs = [_slim(j, drop) for j in jobs]
+        return jobs
 
     def count_by_kind(self, owner=None):
         """⚠ THIS ONE STREAMS, because Firestore has no group-by.
@@ -437,7 +569,7 @@ class MongoJobStore(JobStore):
         self._col.update_one({"_id": job_id}, {"$set": changed})
         return job
 
-    def list(self, limit=50, owner=None, kinds=None):
+    def list(self, limit=50, owner=None, kinds=None, drop=None, where=None):
         query: dict = {}
         if owner is not None:
             query["owner"] = owner
@@ -446,7 +578,26 @@ class MongoJobStore(JobStore):
         # applied after it — no over-fetch-and-trim needed.
         if kinds:
             query["kind"] = {"$in": [JobKind(k).value for k in kinds]}
-        cursor = self._col.find(query).sort("created_at", -1).limit(limit)
+        # `where` IS Mongo's own syntax, so it goes straight in - and being part
+        # of the query is what puts it before the limit. It is written with
+        # `setdefault` so it can never quietly replace `owner` or `kind`: a
+        # caller's typo must not be able to widen the scope of a library.
+        if where:
+            for path, cond in where.items():
+                query.setdefault(path, cond)
+        # ⚠ AN EXCLUSION PROJECTION, so it is the SERVER that never sends the
+        # field — the whole point. An inclusion projection here would be a
+        # standing invitation to forget a field the summariser reads and ship a
+        # library of blank cards; excluding names only what is provably unread.
+        #
+        # A dotted path reaches THROUGH an array: `params.frames.keyframes`
+        # excludes that key from every frame, and the array keeps its length and
+        # its order. That is the behaviour `_prune` reproduces for the other
+        # backends — see `_slim`.
+        projection = {f: 0 for f in drop} if drop else None
+        cursor = (
+            self._col.find(query, projection).sort("created_at", -1).limit(limit)
+        )
         return [self._to_job(d) for d in cursor]
 
     def count_by_kind(self, owner=None):

@@ -88,9 +88,17 @@ def check(label, good, detail=""):
 # ---------------------------------------------------------------------------
 # The fixture — a board row and a video row, and a library that already has both
 # ---------------------------------------------------------------------------
-# ⚠ THE PROJECT CARRIES `assets`, so the backfill path is NOT what is under test
-# here: this is a project saved since the library existed. (The backfill itself is
+# ⚠ THE PROJECT CARRIES `assets`, so the WHOLE-library backfill is NOT what is
+# under test here: this is a project saved since the library existed. (That one is
 # pure and is checked in `tests/asset_fields_check.py`.)
+#
+# ⚠ BUT IT ALSO CARRIES A KEY POSE ON THE TIMELINE WITH NO CARD, and that IS under
+# test. It is the state every project blocked out by the first build of
+# ✨ Animatic images is in: the drawings were placed and deliberately not carded,
+# so the Media pane could not show them and there was no way to save one —
+# "i can't see animatic images in midea". A project WITH a library is never
+# re-derived, so nothing was ever going to notice; the narrow repair in
+# `onLoadedRef` is what does, and this fixture is what proves it runs.
 #
 # ⚠ AND THERE IS A THIRD CARD WITH NO CLIP — the "orphan". It is the state the
 # whole feature exists to make possible, and the one the old pane could not
@@ -119,10 +127,16 @@ PROJECT = {
          "duration_ms": 4000, "start_ms": 0, "track": 1, "label": "TTBB_EP_1",
          "in_ms": 0, "out_ms": 54420, "speed": 1,
          "url": f"/animatics/probe/media/{VID_UPLOAD}?poster=1"},
+        # ⚠ ONE KEY POSE OF SHOT 1, on its own row, WITH NO CARD IN `assets`.
+        {"id": "k1", "kind": "image",
+         "src": {"kind": "pose", "storyboard_id": BOARD_ID, "index": 0, "frame": 2},
+         "duration_ms": 250, "start_ms": 0, "track": 2, "label": "Shot 1 - 3",
+         "url": "/animatics/probe/frame/k1?v=1"},
     ],
     "layers": [
         {"id": "L0", "kind": "board_image", "name": "Storyboard images", "track": 0},
         {"id": "L1", "kind": "video", "name": "Video", "track": 1},
+        {"id": "L2", "kind": "board_poses", "name": "Anim..Image", "track": 2},
     ],
     "assets": [
         {"id": "a1", "kind": "image",
@@ -146,6 +160,13 @@ PROJECT = {
     "texts": [], "shapes": [], "overlays": [], "transitions": [],
     "audio_tracks": [], "veo_clips": [], "video": None,
 }
+
+# FOUR CARDS ARE SAVED WITH THE PROJECT, and the fifth is the one the load
+# REPAIRS in — the key pose above. Written down once rather than as a literal 4
+# in five places, because the number is incidental to every assertion that reads
+# it ("nothing else left the library") and updating four of five is how a count
+# check comes to be measuring nothing.
+CARDS_TOTAL = 5
 
 SAVED: dict = {}
 
@@ -232,6 +253,34 @@ probe.bin = () =>
     used: (card.querySelector(".fs-num") || {}).textContent || "",
     drawn: Boolean(card.querySelector(".fs-thumb img")),
   }));
+
+/**
+ * THE MEDIA PANE'S SECTIONS — title, count and what is listed under each.
+ *
+ * ⚠ SECTION BY SECTION, NOT ONE FLAT LIST. `probe.bin()` cannot tell "the card
+ * exists" from "the card is somewhere a person will find it", and the report was
+ * the second of those: the drawings were filed with the panels, in a section
+ * people keep folded shut.
+ */
+probe.sections = () =>
+  Array.from(document.querySelectorAll(".an-media-body .an-grp")).map((sec) => ({
+    title: (sec.querySelector(".an-grp-title") || {}).textContent || "",
+    count: (sec.querySelector(".an-grp-count") || {}).textContent || "",
+    labels: Array.from(sec.querySelectorAll(".fs-bin-card .fs-label")).map(
+      (n) => n.textContent
+    ),
+  }));
+
+/** Does the card with this label offer a ⬇? `null` when there is no such card. */
+probe.hasDownload = (label) => {
+  const card = Array.from(document.querySelectorAll(".fs-bin-card")).find(
+    (c) => ((c.querySelector(".fs-label") || {}).textContent || "") === label
+  );
+  if (!card) return null;
+  return Array.from(card.querySelectorAll(".fs-tool")).some((b) =>
+    (b.getAttribute("aria-label") || "").startsWith("Download")
+  );
+};
 
 /** The TIMELINE's clips: which row each is on, and where it starts, in pixels. */
 probe.bars = () => {
@@ -575,8 +624,40 @@ def main():
                 return 1
             page.wait_for_timeout(1500)
 
+            # -----------------------------------------------------------------
+            # A KEY POSE ON THE TIMELINE WITH NO CARD IS PUT RIGHT, IN A SECTION
+            # OF ITS OWN — and only what this app MADE offers a ⬇
+            # -----------------------------------------------------------------
+            print("\nAnimatic images reach Media, and only generated cards save")
+            secs = page.evaluate("() => window.__probe.sections()")
+            titles = [x["title"] for x in secs]
+            check("the pane grows an Animatic Images section",
+                  "Animatic Images" in titles, json.dumps(titles))
+            poses = next((x for x in secs if x["title"] == "Animatic Images"), None)
+            check("…carrying the drawing that had no card",
+                  bool(poses) and "Shot 1 - 3" in poses["labels"],
+                  json.dumps(poses))
+            # ⚠ AND IT IS NOT FILED WITH THE PANELS. Sixteen drawings a shot would
+            # bury them, which is the half of the report a card alone does not fix.
+            board = next((x for x in secs if x["title"] == "Storyboard Frames"), None)
+            check("…and NOT in among the panels it was drawn from",
+                  bool(board) and "Shot 1 - 3" not in board["labels"],
+                  json.dumps(board))
+            # ⚠ THE ⬇ IS FOR WHAT THIS APP MADE. A key pose costs an image credit
+            # and there is no other copy of it; a file the user dropped in is
+            # already on their machine — "only generated cheezon par dikhe ye ⬇".
+            check("the key pose offers a Download",
+                  page.evaluate("() => window.__probe.hasDownload('Shot 1 - 3')") is True,
+                  "no ⬇ on the drawing")
+            check("…so does the storyboard panel it was drawn from",
+                  page.evaluate("() => window.__probe.hasDownload('Shot 1')") is True,
+                  "no ⬇ on the panel")
+            check("…but an uploaded file does not",
+                  page.evaluate("() => window.__probe.hasDownload('spare.png')") is False,
+                  "an upload is already on the user's machine")
+
             shelf = page.evaluate("() => window.__probe.bin()")
-            check("all four sources are listed", len(shelf) == 4, json.dumps(shelf))
+            check("every source is listed", len(shelf) == CARDS_TOTAL, json.dumps(shelf))
             # ⚠ THE CARD WITH NO CLIP IS THE POINT. The old pane could not draw
             # this row at all: it listed clips, so a source with none did not exist.
             orphan = next((r for r in shelf if r["label"] == "spare.png"), None)
@@ -606,7 +687,7 @@ def main():
                   json.dumps(labels(shelf)))
             check("…now listed as used by nothing",
                   bool(kept) and kept["used"] == "–", json.dumps(kept))
-            check("and nothing else left the library", len(shelf) == 4, json.dumps(labels(shelf)))
+            check("and nothing else left the library", len(shelf) == CARDS_TOTAL, json.dumps(labels(shelf)))
 
             # -----------------------------------------------------------------
             # …and drag it back out
@@ -630,7 +711,7 @@ def main():
                 # payload would have moved a clip; an `asset` payload makes one.
                 shelf = page.evaluate("() => window.__probe.bin()")
                 check("…and the card is still in Media, now used once",
-                      len(shelf) == 4
+                      len(shelf) == CARDS_TOTAL
                       and next(r for r in shelf if r["label"] == "TTBB_EP_1")["used"] == "×1",
                       json.dumps(shelf))
 
@@ -671,7 +752,7 @@ def main():
                 check("↵ takes the new name",
                       "Chase wide" in labels(shelf), json.dumps(labels(shelf)))
                 check("…without growing a second card for the same source",
-                      len(shelf) == 4, json.dumps(labels(shelf)))
+                      len(shelf) == CARDS_TOTAL, json.dumps(labels(shelf)))
                 now = page.evaluate("() => window.__probe.barLabels()")
                 renamed = [k for k in now if now[k] == "Chase wide"]
                 check("the clip cut from it takes the new name too",
@@ -723,9 +804,15 @@ def main():
                              "Properties", "Remove from Media"):
                     check(f"…and it offers {want}",
                           any(t.startswith(want) for t in texts), json.dumps(texts))
-                # ⚠ DOWNLOAD IS A VEO RENDER'S LINE AND NOTHING ELSE'S. This card
-                # is an ordinary upload, which is already on the user's machine.
-                check("…but NOT Download, which only a Veo render offers",
+                # ⚠ DOWNLOAD IS FOR WHAT THIS APP MADE, AND THIS CARD IS AN
+                # ORDINARY UPLOAD — a file already sitting on the user's machine.
+                # The gate widened once, from `isVeoRender` to "anything with bytes
+                # behind it", so that ✨ Animatic images' key poses could be saved;
+                # that put a ⬇ on uploads too and was sent straight back — "only
+                # generated cheezon par dikhe ye ⬇ icone". `isSavable` asks for the
+                # board reference now, which no upload carries.
+                # `tests/veo_download_check.py` pins the rule and the truth table.
+                check("…but NOT Download, which only what this app generated offers",
                       not any(t.startswith("Download") for t in texts), json.dumps(texts))
                 # ⚠ THE GEOMETRY IS PART OF THE CLAIM: the Media pane scrolls and
                 # clips, so a menu that were a child of the card would be cut off
@@ -920,7 +1007,7 @@ def main():
             # ⚠ AND THE SOURCES SURVIVE EVEN THAT. Removing a whole row takes its
             # clips; it is still not a reason to lose the files they came from.
             shelf = page.evaluate("() => window.__probe.bin()")
-            check("…and its sources are still in Media", len(shelf) == 4,
+            check("…and its sources are still in Media", len(shelf) == CARDS_TOTAL,
                   json.dumps(labels(shelf)))
 
             # -----------------------------------------------------------------

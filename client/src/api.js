@@ -20,6 +20,167 @@ const EMAIL_KEY = "cas_email";
 // for an account we are not currently signed in as.
 const ACCOUNTS_KEY = "cas_accounts";
 
+// ---------------------------------------------------------------- work counts
+// HOW MUCH WORK EACH ACCOUNT HAS, `{kind: n}`, as the LOGIN told us.
+//
+// ⚠ IT IS A HINT ABOUT WHAT TO DRAW, NOT DATA AND NOT A PERMISSION. The one
+// question it answers is "is this a brand-new account, or one with a library
+// behind it" — and that question has to be answerable BEFORE any list request
+// comes back, or the app has no choice but to show a spinner to everybody,
+// including the person whose answer is going to be "nothing".
+//
+// Remembered per email rather than held in memory because the commonest way
+// back into the app is a RELOAD with the token already in storage — no login
+// call, and so no fresh hint. Last login's shape is a perfectly good guess for
+// "does this person have work"; the prefetch that starts in the same breath
+// corrects the actual numbers a moment later.
+const COUNTS_KEY = "cas_counts";
+
+function readCounts() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COUNTS_KEY) || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    // Private mode, or somebody edited it by hand. No hint is not an error.
+    return {};
+  }
+}
+
+function writeCounts(map) {
+  try {
+    localStorage.setItem(COUNTS_KEY, JSON.stringify(map));
+  } catch {
+    // Storage full or disabled — the app just loses the head start.
+  }
+}
+
+export function rememberWorkCounts(email, counts) {
+  if (!email || !counts || typeof counts !== "object") return;
+  const map = readCounts();
+  map[email] = counts;
+  writeCounts(map);
+}
+
+/**
+ * The remembered `{kind: n}` for an account, or `null` when we have no hint.
+ *
+ * ⚠ `null` AND `{}` ARE DIFFERENT ANSWERS and callers must keep them apart.
+ * `{}` is "the server counted, and there is nothing" — draw the empty
+ * dashboard, skip the requests. `null` is "we never asked" — behave exactly as
+ * the app did before this existed and wait for the lists. Collapsing the two
+ * would show a returning customer an empty library for a heartbeat, which is
+ * the one thing worse than showing them a spinner.
+ */
+export function getWorkCounts(email) {
+  const map = readCounts();
+  const hit = map[email || getEmail()];
+  return hit && typeof hit === "object" ? hit : null;
+}
+
+function forgetWorkCounts(email) {
+  if (!email) return;
+  const map = readCounts();
+  if (!(email in map)) return;
+  delete map[email];
+  writeCounts(map);
+}
+
+// ------------------------------------------------------- remembered rail
+// THE LAST ANSWER `/auth/me/entitlements` GAVE, per account.
+//
+// ⚠ WHAT THIS FIXES. The sidebar has to be drawn on the FIRST paint, before any
+// request can possibly have answered, and it used to be drawn from the built-in
+// `WORKFLOWS` array in Sidebar.jsx. That array is every workflow that EXISTS —
+// so an administrator who had HIDDEN two of them watched both reappear for
+// about a second on every single reload, before the real answer arrived and
+// took them away again. That is a bad enough bug on its own: a hidden feature
+// which flashes up on every refresh is not hidden.
+//
+// So the answer is kept, and the rail is drawn from what this account was told
+// LAST TIME rather than from what exists. In the steady state that is the same
+// list the server is about to send, so nothing flashes at all.
+//
+// ⚠ IT IS STILL "WHAT IS DRAWN", NEVER "WHAT IS ALLOWED". Every workflow route
+// is guarded server-side by the feature registry and every /admin route by
+// `require_admin`; editing this key in a debugger gets you a page whose every
+// request refuses. It is a paint hint — which is exactly why keeping it in
+// localStorage is not a privilege escalation.
+const ENTITLEMENTS_KEY = "cas_entitlements";
+
+function readEntitlementsMap() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ENTITLEMENTS_KEY) || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeEntitlementsMap(map) {
+  try {
+    localStorage.setItem(ENTITLEMENTS_KEY, JSON.stringify(map));
+  } catch {
+    // Storage full or disabled — the rail goes back to waiting for the
+    // request, which is correct, only slower.
+  }
+}
+
+export function rememberEntitlements(email, payload) {
+  const who = email || getEmail();
+  // ⚠ AN ANSWER WITH NO WORKFLOWS IS NOT REMEMBERED. That is what a failed or
+  // half-built response looks like, and writing it would teach the next reload
+  // to draw an empty rail — the exact outage the fail-open rule exists to stop.
+  if (!who || !payload?.workflows?.length) return;
+  const map = readEntitlementsMap();
+  map[who] = payload;
+  writeEntitlementsMap(map);
+}
+
+/** The last answer this account got, or `null` if we have never had one. */
+export function getRememberedEntitlements(email) {
+  const hit = readEntitlementsMap()[email || getEmail()];
+  return hit?.workflows?.length ? hit : null;
+}
+
+export function forgetEntitlements(email) {
+  const who = email || getEmail();
+  if (!who) return;
+  const map = readEntitlementsMap();
+  if (!(who in map)) return;
+  delete map[who];
+  writeEntitlementsMap(map);
+}
+
+// ⚠ AN ADMIN CHANGE MUST NOT WAIT FOR THE NEXT SESSION TO BE BELIEVED. Hiding a
+// workflow in the panel is exactly the moment the remembered copy becomes
+// wrong — so the panel says so, here, and `session_cache` re-reads at once.
+// Without it, the administrator who just hid something would see it flash one
+// more time on their next reload, which is precisely the complaint.
+//
+// A callback rather than a direct import, because `session_cache` imports THIS
+// module and calling it the other way round would be a cycle.
+let _entitlementsWatcher = null;
+
+export function onEntitlementsChanged(fn) {
+  _entitlementsWatcher = fn;
+}
+
+/**
+ * Announce a change and PASS THE RESPONSE STRAIGHT THROUGH.
+ *
+ * ⚠ IT MUST RETURN ITS ARGUMENT. Written as a bare `.then(entitlementsChanged)`
+ * it would resolve every one of these calls to `undefined`, and the admin
+ * screens read what they get back.
+ */
+function entitlementsChanged(response) {
+  try {
+    _entitlementsWatcher?.();
+  } catch {
+    // A stale rail is not worth breaking the admin action that caused it.
+  }
+  return response;
+}
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -113,6 +274,8 @@ export function switchAccount(email) {
  */
 export function forgetAccount(email) {
   writeAccounts(readAccounts().filter((a) => a.email !== email));
+  forgetWorkCounts(email);
+  forgetEntitlements(email);
   if (getEmail() === email) {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EMAIL_KEY);
@@ -126,7 +289,13 @@ export function clearSession() {
   const email = getEmail();
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EMAIL_KEY);
-  if (email) writeAccounts(readAccounts().filter((a) => a.email !== email));
+  if (email) {
+    writeAccounts(readAccounts().filter((a) => a.email !== email));
+    // The hint goes with the token, for the same reason the token does: what
+    // this account had is nobody else's business once they have signed out.
+    forgetWorkCounts(email);
+    forgetEntitlements(email);
+  }
 }
 
 // Ride out a backend that is momentarily unreachable (typically uvicorn
@@ -179,6 +348,25 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeout
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * `{a: 1, b: "", c: "x y"}` → `"?a=1&c=x%20y"`. Empty values are DROPPED.
+ *
+ * Written once because the alternative is what this file used to do: every list
+ * function building its own `?a=…` by hand, each one correct on its own and
+ * none of them able to add a second parameter without being rewritten. The
+ * dropping matters — an omitted `limit` has to mean "the server's default",
+ * never `?limit=`.
+ */
+function qs(params) {
+  const out = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v === "" || v === null || v === undefined) continue;
+    out.set(k, String(v));
+  }
+  const s = out.toString();
+  return s ? `?${s}` : "";
 }
 
 async function request(path, { method = "GET", body, isForm = false, timeoutMs } = {}) {
@@ -384,6 +572,12 @@ export function adminSetNote(email, note) {
 export function adminDeleteUser(email) {
   return request(adminUserPath(email), { method: "DELETE" });
 }
+// ⚠ EVERY MUTATION BELOW THAT CAN CHANGE WHICH WORKFLOWS A RAIL DRAWS ENDS IN
+// `.then(entitlementsChanged)`. There are five levers: a feature's visibility or
+// status, one account's override, the tier a feature needs, what a tier
+// contains, and which tier an account is on. Anything added here that moves one
+// of them needs the same line, or the panel will go on showing the
+// administrator who changed it a stale sidebar. See `onEntitlementsChanged`.
 export function adminListFeatures() {
   return request("/admin/features"); // → { features, statuses, rollout_modes, groups }
 }
@@ -394,7 +588,7 @@ export function adminUpdateFeature(key, fields) {
   return request(`/admin/features/${encodeURIComponent(key)}`, {
     method: "PATCH",
     body: fields,
-  });
+  }).then(entitlementsChanged);
 }
 export function adminSetOverride(email, key, value) {
   // ⚠ `value` IS TRISTATE: true forces on, false forces off, and null CLEARS
@@ -403,7 +597,7 @@ export function adminSetOverride(email, key, value) {
   return request(adminUserPath(email, "/override"), {
     method: "POST",
     body: { key, value },
-  });
+  }).then(entitlementsChanged);
 }
 export function adminListTiers() {
   return request("/admin/tiers"); // → { tiers, currency, default_tier, tier_ids }
@@ -412,7 +606,7 @@ export function adminUpdateTier(id, fields) {
   return request(`/admin/tiers/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: fields,
-  });
+  }).then(entitlementsChanged);
 }
 export function adminSetMinTier(key, tier) {
   // "" clears the requirement — the feature goes back to being included in
@@ -420,10 +614,13 @@ export function adminSetMinTier(key, tier) {
   return request(`/admin/features/${encodeURIComponent(key)}/min-tier`, {
     method: "POST",
     body: { tier: tier || "" },
-  });
+  }).then(entitlementsChanged);
 }
 export function adminSetUserTier(email, tier) {
-  return request(adminUserPath(email, "/tier"), { method: "POST", body: { tier } });
+  return request(adminUserPath(email, "/tier"), {
+    method: "POST",
+    body: { tier },
+  }).then(entitlementsChanged);
 }
 export function adminListOffers() {
   return request("/admin/offers");
@@ -486,8 +683,8 @@ export function clearScriptDraft() {
 // --- Plan & Script ---
 // A planning session is a conversation with the strategist agent plus the
 // calendar it produced. Text quota only — nothing here generates an image.
-export function listPlans() {
-  return request("/plans");
+export function listPlans(limit) {
+  return request(`/plans${qs({ limit: limit || "" })}`);
 }
 export function createPlan(title) {
   return request("/plans", { method: "POST", body: { title: title || null } });
@@ -691,9 +888,8 @@ export function createStoryboard({
 // Boards belong to a workflow. Script to Storyboard's own boards carry no tag
 // (pass nothing); Image to Animatic Image asks for its copies by name, so
 // neither library shows the other's.
-export function listStoryboards(workflow = "") {
-  const q = workflow ? `?workflow=${encodeURIComponent(workflow)}` : "";
-  return request(`/storyboards${q}`);
+export function listStoryboards(workflow = "", limit) {
+  return request(`/storyboards${qs({ workflow, limit: limit || "" })}`);
 }
 
 // Deep-copy a board — its own record AND its own panel files, so drawing or
@@ -1008,8 +1204,8 @@ export function createAnimatic({
   });
 }
 
-export function listAnimatics() {
-  return request("/animatics");
+export function listAnimatics(limit) {
+  return request(`/animatics${qs({ limit: limit || "" })}`);
 }
 export function getAnimatic(id) {
   return request(`/animatics/${id}`);
@@ -1608,26 +1804,36 @@ export async function fetchAnimaticMedia(path, maxEdge = 0) {
   return URL.createObjectURL(await res.blob());
 }
 
-// SAVE ONE SOURCE FILE OUT OF A PROJECT — used by the Veo download, which is
-// the one asset in an animatic that cannot be got back: an upload can be dropped
-// in again and a panel is still on the board, but re-rendering this costs money.
-// So it has to be savable BEFORE the project is deleted.
+// SAVE ONE SOURCE FILE OUT OF A PROJECT, by the relative path this app already
+// serves it on.
+//
+// It began as the Veo download — a render is the one asset in an animatic that
+// cannot be got back, so it has to be savable BEFORE the project is deleted.
+// ✨ Animatic images made the same true of a key pose, and the ⬇ is now drawn on
+// everything with bytes behind it (`isSavable` in `animatic/scene.js`).
+//
+// ⚠ IT TAKES A PATH BECAUSE NOT EVERY PICTURE IS AN UPLOAD. A Veo render is a
+// file under this animatic's id (`/media/<upload_id>`); a storyboard panel and a
+// key pose are content-addressed on the BOARD (`/panel/<board>/<index>?frame=n`)
+// and have no upload id at all — see `assetUrl` in `animatic/assets.js`, which
+// builds exactly these paths for the Media pane. One saver for all of them,
+// because "which url shows this?" is a question the library already answers.
 //
 // ⚠ IT GOES THROUGH `fetch`, NOT A PLAIN LINK, for the reason every download in
-// this file does: `/animatics/{id}/media/{upload_id}` requires a bearer token, and
-// an `<a href>` sends no headers — it would land on a 401 page. The blob is
-// fetched with the token, handed to a temporary `<a download>`, and revoked.
+// this file does: every media route requires a bearer token, and an `<a href>`
+// sends no headers — it would download a 401 page named like a picture. The blob
+// is fetched with the token, handed to a temporary `<a download>`, and revoked.
 //
-// ⚠ THE NAME IS THE CALLER'S. This route serves stills, footage and audio and
-// says nothing about which — there is no Content-Disposition to read, so
+// ⚠ THE NAME IS THE CALLER'S. These routes serve stills, footage and audio and
+// say nothing about which — there is no Content-Disposition to read, so
 // `serverFilename` has nothing to work with. The editor knows the clip's label,
 // which is what the user will look for on their desk.
-export async function downloadAnimaticMedia(id, uploadId, filename) {
-  if (!id || !uploadId) throw new Error("There's no file behind this clip.");
+export async function downloadAnimaticFile(path, filename) {
+  if (!path) throw new Error("There's no file behind this clip.");
   const token = getToken();
   let res;
   try {
-    res = await fetch(`${BASE}/animatics/${id}/media/${uploadId}`, {
+    res = await fetch(`${BASE}${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
   } catch {
@@ -1645,11 +1851,21 @@ export async function downloadAnimaticMedia(id, uploadId, filename) {
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename || "clip.mp4";
+  a.download = filename || "clip";
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// The same thing for a file stored under this animatic's own id. Kept as its own
+// name because that is what every existing caller asks for.
+export function downloadAnimaticMedia(id, uploadId, filename) {
+  if (!id || !uploadId) throw new Error("There's no file behind this clip.");
+  return downloadAnimaticFile(
+    `/animatics/${id}/media/${uploadId}`,
+    filename || "clip.mp4"
+  );
 }
 
 export async function downloadAnimaticVideo(id, filename) {
@@ -1709,8 +1925,8 @@ export function createFinalVideo({
   });
 }
 
-export function listFinalVideos() {
-  return request("/final-videos");
+export function listFinalVideos(limit) {
+  return request(`/final-videos${qs({ limit: limit || "" })}`);
 }
 export function getFinalVideo(id) {
   return request(`/final-videos/${id}`);
@@ -1857,8 +2073,14 @@ export function createCharacter(formData) {
 export const CHARACTER_JOB_KINDS = ["generate", "meshy"];
 
 // `kinds` is an array of job kinds, e.g. CHARACTER_JOB_KINDS. Omit for all.
-export function listJobs(kinds) {
-  const q = kinds?.length ? `?kind=${encodeURIComponent(kinds.join(","))}` : "";
+//
+// ⚠ `limit` IS NOT DECORATION — see `qs` below. A screen that shows two rows
+// must ASK for a handful, not for a hundred and slice.
+export function listJobs(kinds, limit) {
+  const q = qs({
+    kind: kinds?.length ? kinds.join(",") : "",
+    limit: limit || "",
+  });
   return request(`/jobs${q}`);
 }
 export function getJob(jobId) {

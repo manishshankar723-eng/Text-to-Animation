@@ -275,7 +275,137 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-25 — **THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN
+**Last updated:** 2026-08-26 — **🖼 ANIMATIC IMAGES: THE FLIPBOOK, IN THE
+EDITOR.** Asked for as "image to Animatic images workflow jaise images generate
+hota tha waise editor mai ho … ek button banao make video button ke side mai aur
+uska name Animatic images rakho … generate ho kar Animatic image ke layer mai aa
+jaye aur har shot ke uper uska length ke hisab se sab image set ho jaye". One
+press in the timeline's tool row now blocks **every** storyboard shot on the
+timeline out as key poses — the same `submit_sequence_run` the board's own
+Generate calls, so nothing is reimplemented and nothing is paid for twice — and
+lands them on a **row of their own**: `board_poses` / "Animatic images", between
+the board's stills and its Veo renders. ⚠ **THE ROW KIND IS DERIVED, NOT
+STORED** (`src.kind === "pose"`), so there is no new field and no migration; ⚠
+**A VEO TAKE OF A POSE STILL GOES TO THE RENDER ROW**, because `attachVeoClip`
+keeps the pose's whole `src` underneath the video source and "is it footage now"
+has to win. Each shot's drawings **divide that shot's own span** — a 2s shot's
+eight poses are eight 250ms clips that start where the shot starts and end
+exactly where it ends (`poseRunAcross` in `scene.js`, every boundary rounded off
+the same total so sixteen roundings cannot drift the run off its shot). The
+dialog **prices the pass against what is already drawn**, one free read per shot,
+because a resume costs nothing for poses the board already has. ⚠ **AND THE ROW
+FOLLOWS ITS SHOTS BY ITSELF** (asked for straight after: "ye apne aap ho jayen kar
+do waisa") — `alignPoseRuns` states one rule, *a run sits over its panel*, and an
+effect applies it to every change, so a Veo take, a trim, a drag or a shot
+generated into the middle of the cut all carry the flipbook with them. ⚠ **IT IS A
+RULE, NOT A DIFF**: it never looks at the previous render, so undo is exact, it
+cannot loop, and a hand-lengthened drawing is mapped rather than re-spread. ⚠
+**AND EVERY DRAWING IS IN THE MEDIA PANE, IN A SECTION OF ITS OWN, WITH A ⬇** —
+the first build left the cards out and they were invisible ("media panel mai
+generted iamge nhi dikh rah ahai aur dikhe to download kar sakta hun veo video
+jaisa hi fuction"). `assetOrigin` files a key pose under **Animatic Images**
+rather than burying it in Storyboard Frames; the load REPAIRS a pose that is on
+the timeline with no card, so projects blocked out by the first build are put
+right on open; and the ⬇ gate moved from `isVeoRender` to `isSavable` — **what
+this app MADE**, which is everything carrying a board reference and nothing the
+user dropped in ("only generated cheezon par dikhe ye ⬇ icone"). New:
+`tests/animatic_images_check.py` (96 checks, node-driven, no browser), and
+`editor_media_bin_check.py` now proves the repair and the ⬇ rule in Chromium.
+Previous entry: **AN OFFER THE ADMIN CREATED IS NOW ON THE
+CUSTOMER'S SCREEN.** Reported as "main ne ek offer card banaya magar mujhe user
+ke frontend screen mai nhi dikh rha hai". It was not a rendering bug: a
+**coupon** applies to nobody until it is typed, and nothing in the app printed
+one anywhere, so `LAUNCH50 · 20% off` was live in the panel and unreachable from
+every customer screen. ⚠ **THE FIX IS A THIRD IDEA, NOT A LOOSENED SECOND ONE:
+`promoted`** — `active` is whether a discount WORKS, `promoted` is whether
+anybody is TOLD, and both states are wanted (a code emailed to one customer must
+work and stay invisible). `GET /billing/tiers` now carries `offers`, and
+`PricingModal.jsx` draws each as a gold ticket above the plans: the discount, what
+it covers in words, a dashed click-to-copy code stub behind a tear-off
+perforation, a gold Apply, and `⏳ Ends in 6 days · 40 left`. ⚠ **AN ABSENT
+`promoted` READS AS TRUE** — every offer in every store predates the field, and
+the reported one was already in Mongo; reading a missing key as "hidden" would
+have shipped the fix and left that offer exactly as invisible. ⚠ **AND APPLYING A
+CODE NOW MOVES EVERY PLAN IT COVERS**, one `POST /billing/coupon` per paid tier,
+because "20% off every plan" that discounted a single card left the other three
+quoting a price that was no longer true. Two bugs found while reading and fixed
+without being asked: the period toggle kept a stale price (the comment claimed a
+re-check that no code did), and `offers.summary` printed "5 off" where its own
+docstring promised "$5 off". Admin → Sales gained a Hide/Show switch and a state
+chip per row beside Switch off — two switches, both named. ⚠ **AND A STALE
+SELECTOR IN `admin_fields_check.py` WAS PASSING BY MEASURING NOTHING**: it opened
+the offer form via `.btn.ghost`, that button stopped being a ghost, and a sweep
+of zero fields reported ok. New: `tests/offer_visibility_check.py` (47 checks) and
+`tests/offer_card_check.py` (Chromium, signed in as an ORDINARY CUSTOMER — the
+whole failure was that the offer existed on one side of the app and not the
+other). Previously: **THE PRICING CARDS' TWO COLUMNS ARE EDITABLE FROM THE PANEL,
+AND THE BADGE BOX LINES UP WITH THE WORDS BESIDE IT.** Asked for
+as "price section mai text editable karne ka function chahiye … Says on the card
+and Actually unlocks ye do ke niche sare text line", plus two alignment
+complaints. ⚠ **THE TWO COLUMNS ARE NOT THE SAME KIND OF THING, and the screen
+now says so.** *Says on the card* is free copy stored on the tier as `bullets`,
+so each line got a tick you can flip (that is what makes the card print a line as
+NOT included), a **B** for bold, a **✕**, and "+ Add a line" — capped at 12
+because `TierUpdate.bullets` is. ⚠ **`bullets` IS ONE FIELD, so every one of
+those posts the WHOLE list** — text on blur, a flag the moment it is clicked.
+*Actually unlocks* is DERIVED from each feature's `min_tier` and cannot gain a
+line here; what is editable is each feature's own `label`, which is why the
+rename is the screen's job and lands on **every card that lists that feature at
+once**. ⚠ **BOTH COLUMNS ARE `<textarea rows={1}>` THAT GROW, NOT INPUTS** — the
+columns are ~180px of a 440px card and these lines already wrap on the real
+pricing card, so a single-line box would have shown an administrator a trimmed
+copy of the sentence a customer reads in full. The bold/remove buttons sit
+**over** the row and only on hover, because two 21px buttons in the flow took a
+quarter of the width off the copy. ⚠ **AND THE ALIGNMENT BUG WAS TRAP 2 AGAIN,
+this time a `<label>`**: `theme.css` gives every label `margin: 0.75rem 0 0.3rem`
+for sitting above a field, so `.admin-check` was a 32.8px margin box around 16px
+of text next to a 30px badge field — `align-items: center` centred the two boxes
+and left the TEXT 3.6px low. Measured with `getBoundingClientRect`, not eyeballed:
+**3.6px → 0.05px.** The price row now aligns its boxes' ENDS, so a wrapping
+label ("Was (struck through)" on a narrow window, which is what the first
+screenshot showed) can no longer drop one box a line below the other two. **New:
+`tests/pricing_edit_check.py` — 17 checks, every one a round trip: it types in
+the browser and re-reads `/admin/tiers` and `/admin/features` to ask whether the
+document actually changed.** See the Work Log.
+
+
+**Previously:** 2026-08-26 — **SIGNING IN WAS SLOW IN PROPORTION TO HOW MUCH
+WORK YOU HAD.** Reported as "why the delay when I log in from the id that has
+the things I created before". Four causes, all of them real, none of them the
+network. ⚠ **(1) THE DASHBOARD ASKED FOR NOTHING UNTIL IT HAD ALREADY BEEN
+DRAWN** — `Home` owned a `useEffect` that fired seven requests on mount, so the
+first thing a returning customer saw was their own work replaced by the word
+"Loading…"; and nothing cached it, so every return to Home did it again. The
+fetch now starts inside `Login`, one line after the token is written, and lives
+in the new **`client/src/session_cache.js`** for the session. ⚠ **(2) A HIDDEN
+N+1 IN THE ANIMATIC LIBRARY** — `_summarise` called `_frame_version` with a
+FRESH board cache per card, so each card paid its own `get_store().get()`;
+listing 50 projects was 50 sequential Atlas round trips inside one request.
+**One dict for the whole page — measured 12 → 2.** ⚠ **(3) `GET /jobs` SHIPPED
+`params`**, the run inputs, to screens that print a name and a date; new `drop=`
+on `JobStore.list` excludes it server-side. ⚠ **(4) `nav` WAS IN THE SHELL'S
+EFFECT DEPS**, so every click in the rail re-asked `me()` + `entitlements()`. It
+still is — but through the cache, so it is at most one request per minute rather
+than two per click. ⚠ **AND THE ONE THING THAT WAS NOT A SPEED FIX**:
+`list_storyboards` filtered workflow and draft AFTER the store applied `limit`,
+which reads an already-truncated page — new `where=` puts both conditions in the
+query. That was harmless only because every caller asked for 100; the moment the
+dashboard asked for 8 it would have reported an empty library over a full one.
+**New: `tests/dashboard_boot_check.py` (33 checks) and a `where`/`drop` section
+in `tests/mongo_job_store_check.py`, which proves both backends agree.**
+`POST /auth/login` now also answers `counts` — one aggregate, so the browser can
+tell a new account from a returning one with no second round trip and paint the
+empty dashboard with no loader at all. **MEASURED against the live Atlas
+(`tests/dashboard_timing_report.py`): a 100-project animatic library 991 ms →
+172 ms (5.8×); the dashboard's five lists 254 ms → 100 ms (2.5×).** And the list
+routes stopped fetching what a card has never printed — `frames.mask` /
+`keyframes` / `effects`, panel `description` / `dialogue` / `versions` — which
+`tests/summary_projection_check.py` proves is safe by rebuilding **every one of
+the 566 real documents' cards both ways** and requiring them to be identical:
+−15% on an animatic page, −43% on a board page. See the Work Log.
+
+
+**Previously:** 2026-08-25 — **THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN
 HALF, IN TWO DIFFERENT WAYS.** Reported with three screenshots: dropdowns reading
 "Any status" with the bottom third of the letters gone, and the Private note box
 squeezed to one clipped line. ⚠ **CAUSE (a) IS ARITHMETIC, NOT DESIGN** — the
@@ -301,7 +431,7 @@ tab. ⚠ **The first of the three screenshots was NOT a bug**: that line only
 looked truncated because the crop ended there. See the Work Log.
 
 
-**Previously:** 2026-08-25 — **🎬 MAKE VIDEO SCORES THE FILM.** Sound effects
+**Before that:** 2026-08-25 — **🎬 MAKE VIDEO SCORES THE FILM.** Sound effects
 and a background-music bed are laid down automatically, on two audio rows of
 their own (Sound FX · Music), beside the voiceover / captions / text / shapes /
 Veo passes that were already automatic. ⚠ **THE NEW PHASE RUNS *LAST*, WHICH IS
@@ -3004,6 +3134,27 @@ dragged under a picture row**, and no Python test can see a band split. Run it
 after touching `ProgramCanvas.jsx`, `lane_order.js` or the stacking half of
 `scene.js`. It starts Vite itself, needs no backend, and takes about a minute.
 
+`tests/offer_card_check.py` is the newest of these and the one to run after
+touching offers, the pricing modal or Admin → Sales. ⚠ **IT SIGNS IN AS AN
+ORDINARY CUSTOMER, NOT THE ADMIN** — the bug it was written for was an offer that
+existed on one side of the app and not the other, so a test that looked at the
+panel would have passed throughout. It opens the pricing modal from
+`.sb-upgrade`, reads the offer card, presses **Apply**, and compares the number on
+every plan card before and after; then toggles the billing period and watches
+them move again. It leaves `output/offer_card.png` and
+`output/offer_card_light.png` behind on purpose — `theme.css` defines every
+colour twice, and a gold wash that reads as a highlight on `#13161f` can read as
+a stain on white. Its no-browser half is `tests/offer_visibility_check.py`, which
+needs neither Chromium nor Mongo and runs in a second.
+
+`tests/pricing_edit_check.py` is the one to run after touching Admin →
+Pricing: it boots the same rig as
+`admin_fields_check.py`, then **types into the cards and re-reads the API**, so
+it fails if the editing UI is intact but the PATCH is not. It also pins the two
+alignment numbers the cards were reported for — the badge box against the words
+beside it, and the three price boxes against each other — at 2400px wide, where
+neither row wraps.
+
 `tests/e2e_animatic.py` is the
 whole editor against a live API and needs three terminals; **`tests/monitor_effects_check.py`
 is the Program monitor only, starts Vite itself, needs no backend, and takes about
@@ -3226,7 +3377,881 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-25 (latest) — THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN HALF, IN TWO DIFFERENT WAYS (bug report, three screenshots — "text half hide from box not full view … aur kahi v admin panel aisa problem dikhe to thik kar dena")
+### 2026-08-26 (latest) — 🖼 ANIMATIC IMAGES IS A 🎬 TICK BOX NOW (PHASE C2) (ask: "Animatic image buttun function make video butun mai v rahe automatic … check box tik kar ke generet karne ka type so agar kisi user ko Animatics image chahiye to choose … waise hi aa jaye jaise veo video aata hi")
+
+**What it is.** 🎬 Make Video's preview has a new tick box, **Animatic images**,
+in the same spending row as Voiceover and Veo renders. Tick it and every
+storyboard shot on the timeline is blocked out as key poses on its own row —
+exactly as ✨ Animate with Veo's box buys footage, and exactly what the 🖼 button
+in the tool row already did on its own.
+
+**⚠ IT IS NOT A SECOND ANIMATIC-IMAGES FEATURE. IT IS THE SAME ONE, TICKED.** The
+🖼 button's queue was extracted from `runPoses` into **`blockOutPoses`**, and both
+buttons drive that one function. So every rule already written for it governs the
+🎬 pass for free: one shot at a time because a board can only draw one, each run
+laid across its shot the moment it lands, a failed shot leaving the rest of the
+queue alone, and a Stop that keeps everything drawn. `runPoses` is now just "close
+the dialog, run the queue, write the notice"; the price read is `readPosesPlan`,
+which the Director calls too, so the two can never quote one pass at two numbers.
+
+**THE PHASE ORDER — AND IT IS LAST OF THE PAID PASSES ON PURPOSE.**
+
+```
+speaking (B, voiceover)  →  rendering (C, Veo)  →  blocking (C2, key poses)
+                                                          ↓
+                                    anchoring → running (the steps) → scoring
+```
+
+How many drawings a shot buys is **four per second of the length it ends up
+holding**, and B stretches the shot that carries a line while C grows the shot a
+take is longer than. Blocked out first, a 2-second shot buys eight drawings and is
+then stretched to 9.3s to carry its line — a slideshow. Blocked out last, the same
+shot buys thirty-six. The pass therefore **re-reads the shot list before it spends**
+rather than trusting the preview's.
+
+**⚠ THE BUG THIS UNCOVERED, AND IT WAS ALREADY LIVE.** `shotRow` — "the film as the
+Director counts it" — dropped Veo takes and **not key poses**. A pose run is FOUR
+CLIPS PER SECOND, so an 8-panel 32-second film that had been through 🖼 handed the
+Director **136 shots**: `housePlan` would take the median of a list that is 94%
+drawings, `shotIndex` would accept "shot 120", and the preview table would draw a
+row per drawing. Anyone who pressed 🖼 and then 🎬 hit this before today.
+`isPose` now lives in `poses_pass.js` and `shotRow` filters on both.
+
+**WHAT IS NEW, AND WHERE.**
+
+- **`client/src/animatic/agent/poses_pass.js`** (new, pure, node-testable):
+  `POSES_KEY`, `isPose`, `poseWork`, `poseTally`, `posesDue`. The decisions only —
+  the queue that spends stays in the editor.
+- **`plan_schema.js`**: `poses` added to `INCLUDE_KEYS`, `PASS_GOVERNORS` and
+  `PAID_PASSES`, and to the new `OFF_BY_DEFAULT` list beside `veo`.
+- **`useDirectorRun.js`**: `readPoses` / `blockPoses` props, the `blocking` phase,
+  `loadPoses` (one read per plan) + `resolvePoses` (pure, so a tick box re-costs
+  for free), and `poses` / `blocking` / `willBlock` / `blockWhy` on the return.
+- **`DirectorPanel.jsx`**: the tick box (gated on `image-generate`, the same
+  capability the 🖼 button uses), a preview listing every shot and its drawing
+  count, its own progress rail with a per-shot Stop, and a count on the Run button.
+- **`AnimaticEditor.jsx`**: `readPosesPlan` and `blockOutPoses` split out, wired
+  through refs like every other pass.
+
+**THE RULES THAT MATTER.**
+
+- **⚠ A SHOT VEO IS RENDERING IS NOT BLOCKED OUT.** `board_video` sits ABOVE
+  `board_poses`, so drawings under a take are pictures nobody sees, bought with
+  quota, on a run that also paid for the footage. `poseWork` drops the overlap
+  **by name, with the reason on screen** — not by a count that quietly shrank. And
+  un-ticking Veo hands those shots straight back, which the button's count shows.
+- **⚠ "ALREADY DRAWN" IS NOT A SKIP.** The run resumes onto the storyboard, so
+  those drawings cost nothing again — but the shot still goes through the queue,
+  because the drawings have to be LAID on this timeline. It changes the PRICE
+  only: `toDraw`, never `drawings`, is the number beside the word "images".
+- **⚠ IT STARTS UN-TICKED, like Veo**, and for the same reason: a 32-second
+  animatic is 128 pictures out of the image quota, and a default-on box is a box
+  nobody reads until it is on an invoice.
+- **⚠ A COUNT, NEVER A PRICE.** It spends image quota, not dollars, so the Run
+  button says "128 animatic images" where Veo says "$34.56 of footage".
+- **⚠ A STOP PRESSED DURING THE RENDER STOPS THIS PASS TOO**, before it starts —
+  `stopRef` is not cleared between phases, and someone who stopped a run while
+  money was moving meant the spending to stop.
+- **⚠ `poseTally` RETURNS `count`, NOT `shots`.** Every caller spreads it over an
+  object already holding the shot LIST under `shots`; a collision there replaces
+  an array with a number and nothing throws — the pass simply finds no work.
+- The heading over the spending row said **"These two spend"** and there are three
+  now; it says "These spend" and has stopped counting.
+
+**Checked.** `tests/director_poses_check.py` (new, 33 checks, node, spends nothing)
+drives `isPose` / `shotRow` / `poseWork` / `poseTally` / `posesDue`, including the
+136-clip drowning case. The existing pure suites still pass:
+`director_take_row_check`, `director_chunk_check`, `director_house_veo_check`,
+`director_guardrails_check`, `director_plan_check`, `director_actions_check`,
+`director_sound_check`, `director_voice_order_check`. `vite build` is clean.
+
+**⚠ `tests/editor_director_check.py` HAD A STALE ASSERTION AND IT IS FIXED.** Its
+tick-box list still read `[Transitions, Effects, Text, Shapes, Voiceover, Veo
+renders]` — it was never updated when phases D and E added Sound effects and
+Background music, so it was already failing before this change. It now asserts the
+full derived list of nine and that BOTH big spenders start off. **The Playwright
+suite has not been run** — see Next Steps.
+
+### 2026-08-26 — 🎬 THE TIMELINE TOOL ROW: NEW ORDER, AND MAKE VIDEO GOES PASTEL BLUE (ask: "arrange buttun like this in time line :- Make video, voiceover, Animae with veo, Animatic images. text and colour card in timeline and Make video buttun color change green to pestal blue color")
+
+**Two small, purely visual changes to `.tl-add-tools` — the button row above the
+timeline ruler. No behaviour, no handler, no state moved.**
+
+**1. THE ORDER.** The row was `✨ Animate with Veo · T Text · ▣ Colour card ·
+🎙 Voiceover · 🎬 Make Video · 🖼 Animatic images`. It is now, as asked:
+
+> `🎬 Make Video · 🎙 Voiceover · ✨ Animate with Veo · 🖼 Animatic images ·
+> T Text · ▣ Colour card`
+
+It also reads better than the old one: the four that act on the WHOLE film come
+first, then the two free "make a clip out of nothing" buttons close the row.
+Done by moving the JSX blocks (each with its own comment) inside the `addTools`
+fragment in `AnimaticEditor.jsx` — nothing else was touched, and the three
+comments that described a button's OLD position were rewritten so they do not
+lie about the row any more.
+
+**2. 🎬 MAKE VIDEO IS PASTEL BLUE.** New `--tool-blue-edge` / `--tool-blue-tint`
+in `theme.css` (dark **and** light pairs, the light one deeper for the same
+reason the greens are), applied by
+`.tl-add-tools .btn.an-add-director` in `animatic-editor.css`. Everything else in
+the row keeps the tree green.
+
+- **⚠ THE SELECTOR CARRIES `.btn` ON PURPOSE.** `.tl-add-tools .btn` (two
+  classes) paints the whole row green; `.tl-add-tools .btn.an-add-director` is
+  three, so the blue wins wherever the rule lands in the file rather than by
+  source order.
+- **⚠ IT IS NOT `--pane-ink`.** The pane blue is chrome — the timeline head this
+  bar sits under is painted in it — and a control in exactly the chrome colour
+  disappears into its own panel. The tool blue is a shade warmer and stronger.
+- **Disabled still greys out** like the rest of the row — via an explicit
+  `.tl-add-tools .btn.an-add-director:disabled` that repeats the row's own
+  declarations. The row's `.tl-add-tools .btn:disabled` is exactly TIED with the
+  blue rule on specificity and the blue is written later, so without that repeat
+  an empty animatic would show a disabled button in a pressable-looking blue.
+- `.an-add-director` keeps its `font-weight: 650` from `animatic-text.css` — it
+  is still one of the free "makes something" buttons; only the hue says it acts
+  on everything at once.
+
+**Checked.** `esbuild` parses `AnimaticEditor.jsx` clean.
+`tests/editor_director_check.py` clicks `button.an-add-director` by class, not by
+position, so the reshuffle does not touch it — **but the Playwright suite was NOT
+run for this change and the editor has not been opened by hand.** See Next Steps.
+
+### 2026-08-26 — 🖼 ANIMATIC IMAGES: EVERY SHOT ON THE TIMELINE, BLOCKED OUT AS KEY POSES, ON A ROW OF ITS OWN (ask: "image to Animatics images workflow jaise images generate hota tha waise editor mai ho … ek button banao make video button ke side mai aur uska name Animatic images rakho … ye same Story..Video layer jaisa kaam karega … generate ho kar Animatic image ke layer mai aa jaye aur har shot ke uper uska length ke hisab se sab image set ho jaye … like shot 1 mai 2 sec mai 8 key poses image generate ho aur 2 sec shot image ke under hi ye 8 image set hona chahiye divide ho kar same mini keyframe")
+
+**What it is.** The **Image to Animatic Image** workflow blocks ONE shot out as
+key poses at a time, on the storyboard board page. That work never reached the
+timeline unless you re-imported the whole board. There is now a **🖼 Animatic
+images** button beside **🎬 Make Video** in the timeline's tool row: press it and
+every storyboard shot on the timeline is blocked out, in order, and the drawings
+land on the timeline as they arrive.
+
+**⚠ NOTHING ON THE SERVER CHANGED, AND THAT IS THE POINT.** Every drawing is made
+by `submit_sequence_run` on the **board's** job, reached through the two routes
+the "make this shot 2s longer" control already used —
+`POST/GET /animatics/{id}/frames/{frameId}/sequence`. So the continuity bible, the
+pose planner, the resume arithmetic and the per-pose redraw are all the board's,
+unforked. A pose redrawn on the board updates this timeline with nothing to
+re-import, and a pose deleted here costs nothing to get back.
+
+**THE ROW — `board_poses`, "Animatic images", short label `Anim..Image`.**
+`ROW_KINDS` is four now: `board_image → board_poses → board_video → video`. A key
+pose draws **over** the panel it was made from (so 👁 on the row shows the plain
+board again, exactly as it does for the render row) and **under** a Veo take of
+the same shot, which is the finished thing.
+
+- **⚠ THE KIND IS DERIVED, NOT STORED.** `clipRowKind` asks a third question of
+  the clip — `src.kind === "pose"` — beside the two it already asked. No new
+  field on `AnimaticFrameSource`, no schema change, no migration pass.
+- **⚠ AND A VEO TAKE OF A POSE STILL GOES TO THE RENDER ROW.** `attachVeoClip`
+  keeps the pose's whole `src` underneath the video source, so such a clip
+  answers "pose" AND "video"; video is tested first, and that ordering is
+  asserted in the new test rather than trusted.
+- `board_poses` takes **no dropped file** (`ROW_TAKES`), like the two board rows
+  either side of it. Its own ＋ in the gutter opens the pass, and ＋ Add layer
+  offers the empty row.
+- **⚠ A POSE COUNTS AS A PANEL IN `spreadPanelsForRenders`.** A take can be made
+  of a pose (`shotKey` keeps the two apart by `frame`), so a run of poses has to
+  be pushed clear of a render exactly as a panel is — `veo_ripple_check` already
+  pinned this and would have caught its loss.
+
+**THE LAYOUT — each shot's drawings divide that shot, and end where it ends.**
+`poseRunAcross` in `client/src/animatic/scene.js`, pure and driven by node:
+
+- The planner only accepts 2/4/6/8/10s, so the clip's hold is rounded to the
+  nearest rung (`poseSecondsFor`) — but the drawings are then laid across the
+  clip's **real** length, because what has to line up on screen is the poses and
+  the shot underneath them.
+- **⚠ EVERY BOUNDARY IS ROUNDED OFF THE SAME TOTAL** (`round(hold * i / n)`),
+  never accumulated from a fixed step. Sixteen rounded steps drift the run off
+  its shot by a few frames — which is a flash of the panel underneath at the end
+  of every shot, in every film, for ever.
+- A refused pose leaves a **hole**: the server says which drawing is which
+  (`frame_numbers`), so drawing 6 is not necessarily pose 6 and the clips carry
+  the real pose numbers.
+- A shot too short to hold every drawing shows **as many as fit** at the 100ms
+  floor; the rest stay on the board. Squeezing them would run the tail of the
+  flipbook off the end of its shot.
+
+**THE QUEUE — one shot at a time, placed as it finishes.** A board draws one
+sequence at a time (`submit_sequence_run` answers 409 on a busy board), so firing
+sixteen at once would land one run and fifteen refusals. Each shot is saved and
+placed the moment it lands, so a twelve-shot pass fills the row in front of you
+and a **Stop** halfway through leaves half a flipbook rather than nothing. One
+shot failing does not abandon the queue. The status strip carries the shot
+number, the board's own message, one bar for the WHOLE queue, and its own Stop.
+
+**⚠ THE DIALOG PRICES THE PASS AGAINST WHAT IS ALREADY DRAWN.** A run resumes, so
+poses the board already has are free the second time; quoting "every shot ×
+every drawing" would bill for something nobody is charged. One free
+`GET …/sequence` per shot, pooled four at a time, and the button reads
+`✨ Generate N images` with the real N. The shot list shows each shot's length
+and what it buys, because the length is the thing worth checking before spending.
+
+**⚠ AND THE ROW FOLLOWS ITS SHOTS BY ITSELF** *(follow-up, same day: "ye apne aap
+ho jayen kar do waisa" — the first build shipped this as a documented limitation
+and it is now done)*. A shot moves for a dozen ordinary reasons: a Veo take lands
+and pushes everything after it along (`spreadPanelsForRenders`), a shot is
+generated into the middle of the cut, the voiceover stretches a hold, a panel is
+dragged or trimmed by hand. Hooking the poses into each of those would be a list
+to keep in step for ever, so there is **one rule** — `alignPoseRuns` in
+`scene.js`: *a run of drawings sits over the panel it references* — applied by an
+effect on every change to the picture list.
+
+**⚠ IT IS A RULE, NOT A DIFF, AND THAT IS THE WHOLE DESIGN.** It compares the run
+against the panel it references and against nothing else — in particular NOT
+against a previous render of the document. Three things fall out of that, and all
+three are asserted rather than trusted:
+
+- **UNDO IS EXACT.** A pass that remembered "where the panels were last render"
+  would read a restored snapshot as a move and shift the poses a second time — so
+  Ctrl+Z would not give back what it took. A snapshot is already consistent, so
+  this pass looks at it and returns the SAME ARRAY.
+- **IT CANNOT LOOP.** Idempotent by construction: its own output already holds
+  every value it would assign, so the effect stops after one pass. Checked by
+  identity in the test, not by value.
+- **IT COSTS NO SECOND UNDO ENTRY.** `useUndoStack` records on a signature change
+  and coalesces everything inside a pointer gesture and everything within half a
+  second of the last push, so the correction lands in the same entry as the edit
+  that caused it.
+
+**⚠ IT MAPS, IT DOES NOT RE-SPREAD.** The run's boundaries are carried over
+proportionally, so a drawing somebody lengthened by hand is still the long one
+after the shot moves — the same argument `rebuildPoseRun` makes for reusing pose
+clips rather than rebuilding the run. **⚠ NO DRAWING IS EVER DROPPED**, not even
+by a shot trimmed too short to hold them at the 100ms floor: the run is laid at
+the floor and allowed to OVERHANG rather than losing its tail, because an
+automatic pass that deletes an image somebody paid for is worse than a flipbook
+that runs long. **⚠ A RUN WHOSE PANEL IS NOT ON THE TIMELINE IS LEFT ALONE** —
+that covers the import's own layout (`_frames_from_board` lays poses down INSTEAD
+of the panel, so those poses ARE the cut) and a shot whose panel was deleted.
+**⚠ AND A DUPLICATED PANEL CANNOT STEAL THE ORIGINAL'S FLIPBOOK**: the run belongs
+to the earliest panel of that shot.
+
+**What it deliberately does NOT do is buy drawings.** Stretch a 4s shot to 8s and
+its sixteen poses each hold twice as long; pressing ✨ Animatic images again
+re-blocks it at the new length and draws only the tail. Spending on a trim would
+be money moving without the priced dialog.
+
+**⚠ AND EVERY DRAWING IS A MEDIA CARD YOU CAN SAVE** *(second follow-up, after
+the user ran the pass for real: "asli check kiya, image generate hua aur layer par
+aa bhi gaya — bas media panel mai generted iamge nhi dikh rah ahai aur dikhe to
+download kar sakta hun veo video jaisa hi fuction")*. The first build deliberately
+skipped the library on the grounds that sixteen cards a shot is clutter. That was
+wrong twice over: a card is how you SAVE a drawing, how you drag one back after
+deleting its clip, and how you find out which pose it is — and the library is the
+one list a deletion must not empty, which is the entire reason it is a separate
+list (see the header of `assets.js`). Three parts:
+
+- **THE CARDS.** `placePoses` now writes a card per drawing in the SAME `flush` as
+  the clips and the row. `assetKey` already knew `pose:`, so `mergeAssets` re-uses
+  a shot's cards on a re-run instead of doubling them — the same reason that
+  function clears the shot's old clips. It reads the library through a new
+  `assetsRef`, for the reason `layersRef` exists: the queue runs for minutes
+  across many renders and a closure's copy is several shots stale.
+- **A SECTION OF THEIR OWN — "Animatic Images".** `assetOrigin` answers `poses`
+  for a key pose. Filed with the panels they would bury them inside Storyboard
+  Frames, which is a section people keep folded shut — and folded shut is exactly
+  what made them look missing. ⚠ **A VEO TAKE OF A POSE STAYS WITH THE RENDERS**:
+  it still carries `frame` underneath its video source, but its `src.kind` is
+  "video" by then, and what it IS now wins — the same ordering rule `cardRowKind`
+  follows. ⚠ **AND "WHICH SECTION" IS NO LONGER "DID IT COME OFF A BOARD"**: four
+  places asked `assetOrigin(card) === "board"` to decide where a DRAG of the card
+  may land, and every one of them would have started answering *no* for a key
+  pose — routing a board picture onto the overlay Images lane. `isBoardAsset` is
+  the question those four actually meant. The pose card's ＋ also passes the third
+  argument to `cardRowKind`, without which it would land on Story..Image.
+- **AND THE LOAD REPAIRS A PROJECT BLOCKED OUT BY THE FIRST BUILD.** Cards added
+  from now on are not enough: a project WITH a library is never re-derived, so
+  every animatic whose drawings were placed by the first build carries a row the
+  Media pane cannot show, on every open, for ever — reported as "i can't see
+  animatic images in midea". The narrow "on the timeline with no card" repair in
+  `onLoadedRef` — which existed for a voiceover with the same symptom, and whose
+  own note said to widen it "when an add path for pictures that skips the library
+  appears, not before" — now sweeps **key poses** as well as audio. ⚠ **POSES
+  ONLY, NOT ALL OF `frames`**, for that note's own reason: a blanket sweep mints a
+  junk card for every clip whose `src` names no file, and a colour card is exactly
+  that shape. It is safe because the ✕ takes the clips with it (`deleteAsset`), so
+  a clip with no card is always a gap and never a choice.
+- **THE ⬇ GATE: `isVeoRender` → `isSavable`, AND IT HAS BEEN WRONG IN BOTH
+  DIRECTIONS.** The old rule was "only a Veo render", on the argument that
+  offering to save a storyboard panel "promises a file that is not this editor's
+  to give". That did not survive an editor that DRAWS pictures: a key pose costs
+  an image credit and had no way out of the pane. The first fix over-corrected to
+  "anything with bytes behind it", which put a ⬇ on the user's own uploads and
+  came straight back: "only generated cheezon par dikhe ye ⬇ icone". ⚠ **THE LINE
+  IS THE BOARD REFERENCE** — `src.storyboard_id`, carried by every picture this
+  app drew (a panel, a key pose, a Veo take of either, a generated in-between
+  shot) and by nothing a person dropped in. `tests/animatic_images_check.py` pins
+  `upload` and `footage` at **False** by name, because both have perfectly
+  fetchable bytes and are the two rows that flip if anyone widens it again.
+  ⚠ **ONE QUESTION, ONE HANDLER, RE-ASKED AT THE END** is the property that did
+  NOT change through either swing and is pinned hardest: the card and the clip
+  menu consult the same predicate and call the same `downloadClip`, which re-asks
+  `isSavable` rather than trusting its caller. ⚠ `api.downloadAnimaticFile` takes
+  a PATH now, because a panel and a pose are content-addressed on the board
+  (`/panel/<board>/<index>?frame=n`) and have no upload id at all;
+  `downloadAnimaticMedia` survives as a thin wrapper for its existing callers.
+  The extension still follows what the clip IS — `.mp4` for footage, `.png` for a
+  still — or a Veo take would save as `something.png`.
+
+**Files.** `client/src/animatic/scene.js` (`ROW_KINDS`, `ROW_TAKES`,
+`cardRowKind`, `clipRowKind`, `isBoardRow`, `spreadPanelsForRenders`, new
+`poseRunAcross`, new `poseShotKey` + `alignPoseRuns`),
+`client/src/components/AnimaticEditor.jsx` (`ROW_KIND.board_poses`,
+`KEY_POSES_PER_SECOND`, `poseSecondsFor`, `posesShots`, `posesLane`, `placePoses`,
+`openPoses`, `waitForShot`, `runPoses`, `stopPoses`, the alignment effect, the
+button, the dialog, the status row, the ＋ Add layer entry),
+`client/src/components/Timeline.jsx` (`LANE_HUE`, the clip menu's ⬇ gate),
+`client/src/styles/animatic.css` (`.an-pick-row.is-static`,
+`.fv-confirm .an-pick-list`), `client/src/animatic/assets.js` (`assetOrigin`, new
+`isBoardAsset`), `client/src/components/MediaBin.jsx` (`SECTION_NAME`, the ⬇ gate,
+the pose's Properties line), `client/src/api.js` (new `downloadAnimaticFile`;
+`downloadAnimaticMedia` delegates to it). New test
+`tests/animatic_images_check.py` (96 checks); `tests/image_lane_routing_check.py`
+updated for the fourth row kind; `tests/veo_download_check.py` and
+`tests/asset_fields_check.py` re-pointed at the new ⬇ rule and the new Media
+section; and `tests/editor_media_bin_check.py` grew a key pose with no card in its
+fixture, which proves the load repair, the section and the ⬇ rule in Chromium.
+
+**Verified.** `npm run build` clean. `tests/animatic_images_check.py` — 96 checks,
+all green, including the row derivation, the layout arithmetic, the three safety
+properties of the alignment pass (idempotent by identity, untouched when already
+correct, lossless when squeezed), the ⬇ truth table and which Media section each
+kind is filed under —
+plus the node-driven suite that touches `scene.js` re-run and green:
+`image_lane_routing_check`, `veo_ripple_check`, `timeline_ripple_check`,
+`lane_reorder_check`, `render_parity`, `shot_insert_check`, `picture_tracks_check`,
+`razor_check`, `transition_check`, `keyframe_ops_check`, `captions_check`,
+`autoframe_check`, `animatic_motion_check`, `effects_check`, `video_clip_check`,
+`veo_download_check`, `move_follows_hold_check`, `shape_points_check`.
+Two Playwright suites were run for the Media half and are green:
+`editor_media_bin_check` — which now asserts, in a real browser, that a key pose
+with no card gets one on load, that it lands in **Animatic Images** and not in
+among the panels, that it and the panel offer a ⬇, and that an upload does not —
+and `editor_media_row_routing_check` (a card still lands on its own row after
+`isBoardAsset`).
+
+**Verified by the user, live:** the queue itself — "asli check kiya, image
+generate hua aur layer par aa bhi gaya". **NOT run:** the rest of the Playwright
+suite, and no live pass was spent from this side — the Media/⬇ half is proven
+against a stubbed project rather than a real board.
+
+### 2026-08-26 — AN OFFER THE ADMIN CREATED IS NOW ON THE CUSTOMER'S SCREEN (report: "main ne ek offer card banaya magar mujhe user ke frontend screen mai nhi dikh rha hai … user ko dikhna chahiye … professional and production" + "check karo sales mai sab thik hai")
+
+**The bug, in one sentence.** An administrator created `LAUNCH50 · 20% off every
+plan`, Admin → Sales listed it as **live**, and there was no screen in the app on
+which any customer could ever have encountered it.
+
+**⚠ AND IT WAS NOT A RENDERING BUG — IT WAS THE DESIGN, READ HONESTLY.**
+`offers.py` has always said a **sale** (`code = None`) applies to everyone
+automatically and a **coupon** (`code = "…"`) "applies to nobody until it is
+typed". That is correct arithmetic and a complete dead end as a product: a sale
+announces itself, because it changes the number printed on a plan card; a coupon
+changes **nothing at all** until somebody types it, so a coupon that is not
+printed somewhere is a discount that exists only in the admin panel. `GET
+/billing/tiers` sent `tiers`, `currency` and `banner` — and the banner half was
+`if not o.get("code")`, i.e. **sales only**, so even the one channel that could
+have carried a code deliberately refused to.
+
+**THE FIX IS A THIRD IDEA, NOT A LOOSENED SECOND ONE: `promoted`.** `active` is
+whether a discount **works**; `promoted` is whether anybody is **told**. They are
+separate because both states are wanted — a code emailed to one customer must
+work for them and be invisible to everyone else, and a code on the pricing page
+must be usable by somebody who was never emailed. Three new functions in
+`server/offers.py`: `is_promoted`, `public_offer`, `promoted_offers`.
+
+**⚠ AN ABSENT `promoted` READS AS TRUE.** Every offer in every store predates the
+field, and the user's own `LAUNCH50` was already sitting in Mongo — a missing key
+read as "hidden" would have shipped the fix and left the reported offer exactly
+as invisible as before. `is_promoted` is `bool(offer.get("promoted", True))`, and
+`create_offer` writes it explicitly on new rows. Only an explicit `False` hides
+one; hiding is one click in the panel.
+
+**⚠ THE PUBLIC PAYLOAD IS AN ALLOW-LIST, NOT A DELETE-LIST.** `public_offer`
+builds twelve named fields rather than spreading the stored row and popping
+`created_by` / `updated_by` / `redeemed` — a route written the other way leaks
+the thirteenth field somebody adds next month. `remaining` is sent and `redeemed`
+is not: "34 left" is the scarcity a customer is entitled to, "1,266 already used
+it" is a business metric, and they are the same two numbers from opposite sides.
+The field list is asserted **exactly** in the new test.
+
+**THE CARD IS A COUPON, NOT A BANNER, AND THE SHAPE IS DOING WORK.** A banner is
+something people have learnt to skip. `.pricing-offer` is a gold-rimmed ticket
+above the plan grid: a `LIMITED OFFER` flag, the discount at 1.6rem, the label,
+what it covers in words ("every plan · monthly or yearly"), the code as a dashed
+click-to-copy stub behind a tear-off perforation, a gold **Apply**, and a footer
+strip with `⏳ Ends in 6 days` and `40 left`. A **sale** gets the same card with
+"✓ Already applied to the prices below" instead of the stub — offering an Apply
+button for a sale invites somebody to press a button that cannot do anything.
+⚠ The perforation is a **dashed divider**, not punched notches: notches were
+tried as transparent circles in a `radial-gradient` and, with the card's 1px
+border running through them, rendered in Chromium as two white pimples on the
+edge. Screenshotted in **both** themes before that was believed.
+
+**⚠ AND APPLYING A CODE NOW MOVES EVERY PLAN IT COVERS, NOT ONE.** The old modal
+checked the coupon against the featured tier only, so "20% off every plan" struck
+through one card and left the other three quoting a price that was no longer true
+for them. `applyCode` fires one `POST /billing/coupon` per paid tier and keeps a
+`byTier` map. ⚠ **"Valid" means ANY tier took it** — "20% off Starter only" is a
+real code three cards must refuse, and reading those refusals as a bad code would
+tell a customer their working coupon does not exist. ⚠ **THE ARITHMETIC STAYS ON
+THE SERVER**: four requests is the price of not having a second copy of the
+discount maths in JavaScript that can disagree with the first.
+
+**A BUG FOUND WHILE READING, NOT REPORTED: the period toggle kept a stale
+price.** `PricingModal.jsx` carried a comment saying an applied coupon "is
+re-checked when the period toggles" — and nothing did it. Switching Yearly →
+Monthly left a figure worked out against the yearly price on screen, which is a
+price that does not exist. There is now a `useEffect` keyed on `yearly` alone
+(adding `appliedCode` would re-run it on the answer it just stored and loop), and
+the browser test watches the number move.
+
+**A second one: `offers.summary` printed `"5 off"`** while its own docstring
+promised `"$5 off"`. Beside a percentage discount a bare number reads as five
+percent — the one place on a pricing page where ambiguity costs money. It now
+carries the symbol for `config.BILLING_CURRENCY`.
+
+**SALES TAB — WHAT THE CHECK TURNED UP.** The Offers section had one button per
+row and no way to see or set any of this. Every row now carries a state chip
+(`ON THE PRICING PAGE` green / `Shown when live` / `HIDDEN`) with a tooltip
+saying *why*, plus **Hide/Show** beside **Switch off** — two switches, both
+named, because collapsing them is how a live coupon works perfectly and reaches
+nobody. The create form gained the checkbox, **ticked by default**, with a
+sentence that changes depending on whether a code has been typed. ⚠ **HIDING A
+SALE HIDES ITS CARD, NOT ITS DISCOUNT** — `live_sale` never asks about
+`promoted`, and the test pins that. The banner rule now asks sales first and
+promoted coupons second (a sale is already changing every price, so its sentence
+is the one that explains the screen), and a hidden coupon's banner is not printed
+either. **And "＋ New offer" is no longer a `.btn.ghost`** — transparent and
+borderless in a section head, beside a heading, the one control an administrator
+comes to that section to press was the least visible thing in it.
+
+**⚠ A STALE SELECTOR IN `admin_fields_check.py` WAS PASSING BY MEASURING
+NOTHING.** It opened the offer form with `.admin-section-head .btn.ghost`; the
+moment that button stopped being a ghost, the click silently did nothing, the
+sweep found zero fields and reported **ok**. Matched by its words now. This is
+the second time in this file's history that a green line meant "nothing was on
+screen" rather than "everything fits".
+
+**Two new tests.**
+- `tests/offer_visibility_check.py` — 47 checks, no browser, no Mongo: the card
+  reaches `/billing/tiers`, the payload's field list exactly, hidden-still-works
+  vs switched-off-refused, a row with the key deleted still advertised, nothing
+  expired/unstarted/exhausted/switched-off ever advertised, `remaining` counting
+  down, deepest-discount-first ordering, the banner precedence, the currency
+  symbol, and **fail closed** (an unreachable offer store advertises nothing,
+  while the price list still renders).
+- `tests/offer_card_check.py` — Chromium, signed in **as an ordinary customer**,
+  because the whole failure was that the offer existed on one side of the app and
+  not the other. Opens the modal from `.sb-upgrade`, reads the card, presses
+  Apply, and compares the numbers on all four plan cards before and after; then
+  toggles the period and watches them move again. Screenshots both themes to
+  `output/offer_card*.png`.
+
+**Verified:** `offer_visibility_check` 47/47 · `offer_card_check` all green ·
+`sales_check`, `billing_check`, `admin_check`, `pricing_edit_check`,
+`admin_fields_check` (with the selector fixed, so the offer form is really
+measured now) all still pass · `npx vite build` clean · both themes eyeballed
+from the screenshots the browser test leaves behind.
+
+**Files:** `server/offers.py` (`promoted`, `is_promoted`, `public_offer`,
+`promoted_offers`, `summary` symbol), `server/billing.py` (`offers` in the public
+payload, banner precedence), `server/admin.py` (`promoted` on `OfferBody` /
+`OfferUpdate` / `_offer_row`), `client/src/components/PricingModal.jsx` (offer
+cards, per-tier coupon, period re-check), `client/src/styles/pricing.css`,
+`client/src/admin/AdminSales.jsx`, `client/src/styles/admin.css`,
+`tests/offer_visibility_check.py`, `tests/offer_card_check.py`,
+`tests/admin_fields_check.py`.
+
+### 2026-08-26 — THE PRICING CARDS ARE EDITABLE, AND THE FOOTER'S BADGE BOX WAS 3.6px HIGH (report: "price section mai text editeable karne ka function chahiye so mai yaha se edit kar sakun: Says on the card and Actually unlocks" + "Badge buttun box text ke aling nhi hai thora uper hai")
+
+**The ask, in two halves.** Make the text lines under **both** headings on an
+Admin → Pricing card editable from that screen; and fix two things that did not
+line up — the price fields, and the badge box in the footer.
+
+**⚠ THE FIRST THING TO GET RIGHT WAS THAT THE TWO COLUMNS ARE NOT THE SAME KIND
+OF THING.** The header of `AdminPricing.jsx` has always said it: the left column
+is marketing copy stored on the tier, the right column is *derived* by asking
+every feature which tier it needs. "Make the text editable" therefore means two
+different edits, and shipping them as one uniform "edit the card" would have
+quietly turned the derived column into a per-tier caption — the exact confusion
+the two-column layout exists to prevent.
+
+**LEFT — `bullets`, free copy, now a small editor.** Each line has its tick as a
+**button** (flipping it is what makes the pricing card print that line as *not*
+included), a **B** for `strong`, a **✕**, and there is a "+ Add a line" under the
+list. ⚠ **`bullets` IS ONE FIELD ON THE TIER, NOT ONE FIELD PER LINE** — there is
+no "line 3" the route can be told about, so every one of those actions PATCHes
+the whole array: text when the field is left, a flag the moment it is clicked.
+Capped at **12** because `TierUpdate.bullets` in `admin.py` is `max_length=12`;
+an added row nobody typed into is dropped on the way out rather than stored as an
+empty promise.
+
+**RIGHT — the feature's own `label`.** A line cannot be added or removed here (it
+is `min_tier` on the feature that decides), so what is editable is the name
+itself, via `PATCH /admin/features/{key}`. ⚠ **THAT RENAMES IT EVERYWHERE** — the
+workflow rail, every "you need a higher plan" refusal — so the PATCH is the
+SCREEN's (`renameFeature`), not the card's, and it writes the new name into every
+tier's `includes` so all four cards change at once. The card says so in as many
+words, and an empty name is refused in the browser (the server would fall back to
+the raw key).
+
+**⚠ BOTH COLUMNS USE `<textarea rows={1}>` THAT GROWS TO ITS TEXT (`GrowText`),
+NOT AN `<input>`.** Each column is ~180px of a 440px card and these lines already
+wrap on the real pricing card — "Unlimited image generations" takes two lines on
+the card in the user's own screenshot — so a single-line field would have shown
+an administrator a *trimmed* version of the sentence a customer reads in full,
+with nothing on screen to say it had been trimmed. Two details that are load
+bearing: Enter **commits** instead of inserting a newline (a stored `\n` would
+reach the pricing page as a line the layout never planned for), and the height is
+`scrollHeight + offsetHeight - clientHeight` — `scrollHeight` alone is 2px short
+because `theme.css` puts `box-sizing: border-box` on everything, and `overflow:
+hidden` then eats the bottom of the last line.
+
+**The bold and remove buttons sit OVER the row and only appear on hover or
+focus.** Parked in the flow they took ~50px — a quarter of the column — off the
+copy, and "5 projects per month" started wrapping in the editor while the real
+card prints it on one line. The hint line under the list says they are there.
+
+**⚠ THE BADGE MISALIGNMENT WAS TRAP 2 AGAIN, AND THIS TIME THE CULPRIT WAS A
+`<label>`.** `theme.css` gives every label `margin: 0.75rem 0 0.3rem`, because a
+label normally sits *above* the field it names. `.admin-check` is a label sitting
+*beside* its checkbox in a centred flex row, so that 12px top and 4.8px bottom
+made it a **32.8px margin box around 16px of text**, against a 30px
+`.admin-badge-input` with no margin — and `align-items: center` then centred the
+two *margin* boxes, which put the words 3.6px below the middle of the box next to
+them. `margin: 0` plus `min-height: 30px` makes them literally the same box.
+**Measured, not eyeballed: 3.6px → 0.05px.**
+
+**The price row was the same class of bug from the other end.** `Was (struck
+through)` is long enough to wrap onto a second line as soon as the window
+narrows, and in a `column` field that pushed its box a line below the other two —
+which is what the first screenshot showed (the user later confirmed it was a
+narrow browser on a monitor, and that their laptop was fine). `align-items:
+flex-end` pins the three boxes to one line whatever the labels do; at full width
+nothing moves, because no label wraps there.
+
+**One more thing, unasked but needed by the above:** a failed PATCH now bumps a
+`rev` that is part of every card's `key`, so the cards **remount** and every
+field goes back to what the server actually has. Each card keeps what is being
+typed in local state, and a rejected save used to leave a line on screen that the
+database did not have.
+
+**Files:** `client/src/admin/AdminPricing.jsx` (the editor, `GrowText`,
+`UnlockName`, `renameFeature`, `rev`), `client/src/styles/admin.css` (the two
+quiet fields, the hover tools, `.admin-check`, `.admin-price-row`), new
+`tests/pricing_edit_check.py`.
+
+**Verified:** `tests/pricing_edit_check.py` — **17 checks, all passing, and every
+one of them a round trip**: the browser types or clicks, then the test re-reads
+`/admin/tiers` (or `/admin/features`) with the admin's token and asks whether the
+stored document says what the screen said. It covers text, the tick, bold,
+adding, "an empty new row is NOT saved", removing, the rename reaching the other
+cards, an emptied name being refused, and the two alignment numbers. It asserts
+the alignment at **2400px wide (a 566px card — the monitor the screenshot came
+from)** and *prints without asserting* at 1440px, where both rows legitimately
+wrap. `tests/admin_fields_check.py` still passes all 13 sweeps, so none of the
+new fields clips its own text.
+
+### 2026-08-26 — SIGNING IN WAS SLOW IN PROPORTION TO HOW MUCH WORK YOU HAD (report: "why are we seeing a bit of a delay when I log from the id who is having the things which I have created from before")
+
+**The report:** an account with a history waited at the dashboard; a fresh one
+did not. The ask was to load that data *at auth*, keep it loaded, and — if
+anything must load at all — to know at sign-in **who has work and who is new**
+so the loader is only shown to the person it is true for.
+
+**Four causes. None of them was the network, and only one of them was the part
+everyone looks at first (payload size).**
+
+**(1) NOTHING WAS ASKED FOR UNTIL THE DASHBOARD WAS ALREADY ON SCREEN.**
+`Home.jsx` owned a `load()` in a `useEffect`: seven requests, every one starting
+*after* React had mounted and painted the page. So the first frame a returning
+customer saw was their own empty dashboard with "Loading…" in six places, and
+the requests began from there. Worse, nothing remembered the answers — the app
+has no router, so leaving Home unmounts it, and coming back re-ran all seven.
+
+The fetch now starts in **`Login.jsx`**, one line after `api.setSession(...)`
+and one line *before* `onAuthed()` — before React has been told anything
+happened. The answers live in the new **`client/src/session_cache.js`** at
+module scope for the life of the session. Three rules that file exists to keep:
+one request per feed (a component mounting mid-flight joins that promise, never
+starts a second), `read()` is SYNCHRONOUS so the first render has real content,
+and nothing survives an account change (`_epoch` is bumped by `reset`, and an
+answer that resolves against an older epoch is dropped — which is what stops one
+customer's library landing in another's dashboard when you switch mid-flight).
+
+**⚠ Home REFRESHES ON EVERY MOUNT AND SHOWS THE CACHE MEANWHILE.** The staleness
+window is deliberately ignored there: the commonest reason to come back to Home
+is that you just made something, and a cache answering "still fresh, I read this
+forty seconds ago" would show a customer a dashboard with their new project
+missing. Stale-while-revalidate — the content stays put while the top-up runs —
+so the cost is five small requests nobody waits for, against the old behaviour
+which made the same requests and **blanked the page** until they answered.
+
+**(2) A HIDDEN N+1 IN THE ANIMATIC LIBRARY — the biggest single server win.**
+A card's cover URL carries a version token, and for a frame sourced from a
+storyboard that token is read from the **board record**. `_frame_version` takes a
+`boards` cache for exactly this reason — and `_summarise` was calling it with the
+default, so **every card started a fresh cache and paid its own
+`get_store().get()`**. Listing 50 projects was 50 sequential round trips to Atlas
+inside one request. `list_animatics` now passes ONE dict for the whole page.
+Measured in `tests/dashboard_boot_check.py`: **12 animatics off 2 boards, 12
+store reads → 2.**
+
+**(3) `GET /jobs` SHIPPED THE RUN INPUTS.** `response_model=list[Job]` includes
+`params` — the whole run's inputs, reference images included — and not one reader
+of that list opens it (the job rail, Home's Recent work and the final-video art
+picker print `character_name` / `status` / `template` / `kind` / `created_at`,
+and reach for `result.zip`). New **`drop=`** on `JobStore.list` is an *exclusion*
+projection in Mongo, so the server never sends the field; the memory and
+Firestore backends blank it on a `model_copy` — ⚠ **a copy, never the stored
+object, or the "optimisation" would delete the project**. There is a test for
+exactly that. `/jobs` now passes `drop=("params",)`.
+
+**(4) `nav` WAS IN THE SHELL'S EFFECT DEPENDENCIES.** Every click in the rail
+re-ran `me()` + `entitlements()` — two round trips per navigation for two answers
+that had not changed since sign-in. ⚠ **`nav` IS STILL THERE, DELIBERATELY.**
+The fix was not to stop re-checking, it was to stop re-asking: those calls go
+through `cache.ensure`, which returns the cached answer without touching the
+network until it is a minute old. That keeps what the dependency was buying — an
+administrator turning a workflow on for an account sees it take effect while
+they are still using the app — at one request a minute instead of two a click.
+The prefetch itself got its **own** effect keyed on the account and not on `nav`,
+because the dashboard does not go out of date because somebody opened the editor.
+
+**⚠ AND ONE CORRECTNESS BUG FOUND ON THE WAY, WHICH WAS THE REAL REASON TO SLOW
+DOWN.** `list_storyboards` applied `limit` in the store and *then* filtered out
+drafts and other workflows' copies in a comprehension — i.e. it filtered an
+already-truncated page. It was harmless only because every caller asked for 100.
+The moment the dashboard asked for 8, an account whose newest 8 boards were all
+Image-to-Animatic copies would have been told Script to Storyboard was **empty**,
+over a library full of work. New **`where=`** on `JobStore.list` carries the
+condition into the query so the limit lands after it — equality, `$in` and `$ne`,
+three operators and no more, because anything richer means writing a query engine
+twice and that is how two backends start disagreeing. ⚠ **The untagged boards are
+`$in [None, ""]`, not `== ""`**: boards made before the tag existed have no
+`workflow` key, and in Mongo a missing field reads as null. The Python
+comprehension is KEPT as well — against Mongo it now removes nothing, and the day
+it does, the bug is in the query rather than on screen.
+
+**WHO IS NEW AND WHO IS NOT, ANSWERED AT AUTH.** `TokenResponse` gains
+`counts: {kind: n}`, filled by the `count_by_kind` aggregate the store already
+had. It rides on the login answer because the browser has to decide what to DRAW
+the instant the token lands, and a second round trip to find out would cost
+exactly the delay this was about. ⚠ **`null` and `{}` are different answers and
+every caller keeps them apart** — `{}` is "the server counted, there is nothing",
+`null` is "nobody told us", and collapsing them would flash an empty library at a
+paying customer. Remembered per-account in `localStorage` (`cas_counts`), because
+the commonest way back into the app is a RELOAD with the token already there and
+no login call to carry a fresh hint; it is cleared with the token on logout.
+⚠ **It is a hint about what to draw, never a permission and never the data** —
+every list is still fetched and still owner-scoped server-side, and a seeded
+empty list is overwritten by the truth a moment later. Trusting it permanently is
+how somebody's first project would go missing from their own dashboard.
+
+**The dashboard asks for a PAGE now.** `DASH_LIMIT = 8`, against the hundred it
+used to fetch to print two per workflow. So "View all (N)" could no longer
+honestly print `items.length` — `totalFor` prints a number only when the page
+came back short of the limit (the page IS the library) or when the login hint
+counts those job kinds exactly; otherwise it prints a bare arrow rather than a
+wrong number. The **Projects** stat now uses the hint, which is the only exact
+figure available — the old sum was capped at 100 and called itself "Projects" too.
+
+**The loader, for the times one is still needed.** `Home`'s "Loading…" text is
+replaced by shimmering rows shaped like `.wf-item`, so the group is the same
+height before and after its content arrives and nothing jolts. Deliberately the
+same `is-loading` / ghost idiom `StoryboardLibrary` already uses, reduced-motion
+escape included — not a second loading look invented for one screen.
+
+**Files:** `client/src/session_cache.js` (new), `client/src/App.jsx`,
+`client/src/api.js` (`qs()` helper, `limit` on every boot list, `cas_counts`),
+`client/src/components/Login.jsx`, `client/src/components/Home.jsx`,
+`client/src/styles/home.css`, `server/jobs.py` (`where`, `drop`, `_matches`,
+`_prune`, `_slim`), `server/main.py` (`/jobs`, `list_storyboards`,
+`BOARD_SUMMARY_DROP`), `server/animatics.py` (`_summarise` shares one board
+cache; `SUMMARY_DROP`), `server/auth.py` (`counts`),
+`tests/dashboard_boot_check.py` (new, 33 checks),
+`tests/summary_projection_check.py` (new — every real card, both ways),
+`tests/dashboard_timing_report.py` (new — a report, not a test),
+`tests/mongo_job_store_check.py` (a `where`/`drop` section).
+
+**Verified:** `tests/dashboard_boot_check.py` — 33 checks, all pass, against the
+real app. `tests/mongo_job_store_check.py` — passes against **real Mongo and the
+memory store**, proving the two agree on `where` and `drop`; ⚠ it caught a wrong
+assertion of mine (a DRAFT board has no workflow key either, so a workflow-only
+filter correctly returns it) rather than a code bug. A Node behaviour test of
+`session_cache.js` — 17 checks including the switch-account race and "a failed
+refresh keeps the last good value" — passes. `vite build` clean. Test accounts
+created along the way were deleted from the user store.
+
+---
+
+**AND THEN THE BROWSER FOUND THE ONE THING THE API COULD NOT** (same day, third
+pass — "mai admin panel se 2 workflow hide kiya hun … 1 sec ke liye dono
+dikhta hai").
+
+**THE BUG.** An administrator had HIDDEN two workflows from the panel. On every
+single browser refresh both of them appeared in the sidebar for about a second,
+then vanished. ⚠ **That is not a cosmetic flash, it is the feature not working**
+— a hidden workflow that reappears on every reload is not hidden, and it was
+visible to anyone the account was ever shown to.
+
+**THE CAUSE, and it was a deliberate decision that had aged into a bug.**
+`App.jsx` initialised its rail as `useState(WORKFLOWS)` — the built-in array in
+`Sidebar.jsx`, which is **every workflow that EXISTS** — under a comment
+explaining that the alternative was a blank sidebar on every cold start. Both
+halves of that were true when it was written and the reasoning was sound. What
+it missed is that there is a THIRD option, and that the fallback it chose is the
+one list guaranteed to contain the things an administrator has just hidden.
+
+**THE FIX: DRAW FROM THE LAST ANSWER, NOT FROM WHAT EXISTS.** A successful
+`/auth/me/entitlements` is now remembered per account in `localStorage`
+(`cas_entitlements`, beside `cas_counts`), and `App.jsx` reads it
+SYNCHRONOUSLY in a `useState` initialiser — so frame one already has the right
+rows. Three states, drawn three ways:
+
+| what we have | what the rail draws |
+|---|---|
+| a remembered answer | it, immediately — the steady state, nothing flashes |
+| nothing remembered | **skeleton rows** (`.sb-ghost`) — never a wrong row |
+| the request FAILED, nothing remembered | the built-in list — fail-open still beats a rail nobody can use |
+
+⚠ **THE SEED IS DELIBERATELY STORED WITHOUT A TIMESTAMP.** `_at` is what
+`isStale` reads, so leaving it unset means the remembered copy is always
+considered stale and is always re-read — shown at once, believed only until the
+server says otherwise. A remembered rail that was ever *trusted* instead of
+*displayed* would be the same bug wearing a different hat.
+
+⚠ **AND AN ADMIN CHANGE INVALIDATES IT AT ONCE.** Remembering alone would have
+left one last flash: the administrator who has just hidden something still holds
+a remembered answer that contains it. So the five admin mutations that can move
+what a rail draws — feature visibility/status, a user override, a feature's
+min-tier, a tier's contents, a user's tier — end in `.then(entitlementsChanged)`,
+which drops the stored copy and re-reads. ⚠ `entitlementsChanged` **returns its
+argument**; written as a bare `.then(fn)` it would have resolved every one of
+those admin calls to `undefined`, and the panel reads what it gets back.
+⚠ It is a CALLBACK registered by `session_cache`, not an import, because
+`session_cache` imports `api` — the other direction would be a cycle.
+
+**THE SAME FLASH EXISTED ONE LAYER DOWN** and is fixed with it:
+`clearEntitlements()` leaves the capability store saying "we don't know", which
+is fail-OPEN, so ✨ Animate / 🎙 Voiceover / the 3D popup drew as AVAILABLE until
+the answer landed — on accounts where an administrator had switched them off.
+The shell now seeds that store from the remembered answer too.
+
+⚠ **IT IS STILL "WHAT IS DRAWN", NEVER "WHAT IS ALLOWED".** Every workflow route
+is guarded by the feature registry server-side and every `/admin/*` route by
+`require_admin`. Editing `cas_entitlements` in a debugger gets you a page whose
+every request refuses — which is exactly why keeping it in `localStorage` is not
+a privilege escalation.
+
+**Checked by `tests/rail_visibility_check.mjs`** (18 assertions), which imports
+the REAL `WORKFLOWS` array rather than a copy — a copy would drift and let the
+test pass while the app was wrong — and asserts, among other things, that the
+built-in list still contains the hidden ids, so the test cannot quietly stop
+testing anything. It covers the reload path, the admin-change path, both
+fail-open rules, and that one account never inherits another's rail.
+
+**Also promoted out of a temp directory:** `tests/session_cache_check.mjs`, the
+23 assertions behind `session_cache.js`. It had been living in a scratchpad,
+which is to say it was not a test at all. ⚠ Its own first run failed on a check
+written without an `await` — `run()` starts its fetcher in a MICROTASK, and the
+synchronous half of `prefetch` is deliberately only the seeding, so that a
+caller can read and paint before anything touches the network.
+
+⚠ **BOTH `.mjs` SUITES MUST BE BUNDLED BEFORE THEY RUN** — `api.js` reads Vite's
+`import.meta.env`, which plain node has no such thing as. The exact esbuild
+command is in each file's header, `--jsx=automatic` included (the rail suite
+imports `Sidebar.jsx`). ⚠ Write the bundle OUTSIDE the repo; it is a build
+artefact and nothing here should have to gitignore it.
+
+**Files:** `client/src/api.js` (`cas_entitlements`, `onEntitlementsChanged`,
+five admin mutations), `client/src/session_cache.js` (seeds and remembers the
+rail; registers the invalidation), `client/src/App.jsx` (`railKnown`, the three
+states, capability seeding), `client/src/components/Sidebar.jsx`
+(`workflowsKnown`, skeleton rows), `client/src/styles/shell.css` (`.sb-ghost`),
+`tests/rail_visibility_check.mjs` (new), `tests/session_cache_check.mjs` (new).
+
+---
+
+**THEN IT WAS MEASURED, AND THEN IT WAS FINISHED** (same day, second pass —
+"remaining work ko pura kro production level ke hisaab se").
+
+**FIRST, WHERE THE WEIGHT ACTUALLY IS — read off the live collection rather than
+guessed at.** 578 job documents, ~3 MB in total. An animatic averages **4.8 KB**
+of which `params.frames` is **half**, and inside a frame `src` + `mask` +
+`keyframes` are ~70% of the bytes. A storyboard averages **7.8 KB** of which
+`result` is **54%**, essentially all `panels`, and `description` alone is ~29% of
+the panel array. So one library page was **~500 KB of documents to draw a hundred
+titles, counts and thumbnails** — and none of the heavy parts had ever been
+printed on a card. ⚠ That measurement is what made the next change small: the
+first instinct was a denormalised summary block written at save time, which the
+numbers did not justify for a 3 MB collection and which would have put a
+drift-prone copy of every count on the write path.
+
+**SO: `drop` LEARNED TO REACH THROUGH ARRAYS.** `params.frames.keyframes` now
+means "that key, from every frame". Mongo's exclusion projection does it for
+free; `_prune` / `_slim` in `jobs.py` reproduce it for the memory and Firestore
+backends so a deployment on either behaves the same. ⚠ **`_slim` dumps before it
+prunes** — `MemoryJobStore` hands out the objects it is storing, and pruning one
+in place would delete a customer's timeline out of the running process. There is
+a test for exactly that.
+
+**EACH DROP LIST LIVES NEXT TO ITS SUMMARISER** — `animatics.SUMMARY_DROP`,
+`main.BOARD_SUMMARY_DROP` — because it is the same knowledge. ⚠ **BOTH BOARD
+RESULT SHAPES ARE LISTED**: a board written before restyling has flat
+`result.panels`, one written after has `result.variants[].panels` (17 of 69 live
+boards), and a list naming only one would have silently kept shipping the other.
+
+**⚠ AND THE LIST IS NOT TRUSTED, IT IS CHECKED.** A summariser and its drop list
+are one thing written in two places, and the failure mode is silent: read a
+dropped field and every card in the library goes blank with nothing raising. So
+`tests/summary_projection_check.py` rebuilds **every real document's card twice**
+— once from the whole document, once from the document as the route will actually
+receive it — and fails on any difference. 497 animatics and 69 boards: identical.
+It also prints what each list saves, and warns if a list saves under 5%, because
+a drop list that saves nothing is upkeep with no payer. ⚠ Its first run failed on
+its own synthetic fixture (invented `mask` / `keyframes` shapes the models
+refuse, so `_frames_of` discarded every frame of the FULL document) — the fixture
+now validates itself before it is used, so "the drop list is wrong" and "the
+fixture is wrong" can never again arrive as the same message.
+
+**THE NUMBERS, from `tests/dashboard_timing_report.py` against the live Atlas**
+(median of several runs; ⚠ **it is a REPORT and must never become a pass/fail
+test** — every figure moves with the network, and a suite that cries wolf gets
+ignored):
+
+| | before | now | |
+|---|---|---|---|
+| Animatic library, 100 cards | **991 ms** | **172 ms** | 5.8× |
+| Animatic library, 25 cards | 152 ms | 56 ms | 2.7× |
+| The dashboard's five lists | 254 ms | 100 ms | 2.5× |
+| Board list, database read | 70 ms | 53 ms | 1.3× |
+| The new `counts` hint | — | **9 ms** | one aggregate |
+| An animatic page's bytes | — | **−15%** | 358 KB of 2.3 MB |
+| A board page's bytes | — | **−43%** | 230 KB of 534 KB |
+
+⚠ **THE BUSIEST ACCOUNT TODAY HAS SEVEN ANIMATICS**, which is why the per-account
+row is the least impressive one here: a per-card cost and a per-page cost look
+much alike at seven cards. The 100-card row is the one that matters, because it
+is what the fifty-first project turns into.
+
+**⚠ WHAT IS STILL NOT MEASURED:** nothing has been looked at in a browser — per
+the standing instruction, those runs are on request, and the user is doing this
+one. And the numbers above are this machine's link to Atlas, not a customer's.
+
+**Left deliberately undone:** the plan summary still reads whole transcripts to
+COUNT them (`len(messages)`, `len(scripts)`), and the animatic card still needs
+`frames` for its length and duration. Neither can be fixed by a projection —
+dropping the field removes the thing being counted — so it wants a `$project`
+aggregation computing `$size`, or a denormalised block on the write path. ⚠ **Not
+worth it yet, on the evidence above**: seven plan documents exist, the dashboard
+now asks for 8 rows rather than 100, and the write path is not somewhere to go
+changing without a measured reason. `tests/dashboard_timing_report.py` is how
+that reason would be produced.
+
+### 2026-08-25 — THE ADMIN PANEL WAS CUTTING ITS OWN TEXT IN HALF, IN TWO DIFFERENT WAYS (bug report, three screenshots — "text half hide from box not full view … aur kahi v admin panel aisa problem dikhe to thik kar dena")
 
 **The report:** three crops of the admin panel — a filter row whose dropdowns
 read "All roles" and "Any status" with the bottom third of the letters gone, and
@@ -19170,10 +20195,61 @@ Sales; and a sale drives `compare_at` rather than inventing a second old price.
 
 - ⬜ **The panel has never been opened in a browser.** Everything is asserted at
   the API and by `vite build`; no screen has been looked at. Top of the list.
+  *(Pricing is now the exception — `tests/pricing_edit_check.py` drives it in a
+  real Chromium, and `admin_fields_check.py` walks all six tabs measuring boxes.)*
+- ⬜ **The Features screen still shows a feature's name as static text**, while
+  Admin → Pricing now lets you rename it from the "Actually unlocks" column
+  (2026-08-26). That is backwards — the name belongs to the feature — so the
+  same editable field should go on `AdminFeatures.jsx`, where `min_tier`,
+  `status` and the rollout already live.
+- ✅ **THE SIGN-IN SPEEDUP IS MEASURED** (2026-08-26, top Work Log entry).
+  `tests/dashboard_timing_report.py`, against the live Atlas: a 100-project
+  animatic library **991 ms → 172 ms**, the dashboard's five lists
+  **254 ms → 100 ms**, the `counts` hint 9 ms. Payload: −15% on an animatic
+  page, −43% on a board page, both proved harmless card-by-card over all 566
+  real documents by `tests/summary_projection_check.py`.
+- ✅ **THE BROWSER PASS HAPPENED, and it found something the API tests could
+  not**: two workflows hidden from the admin panel flashed up in the sidebar for
+  about a second on every refresh. Fixed — see the top Work Log entry. ⚠ The
+  lesson is worth keeping: an API test cannot see a FIRST PAINT. Everything
+  about that bug was correct one tick later, and `tests/dashboard_boot_check.py`
+  was right to pass.
+- ⬜ **STILL UNWATCHED IN A BROWSER:** the sidebar SKELETON path
+  (`workflowsKnown === false`), which only appears on a first sign-in in a
+  browser that has never had an answer — clear `cas_entitlements` in devtools to
+  see it. Also unwatched: the rail's fail-open on a failed entitlements call,
+  and both collapsed-rail states.
+- ⬜ **The plan summary still reads whole transcripts to COUNT them**, and the
+  animatic card still needs `frames` for its length and duration. A projection
+  cannot help — dropping the field removes the thing being counted — so it wants
+  either a `$project` aggregation computing `$size`, or a denormalised block
+  written at save time (cheap to read, one more thing that can drift).
+  ⚠ **NOT WORTH IT ON TODAY'S EVIDENCE, and that is a measurement rather than a
+  shrug**: seven plan documents exist, the whole collection is 3 MB, and the
+  dashboard now asks for 8 rows rather than 100. Re-run
+  `tests/dashboard_timing_report.py` when volume grows; that is what would
+  produce the reason to do it.
+- ⬜ **`tests/dashboard_timing_report.py` MUST NOT BECOME A PASS/FAIL TEST.**
+  Every number in it moves with the network between the machine running it and
+  Atlas. A threshold there would fail on a train and pass in an office, and a
+  suite that cries wolf stops being read. What IS stable across networks, and
+  worth watching, is the SHAPE: a per-card cost where there should be a per-page
+  one shows up as the 100-row case being ~4× the 25-row case.
+- ⬜ **`session_cache` is the DASHBOARD's cache and the libraries do not use
+  it.** Each library still does its own full-fat read on mount, which is correct
+  — they need everything, the cache holds a page. If a library is ever pointed
+  at it, `DASH_LIMIT` has to stop being one number for both, or a library will
+  be handed 8 rows and think that is all there is.
 - ⬜ **A browser already open does not pick up a flag change until it reloads or
   the user moves between workflows** — `App.jsx` re-reads entitlements on `nav`
   change, which is deliberate (no polling), but it means an admin watching a
   customer's screen will not see it flip. The Features screen says so.
+  ⚠ **AS OF 2026-08-26 THAT RE-READ GOES THROUGH `session_cache`**, which
+  answers from memory until the last one is a minute old. So the behaviour is
+  unchanged in kind — still no polling, still driven by navigation — but the
+  worst case moved from "the next click" to "the next click after a minute".
+  Anyone tightening this should change `STALE_AFTER_MS`, not put `nav` back on
+  a raw `api.entitlements()`: that is what cost two round trips per click.
 - ⬜ **Usage is counted at the ROUTE, not at the generator.** `image_generations`
   counts the panels a board was ASKED for (`len(shots)`), which is right at
   request time and can drift from what the worker actually drew if a panel
@@ -19730,6 +20806,60 @@ language — do NOT copy the Drawstory reference's look/colours.
 
 **Next steps** (pick the top unchecked item when told to "start next"):
 
+- [ ] **RUN 🎬 WITH THE ANIMATIC IMAGES BOX TICKED, IN A REAL BROWSER. IT HAS
+      NEVER BEEN PRESSED.** Phase C2 (2026-08-26) is asserted end to end without a
+      browser and the queue behind it is the 🖼 button's own, unforked — but nobody
+      has ticked the box and watched the drawings arrive. Five things, in this
+      order:
+      1. **DO THE DRAWINGS LAND UNDER THE RIGHT SHOTS?** Run a plan that RE-TIMES
+         shots (one with `set_shot_duration` in it) with the box ticked, and check
+         each run still starts and ends exactly where its shot does. The steps run
+         AFTER this pass, so `alignPoseRuns` is what has to carry them — that is
+         the seam most likely to be wrong.
+      2. **TICK VEO *AND* THIS ONE TOGETHER.** The shots Veo is taking should
+         disappear from the Animatic images list with a reason printed under it,
+         and the count on the Run button should shrink. Un-tick Veo again and they
+         should all come back.
+      3. **DOES THE COUNT ON THE BUTTON MATCH WHAT GETS DRAWN?** It is the only
+         guard on the image quota — there is no dollar figure to make anyone
+         cautious.
+      4. **PRESS STOP MID-PASS.** The shot being drawn should finish and keep its
+         drawings; the shots after it should never be asked for.
+      5. **A BOARD ALREADY BLOCKED OUT BY HAND.** Press 🖼 first, then 🎬: the
+         second pass should be nearly free ("already on the storyboard"), and the
+         preview table must show the real shot count rather than one row per
+         drawing — that is the `shotRow` fix, and it is the one thing here that
+         was broken before today.
+- [ ] **THE PLAYWRIGHT SUITE HAS NOT BEEN RUN SINCE THE TOOL-ROW RESHUFFLE OR
+      PHASE C2.** `tests/editor_director_check.py` had a stale tick-box list (it
+      missed the two sound boxes) and was corrected blind, to nine boxes. Run it.
+- [ ] **LOOK AT THE NEW TOOL ROW IN A REAL BROWSER.** The row was reordered to
+      `🎬 Make Video · 🎙 Voiceover · ✨ Animate with Veo · 🖼 Animatic images ·
+      T Text · ▣ Colour card` and 🎬 Make Video was repainted pastel blue
+      (2026-08-26). It parses and no test asserts button POSITION, but nobody has
+      opened the editor. Three things to check: **(1)** the blue is readable in
+      BOTH themes — `--tool-blue-*` has a light pair and only the dark one was
+      eyeballed in the token file; **(2)** on a narrow pane the row still WRAPS
+      rather than clipping, and the wrap now falls between different buttons than
+      before; **(3)** with an empty animatic, 🎬 Make Video greys out like the
+      rest of the row and does not keep a pressable-looking blue.
+- [ ] **A PROMOTED OFFER REACHES ONLY SIGNED-IN USERS, BECAUSE THE LANDING PAGE
+      HAS NO PRICES ON IT.** `Landing.jsx` mentions neither `tiers` nor pricing,
+      so the offer card added on 2026-08-26 lives exclusively behind the
+      sidebar's Upgrade button — a visitor who has not registered cannot see the
+      discount that is meant to make them register. ⚠ **BOTH ROUTES IT NEEDS ARE
+      ALREADY PUBLIC** (`GET /billing/tiers` carries the tiers, the banner and
+      the promoted offers, and needs no token), so this is a Landing section, not
+      a backend change. ⚠ **BUT `POST /billing/coupon` IS SIGNED-IN ONLY**, so a
+      logged-out card must show and copy the code and NOT offer an Apply button —
+      an Apply that 401s in front of a prospect is worse than no Apply.
+- [ ] **DECIDE WHAT AN OFFER CARD DOES WHEN CHECKOUT ARRIVES (Phase 6).** Today
+      Apply changes the numbers on the plan cards and the Upgrade button says
+      "coming soon", so the applied code goes nowhere. ⚠ **THE REDEMPTION COUNT
+      MOVES WHEN A SUBSCRIPTION IS RECORDED, NOT WHEN A CODE IS CHECKED** —
+      whatever starts a checkout has to carry the code through to
+      `subscriptions.record` or `offers.redeem` will never fire, and every capped
+      coupon will advertise "40 left" forever.
 - [ ] **CLICK THE SOUNDTRACK. IT HAS NEVER BEEN CLICKED.** Phases D and E are
       asserted end to end without a browser (`tests/director_sound_check.py`, 60
       checks) and the route was driven in-process against a faked provider, but

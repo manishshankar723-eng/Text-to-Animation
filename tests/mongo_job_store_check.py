@@ -5,8 +5,10 @@ backends are proven to behave alike rather than the Mongo one merely "looking
 right". Every job it creates is removed afterwards.
 
 Covers what the app actually relies on: owner scoping, per-workflow (kind)
-filtering, share-token lookup, partial updates under concurrent writers, and
-that asset URLs (including GCS URLs) survive a round trip.
+filtering, `where` (a condition applied BEFORE the limit), `drop` (fields the
+caller does not read and must not be sent), share-token lookup, partial updates
+under concurrent writers, and that asset URLs (including GCS URLs) survive a
+round trip.
 
     python tests/mongo_job_store_check.py
 """
@@ -96,6 +98,82 @@ def run_contract(name: str, store, track=False):
     check("multi-kind filter", len(multi), 2)
     check("newest first", multi[0].created_at >= multi[-1].created_at, True)
     check("limit is applied", len(store.list(limit=1, owner=owner_a)), 1)
+
+    # ---------------------------------------------------------------- where
+    # THE ORDERING IS THE POINT. `limit` is applied by the store, so a caller
+    # that filters afterwards is filtering an already-truncated page - ask for
+    # the newest 3 boards of an owner whose newest 3 are all tagged copies and
+    # the untagged list comes back EMPTY over a library full of work. That is
+    # what `where` exists to prevent, and it has to behave the same on both
+    # backends or the bug simply moves to whichever one is in production.
+    print("  where: the condition is applied BEFORE the limit")
+    owner_c = f"where-{uuid.uuid4().hex[:8]}@test.local"
+    plain = store.create("untagged", kind=JobKind.STORYBOARD, owner=owner_c)
+    tagged = [
+        store.create(f"copy {i}", kind=JobKind.STORYBOARD, owner=owner_c,
+                     params={"workflow": "animatic-image"})
+        for i in range(3)
+    ]
+    drafted = store.create("a draft", kind=JobKind.STORYBOARD, owner=owner_c)
+    store.update(drafted.job_id, status=JobStatus.DRAFT)
+    if track:
+        created.append(plain.job_id)
+        created.extend(j.job_id for j in tagged)
+        created.append(drafted.job_id)
+
+    # The three copies are all NEWER than the untagged board, so a limit of 3
+    # applied first would hide it completely.
+    untagged = store.list(
+        limit=3, owner=owner_c, kinds=[JobKind.STORYBOARD],
+        where={"params.workflow": {"$in": [None, ""]}},
+    )
+    # ⚠ THE DRAFT IS IN HERE TOO, and correctly so - it has no workflow key
+    # either. Filtering drafts is a SEPARATE condition (see "two conditions
+    # combine" below); asserting one job here would be asserting the wrong
+    # thing, and did until this test was run.
+    check("$in [None, ''] survives a limit filled by newer tagged copies",
+          plain.job_id in [j.job_id for j in untagged], True)
+    check("and no tagged copy came back with it",
+          any(j.job_id in [t.job_id for t in tagged] for j in untagged), False)
+    copies = store.list(
+        limit=50, owner=owner_c, kinds=[JobKind.STORYBOARD],
+        where={"params.workflow": "animatic-image"},
+    )
+    check("equality finds only the tagged copies", len(copies), 3)
+    live = store.list(
+        limit=50, owner=owner_c, kinds=[JobKind.STORYBOARD],
+        where={"status": {"$ne": JobStatus.DRAFT.value}},
+    )
+    check("$ne excludes drafts", all(j.status != JobStatus.DRAFT for j in live), True)
+    check("$ne keeps everything else", len(live), 4)
+    combined = store.list(
+        limit=50, owner=owner_c, kinds=[JobKind.STORYBOARD],
+        where={"status": {"$ne": JobStatus.DRAFT.value},
+               "params.workflow": {"$in": [None, ""]}},
+    )
+    check("two conditions combine", [j.job_id for j in combined], [plain.job_id])
+    check("a where cannot widen the owner scope",
+          all(j.owner == owner_c for j in
+              store.list(limit=50, owner=owner_c, where={"owner": owner_a})), True)
+
+    # ----------------------------------------------------------------- drop
+    print("  drop: unread fields are left out of the answer, not the store")
+    heavy = store.create("heavy", kind=JobKind.STORYBOARD, owner=owner_c,
+                         params={"blob": "x" * 4000, "count": 7})
+    if track:
+        created.append(heavy.job_id)
+    lean = store.list(limit=50, owner=owner_c, kinds=[JobKind.STORYBOARD],
+                      drop=("params",))
+    check("params is empty in the answer", all(j.params == {} for j in lean), True)
+    check("the rest of the record is intact",
+          all(j.character_name and j.created_at for j in lean), True)
+    # ⚠ THE ONE THAT MATTERS: dropping is about the RESPONSE. A backend that
+    # handed back its own stored object and let the caller blank it would
+    # destroy the project.
+    check("THE STORE STILL HAS params",
+          (store.get(heavy.job_id).params or {}).get("count"), 7)
+    check("and still has the big field",
+          len((store.get(heavy.job_id).params or {}).get("blob", "")), 4000)
 
     print("  share token lookup (public links)")
     token = uuid.uuid4().hex

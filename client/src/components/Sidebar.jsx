@@ -26,14 +26,25 @@ const MENU_DISMISS = ".sb-account-menu, .sb-workspace";
 // ORDER IS THE OWNER'S CHOICE and is deliberately not pipeline order — don't
 // "fix" it.
 //
-// ⚠ THIS ARRAY IS THE FALLBACK NOW, NOT THE SOURCE OF TRUTH. Since the feature
-// registry (Phase 2) the real list comes from `GET /auth/me/entitlements` and is
-// handed down as the `workflows` prop — which is what makes hiding, staging and
-// reordering a workflow a switch in the admin panel instead of a redeploy. This
-// is what gets drawn when that call has not answered yet or has FAILED, because
-// a rail that renders nothing is a worse outage than a rail that is briefly out
-// of date. Keep it byte-identical to `_WORKFLOWS` in `server/features.py`, or a
-// database hiccup silently reorders somebody's sidebar.
+// ⚠ THIS ARRAY IS THE LAST RESORT, NOT THE SOURCE OF TRUTH, AND NO LONGER THE
+// "not answered yet" ANSWER EITHER. Since the feature registry (Phase 2) the
+// real list comes from `GET /auth/me/entitlements` and is handed down as the
+// `workflows` prop — which is what makes hiding, staging and reordering a
+// workflow a switch in the admin panel instead of a redeploy.
+//
+// ⚠ IT USED TO BE DRAWN WHILE THAT CALL WAS IN FLIGHT, and that was a bug worth
+// naming: this array is every workflow that EXISTS, so an administrator who had
+// HIDDEN two of them saw both flash up on every single reload before the answer
+// arrived and removed them. A hidden feature that reappears on every refresh is
+// not hidden. "Not answered yet" is now `workflowsKnown === false`, and it draws
+// SKELETON rows — nothing that could be wrong.
+//
+// This array is what is left for the one case that still needs it: the request
+// FAILED and this browser has never had an answer to remember. A rail nobody can
+// use is a worse outage than a rail that is briefly out of date.
+//
+// Keep it byte-identical to `_WORKFLOWS` in `server/features.py`, or a database
+// hiccup silently reorders somebody's sidebar.
 export const WORKFLOWS = [
   // FIRST in the pipeline: decide what to make before making any of it.
   { id: "plan-and-script", label: "Plan & Script", icon: "🗓️", status: "live" },
@@ -51,6 +62,14 @@ export default function Sidebar({
   // already filtered to what this account may SEE and already in the owner's
   // order. Null/empty → the built-in fallback above. See the note on WORKFLOWS.
   workflows,
+  // ⚠ WHETHER `workflows` IS AN ANSWER OR A GUESS, and the whole reason the
+  // hidden-workflow flash is gone. False means nobody has told this browser
+  // what this account may see — neither the server just now, nor a remembered
+  // answer from last time — so the rows below are drawn as skeletons rather
+  // than filled in from the built-in list, which would show workflows an
+  // administrator has hidden. The shell flips it true on the answer AND on a
+  // failure; see App.jsx.
+  workflowsKnown = true,
   email,
   displayName,
   theme,
@@ -77,6 +96,11 @@ export default function Sidebar({
   // not as "this account has no workflows" — the second reading would blank the
   // rail for everyone the moment the entitlements call had a bad minute.
   const items = workflows?.length ? workflows : WORKFLOWS;
+  // How many placeholder rows to draw while we wait. The remembered list is
+  // almost always there, so this is a first-run-on-a-new-browser sight; the
+  // built-in count is the best guess available for how tall the rail will be,
+  // and being one row out costs nothing because the rows are the same height.
+  const ghostRows = WORKFLOWS.length;
   const who = displayName || email || "";
   const initial = (who || "?").trim().charAt(0).toUpperCase();
   const workspace = displayName || (email || "My workspace").split("@")[0];
@@ -138,7 +162,21 @@ export default function Sidebar({
         ) : (
           <div className="sb-section-label">Workflows</div>
         )}
-        {items.map((w) => (
+        {/* ⚠ SKELETONS RATHER THAN THE BUILT-IN LIST. Until somebody has told
+            this browser what this account may see, the honest thing to draw is
+            "loading", not "everything that exists" — the latter is how a
+            workflow an administrator had hidden appeared for a second on every
+            reload. Hidden from assistive tech: it is a placeholder, not a
+            navigation. See `workflowsKnown`. */}
+        {!workflowsKnown &&
+          Array.from({ length: ghostRows }, (_, i) => (
+            <div className="sb-item sb-ghost" key={`ghost-${i}`} aria-hidden="true">
+              <span className="sb-ico sb-ghost-ico" />
+              <span className="sb-item-label sb-ghost-line" />
+            </div>
+          ))}
+        {workflowsKnown &&
+          items.map((w) => (
           <button
             key={w.id}
             className={`sb-item ${active === w.id ? "active" : ""}`}

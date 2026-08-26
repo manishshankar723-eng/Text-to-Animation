@@ -467,6 +467,63 @@
   text-align: center;
   flex-shrink: 0;
 }
+
+/* ---- Waiting for the entitlements answer -------------------------------- */
+/* Placeholder rows, drawn ONLY when nobody has yet told this browser which
+   workflows this account may see. They exist because the alternative — filling
+   the rail in from the built-in list meanwhile — showed workflows an
+   administrator had HIDDEN, for about a second, on every reload. See the note
+   over `WORKFLOWS` in Sidebar.jsx.
+
+   Deliberately the same box as `.sb-item`: same padding, same border, same
+   radius, same height, so the real rows replace these without the rail
+   changing size. Same `lib-ghost` two-tone sweep the storyboard library and the
+   dashboard already use, rather than a third loading look for one component. */
+.sb-ghost {
+  pointer-events: none;
+  cursor: default;
+}
+.sb-ghost-ico,
+.sb-ghost-line {
+  display: block;
+  height: 0.72rem;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    var(--panel-2) 25%,
+    var(--nav-stroke-hover, var(--border)) 50%,
+    var(--panel-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: sb-shimmer 1.3s ease-in-out infinite;
+}
+.sb-ghost-ico {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 6px;
+}
+/* Uneven widths, so a column of them reads as "text loading" rather than as a
+   deliberate row of identical bars. */
+.sb-ghost:nth-child(odd) .sb-ghost-line {
+  width: 72%;
+}
+.sb-ghost:nth-child(even) .sb-ghost-line {
+  width: 55%;
+}
+/* Collapsed, there is no label to stand in for — only the icon square. */
+.sidebar.collapsed .sb-ghost-line {
+  display: none;
+}
+@keyframes sb-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-ghost-ico,
+  .sb-ghost-line {
+    animation: none;
+  }
+}
 .sb-item-label {
   flex: 1;
   overflow: hidden;
