@@ -13,22 +13,16 @@ import StoryboardBoard from "./StoryboardBoard.jsx";
 import StoryboardCast from "./StoryboardCast.jsx";
 import StoryboardAssets from "./StoryboardAssets.jsx";
 import StoryboardLibrary from "./StoryboardLibrary.jsx";
-import BreakdownProgress from "./BreakdownProgress.jsx";
+import BreakdownProgress, { SCRIPT_STEPS } from "./BreakdownProgress.jsx";
 import PreflightModal from "./PreflightModal.jsx";
 import ScriptLineBox from "./ScriptLineBox.jsx";
 import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
-// The third way into the script box: talk to an assistant instead of arriving
-// with a script already written. See ScriptChat.jsx.
-//
-// The two named exports are how the chat is scoped to ONE storyboard: the id
-// says which transcript this form is talking through, and `resetScriptChat`
-// retires it when the form is emptied for a new board.
-import ScriptChat, {
-  currentScriptChatSession,
-  resetScriptChat,
-} from "./ScriptChat.jsx";
+// ⚠ THE SCRIPT CHAT IS NOT IMPORTED HERE ANY MORE — see the note above the
+// script box below. `ScriptChat.jsx` and `POST /script-chat` are deliberately
+// left in the tree; the chat belongs AFTER a board exists, as the thing that
+// edits it, not on the screen where the user is still handing over material.
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // Style / aspect / genre lists live in one module so the Profile page's
 // "usual choices" and this form can never offer different options.
@@ -78,25 +72,12 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [step, setStep] = useState("library");
 
   // Form state
-  // Which way into the script box is showing.
   //
-  // ⚠ THE ASSISTANT IS NOT ONE OF THESE. It was, briefly, and it was wrong:
-  // writing with it and editing what it wrote are the same job, so a tab between
-  // them meant flipping back and forth to read your own script. It now lives
-  // INSIDE the "paste" panel, under the text box, and writes into the same
-  // `script` state — so everything downstream (autosave, the breakdown, the
-  // review step) is unchanged either way.
-  const [tab, setTab] = useState("paste"); // "paste" | "upload"
-  // Which chat transcript this form is talking through. Read from storage on
-  // mount so a refresh keeps the conversation, and replaced by `resetWorkflow`
-  // so a NEW storyboard starts a new one. Also used as the component's React
-  // `key`, which is what makes the swap a clean remount rather than a live
-  // component finding a different transcript underneath it.
-  const [chatSession, setChatSession] = useState(currentScriptChatSession);
-  // What the box held before the assistant last wrote into it: {script, title}.
-  // Non-null = the "✨ AI wrote this script · Undo" line is showing. Null the
-  // moment the user types their own change — see the textarea's onChange.
-  const [aiUndo, setAiUndo] = useState(null);
+  // ⚠ THERE IS ONE WAY IN NOW, NOT THREE. This form used to carry two tabs
+  // (paste / upload) with a chat living inside the first of them — three doors
+  // to the same `script` state, and a Generate button on two of them. `script`
+  // is still the single value everything downstream reads; only the number of
+  // controls writing into it has come down to one box plus an upload.
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
@@ -140,6 +121,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [genreMoreOpen, setGenreMoreOpen] = useState(false);
   const [styleMoreOpen, setStyleMoreOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const scriptRef = useRef(null);
 
   // Review state
   const [shots, setShots] = useState([]);
@@ -385,6 +367,28 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [boardOrigin, setBoardOrigin] = useState("review");
 
   const [busy, setBusy] = useState(false);
+  // ⚠ SEPARATE FROM `busy` ON PURPOSE. `busy` swaps the whole form out for the
+  // breakdown's progress ring; reading the box is a second or two in front of
+  // that and must not throw the form off screen — the user may be about to be
+  // asked a question and need to see what they typed.
+  const [reading, setReading] = useState(false);
+  // What the intake said, when it said anything other than "this is a script":
+  // {kind, reason, question}. Non-null = the panel under the box is showing.
+  const [intake, setIntake] = useState(null);
+  // ⚠ THE APPROVAL GATE. A brief or an idea becomes a concept the user reads
+  // and can edit, and NOTHING is drawn until they approve it. Non-null means
+  // the concept step is what's on screen. `conceptSource` is what they pasted,
+  // kept because a concept has no field for a product name or a required line
+  // and the writer needs those.
+  const [concept, setConcept] = useState(null);
+  const [conceptSource, setConceptSource] = useState("");
+  const [developing, setDeveloping] = useState(false);
+  // Writing the approved concept out as a real script — the long call.
+  const [writing, setWriting] = useState(false);
+  const [scriptWritten, setScriptWritten] = useState(false);
+  const pendingScript = useRef(null);
+  // "brief" or "idea" — only used for the sentence on the concept screen.
+  const conceptKind = useRef("idea");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -533,32 +537,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     pickFile(e.dataTransfer.files?.[0]);
   }
 
-  // ⚠ WHAT THE BOX HOLDS *NOW*, READ THROUGH A REF ON PURPOSE. `applyAiScript`
-  // is called from inside the chat's async handler, so the closure it was
-  // captured in can be several keystrokes old by the time a reply lands. Undo
-  // built from that closure would restore text from before edits the user made
-  // while waiting — i.e. it would destroy work rather than rescue it.
-  const latestScript = useRef(script);
-  const latestTitle = useRef(title);
-  useEffect(() => {
-    latestScript.current = script;
-  }, [script]);
-  useEffect(() => {
-    latestTitle.current = title;
-  }, [title]);
-
-  /** Put a script the assistant wrote into the box, keeping a way back out. */
-  function applyAiScript(text, scriptTitle) {
-    const clean = (text || "").trim();
-    if (!clean) return;
-    setAiUndo({ script: latestScript.current, title: latestTitle.current });
-    setScript(clean);
-    // Never overwrite a title the user typed themselves — but a blank one is
-    // worth filling, since the board is otherwise named after the script's
-    // opening words.
-    if (scriptTitle && !latestTitle.current.trim()) setTitle(scriptTitle);
-  }
-
   // Resolve the script text from the paste box or an uploaded text file.
   async function resolveScriptText() {
     const pasted = script.trim();
@@ -575,16 +553,174 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     return "";
   }
 
+  /** Create storyboard → read what was given FIRST, then decide what to do.
+   *
+   * ⚠ THIS IS THE WHOLE POINT OF THE INTAKE. Before it, every box of text went
+   * into the breakdown as a script, so one line of premise came back as a
+   * twenty-panel film with a cast, locations and dialogue nobody wrote — drawn
+   * and charged for without anyone being asked. A script still goes straight
+   * through, untouched and usually without a model call; anything else stops
+   * here and says so.
+   */
   async function handleGenerate() {
-    if (!canGenerate || busy) return;
+    if (!canGenerate || busy || reading || developing) return;
     setError("");
     setNotice("");
+    setIntake(null);
+
+    let text;
+    try {
+      text = await resolveScriptText();
+    } catch (e) {
+      setError(e.message);
+      return;
+    }
+    if (!text.trim()) {
+      setIntake({ kind: "empty", reason: "", question: "" });
+      return;
+    }
+
+    setReading(true);
+    let verdict;
+    try {
+      verdict = await api.intakeScript(text);
+    } catch {
+      // ⚠ FAIL OPEN, ALWAYS. The intake is a helper, not a gate: if it is down
+      // the user still gets the storyboard they asked for, exactly as they did
+      // before this step existed. Blocking a board on a classifier would be a
+      // worse bug than the one the classifier fixes.
+      verdict = { kind: "script" };
+    }
+    setReading(false);
+
+    const kind = verdict.kind || "idea";
+
+    // ⚠ A BRIEF OR AN IDEA GOES TO THE APPROVAL GATE, NOT TO THE BREAKDOWN.
+    // This is the whole point of the redesign: the invention happens where the
+    // user can see it and change it, before a single image is paid for.
+    if (kind === "brief" || kind === "idea") {
+      setDeveloping(true);
+      try {
+        const res = await api.developConcept(text, {
+          kind,
+          genre: effectiveGenre(),
+          style: effectiveStyle(),
+          aspectRatio: effectiveAspect(),
+        });
+        setConcept(res.concept);
+        setConceptSource(text);
+        conceptKind.current = kind;
+        setStep("concept");
+      } catch (e) {
+        // ⚠ NO FALLING THROUGH TO THE BREAKDOWN HERE, unlike the intake above.
+        // The intake failing means "we could not tell"; this failing means we
+        // could not work out what the film is — and building one anyway is the
+        // silent invention the gate exists to stop. Say so and stay put.
+        setError(e.message);
+      } finally {
+        setDeveloping(false);
+      }
+      return;
+    }
+
+    if (kind !== "script") {
+      setIntake({
+        kind,
+        reason: verdict.reason || "",
+        question: verdict.question || "",
+        // ⚠ THE RESOLVED TEXT, NOT `script`. It may have come out of an
+        // uploaded file, in which case the box is empty.
+        text,
+      });
+      return;
+    }
+    startBreakdown(text);
+  }
+
+  // ---- The approval gate --------------------------------------------------
+
+  /** "a brief" / "an idea" — how the concept screen refers back to the input.
+   *  Kept from the intake so the wording matches what actually happened. */
+  function intakeKindWord() {
+    return conceptKind.current === "brief" ? "a brief" : "an idea";
+  }
+
+  /** Enough left on the card to write a film from. ⚠ The user can delete every
+   *  scene and empty the premise; approving that would send the writer a blank
+   *  page and get back an invention nobody approved. */
+  function conceptReady() {
+    if (!concept) return false;
+    const hasScenes = (concept.key_scenes || []).some((s) => (s || "").trim());
+    return Boolean((concept.premise || "").trim()) || hasScenes;
+  }
+
+  /** Change one field of the concept on screen. Every field is editable. */
+  function updateConcept(patch) {
+    setConcept((c) => ({ ...(c || {}), ...patch }));
+  }
+
+  function updateKeyScene(i, value) {
+    setConcept((c) => ({
+      ...c,
+      key_scenes: (c.key_scenes || []).map((s, idx) => (idx === i ? value : s)),
+    }));
+  }
+
+  /** ⚠ APPROVED → a real SCRIPT → the breakdown. Never concept → shots.
+   *
+   * The review step, ScriptPanel and every shot card's "FROM YOUR SCRIPT ·
+   * LINE 12" need a script to point at, so the approved concept is written out
+   * by plan_agent.write_script() — whose format is already a contract with
+   * script_breakdown.py — and the board is built from THAT text.
+   */
+  async function approveConcept() {
+    if (writing) return;
+    setError("");
+    setNotice("");
+    setScriptWritten(false);
+    pendingScript.current = null;
+    setWriting(true);
+    try {
+      const res = await api.conceptToScript(concept, {
+        source: conceptSource,
+        language,
+      });
+      pendingScript.current = res;
+      setScriptWritten(true); // lets the ring finish before we move on
+    } catch (e) {
+      setError(e.message);
+      setWriting(false);
+      setScriptWritten(false);
+      pendingScript.current = null;
+    }
+  }
+
+  /** Called by the ring once "Writing your script" has reached 100%. */
+  function finishScript() {
+    const res = pendingScript.current;
+    pendingScript.current = null;
+    if (!res) return;
+    setScriptWritten(false);
+    setWriting(false);
+    // The approved concept's title names the board, unless the user typed one.
+    if (res.title && !title.trim()) setTitle(res.title);
+    // ⚠ THE BOX KEEPS THE USER'S OWN WORDS. The written script is what the
+    // board is built from and what the review step shows; overwriting their
+    // brief with it would throw away the thing they can edit and re-run.
+    startBreakdown(res.script);
+  }
+
+  /** Break `text` into shots and move to the review step. */
+  async function startBreakdown(text) {
+    if (busy) return;
+    setError("");
+    setNotice("");
+    setIntake(null);
     setBreakdownDone(false);
     pendingBreakdown.current = null;
     setBusy(true);
     try {
-      const text = await resolveScriptText();
-      if (text.length < 20) {
+      if (text.trim().length < 20) {
         throw new Error("Please provide at least a few sentences of script.");
       }
       setScriptText(text); // what the review step shows, line for line
@@ -921,11 +1057,9 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     setCustomAspect("");
     setError("");
     setNotice("");
-    // ⚠ AND THE CHAT GOES WITH IT. Everything above empties the form; leaving
-    // the conversation behind would hand the next storyboard an assistant still
-    // holding the last film in mind, and a log the user has to scroll past.
-    setChatSession(resetScriptChat());
-    setAiUndo(null); // nothing to undo back to — the box was just emptied
+    setIntake(null);
+    setConcept(null);
+    setConceptSource("");
   }
 
   // The pre-flight confirmation. Built once and dropped into every step that
@@ -1067,6 +1201,195 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   }
 
   // ============================================================ Review step
+  // =========================================================== Concept step
+  // ⚠ THE APPROVAL GATE, AND THE ONLY REASON THIS PHASE EXISTS. A brief or an
+  // idea cannot become a storyboard without somebody inventing a film — who is
+  // on screen, what goes wrong, how it ends. Before this screen the app made
+  // those decisions in silence and the user met them as twenty finished,
+  // paid-for drawings. Now they are thirty seconds of reading and one click,
+  // and every one of them is editable first.
+  //
+  // A SCRIPT NEVER COMES THROUGH HERE. When the user wrote the thing there is
+  // nothing to interpret, so `script_intake` sends it straight to the
+  // breakdown — being asked to approve our reading of your own script would be
+  // a step that exists only to annoy.
+  if (step === "concept" && concept) {
+    if (writing) {
+      return (
+        <div className="workflow-head-wrap sb-form">
+          <div className="sts-form-wrap">
+            <BreakdownProgress
+              done={scriptWritten}
+              onDone={finishScript}
+              steps={SCRIPT_STEPS}
+              title="Writing your script"
+              readyLabel="Script ready!"
+              slowLabel="Still writing — a longer film takes a little more time…"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    const scenes = concept.key_scenes || [];
+    return (
+      <div className="workflow-head-wrap sb-form">
+        <div className="workflow-header">
+          <button
+            type="button"
+            className="btn back-btn wf-back"
+            title="Back"
+            aria-label="Back"
+            onClick={() => {
+              setError("");
+              setStep("form");
+            }}
+          >
+            ←
+          </button>
+          <span className="wf-icon"><WorkflowIcon id="script-to-storyboard" /></span>
+          <div>
+            <h1 className="wf-title">Is this the right direction?</h1>
+            <p className="muted">
+              You gave us {intakeKindWord()}, so we had to work out the film.
+              Change anything here — nothing is drawn until you approve it.
+            </p>
+          </div>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <div className="sts-form-wrap">
+          <div className="card sts-concept">
+            <label>Title</label>
+            <input
+              value={concept.title || ""}
+              placeholder="A few words naming the film"
+              maxLength={120}
+              onChange={(e) => updateConcept({ title: e.target.value })}
+            />
+
+            <label>Core idea</label>
+            <textarea
+              className="prompt-textarea sts-concept-premise"
+              value={concept.premise || ""}
+              placeholder="What the film is, in a sentence or two"
+              onChange={(e) => updateConcept({ premise: e.target.value })}
+            />
+
+            <label>
+              Story direction{" "}
+              <span className="label-optional">· the shape of the film</span>
+            </label>
+            <textarea
+              className="prompt-textarea sts-concept-arc"
+              value={concept.story_direction || ""}
+              placeholder="Beginning → what changes → how it ends"
+              onChange={(e) => updateConcept({ story_direction: e.target.value })}
+            />
+
+            {/* ⚠ THE SCENES ARE THE PART WORTH READING. Everything above is
+                framing; this is what the board will actually be made of, which
+                is why each one is its own editable line rather than a blob. */}
+            <label>
+              Key scenes{" "}
+              <span className="label-optional">· in order</span>
+            </label>
+            <ol className="sts-concept-scenes">
+              {scenes.map((sc, i) => (
+                <li key={i}>
+                  <span className="sts-concept-num">{i + 1}</span>
+                  <input
+                    value={sc}
+                    placeholder="A moment we can see"
+                    onChange={(e) => updateKeyScene(i, e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    title="Remove this scene"
+                    onClick={() =>
+                      updateConcept({
+                        key_scenes: scenes.filter((_, idx) => idx !== i),
+                      })
+                    }
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => updateConcept({ key_scenes: [...scenes, ""] })}
+            >
+              ＋ Add a scene
+            </button>
+
+            <div className="sts-concept-row">
+              <div>
+                <label>Length</label>
+                <div className="sts-concept-seconds">
+                  <input
+                    type="number"
+                    min={5}
+                    max={600}
+                    value={concept.duration_seconds || 60}
+                    onChange={(e) =>
+                      updateConcept({
+                        duration_seconds: Number(e.target.value) || 0,
+                      })
+                    }
+                  />
+                  <span className="tiny muted">seconds</span>
+                </div>
+              </div>
+              <div className="sts-concept-look">
+                <label>Look and feel</label>
+                <input
+                  value={concept.visual_direction || ""}
+                  placeholder="e.g. premium, modern, uncluttered"
+                  maxLength={160}
+                  onChange={(e) =>
+                    updateConcept({ visual_direction: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="sts-concept-actions">
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!conceptReady()}
+                onClick={approveConcept}
+              >
+                ✓ Approve &amp; create storyboard
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setError("");
+                  setConcept(null);
+                  setStep("form");
+                }}
+              >
+                Start over
+              </button>
+            </div>
+            {!conceptReady() && (
+              <p className="tiny muted sts-concept-hint">
+                Add a core idea or at least one scene before approving.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (step === "review") {
     const activeCast = computeCast();
     const activeAssets = computeAssets();
@@ -1333,13 +1656,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         <div>
           <h1 className="wf-title">Script to Storyboard</h1>
           <p className="muted">
-            Turn a script into a shot-by-shot storyboard — pick a style and frame,
-            then generate.
+            Hand over your script — we read it, break it into shots and draw
+            the board.
           </p>
         </div>
       </div>
 
-      <div className="sts-hero-grid">
+      <div className={`sts-hero-grid ${busy ? "busy" : ""}`}>
       <div className="sts-form-wrap">
         {busy ? (
           <BreakdownProgress done={breakdownDone} onDone={finishBreakdown} />
@@ -1354,131 +1677,86 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             onChange={(e) => setTitle(e.target.value)}
           />
 
-          {/* --- Script --- */}
-          <label className="sts-script-label">Your script</label>
-          <div className="tab-bar">
-            <button
-              type="button"
-              className={`tab-btn ${tab === "paste" ? "active" : ""}`}
-              onClick={() => setTab("paste")}
-            >
-              ✍️ Write, paste or ask AI
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${tab === "upload" ? "active" : ""}`}
-              onClick={() => setTab("upload")}
-            >
-              📁 Upload file
-            </button>
-          </div>
+          {/* --- Source material -------------------------------------------
+              ⚠ ONE BOX, ONE BUTTON. This was three controls: a "paste" tab, an
+              "upload" tab, and a chat inside the paste tab with a Generate
+              button of its own. Every one of them ended at the same `script`
+              state, so the only thing the choice added was the question "which
+              one am I supposed to use?" — asked before the user had done
+              anything at all.
 
-          {tab === "paste" && (
-            /* ⚠ ONE BOX, NOT TWO. The script area and the AI composer were two
-               separately-framed controls stacked on each other, which read as
-               two unrelated widgets — "where do I type?" is not a question this
-               form should raise. They share one frame now: script on top, a
-               hairline, then the composer. The frame lights up on focus, so
-               whichever half you are typing in, the whole panel is the control. */
-            <div className="sts-script-panel">
-              <textarea
-                className="prompt-textarea sts-script-area"
-                placeholder="Paste or type your script here — or ask the AI below to write it…"
-                value={script}
-                onChange={(e) => {
-                  setScript(e.target.value);
-                  // Their own typing ends the AI's turn: an Undo offering to
-                  // restore text from before edits they have since made would
-                  // throw away work, not rescue it.
-                  if (aiUndo) setAiUndo(null);
-                }}
-              />
-              <div className="sts-script-status">
-                {/* What the assistant just did to the box, and the way back out
-                    of it. ⚠ THIS IS WHAT MAKES AUTO-REPLACING SAFE — the
-                    alternative was a confirm() before every rewrite, which asks
-                    people to predict whether they'll like an answer they have
-                    not read yet. */}
-                {aiUndo ? (
-                  <span className="sts-ai-applied">
-                    ✨ AI wrote this script.{" "}
-                    <button
-                      type="button"
-                      className="linklike"
-                      onClick={() => {
-                        setScript(aiUndo.script);
-                        setTitle(aiUndo.title);
-                        setAiUndo(null);
-                      }}
-                    >
-                      Undo
-                    </button>
-                  </span>
-                ) : (
-                  <span />
-                )}
-                {/* Quiet confirmation that the typing is safe. Only appears once
-                    something has actually been saved — an idle "not saved" badge
-                    on an empty box is noise. */}
-                {draftSavedAt && (
-                  <span className="sts-draft-status" title={draftSavedAt}>
-                    {script === draftLastSaved.current
-                      ? "✓ Draft saved"
-                      : "Saving…"}
-                  </span>
-                )}
-              </div>
+              The chat has not been deleted, it has been MOVED IN TIME: talking
+              to an assistant makes sense once there is a board to change, not
+              while the user is still handing over what they already have. See
+              ScriptChat.jsx, still in the tree and still routed.
 
-              {/* ⚠ THE CHAT IS PART OF THIS BOX, NOT A TAB BESIDE IT. Writing
-                  with the assistant and editing what it wrote are the same job,
-                  so they are one panel: script on top, conversation and composer
-                  underneath. */}
-              <ScriptChat
-                key={chatSession}
-                sessionId={chatSession}
-                script={script}
-                title={title}
-                genre={genre === "custom" ? customGenre : genre}
-                style={style === "custom" ? customStyle : style}
-                aspect={aspect === "custom" ? customAspect : aspect}
-                onApplyScript={applyAiScript}
-              />
-            </div>
-          )}
-
-          {tab === "upload" && (
-            <div
-              className={`dropzone ${dragOver ? "over" : ""}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
+              Upload is a button inside this same box rather than a tab beside
+              it, because pasting a script and uploading one are the same act —
+              handing over the source — and a file can also just be dropped on
+              the box. */}
+          <label className="sts-script-label">Your script, brief or idea</label>
+          <div
+            className={`sts-script-panel ${dragOver ? "over" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <textarea
+              className="prompt-textarea sts-script-area"
+              placeholder="Paste your script, brief, story or idea — we'll work out what it is…"
+              ref={scriptRef}
+              value={script}
+              onChange={(e) => {
+                setScript(e.target.value);
+                // The panel below is a verdict on text that no longer exists.
+                if (intake) setIntake(null);
               }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-            >
-              <span className="dropzone-icon">📄</span>
-              {file ? (
-                <>
-                  <span className="dropzone-text">{file.name}</span>
-                  <span
-                    className="dropzone-sub sts-clear-file"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFile(null);
-                    }}
-                  >
-                    Remove
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="dropzone-text">Click or drop your script file</span>
-                  <span className="dropzone-sub">TXT / Fountain / FDX (PDF, DOCX soon)</span>
-                </>
+            />
+            <div className="sts-script-status">
+              {/* Left slot kept empty so the autosave badge stays on the right
+                  however many things end up wanting to speak here. */}
+              <span />
+              {/* Quiet confirmation that the typing is safe. Only appears once
+                  something has actually been saved — an idle "not saved" badge
+                  on an empty box is noise. */}
+              {draftSavedAt && (
+                <span className="sts-draft-status" title={draftSavedAt}>
+                  {script === draftLastSaved.current
+                    ? "✓ Draft saved"
+                    : "Saving…"}
+                </span>
               )}
             </div>
-          )}
+
+            <div className="sts-source-foot">
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                📁 Upload a script file
+              </button>
+              {file ? (
+                <span className="sts-file-chip">
+                  📄 {file.name}
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => setFile(null)}
+                  >
+                    Remove
+                  </button>
+                </span>
+              ) : (
+                <span className="tiny muted">
+                  or drop it here · TXT / Fountain / FDX
+                </span>
+              )}
+            </div>
+          </div>
 
           <input
             ref={fileInputRef}
@@ -1487,6 +1765,61 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             hidden
             onChange={(e) => pickFile(e.target.files?.[0])}
           />
+
+          {/* --- What we made of it ------------------------------------------
+              ⚠ THE ONE THING THIS FORM USED TO NEVER SAY. Every box of text
+              went straight into the breakdown as a script, so an idea came back
+              as an invented film — drawn, charged for, and never shown to
+              anyone as a decision. This panel is where the app admits what it
+              thinks it was handed, BEFORE it spends anything on pictures.
+
+              It appears only when the answer is not "script": a script goes
+              through in silence, because being told your script is a script is
+              not information. */}
+          {intake && (
+            <div className={`sts-intake sts-intake-${intake.kind}`}>
+              {/* ⚠ ONLY 'empty' AND 'vague' LAND HERE NOW. A brief or an idea
+                  used to get a warning and a "Build it anyway" button; since
+                  Phase 3 they go to the concept step instead, where the
+                  invention is shown and approved rather than waved through. */}
+              <p className="sts-intake-title">
+                {intake.kind === "empty"
+                  ? "Let's start with an idea."
+                  : "Tell us a bit more."}
+              </p>
+
+              {/* The model's own sentence, in the user's own language.
+                  ⚠ NOT SHOWN FOR 'vague': the question below already says the
+                  same thing and says it usefully, and stacking "this is a wish
+                  with no subject" on top of it reads as a telling-off. */}
+              {intake.reason && intake.kind !== "vague" && (
+                <p className="sts-intake-body">{intake.reason}</p>
+              )}
+
+              {intake.kind === "empty" && (
+                <p className="sts-intake-body">
+                  What would you like to create? Paste a script, describe your
+                  idea, or just say what the film should do.
+                </p>
+              )}
+
+              {intake.kind === "vague" && (
+                <>
+                  {/* ⚠ ONE QUESTION. Ten questions at once is an interrogation,
+                      and the answer to it is a closed tab. */}
+                  <p className="sts-intake-body">
+                    {intake.question ||
+                      "What would you like the story to be about?"}
+                  </p>
+                  <p className="tiny muted">
+                    You can describe the characters, the situation, the product
+                    — or just the basic idea.
+                  </p>
+                </>
+              )}
+
+            </div>
+          )}
 
           {/* --- Audience ---
               ⚠ ONE DROPDOWN, AND IT USED TO BE TWO. The country picker beside
@@ -1500,27 +1833,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               A dropdown and not chips: twenty-five languages in a chip row
               would bury the Genre and Style rows that matter on every board.
               It wears the same pill the board's "Add a style" select does. */}
-          <label>
-            Audience{" "}
-            <span className="label-optional">
-              · the language on screens and signs
-            </span>
-          </label>
-          <div className="opt-chips sts-audience">
-            <select
-              className="opt-select"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              title="The language written on screens and signs"
-            >
-              {MARKET_LANGUAGES.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.id ? l.label : "Auto — from your script"}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {/* --- Brand ---
               ⚠ THE LOGO IS UPLOADED, NEVER GENERATED. An image model rebuilds a
               mark from its description every time it draws one, so four panels
@@ -1532,65 +1844,103 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               ANY MORE — "no logo uploaded, we never invent one" explained our
               engineering to somebody who only wanted to draw a storyboard. An
               upload slot marked "No logo" already says what it wants. */}
-          <label>
-            Brand{" "}
-            <span className="label-optional">
-              · only if this film sells a product
-            </span>
-          </label>
-          <div className="sts-brand">
-            <input
-              className="sts-brand-name"
-              value={brandName}
-              placeholder="Brand or app name, e.g. Lickyeat"
-              maxLength={80}
-              onChange={(e) => setBrandName(e.target.value)}
-            />
-            <div className="sts-brand-logo">
-              {brandLogoPreview ? (
-                <img
-                  src={brandLogoPreview}
-                  alt="Your logo"
-                  className="sts-brand-preview"
-                />
-              ) : (
-                <span className="sts-brand-empty">No logo</span>
-              )}
-              <input
-                ref={brandFileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                hidden
-                onChange={(e) => {
-                  uploadLogo(e.target.files?.[0]);
-                  e.target.value = ""; // allow re-selecting the same file
-                }}
-              />
-              <button
-                type="button"
-                className="btn ghost small"
-                disabled={brandBusy}
-                onClick={() => brandFileRef.current?.click()}
+          {/* ⚠ ONE ROW, NOT TWO. The language dropdown is a short pill and
+              the brand row was landing under a half-empty line — the logo
+              slot belongs beside the language, not below it. Both columns
+              wear the same label + control rhythm, so they line up. */}
+          <div className="sts-meta-row">
+            <div className="sts-meta-col sts-meta-audience">
+            <label>
+              Audience{" "}
+              <span className="label-optional">
+                · the language on screens and signs
+              </span>
+            </label>
+            <div className="opt-chips sts-audience">
+              <select
+                className="opt-select"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                title="The language written on screens and signs"
               >
-                {brandBusy ? (
-                  <>
-                    <span className="spinner-inline" /> Uploading…
-                  </>
-                ) : brandLogoId ? (
-                  "Replace logo"
+                {MARKET_LANGUAGES.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.id ? l.label : "Auto — from your script"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            </div>
+            <div className="sts-meta-col sts-meta-brand">
+            <label>
+              Brand{" "}
+              <span className="label-optional">
+                · only if this film sells a product
+              </span>
+            </label>
+            <div className="sts-brand">
+              <input
+                className="sts-brand-name"
+                value={brandName}
+                placeholder="Brand or app name, e.g. Lickyeat"
+                maxLength={80}
+                onChange={(e) => setBrandName(e.target.value)}
+              />
+              <div className="sts-brand-logo">
+                {brandLogoPreview ? (
+                  <img
+                    src={brandLogoPreview}
+                    alt="Your logo"
+                    className="sts-brand-preview"
+                  />
                 ) : (
-                  "📁 Upload logo"
+                  <span className="sts-brand-empty">No logo</span>
                 )}
-              </button>
-              {brandLogoId && (
-                <button type="button" className="btn ghost small" onClick={clearLogo}>
-                  Remove
+                <input
+                  ref={brandFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  hidden
+                  onChange={(e) => {
+                    uploadLogo(e.target.files?.[0]);
+                    e.target.value = ""; // allow re-selecting the same file
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  disabled={brandBusy}
+                  onClick={() => brandFileRef.current?.click()}
+                >
+                  {brandBusy ? (
+                    <>
+                      <span className="spinner-inline" /> Uploading…
+                    </>
+                  ) : brandLogoId ? (
+                    "Replace logo"
+                  ) : (
+                    "📁 Upload logo"
+                  )}
                 </button>
-              )}
+                {brandLogoId && (
+                  <button type="button" className="btn ghost small" onClick={clearLogo}>
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
             </div>
           </div>
           {brandError && <div className="error">{brandError}</div>}
 
+        </div>
+        )}
+      </div>
+
+      {!busy && (
+      <aside className="sts-hero-aside">
+        <div className="card sts-options">
+          <h3 className="sts-options-title">Story settings</h3>
           {/* --- Genre --- */}
           <label>Genre <span className="label-optional">· shapes the tone</span></label>
           <div className="opt-chips">
@@ -1706,7 +2056,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           <button
             type="button"
             className="btn primary sts-generate"
-            disabled={!canGenerate || busy}
+            disabled={!canGenerate || busy || reading || developing}
             onClick={handleGenerate}
           >
             {busy ? (
@@ -1714,49 +2064,23 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 <span className="btn-ring" />
                 Breaking down your script…
               </span>
+            ) : reading ? (
+              <span className="btn-loading">
+                <span className="btn-ring" />
+                Reading what you gave us…
+              </span>
+            ) : developing ? (
+              <span className="btn-loading">
+                <span className="btn-ring" />
+                Working out the concept…
+              </span>
             ) : (
-              "🎬 Generate storyboard"
+              "🎬 Create storyboard"
             )}
           </button>
         </div>
-        )}
-      </div>
-
-      <aside className="sts-hero-aside">
-        <div className="card sts-guide">
-          <h3 className="sts-guide-title">How it works</h3>
-          <ol className="sts-guide-steps">
-            <li>
-              <span className="sts-guide-num">1</span>
-              Paste or upload your script
-            </li>
-            <li>
-              <span className="sts-guide-num">2</span>
-              Pick a visual style &amp; frame
-            </li>
-            <li>
-              <span className="sts-guide-num">3</span>
-              Review &amp; edit the shots
-            </li>
-            {/* Step 4 only exists for the detailed styles — with Rough Sketch
-                selected it would be a step the user never sees. */}
-            {!skipsRefs() && (
-              <li>
-                <span className="sts-guide-num">4</span>
-                Lock your cast, props &amp; backgrounds (optional)
-              </li>
-            )}
-            <li>
-              <span className="sts-guide-num">{skipsRefs() ? 4 : 5}</span>
-              Generate panels &amp; download a PDF
-            </li>
-          </ol>
-          <p className="tiny muted sts-guide-tip">
-            Tip: keep each scene short and visual — one clear moment per shot gives
-            the best panels.
-          </p>
-        </div>
       </aside>
+      )}
       </div>
 
       {genreMoreOpen && (

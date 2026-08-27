@@ -47,6 +47,8 @@ from .animatics import router as animatics_router
 from .auth import CurrentUser, get_current_user, router as auth_router
 from .drafts import router as drafts_router
 from .script_chat import router as script_chat_router
+from .script_intake import router as script_intake_router
+from .script_concept import router as script_concept_router
 from .director import router as director_router
 from .plans import router as plans_router
 from .sounds import router as sounds_router
@@ -173,7 +175,21 @@ app.include_router(drafts_router)
 # also hand back a finished script, so a user with no script doesn't have to
 # leave the Script → Storyboard form to get one. Stateless; the browser owns the
 # transcript. Spends TEXT quota only. See server/script_chat.py.
+#
+# ⚠ NOT ON THE FORM ANY MORE. It is routed and tested, and it comes back beside
+# the finished BOARD as the thing that edits it. The first screen takes source
+# material and asks nothing.
 app.include_router(script_chat_router)
+# What the user pasted (/script-intake) — script, brief, idea, vague or nothing.
+# Runs in front of the breakdown so an IDEA is never silently expanded into a
+# whole invented film. Free whenever the text is recognisably a script; the
+# client carries on into the breakdown if this route fails, by design.
+app.include_router(script_intake_router)
+# The approval gate (/script-concept) — a brief or an idea becomes ONE concept
+# the user reads and approves, and only then is it written out as a real script
+# (plan_agent.write_script) and broken down. ⚠ Unlike the intake this one RAISES:
+# it is a gate, and falling through it silently is the bug it prevents.
+app.include_router(script_concept_router)
 # Plan & Script (/plans/…) — the conversational content planner that sits BEFORE
 # the storyboard workflow. Spends text quota only, never image quota.
 app.include_router(plans_router)

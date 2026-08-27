@@ -20,9 +20,19 @@ const STEPS = [
   { until: 100, label: "Creating the scene breakdown…" },
 ];
 
-function stepFor(pct) {
-  const i = STEPS.findIndex((s) => pct < s.until);
-  return i === -1 ? STEPS.length - 1 : i;
+// Writing the script from an APPROVED concept is the same shape of wait — one
+// call, no progress signal — so it wears the same ring rather than a second,
+// slightly-different spinner invented for it. Only the words change.
+export const SCRIPT_STEPS = [
+  { until: 25, label: "Building the story structure…" },
+  { until: 50, label: "Breaking it into scenes…" },
+  { until: 75, label: "Writing the action and dialogue…" },
+  { until: 100, label: "Formatting it for the breakdown…" },
+];
+
+function stepFor(pct, steps) {
+  const i = steps.findIndex((s) => pct < s.until);
+  return i === -1 ? steps.length - 1 : i;
 }
 
 // SVG ring geometry.
@@ -49,7 +59,16 @@ const FINISH_RATE = 34;    // %/sec once done — a quick, satisfying completion
 const HOLD_AT_100_MS = 300; // let the eye register 100% before leaving
 const LONG_WAIT_MS = 16000; // after this, reassure that a long wait is normal
 
-export default function BreakdownProgress({ done = false, onDone }) {
+export default function BreakdownProgress({
+  done = false,
+  onDone,
+  // Both default to the breakdown's own wording, so every existing call site
+  // reads exactly as it did before this became reusable.
+  steps = STEPS,
+  title = "Generating your scene breakdown",
+  readyLabel = "Scene breakdown ready!",
+  slowLabel = "Still working — longer scripts take a little more time…",
+}) {
   const [pct, setPct] = useState(0);
   const [slow, setSlow] = useState(false); // long wait → reassurance sub-line
   const progress = useRef(0);
@@ -108,7 +127,7 @@ export default function BreakdownProgress({ done = false, onDone }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const stepIdx = stepFor(pct);
+  const stepIdx = stepFor(pct, steps);
   const atFull = pct >= 99.5;
   const offset = CIRC * (1 - pct / 100);
 
@@ -139,20 +158,20 @@ export default function BreakdownProgress({ done = false, onDone }) {
         </div>
       </div>
 
-      <h3 className="bp-inline-title">Generating your scene breakdown</h3>
+      <h3 className="bp-inline-title">{title}</h3>
       <p
         className="bp-inline-step"
         key={atFull ? "done" : slow && !done ? "slow" : stepIdx}
       >
         {atFull
-          ? "Scene breakdown ready!"
+          ? readyLabel
           : slow && !done
-            ? "Still working — longer scripts take a little more time…"
-            : STEPS[stepIdx].label}
+            ? slowLabel
+            : steps[stepIdx].label}
       </p>
 
       <div className="bp-dots">
-        {STEPS.map((_, i) => (
+        {steps.map((_, i) => (
           <span
             key={i}
             className={`bp-dot2 ${atFull || i === stepIdx ? "on" : ""}`}

@@ -590,6 +590,112 @@ class ScriptChatResponse(BaseModel):
     usage: dict = Field(default_factory=dict)
 
 
+class ScriptIntakeRequest(BaseModel):
+    """Body for POST /script-intake — "what did the user actually give us?".
+
+    ⚠ ONE FIELD, AND NO `kind` COMING IN. The whole point of this route is that
+    the browser does NOT know what the text is and must not be made to guess:
+    the form has one box, and asking the user to label their own paste is the
+    friction the one-box form was built to remove. See script_intake.py.
+
+    No `min_length`: an empty box is a real answer here ("empty"), and it is
+    answered for free without the model ever seeing it.
+    """
+
+    text: str = Field("", max_length=400_000)
+
+
+class ScriptIntakeResponse(BaseModel):
+    """What the text is, and what to say about it.
+
+    `reason` is empty for a script — nobody needs to be told their script is a
+    script — and `question` is filled only for `vague`, which is the one kind
+    that cannot move forward without an answer.
+
+    `decided_by` is "sniff" when the free reader recognised it (no model call,
+    no tokens, no latency) and "model" otherwise. Advisory, but worth having on
+    the wire: it is the only way to see how often the cheap path is actually
+    paying for itself.
+    """
+
+    kind: str = "idea"
+    reason: str = ""
+    question: str = ""
+    decided_by: str = "model"
+    # This call's token count (ai_usage.Usage.as_dict); {} on the free path.
+    usage: dict = Field(default_factory=dict)
+
+
+class StoryConcept(BaseModel):
+    """What we think the user meant, before anything is drawn.
+
+    ⚠ EVERY FIELD IS EDITABLE ON SCREEN, so this model travels in BOTH
+    directions: out of `POST /script-concept` as our reading, and back into
+    `POST /script-concept/script` as whatever the user changed it to. The
+    version that comes back is the instruction — see `concept_to_brief`.
+    """
+
+    title: str = ""
+    premise: str = ""
+    story_direction: str = ""
+    key_scenes: list[str] = Field(default_factory=list, max_length=12)
+    duration_seconds: int = Field(60, ge=5, le=600)
+    visual_direction: str = ""
+
+
+class ConceptRequest(BaseModel):
+    """Body for POST /script-concept — brief or idea in, one concept out.
+
+    `kind` comes from `/script-intake`, not from the user: it only picks the
+    default runtime and the wording of the ask. Anything other than "brief" is
+    treated as "idea".
+    """
+
+    text: str = Field(..., min_length=1, max_length=200_000)
+    kind: str = Field("idea", pattern="^(brief|idea)$")
+    # What the form already says, so the concept can't contradict a choice the
+    # user has already made on the same screen.
+    genre: str = ""
+    style: str = ""
+    aspect_ratio: str = ""
+
+
+class ConceptResponse(BaseModel):
+    """One concept, for the card that asks 'is this the right direction?'."""
+
+    concept: StoryConcept
+    usage: dict = Field(default_factory=dict)
+
+
+class ConceptScriptRequest(BaseModel):
+    """Body for POST /script-concept/script — the APPROVED concept → a script.
+
+    ⚠ THIS IS THE STEP THAT MAKES THE WHOLE FLOW WORK. A concept cannot be
+    broken into shots: the review step, `ScriptPanel` and every shot card's
+    "FROM YOUR SCRIPT · LINE 12" all need a real script to point at. So an
+    approved concept is written out by `plan_agent.write_script()` — which
+    already emits the exact layout `script_breakdown.py` reads — and the board
+    is built from that text.
+
+    `source` is what the user originally pasted, carried along for the details
+    a concept has no field for (a product name, a required line, a platform).
+    """
+
+    concept: StoryConcept
+    source: str = ""
+    # What to WRITE it in. Empty = let the writer follow the source's language.
+    language: str = ""
+
+
+class ConceptScriptResponse(BaseModel):
+    """The script, in the layout the breakdown reads."""
+
+    script: str = ""
+    title: str = ""
+    seconds: int = 0
+    usage: dict = Field(default_factory=dict)
+
+
 class WeakDescription(BaseModel):
     """A shot whose description shares almost no wording with the script."""
 

@@ -275,7 +275,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **THE BOARD FORM NO LONGER ASKS "WHICH MARKET?", BECAUSE THAT IS A QUESTION ABOUT PRICES.** Phase 2 fixed the `$` and then left the fix's plumbing on the form: a dropdown reading "Not set — show no prices" met somebody who only wanted to draw two friends on a train. The form now asks ONE thing, the language; the country, the money and the units are worked out from it, from the account, or from the script. ⚠ **English is deliberately NOT in the language→country table** — mapping it to the US is how an Indian creator's promo got priced in dollars in the first place, and Spanish and Arabic are absent for the same reason. New `_LANGUAGE_ONLY_RULE` covers the case this created: a language with no country writes text in that language and shows NO price. The two explanatory lines under the form are gone. See the Work Log.
+**Last updated:** 2026-08-27 — **PHASE 3, THE APPROVAL GATE: NOTHING IS DRAWN FROM AN IDEA UNTIL SOMEBODY HAS SEEN WHAT WE MADE OF IT.** A brief or an idea now becomes ONE editable concept card — title, core idea, story direction, key scenes, length, look — and **Approve** is what starts the spending. ⚠ **The approved concept is written out as a real SCRIPT by `plan_agent.write_script()`, never straight to shots**: the review step and every "FROM YOUR SCRIPT · LINE 12" need a script to point at. ⚠ **And unlike `/script-intake`, this gate does NOT fail open** — a dead classifier must not block a board, a dead concept step must. A script still bypasses the screen entirely. Chain live-checked brief → concept → 2.5k-character script in the breakdown's own layout. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 2: THE FORM READS WHAT IT WAS HANDED BEFORE IT DRAWS ANYTHING.** New `script_intake.py` sits in front of the breakdown and names the paste — script / brief / idea / vague / empty. A recognisable script is spotted in pure Python and costs nothing; everything else gets one small model call. ⚠ **The tie goes to `idea`, never to `script`** — calling an idea a script invents a whole film and bills for it, calling a script an idea costs one click — and every failure path lands there. ⚠ **But the form FAILS OPEN**: if the route dies the breakdown runs anyway, because a classifier that can block a storyboard is the worse bug. ⚠ Phase 2 is NOT the approval gate — brief/idea still offer "Build it anyway"; Phase 3 replaces it with a concept to approve. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 1 OF THE INTAKE REDESIGN: THE FIRST SCREEN TAKES MATERIAL, IT DOES NOT HOLD A CONVERSATION.** Script → Storyboard had three doors into one `script` string — a paste tab, an upload tab, and a chat with its own Generate button — so the form's first question was "which box do I type in?". Now one box (upload is a button inside it, drop still works), one **Create storyboard**, and a compact **Story settings** column. ⚠ `ScriptChat.jsx` and `/script-chat` are LEFT IN THE TREE on purpose: the chat returns in Phase 4, beside the finished board, as its editor. ⚠ The placeholder deliberately still says "script" and not "brief or idea" — that wording ships with the Phase 2 classifier, not before it. Layout and copy only; no AI behaviour changed. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE "HOW IT WORKS" LIST IS GONE FROM SCRIPT → STORYBOARD; THE CHOICES LIVE IN ITS PLACE.** Genre, visual style, aspect ratio and the Generate button moved out of the left card into the right-hand column, under a "Look & format" heading, so nothing on the form needs scrolling past a static list of instructions to reach. The aside hides while the breakdown runs. Audience and Brand+logo now share one row (`.sts-meta-row`) instead of stacking. ⚠ Layout only — no state, handler or prompt changed, and it has NOT been opened in a browser. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE BOARD FORM NO LONGER ASKS "WHICH MARKET?", BECAUSE THAT IS A QUESTION ABOUT PRICES.** Phase 2 fixed the `$` and then left the fix's plumbing on the form: a dropdown reading "Not set — show no prices" met somebody who only wanted to draw two friends on a train. The form now asks ONE thing, the language; the country, the money and the units are worked out from it, from the account, or from the script. ⚠ **English is deliberately NOT in the language→country table** — mapping it to the US is how an Indian creator's promo got priced in dollars in the first place, and Spanish and Arabic are absent for the same reason. New `_LANGUAGE_ONLY_RULE` covers the case this created: a language with no country writes text in that language and shows NO price. The two explanatory lines under the form are gone. See the Work Log.
 
 **Previously:** 2026-08-27 — **PHASE 4, THE LAST: THE BOARD IS MEASURED AFTER IT IS DRAWN.** New `qa.py`. Every fix in Phases 1-3 is a PROMPT, which is a request and not a guarantee — so a free Pillow/NumPy audit now runs on every board (a shipped magenta placeholder, colour on a greyscale style, a wrong aspect, and ⚠ **a branded board where the logo never landed anywhere**, which is how the brand scheme would fail SILENTLY), and a paid vision check sits behind a button at ONE call per 24 panels. ⚠ Medium drift is deliberately NOT guessed for free: chroma cannot tell a cartoon from a night shot, and a checker that cries wolf gets switched off. The Production Brief is complete; nothing is verified against the real models yet. See the Work Log.
 
@@ -3418,7 +3426,262 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — THE BOARD FORM ASKED "WHICH MARKET?", WHICH IS A QUESTION ABOUT PRICES ("prices wala function nahi rakhna hai humko … user se direct prices mat pucho, usko hata do frontend se, bas peeche se jitna aur jahan se samajh jaye AI waisa kar do")
+### 2026-08-27 (latest) — PHASE 3, THE APPROVAL GATE: A BRIEF BECOMES A CONCEPT, THE CONCEPT BECOMES A SCRIPT, AND THE USER SAYS YES IN BETWEEN ("AI ko approval ke bina storyboard generate nahi karna hai when the input is a brief/concept that requires creative interpretation")
+
+New `script_concept.py`, `server/script_concept.py`, `tests/script_concept_check.py`.
+
+Phase 2 could TELL a brief from a script and then offered **"Build it anyway"** —
+honest, but still the old invent-the-film path with a warning bolted on.
+Knowing was never the point. Something still has to decide who is on screen,
+what goes wrong and how it ends, and that decision is INVENTION. It now happens
+where the user can see it and change it.
+
+**The flow, end to end:**
+
+```
+brief / idea  →  develop()  →  CONCEPT CARD (editable)  →  approve
+              →  plan_agent.write_script()  →  real script  →  breakdown  →  review
+```
+
+⚠ **THE APPROVED CONCEPT IS WRITTEN OUT AS A REAL SCRIPT — NEVER STRAIGHT TO
+SHOTS.** This is the correction to the user's own spec and the reason the phase
+hangs together: the review step, `ScriptPanel`, every shot card's "FROM YOUR
+SCRIPT · LINE 12" and `_attach_script_lines()` all need a script to point at. A
+concept jumping to shots would leave the whole traceability layer aimed at
+nothing. `plan_agent.write_script()` already emits the exact layout
+`script_breakdown.py` reads, so it is the bridge and no new writer was built.
+
+⚠ **THIS GATE DOES NOT FAIL OPEN, AND THAT IS THE OPPOSITE OF `/script-intake`.**
+The intake is a helper: if it dies the board is built anyway, because a
+classifier that can block a storyboard is worse than the bug it fixes. The
+concept step is a GATE: if it dies the user gets an error and stays put, because
+falling through it means building the film nobody approved. Both routes, both
+clients and `tests/script_concept_check.py` all say so in as many words.
+
+⚠ **A SCRIPT NEVER TOUCHES THIS SCREEN.** When the user wrote the thing there is
+nothing to interpret; being asked to approve our reading of their own script
+would be a step that exists only to annoy. `script_intake` sends those straight
+to the breakdown, usually with no model call at all.
+
+**The card — six fields, all editable, reads in half a minute:** title, core
+idea, story direction (an arrow chain), **key scenes as one editable numbered
+line each** (they are the panels, so they can be reordered by editing, added and
+removed), length in seconds, look and feel. `conceptReady()` blocks approval
+once the user has emptied both the premise and every scene — approving a blank
+card would send the writer a blank page and get back an invention nobody agreed
+to.
+
+**Decisions worth not re-litigating:**
+
+- **Editable in place, not an "Edit Concept" button.** The spec listed Approve /
+  Edit / Start Over; an Edit button here would mean dropping back into a chat,
+  which is what this redesign removed.
+- **What the user stated is FIXED.** The developer is told never to override the
+  product, audience, goal, length, tone or a named character, and that an idea's
+  premise stays THEIR premise — it develops their story, it does not swap in a
+  better one.
+- **`concept_to_brief()` carries the original paste underneath the concept**,
+  explicitly ranked below it. A concept has no field for a product name or a
+  required line, and losing those between the two steps shows up as a script
+  that quietly forgot half the ask.
+- **The long write wears the existing ring.** `BreakdownProgress` gained
+  optional `steps` / `title` / `readyLabel` / `slowLabel` and a `SCRIPT_STEPS`
+  export; every existing call site reads exactly as before. No second spinner
+  was invented.
+- **The box keeps the user's own words.** The generated script is what the board
+  is built from and what review shows; overwriting their brief with it would
+  throw away the thing they can edit and re-run. The concept's title names the
+  board instead, unless they typed one.
+
+**Live-checked against the real model, the whole chain:** the AI-meeting-
+assistant brief → intake `brief` → a concept titled *"Sync Genius"* with a
+correct 30s runtime, six visible scenes and a look that honoured the form's
+Commercial + cinematic choices → `write_script()` → **2 483 characters in the
+exact `SCENE n. INT./EXT.` + `NAME:` layout**, confirmed by feeding it back
+through `script_intake.sniff()`, which reads it as `script`.
+
+**Verified:** `script_concept_check` (52 checks) and `script_intake_check`
+(updated for the gate — the interim "Build it anyway" assertions are replaced by
+the ones that pin the gate), plus `script_chat_check`, `board_look_check`,
+`board_market_check`, `board_brand_check`, `board_audit_check` and a clean
+`vite build`. ⚠ **Not opened in a browser.** Both model calls have met the real
+models; the concept card itself has never been seen on screen.
+
+### 2026-08-27 — PHASE 2: THE APP READS WHAT IT WAS HANDED BEFORE IT DRAWS ANYTHING ("AI ko automatically samajhna chahiye ki user ne kya provide kiya hai aur uske according workflow choose karna chahiye")
+
+New `script_intake.py`, `server/script_intake.py`, `tests/script_intake_check.py`.
+
+⚠ **ONE BOX WENT TO ONE PLACE, WHATEVER WAS IN IT.** Every paste was posted to
+`script_breakdown.py` as a script, so a single line —
+
+> "A man wakes up and discovers that everyone in the city has disappeared."
+
+— came back as a film with scenes, a cast, locations and dialogue nobody wrote:
+invented in silence, drawn, and charged for. Nothing in the flow ever said "this
+is an idea, not a script", because nothing in the flow ever looked.
+
+**Two readers, cheapest first:**
+
+- `sniff(text)` — **pure Python, no model, no cost, no latency.** A scene
+  heading (`INT./EXT.`, our own `SCENE 1. INT. …`) or three-plus lines of
+  `NAME: line` speech over 40 words. Returns `None` — meaning *ask* — for
+  everything else, and `"empty"` for a blank box.
+- `classify(text)` — one small structured call (`{kind, reason, question}`,
+  temp 0, clipped at 6 000 chars), and **only when sniff shrugs.**
+
+⚠ **THE SNIFF'S FALSE-POSITIVE TRAP IS A CLIENT BRIEF, NOT A SCRIPT.** A brief
+is written in `BRIEF:` / `TARGET AUDIENCE:` / `GOAL:` / `TONE:` lines, which are
+indistinguishable from dialogue by shape. `_NOT_SPEAKERS` is why a four-line
+brief is not fast-pathed into the breakdown as a screenplay — that failure would
+be the original bug back again with no model in the loop to catch it.
+
+⚠ **THE TIE GOES TO `idea`, NEVER TO `script` — and the model is told so in as
+many words.** The two mistakes do not cost the same: calling an idea a script
+invents a whole film and bills for the panels; calling a script an idea costs
+one confirmation click. Every failure path lands on `idea`: unparseable JSON,
+an unknown `kind`, a raised exception in the route.
+
+⚠ **BUT THE CLASSIFIER IS A HELPER, NOT A GATE — THE FORM FAILS OPEN.** If
+`/script-intake` errors, `handleGenerate` proceeds into the breakdown exactly as
+it did before this step existed. A classifier able to stop somebody making a
+storyboard would be a worse bug than the one it fixes. The route mirrors this
+and never raises: it answers `kind="idea", decided_by="error"`.
+
+**What the user now sees.** A script goes through in silence (being told your
+script is a script is not information). Anything else stops under the box:
+
+| kind | what happens |
+|------|--------------|
+| `script` | straight to the breakdown, untouched — usually with no model call at all |
+| `brief` / `idea` | "This reads like a brief/idea, not a script" + the model's one-sentence reason + **"We can still build a board from this — but the scenes, the characters and every line of dialogue would be ours, not yours"** → **Build it anyway** / **I'll write more** |
+| `vague` | ONE question, in the user's own language, and a hint. No buttons — the answer is typing. ⚠ The `reason` is deliberately NOT rendered here: it repeats the question as a telling-off |
+| `empty` | "Let's start with an idea." — answered client-side, no request at all |
+
+**Live-checked against the real model** (six inputs, all correct): prose brief →
+`brief`, label brief → `brief`, one-line premise → `idea`, "I want to make
+something emotional" → `vague`, **"mujhe ek acchi si video banani hai" →
+`vague` with the question asked back in Hinglish**, and a slug-less three-line
+scene → `script`.
+
+**Also in this phase:** the box's label and placeholder finally say what the
+form takes — *"Your script, brief or idea"* / *"Paste your script, brief, story
+or idea — we'll work out what it is…"*. Phase 1 deliberately held that wording
+back until the classifier existed; it exists now.
+
+⚠ **PHASE 2 IS NOT THE APPROVAL GATE.** `brief`/`idea` still offer **Build it
+anyway**, which is the old invent-the-film path — now chosen out loud instead of
+taken silently. Phase 3 replaces that button with a concept card, an approval,
+and `plan_agent.write_script()` in between.
+
+**Verified:** `tests/script_intake_check.py` (44 checks) plus
+`script_chat_check`, `board_market_check`, `board_brand_check`, and a clean
+`vite build`. ⚠ **Not opened in a browser.** The classifier itself HAS met the
+real model; the panel it feeds has not been seen on screen.
+
+### 2026-08-27 — PHASE 1 OF THE INTAKE REDESIGN: THE FORM ASKED "WHICH BOX DO I TYPE IN?" BEFORE THE USER HAD DONE ANYTHING ("mai chahta hun … user AI se chat nahi kar raha hai, user AI ko material de raha hai")
+
+⚠ **THE SCRIPT → STORYBOARD FORM HAD THREE DOORS INTO ONE PIECE OF STATE.** A
+"Write, paste or ask AI" tab, an "Upload file" tab, and — inside the first tab —
+a chat with a **Generate** button of its own, sitting directly above the form's
+own **Generate storyboard** button. All three ended at the same `script` string,
+so the only thing the choice bought was the question *"which one am I supposed
+to use?"*, asked on arrival. Reported over three screenshots.
+
+**The product decision behind it (user's words, via a written spec):** on the
+first screen the user is **not talking to an AI, they are handing over
+material**. The screen's job is to take that material; the conversation belongs
+after a board exists, as the thing that edits it.
+
+**What this phase changed — LAYOUT AND COPY ONLY, no AI behaviour:**
+
+- `ScriptToStoryboard.jsx` — the two tabs, the dropzone and `<ScriptChat>` are
+  gone from the form. One `.sts-script-panel` box, with **Upload a script file**
+  as a button inside it under a hairline; a file can also be dropped anywhere on
+  the box (the panel took over the dropzone's `over` state). Removed with them:
+  `tab`, `chatSession`, `aiUndo`, `applyAiScript()` and the `latestScript` /
+  `latestTitle` refs that existed only to make the chat's Undo safe.
+- Options card heading is now **"Story settings"** (the user's own name for it),
+  and the primary button reads **"🎬 Create storyboard"**.
+- `storyboard.css` — the script box goes 160px → **300px** (it no longer shares
+  a height with a dropzone that no longer exists). Deleted as unreachable: the
+  `.sts-script-panel .sc-*` rules and `.sts-ai-applied`.
+
+⚠ **`ScriptChat.jsx`, `POST /script-chat` AND `script_agent.py` ARE DELIBERATELY
+LEFT IN THE TREE, UNTOUCHED.** They are not dead — they are early. Phase 4 puts
+that chat beside the finished board as its editor, where "Ask AI" means
+something specific. `tests/script_chat_check.py` and
+`tests/script_chat_session_check.mjs` both still pass, and the session helpers
+are unchanged, so nothing has to be rebuilt to bring it back.
+
+⚠ **THE PLACEHOLDER STILL SAYS "PASTE OR TYPE YOUR SCRIPT HERE", NOT "SCRIPT,
+BRIEF, STORY OR IDEA".** The spec asks for the wider wording and it is the right
+end state — but the backend still treats every input as a script. Advertising
+"or just an idea" today would invite exactly the failure this redesign exists to
+fix: `script_breakdown` inventing a whole film from one line, with no concept and
+no approval, and charging for the panels. **The wording changes in Phase 2, in
+the same commit as the classifier.**
+
+**The agreed shape of the rest (planned with the user, not built):**
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1 | One box, one button; chat off the first screen; compact Story settings | ✅ built |
+| 2 | Input classification — free `INT./EXT.` + `NAME:` sniff first, AI call only on doubt; script → straight to breakdown, brief/idea → named and stopped | ✅ built, `tests/script_intake_check.py` |
+| 3 | Concept card + **approval gate**, then `plan_agent.write_script()` → breakdown | ✅ built, `tests/script_concept_check.py` |
+| 4 | "Ask AI" beside the finished board, with the selected shot/scene as target | ⬜ **next** |
+| 5 | Shot metadata: shot type, camera movement, duration | ⬜ |
+
+⚠ **PHASE 3 MUST PRODUCE A REAL SCRIPT, NOT SHOTS DIRECTLY** — this is not in
+the user's spec and is the one place the plan had to correct it. The review step,
+`ScriptPanel`, every shot card's "FROM YOUR SCRIPT · LINE 12" and
+`_attach_script_lines()` all rest on a script existing. A concept that jumps
+straight to shots leaves the entire traceability layer pointing at nothing.
+`plan_agent.write_script()` already emits the exact format `script_breakdown.py`
+reads — that is the bridge, and it is already built.
+
+**Verified:** `vite build` clean, and `board_brand_check`, `board_look_check`,
+`board_market_check`, `script_chat_check`, `script_chat_session_check.mjs` all
+pass. ⚠ **Not opened in a browser.**
+
+### 2026-08-27 — THE "HOW IT WORKS" PANEL WAS FOUR LINES OF INSTRUCTIONS SITTING NEXT TO A FORM THAT SCROLLED PAST THEM ("how it work panel ko remove karo aur ye buttun aor genre and visual how is work ke side dikhe")
+
+The Script → Storyboard hero was a two-column grid: the whole form on the left,
+a static numbered list on the right. The list never changed, never had to be
+read twice, and the price of it was that **every choice on the board — genre,
+visual style, aspect ratio, and the Generate button — was pushed below the
+fold**, while a tall empty column sat beside them.
+
+**What moved:**
+
+- `client/src/components/ScriptToStoryboard.jsx` — the `<aside>`'s guide markup
+  is deleted. The Genre, Visual style and Aspect ratio blocks, the error line
+  and the `sts-generate` button were lifted out of the left card, unchanged, and
+  are now the aside's content under a **"Look & format"** heading. The left card
+  keeps title → script/AI composer → audience → brand.
+- The aside renders only when `!busy`, and the grid carries a `busy` modifier
+  class so the breakdown progress screen goes back to one full-width column
+  instead of leaving an empty gutter.
+- `client/src/styles/storyboard.css` — `.sts-guide*` rules deleted (no longer
+  referenced anywhere), replaced by `.sts-options` / `.sts-options-title`. Grid
+  is `1.15fr 1fr` (was `1.6fr 0.9fr`, sized for a thin guide) and `align-items`
+  is `start`, so the options card is content-height rather than stretched.
+
+⚠ **Nothing about generation changed** — the same state, the same handlers, the
+same chips; only where they render. Verified by esbuild parse only; **not opened
+in a browser** — the narrow column will wrap the chip rows and the long
+`style-note` paragraph differently than the wide card did.
+
+**Same session, follow-up ("logo wala language ke side mai set karo, niche nahi
+achha nahi lag raha hai"):** with Genre and Style gone from the left card,
+Audience sat alone on a line with a short pill and Brand stacked underneath it —
+a half-empty line, then the logo slot pushed down the form. Both are now one
+`.sts-meta-row`: **Audience left, Brand + logo right.** The language column is
+`flex: 0 1 auto` (sizes to its longest option), the brand column `flex: 1 1
+320px`, so on a narrow card the brand row drops to its own line as before. No
+markup inside either block changed — only the wrapper — and the two columns line
+up because `label` and `.opt-chips`/`.sts-brand` already share their margins.
+
+### 2026-08-27 — THE BOARD FORM ASKED "WHICH MARKET?", WHICH IS A QUESTION ABOUT PRICES ("prices wala function nahi rakhna hai humko … user se direct prices mat pucho, usko hata do frontend se, bas peeche se jitna aur jahan se samajh jaye AI waisa kar do")
 
 ⚠ **PHASE 2 SOLVED THE BUG AND THEN PUT THE BUG'S PLUMBING ON THE FORM.** The
 `$4.50` is fixed, but the fix arrived as a dropdown reading **"Not set — show no

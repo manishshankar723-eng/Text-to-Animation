@@ -689,6 +689,72 @@ export function clearScriptDraft() {
   return request("/scripts/draft", { method: "DELETE" });
 }
 
+// --- Script intake: what did the user actually paste? ---
+// Runs when Create storyboard is pressed, BEFORE the breakdown, so an idea is
+// never silently expanded into a whole invented film.
+//
+// Returns { kind, reason, question, decided_by, usage } where kind is one of
+// "script" | "brief" | "idea" | "vague" | "empty". Often free: a recognisable
+// script is spotted in plain Python on the server and never reaches a model
+// (`decided_by: "sniff"`).
+//
+// ⚠ THE CALLER MUST FAIL OPEN. If this rejects, carry on into the breakdown as
+// though the text were a script — which is what the form did before this route
+// existed. A classifier that can block a storyboard is a worse bug than the one
+// it was added to fix. See server/script_intake.py.
+export function intakeScript(text) {
+  return request("/script-intake", {
+    method: "POST",
+    body: { text: text || "" },
+  });
+}
+
+// --- The approval gate: brief/idea → concept → approved concept → script ---
+//
+// ⚠ THESE TWO DO NOT FAIL OPEN, and that is the difference between them and
+// `intakeScript`. The intake is a helper; this is a GATE. If a concept can't be
+// developed the caller must show the error, NOT fall through to breaking the
+// raw brief down as a script — that silent invention is the whole reason the
+// gate exists. See server/script_concept.py.
+
+// Brief or idea in, ONE concept out. Nothing is drawn.
+// Returns { concept: {title, premise, story_direction, key_scenes[],
+// duration_seconds, visual_direction}, usage }.
+export function developConcept(text, { kind, genre, style, aspectRatio } = {}) {
+  return request("/script-concept", {
+    method: "POST",
+    body: {
+      text: text || "",
+      kind: kind === "brief" ? "brief" : "idea",
+      genre: genre || "",
+      style: style || "",
+      aspect_ratio: aspectRatio || "",
+    },
+  });
+}
+
+// The concept the user APPROVED (edits included) → a real script in the exact
+// layout the breakdown reads. `source` is what they originally pasted, carried
+// along for details a concept has no field for (a product name, a required
+// line). Returns { script, title, seconds, usage }.
+export function conceptToScript(concept, { source, language } = {}) {
+  return request("/script-concept/script", {
+    method: "POST",
+    body: {
+      concept: {
+        title: concept?.title || "",
+        premise: concept?.premise || "",
+        story_direction: concept?.story_direction || "",
+        key_scenes: (concept?.key_scenes || []).filter((s) => (s || "").trim()),
+        duration_seconds: concept?.duration_seconds || 60,
+        visual_direction: concept?.visual_direction || "",
+      },
+      source: source || "",
+      language: language || "",
+    },
+  });
+}
+
 // --- Script assistant (the "Ask AI" tab in the Script → Storyboard form) ---
 // A normal chat that can also hand back a finished script.
 //
