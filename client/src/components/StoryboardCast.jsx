@@ -6,6 +6,7 @@
 import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
+import GrowTextarea from "./GrowTextarea.jsx";
 // A reference is a drawn image, so it spends `cap.image-generate` — guarded on
 // POST /characters/reference. ⚠ UPLOADING ONE IS NOT GATED and must not be:
 // the file is the customer's own, nothing is drawn, and it is the way an
@@ -48,6 +49,9 @@ export default function StoryboardCast({
       const prev = saved?.[(c.name || "").trim().toLowerCase()] || {};
       return {
         name: c.name,
+        // How many shots this character is in. Read-only, and shown on the
+        // card so a face that appears once can be skipped knowingly.
+        shotCount: c.shotCount || 0,
         description: prev.description ?? c.description ?? "",
         referenceId: prev.referenceId ?? null,
         previewUrl: prev.previewUrl ?? null,
@@ -260,8 +264,35 @@ export default function StoryboardCast({
                 )}
               </div>
               <div className="cast-body">
-                <div className="cast-name">{ch.name}</div>
-                <textarea
+                <div className="cast-name">
+                  {ch.name}
+                  {/* ⚠ WHAT A REFERENCE IS WORTH, IN ONE NUMBER. Every
+                      sheet costs an image, and a board came back carrying a
+                      full character sheet for an artisan who appears only as
+                      a pair of HANDS in one close-up. Reported. The count is
+                      a fact rather than a guess about what is visible, and
+                      this step is already optional — so the honest thing is
+                      to say who is barely in the film and let the user skip
+                      them. The reasoning lives in the tooltip. */}
+                  {ch.shotCount > 0 && (
+                    <span
+                      className={`cast-shots${ch.shotCount === 1 ? " one" : ""}`}
+                      title={
+                        ch.shotCount === 1
+                          ? "In one shot only — a reference costs an image, and may not be worth it here."
+                          : `In ${ch.shotCount} shots — a reference keeps them looking the same across all of them.`
+                      }
+                    >
+                      {ch.shotCount} shot{ch.shotCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </div>
+                {/* ⚠ IT GROWS TO ITS TEXT — the same fault as the review
+                    step's image prompt, on the same kind of box. Fixed at
+                    76px it clipped every description mid-sentence, behind a
+                    scrollbar — and this is the text that DRAWS the
+                    character. */}
+                <GrowTextarea
                   className="prompt-textarea cast-desc"
                   value={ch.description}
                   placeholder="Describe how this character looks…"

@@ -132,6 +132,14 @@ export default function App() {
   // Set by the board's "Make animatic" button: the animatic already exists, so
   // the animatics workflow opens straight into its editor instead of the library.
   const [pendingAnimaticId, setPendingAnimaticId] = useState(null);
+  // ⚠ "CONTINUE WHERE YOU LEFT OFF" ARRIVING FROM HOME. The unfinished
+  // storyboard is offered on the dashboard as well as inside the workflow
+  // — asked for in as many words: *"ye resume dikh raha hai magar recent
+  // mein kyun nahi … user ko first page mein hi dikh jaaye."* Clicking it
+  // there has to land ON the board, not on the workflow's front door with
+  // the same offer repeated, so the intent travels as a flag and
+  // ScriptToStoryboard consumes it the moment the draft arrives.
+  const [resumeDraft, setResumeDraft] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   // Every account whose token this browser is holding, for the switcher in the
   // sidebar's menu. Kept in state rather than read straight from `api` on each
@@ -547,6 +555,11 @@ export default function App() {
         onOpenProfile={() => setNav("profile")}
         // "View all" on a workflow group jumps into that workflow.
         onNavigate={setNav}
+        // Continue an unfinished storyboard, straight onto the board.
+        onResumeStoryboard={() => {
+          setResumeDraft(true);
+          setNav("script-to-storyboard");
+        }}
       />
     );
   } else if (nav === "profile") {
@@ -657,6 +670,10 @@ export default function App() {
           setPendingAnimaticId(id);
           setNav("storyboard-to-animatics");
         }}
+        // Set only by Home's "Continue" card; cleared the moment it is
+        // used, so navigating back here later opens the form as normal.
+        autoResumeDraft={resumeDraft}
+        onDraftResumed={() => setResumeDraft(false)}
       />
     );
   } else if (nav === "storyboard-to-animatics") {

@@ -1,17 +1,51 @@
-// Inline progress state shown INSIDE the form card while the (single-call)
-// script breakdown runs — a gold progress ring with a step label.
+// Inline progress state shown INSIDE the form card while the script breakdown
+// (and, before it, the script writer) runs — a gold progress ring with a step
+// label.
 //
-// The ring is an HONEST wait indicator, not a fake timer:
-//   • While the real API call is in flight (`done` = false) it fills at a steady
-//     pace but HOLDS at 90% — it must never claim 100% before the work is done.
-//   • When the call returns (`done` = true) it races the rest of the way to
-//     100%, and only THEN calls `onDone`, which advances to Review.
-// So the number, the ring and the label always reach 100% together, every time,
-// regardless of how long the call actually took.
+// ⚠ ONE RING, ONE CLIMB, FOR THE WHOLE WAIT. Approving a concept runs TWO calls
+// back to back — `write_script()` then the breakdown — and the ring must not
+// notice. It is mounted ONCE and its props change under it; the number only
+// ever goes up, and it reaches 100 exactly once, when the review step is ready.
+//
+// THREE ROUNDS OF REPORTS SHAPED THE MOTION, AND EACH ONE UNDID PART OF THE
+// LAST. Worth reading before touching the constants:
+//
+//   1. "ye stuck lag raha hai" — the ORIGINAL fill was flat to a soft cap of 96,
+//      crawled to 99, and STOPPED DEAD. A 45-second call left a motionless
+//      "99%" on screen for half a minute. 99% does not read as working; it
+//      reads as finished-and-broken.
+//
+//   2. "progress bar pehle 100% ho jaye fir kuch time pe open ho" — each of the
+//      two calls drove its OWN ring from 0 to 100, so the user watched a bar
+//      finish and then watched a second one start from zero.
+//
+//   3. "kabhi fast kabhi slow … last mein laga 100 gaya hi nahi aur open ho
+//      gaya" — the fix for (2) gave each call its own SLICE of the bar (0-50,
+//      50-100). That was worse in a way that is obvious in hindsight: a ring
+//      approaching 50 crawls at half the speed of one approaching 100, and each
+//      slice ENDED with a half-second sprint to its own ceiling. Slow, jump,
+//      slow, jump. And the sprint at the end handed off on the same frame it
+//      touched 100 — before React had painted it — so 100 was never actually
+//      seen.
+//
+// WHAT IT DOES NOW, and why each part is the answer to one of those:
+//
+//   • ONE curve for the whole wait, with no per-phase ceilings. The rate is
+//     proportional to the distance still to go, so it is quick off the mark and
+//     decelerates smoothly for ever — never a wall (1), never a slice boundary
+//     to jump across (3).
+//   • A call finishing mid-wait hands off WHERE IT IS (`final={false}`). No
+//     sprint, no reset, no visible seam — the next call just carries on from the
+//     same number (2, 3).
+//   • Only the LAST call sweeps to 100, and the ring PAINTS 100 before handing
+//     over (3). The hold is a fifth of a second: long enough to see the number
+//     land, short enough that nobody is waiting on it.
 import { useEffect, useRef, useState } from "react";
 
 // Each step owns a slice of the bar, so the label changes exactly as the ring
-// passes that mark. `until` is the upper % bound of the slice.
+// passes that mark. `until` is the upper % bound of the slice. Both sets are
+// written against the whole 0-100 climb, so swapping one for the other
+// mid-wait changes the words without moving the ring.
 const STEPS = [
   { until: 20, label: "Reading your story…" },
   { until: 40, label: "Aligning it with the genre…" },
@@ -41,22 +75,28 @@ const STROKE = 10;
 const R = (SIZE - STROKE) / 2;
 const CIRC = 2 * Math.PI * R;
 
-// The breakdown is a single AI call with NO real progress signal, so the % is an
-// estimate. The motion that reads best for an unknown wait: ONE calm, constant
-// speed for the whole climb (no rush at the start — that's what looked "stuck"),
-// then a quick, even finish once the work is actually done (speeding up at the
-// end signals completion, which feels right).
+// ⚠ AN EXPONENTIAL APPROACH, NOT A CONSTANT CLIMB. The work behind this ring is
+// a model call with no progress signal at all, so any percentage is an estimate
+// — and the honest way to draw an estimate is one that slows as it gets less
+// sure. Rate is proportional to the distance still to go: quick off the mark,
+// unhurried in the middle, still creeping a minute in, and never hitting a wall.
 //
-//   • Not done: fill at a steady FILL_RATE up to SOFT_CAP — a single, even pace.
-//   • Past SOFT_CAP (only if the call runs longer than ~the expected time): a
-//     gentle creep to HARD_CAP so it never freezes, but never reaches 100.
-//   • Done: sweep from wherever it is to 100 at FINISH_RATE, then hand off.
-const SOFT_CAP = 96;       // one even speed carries the ring almost all the way
-const HARD_CAP = 99;       // ...only outliers reach the slow tail beyond SOFT_CAP
-const FILL_RATE = 6.5;     // %/sec — calm and even; 0→96% over ~15s
-const CRAWL_RATE = 0.6;    // %/sec past SOFT_CAP (rare; keeps it from freezing)
-const FINISH_RATE = 34;    // %/sec once done — a quick, satisfying completion
-const HOLD_AT_100_MS = 300; // let the eye register 100% before leaving
+// Roughly: ~18% at 5s, 44% at 15s, 65% at 25s, 81% at 40s, 90% at 60s.
+const APPROACH_SECONDS = 22;
+// Where the climb aims while the work is still running. Held back from 100 on
+// purpose, and by enough to be visible: parking on "99%" reads as finished, and
+// the closing sweep needs somewhere to sweep FROM.
+const SOFT_TARGET = 96;
+// The closing sweep takes about this long FROM WHEREVER IT IS — the rate is
+// worked out ONCE, on the frame the work lands, and then held. Recomputing it
+// every frame makes it an exponential decay instead, which drags a fast call
+// out to a second and a half of watching a bar fill after the work is done.
+const FINISH_SECONDS = 0.45;
+const MIN_FINISH_RATE = 12; // %/sec — a very short sweep still has to be seen
+// ⚠ THE RING PAINTS 100 BEFORE IT HANDS OVER. Firing on the same frame the
+// number reaches 100 means React never renders it — reported as "laga 100 gaya
+// hi nahi aur open ho gaya". A fifth of a second is the completion, not a wait.
+const SHOW_100_MS = 220;
 const LONG_WAIT_MS = 16000; // after this, reassure that a long wait is normal
 
 export default function BreakdownProgress({
@@ -68,16 +108,34 @@ export default function BreakdownProgress({
   title = "Generating your scene breakdown",
   readyLabel = "Scene breakdown ready!",
   slowLabel = "Still working — longer scripts take a little more time…",
+  // ⚠ IS `done` THE END OF THE WHOLE WAIT, OR JUST OF THIS CALL? False means
+  // another call follows: hand off immediately, leave the ring where it is, and
+  // keep climbing. Only the final call earns the sweep to 100.
+  final = true,
 }) {
   const [pct, setPct] = useState(0);
   const [slow, setSlow] = useState(false); // long wait → reassurance sub-line
   const progress = useRef(0);
-  // Read the latest done/onDone inside the rAF loop without restarting it.
+  // Read the latest props inside the rAF loop without restarting it.
   const doneRef = useRef(done);
+  const finalRef = useRef(final);
   const onDoneRef = useRef(onDone);
+  // Whether THIS call has already been handed off. Cleared when `done` goes
+  // back to false, which is what starting the next call looks like from here.
+  const firedRef = useRef(false);
+  const finishRate = useRef(null);
+
   useEffect(() => {
     doneRef.current = done;
+    if (!done) {
+      firedRef.current = false;
+      finishRate.current = null;
+      setSlow(false); // a new call gets its own patience before we apologise
+    }
   }, [done]);
+  useEffect(() => {
+    finalRef.current = final;
+  }, [final]);
   useEffect(() => {
     onDoneRef.current = onDone;
   }, [onDone]);
@@ -88,43 +146,60 @@ export default function BreakdownProgress({
       if (!doneRef.current) setSlow(true);
     }, LONG_WAIT_MS);
     return () => clearTimeout(t);
-  }, []);
+  }, [done]);
 
   useEffect(() => {
     let raf;
-    let fired = false;
+    let handOff;
     let last = performance.now();
 
     const tick = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000); // clamp after a tab stall
       last = now;
-
       const p = progress.current;
-      let cap;
-      let rate;
-      if (doneRef.current) {
-        cap = 100;
-        rate = FINISH_RATE;
-      } else if (p < SOFT_CAP) {
-        cap = SOFT_CAP;
-        rate = FILL_RATE;
-      } else {
-        cap = HARD_CAP; // keep creeping so it never looks frozen
-        rate = CRAWL_RATE;
+
+      // ⚠ A CALL THAT IS NOT THE LAST ONE HANDS OFF WHERE IT STANDS. No sprint
+      // to a phase ceiling: the next call carries on from this same number, so
+      // there is no seam to see. This is the whole of complaint (3).
+      if (doneRef.current && !finalRef.current && !firedRef.current) {
+        firedRef.current = true;
+        onDoneRef.current?.();
       }
-      progress.current = Math.min(cap, p + rate * dt);
+
+      if (doneRef.current && finalRef.current) {
+        if (finishRate.current === null) {
+          finishRate.current = Math.max(
+            MIN_FINISH_RATE,
+            (100 - p) / FINISH_SECONDS
+          );
+        }
+        progress.current = Math.min(100, p + finishRate.current * dt);
+      } else {
+        // Approach a target short of 100. The rate falls with the distance, so
+        // this decelerates for ever and never actually arrives.
+        const rate = Math.max(0, (SOFT_TARGET - p) / APPROACH_SECONDS);
+        progress.current = Math.min(SOFT_TARGET, p + rate * dt);
+      }
       setPct(progress.current);
 
-      if (doneRef.current && progress.current >= 100 && !fired) {
-        fired = true;
-        // Show a full ring for a beat, then hand off to Review.
-        setTimeout(() => onDoneRef.current?.(), HOLD_AT_100_MS);
-        return; // stop the loop; component is about to unmount
+      if (
+        doneRef.current &&
+        finalRef.current &&
+        progress.current >= 99.99 &&
+        !firedRef.current
+      ) {
+        firedRef.current = true;
+        // Let the ring RENDER 100 before the screen changes under it.
+        handOff = setTimeout(() => onDoneRef.current?.(), SHOW_100_MS);
+        return; // stop the loop; this ring's work is over
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(handOff);
+    };
   }, []);
 
   const stepIdx = stepFor(pct, steps);
@@ -147,9 +222,9 @@ export default function BreakdownProgress({
             cx={SIZE / 2}
             cy={SIZE / 2}
             r={R}
-            strokeWidth={STROKE}
             strokeDasharray={CIRC}
             strokeDashoffset={offset}
+            strokeWidth={STROKE}
           />
         </svg>
         <div className="bp-ring-inner">

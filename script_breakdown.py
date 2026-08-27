@@ -193,7 +193,17 @@ def get_client(provider: str | None = None):
 # ---------------------------------------------------------------------------
 # Prompt + response schema
 # ---------------------------------------------------------------------------
-_SYSTEM_INSTRUCTION = (
+# ⚠ THE SYSTEM PROMPT IS IN THREE PIECES BECAUSE ONE RULE IN IT HAS TO SWAP.
+# Everything here was written for RAW PROSE — a user pasting a story — where
+# the job really is to break long sentences down into beats. Since the concept
+# gate landed, most scripts arrive from `plan_agent.write_script()` via
+# `script_to_text()`, which ALREADY writes ONE BEAT PER LINE. Told to split a
+# beat that is already a beat, the model splits it again: three script lines
+# about a face, the light on it and the flowers before it came back as three
+# almost identical close-ups, all drawn, all paid for. Reported. So the density
+# rule lives in its own block and `_system_instruction()` picks the one that
+# suits the script in hand — see `_is_beat_script`.
+_SYSTEM_HEAD = (
     "You are a professional film storyboard supervisor. You read a script and "
     "break it into a clear, ordered SHOT LIST for a storyboard artist. Each shot "
     "is ONE storyboard panel: a single moment we can draw. Keep descriptions "
@@ -240,6 +250,13 @@ _SYSTEM_INSTRUCTION = (
     "- Draw the instant BEFORE the movement happens — the wind-up, the hand "
     "still holding the object, the mouth about to open, the weight already "
     "shifting. Never open a shot on the middle or the end of a movement.\n"
+)
+
+# --- HOW FINELY TO CUT. The two blocks below are alternatives, never both. ---
+#
+# PROSE: the original rule, and still the right one for a pasted story. Nobody
+# has divided that into beats yet, so the breakdown has to.
+_SYS_DENSITY_PROSE = (
     "- A thrown object is the clearest case. WRONG: one shot of 'the slipper "
     "flies through the air'. RIGHT: the thrower with the slipper raised in his "
     "hand, ready to throw → the slipper in flight → the moment it strikes → the "
@@ -250,6 +267,30 @@ _SYSTEM_INSTRUCTION = (
     "- Prefer MORE, SMALLER shots over fewer busy ones. Each shot is one clear "
     "physical beat that a person could act out in about a second. If your "
     "description needs the word 'then', or 'as', or 'while', it is two shots.\n"
+)
+
+# BEATS: the script came out of `plan_agent.script_to_text()`, where ONE LINE IS
+# ALREADY ONE BEAT. Dividing it a second time is the bug this block exists to
+# stop, so the pressure runs the other way — merge, do not split.
+_SYS_DENSITY_BEATS = (
+    "- A thrown object still shows the rule: given a line about a slipper being "
+    "thrown, draw the thrower with it raised in his hand, ready — not the "
+    "slipper already in flight.\n"
+    "- THIS SCRIPT IS ALREADY DIVIDED INTO BEATS. Every line under a scene "
+    "heading was written to BE one panel, so ONE LINE IS ONE SHOT. Do NOT "
+    "divide a line again into a wind-up, an action and a reaction: the writer "
+    "already made that division, and making it twice hands back three "
+    "near-identical panels of one moment.\n"
+    "- Prefer FEWER, WHOLE shots. Split one line into two only when it plainly "
+    "holds two DIFFERENT pictures — a different place, a different person, or "
+    "a cut the line itself asks for. Two lines describing the same picture are "
+    "ONE shot.\n"
+    "- READ YOUR LIST BACK FOR REPEATS BEFORE YOU ANSWER. If two shots would "
+    "show the same subject at the same framing — two close-ups of one face, "
+    "two wides of one room — they are one shot. Merge them.\n"
+)
+
+_SYSTEM_TAIL = (
     "- A shot that shows only a result, with no visible cause and nobody "
     "reacting, is a mistake — add the shot before it.\n"
     # Even with the rule above, a board came back going: Kabir asleep → wide of
@@ -303,13 +344,95 @@ _SYSTEM_INSTRUCTION = (
     "generic Western/European default."
 )
 
-_PROMPT_TEMPLATE = (
-    "Break the following script into a storyboard shot list, a short cast list, "
-    "AND an asset list.\n"
+# The prose reading, kept under its old name because it is what a pasted story
+# gets and because several checks read it.
+_SYSTEM_INSTRUCTION = _SYSTEM_HEAD + _SYS_DENSITY_PROSE + _SYSTEM_TAIL
+
+
+def _system_instruction(beats: bool) -> str:
+    """The system prompt, carrying the density rule this script's shape needs."""
+    return (
+        _SYSTEM_HEAD
+        + (_SYS_DENSITY_BEATS if beats else _SYS_DENSITY_PROSE)
+        + _SYSTEM_TAIL
+    )
+
+
+# ---------------------------------------------------------------------------
+# HOW MANY SHOTS — the prompt half of the same decision
+# ---------------------------------------------------------------------------
+_DENSITY_PROSE = (
     "Return between 1 and {max_shots} shots, in reading order. Err on the side "
     "of MORE shots: one clear physical beat each, opened at the start of its "
     "own action. A single sentence of script that contains a wind-up, an action "
     "and a reaction is three or four shots, not one.\n"
+)
+
+_DENSITY_BEATS = (
+    "Return between 1 and {max_shots} shots, in reading order.\n"
+    "⚠ THIS SCRIPT IS ALREADY BROKEN INTO BEATS — ONE LINE IS ONE SHOT. It "
+    "was written for this breakdown: a 'SCENE n.' heading starts a scene, and "
+    "every line under it is ONE beat, already sized to be ONE panel.\n"
+    "- START FROM ONE SHOT PER ACTION LINE, and depart from that only where a "
+    "line plainly holds two different pictures. Never re-split a line that is "
+    "already a single beat.\n"
+    "- Three lines circling one thing — a face, the light on that face, the "
+    "flowers in front of it — are ONE shot, not three. That exact case came "
+    "back as three almost identical close-ups of one idol.\n"
+    "- 'A hand picks up the brush and paints the eye' is ONE shot. The word "
+    "'and' is not a cut.\n"
+)
+
+# ⚠ A LINE OF SPEECH IS NOT A PICTURE, and nothing in the prompt used to say
+# so. "NARRATOR (V.O.): The spirit of Ganesh Utsav awakens." became scene 1's
+# fourth panel, with a fourth drawing of the same idol invented to carry it.
+# Reported. The shape the board already handles correctly is the line living in
+# a neighbouring shot's `dialogue`, which is where this sends it.
+_SPEECH_RULE = (
+    "⚠ A LINE OF SPEECH IS NOT A SHOT. Lines written as 'NAME: …' or "
+    "'NAME (V.O.): …' are what the audience HEARS. They never get a panel of "
+    "their own.\n"
+    "- Put such a line in the `dialogue` of the shot it plays OVER — the "
+    "action shot it belongs to, normally the one immediately before or after "
+    "it in the script. A voice-over runs over a picture that is already on "
+    "screen; it does not stop the film for a portrait of the speaker.\n"
+    # ⚠ THE FIRST LIVE RUN OF THIS RULE CAUGHT ITSELF OUT. The end card came
+    # back as a real shot — correct, an end card IS a shot — but its
+    # description read "…with the text 'Celebrate Ganesh Chaturthi. May His
+    # blessings light your path.' superimposed on screen." The description IS
+    # the image prompt, and `gemini_client._SINGLE_FRAME_RULE` tells the image
+    # model in the same breath: "No text, captions, speech bubbles, borders or
+    # watermarks." Asking for both gets a frame of misspelt gibberish — image
+    # models cannot letter. So the panel may exist; its WORDS may not be drawn.
+    "- ⚠ 'ON SCREEN:' TEXT IS DIFFERENT, AND IT IS NEVER WRITTEN INTO THE "
+    "PICTURE. An end card or a title card MAY be a shot of its own — that is a "
+    "real shot of the film. But `description` is handed straight to an image "
+    "model that is told to draw NO text, NO captions and NO lettering, so "
+    "describe only what is PHOTOGRAPHED there ('a wide of the room, the idol "
+    "glowing on the altar') and NEVER quote the words, never say "
+    "'superimposed', 'with the text', 'the words appear' or 'a caption "
+    "reads'.\n"
+    "- The words themselves go in `dialogue`, as one entry with the character "
+    "'ON SCREEN' and the line exactly as the script wrote it. That is the one "
+    "field the board, the PDF and the animatic read and no image prompt ever "
+    "does, so the text survives to the screen without an image model trying to "
+    "spell it.\n"
+    "- A (V.O.) speaker is BY DEFINITION not in frame. Never put them in that "
+    "shot's `characters`, and never invent a picture of them, a narrator "
+    "figure or a microphone.\n"
+    "- NEVER REPEAT A PICTURE IN ORDER TO CARRY A LINE. If the only thing you "
+    "can think of to draw for a line is a shot you have already drawn, that is "
+    "the proof the line belongs to an existing shot — attach it there.\n"
+    "- The title line, 'LOGLINE:' and the CAST block at the top of the script "
+    "are not shots either. They describe the film; they are not in it.\n"
+)
+
+_PROMPT_TEMPLATE = (
+    "Break the following script into a storyboard shot list, a short cast list, "
+    "AND an asset list.\n"
+    "{density}"
+    "{budget}"
+    "{speech}"
     "For each shot provide:\n"
     "  - scene_number: which SCENE this shot belongs to, starting at 1. A scene is "
     "one continuous piece of action in ONE place at ONE time. Start a NEW scene "
@@ -324,6 +447,11 @@ _PROMPT_TEMPLATE = (
     "  - shot_number: this shot's position WITHIN its scene, restarting at 1 in "
     "each new scene (so scene 2's first shot is shot_number 1)\n"
     "  - description: one vivid sentence describing what we SEE in this panel. "
+    "⚠ THIS SENTENCE IS THE IMAGE PROMPT — it is handed to an image model that "
+    "is separately told to draw no text, no captions and no lettering of any "
+    "kind. So it describes the PICTURE and nothing else: never any words to be "
+    "written into the frame, no 'with the text …', no 'superimposed', no "
+    "caption, no title, no subtitle, no logo wording. "
     "Write it as the NEXT shot of a film that is already running, and open it at "
     "the START of this shot's action (see the rule above). "
     "Name the characters by their cast names every time — never 'he', 'the "
@@ -372,7 +500,9 @@ _PROMPT_TEMPLATE = (
     "EMPTY list whenever nothing is spoken in this shot — a silent establishing "
     "shot, an action beat, a reaction. NEVER invent dialogue the script does not "
     "contain, never turn narration or a description of the scene into a spoken "
-    "line, and never repeat the same line in two shots.\n"
+    "line, and never repeat the same line in two shots. A '(V.O.)' or "
+    "'NAME:' line from the script belongs HERE, in the shot it plays over — "
+    "never as a shot of its own.\n"
     "  - assets: list of asset names visible in the shot — the key recurring "
     "props/objects AND the background/location — using the SAME names as the "
     "asset list below (empty if none)\n"
@@ -443,6 +573,123 @@ _PROMPT_TEMPLATE = (
     "SAME asset name in both the shots' `assets` and this list.\n\n"
     "SCRIPT:\n{script}"
 )
+
+
+# ---------------------------------------------------------------------------
+# WHAT SHAPE IS THIS SCRIPT IN?
+# ---------------------------------------------------------------------------
+# ⚠ THE ANSWER DECIDES HOW FINELY THE BREAKDOWN CUTS, so it is worked out here
+# rather than guessed by the model. Two kinds of text arrive at this module and
+# they need opposite treatment:
+#
+#   PROSE — the user pasted a story. Nothing has been divided into beats, so the
+#   breakdown must do it: wind-up, action, impact, reaction.
+#
+#   BEATS — the text came out of `plan_agent.script_to_text()`, which writes ONE
+#   BEAT PER LINE under `SCENE n.` headings precisely so a shot's quote can land
+#   on exactly one panel. Cutting that again is the duplicate-panel bug.
+#
+# The test is the fingerprint `script_to_text` leaves, not a guess about tone: a
+# `SCENE n.` heading plus one of the other blocks it writes (CAST, LOGLINE:,
+# CALL TO ACTION:, ON SCREEN:, a `(V.O.):` line). A pasted screenplay that
+# happens to have scene headings but none of those falls back to the SHAPE
+# itself — short, mostly one-sentence lines — and to prose if it is neither,
+# which is the safe answer because prose is what this module always did.
+_SCENE_HEADING_RE = re.compile(r"^\s*SCENE\s+\d+\s*[.:]", re.M | re.I)
+_SCRIPT_MARKER_RE = re.compile(
+    r"^\s*(?:CAST\s*$|LOGLINE:|CALL TO ACTION:|ON SCREEN:)|\(V\.O\.\)\s*:",
+    re.M | re.I,
+)
+# A beat is one thing that happens. Longer than this, or carrying more than one
+# full stop, and the line is a paragraph however it was headed.
+_BEAT_LINE_CHARS = 200
+_BEAT_LINE_SHARE = 0.7
+
+
+def _is_beat_script(script_text: str) -> bool:
+    """True when the script is already written one beat per line."""
+    text = script_text or ""
+    if not _SCENE_HEADING_RE.search(text):
+        return False
+    if _SCRIPT_MARKER_RE.search(text):
+        return True
+
+    body = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not _SCENE_HEADING_RE.match(line)
+    ]
+    if len(body) < 3:
+        return False
+    short = sum(
+        1
+        for line in body
+        if len(line) <= _BEAT_LINE_CHARS
+        and (line.count(".") + line.count("!") + line.count("?")) <= 1
+    )
+    return short / len(body) >= _BEAT_LINE_SHARE
+
+
+# ---------------------------------------------------------------------------
+# HOW LONG THE FILM IS MEANT TO BE
+# ---------------------------------------------------------------------------
+# ⚠ THE BREAKDOWN USED TO BE THE ONE STAGE THAT DIDN'T KNOW. The user approves a
+# 30-second concept, `script_concept.concept_seconds()` reads 30 off it and
+# `plan_agent.write_script()` is told to write 30 seconds of it — and then the
+# number stopped there. A board came back 29 shots long and 1m 04s, more than
+# twice the film that was approved. Reported. Nothing downstream can repair
+# that: every extra panel is a drawing that was paid for.
+#
+# A shot holds the screen two to three seconds on average, so the length IS a
+# shot count, and both are stated — a total to add up to, and a range to stay
+# inside. The prompt's own ceiling is pulled down to match, with slack, so the
+# model is never asked to choose between the budget and the end of the story.
+_AVERAGE_SHOT_SECONDS = 2.5
+_MIN_TARGET_SECONDS = 5
+_MAX_TARGET_SECONDS = 3600
+
+
+def _duration_budget(seconds) -> tuple[str, int | None]:
+    """(prompt block, shot ceiling) for a film of known length; ("", None) if not.
+
+    ⚠ THE CEILING IS PROMPT TEXT, NOT A TRUNCATION. Cutting the returned list to
+    it would delete the END of the story, which is the one failure worse than a
+    board that runs long — see `_coerce_shots`. So the budget is argued, and the
+    model is told in as many words to MERGE rather than trim.
+    """
+    try:
+        secs = int(seconds or 0)
+    except (TypeError, ValueError):
+        return "", None
+    if secs <= 0:
+        return "", None
+    secs = max(_MIN_TARGET_SECONDS, min(secs, _MAX_TARGET_SECONDS))
+
+    low = max(1, round(secs * 0.9))
+    high = round(secs * 1.1)
+    target = max(2, round(secs / _AVERAGE_SHOT_SECONDS))
+    lo_shots = max(2, round(secs / 4))
+    hi_shots = max(lo_shots + 1, round(secs / 2))
+    ceiling = max(hi_shots + 2, round(secs / 1.5))
+
+    block = (
+        f"\u26a0 THIS FILM IS {secs} SECONDS LONG. That is the length the user "
+        f"approved, and it is a hard target rather than a suggestion:\n"
+        f"- Your shots' `duration_seconds` must ADD UP to about {secs} seconds "
+        f"\u2014 between {low} and {high}. Add them up yourself before you answer, "
+        f"and if the total is wrong, fix the list.\n"
+        f"- At the two to three seconds an average shot holds the screen, that is "
+        f"roughly {target} shots for the WHOLE script. Stay inside "
+        f"{lo_shots}\u2013{hi_shots} shots. A {secs}-second film with {hi_shots * 2} "
+        f"shots is not this film \u2014 it is this film cut into pieces too small to "
+        f"read.\n"
+        f"- IF YOU ARE RUNNING LONG, MERGE \u2014 NEVER TRIM. Every part of the "
+        f"script must still be on the board, the ending included. Running long "
+        f"means you split moments that did not need splitting, so join them back "
+        f"up.\n"
+    )
+    return block, ceiling
+
 
 
 def _breakdown_schema() -> types.Schema:
@@ -1208,6 +1455,8 @@ def break_down_script(
     max_shots: int = MAX_SHOTS,
     genre: str | None = None,
     brand_name: str | None = None,
+    seconds: int | None = None,
+    beats: bool | None = None,
 ) -> dict:
     """Break a raw script into a storyboard shot list + a cast list.
 
@@ -1216,6 +1465,17 @@ def break_down_script(
         provider: "vertex" or "gemini". Defaults to TEXT_PROVIDER env (or "vertex").
         max_shots: Upper bound on the number of shots to return.
         genre: Optional genre — shapes the tone / pacing of the breakdown.
+        brand_name: The product's real name, so a writer's "[Your App Name]"
+            never survives into a shot description.
+        seconds: HOW LONG THE FINISHED FILM IS MEANT TO BE. The number the
+            user approved on the concept card. Without it the breakdown has no
+            idea whether it is boarding a 15-second ad or a 3-minute short, and
+            a 30-second concept came back as a 1m 04s, 29-shot board. Pass it
+            whenever it is known; None means "no target", which is honest for a
+            script the user simply pasted.
+        beats: Whether the script is ALREADY written one beat per line. None
+            (the default) works it out with `_is_beat_script`; pass True/False
+            only where the caller knows better than the fingerprint.
 
     Returns:
         {"shots": [{scene_number, shot_number, description, characters[],
@@ -1261,7 +1521,29 @@ def break_down_script(
     client = get_client(provider)
     model_id = _model_id(provider)
     capped = max(1, min(int(max_shots or MAX_SHOTS), MAX_SHOTS))
-    prompt = _PROMPT_TEMPLATE.format(max_shots=capped, script=text)
+
+    # ⚠ TWO DECISIONS BEFORE THE PROMPT IS BUILT, AND THEY ARE THE SAME ONE:
+    # how finely to cut. A script that is already one beat per line must not be
+    # cut again, and a film with a known length has a shot count it cannot
+    # exceed. Together they are what stops a 30-second concept coming back as
+    # 29 panels, a third of them the same picture.
+    beat_script = _is_beat_script(text) if beats is None else bool(beats)
+    budget, ceiling = _duration_budget(seconds)
+    if ceiling:
+        capped = max(1, min(capped, ceiling))
+    logger.info(
+        "[breakdown] script reads as %s; target %s, ceiling %d shots.",
+        "BEATS (one line = one shot)" if beat_script else "prose",
+        f"{int(seconds)}s" if seconds else "none given",
+        capped,
+    )
+
+    density = (_DENSITY_BEATS if beat_script else _DENSITY_PROSE).format(
+        max_shots=capped
+    )
+    prompt = _PROMPT_TEMPLATE.format(
+        density=density, budget=budget, speech=_SPEECH_RULE, script=text
+    )
     if genre and genre.strip():
         prompt = (
             f"Genre: {genre.strip()}. Shape the tone, pacing and shot choices to "
@@ -1293,7 +1575,7 @@ def break_down_script(
                 model=model_id,
                 contents=[prompt],
                 config=types.GenerateContentConfig(
-                    system_instruction=_SYSTEM_INSTRUCTION,
+                    system_instruction=_system_instruction(beat_script),
                     response_mime_type="application/json",
                     response_schema=_breakdown_schema(),
                     **_sampling_kwargs(),

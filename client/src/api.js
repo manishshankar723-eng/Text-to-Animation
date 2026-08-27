@@ -933,9 +933,14 @@ export function discardStoryboardDraft(jobId) {
 // `brand` is sent for its NAME only — the breakdown is text, and the name is
 // what stops a writer's "[Your App Name]" being copied into a shot description
 // and then burnt into the finished video's captions, which is what happened.
+// `seconds` is the runtime the user approved on the concept card, and it is
+// the one thing the breakdown used to be told nothing about: the concept knew
+// 30, the script writer was told 30, and the breakdown — knowing no target —
+// boarded those words as 29 shots and 1m 04s. Omitted for a pasted script,
+// where nobody has agreed a length.
 export function breakdownScript(
   script,
-  { style, aspectRatio, genre, brand, provider, title } = {}
+  { style, aspectRatio, genre, brand, provider, title, seconds } = {}
 ) {
   return request("/storyboards/breakdown", {
     method: "POST",
@@ -947,6 +952,7 @@ export function breakdownScript(
       brand: brand || null,
       provider,
       title,
+      seconds: seconds || null,
     },
   });
 }

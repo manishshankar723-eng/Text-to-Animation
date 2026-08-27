@@ -306,7 +306,15 @@ check("…scenes can be added and removed, because they ARE the panels",
       "＋ Add a scene" in ui and "key_scenes: scenes.filter(" in ui)
 check("approving writes the script FIRST and breaks down that text",
       "api.conceptToScript(concept" in ui
-      and "startBreakdown(res.script)" in ui)
+      and "startBreakdown(res.script, res.seconds)" in ui)
+check("⚠ …AND THE APPROVED LENGTH GOES WITH IT. `concept_seconds()` reads 30 "
+      "off the card and the writer is told to write 30 seconds of words — and "
+      "the breakdown, told no target, boarded them as 29 shots and 1m 04s. "
+      "Every extra panel is a drawing that was paid for",
+      "startBreakdown(res.script, res.seconds)" in ui
+      and "seconds," in ui.split("api.breakdownScript(text, {")[1].split("})")[0]
+      and "seconds: seconds || null" in api
+      and "seconds=body.seconds" in read("server", "main.py"))
 check("⚠ …and the user's own words stay in the box, not overwritten by the "
       "script we generated from them",
       "THE BOX KEEPS THE USER'S OWN WORDS" in ui)
@@ -314,11 +322,56 @@ check("the approved title names the board unless the user typed one",
       "if (res.title && !title.trim()) setTitle(res.title);" in ui)
 check("an emptied concept cannot be approved",
       "function conceptReady()" in ui and "disabled={!conceptReady()}" in ui)
-check("the long write wears the same ring as the breakdown, not a new spinner",
-      "SCRIPT_STEPS" in ui and 'title="Writing your script"' in ui)
+check("the long write wears the same ring as the breakdown, not a new spinner "
+      "— and since the third round of reports it is literally the SAME ring, "
+      "one element with its words swapping under it",
+      "SCRIPT_STEPS" in ui
+      and 'title={writing ? "Writing your script" : undefined}' in ui
+      and "steps={writing ? SCRIPT_STEPS : undefined}" in ui)
 check("…and that ring is the existing component, parameterised",
       "export const SCRIPT_STEPS" in read(
           "client", "src", "components", "BreakdownProgress.jsx"))
+
+# ---------------------------------------------------------------------------
+# \u26a0 ONE BAR FOR THE WHOLE WAIT, AND IT NEVER STOPS MOVING.
+#
+# Reported mid-test: "progress bar ruka hua hai … ye pehle complete ho gaya, fir
+# kuch time pe open ho — jaise hi 100% ho, mera next page khulna chahiye."
+#
+# Two faults wearing one complaint:
+#   1. IT FROZE. The fill was a flat 6.5%/sec to 96, a crawl to 99, and then a
+#      dead stop. A 45-second breakdown left a motionless "99%" on screen for
+#      half a minute, and 99% does not read as "working" — it reads as stuck.
+#   2. IT FINISHED TWICE. Approving runs write_script() AND THEN the breakdown,
+#      and each drove its own ring 0\u2192100. The user watched a bar complete and
+#      then watched a second one start from zero.
+bp = read("client", "src", "components", "BreakdownProgress.jsx")
+
+check("⚠ ONE RING, MOUNTED ONCE, ACROSS BOTH CALLS. Two elements or two "
+      "`key`s are two instances, and the second starts its own climb from "
+      "zero — reported twice over: a bar finishing and a new one starting, "
+      "then 'kabhi fast kabhi slow' when they were given half the bar each",
+      'key="script"' not in ui and 'key="breakdown"' not in ui
+      and "floor=" not in ui and "ceiling=" not in ui
+      and "SCRIPT_PHASE_END" not in bp)
+check("…and a call that is NOT the last hands off WHERE IT STANDS, so there is "
+      "no sprint to a phase ceiling and no seam to see",
+      "final={!writing}" in ui
+      and "!finalRef.current && !firedRef.current" in bp)
+check("⚠ the fill DECELERATES instead of hitting a wall — the rate is set by "
+      "the distance still to go, so it is still creeping a minute in",
+      "APPROACH_SECONDS" in bp
+      and "(SOFT_TARGET - p) / APPROACH_SECONDS" in bp
+      and "SOFT_CAP" not in bp and "HARD_CAP" not in bp)
+check("…and it never claims to be finished before the work is",
+      "SOFT_TARGET = 96" in bp and "Math.min(SOFT_TARGET, p +" in bp)
+check("⚠ THE RING PAINTS 100 BEFORE IT HANDS OVER. Firing on the frame the "
+      "number lands means React never renders it — reported as 'laga 100 gaya "
+      "hi nahi aur open ho gaya'",
+      "const SHOW_100_MS = 220;" in bp
+      and "setTimeout(() => onDoneRef.current?.(), SHOW_100_MS)" in bp)
+check("the finish is one fixed sweep from wherever it is, worked out once",
+      "finishRate.current === null" in bp and "FINISH_SECONDS" in bp)
 check("a new storyboard starts with no concept",
       "setConcept(null);" in ui and 'setConceptSource("");' in ui)
 check("the screen says why it is asking",

@@ -275,7 +275,19 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **THE REVIEW STEP IS REACHABLE AT LAST, AND THE FIRST THING THE USER TRIED THERE WAS BROKEN TOO.** A real board came through — 29 shots, ≈1m 4s, world card 6/6, hook-first script — but Ctrl+A in the script box selected the ENTIRE page, because `ScriptPanel` is a read-only `<ol>` and not a `<textarea>`. Added a **Copy button** (PlanScriptModal's `copy()` verbatim; ⚠ it is inside a `<summary>` so it must stop the click reaching it) and scoped Ctrl+A to the box via `tabIndex={-1}`. See the Work Log.
+**Last updated:** 2026-08-27 — **THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR.** `.cast-desc` was a fixed 76px with its own scrollbar, so every cast and prop description was clipped mid-sentence — ⚠ **on the very text the character is DRAWN from**. Both steps use `GrowTextarea` now. **And the cast step never said who deserved a reference**: `ANANYA` in most of the film and `RAJESH` in one shot were offered the same button at the same price — the second time that exact waste has been reported. ⚠ **Guessing "hands only" from the wording would be a guess; the shot count is a FACT**, already known where the cast list is built, and it answers the same question — so each card now carries `1 shot` (warn colour) or `7 shots`, and skipping becomes an informed choice. The count lower-cases before de-duplicating, so one shot naming "Ananya" and "ANANYA" is one appearance. ⚠ Separately: `tests/plan_script_check.py` fails with **403 on POST /plans for a new account** — confirmed NOT ours by running it on a stashed clean tree, and nobody has looked at it. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE RING, ROUND THREE: MY OWN FIX MADE IT WORSE.** Giving each chained call its own SLICE of the bar (0-50, 50-100) stopped the restart and created two faults — a ring approaching 50 crawls at half the speed of one approaching 100, and each slice ENDED with a half-second sprint to its own ceiling, so the motion was slow-jump-slow-jump (*"kabhi fast kabhi slow"*). Worse, the sprint handed off on the frame it touched 100, before React painted it (*"laga 100 gaya hi nahi"*) — I had removed the 300ms hold the round before, on the user's own instruction, without noticing it was the only thing making 100 renderable. ⚠ **Both asks were right**: the complaint then was a pause after a THIRTY-SECOND FREEZE; with the freeze gone, a fifth of a second is the completion, not a wait. Now ONE element mounted once, one continuous curve, `final={!writing}` so a non-final call hands off WHERE IT STANDS with no sprint. Simulated: largest single-frame movement while waiting, **1%**. **Also: the unfinished board is now on HOME** — its own strip above Recent work (⚠ not IN it: a draft has no panels and is not a board), resuming in one click via an `autoResumeDraft` flag consumed when the draft ARRIVES, not on mount. See the Work Log.
+
+**Previously:** 2026-08-27 — ✅ **B1-B4 RAN LIVE AND ALL FOUR HELD: 29 shots / 1m 04s BECAME 9 shots / EXACTLY 30s.** Chip reads `≈ 30s of 30s` and stays gold. Four separate multi-line runs each merged to ONE shot — including *"hands hold brush"* + *"paints detail"*, the exact pair that had been two panels of one hand; four voice-over lines each attached to a shot that already existed, none given a panel; every prompt box rendered whole. ⚠ **And the live run caught `_SPEECH_RULE` out (B7):** the end card's description came back quoting the words to superimpose, while `gemini_client._SINGLE_FRAME_RULE` forbids the image model ALL lettering — a frame of gibberish, paid for. My first rule was also too absolute: an end card IS a real shot, so the cases are now separated — the card may be a panel, its WORDS go to `dialogue` under `ON SCREEN` and never into the description. ⚠ A prompt fix does not repair the board already on screen. B5, B6 and everything downstream of the review step are still unverified. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE PROGRESS RING FROZE AT 99%, AND THEN FINISHED TWICE.** One complaint, two faults. (1) The fill was flat to a hard cap of 99 and then **stopped dead** — a 45-second breakdown left a motionless "99%" on screen for half a minute, and ⚠ **99% is the worst number to park on**: it reads as finished-and-stuck, not working. Now an exponential approach — quick off the mark, decelerating for ever, still moving two minutes in. (2) Approve runs `write_script()` **and then** the breakdown, and each drove its OWN ring 0→100, so the user watched a bar finish and a second one start from zero. New `floor`/`ceiling` props make it one bar: script 0-50%, breakdown 50-100%, reaching 100 exactly once. The 300ms hold at the top is gone — it hands off on the same frame. ⚠ **The 50% mark is the one REAL progress signal this wait has** (the script call actually returning); the rest is an estimate and is drawn like one. Fill curve and finish duration verified by simulating the rAF loop. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE WORKFLOW KEPT DRAGGING THE USER BACK INTO A BOARD THEY HAD WALKED OUT OF.** The storyboard-draft resume effect called `setStep("review")` on EVERY mount, and switching workflows unmounts this component — so leaving the concept card, visiting Plan & Script and coming back re-opened a 29-shot board from an earlier session. ⚠ **A first-mount-wins flag would NOT have fixed it**: StrictMode mounts twice in development, so the flag is spent by a mount nobody saw and the built app behaves differently from `npm run dev`. The draft is now **offered**, never taken — a banner on the form carrying its SHOT COUNT (which is what makes a stale board recognisable before it is opened), with Resume and a Discard that asks first, hidden the moment this session has shots of its own. ⚠ **The same episode proved B1-B4 have still never run** — that 29-shot board predates them; a board built through the new path reads `≈ 30s of 30s`. Also found and NOT fixed: the user typed "virl", one letter short of "viral", so the hook-first rule never fired — a decision is pending on how to make that visible. See the Work Log.
+
+**Previously:** 2026-08-27 — **ALL FOUR OPEN BUGS FIXED, AND THREE OF THEM WERE THE SAME BUG.** The breakdown did not know WHAT it was reading or HOW LONG the film was meant to be. `_is_beat_script()` now tells it which: a script from `write_script()` gets *one line is one shot, merge repeats*, pasted prose keeps the old *split into beats*, and the system prompt swaps its half of the rule with it. `seconds` runs the whole way from the concept card into `break_down_script()` and becomes a total to add up to plus a shot range — ⚠ **argued, not clamped**, because truncating to a budget deletes the END of the story, so the model is told to MERGE and the review chip goes amber if it did not. `_SPEECH_RULE` stops a `(V.O.)` line getting a panel of its own and says where it goes instead. And the "Image prompt" box grows to its text (`GrowTextarea`), so the box you must EDIT is no longer the only clipped one on the card. ⚠ **B1-B3 are PROMPT changes and a prompt is only fixed when a live run says so.** `tests/shot_density_check.py` is new. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE REVIEW STEP IS REACHABLE AT LAST, AND THE FIRST THING THE USER TRIED THERE WAS BROKEN TOO.** A real board came through — 29 shots, ≈1m 4s, world card 6/6, hook-first script — but Ctrl+A in the script box selected the ENTIRE page, because `ScriptPanel` is a read-only `<ol>` and not a `<textarea>`. Added a **Copy button** (PlanScriptModal's `copy()` verbatim; ⚠ it is inside a `<summary>` so it must stop the click reaching it) and scoped Ctrl+A to the box via `tabIndex={-1}`. See the Work Log.
 
 **Previously:** 2026-08-27 — **THE APPROVE BUTTON LOOKED DEAD, AND THE SERVER WAS INNOCENT.** Approving a concept fires TWO waits back to back — `write_script()` then the breakdown — but the breakdown's ring is rendered by the `form` step, which the `concept` branch returns before ever reaching. So the script ring hit 100%, handed off, and the concept card re-rendered over a live API call. Guard widened to `writing || busy`; the second half now shows the form's own ring. ⚠ The chain itself was verified healthy offline (2813-char hook-first script → 22 shots, 10 cast, movement varying) — **but a 30s concept broke down to a 55s board**, because `break_down_script()` is never told the target. Left visible, not silently fixed. See the Work Log.
 
@@ -3438,7 +3450,417 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — "CTRL+A DABAYA AUR POORA PAGE SELECT HO GAYA" — THE SCRIPT BOX LOOKED LIKE A TEXT BOX AND BEHAVED LIKE A PARAGRAPH
+### 2026-08-27 (latest) — THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR
+
+First look at the cast step in a browser. Two things, one of them a repeat.
+
+**THE SAME CLIPPED BOX, ON TWO MORE STEPS.** `.cast-desc` was a fixed 76px with
+its own scrollbar, so every description was cut off mid-sentence — on screen:
+*"…a salwar kameez or lehenga choli). Her face is innocent and expressive. She"*.
+⚠ **This is the text the character is DRAWN from**, so it is the worst one on
+the page to hide. `StoryboardCast` and `StoryboardAssets` share the class and
+both had it; both now use `GrowTextarea`, and `.cast-desc` drops the drag handle
+and the inner scrollbar the way `.shot-desc` already had to.
+
+**AND THE STEP NEVER SAID WHO WAS WORTH A REFERENCE.** Reported twice now — a
+board carrying a full character sheet for an artisan who appears **only as a
+pair of hands in one close-up**, and this run had exactly the same shape:
+`ANANYA` in most of the film, `RAJESH` in one shot, both offered the same
+"Generate" button at the same price.
+
+⚠ **DETECTING "HANDS ONLY" FROM THE WORDING WOULD BE A GUESS.** The number of
+shots someone appears in is a FACT, it is already known where the cast list is
+built, and it answers the same question. `computeCast()` now counts it and the
+card shows `1 shot` / `7 shots` beside the name — the one-shot case in warn
+colour, because that is the one worth looking at twice before spending an image.
+The step is already optional; this is what makes skipping an informed choice
+rather than a shrug. The reasoning is in the tooltip, not the layout.
+
+⚠ **THE COUNT LOWER-CASES BEFORE IT DE-DUPLICATES.** A shot whose `characters`
+list holds both "Ananya" and "ANANYA" is one appearance, not two. Verified by
+running the function's logic in Node against a shot list shaped like the live
+one: ANANYA 7, RAJESH 1, with the doubled entry counted once.
+
+**Files:** `client/src/components/ScriptToStoryboard.jsx` (`computeCast`),
+`client/src/components/StoryboardCast.jsx`,
+`client/src/components/StoryboardAssets.jsx`,
+`client/src/styles/storyboard.css`.
+
+**Checked:** `tests/shot_density_check.py` gains 3 checks in section [5] and a
+new section [6] (4 checks). Nine suites pass, client builds.
+
+⚠ **`tests/plan_script_check.py` FAILS, AND IT IS NOT THIS WORK.** `POST /plans`
+answers **403** for a freshly registered test user — a feature-gate / tier state
+problem in the shared Mongo, nothing to do with any file touched here. Confirmed
+by stashing every change and running it on a clean tree: it fails there too.
+Someone should look at why the `workflow.plan-script` gate is refusing new
+accounts.
+
+### 2026-08-27 — THE RING, ROUND THREE: MY OWN FIX MADE IT WORSE ("kabhi fast kabhi slow … last mein laga 100 gaya hi nahi aur open ho gaya")
+
+⚠ **THE PREVIOUS ENTRY'S FIX INTRODUCED THIS.** Giving each of the two chained
+calls its own SLICE of the bar (0-50 for the script, 50-100 for the breakdown)
+stopped the bar restarting — and created two new faults that are obvious in
+hindsight:
+
+1. **A ring approaching 50 crawls at half the speed of one approaching 100.**
+   The rate is proportional to the distance left, and I halved the distance. The
+   climb opened at 2.1%/sec instead of 4.4%/sec.
+2. **Each slice ENDED with a half-second sprint to its own ceiling.** So the
+   motion was: slow crawl, sudden jump to 50, slow crawl, sudden jump to 100.
+   Exactly *"kabhi fast kabhi slow"*.
+3. **And 100 was never actually seen.** The sprint handed off on the same frame
+   `progress.current` reached 100 — before React had painted it. *"Laga 100 gaya
+   hi nahi aur open ho gaya."* That one is a straight bug: I had removed the
+   300ms hold the round before, on the user's own instruction, without noticing
+   it was the only thing making 100 renderable.
+
+**THE FIX: ONE RING, ONE CURVE, NO SLICES.**
+
+- `floor`/`ceiling`/`SCRIPT_PHASE_END` are gone. The ring always approaches
+  `SOFT_TARGET` (96) at `(96 - p) / 22` per second — one continuous
+  deceleration from 0 to the end of the whole wait.
+- ⚠ **ONE ELEMENT, MOUNTED ONCE.** Not two rings in a ternary, not two `key`s:
+  either is a second instance that starts its own climb from zero. It is now a
+  single `<BreakdownProgress>` whose props change under it.
+- `final={!writing}` carries the difference. A call that is **not** the last one
+  hands off **where it stands** — no sprint, no ceiling, no seam — and the next
+  call carries on from the same number. Only the breakdown earns the sweep.
+- `SHOW_100_MS = 220` puts the hold back, deliberately. ⚠ **The user asked for
+  the opposite last round and both asks were right**: the complaint then was a
+  300ms pause after a THIRTY-SECOND FREEZE at 99%. With the freeze gone, a fifth
+  of a second is the completion, not a wait.
+
+Simulated across script/breakdown pairs of 12+25s, 5+40s and 20+10s: hand-off at
+40%, 20% and 57% respectively, **largest single-frame movement while waiting: 1%**
+(i.e. no jumps at all), 100 reached 0.47s after the work lands.
+
+---
+
+**AND THE UNFINISHED BOARD IS NOW ON THE FIRST PAGE** — *"ye resume dikh raha
+hai magar recent mein kyun nahi dikh raha hai … user ko first page mein hi dikh
+jaaye."* Home gets its own strip above Recent work: **Continue where you left
+off — <title> · N shots · not yet drawn**, with **Resume →**.
+
+⚠ **IT IS DELIBERATELY NOT IN "RECENT WORK".** A draft has no panels, so it is
+not a board, and listing it beside finished ones would be a lie with a thumbnail
+on it — `storyboard_draft_check.py` section [3] has pinned "a DRAFT must NOT
+appear in the library" since the draft store was built. Its own strip says what
+it is instead.
+
+⚠ **AND IT RESUMES IN ONE CLICK, NOT TWO.** Landing on the workflow's front door
+with the same offer repeated as a banner would be a worse answer than no button.
+`App` holds a `resumeDraft` flag, `ScriptToStoryboard` takes it as
+`autoResumeDraft` and consumes it **when the draft arrives** rather than on
+mount — the fetch is usually still in flight when the workflow mounts, so firing
+on mount would land on an empty form. The flag is cleared on use, so navigating
+back later opens the form as normal.
+
+⚠ Home fetches this one itself rather than through `session_cache`: that cache is
+for the dashboard's LIST feeds and its own docstring says not to point anything
+else at it, and this record goes stale the instant the user resumes or discards.
+
+**Files:** `client/src/components/BreakdownProgress.jsx` (rewritten motion),
+`client/src/components/ScriptToStoryboard.jsx` (one ring; `autoResumeDraft`),
+`client/src/components/Home.jsx`, `client/src/App.jsx`,
+`client/src/styles/home.css`.
+
+**Checked:** 6 ring checks rewritten in `script_concept_check.py`, 8 new checks
+in `storyboard_draft_check.py` section [14]; that file's older assertion on
+`title="Writing your script"` was updated — the prop is a ternary now, which is
+the point. All ten suites pass, client builds, motion verified by running the
+rAF loop's maths in Node. ⚠ Not watched in a browser.
+
+### 2026-08-27 — ⚠ B1-B4 RAN LIVE AND ALL FOUR HELD. 29 SHOTS / 1m 04s BECAME 9 SHOTS / EXACTLY 30s
+
+The same brief, driven end to end in a browser for the first time since the
+fixes. `Cinematic · 9:16 · 9 shots · ≈ 30s of 30s`, chip gold. Evidence, because
+"it looks better" is not a result:
+
+**B1 — the re-splitting is gone, and the merges are the PROOF.** Every place the
+old board produced duplicates, this one produced one shot:
+
+| Script lines | Old behaviour | Now |
+|---|---|---|
+| 11-12 — camera pushes in / eyes glow | two panels | **Scene 1 Shot 1** |
+| 16-18 — closes eyes / clasps hands / serene face | three near-identical close-ups | **Scene 2 Shot 2** |
+| 22-23 — hands hold brush / paints detail | two panels of one hand | **Scene 3 Shot 1** |
+| 33-35 — light in eyes / lips curve / peace settles | three panels | **Scene 4 Shot 4** |
+
+The 22-23 row is the exact case reported in Hinglish — *"haath brush pakde"* and
+*"haath paint karta"* had been two shots. One now.
+
+**B2 — the runtime is not approximately right, it is exactly right.**
+4+3+4+4+4+3+2+4+2 = **30 seconds**, against a 30-second concept. The chip reads
+`≈ 30s of 30s` and stays gold. 9 shots, inside the 8-15 the budget asked for.
+
+**B3 — four voice-over lines, four attachments, zero invented panels.** Every
+`NARRATOR (V.O.)` line landed in the `dialogue` of a shot that already existed
+(Scene 2 Shot 2, Scene 3 Shot 1, Scene 4 Shot 1, Scene 4 Shot 4). The old board
+gave one of them a panel with a fourth drawing of the same idol.
+
+**B4 — the prompt boxes render whole**, four and five lines of them, no
+scrollbar.
+
+---
+
+**B7 — AND THE LIVE RUN CAUGHT `_SPEECH_RULE` OUT.** Scene 4 Shot 5 is the end
+card, and its description came back as:
+
+> "A wide shot of Ananya's room shows Ananya standing peacefully before the
+> glowing Ganesha idol on her altar, **with the text "Celebrate Ganesh
+> Chaturthi. May His blessings light your path." superimposed on screen.**"
+
+⚠ **`description` IS THE IMAGE PROMPT**, and `gemini_client._SINGLE_FRAME_RULE`
+tells the image model in the same breath: *"No text, captions, speech bubbles,
+borders or watermarks."* Asking for both is a frame of misspelt gibberish, drawn
+and paid for. Image models cannot letter.
+
+⚠ **AND MY FIRST RULE WAS TOO ABSOLUTE.** It lumped `ON SCREEN:` in with
+`NAME (V.O.):` and said neither *"gets a panel of their own"*. That is right for
+speech and wrong for a title card — **an end card IS a real shot of the film**.
+The two cases are now separated:
+
+- A spoken line never gets a panel; it plays over a picture.
+- An `ON SCREEN:` card MAY be a shot — but its `description` describes only what
+  is PHOTOGRAPHED, and never quotes the words, never says "superimposed", "with
+  the text", "the words appear" or "a caption reads". The words go to
+  `dialogue` under the character `ON SCREEN`, which is the one field the board,
+  the PDF and the animatic read and no image prompt ever does.
+
+The same warning is repeated on the `description` field itself, because that is
+where the model is actually making the choice.
+
+⚠ **THE BOARD ON SCREEN IS NOT RETROSPECTIVELY FIXED.** A prompt change only
+affects the NEXT breakdown. That one panel has to be edited by hand, or the
+breakdown re-run.
+
+**Files:** `script_breakdown.py` (`_SPEECH_RULE`, the `description` field).
+**Checked:** `tests/shot_density_check.py` gains 5 checks (one of which asserts
+the rule matches what `gemini_client` actually forbids); all nine suites pass.
+
+**Still open from this run, none of them new:** `RAJESH` appears only as a pair
+of hands and still gets a full cast reference (money, for a face nobody sees);
+the board's scene rows stretch every card to the tallest and leave a half-empty
+final row.
+
+### 2026-08-27 — THE PROGRESS RING FROZE AT 99%, AND THEN FINISHED TWICE ("progress bar ruka hua hai … jaise hi 100% ho, mera next page khulna chahiye")
+
+One complaint, two faults underneath it, both in `BreakdownProgress.jsx`.
+
+**1. IT FROZE.** The fill was a flat 6.5%/sec to `SOFT_CAP` 96, a 0.6%/sec crawl
+to `HARD_CAP` 99, and then **a dead stop**. A breakdown that takes 45 seconds
+left a motionless *"99%"* on screen for half a minute. ⚠ **And 99% is the worst
+number to park on** — it does not read as "working", it reads as *finished, and
+stuck*.
+
+Replaced with an **exponential approach**: the rate is proportional to the
+distance still to go, so the ring is quick off the mark and decelerates for ever
+without hitting a wall. Simulated: ~19% at 5s, 47% at 15s, 70% at 30s, 88% at
+60s, 93% at 90s. Still moving two minutes in, which the old one never was.
+
+**2. IT FINISHED TWICE.** Approving a concept runs `write_script()` **and then**
+the breakdown, and each drove **its own ring from 0 to 100**. So the user watched
+a bar complete — and then watched a second bar start again from zero. That is
+the literal complaint: *"progress bar pehle 100% ho jaye, fir kuch time pe open
+ho."*
+
+New `floor` / `ceiling` props make it ONE bar: the script phase owns **0-50%**
+(`SCRIPT_PHASE_END`), the breakdown **50-100%**. The number only ever climbs, and
+it reaches 100 exactly once — when the review step is ready. The two rings carry
+`key="script"` / `key="breakdown"` so phase two starts cleanly at its own floor
+instead of implicitly inheriting the first instance's state.
+
+**3. AND THE HANDOFF IS NOW IMMEDIATE.** `HOLD_AT_100_MS = 300` existed "so the
+eye can register 100%". Asked for explicitly, and rightly: *"jaise hi 100% ho, so
+mera next page khulna chahiye."* `onDone` now fires on the same frame the ring
+lands.
+
+⚠ **THE FINISH RATE IS WORKED OUT ONCE, NOT PER FRAME.** Recomputing
+`(ceiling - p) / FINISH_SECONDS` every frame is an exponential decay, and it
+dragged a fast call (ring at 19%) out to 1.6 seconds of watching a bar fill
+*after the work was already done* — the exact thing being complained about,
+reintroduced at the other end. Capturing the rate on the frame the work lands
+makes the finish a flat ~0.5s from anywhere. Verified by simulating the loop.
+
+⚠ **WHAT THIS RING STILL IS NOT.** The user asked for the bar to track the real
+work. The breakdown is ONE model call with no progress signal, so a true
+percentage does not exist and inventing one would be a lie with a number on it.
+What DID become real is the **midpoint**: the script call returning is a genuine
+event, and it is now the 50% mark. That is the only honest progress signal this
+wait has, and the bar now carries it.
+
+**Files:** `client/src/components/BreakdownProgress.jsx` (rewritten fill model,
+`floor`/`ceiling`/`SCRIPT_PHASE_END`, no hold),
+`client/src/components/ScriptToStoryboard.jsx` (both call sites).
+
+**Checked:** `tests/script_concept_check.py` gains 6 checks pinning all of it;
+`script_concept_check`, `script_intake_check`, `storyboard_draft_check`,
+`shot_density_check`, `shot_metadata_check`, `grounding_check`,
+`shot_infill_check`, `plan_script_check` and `board_look_check` all pass. Client
+builds. The fill curve and the finish duration were verified by running the rAF
+loop's maths in Node. ⚠ Not watched in a browser.
+
+### 2026-08-27 — THE WORKFLOW KEPT DRAGGING THE USER BACK INTO A BOARD THEY HAD WALKED OUT OF ("mai abhi aage nhi dawaya tha, mai back aaya tha aur Start over button bhi nhi dabaya")
+
+Mid-test, the user backed out of the concept card, went to Plan & Script, came
+back to Script to Storyboard — and landed on **"Review your shots"**, showing a
+**29-shot / 1m 04s board from an earlier session**. They had pressed neither
+Approve nor Start over.
+
+**THE CAUSE.** The storyboard-draft resume effect hydrated itself and called
+`setStep("review")` **on every mount**. Switching workflows UNMOUNTS this
+component (`App.jsx` swaps `content`), so coming back re-ran it. Right after a
+refresh — the case it was written for, where a paid breakdown must not be lost —
+and wrong every other time.
+
+⚠ **"ONLY AUTO-OPEN ON THE FIRST MOUNT" IS NOT THE FIX, and this is the part
+worth remembering.** React's StrictMode mounts every component twice in
+development, so any first-mount-wins flag is spent by a mount the user never
+saw — and `npm run dev` would then behave differently from the built app, which
+is the worst kind of bug to chase. `performance.timeOrigin`, `sessionStorage`
+and a mount counter all fail the same way.
+
+**THE FIX: OFFER IT, NEVER TAKE IT.** The workflow now always opens on its own
+front door, and the unfinished board waits at the top of it as a banner —
+`📋 Unfinished storyboard · Ganesh Chaturthi · 29 shots` — with **Resume** and
+**Discard**. Nothing is lost, which was the whole point of saving it, and nobody
+is moved somewhere they did not ask to go. Three details:
+
+- **The shot count is ON the banner.** That is what makes a STALE board
+  recognisable before it is opened — the reported confusion was not just being
+  moved, it was not knowing which board this was.
+- **It hides the moment this session has shots of its own** (`!shots.length`),
+  so it can never sit above work in progress.
+- ⚠ **Discard asks first.** The breakdown behind those shots was paid for and
+  there is no undo — same manners as Plan & Script's "load this script?".
+
+⚠ **AND WHAT THIS EPISODE ALSO PROVED: B1-B4 HAVE STILL NEVER RUN.** The board
+on screen was the OLD one — 29 shots, `≈ 1m 4s` with no `of 30s` beside it,
+scene 1 still three near-identical close-ups plus a V.O. panel. It was generated
+BEFORE the density/duration/speech fixes existed. Nothing about it says those
+fixes failed; they were simply never exercised.
+
+**Files:** `client/src/components/ScriptToStoryboard.jsx` (`draftOffer`,
+`resumeDraft()`, `discardDraftOffer()`, the banner),
+`client/src/styles/storyboard.css`.
+
+**Checked:** `tests/storyboard_draft_check.py` gains section [13] (8 checks)
+pinning the new rule; all 14 sections pass. Client builds. `shot_density_check`,
+`shot_metadata_check`, `script_concept_check`, `script_intake_check`,
+`grounding_check`, `shot_infill_check`, `plan_script_check` and
+`board_look_check` all still pass. ⚠ Not clicked in a browser.
+
+**Also found, not a code bug:** the user typed *"30 sec upcoming festive **virl**
+script"* — one letter short of "viral" — so `is_short_form()` did not fire and
+the concept came back chronological rather than hook-first. Verified by running
+the function on both spellings. ⚠ **The keyword list is exact-match and that is
+fragile**: one typo silently changed the SHAPE of the film with nothing on screen
+saying so. Two options were put to the user — fuzzy matching (risky: "sports" is
+one letter from "shorts") or showing the decision on the form as an editable
+toggle. **Recommended the toggle; awaiting the decision, nothing changed yet.**
+
+### 2026-08-27 — ALL FOUR OPEN BUGS FROM THE LIVE TEST, AND THEY REALLY WERE ONE BUG ("fix bugs karo to mai fir testing karunga")
+
+B1, B2 and B3 were three symptoms of a single missing fact: **the breakdown did
+not know what it was reading, or how long it was meant to be.** B4 is unrelated
+and small. Fixed together; nothing has been opened in a browser yet.
+
+**B1 — THE BREAKDOWN WAS STILL BEING TOLD TO SPLIT.** `_PROMPT_TEMPLATE` said
+*"Err on the side of MORE shots … three or four shots, not one."* That was
+correct while users pasted PROSE. Since Phase 3, most scripts arrive from
+`plan_agent.write_script()` → `script_to_text()`, which already writes **one beat
+per line** — so the model was breaking a beat that was already a beat. Scene 1's
+three lines (the idol's face / the golden light on it / the flowers before it)
+came back as three almost identical close-ups.
+
+⚠ **THE FIX IS NOT A STRONGER RULE, IT IS A DIFFERENT ONE.** `_is_beat_script()`
+reads the script's shape first, and the density instruction swaps to match:
+
+- **PROSE** (unchanged, still the fallback) — *split into beats, err on the side
+  of more shots*.
+- **BEATS** — *one line is one shot; never re-split a line that is already a
+  single beat; two lines describing the same picture are ONE shot; read your list
+  back for repeats and merge them.*
+
+The system prompt is now three pieces (`_SYSTEM_HEAD` + a density block +
+`_SYSTEM_TAIL`) so its own *"SPLIT AN ACTION INTO ITS BEATS"* swaps with the
+prompt's, or the two would contradict each other. ⚠ The rules that are about
+CONTINUITY rather than density — *nothing moves on its own*, *posture carries
+forward*, *background people are continuity too* — are in the tail and survive in
+both readings. `_SYSTEM_INSTRUCTION` still exists and still means the prose
+reading, because other checks read it.
+
+⚠ **THE DETECTOR IS A FINGERPRINT, NOT A VIBE.** It looks for what
+`script_to_text()` actually writes — a `SCENE n.` heading plus one of `CAST`,
+`LOGLINE:`, `CALL TO ACTION:`, `ON SCREEN:` or a `(V.O.):` line — and falls back
+to the SHAPE (short, mostly one-sentence lines) for a headed script without them.
+Anything else is prose, which is what this module always assumed, so a wrong
+verdict cannot under-cut a story nobody has divided yet.
+
+**B2 — THE FILM'S LENGTH NOW REACHES THE BREAKDOWN.** `concept_seconds()` read 30
+off the approved card and `write_script()` was told to write 30 seconds of words;
+the number then stopped dead. `break_down_script()` takes `seconds` and turns it
+into a budget the model is argued with: a total to add up to (±10%), a shot range
+(≈`seconds/4` to `seconds/2`), and a prompt ceiling pulled down to match — 20
+shots for a 30-second film, against the 29 that were actually drawn.
+
+⚠ **ARGUED, NOT CLAMPED.** Truncating the returned list to the budget would
+delete the END of the story, which is the one failure worse than a board that
+runs long — the same reasoning already on `MAX_SHOTS` in `_coerce_shots`. So the
+last line of the budget block is blunt: **if you are running long, MERGE, never
+trim.** And because a model can still ignore it, the review step's runtime chip
+now reads `≈ 1m 4s of 30s` and turns amber past a fifth over — the last look
+before panels are drawn and money is spent.
+
+⚠ The whole chain carries it or it is worth nothing: concept card →
+`ConceptScriptResponse.seconds` → `startBreakdown(text, seconds)` →
+`api.breakdownScript` → `ScriptBreakdownRequest.seconds` → `break_down_script`.
+A **pasted** script still passes nothing, because nobody has agreed a length for
+it, and inventing one would be the same class of mistake as the wrong `$`.
+
+**B3 — A LINE OF SPEECH IS NOT A PICTURE.** `NARRATOR (V.O.): The spirit of Ganesh
+Utsav awakens.` became scene 1's shot 4 with a fourth drawing of the same idol
+invented to carry it. Nothing in the prompt had ever said otherwise. `_SPEECH_RULE`
+now says it, and — more importantly — says **where the line goes instead**: into
+the `dialogue` of the shot it plays over, which is the shape the board, the PDF
+and the animatic already handle correctly. A `(V.O.)` speaker is by definition not
+in frame, so they are kept out of that shot's `characters` and no narrator figure
+is invented. ⚠ The sharpest line in it is the self-check: *if the only thing you
+can think of to draw for a line is a shot you have already drawn, that is the
+proof the line belongs to an existing shot.*
+
+**B4 — THE BOX THE USER EDITS WAS THE CLIPPED ONE.** The review card's "Image
+prompt" was a fixed 64px textarea with its own scrollbar, while the **read-only**
+"FROM YOUR SCRIPT" quote directly above it rendered in full. New `GrowTextarea`
+component sets the height from `scrollHeight` (+ the measured border, because
+`scrollHeight` alone is short by it and `overflow: hidden` then eats the last
+line), `height: auto` first so the box can shrink again. ⚠ **The sister of
+`GrowText` in `admin/fields.jsx`** and the maths is deliberately identical — what
+differs is the manners: the admin one commits on Enter because every caller there
+edits ONE line of copy, and a shot description is a paragraph.
+
+**Files:** `script_breakdown.py` (`_SYSTEM_HEAD` / `_SYS_DENSITY_PROSE` /
+`_SYS_DENSITY_BEATS` / `_SYSTEM_TAIL`, `_system_instruction()`, `_DENSITY_*`,
+`_SPEECH_RULE`, `_is_beat_script()`, `_duration_budget()`, `break_down_script()`),
+`server/schemas.py`, `server/main.py`, `client/src/api.js`,
+`client/src/components/ScriptToStoryboard.jsx`,
+`client/src/components/GrowTextarea.jsx` (new), `client/src/styles/storyboard.css`.
+
+**Checked:** new `tests/shot_density_check.py` (33 checks) passes; the client
+builds; `shot_metadata_check`, `storyboard_draft_check`, `grounding_check`,
+`shot_infill_check`, `script_concept_check`, `script_intake_check`,
+`shot_insert_check`, `plan_script_check`, `board_brand_check`, `board_look_check`,
+`board_market_check`, `director_timeout_check` and `key_pose_scope_check` all
+pass. ⚠ `script_concept_check` and `script_intake_check` each pinned the old
+`startBreakdown(text)` signature and were updated to pin the new one — the
+concept check now also asserts the approved length reaches the server.
+
+⚠ **NOT VERIFIED AGAINST THE REAL MODEL.** Every one of B1, B2 and B3 is a
+PROMPT change, and a prompt is only fixed when a live run says so. The next live
+test is the verification.
+
+### 2026-08-27 — "CTRL+A DABAYA AUR POORA PAGE SELECT HO GAYA" — THE SCRIPT BOX LOOKED LIKE A TEXT BOX AND BEHAVED LIKE A PARAGRAPH
 
 With the review step finally reachable (see the entry below), the user tried to
 copy their script out of it and could not. **Ctrl+A selected the whole review
@@ -21830,6 +22252,147 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+> ⚠ **START HERE. THE 2026-08-27 LIVE TEST OF SCRIPT → STORYBOARD IS NOW ALL
+> FIXED AND ALL UNVERIFIED.** The user drove the whole new intake flow in a
+> browser with a real brief (*"30 sec viral reel, Ganesh Chaturthi"*). Six faults
+> came out of it; **all six are now fixed in code and NOT ONE has been confirmed
+> in a browser.** The next job is a live run, not more building.
+
+### 🟠 THE NEXT THING TO DO: ONE LIVE RUN OF THE SAME BRIEF
+
+Paste *"30 sec viral reel, Ganesh Chaturthi"* and drive it to the review step.
+What to look at, in order:
+
+1. **The shot count and the runtime chip.** It should read something like
+   `≈ 30s of 30s` and stay gold. Amber means the board overshot by more than a
+   fifth and the model ignored its budget — report the number.
+2. **Scene 1.** Three script lines about the idol should be about ONE panel, not
+   three near-identical close-ups.
+3. **The `NARRATOR (V.O.)` line.** It should appear as *dialogue on an existing
+   shot*, with no panel of its own.
+4. **Any shot card's "Image prompt" box.** It should be as tall as its text,
+   with no scrollbar.
+5. **The two fixes from the last session that were never clicked**: the script
+   box's **Copy** button, and Ctrl+A inside it selecting only the script.
+
+✅ **AND THEY HAVE NOW RUN, AND THEY HELD.** Same brief, driven end to end in a
+browser: `9 shots · ≈ 30s of 30s`, chip gold, against the old `29 shots ·
+≈ 1m 4s`. Four separate three-line runs each merged to ONE shot; four voice-over
+lines each attached to a shot that already existed; every prompt box rendered
+whole. Runtime landed on exactly 30 seconds. See the Work Log for the line-by-line
+evidence.
+
+⚠ **WHAT IS STILL NOT VERIFIED**: B5's banner was seen and worked; **B6 was
+reported BROKEN and has since been rewritten a second time** (see the top Work
+Log entry — the slice-per-call design crawled, jumped, and never painted 100).
+Nothing has been GENERATED from this board yet — cast, assets, panels, PDF are
+all still unseen.
+
+### 🔴 NOT OURS, BUT BROKEN — `POST /plans` REFUSES NEW ACCOUNTS
+
+`tests/plan_script_check.py` fails at its first request: a freshly registered
+user gets **403** from `POST /plans`. ⚠ Confirmed **not** caused by any of this
+session's work — stashing every change and running it on a clean tree fails
+identically. Something in the `workflow.plan-script` gate or the tier store is
+refusing new accounts. Nobody has looked at it yet.
+
+⚠ **AND B7's FIX DOES NOT REPAIR THE BOARD ON SCREEN.** The user edited that
+panel by hand, correctly removing the quoted text from the image prompt — but
+put the words in `dialogue` under the speaker **ANANYA** rather than
+**ON SCREEN**. As it stands the CTA is a line the little girl SAYS, which is
+what the voiceover and the caption pass will both read it as.
+
+### 🟡 AWAITING A DECISION — the typo that changed the film's shape
+
+The user typed *"30 sec upcoming festive **virl** script of Ganesh chaturthi"*.
+One letter short of "viral", so `is_short_form()` did not fire and the concept
+came back chronological instead of hook-first — **correct behaviour for what was
+actually typed**, and verified by running the function on both spellings. But a
+single typo silently changed the SHAPE of the film with nothing on screen saying
+so. Two options were put to the user:
+
+- **(a) fuzzy keyword matching.** ⚠ Risky: "sports" is one letter from "shorts",
+  "vital" one from "viral" — a false trigger would be a new bug, and there is
+  always another spelling that slips through.
+- **(b) show the decision on the form** as a small, editable "Feed hook-first /
+  Normal film order" control. Nothing is guessed and nothing is hidden.
+
+**(b) was recommended. Do not build either until the user answers.**
+
+### ✅ FIXED, NOT YET SEEN IN A BROWSER
+
+- **B1 — one shot per script line.** `_is_beat_script()` now reads the script's
+  shape and the density rule swaps: a script written by `write_script()` gets
+  *one line is one shot, merge repeats*; pasted prose keeps the old *split into
+  beats*. The system prompt swaps its half of the rule too.
+- **B2 — the breakdown never knew the target length.** `seconds` runs the whole
+  way now: concept card → script writer → `break_down_script()`, where it becomes
+  a total to add up to and a shot range to sit in. ⚠ **Argued, not clamped** —
+  truncating to the budget would delete the END of the story, so the model is
+  told to MERGE rather than trim, and the review step's runtime chip turns amber
+  if it did not listen.
+- **B3 — a voiceover line got its own panel.** `_SPEECH_RULE` says a line of
+  speech is not a shot, and says where it goes instead: the `dialogue` of the
+  shot it plays over.
+- **B4 — the image-prompt box was clipped.** New `GrowTextarea` component sizes
+  itself to its text — sister of `GrowText` in `admin/fields.jsx`.
+- **B8 — the cast and props steps had B4's clipped box too**, on the very text
+  a character is DRAWN from. Both use `GrowTextarea` now. ⚠ **And the cast step
+  now says how many shots each face is in** (`1 shot` in warn colour, `7 shots`
+  plain) — reported twice as money wasted on a full sheet for an artisan seen
+  only as hands. The count is a fact; guessing "hands only" from the wording
+  would not be.
+- **B7 — `ON SCREEN:` text was written INTO the image prompt.** The end card's
+  description quoted the words to superimpose, while the image side forbids all
+  lettering — a frame of gibberish, paid for. ⚠ An end card is still allowed to
+  BE a shot; only its words may not be drawn. They go to `dialogue` under the
+  character `ON SCREEN`. Found by the first live run of B3's own rule.
+- **B6 — the progress ring froze at 99%, then finished twice.** The fill was
+  flat and stopped dead at a hard cap; and the two chained calls behind Approve
+  each drove their own ring 0→100. Now one exponential-approach bar that never
+  stops moving, split 0-50% (script) / 50-100% (breakdown), handing off on the
+  same frame it reaches 100. ⚠ The script call returning is a REAL event and is
+  now the 50% mark — the only honest progress signal this wait has.
+- **B5 — the workflow re-opened a board the user had walked out of.** The
+  draft-resume effect called `setStep("review")` on EVERY mount, and switching
+  workflows unmounts this component. Now the draft is **offered** as a banner on
+  the form (shot count on it, Resume / Discard) and never opens itself. ⚠ A
+  first-mount-wins flag would NOT have worked — StrictMode mounts twice in dev.
+- **Approve looked dead.** Guard widened to `if (writing || busy)`. **This one
+  the user did re-test: the review step now opens.**
+- **Ctrl+A in the script box selected the whole page.** Added a **Copy button**
+  (PlanScriptModal's `copy()` verbatim) and scoped Ctrl+A via `tabIndex={-1}`.
+  **NOT yet clicked in a browser.**
+
+Covered by `tests/shot_density_check.py`. Every other check that reads these
+files still passes; two of them pinned the old `startBreakdown(text)` signature
+and were updated.
+
+### 🟡 LOWER PRIORITY, DELIBERATE DECISIONS — do not "fix" without asking
+
+- **`story_direction` still reads chronologically** while `key_scenes` are
+  hook-first. Checked end-to-end: the written script came out hook-first anyway,
+  because `concept_to_brief` numbers the scenes and says *"in this order"*. Left
+  alone on purpose; it is cosmetic and the field is editable.
+- **No reorder on the board** — `board_agent` has only edit/insert/delete, so it
+  answers a reorder request with delete+add.
+- **Board "Ask AI" cannot change `movement` or `duration_seconds`** — same three
+  verbs.
+- **Upload still accepts PDF/DOCX in the file picker** but errors at generate
+  time.
+
+### 📍 NEVER SEEN IN A BROWSER AT ALL
+
+Cast step · Assets step · the finished board's slug line and runtime · the whole
+of **Ask AI** (`BoardAssistant`, the selection ring, the Apply path) · the PDF's
+new `_shot_line`.
+
+### 📦 UNCOMMITTED
+
+**Phases 4 and 5 are not committed.** Phases 1-3 went in as `9149052`.
+
+---
 
 **🎬 THE PRODUCTION BRIEF — ALL FOUR PHASES ARE BUILT (2026-08-27).
 ⚠ AND NOT ONE OF THEM HAS MET THE REAL MODELS YET.**

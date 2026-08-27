@@ -334,6 +334,17 @@ class ScriptBreakdownRequest(BaseModel):
     # Only used to name the DRAFT job this breakdown is saved as, so a resumed
     # draft isn't called "Storyboard". Falls back to the script's opening words.
     title: str | None = Field(None, description="Optional title for the saved draft.")
+    # ⚠ HOW LONG THE FILM IS MEANT TO BE — the number the user approved on the
+    # concept card, and the one thing the breakdown used to be told nothing
+    # about. `concept_seconds()` read 30 off the card and the script writer was
+    # given 30 seconds of words; the breakdown, knowing no target, boarded them
+    # as 29 shots and 1m 04s. Every extra panel is a drawing that was paid for.
+    # None is honest for a pasted script, where nobody has said a length.
+    seconds: int | None = Field(
+        None,
+        ge=0,
+        description="Target runtime in seconds — the length the user approved.",
+    )
 
 
 class DialogueLine(BaseModel):

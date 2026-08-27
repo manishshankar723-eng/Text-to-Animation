@@ -16,6 +16,7 @@ import StoryboardLibrary from "./StoryboardLibrary.jsx";
 import BreakdownProgress, { SCRIPT_STEPS } from "./BreakdownProgress.jsx";
 import PreflightModal from "./PreflightModal.jsx";
 import ScriptLineBox from "./ScriptLineBox.jsx";
+import GrowTextarea from "./GrowTextarea.jsx";
 import DialogueEditor from "./DialogueEditor.jsx";
 import WorldSetting from "./WorldSetting.jsx";
 import ScriptPanel from "./ScriptPanel.jsx";
@@ -79,7 +80,15 @@ export function formatRuntime(seconds) {
   return rest ? `${m}m ${rest}s` : `${m}m`;
 }
 
-export default function ScriptToStoryboard({ onOpenAnimatic }) {
+export default function ScriptToStoryboard({
+  onOpenAnimatic,
+  // ⚠ THE ONE CASE WHERE THE DRAFT OPENS ITSELF, and it is not a guess:
+  // the user clicked "Continue" on the dashboard, so opening the board is
+  // literally what they asked for. Every other arrival still lands on the
+  // form with the draft offered as a banner — see the note on `draftOffer`.
+  autoResumeDraft = false,
+  onDraftResumed,
+}) {
   // Open on the library so a returning user sees their saved storyboards first.
   const [step, setStep] = useState("library");
 
@@ -147,6 +156,11 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   // full on the review step and saved with the board, so the line numbers on the
   // shot cards can be looked up — including on a duplicated board.
   const [scriptText, setScriptText] = useState("");
+  // ⚠ THE RUNTIME THE USER APPROVED, carried from the concept card to the
+  // breakdown and then shown beside the real one on the review step. Null
+  // for a pasted script (nobody agreed a length) and for a resumed draft
+  // (the target is not stored on the draft), and the chip simply hides.
+  const [targetSeconds, setTargetSeconds] = useState(null);
   // Set true the moment the breakdown API call returns, so the progress ring
   // can race to 100% and THEN hand off to Review — instead of the old behaviour
   // where the call finishing froze the ring wherever it happened to be.
@@ -280,33 +294,35 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const draftHydrated = useRef(false);
   const reviewLastSaved = useRef("");
 
+  // ⚠ THE UNFINISHED BOARD IS OFFERED, NEVER TAKEN. This effect used to hydrate
+  // itself and `setStep("review")` on every mount. That is right after a
+  // refresh and wrong every other time: switching to Plan & Script and back
+  // UNMOUNTS this component, so returning to the workflow re-ran it and dropped
+  // the user straight into a review step they had deliberately walked out
+  // of — showing a board from an EARLIER session, with nothing on screen saying
+  // where it had come from. Reported exactly that way: *"mai abhi aage nhi
+  // dawaya tha, mai back aaya tha aur Start over button bhi nhi dabaya."*
+  //
+  // ⚠ AND "ONLY AUTO-OPEN ON THE FIRST MOUNT" IS NOT THE FIX. React's
+  // StrictMode mounts every component twice in development, so any
+  // first-mount-wins flag is spent by a mount the user never saw, and the
+  // behaviour would then differ between `npm run dev` and the built app — the
+  // worst kind of bug to chase.
+  //
+  // So this stops guessing how the user got here. The workflow always opens on
+  // its own front door, and the unfinished board waits at the top of it as a
+  // banner carrying its shot count. Nothing is lost, which was the whole point
+  // of saving it, and nobody is moved somewhere they did not ask to go.
+  const [draftOffer, setDraftOffer] = useState(null);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const d = await api.getStoryboardDraft();
-        if (cancelled || !d?.job_id) return;
-        // A resumed draft carries the settings it was reviewed with. Those beat
-        // the profile defaults — block that effect whichever order they finish
-        // in, or reopening a 9:16 draft could snap it back to your usual 16:9.
-        profileDefaultsApplied.current = true;
-        setDraftJobId(d.job_id);
-        // Restore only into an untouched session — never stamp on work the
-        // user has already started while this was in flight.
-        setShots((cur) => (cur.length ? cur : d.shots || []));
-        setCharacters((cur) => (cur.length ? cur : d.characters || []));
-        setAssets((cur) => (cur.length ? cur : d.assets || []));
-        setWorld((cur) => (Object.keys(cur).length ? cur : d.world || {}));
-        setScriptText((cur) => cur || d.script || "");
-        setScript((cur) => (cur.trim() ? cur : d.script || ""));
-        if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
-        if (d.style) setStyle(d.style);
-        if (d.aspect_ratio) setAspect(d.aspect_ratio);
-        if (d.genre) setGenre(d.genre);
-        if (d.character_refs) setCharacterRefs(d.character_refs);
-        if (d.updated_at) setReviewSavedAt(d.updated_at);
-        // Land them back on the work, not on the library.
-        if ((d.shots || []).length) setStep("review");
+        // A draft with no shots is nothing to offer — there is no board in it.
+        if (cancelled || !d?.job_id || !(d.shots || []).length) return;
+        setDraftOffer(d);
       } catch {
         // No draft, or the server is unreachable — start clean.
       } finally {
@@ -317,6 +333,60 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
       cancelled = true;
     };
   }, []);
+
+  // Home's "Continue" card sets the flag before this workflow mounts, so
+  // the draft is usually still in flight when it does. Waiting on the offer
+  // rather than firing on mount is what makes it land on the board.
+  useEffect(() => {
+    if (!autoResumeDraft || !draftOffer || shots.length) return;
+    resumeDraft();
+    onDraftResumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoResumeDraft, draftOffer]);
+
+  /** Take the offered draft: load all of it and reopen the review step. */
+  function resumeDraft() {
+    const d = draftOffer;
+    if (!d) return;
+    // A resumed draft carries the settings it was reviewed with. Those beat the
+    // profile defaults — block that effect whichever order they finish in, or
+    // reopening a 9:16 draft could snap it back to your usual 16:9.
+    profileDefaultsApplied.current = true;
+    setDraftJobId(d.job_id);
+    setShots(d.shots || []);
+    setCharacters(d.characters || []);
+    setAssets(d.assets || []);
+    setWorld(d.world || {});
+    setScriptText(d.script || "");
+    // ⚠ THE BRIEF BOX KEEPS WHATEVER THE USER HAS TYPED. Resuming a board must
+    // not overwrite a sentence they are part-way through writing.
+    setScript((cur) => (cur.trim() ? cur : d.script || ""));
+    if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
+    if (d.style) setStyle(d.style);
+    if (d.aspect_ratio) setAspect(d.aspect_ratio);
+    if (d.genre) setGenre(d.genre);
+    if (d.character_refs) setCharacterRefs(d.character_refs);
+    if (d.updated_at) setReviewSavedAt(d.updated_at);
+    setDraftOffer(null);
+    setStep("review");
+  }
+
+  /** ⚠ ASK BEFORE THROWING IT AWAY. The breakdown behind these shots has
+   *  already been paid for and there is no undo — same manners as Plan &
+   *  Script's "load this script?" confirm. */
+  function discardDraftOffer() {
+    const d = draftOffer;
+    if (!d) return;
+    const n = (d.shots || []).length;
+    const ok = window.confirm(
+      `Discard the unfinished storyboard (${n} shot${n === 1 ? "" : "s"})?\n\n` +
+        "This cannot be undone, and the breakdown that produced it has already " +
+        "been paid for."
+    );
+    if (!ok) return;
+    api.discardStoryboardDraft(d.job_id).catch(() => {});
+    setDraftOffer(null);
+  }
 
   useEffect(() => {
     if (!draftHydrated.current || !draftJobId) return;
@@ -719,17 +789,29 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     // ⚠ THE BOX KEEPS THE USER'S OWN WORDS. The written script is what the
     // board is built from and what the review step shows; overwriting their
     // brief with it would throw away the thing they can edit and re-run.
-    startBreakdown(res.script);
+    //
+    // ⚠ AND THE LENGTH TRAVELS WITH IT. `res.seconds` is what the concept
+    // card said and what the script was written to; the breakdown used to be
+    // the one stage that never heard the number, and boarded a 30-second
+    // film as 29 shots and 1m 04s.
+    startBreakdown(res.script, res.seconds);
   }
 
-  /** Break `text` into shots and move to the review step. */
-  async function startBreakdown(text) {
+  /** Break `text` into shots and move to the review step.
+   *
+   *  `seconds` is the approved runtime, when there is one. A script that was
+   *  pasted rather than written from a concept has no agreed length, and
+   *  passing nothing is the honest answer — the breakdown then boards it
+   *  without a duration budget, exactly as it always did.
+   */
+  async function startBreakdown(text, seconds = null) {
     if (busy) return;
     setError("");
     setNotice("");
     setIntake(null);
     setBreakdownDone(false);
     pendingBreakdown.current = null;
+    setTargetSeconds(seconds || null);
     setBusy(true);
     try {
       if (text.trim().length < 20) {
@@ -743,6 +825,8 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         // For the NAME only — so "[Your App Name]" never reaches a shot.
         brand: effectiveBrand(),
         title: effectiveTitle(),
+        // The length the film is meant to be. See startBreakdown's note.
+        seconds,
       });
       // Hold the result and let the ring finish to 100%. finishBreakdown()
       // (called by the ring on completion) applies it and moves to Review.
@@ -784,6 +868,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
    *  carry one (an older board, from before the breakdown returned it). */
   function totalSeconds() {
     return shots.reduce((sum, sh) => sum + (Number(sh.duration_seconds) || 0), 0);
+  }
+
+  /** Is the board meaningfully longer than the film the user approved?
+   *  False whenever no length was agreed — a pasted script has no target to
+   *  be over, and colouring the chip red would be inventing one. */
+  function overRunning() {
+    return Boolean(targetSeconds) && totalSeconds() > targetSeconds * 1.2;
   }
 
   function updateShot(i, patch) {
@@ -836,18 +927,36 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     const descByName = new Map(
       characters.map((c) => [c.name.trim().toLowerCase(), c])
     );
-    const seen = new Set();
-    const out = [];
+    const byKey = new Map();
     for (const sh of shots) {
+      // A shot naming the same person twice still only counts once — and the
+      // key is lower-cased BEFORE the de-duplication, or "Ananya" and "ANANYA"
+      // in one shot's list would count as two appearances of her.
+      const inThisShot = new Map();
       for (const raw of sh.characters || []) {
         const name = (raw || "").trim();
-        const key = name.toLowerCase();
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        out.push(descByName.get(key) || { name, description: "" });
+        if (name) inThisShot.set(name.toLowerCase(), name);
+      }
+      for (const [key, name] of inThisShot) {
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.shotCount += 1;
+          continue;
+        }
+        byKey.set(key, {
+          ...(descByName.get(key) || { name, description: "" }),
+          // ⚠ HOW MUCH FILM THIS FACE IS ACTUALLY IN. A reference costs an
+          // image, and the cast list never said who was worth one: a board
+          // came back with a full character sheet for an artisan who appears
+          // ONLY as a pair of hands in a single close-up. Reported. The honest
+          // signal is the COUNT — not a guess at whether a face is visible —
+          // and this step is optional, so it lets the user skip the cheap ones
+          // knowingly instead of paying for every name in the script.
+          shotCount: 1,
+        });
       }
     }
-    return out;
+    return [...byKey.values()];
   }
 
   // WHAT THE BOARD IS TOLD ITS PEOPLE AND PLACES LOOK LIKE.
@@ -1240,24 +1349,37 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
     // handed off to startBreakdown(), and the user was dropped back onto the
     // concept card with a live API call running and nothing on screen saying
     // so. It read as "I pressed Approve and it did nothing."
+    //
+    // ⚠ AND THEY SHARE ONE RING — ONE ELEMENT, MOUNTED ONCE, WITH ITS PROPS
+    // CHANGING UNDER IT. Not two rings in a ternary and not two `key`s: either
+    // of those is a second instance, which starts its own climb from zero and
+    // is exactly what was reported twice over — *"progress bar pehle 100% ho
+    // jaye fir kuch time pe open ho"*, and then *"kabhi fast kabhi slow"* when
+    // the two were given half the bar each. The number now only ever goes up,
+    // at one pace, and reaches 100 once.
+    //
+    // `final={!writing}` is the whole trick: while the script is being written
+    // the ring hands off WHERE IT STANDS when that call returns, with no sprint
+    // to a ceiling, and the breakdown carries on from the same number. Only the
+    // breakdown — the last call before the review step — earns the sweep to
+    // 100. See the note at the top of BreakdownProgress.jsx.
     if (writing || busy) {
       return (
         <div className="workflow-head-wrap sb-form">
           <div className="sts-form-wrap">
-            {writing ? (
-              <BreakdownProgress
-                done={scriptWritten}
-                onDone={finishScript}
-                steps={SCRIPT_STEPS}
-                title="Writing your script"
-                readyLabel="Script ready!"
-                slowLabel="Still writing — a longer film takes a little more time…"
-              />
-            ) : (
-              // The same ring the form shows, with the same words — this IS
-              // the breakdown, it just happens to have been reached from here.
-              <BreakdownProgress done={breakdownDone} onDone={finishBreakdown} />
-            )}
+            <BreakdownProgress
+              done={writing ? scriptWritten : breakdownDone}
+              final={!writing}
+              onDone={writing ? finishScript : finishBreakdown}
+              steps={writing ? SCRIPT_STEPS : undefined}
+              title={writing ? "Writing your script" : undefined}
+              readyLabel={writing ? "Script ready!" : undefined}
+              slowLabel={
+                writing
+                  ? "Still writing — a longer film takes a little more time…"
+                  : undefined
+              }
+            />
           </div>
         </div>
       );
@@ -1520,8 +1642,24 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             {shots.length} shot{shots.length === 1 ? "" : "s"}
           </span>
           {totalSeconds() > 0 && (
-            <span className="chip" title="Added up from each shot's length">
+            <span
+              /* ⚠ RED WHEN THE BOARD OVERSHOOTS WHAT WAS APPROVED. The
+                 breakdown is now told the target, but it is a model being
+                 argued with, not a clamp — so the one place the user can
+                 catch a 30-second film that came back at 64 seconds is here,
+                 before the panels are drawn and paid for. A fifth over is
+                 the point where merging shots is worth the reader's time. */
+              className={`chip${overRunning() ? " chip-warn" : ""}`}
+              title={
+                targetSeconds
+                  ? `Added up from each shot's length. You approved ${formatRuntime(
+                      targetSeconds
+                    )} — shorten or merge shots to get closer.`
+                  : "Added up from each shot's length"
+              }
+            >
               ≈ {formatRuntime(totalSeconds())}
+              {targetSeconds ? ` of ${formatRuntime(targetSeconds)}` : ""}
             </span>
           )}
         </div>
@@ -1612,8 +1750,14 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               {/* Their script first, then the AI's prompt for it. */}
               <ScriptLineBox shot={sh} />
 
+              {/* ⚠ IT GROWS TO ITS TEXT, and that is not a nicety. This box
+                  was a fixed 64px with its own scrollbar, so the prompt cut
+                  off after two or three lines — while the read-only "FROM
+                  YOUR SCRIPT" box directly above it showed every word. The
+                  one thing on the card the user is meant to EDIT was the one
+                  thing they could not see. */}
               <label className="shot-prompt-label">Image prompt</label>
-              <textarea
+              <GrowTextarea
                 className="prompt-textarea shot-desc"
                 value={sh.description}
                 placeholder="Describe what we see in this panel…"
@@ -1736,6 +1880,41 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           </p>
         </div>
       </div>
+
+      {/* ⚠ OFFERED, NOT OPENED — see the note on `draftOffer`. Hidden the
+          moment this session has shots of its own, so it can never sit above
+          work in progress. The date and the warning live in the tooltip; the
+          line itself stays short enough to read at a glance. */}
+      {draftOffer && !shots.length && (
+        <div
+          className="sts-draft-offer"
+          title={
+            draftOffer.updated_at
+              ? `Saved ${new Date(draftOffer.updated_at).toLocaleString()}. The breakdown behind it has already been paid for.`
+              : "The breakdown behind it has already been paid for."
+          }
+        >
+          <span className="sts-draft-offer-text">
+            📋 Unfinished storyboard
+            {draftOffer.title ? ` · ${draftOffer.title}` : ""}
+            {` · ${(draftOffer.shots || []).length} shot${
+              (draftOffer.shots || []).length === 1 ? "" : "s"
+            }`}
+          </span>
+          <div className="sts-draft-offer-actions">
+            <button type="button" className="btn" onClick={resumeDraft}>
+              Resume
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={discardDraftOffer}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className={`sts-hero-grid ${busy ? "busy" : ""}`}>
       <div className="sts-form-wrap">

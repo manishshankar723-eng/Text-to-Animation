@@ -208,9 +208,41 @@ export default function Home({
   onOpenJob,
   onUpgrade,
   onOpenProfile,
-  onNavigate
+  onNavigate,
+  // Continue an unfinished storyboard — see `draft` below.
+  onResumeStoryboard,
 }) {
   useDashboard();
+
+  // ⚠ THE UNFINISHED STORYBOARD, ON THE FIRST PAGE. A breakdown costs
+  // quota and a half-reviewed board is the most expensive thing an account
+  // can lose, but it is deliberately NOT in Recent work: a draft has no
+  // panels, so it is not a board and listing it beside finished ones would
+  // be a lie with a thumbnail on it (see `storyboard_draft_check.py` — a
+  // DRAFT must not appear in the library). Asked for directly: *"ye resume
+  // dikh raha hai magar recent mein kyun nahi … user ko first page mein hi
+  // dikh jaaye."* So it gets its own strip, above the lists, saying what it
+  // is and how big — and it is the one thing on this screen that resumes
+  // rather than opens.
+  //
+  // ⚠ ITS OWN FETCH, NOT `session_cache`. That cache is the dashboard's
+  // LIST feeds and its own docstring says not to point anything else at it;
+  // this is a single small record that must be right the moment it is
+  // shown, and it goes stale the instant the user resumes or discards it.
+  const [draft, setDraft] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getStoryboardDraft()
+      .then((d) => {
+        // Nothing to offer unless there are actually shots in it.
+        if (!cancelled && d?.job_id && (d.shots || []).length) setDraft(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Every one of these is a synchronous read of an answer that, on the ordinary
   // path, arrived while this component was still being mounted.
@@ -500,6 +532,35 @@ export default function Home({
           </p>
         </section>
       </div>
+
+      {/* ⚠ ABOVE RECENT WORK, AND NOT INSIDE IT — a draft has no panels, so
+          it is not a board and does not belong in a list of them. See the
+          note where `draft` is fetched. */}
+      {draft && onResumeStoryboard && (
+        <section
+          className="card home-card home-draft"
+          title={
+            draft.updated_at
+              ? `Saved ${new Date(draft.updated_at).toLocaleString()}. The breakdown behind it has already been paid for.`
+              : "The breakdown behind it has already been paid for."
+          }
+        >
+          <span className="home-draft-icon">
+            <WorkflowIcon id="script-to-storyboard" />
+          </span>
+          <div className="home-draft-what">
+            <h2 className="home-draft-title">Continue where you left off</h2>
+            <p className="muted tiny">
+              {draft.title || "Untitled storyboard"} ·{" "}
+              {(draft.shots || []).length} shot
+              {(draft.shots || []).length === 1 ? "" : "s"} · not yet drawn
+            </p>
+          </div>
+          <button className="btn small" onClick={onResumeStoryboard}>
+            Resume →
+          </button>
+        </section>
+      )}
 
       {/* Recent work, one group per workflow. */}
       <section className="card home-card recent-card">

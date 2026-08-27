@@ -736,6 +736,12 @@ def breakdown_script(
             body.script,
             provider=body.provider,
             genre=body.genre,
+            # ⚠ THE APPROVED LENGTH. Without it the breakdown cannot tell a
+            # 15-second ad from a 3-minute short and boards every script at
+            # whatever density the model feels like — which is how a 30-second
+            # concept became a 1m 04s board. Absent for a pasted script, where
+            # no length has been agreed, and that is the honest answer.
+            seconds=body.seconds,
             # So a writer's "[Your App Name]" never reaches a shot description.
             # It was reaching the finished video's burnt-in captions.
             brand_name=(body.brand.name if body.brand else ""),

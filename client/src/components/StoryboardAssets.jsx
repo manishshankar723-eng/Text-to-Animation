@@ -7,6 +7,7 @@
 import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
+import GrowTextarea from "./GrowTextarea.jsx";
 // Same rule as the Cast page: DRAWING a reference is gated, UPLOADING one is
 // not — see the note there.
 import useCapability from "../useCapability.js";
@@ -268,7 +269,9 @@ export default function StoryboardAssets({
                       {meta.icon} {meta.label}
                     </span>
                   </div>
-                  <textarea
+                  {/* Grows to its text — same box, same fault, same fix as
+                      the cast step it shares a class with. */}
+                  <GrowTextarea
                     className="prompt-textarea cast-desc"
                     value={it.description}
                     placeholder={

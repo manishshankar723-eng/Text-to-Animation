@@ -371,8 +371,30 @@
   opacity: 0.35;
   cursor: not-allowed;
 }
+/* ⚠ THE ONE BOX ON THE CARD THE USER IS MEANT TO EDIT, and it used to be the
+   only one that was cut off. At a fixed 64px the shot description scrolled
+   inside itself after two or three lines, while the read-only "FROM YOUR
+   SCRIPT" box right above it showed its text in full — so the thing you can
+   only read was whole and the thing you have to write was clipped.
+   `GrowTextarea` sets the height from `scrollHeight`, which is why the drag
+   handle and the inner scrollbar both have to go: either one fights it. The
+   line-height is STATED rather than `normal` because that measurement is what
+   the height is computed from — same arrangement as `.admin-quiet-field`. */
 .shot-desc {
   min-height: 64px;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+}
+/* ⚠ THE RUNTIME CHIP, WHEN THE BOARD IS LONGER THAN THE FILM THAT WAS
+   APPROVED. The breakdown is told the target now, but it is a model being
+   argued with rather than a clamp, so this is the last place a 30-second film
+   that came back at 64 seconds can be caught — before the panels are drawn
+   and paid for. A warning, not an error: the board is still usable, it is
+   just not the length that was asked for. */
+.review-summary .chip-warn {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 .shot-meta {
   margin-top: 0.2rem;
@@ -1007,9 +1029,37 @@
   border-color: rgba(120, 170, 255, 0.35);
   color: #8ab4ff;
 }
+/* ⚠ THE SAME FAULT AS `.shot-desc`, ON THE SAME KIND OF BOX. At a fixed
+   76px every cast and prop description was clipped mid-sentence behind a
+   scrollbar — and this is the text that DRAWS the character or the object.
+   `GrowTextarea` sets the height from `scrollHeight`, so the drag handle and
+   the inner scrollbar both have to go: either one fights it. The
+   line-height is STATED rather than `normal` because that measurement is
+   what the height is computed from. */
 .cast-desc {
   min-height: 76px;
   font-size: 0.9rem;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+}
+/* ⚠ HOW MUCH FILM THIS FACE IS IN, beside its name. A reference costs an
+   image and this step is optional, so the one number that decides whether to
+   spend belongs where the decision is made. `.one` is not an error — one
+   shot is a perfectly good answer — it just carries the weight that makes
+   somebody look twice before pressing Generate. */
+.cast-shots {
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+.cast-shots.one {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 .cast-actions {
   display: flex;
@@ -1274,6 +1324,34 @@
 .more-panel .opt-chip {
   border-radius: 9px;
   min-height: 2.5rem;
+}
+
+/* ⚠ THE UNFINISHED BOARD, OFFERED RATHER THAN OPENED. The review step used to
+   re-open itself on every mount of this workflow, so walking out of it and
+   coming back through the sidebar put you straight back inside it, looking at a
+   board from an earlier session. It waits here instead — one line saying what it
+   is and how big, and the two buttons that are the only honest answers. Gold
+   edge because it is an offer about work already paid for, not a warning. */
+.sts-draft-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border-gold);
+  border-radius: 9px;
+}
+.sts-draft-offer-text {
+  font-size: 0.88rem;
+  min-width: 0;
+}
+.sts-draft-offer-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 /* The concept card — the approval gate. Deliberately built out of the SAME

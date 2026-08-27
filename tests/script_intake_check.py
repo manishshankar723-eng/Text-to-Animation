@@ -231,7 +231,10 @@ check("the client has the call", "export function intakeScript(text)" in api
       and '"/script-intake"' in api)
 check("Create storyboard reads the box before it breaks anything down",
       "await api.intakeScript(text)" in ui
-      and "async function startBreakdown(text)" in ui)
+      # The second argument is the approved runtime, and it is optional
+      # precisely because a PASTED script has no agreed length — this path
+      # still calls it with the text alone. See tests/shot_density_check.py.
+      and "async function startBreakdown(text, seconds = null)" in ui)
 check("a script goes straight through, untouched",
       'if (kind !== "script")' in ui and "startBreakdown(text);" in ui)
 check("⚠ …AND A DEAD CLASSIFIER DOES NOT BLOCK A STORYBOARD. On any error the "
