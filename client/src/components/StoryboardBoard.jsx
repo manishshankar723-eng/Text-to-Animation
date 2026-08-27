@@ -406,7 +406,18 @@ export default function StoryboardBoard({
   // while panels are still being drawn (the shot numbers are still moving), and
   // not on an empty one.
   const canAssist = !sequenceMode && !running && panels.length > 0;
-  const showAssistant = canAssist && assistantOpen;
+  // ⚠ `showAssistant` IS COMPUTED WITH THE ASSISTANT'S OWN STATE, FURTHER
+  // DOWN. It used to be here, reading `assistantOpen` — which is declared ~60
+  // lines below — and that is a temporal-dead-zone ReferenceError, not a
+  // warning: React unmounts the whole tree and the page goes WHITE.
+  //
+  // ⚠ IT ONLY FIRED ON FINISHED BOARDS, WHICH IS WHY IT SURVIVED. `&&`
+  // short-circuits: while a board was still drawing, or had no panels,
+  // `canAssist` was false and `assistantOpen` was never read. The moment the
+  // last panel landed — panels present, `running` false — it was read, and the
+  // board the user had just paid for went white. Reported exactly that way:
+  // "jab pura panel image generate hua to white ho gaya", and it stayed white
+  // on every reopen.
   const failedCount = panels.filter((p) => p.failed).length;
 
   // Panels with no image and no failure = never drawn. That's what a stopped
@@ -466,6 +477,8 @@ export default function StoryboardBoard({
   // referent and the only honest answer is "which one?".
   const [selection, setSelection] = useState({ kind: "none" });
   const [assistantOpen, setAssistantOpen] = useState(true);
+  // Declared HERE, after the state it reads. See the note where `canAssist` is.
+  const showAssistant = canAssist && assistantOpen;
 
   function toggleSelectPanel(shot) {
     setSelection((cur) =>

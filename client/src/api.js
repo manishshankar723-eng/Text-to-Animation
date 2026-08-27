@@ -916,6 +916,21 @@ export function downloadPlanScript(planId, scriptId, format) {
 export function getStoryboardDraft() {
   return request("/storyboards/draft");
 }
+// ⚠ GIVE A SHOT LIST A DRAFT WHEN IT HAS NONE. A breakdown mints its own
+// draft because it has just spent money; DUPLICATE does not, because it reuses
+// a saved board's shots on purpose. The review step's autosave is keyed on
+// having a draft, so such a session saved NOTHING — edits and paid-for
+// reference images alike — and lost it all on leaving the workflow. No model
+// call and no quota: the shots already exist.
+// ⚠ ALL of them, newest first — `getStoryboardDraft` returns only the most
+// recent, which meant every older unfinished board was unreachable by any
+// means. Returns [] when there are none; that is not an error.
+export function listStoryboardDrafts() {
+  return request("/storyboards/drafts");
+}
+export function createStoryboardDraft(fields) {
+  return request("/storyboards/draft", { method: "POST", body: fields });
+}
 export function saveStoryboardDraft(jobId, fields) {
   // PATCH is partial: send only what changed. Omitted fields are left alone.
   return request(`/storyboards/draft/${jobId}`, { method: "PATCH", body: fields });

@@ -22462,6 +22462,65 @@ so. Two options were put to the user:
   refitted. A likely shape: leave `.lib-thumb-pic` exactly as it is and paint
   the 16:9 panel on `.lib-thumb` (the outer 86×48 slot) instead, so nothing
   about the picture changes at all. **Not attempted. Ask before trying.**
+- **B14 — a session with shots but NO DRAFT saved nothing, and said nothing.**
+  The user drew ANANYA's reference, went to Home, came back, pressed Resume —
+  and an unrelated project opened. ⚠ **The server was checked: no record of
+  their board existed anywhere, in any state.** Only `/storyboards/breakdown`
+  minted a draft (it had just spent money, so it wrote the result down);
+  **Duplicate deliberately skips the breakdown** — that is its whole point,
+  reuse the shots rather than pay again — so `resetWorkflow()` left
+  `draftJobId` null and the review step's autosave, which is keyed on it,
+  returned early forever. Every edit and every reference image paid for on the
+  cast and props steps lived only in the browser. Resume could only offer what
+  the server actually had, which was a different project.
+  **Fix:** new `POST /storyboards/draft` (`StoryboardDraftCreate`) gives an
+  existing shot list a record. ⚠ **No model call and no quota** — the shots
+  already exist and the paid work was charged where they came from; do not let
+  a breakdown creep into that endpoint. Client-side an effect notices "reviewing
+  real shots, nothing backing them" and asks for one. ⚠ **`jobId` is part of the
+  guard** (stepping Back from a finished board also lands on review with no
+  draft, and a draft beside a board is a second record of one storyboard), and
+  ⚠ **the once-only guard is a REF** — StrictMode mounts twice in development
+  and state would not survive that. ⚠ **The effect lives beside the board state,
+  not beside the autosave it protects**: it reads `jobId`, a dependency array is
+  evaluated during render, and referencing it from higher up is a
+  ReferenceError on every render. Covered by [14c] of the draft check, which
+  drives the real endpoint rather than reading the source.
+- **B15 — only the NEWEST unfinished board was ever reachable.** Found while
+  diagnosing B14: `GET /storyboards/draft` answers "the most recent one" and was
+  the only way in, so this account's two drafts showed as one row and the older
+  29-shot board (ARTISAN, PRIYA, RAHUL) could not be opened **by any means**.
+  New `GET /storyboards/drafts` returns them all, newest first; the library
+  draws one row each, above the finished boards. ⚠ **The singular endpoint
+  stays** — it is a different question, still asked by the workflow on mount for
+  its `draftHydrated` guard, and checks [1], [4], [7] and [9] pin its meaning.
+  ⚠ **Row ids are `draft:<job_id>`, not a shared constant**: with several drafts
+  on screen one constant opened every confirm strip at once, and a bare job_id
+  would collide with the board of the same id the moment a draft is promoted.
+  ⚠ Drafts are still excluded from `GET /storyboards` — check [3] is untouched;
+  the rows are prepended client-side. Covered by [14d], which drives the real
+  endpoint with two drafts and discards one.
+- **B16 — ⚠ THE BOARD WENT WHITE THE MOMENT IT FINISHED DRAWING.** Reported:
+  *"jab pura panel image generate hua to white ho gaya … recent se open kar
+  raha hun to aise hi pura white screen hai."* `StoryboardBoard.jsx` computed
+  `const showAssistant = canAssist && assistantOpen` about **sixty lines above**
+  `const [assistantOpen, setAssistantOpen] = useState(true)`. Reading a `const`
+  before its declaration is a temporal-dead-zone **ReferenceError**, so React
+  unmounted the whole tree — `<div id="root">` empty, page white.
+  ⚠ **IT ONLY FIRED ON FINISHED BOARDS, WHICH IS HOW IT SHIPPED.** `&&`
+  short-circuits: while a board was still drawing, or had no panels,
+  `canAssist` was false and `assistantOpen` was never read. The instant the last
+  panel landed — panels present, `running` false — it was read and the board the
+  user had just paid for went white, and stayed white on every reopen.
+  Introduced by `ab9d65b` (board agent), **not** by the draft/reference work
+  that was in flight when it was reported. Fixed by computing `showAssistant`
+  beside the state it reads. Pinned by the `[TDZ]` section of
+  `tests/board_ask_check.py`.
+  ⚠ **HOW IT WAS FOUND, AND THE LESSON.** Reading the record proved the data was
+  perfect (12 panels, every image on disk, API 200) and got no closer. Driving a
+  real browser at the running dev server with Playwright — logging in by writing
+  `cas_token` into localStorage — printed the error in one run. **For a white
+  screen, go to the browser first; the database will not tell you.**
 - **B7 — `ON SCREEN:` text was written INTO the image prompt.** The end card's
   description quoted the words to superimpose, while the image side forbids all
   lettering — a frame of gibberish, paid for. ⚠ An end card is still allowed to

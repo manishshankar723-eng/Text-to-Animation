@@ -308,6 +308,30 @@ check("…and can be hidden and brought back, because a board is wide",
 
 # ---------------------------------------------------------------------------
 print()
+
+# ---------------------------------------------------------------------------
+print()
+print("[TDZ] ⚠ THE BOARD WENT WHITE THE MOMENT IT FINISHED DRAWING")
+# `showAssistant = canAssist && assistantOpen` sat ~60 lines ABOVE
+# `const [assistantOpen, setAssistantOpen] = useState(true)`. Reading a `const`
+# before its declaration is a temporal-dead-zone ReferenceError, not a warning:
+# React unmounts the whole tree and the page is WHITE.
+#
+# ⚠ IT ONLY FIRED ON FINISHED BOARDS, WHICH IS HOW IT SHIPPED. `&&`
+# short-circuits — while a board was still drawing, or had no panels,
+# `canAssist` was false and `assistantOpen` was never read. The instant the last
+# panel landed it was read, and the board the user had just paid for went white,
+# and stayed white on every reopen. Caught by driving a real browser at it.
+_bd = read("client", "src", "components", "StoryboardBoard.jsx")
+check("the assistant's state is declared BEFORE anything reads it",
+      _bd.index("const [assistantOpen, setAssistantOpen]")
+      < _bd.index("const showAssistant ="))
+check("⚠ …and `showAssistant` is computed exactly once, so the order cannot "
+      "drift back apart",
+      _bd.count("const showAssistant =") == 1)
+check("the gate itself still short-circuits on a board with nothing to discuss",
+      "const canAssist = !sequenceMode && !running && panels.length > 0;" in _bd)
+
 if failures:
     print(f"❌ {len(failures)} check(s) failed:")
     for f in failures:

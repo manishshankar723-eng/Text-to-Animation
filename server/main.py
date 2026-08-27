@@ -89,6 +89,7 @@ from .schemas import (
     ScriptBreakdownResponse,
     StoryboardCreateRequest,
     StoryboardDraft,
+    StoryboardDraftCreate,
     StoryboardDraftUpdate,
     StoryboardProject,
     StoryboardRenameRequest,
@@ -858,6 +859,74 @@ def get_storyboard_draft(current: CurrentUser = Depends(get_current_user)):
         return StoryboardDraft()
     # `list` is newest-first, so the first draft is the one to resume.
     return _draft_to_response(drafts[0])
+
+
+@app.get("/storyboards/drafts", response_model=list[StoryboardDraft])
+def list_storyboard_drafts(current: CurrentUser = Depends(get_current_user)):
+    """EVERY unfinished storyboard this account owns, newest first.
+
+    ⚠ `GET /storyboards/draft` (singular) answers a different question — "the
+    most recent one" — and that was the only way in. An account can hold several
+    unfinished boards, and all but the newest were unreachable by ANY means:
+    the library drew one row, and it always drew the same one. Reported after
+    resuming opened an unrelated project — the user turned out to have two, and
+    the older one could not be opened at all.
+
+    Never 404s and never errors on "none": an empty list is a normal state.
+    Drafts are excluded from `GET /storyboards` on purpose (a draft has no
+    panels, so it is not a board) — this is how the client gets at them.
+    """
+    jobs = get_store().list(limit=50, owner=current.email, kinds=[JobKind.STORYBOARD])
+    return [_draft_to_response(j) for j in jobs if j.status == JobStatus.DRAFT]
+
+
+@app.post("/storyboards/draft", response_model=StoryboardDraft, status_code=201)
+def create_storyboard_draft(
+    body: StoryboardDraftCreate,
+    current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.script-to-storyboard')),
+):
+    """Give an existing shot list a draft to live in. No model call, no quota.
+
+    ⚠ A SESSION WITHOUT A DRAFT SAVES NOTHING, AND SAYS NOTHING ABOUT IT.
+    `/storyboards/breakdown` mints a draft because it has just spent money. But
+    Duplicate reuses a saved board's shots on purpose — no breakdown, so no
+    draft — and the review step's autosave is keyed on having one. Every edit,
+    and every reference image PAID FOR on the cast and props steps, lived only
+    in the browser and went with it. Reported after exactly that: the user drew
+    a character reference, left, came back, and Resume offered an unrelated
+    project, because theirs had never been written down.
+
+    ⚠ THE SHOTS ARE THE CALLER'S, NOT THE MODEL'S. Nothing here generates
+    anything, so it is gated by the workflow feature but NOT by a quota — the
+    paid work was charged wherever these shots actually came from. Do not add a
+    breakdown call to this endpoint; the point of it is that there isn't one.
+    """
+    payload = body.model_dump(exclude_unset=False, mode="json")
+    shots = payload["shots"]
+    title = (body.title or "").strip() or _title_from_script(body.script)
+
+    draft = get_store().create(
+        character_name=title,
+        kind=JobKind.STORYBOARD,
+        params={
+            "style": body.style,
+            "aspect_ratio": body.aspect_ratio,
+            "genre": body.genre,
+            "count": len(shots),
+            "shots": shots,
+            "characters": payload.get("characters") or [],
+            "assets": payload.get("assets") or [],
+            "world": payload.get("world") or {},
+            "script": (body.script or "")[:MAX_STORED_SCRIPT_CHARS],
+        },
+        owner=current.email,
+    )
+    get_store().update(draft.job_id, status=JobStatus.DRAFT)
+    logger.info(
+        "[draft] created %s for an unsaved session (%d shots)", draft.job_id, len(shots)
+    )
+    return _draft_to_response(get_store().get(draft.job_id))
 
 
 @app.patch("/storyboards/draft/{job_id}", response_model=StoryboardDraft)

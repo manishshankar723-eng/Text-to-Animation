@@ -45,12 +45,14 @@ const GENRE_LABELS = {
 // the page reads as a real list waiting to be filled rather than bare text.
 const GHOST_ROWS = 5;
 
-// The row id the unfinished storyboard answers to, for the shared per-row
-// state (which row is busy, which row is showing a confirm strip). A draft has
-// a real job_id, but it is deliberately NOT used here: the confirm strip and
-// the busy flag are keyed by row, and a constant makes it impossible for a
-// draft and a board that once shared that id to be mistaken for each other.
-const DRAFT_ROW_ID = "__draft__";
+// The row id an unfinished storyboard answers to, for the shared per-row state
+// (which row is busy, which row is showing a confirm strip).
+//
+// ⚠ IT IS PREFIXED, NOT BARE. There can be SEVERAL drafts, so a constant will
+// not do — one confirm strip would open on all of them. The prefix keeps a
+// draft's row id from ever colliding with a board's job_id, which is what a
+// bare id risks the moment a draft is promoted to the board of the same name.
+const draftRowId = (jobId) => `draft:${jobId}`;
 
 function titleCase(s) {
   return s.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -142,16 +144,22 @@ export default function StoryboardLibrary({
   // The effect keys off a BOOLEAN, not `onResume` itself: the caller passes an
   // inline arrow, so its identity changes on every parent render and depending
   // on it would re-fetch the draft each time the workflow re-rendered.
-  const [draft, setDraft] = useState(null);
+  // ⚠ ALL OF THEM, NOT THE NEWEST ONE. This asked `GET /storyboards/draft`,
+  // which answers "the most recent" — so an account holding two unfinished
+  // boards could only ever see one, and the older was unreachable by any means.
+  // Found the hard way: resuming opened an unrelated project, and the account
+  // turned out to have two drafts with the older one invisible.
+  const [drafts, setDrafts] = useState([]);
   const canResume = Boolean(onResume);
   useEffect(() => {
     if (!canResume) return;
     let cancelled = false;
     api
-      .getStoryboardDraft()
-      .then((d) => {
-        // Nothing to offer unless there are actually shots in it.
-        if (!cancelled && d?.job_id && (d.shots || []).length) setDraft(d);
+      .listStoryboardDrafts()
+      .then((list) => {
+        if (cancelled) return;
+        // Nothing to offer for one with no shots — there is no board in it.
+        setDrafts((list || []).filter((d) => d?.job_id && (d.shots || []).length));
       })
       .catch(() => {});
     return () => {
@@ -491,12 +499,12 @@ export default function StoryboardLibrary({
   /** Throw the unfinished storyboard away. The breakdown behind it was paid
    *  for and there is no undo, so it goes through the row's own confirm strip
    *  like every other delete in this list — never on a single click. */
-  async function discardDraft() {
-    setBusyId(DRAFT_ROW_ID);
+  async function discardDraft(draft) {
+    setBusyId(draftRowId(draft.job_id));
     setError("");
     try {
       await api.discardStoryboardDraft(draft.job_id);
-      setDraft(null);
+      setDrafts((ds) => ds.filter((d) => d.job_id !== draft.job_id));
       setConfirmId(null);
     } catch (e) {
       setError(e.message);
@@ -523,13 +531,14 @@ export default function StoryboardLibrary({
   // "Not drawn yet" first. That was the other half of the request: *"agar user
   // storyboard image generate nahi kiya hai to text note jaisa icon dikha
   // dena."*
-  function renderDraftRow() {
-    const busy = busyId === DRAFT_ROW_ID;
+  function renderDraftRow(draft) {
+    const uid = draftRowId(draft.job_id);
+    const busy = busyId === uid;
     const shotCount = (draft.shots || []).length;
     const genre = genreLabel(draft.genre);
     return (
       <LibraryRow
-        key={DRAFT_ROW_ID}
+        key={uid}
         onOpen={() => onResume(draft)}
         openTitle="Pick this storyboard up where you left off"
         aspect={draft.aspect_ratio}
@@ -581,14 +590,14 @@ export default function StoryboardLibrary({
               className="lib-icon danger"
               disabled={busy}
               title="Discard this unfinished storyboard"
-              onClick={() => setConfirmId(DRAFT_ROW_ID)}
+              onClick={() => setConfirmId(uid)}
             >
               <Icon name="trash" />
             </button>
           </>
         }
         below={
-          confirmId === DRAFT_ROW_ID ? (
+          confirmId === uid ? (
             <div className="lib-confirm">
               <span className="tiny">
                 Discard “{draft.title || "Untitled storyboard"}”? The breakdown
@@ -608,7 +617,7 @@ export default function StoryboardLibrary({
                   type="button"
                   className="btn small lib-delete"
                   disabled={busy}
-                  onClick={discardDraft}
+                  onClick={() => discardDraft(draft)}
                 >
                   {busy ? "Discarding…" : "Discard"}
                 </button>
@@ -628,12 +637,15 @@ export default function StoryboardLibrary({
   );
   // The unfinished one is a project in this list like any other, so it filters
   // like one too.
-  const draftShown =
-    draft && onResume
-      ? matchesFilter(query, draft.title, genreLabel(draft.genre), draft.aspect_ratio)
-      : false;
-  const listTotal = boards.length + (draft && onResume ? 1 : 0);
-  const shownTotal = shown.length + (draftShown ? 1 : 0);
+  // The unfinished ones are projects in this list like any other, so they
+  // filter like them too.
+  const draftsShown = onResume
+    ? drafts.filter((d) =>
+        matchesFilter(query, d.title, genreLabel(d.genre), d.aspect_ratio)
+      )
+    : [];
+  const listTotal = boards.length + (onResume ? drafts.length : 0);
+  const shownTotal = shown.length + draftsShown.length;
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -700,9 +712,10 @@ export default function StoryboardLibrary({
           </>
         }
       >
-        {/* The unfinished one LEADS the list — it is the newest thing the
-            user touched and the only one still waiting on them. */}
-        {draftShown && renderDraftRow()}
+        {/* The unfinished ones LEAD the list — they are the only projects
+            still waiting on the user, and newest first among themselves
+            because that is the order the server returns them in. */}
+        {draftsShown.map(renderDraftRow)}
         {shown.map(renderBoard)}
       </LibrarySection>
     </div>

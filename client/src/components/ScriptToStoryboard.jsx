@@ -376,6 +376,12 @@ export default function ScriptToStoryboard({
     setStep("review");
   }
 
+  // The effect that gives a draft-less session a draft of its own lives further
+  // down, beside the board state — it has to read `jobId`, which is declared
+  // there, and a dependency array is evaluated during RENDER, so referencing it
+  // from up here is a ReferenceError on every render, not a subtle bug.
+
+
   useEffect(() => {
     if (!draftHydrated.current || !draftJobId) return;
     if (!shots.length) return; // never save an empty shot list over real work
@@ -550,6 +556,62 @@ export default function ScriptToStoryboard({
   // content: the review step for a board we just generated, the library for a
   // saved board re-opened from a card (whose shots aren't loaded).
   const [boardOrigin, setBoardOrigin] = useState("review");
+
+  // ⚠ A SESSION WITH SHOTS BUT NO DRAFT SAVES NOTHING, SILENTLY. The autosave
+  // below is keyed on `draftJobId`, and only a BREAKDOWN mints one — it has
+  // just spent money, so it writes the result down before showing it. Duplicate
+  // deliberately skips the breakdown (that is its whole point: reuse the shots,
+  // don't pay again), so it landed on the review step with no draft, and from
+  // there every edit and every reference image the user PAID FOR on the cast
+  // and props steps lived only in this component. Walking out to Home unmounted
+  // it and took the lot.
+  //
+  // Reported exactly that way: a character reference was drawn, the user left,
+  // came back, pressed Resume — and an unrelated project opened, because theirs
+  // had never been written down and Resume could only offer what the server
+  // actually had.
+  //
+  // So: if we are reviewing real shots and nothing is backing them, make a
+  // record. `POST /storyboards/draft` calls no model and spends no quota.
+  //
+  // ⚠ `jobId` IS PART OF THE GUARD. Stepping Back from a finished board also
+  // lands on the review step with shots and no draft — but that work is already
+  // saved, as a board, and a draft beside it would be a second record of one
+  // storyboard. ⚠ And `creatingDraft` is a ref, not state: StrictMode mounts
+  // twice in development, and two runs here would mean two drafts.
+  const creatingDraft = useRef(false);
+  useEffect(() => {
+    if (!draftHydrated.current) return;
+    if (step !== "review" || draftJobId || jobId) return;
+    if (!shots.length || creatingDraft.current) return;
+    creatingDraft.current = true;
+    (async () => {
+      try {
+        const d = await api.createStoryboardDraft({
+          shots,
+          title: effectiveTitle(),
+          script: scriptText || "",
+          style: effectiveStyle(),
+          aspect_ratio: effectiveAspect(),
+          genre: effectiveGenre(),
+          characters,
+          assets,
+          world,
+        });
+        if (d?.job_id) {
+          setDraftJobId(d.job_id);
+          setReviewSavedAt(d.updated_at || new Date().toISOString());
+        }
+      } catch {
+        // Storage is down, or the plan does not carry this workflow. The
+        // session still works exactly as it did before — it just isn't saved,
+        // which is the old behaviour and not worth a dialog mid-review.
+      } finally {
+        creatingDraft.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, draftJobId, jobId, shots.length]);
 
   const [busy, setBusy] = useState(false);
   // ⚠ SEPARATE FROM `busy` ON PURPOSE. `busy` swaps the whole form out for the

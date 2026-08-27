@@ -262,10 +262,10 @@ sb_css = open(os.path.join(ROOT_DIR, "client", "src", "styles",
 sb_lib_css = open(os.path.join(ROOT_DIR, "client", "src", "styles",
                                "storyboard-library.css"), encoding="utf-8").read()
 
-check("the storyboards page asks for the draft itself",
-      ".getStoryboardDraft()" in lib)
-check("…and only offers one that actually has shots in it",
-      "(d.shots || []).length) setDraft(d)" in lib)
+check("the storyboards page asks for the drafts itself",
+      ".listStoryboardDrafts()" in lib)
+check("…and only offers ones that actually have shots in them",
+      "(d.shots || []).length" in lib and "setDrafts(" in lib)
 check("the row says what it is and how big, so a stale board is recognisable "
       "before it is picked up",
       "renderDraftRow" in lib
@@ -276,27 +276,34 @@ check("the row says what it is and how big, so a stale board is recognisable "
 # jaise sab dikh rahe hai, so user samajh jayega ki mera pehla work resume wala
 # bhi hai aur completed work bhi."* Prepended CLIENT-SIDE: the server still
 # excludes drafts from GET /storyboards, which section [3] pins.
-check("⚠ it is the FIRST row of the list, above the finished boards",
-      lib.index("{draftShown && renderDraftRow()}")
+check("⚠ they are the FIRST rows of the list, above the finished boards",
+      lib.index("{draftsShown.map(renderDraftRow)}")
       < lib.index("{shown.map(renderBoard)}"))
-check("⚠ …and it counts, or a user whose only project is unfinished would be "
-      "told they have none — `total: 0` draws the empty state instead of rows",
-      "const listTotal = boards.length + (draft && onResume ? 1 : 0);" in lib
+check("⚠ …and they count, or a user whose only projects are unfinished would "
+      "be told they have none — `total: 0` draws the empty state, not rows",
+      "const listTotal = boards.length + (onResume ? drafts.length : 0);" in lib
       and "total={listTotal}" in lib and "shown={shownTotal}" in lib)
-check("⚠ …and it NEVER pretends to have a picture — there are no panels yet, "
+check("⚠ …and they NEVER pretend to have a picture — there are no panels yet, "
       "so the thumbnail is a note glyph, not a cover",
       "lib-draft-glyph" in lib and "cover={<span" in lib
       and "lib-draft-glyph" in sb_lib_css)
-check("⚠ discarding it ASKS FIRST — the breakdown behind those shots was paid "
-      "for and there is no undo",
-      "setConfirmId(DRAFT_ROW_ID)" in lib
+# ⚠ EACH ROW OWNS ITS OWN CONFIRM STRIP. With several drafts on screen a
+# single shared row id would open every one of their confirm strips at once,
+# and "Discard" would then be a question about which project exactly?
+check("⚠ discarding ASKS FIRST, per row — the breakdown behind those shots was "
+      "paid for and there is no undo",
+      "const draftRowId = (jobId) => `draft:${jobId}`;" in lib
+      and "setConfirmId(uid)" in lib
       and "api.discardStoryboardDraft(draft.job_id)" in lib
       and "cannot be undone" in lib)
-check("⚠ …and it is only offered where it can actually be resumed — the "
+check("⚠ …and a draft's row id can never collide with a board's job_id, which "
+      "a bare id risks the moment a draft is promoted",
+      "`draft:${jobId}`" in lib and "DRAFT_ROW_ID" not in lib)
+check("⚠ …and they are only offered where they can actually be resumed — the "
       "animatic library renders this same component over COPIES",
       "const canResume = Boolean(onResume);" in lib
       and "if (!canResume) return;" in lib
-      and "draftShown =" in lib)
+      and "draftsShown =" in lib)
 # ⚠ The fetch keys off a BOOLEAN, not the callback. `onResume` is an inline
 # arrow in the caller, so its identity changes on every parent render —
 # depending on it would re-request the draft each time the workflow re-rendered.
@@ -323,6 +330,112 @@ check("⚠ the unfinished row never pretends to have a picture — a note glyph,
       "not a cover",
       "lib-draft-glyph" in lib and "cover={<span" in lib
       and "lib-draft-glyph" in sb_lib_css)
+
+print("\n[14c] ⚠ A SESSION WITH SHOTS BUT NO DRAFT SAVES NOTHING")
+# THE BUG, in the user's own test: they drew a character reference, went to
+# Home, came back and pressed Resume — and an UNRELATED project opened. The
+# server was checked: no record of their board existed anywhere, in any state.
+# Only a BREAKDOWN minted a draft (it had just spent money, so it wrote the
+# result down). DUPLICATE deliberately skips the breakdown — that is its whole
+# point, reuse the shots rather than pay again — so it reached the review step
+# with no draft, and the autosave is keyed on having one. Every edit, and every
+# reference image PAID FOR on the cast and props steps, lived only in the
+# browser. Resume could only offer what the server actually had.
+#
+# ⚠ POST /storyboards/draft CALLS NO MODEL AND SPENDS NO QUOTA. The shots
+# already exist; this only gives them somewhere to live. Do not let a breakdown
+# creep into it.
+r = client.post("/storyboards/draft", headers=auth, json={
+    "shots": FAKE["shots"], "title": "Rescued Session", "script": SCRIPT,
+    "style": "sketch", "aspect_ratio": "9:16", "genre": "mythology",
+    "characters": FAKE["characters"], "assets": FAKE["assets"],
+    "world": FAKE["world"],
+})
+check("POST -> 201", r.status_code, 201)
+rescued = r.json()["job_id"]
+made.append(rescued)
+check("it is a real DRAFT job", store.get(rescued).status, JobStatus.DRAFT)
+check("owned by the caller", store.get(rescued).owner, email)
+check("the shots are stored", len(store.get(rescued).params["shots"]), 2)
+check("…and so is everything the review step shows",
+      (store.get(rescued).params["world"]["culture"],
+       store.get(rescued).params["aspect_ratio"],
+       len(store.get(rescued).params["assets"])),
+      ("Hindu", "9:16", 1))
+check("titled from what was passed, not from the script",
+      store.get(rescued).character_name, "Rescued Session")
+# ⚠ IT MUST BEHAVE LIKE ANY OTHER DRAFT FROM HERE ON — saveable, and out of
+# the library until it is generated. A half-saved rescue is not a rescue.
+r = client.patch(f"/storyboards/draft/{rescued}", headers=auth,
+                 json={"character_refs": {"ananya": "ref-xyz"},
+                       "character_takes": {"ananya": [{"reference_id": "ref-xyz"}]}})
+check("the rescued draft autosaves like any other", r.status_code, 200)
+check("⚠ …including the references that cost money",
+      r.json()["character_refs"]["ananya"], "ref-xyz")
+check("…and their takes", len(r.json()["character_takes"]["ananya"]), 1)
+check("⚠ it stays OUT of the library, like every draft",
+      [b for b in client.get("/storyboards", headers=auth).json()
+       if b["job_id"] == rescued], [])
+check("a shot list is required — an empty session is nothing to save",
+      client.post("/storyboards/draft", headers=auth, json={"shots": []}).status_code,
+      422)
+check("auth required",
+      client.post("/storyboards/draft", json={"shots": FAKE["shots"]}).status_code, 401)
+# The client half: the review step notices it has no draft and asks for one.
+check("the workflow creates one when it is reviewing unsaved shots",
+      "api.createStoryboardDraft({" in ui
+      and 'if (step !== "review" || draftJobId || jobId) return;' in ui)
+check("⚠ …but never for a board that is already saved as a board, which would "
+      "be a second record of one storyboard",
+      "|| jobId) return;" in ui)
+check("⚠ …and never twice — StrictMode mounts twice in development, and a ref "
+      "is the only guard that survives that",
+      "const creatingDraft = useRef(false);" in ui
+      and "creatingDraft.current = true;" in ui)
+
+print("\n[14d] ⚠ EVERY UNFINISHED BOARD IS REACHABLE, NOT JUST THE NEWEST")
+# `GET /storyboards/draft` answers "the most recent one", and it was the only
+# way in. This account was found holding TWO unfinished boards with the older
+# one unreachable by any means: the library drew one row and always drew the
+# same one. The user hit it from the other side — Resume opened a project they
+# were not working on, because it was the newest and theirs was not saved.
+#
+# ⚠ THE SINGULAR ENDPOINT STAYS. It is a different question, still asked by
+# the workflow on mount, and sections [1], [4], [7] and [9] pin its meaning.
+r = client.post("/storyboards/draft", headers=auth, json={
+    "shots": FAKE["shots"], "title": "Older Unfinished", "script": SCRIPT,
+})
+older = r.json()["job_id"]; made.append(older)
+r = client.post("/storyboards/draft", headers=auth, json={
+    "shots": FAKE["shots"], "title": "Newer Unfinished", "script": SCRIPT,
+})
+newer = r.json()["job_id"]; made.append(newer)
+
+r = client.get("/storyboards/drafts", headers=auth)
+check("GET /storyboards/drafts -> 200", r.status_code, 200)
+ids = [d["job_id"] for d in r.json()]
+check("⚠ BOTH unfinished boards come back, not only the newest",
+      sorted([i for i in ids if i in (older, newer)]), sorted([older, newer]))
+check("newest first, so the list reads like the library it sits in",
+      ids.index(newer) < ids.index(older))
+check("each carries what its row has to draw",
+      all(("shots" in d and "title" in d and "updated_at" in d) for d in r.json()))
+# ⚠ The singular endpoint still means what it always meant.
+check("…while GET /storyboards/draft still answers with the NEWEST one",
+      client.get("/storyboards/draft", headers=auth).json()["job_id"], newer)
+check("⚠ drafts are STILL absent from the library — a draft has no panels",
+      [b for b in client.get("/storyboards", headers=auth).json()
+       if b["job_id"] in (older, newer)], [])
+check("owner-scoped, like every other draft route",
+      client.get("/storyboards/drafts", headers=other).json(), [])
+check("auth required", client.get("/storyboards/drafts").status_code, 401)
+# Discarding one must leave the other alone — with several rows on screen that
+# is the difference between tidying up and losing a project.
+check("discarding one leaves the other standing",
+      client.delete(f"/storyboards/draft/{older}", headers=auth).status_code, 204)
+check("…and it is the right one that survived",
+      [d["job_id"] for d in client.get("/storyboards/drafts", headers=auth).json()
+       if d["job_id"] in (older, newer)], [newer])
 
 print("\n[15] cleanup")
 removed = sum(1 for jid in made if jid and store.delete(jid))
