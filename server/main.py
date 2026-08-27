@@ -825,6 +825,10 @@ def _draft_to_response(job: Job) -> StoryboardDraft:
         world=p.get("world") or {},
         character_refs=p.get("character_refs") or {},
         asset_refs=p.get("asset_refs") or {},
+        # Every take, so resuming shows the pictures already paid for rather
+        # than an empty card that invites drawing them again.
+        character_takes=p.get("character_takes") or {},
+        asset_takes=p.get("asset_takes") or {},
         asset_categories=p.get("asset_categories") or {},
         updated_at=job.updated_at,
     )

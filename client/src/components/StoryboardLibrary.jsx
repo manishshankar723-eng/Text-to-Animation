@@ -45,6 +45,13 @@ const GENRE_LABELS = {
 // the page reads as a real list waiting to be filled rather than bare text.
 const GHOST_ROWS = 5;
 
+// The row id the unfinished storyboard answers to, for the shared per-row
+// state (which row is busy, which row is showing a confirm strip). A draft has
+// a real job_id, but it is deliberately NOT used here: the confirm strip and
+// the busy flag are keyed by row, and a constant makes it impossible for a
+// draft and a board that once shared that id to be mistaken for each other.
+const DRAFT_ROW_ID = "__draft__";
+
 function titleCase(s) {
   return s.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -74,6 +81,11 @@ export default function StoryboardLibrary({
   onNew,
   onOpen,
   onDuplicate,
+  // ⚠ RESUME THE UNFINISHED STORYBOARD. Given only by the workflow that can
+  // actually resume one, so the animatic library (which renders this same
+  // component over COPIES) never offers a draft it has no way to open. Omit it
+  // and the row does not exist.
+  onResume,
   // ⚠ A WORKFLOW ID, NOT A GLYPH. This library is rendered by two different
   // workflows and each wants its own face on the header; passing the id rather
   // than the picture keeps the drawing in one file. Defaults to Script to
@@ -118,6 +130,34 @@ export default function StoryboardLibrary({
   // together and can't be fired twice.
   const [busyId, setBusyId] = useState(null);
   const coverUrls = useRef([]);
+  // ⚠ THE UNFINISHED STORYBOARD, ON THE PAGE THAT LISTS STORYBOARDS. It used
+  // to have a strip on the dashboard instead, and the user asked for it here
+  // and nowhere else: *"maine recent kyun banaya hai jab yahan pe mera resume
+  // dikh hi nahi raha … home page se bhi hatao, bas ek jagah."*
+  //
+  // A first attempt put it in a strip ABOVE the list; that was not what was
+  // asked for either. It is a ROW now, leading the list — see `renderDraftRow`
+  // for what it does and does not claim to be.
+  //
+  // The effect keys off a BOOLEAN, not `onResume` itself: the caller passes an
+  // inline arrow, so its identity changes on every parent render and depending
+  // on it would re-fetch the draft each time the workflow re-rendered.
+  const [draft, setDraft] = useState(null);
+  const canResume = Boolean(onResume);
+  useEffect(() => {
+    if (!canResume) return;
+    let cancelled = false;
+    api
+      .getStoryboardDraft()
+      .then((d) => {
+        // Nothing to offer unless there are actually shots in it.
+        if (!cancelled && d?.job_id && (d.shots || []).length) setDraft(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [canResume]);
 
   useEffect(() => {
     let alive = true;
@@ -448,12 +488,152 @@ export default function StoryboardLibrary({
     );
   }
 
+  /** Throw the unfinished storyboard away. The breakdown behind it was paid
+   *  for and there is no undo, so it goes through the row's own confirm strip
+   *  like every other delete in this list — never on a single click. */
+  async function discardDraft() {
+    setBusyId(DRAFT_ROW_ID);
+    setError("");
+    try {
+      await api.discardStoryboardDraft(draft.job_id);
+      setDraft(null);
+      setConfirmId(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // THE UNFINISHED STORYBOARD, DRAWN AS A ROW LIKE ANY OTHER PROJECT.
+  //
+  // ⚠ IT IS IN THE LIST, NOT ABOVE IT — asked for in as many words after a
+  // first attempt put it in its own strip: *"mai yeh nahi lagane bola tha …
+  // dance video ke upar hi aa jaye jaise sab dikh rahe hai, so user samajh
+  // jayega ki mera pehla work resume wala bhi hai aur completed work bhi."*
+  // One list, newest first, and the unfinished one leads it.
+  //
+  // ⚠ IT IS STILL NOT A BOARD ON THE SERVER. `GET /storyboards` excludes DRAFT
+  // jobs on purpose and `storyboard_draft_check.py` [3] pins that; this row is
+  // the separately-fetched draft record, prepended client-side. Nothing about
+  // the API contract changed — only where the client draws it.
+  //
+  // ⚠ AND IT NEVER PRETENDS TO HAVE A PICTURE. There are no panels yet, so the
+  // thumbnail is a note glyph rather than a cover, and the Details column says
+  // "Not drawn yet" first. That was the other half of the request: *"agar user
+  // storyboard image generate nahi kiya hai to text note jaisa icon dikha
+  // dena."*
+  function renderDraftRow() {
+    const busy = busyId === DRAFT_ROW_ID;
+    const shotCount = (draft.shots || []).length;
+    const genre = genreLabel(draft.genre);
+    return (
+      <LibraryRow
+        key={DRAFT_ROW_ID}
+        onOpen={() => onResume(draft)}
+        openTitle="Pick this storyboard up where you left off"
+        aspect={draft.aspect_ratio}
+        /* No panels, so no bytes. `formatBytes` draws an em dash, which is the
+           honest answer — see its note on why nothing is ever "0 B". */
+        size={0}
+        cover={<span className="lib-draft-glyph">📝</span>}
+        name={
+          <div
+            className="lib-title"
+            onClick={() => onResume(draft)}
+            title={
+              draft.updated_at
+                ? `Saved ${new Date(draft.updated_at).toLocaleString()}. The breakdown behind it has already been paid for.`
+                : "The breakdown behind it has already been paid for."
+            }
+          >
+            {draft.title || "Untitled storyboard"}
+          </div>
+        }
+        meta={
+          <>
+            <span className="chip warn">Not drawn yet</span>
+            {genre && <span className="chip">{genre}</span>}
+            {draft.aspect_ratio && <span className="chip">{draft.aspect_ratio}</span>}
+            {shotCount > 0 && (
+              <span className="chip">
+                {shotCount} shot{shotCount === 1 ? "" : "s"}
+              </span>
+            )}
+          </>
+        }
+        date={formatDate(draft.updated_at)}
+        actions={
+          <>
+            {/* A real button, not an icon: this row's whole point is that it
+                can be picked up again, and that must not be a glyph to guess
+                at beside four others. */}
+            <button
+              type="button"
+              className="btn small lib-resume"
+              disabled={busy}
+              onClick={() => onResume(draft)}
+            >
+              Resume →
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              disabled={busy}
+              title="Discard this unfinished storyboard"
+              onClick={() => setConfirmId(DRAFT_ROW_ID)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+        below={
+          confirmId === DRAFT_ROW_ID ? (
+            <div className="lib-confirm">
+              <span className="tiny">
+                Discard “{draft.title || "Untitled storyboard"}”? The breakdown
+                behind these {shotCount} shot{shotCount === 1 ? "" : "s"} has
+                already been paid for and this cannot be undone.
+              </span>
+              <div className="lib-confirm-btns">
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => setConfirmId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn small lib-delete"
+                  disabled={busy}
+                  onClick={discardDraft}
+                >
+                  {busy ? "Discarding…" : "Discard"}
+                </button>
+              </div>
+            </div>
+          ) : null
+        }
+      />
+    );
+  }
+
   // What the Filter box leaves standing. A pure VIEW of `boards` - nothing is
   // re-fetched - matched against the three things a user actually types when
   // hunting for a board: its name, its genre and its aspect ratio.
   const shown = boards.filter((b) =>
     matchesFilter(query, b.title, genreLabel(b.genre), b.aspect_ratio)
   );
+  // The unfinished one is a project in this list like any other, so it filters
+  // like one too.
+  const draftShown =
+    draft && onResume
+      ? matchesFilter(query, draft.title, genreLabel(draft.genre), draft.aspect_ratio)
+      : false;
+  const listTotal = boards.length + (draft && onResume ? 1 : 0);
+  const shownTotal = shown.length + (draftShown ? 1 : 0);
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -497,14 +677,18 @@ export default function StoryboardLibrary({
       {/* ONE section. "All Storyboards" used to repeat this list underneath. */}
       <LibrarySection
         title="Recent Storyboards"
-        hint={boards.length > 0 ? `${boards.length} in total` : ""}
+        hint={listTotal > 0 ? `${listTotal} in total` : ""}
         query={query}
         onQuery={setQuery}
         placeholder="Filter storyboards"
         loading={loading}
         ghosts={GHOST_ROWS}
-        total={boards.length}
-        shown={shown.length}
+        /* ⚠ THE DRAFT COUNTS. Without it a user whose only project is an
+           unfinished one would be told "No storyboards yet" with their own
+           work sitting right there — `total: 0` draws the empty state instead
+           of the rows. */
+        total={listTotal}
+        shown={shownTotal}
         metaLabel="Details"
         dateLabel="Created"
         sizeLabel="Size"
@@ -516,6 +700,9 @@ export default function StoryboardLibrary({
           </>
         }
       >
+        {/* The unfinished one LEADS the list — it is the newest thing the
+            user touched and the only one still waiting on them. */}
+        {draftShown && renderDraftRow()}
         {shown.map(renderBoard)}
       </LibrarySection>
     </div>

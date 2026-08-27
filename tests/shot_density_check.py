@@ -325,6 +325,40 @@ check("…and the one-shot case is marked, because that is the one worth "
 
 # ---------------------------------------------------------------------------
 print()
+print("[7] SAME PANEL, SAME BUTTONS — same place, same size")
+# ⚠ THE USER STATED THIS AS A RULE: if two panels do the same job and carry the
+# same buttons, those buttons must match in POSITION as well as size. Two things
+# broke it on the cast/props steps. (a) "Generate all" hung in a strip of its
+# own BELOW the header divider, directly under "Generate panels (skip refs)" —
+# two unrelated jobs, stacked. (b) Generate/Upload floated at different heights
+# on neighbouring cards, because the description above them is a different
+# length. Reported with screenshots.
+for name, markup in (("cast", cast_ui), ("props", assets_ui)):
+    top = markup.split('className="review-actions board-actions top-actions"')[1]
+    top = top.split("</div>")[0]
+    check(f"the {name} step's bulk actions share the step's own row",
+          "Generate all (${toGenCount})" in top
+          and "Retry failed (${failedCount})" in top)
+    check(f"…and they come BEFORE the primary, so the {name} row reads in the "
+          "order it is used",
+          top.index("Generate all (${toGenCount})")
+          < top.index("Generate panels (skip refs)"))
+check("the second strip is gone from the markup AND from the stylesheet — a "
+      "dead `.cast-toolbar` rule is how the next agent puts it back",
+      "cast-toolbar" not in cast_ui
+      and "cast-toolbar" not in assets_ui
+      and ".cast-toolbar" not in css)
+check("Generate/Upload pin to the BOTTOM of the card, so a short description "
+      "cannot float them above their neighbour's",
+      "margin-top: auto;" in css.split(".cast-actions {")[1].split("}")[0])
+check("…which only works because the body is a column — `margin-top: auto` on "
+      "a row child pushes nothing",
+      "flex-direction: column;" in css.split(".cast-body {")[1].split("}")[0])
+check("…and the pair still states one size family, both buttons equal",
+      "flex: 1 1 0;" in css.split(".cast-btn {")[1].split("}")[0])
+
+# ---------------------------------------------------------------------------
+print()
 if failures:
     print(f"❌ {len(failures)} check(s) failed:")
     for f in failures:

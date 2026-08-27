@@ -559,7 +559,13 @@
   cursor: not-allowed;
 }
 .panel-versions-count {
-  color: var(--text);
+  /* ⚠ NOT `var(--text)`, AND THAT WAS THE BUG. The pill's background is a
+     hard-coded dark scrim (it sits over a picture, in both themes), but
+     `--text` flips with the theme — so in LIGHT mode this was near-black text
+     on a near-black pill and the count vanished, leaving two arrows around
+     nothing. Reported with a screenshot. The scrim is fixed, so its ink is
+     fixed too: this is the dark theme's `--text` value, stated. */
+  color: #f4f6fa;
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   padding: 0 0.2rem;
@@ -935,17 +941,9 @@
 }
 
 /* ---- Script → Storyboard: Cast setup (Stage B) ---- */
-/* Bulk actions above the cast / props grid: Generate all + Retry failed. */
-.cast-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-  margin: 0 0 1.1rem;
-}
-.cast-toolbar .btn.secondary {
-  margin-top: 0;
-}
+/* The bulk actions (Generate all / Retry failed) no longer have a strip of
+   their own — they moved INTO `.top-actions`, to the left of the step's
+   primary, so the whole row reads in the order it is used. */
 .cast-grid {
   /* Stretch cards to fill the full width so wide screens don't leave big
      side gutters (was a centered flex row capped at ~460px per card). */
@@ -966,6 +964,11 @@
   }
 }
 .cast-portrait {
+  /* ⚠ THE ANCHOR FOR `.panel-versions`. The take arrows are the board's own
+     control, reused verbatim on these thumbnails (see RefVersions.jsx), and it
+     positions itself absolutely — without this it would escape the thumbnail
+     and pin itself to the page. */
+  position: relative;
   flex-shrink: 0;
   width: 150px;
   height: 150px;
@@ -996,9 +999,18 @@
   font-size: 1.8rem;
   color: var(--muted);
 }
+/* ⚠ SAME BUTTONS, SAME PLACE, ON EVERY CARD. The description decides the
+   card's text height, so a short one used to float its Generate/Upload pair
+   halfway up the card while the card beside it sat lower — two identical
+   controls, doing an identical job, on two different lines. The grid already
+   stretches every card in a row to the same height; making the body a column
+   lets `.cast-actions` take the leftover space with `margin-top: auto` and
+   land on one line across the row. */
 .cast-body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 .cast-name {
   font-weight: 700;
@@ -1064,7 +1076,10 @@
 .cast-actions {
   display: flex;
   gap: 0.5rem;
-  margin-top: 0.6rem;
+  /* Pin to the bottom of the card — see `.cast-body`. The 0.6rem is the
+     minimum breathing room when the text already fills the card. */
+  margin-top: auto;
+  padding-top: 0.6rem;
 }
 /* Generate + Upload: identical size and colour */
 .cast-btn {
@@ -1324,34 +1339,6 @@
 .more-panel .opt-chip {
   border-radius: 9px;
   min-height: 2.5rem;
-}
-
-/* ⚠ THE UNFINISHED BOARD, OFFERED RATHER THAN OPENED. The review step used to
-   re-open itself on every mount of this workflow, so walking out of it and
-   coming back through the sidebar put you straight back inside it, looking at a
-   board from an earlier session. It waits here instead — one line saying what it
-   is and how big, and the two buttons that are the only honest answers. Gold
-   edge because it is an offer about work already paid for, not a warning. */
-.sts-draft-offer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  margin: 0 0 1rem;
-  padding: 0.7rem 0.9rem;
-  background: var(--panel-2);
-  border: 1px solid var(--border-gold);
-  border-radius: 9px;
-}
-.sts-draft-offer-text {
-  font-size: 0.88rem;
-  min-width: 0;
-}
-.sts-draft-offer-actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-shrink: 0;
 }
 
 /* The concept card — the approval gate. Deliberately built out of the SAME

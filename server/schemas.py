@@ -824,6 +824,21 @@ class ScriptBreakdownResponse(BaseModel):
     draft_job_id: str | None = None
 
 
+class RefTake(BaseModel):
+    """One take of a reference — a picture that was drawn or uploaded for a name.
+
+    ⚠ EVERY TAKE COSTS AN IMAGE, so none of them may be lost. Pressing Generate
+    twice mints two reference_ids and the earlier folder is never overwritten,
+    so the takes are already durable on disk; this is what lets a RESUMED draft
+    find them again instead of showing a card that looks as though nothing was
+    ever drawn. `uploaded` rides along per take because a user's own image must
+    never be redrawn by "Generate all", whichever take is live.
+    """
+
+    reference_id: str
+    uploaded: bool = False
+
+
 class StoryboardDraft(BaseModel):
     """A storyboard being reviewed but not yet generated.
 
@@ -846,8 +861,39 @@ class StoryboardDraft(BaseModel):
     # resumed draft keeps the references already generated (they cost quota).
     character_refs: dict[str, str] = Field(default_factory=dict)
     asset_refs: dict[str, str] = Field(default_factory=dict)
+    # name → EVERY take drawn or uploaded for it, oldest first. The id in
+    # `character_refs` / `asset_refs` above is whichever of these is live. An
+    # older draft simply has none, and its single reference is adopted as take 1
+    # by the client — see RefTake.
+    character_takes: dict[str, list[RefTake]] = Field(default_factory=dict)
+    asset_takes: dict[str, list[RefTake]] = Field(default_factory=dict)
     asset_categories: dict[str, str] = Field(default_factory=dict)
     updated_at: str = ""
+
+
+class StoryboardDraftCreate(BaseModel):
+    """Body for POST /storyboards/draft — save a shot list that has no draft yet.
+
+    ⚠ THIS IS NOT A BREAKDOWN AND MUST NEVER BECOME ONE. No model is called and
+    no quota is spent; the shots already exist and this only gives them a record
+    to live in. It exists because a session could reach the review step with no
+    draft behind it — Duplicate is the plain case, since it reuses a saved
+    board's shots rather than running a paid breakdown — and the autosave is
+    keyed on having a draft, so EVERYTHING that session did was silently
+    discarded on leaving the workflow, references included. Reported: resuming
+    afterwards offered a different project, because the work had never been
+    saved at all.
+    """
+
+    shots: list[Shot] = Field(..., min_length=1, description="The shots to save.")
+    title: str | None = None
+    script: str = ""
+    style: str | None = None
+    aspect_ratio: str | None = None
+    genre: str | None = None
+    characters: list[Character] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
+    world: World | None = None
 
 
 class StoryboardDraftUpdate(BaseModel):
@@ -867,6 +913,8 @@ class StoryboardDraftUpdate(BaseModel):
     world: World | None = None
     character_refs: dict[str, str] | None = None
     asset_refs: dict[str, str] | None = None
+    character_takes: dict[str, list[RefTake]] | None = None
+    asset_takes: dict[str, list[RefTake]] | None = None
     asset_categories: dict[str, str] | None = None
 
 

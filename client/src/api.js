@@ -2265,6 +2265,24 @@ export function uploadReference(file) {
 export function getReferenceImageUrl(referenceId) {
   return `${BASE}/characters/reference/${referenceId}/image`;
 }
+// ⚠ A REFERENCE IS OWNER-SCOPED, so it can never be a plain <img src> — the
+// request has to carry the bearer token. This is `fetchStoryboardPanel`'s
+// sibling and behaves the same way: it returns an object URL the CALLER now
+// owns and must revoke.
+//
+// This is what makes a resumed draft show the faces it already paid for. The
+// cast/props steps hold blob previews that die with the page, but the
+// reference_ids are saved on the draft, so the picture is always one authed
+// fetch away — nothing has to be generated twice.
+export async function fetchReferenceImage(referenceId) {
+  if (!referenceId) throw new Error("No reference id");
+  const token = getToken();
+  const res = await fetch(getReferenceImageUrl(referenceId), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+  if (!res.ok) throw new Error("Reference image not available");
+  return URL.createObjectURL(await res.blob());
+}
 export function createCharacter(formData) {
   return request("/characters", { method: "POST", body: formData, isForm: true });
 }

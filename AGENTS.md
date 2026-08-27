@@ -22294,8 +22294,21 @@ all still unseen.
 `tests/plan_script_check.py` fails at its first request: a freshly registered
 user gets **403** from `POST /plans`. ⚠ Confirmed **not** caused by any of this
 session's work — stashing every change and running it on a clean tree fails
-identically. Something in the `workflow.plan-script` gate or the tier store is
-refusing new accounts. Nobody has looked at it yet.
+identically. Nobody has looked at it yet.
+
+⚠ **NARROWED, 2026-08-28.** The gate is `require_feature("workflow.plan-and-script")`
+on `server/plans.py:224` — note the capability id is `workflow.plan-and-script`,
+not `workflow.plan-script` as first written here. **The status code identifies
+which guard fired:** `require_feature` raises **403**, while `require_quota` (on
+the same route, line 225) raises **402** with a "you've used N of your N" body.
+This is a 403, so it is the FEATURE gate refusing the capability to a new
+account's tier — not the monthly project limit. `tests/plan_check.py` fails the
+same way. Separately, `tests/hidden_lane_check.py` fails on the **402** path
+("used 2 of your 2 projects this month"), which is the quota, and
+`tests/profile_check.py` fails on leftover test accounts (313 of them) — three
+different problems, none of them the same one, and none of them ours.
+`tests/effects_parity_check.py` is not a failure at all: it SKIPS because
+`headless-gl` is not installed.
 
 ⚠ **AND B7's FIX DOES NOT REPAIR THE BOARD ON SCREEN.** The user edited that
 panel by hand, correctly removing the quoted text from the image prompt — but
@@ -22343,6 +22356,112 @@ so. Two options were put to the user:
   plain) — reported twice as money wasted on a full sheet for an artisan seen
   only as hands. The count is a fact; guessing "hands only" from the wording
   would not be.
+- **B9 — the cast step's buttons did not line up, in two different ways.**
+  (a) *Generate all* sat in a strip of its own **below** the header divider,
+  under *Generate panels (skip refs)* — two unrelated jobs stacked in two
+  places. `.cast-toolbar` is gone; both bulk buttons now live inside
+  `.top-actions`, to the **left** of the step's primary, so the row reads in
+  the order it is used. (b) *Generate* / *Upload* floated at different heights
+  on neighbouring cards because the description above them is a different
+  length. `.cast-body` is a flex column and `.cast-actions` takes
+  `margin-top: auto`, so they pin to the bottom of the card — the grid already
+  stretches a row's cards to equal height. ⚠ **The user stated the rule:
+  same panel, same job, same buttons → same place AND same size.** Both fixes
+  land on the Cast and Props steps together (they share the classes).
+- **B10 — the first reference was drawn, paid for, and then thrown away.**
+  Generate pressed twice on ANANYA replaced the picture; take 1 was
+  unreachable. ⚠ **The image was never actually lost** — POST
+  /characters/reference mints a fresh `uuid4().hex[:12]` per call and never
+  touches the previous folder, so every take was still on the server with
+  nothing in the UI pointing at it. New `RefVersions.jsx` is the board's own
+  ‹ 1 / 2 › pill (same `.panel-versions` classes, same wrap, same
+  show-from-one rule) sitting on the reference thumbnail; generate and upload
+  both APPEND a take. ⚠ **Picking a take swaps the card's live `referenceId`,
+  which is the id `handleGenerate` sends** — what is on screen is what the
+  panels are drawn from, which is what was asked for. No server work: a panel
+  redraw overwrites `panel_NN.png` and needs an archive, a reference does not.
+  Covered by `tests/ref_versions_check.py`. Cast and Props both.
+- **B11 — walking out of the workflow threw the references away.** *"Mai back
+  aaya to mera ANANYA wala photo dikh hi nahi raha hai … baar baar generate
+  karna pare, usko paisa lagta hai."* B10 keeps the takes while the workflow is
+  MOUNTED; leaving for Home unmounts it, and the takes lived in React state
+  behind blob URLs that die with the page. ⚠ **The ids were never written to the
+  draft at all** — `character_refs` was only filled on the way OUT of the cast
+  step, `asset_refs` never — and `resumeDraft` never handed them back to the
+  steps. Now: `RefTake` on the draft (`character_takes` / `asset_takes`), the
+  autosave writes from `savedCastRefs`/`savedAssetRefs` the moment a reference
+  lands, and resuming seeds both steps and re-fetches the picture through the
+  new `api.fetchReferenceImage` (owner-scoped, so it can never be a plain
+  `<img src>` — `fetchStoryboardPanel`'s sibling). ⚠ **Only the LIVE take is
+  pulled on resume**; an older one fetches when the ‹ › arrows land on it, so a
+  dozen names × three takes is not megabytes nobody asked for. Nothing but IDs
+  is stored — an object URL means nothing to the next page load.
+- **B12 — the take counter was invisible in light mode.** `.panel-versions`
+  paints a hard-coded dark scrim (it sits over a picture in either theme) but
+  the count was `var(--text)`, which flips — so light mode put near-black ink on
+  a near-black pill and the control read as two arrows around nothing. Reported
+  with a screenshot. The scrim is fixed, so its ink is stated. **This was the
+  board's bug too**, not just the new reference pill.
+- **B13 — "Continue where you left off" lived in two places.** *"Maine recent
+  kyun banaya hai jab yahan pe mera resume dikh hi nahi raha … home page se bhi
+  hatao, bas ek jagah."* The strip moved off the dashboard onto **Your
+  Storyboards**, directly above `Recent Storyboards`, and the whole
+  `autoResumeDraft` flag that carried the click from Home into the workflow is
+  gone rather than left dangling. ⚠ **It is still NOT a row in the list** — a
+  draft has no panels, `GET /storyboards` excludes drafts on purpose, and
+  `storyboard_draft_check.py` [3] pins that; listing it beside finished boards
+  would be a lie with a thumbnail on it. ⚠ **It only renders where `onResume` is
+  given**, so the animatic library (same component, over COPIES) never offers a
+  draft it cannot open. `.home-draft*` → `.draft-strip*`, moved from `home.css`
+  into `storyboard.css`.
+- **B13a — and then it had to be a ROW, not a strip.** The first attempt put it
+  in its own gold strip ABOVE the list, on the reasoning that a draft has no
+  panels and so does not belong among boards. That was not what was asked:
+  *"mai yeh nahi lagane bola tha … dance video ke upar hi aa jaye jaise sab
+  dikh rahe hai, so user samajh jayega ki mera pehla work resume wala bhi hai
+  aur completed work bhi."* It is now the **first row of Recent Storyboards**,
+  same columns as every other project. ⚠ **Prepended client-side** — the server
+  still excludes drafts from `GET /storyboards` and check [3] still pins it;
+  only where the client draws it changed. ⚠ **It never fakes a cover**: no
+  panels yet, so the thumbnail slot holds a 📝 glyph (`.lib-draft-glyph`) and
+  Details leads with a warn chip, *Not drawn yet* — asked for by name ("agar
+  user storyboard image generate nahi kiya hai to text note jaisa icon dikha
+  dena"). Actions are a worded **Resume** button plus a trash that discards
+  through the list's own confirm strip — which is where Discard went when the
+  form's banner was deleted. ⚠ **The draft counts toward `total`**, or a user
+  whose only project is unfinished would be shown the "no storyboards yet"
+  empty state with their own work sitting in it.
+- **B13b — the form's banner went too.** *"Script to Storyboard se bhi hata do,
+  only recent mein hi rakho."* `sts-draft-offer`, `draftOffer`,
+  `discardDraftOffer` and their CSS are all gone; three places offered one
+  record, now one does. ⚠ **The mount-time `getStoryboardDraft()` call STAYS** —
+  it no longer feeds anything on screen, but the `await` is what sets
+  `draftHydrated`, and that flag is the only thing stopping the autosave from
+  PATCHing an empty shot list over a good draft. Deleting the call would
+  quietly reintroduce that. Sections [13] and [14] of the draft check were both
+  rewritten — they pinned the OPPOSITE arrangement, twice over.
+- **B13c — REVERTED. Do not try the uniform 16:9 thumbnail frame again.**
+  Asked for: *"noye ka jo icon ke piche box ko 16:9 image jaisa kar do aur 9:16
+  ke piche v same rectangle laga do so sab ek jaisa lage."* Two attempts, both
+  worse than what was there:
+  1. `max-width/max-height` + `object-fit: contain`. A percentage max-height
+     against a container sized by `aspect-ratio` does not reliably resolve, so
+     `max-width` alone bound: a 9:16 picture came out 86×153 and the frame's
+     `overflow: hidden` cut it to the top 48px. A crop by accident.
+  2. `width/height` fixed + `contain`. Reported as still wrong — *"tum aise hi
+     kar do, tum aur kharab kar de rahe ho."*
+  ⚠ **The tree is back to the pre-change state**: `.lib-thumb-pic` takes the
+  project's own ratio from `--lib-thumb-ar` (`aspectStyle` in LibraryList.jsx),
+  the image is `object-fit: cover`, and `cover` does NOT crop there because the
+  box already matches the picture's ratio. `LibraryList.jsx`,
+  `AnimaticLibrary.jsx`, `FinalVideoLibrary.jsx` and `CreateAnimaticImage.jsx`
+  were restored from HEAD; the CSS block was restored from HEAD too.
+  ⚠ **What is still WANTED and still UNSOLVED**: one shared background
+  rectangle behind every thumbnail, with each picture kept at its own shape and
+  size on top of it — the ask was for a BACKGROUND, not for the picture to be
+  refitted. A likely shape: leave `.lib-thumb-pic` exactly as it is and paint
+  the 16:9 panel on `.lib-thumb` (the outer 86×48 slot) instead, so nothing
+  about the picture changes at all. **Not attempted. Ask before trying.**
 - **B7 — `ON SCREEN:` text was written INTO the image prompt.** The end card's
   description quoted the words to superimpose, while the image side forbids all
   lettering — a frame of gibberish, paid for. ⚠ An end card is still allowed to

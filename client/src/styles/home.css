@@ -1550,39 +1550,4 @@
   height: 36px;
 }
 
-/* ⚠ THE UNFINISHED STORYBOARD, ON THE DASHBOARD. It is NOT in Recent work on
-   purpose — a draft has no panels, so it is not a board and a list of boards is
-   the wrong place for it. It is also the most expensive thing on this screen to
-   lose, so it sits above the lists in its own strip, gold-edged like the other
-   things that are about work already paid for. One line, one button. */
-.home-draft {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  border-color: var(--border-gold);
-  margin-bottom: 1rem;
-}
-.home-draft-icon {
-  display: grid;
-  place-items: center;
-  width: 2.4rem;
-  height: 2.4rem;
-  flex-shrink: 0;
-}
-.home-draft-what {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.home-draft-title {
-  margin: 0 0 0.15rem;
-  font-size: 1rem;
-}
-@media (max-width: 560px) {
-  .home-draft {
-    flex-wrap: wrap;
-  }
-  .home-draft-what {
-    flex-basis: 100%;
-    order: 2;
-  }
-}
+

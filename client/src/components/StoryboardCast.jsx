@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
 import GrowTextarea from "./GrowTextarea.jsx";
+import RefVersions from "./RefVersions.jsx";
 // A reference is a drawn image, so it spends `cap.image-generate` — guarded on
 // POST /characters/reference. ⚠ UPLOADING ONE IS NOT GATED and must not be:
 // the file is the customer's own, nothing is drawn, and it is the way an
@@ -17,7 +18,18 @@ import WorkflowIcon from "./WorkflowIcon.jsx";
 // Fields worth keeping when the user steps away from this page (see `saved`).
 // `uploaded` rides along so "Generate all" keeps skipping the user's own images
 // even after they leave and come back.
-const DURABLE = ["description", "referenceId", "previewUrl", "uploaded"];
+// ⚠ `versions` AND `activeVersion` ARE DURABLE TOO, or stepping away to the
+// props step and back would throw away every take but the last one — which is
+// the exact loss this feature exists to stop.
+const DURABLE = [
+  "description",
+  "referenceId",
+  "previewUrl",
+  "uploaded",
+  "versions",
+  "activeVersion",
+];
+
 
 export default function StoryboardCast({
   characters,
@@ -56,6 +68,23 @@ export default function StoryboardCast({
         referenceId: prev.referenceId ?? null,
         previewUrl: prev.previewUrl ?? null,
         uploaded: prev.uploaded ?? false, // user's own image → never auto-generated
+        // Every take drawn or uploaded for this character, oldest first, and
+        // which one is live. A card saved before versions existed carries a
+        // lone reference: ADOPT it as take 1 rather than showing "0 versions"
+        // beside a picture that plainly exists — the same adoption the board
+        // does on read for panels drawn before it kept versions.
+        versions:
+          prev.versions ??
+          (prev.referenceId
+            ? [
+                {
+                  referenceId: prev.referenceId,
+                  previewUrl: prev.previewUrl ?? null,
+                  uploaded: prev.uploaded ?? false,
+                },
+              ]
+            : []),
+        activeVersion: prev.activeVersion ?? 0,
         busy: false,
         error: "",
       };
@@ -63,6 +92,57 @@ export default function StoryboardCast({
   );
   const [bulkBusy, setBulkBusy] = useState(false);
   const fileInputs = useRef([]);
+  // ⚠ THE LATEST CAST, READABLE FROM AN ASYNC HANDLER. `runGenerate` takes a
+  // snapshot so a bulk loop doesn't wait on React state, and appending a take
+  // to a snapshot taken before the previous take landed would DROP that take.
+  // The ref is rewritten on every render, so by the time a fetch resolves it
+  // holds the array the last render saw.
+  const castRef = useRef(cast);
+  castRef.current = cast;
+
+  // Append a take and make it live. Everything downstream — handleGenerate,
+  // readyCount, needsGen — keeps reading the flat `referenceId`/`previewUrl`,
+  // which is exactly the active take's, so nothing else has to know versions
+  // exist.
+  function addVersion(i, take) {
+    const versions = [...(castRef.current[i]?.versions || []), take];
+    patch(i, {
+      versions,
+      activeVersion: versions.length - 1,
+      ...take,
+      busy: false,
+      error: "",
+    });
+  }
+
+  // Switch which take is live. Named `pickVersion`, not `useVersion` — a
+  // component-scope function called `use…` reads as a hook.
+  //
+  // ⚠ A RESTORED TAKE HAS ITS ID BUT NO PICTURE. Resuming a draft pulls down
+  // only the take that is live (see `restoreSavedRefs` in the workflow — a
+  // dozen names times three takes is megabytes nobody asked for), so stepping
+  // onto an older one fetches its image here, once, and keeps it.
+  async function pickVersion(i, n) {
+    const take = (castRef.current[i]?.versions || [])[n];
+    if (!take) return;
+    if (take.previewUrl) {
+      patch(i, { activeVersion: n, ...take });
+      return;
+    }
+    patch(i, { activeVersion: n, ...take, busy: true });
+    try {
+      const previewUrl = await api.fetchReferenceImage(take.referenceId);
+      const filled = { ...take, previewUrl };
+      const versions = (castRef.current[i]?.versions || []).map((v, k) =>
+        k === n ? filled : v
+      );
+      patch(i, { versions, activeVersion: n, ...filled, busy: false });
+    } catch {
+      // The image is gone from the server; the take still points somewhere the
+      // board can use, so keep it selected and leave the placeholder.
+      patch(i, { busy: false });
+    }
+  }
 
   function patch(i, fields) {
     setCast((c) => c.map((ch, idx) => (idx === i ? { ...ch, ...fields } : ch)));
@@ -87,8 +167,10 @@ export default function StoryboardCast({
       });
       let previewUrl = null;
       if (imgRes.ok) previewUrl = URL.createObjectURL(await imgRes.blob());
-      // uploaded:false — a generated ref replaces any prior upload flag.
-      patch(i, { referenceId: res.reference_id, previewUrl, uploaded: false, busy: false });
+      // uploaded:false — a generated take is never treated as the user's own.
+      // ⚠ APPENDED, NOT WRITTEN OVER: the take before this one is still on the
+      // server under its own id and still on screen behind the ‹ › arrows.
+      addVersion(i, { referenceId: res.reference_id, previewUrl, uploaded: false });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
     }
@@ -106,7 +188,9 @@ export default function StoryboardCast({
       const res = await api.uploadReference(file);
       const previewUrl = URL.createObjectURL(file);
       // uploaded:true so bulk "Generate all" / "Retry failed" leaves it alone.
-      patch(i, { referenceId: res.reference_id, previewUrl, uploaded: true, error: "", busy: false });
+      // An upload is a take like any other — it can be compared against a
+      // drawn one and switched away from without re-picking the file.
+      addVersion(i, { referenceId: res.reference_id, previewUrl, uploaded: true });
     } catch (e) {
       patch(i, { busy: false, error: e.message });
     }
@@ -172,6 +256,44 @@ export default function StoryboardCast({
       </div>
 
       <div className="review-actions board-actions top-actions">
+        {/* ⚠ BULK ACTIONS SHARE THE STEP'S OWN ROW, and they sit BEFORE the
+            primary. They used to hang in a second strip of their own below the
+            divider, which read as belonging to the grid and put "Generate all"
+            under "Generate panels" — two different jobs, stacked, in two
+            different places. One row, one order: fill the refs, then leave. */}
+        {cast.length > 0 && imageCap.on && failedCount > 0 && (
+          <button
+            type="button"
+            className="btn"
+            disabled={bulkBusy || busy}
+            onClick={() => runBulk(isFailed)}
+          >
+            {bulkBusy ? (
+              <>
+                <span className="spinner-inline" /> Working…
+              </>
+            ) : (
+              `🔄 Retry failed (${failedCount})`
+            )}
+          </button>
+        )}
+        {cast.length > 0 && imageCap.on && toGenCount > 0 && (
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={bulkBusy || busy}
+            onClick={() => runBulk(needsGen)}
+            title="Generate a reference for every character that doesn't have one (your uploads are left as-is)"
+          >
+            {bulkBusy ? (
+              <>
+                <span className="spinner-inline" /> Generating…
+              </>
+            ) : (
+              `✨ Generate all (${toGenCount})`
+            )}
+          </button>
+        )}
         <button
           type="button"
           className="btn primary"
@@ -199,43 +321,6 @@ export default function StoryboardCast({
           character.
         </p>
       )}
-      {cast.length > 0 && imageCap.on && (toGenCount > 0 || failedCount > 0) && (
-        <div className="cast-toolbar">
-          {failedCount > 0 && (
-            <button
-              type="button"
-              className="btn"
-              disabled={bulkBusy || busy}
-              onClick={() => runBulk(isFailed)}
-            >
-              {bulkBusy ? (
-                <>
-                  <span className="spinner-inline" /> Working…
-                </>
-              ) : (
-                `🔄 Retry failed (${failedCount})`
-              )}
-            </button>
-          )}
-          {toGenCount > 0 && (
-            <button
-              type="button"
-              className="btn secondary"
-              disabled={bulkBusy || busy}
-              onClick={() => runBulk(needsGen)}
-              title="Generate a reference for every character that doesn't have one (your uploads are left as-is)"
-            >
-              {bulkBusy ? (
-                <>
-                  <span className="spinner-inline" /> Generating…
-                </>
-              ) : (
-                `✨ Generate all (${toGenCount})`
-              )}
-            </button>
-          )}
-        </div>
-      )}
 
       {cast.length === 0 ? (
         <div className="card">
@@ -262,6 +347,15 @@ export default function StoryboardCast({
                 ) : (
                   <div className="cast-portrait-empty">🎭</div>
                 )}
+                {/* ⚠ WHAT IS ON SCREEN IS WHAT GOES TO THE PANELS. See
+                    RefVersions — picking a take swaps this card's live
+                    `referenceId`, which is the one `handleGenerate` sends. */}
+                <RefVersions
+                  total={(ch.versions || []).length}
+                  active={ch.activeVersion || 0}
+                  disabled={ch.busy || bulkBusy || busy}
+                  onPick={(n) => pickVersion(i, n)}
+                />
               </div>
               <div className="cast-body">
                 <div className="cast-name">

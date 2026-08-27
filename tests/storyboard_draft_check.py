@@ -206,71 +206,123 @@ print("\n[13] \u26a0 THE DRAFT IS OFFERED, NOT OPENED")
 _sts = os.path.join(ROOT_DIR, "client", "src", "components", "ScriptToStoryboard.jsx")
 with open(_sts, encoding="utf-8") as _fh:
     ui = _fh.read()
-_resume_effect = ui.split("const d = await api.getStoryboardDraft();")[1].split("}, []);")[0]
+_resume_effect = ui.split("await api.getStoryboardDraft();")[1].split("}, []);")[0]
 
-check("the resume effect no longer moves the user anywhere",
+check("the mount effect no longer moves the user anywhere",
       'setStep("review")' not in _resume_effect and "setShots(" not in _resume_effect)
-check("\u2026it only records that a draft exists", "setDraftOffer(d)" in _resume_effect)
-check("a draft with no shots is not offered — there is no board in it",
-      "!(d.shots || []).length" in _resume_effect)
-check("the banner carries the shot count, so a stale board is recognisable "
-      "before it is opened",
-      "sts-draft-offer" in ui and "Unfinished storyboard" in ui
-      and "draftOffer.shots || []).length" in ui)
-check("\u2026and never sits on top of work already in this session",
-      "{draftOffer && !shots.length && (" in ui)
+# ⚠ WHAT THAT CALL IS STILL FOR. It no longer feeds a banner — the offer lives
+# in the library ROW now — but the AWAIT is what sets `draftHydrated`, and that
+# flag is the only thing stopping the autosave from PATCHing an empty shot list
+# over a good draft before the server has answered. Deleting the call would
+# quietly reintroduce that.
+check("…but it still gates the autosave, or a mount would save [] over a draft",
+      "draftHydrated.current = true;" in _resume_effect)
+check("…and the autosave refuses to run until it has",
+      "if (!draftHydrated.current || !draftJobId) return;" in ui)
 check("Resume is what loads it, and it is the only thing that does",
-      "function resumeDraft()" in ui and ui.count('setStep("review");') >= 1
-      and 'setStep("review");' in ui.split("function resumeDraft()")[1].split("\n  }")[0])
-check("\u26a0 Discard ASKS FIRST — the breakdown behind those shots was paid for "
-      "and there is no undo",
-      "function discardDraftOffer()" in ui
-      and "window.confirm(" in ui.split("function discardDraftOffer()")[1].split("\n  }")[0]
-      and "api.discardStoryboardDraft(d.job_id)" in ui)
-check("the stylesheet has the banner", "sts-draft-offer {" in open(
-    os.path.join(ROOT_DIR, "client", "src", "styles", "storyboard.css"), encoding="utf-8"
-).read())
+      "function resumeDraft(record)" in ui and ui.count('setStep("review");') >= 1
+      and 'setStep("review");' in ui.split("function resumeDraft(record)")[1].split("\n  }")[0])
+# ⚠ ONE DOOR, NOT THREE. The draft briefly had a dashboard strip AND a banner on
+# this form AND the library row — three places for one record. *"Script to
+# Storyboard se bhi hata do, only recent mein hi rakho."* The row is the one
+# place, so `resumeDraft` is only ever called with the record the row holds.
+check("⚠ the form no longer repeats the offer as a banner of its own",
+      "sts-draft-offer" not in ui and "draftOffer" not in ui
+      and "Unfinished storyboard" not in ui)
+check("…and it resumes only what it is handed, with no second source to fall "
+      "back to",
+      "const d = record;" in ui.split("function resumeDraft(record)")[1][:200])
+check("…and the banner's dead stylesheet went with it — a live rule is how the "
+      "next agent puts the second offer back",
+      "sts-draft-offer" not in open(
+          os.path.join(ROOT_DIR, "client", "src", "styles", "storyboard.css"),
+          encoding="utf-8").read())
 
-print("\n[14] ⚠ AND IT IS OFFERED ON THE FIRST PAGE TOO")
-# "ye resume dikh raha hai magar recent mein kyun nahi dikh raha hai — so user
-# ko first page mein hi dikh jaaye." A half-reviewed board is the most expensive
-# thing an account can lose, and until now the only way back to one was to walk
-# into the workflow first and find the banner there.
+print("\n[14] ⚠ THE OFFER LIVES IN ONE PLACE: THE STORYBOARDS PAGE")
+# It used to be offered on the DASHBOARD as well, which is what the previous
+# version of this section pinned. The user asked for the opposite, pointing at
+# the page they had built for exactly this: *"maine recent kyun banaya hai jab
+# yahan pe mera resume dikh hi nahi raha hai … home page se bhi hatao, bas ek
+# jagah."* So the strip moved to "Your Storyboards", above Recent Storyboards,
+# and the dashboard copy — along with the whole `autoResumeDraft` flag that
+# carried the click across two components — is gone rather than left dangling.
 #
-# ⚠ IT IS STILL NOT IN "RECENT WORK", AND THAT IS NOT AN OVERSIGHT. A draft has
+# ⚠ IT IS STILL NOT A ROW IN THE LIST, AND THAT IS NOT AN OVERSIGHT. A draft has
 # no panels, so it is not a board; listing it beside finished ones would be a
 # lie with a thumbnail on it, and section [3] above pins that a DRAFT must never
-# reach the library. It gets its own strip instead.
+# reach `GET /storyboards`. It sits ABOVE the list, in its own strip.
 home = open(os.path.join(ROOT_DIR, "client", "src", "components", "Home.jsx"),
             encoding="utf-8").read()
 app = open(os.path.join(ROOT_DIR, "client", "src", "App.jsx"),
            encoding="utf-8").read()
+lib = open(os.path.join(ROOT_DIR, "client", "src", "components",
+                        "StoryboardLibrary.jsx"), encoding="utf-8").read()
+sb_css = open(os.path.join(ROOT_DIR, "client", "src", "styles",
+                           "storyboard.css"), encoding="utf-8").read()
+sb_lib_css = open(os.path.join(ROOT_DIR, "client", "src", "styles",
+                               "storyboard-library.css"), encoding="utf-8").read()
 
-check("Home asks for the draft itself", ".getStoryboardDraft()" in home)
+check("the storyboards page asks for the draft itself",
+      ".getStoryboardDraft()" in lib)
 check("…and only offers one that actually has shots in it",
-      "(d.shots || []).length) setDraft(d)" in home)
-check("the strip says what it is and how big, so a stale board is recognisable "
-      "before it is opened",
-      "Continue where you left off" in home
-      and "(draft.shots || []).length} shot" in home
-      and "not yet drawn" in home)
-check("⚠ it is NOT inside Recent work — a draft has no panels and is not a board",
-      home.index("home-draft") < home.index("Recent work, one group per workflow"))
-check("clicking it lands ON the board, not on the workflow's front door with "
-      "the same offer repeated",
-      "onResumeStoryboard" in app and "setResumeDraft(true)" in app
-      and "autoResumeDraft={resumeDraft}" in app)
-check("…and the flag is cleared once used, so coming back later opens the form "
-      "as normal",
-      "onDraftResumed={() => setResumeDraft(false)}" in app
-      and "onDraftResumed?.();" in ui)
-check("the workflow waits for the draft to ARRIVE rather than firing on mount, "
-      "or the click would land on an empty form",
-      "if (!autoResumeDraft || !draftOffer || shots.length) return;" in ui)
-check("the strip has styling of its own",
-      ".home-draft {" in open(
-          os.path.join(ROOT_DIR, "client", "src", "styles", "home.css"),
-          encoding="utf-8").read())
+      "(d.shots || []).length) setDraft(d)" in lib)
+check("the row says what it is and how big, so a stale board is recognisable "
+      "before it is picked up",
+      "renderDraftRow" in lib
+      and "{shotCount} shot" in lib
+      and "Not drawn yet" in lib)
+# ⚠ IN THE LIST, LEADING IT — asked for after a first attempt put it in its own
+# strip above: *"mai yeh nahi lagane bola tha … dance video ke upar hi aa jaye
+# jaise sab dikh rahe hai, so user samajh jayega ki mera pehla work resume wala
+# bhi hai aur completed work bhi."* Prepended CLIENT-SIDE: the server still
+# excludes drafts from GET /storyboards, which section [3] pins.
+check("⚠ it is the FIRST row of the list, above the finished boards",
+      lib.index("{draftShown && renderDraftRow()}")
+      < lib.index("{shown.map(renderBoard)}"))
+check("⚠ …and it counts, or a user whose only project is unfinished would be "
+      "told they have none — `total: 0` draws the empty state instead of rows",
+      "const listTotal = boards.length + (draft && onResume ? 1 : 0);" in lib
+      and "total={listTotal}" in lib and "shown={shownTotal}" in lib)
+check("⚠ …and it NEVER pretends to have a picture — there are no panels yet, "
+      "so the thumbnail is a note glyph, not a cover",
+      "lib-draft-glyph" in lib and "cover={<span" in lib
+      and "lib-draft-glyph" in sb_lib_css)
+check("⚠ discarding it ASKS FIRST — the breakdown behind those shots was paid "
+      "for and there is no undo",
+      "setConfirmId(DRAFT_ROW_ID)" in lib
+      and "api.discardStoryboardDraft(draft.job_id)" in lib
+      and "cannot be undone" in lib)
+check("⚠ …and it is only offered where it can actually be resumed — the "
+      "animatic library renders this same component over COPIES",
+      "const canResume = Boolean(onResume);" in lib
+      and "if (!canResume) return;" in lib
+      and "draftShown =" in lib)
+# ⚠ The fetch keys off a BOOLEAN, not the callback. `onResume` is an inline
+# arrow in the caller, so its identity changes on every parent render —
+# depending on it would re-request the draft each time the workflow re-rendered.
+check("…and the draft is fetched once, not on every render of the workflow",
+      "}, [canResume]);" in lib)
+check("Resume hands the workflow the very record the row is showing",
+      "onResume(draft)" in lib
+      and "onResume={(draft) => resumeDraft(draft)}" in ui)
+check("⚠ the dashboard no longer carries a second copy of the offer",
+      "getStoryboardDraft" not in home
+      and "Continue where you left off" not in home
+      and "home-draft" not in home)
+check("⚠ …and the cross-component flag that drove it went with it, rather than "
+      "being left dangling",
+      "autoResumeDraft" not in app and "autoResumeDraft" not in ui
+      and "setResumeDraft" not in app)
+check("⚠ the strip that briefly stood above the list is gone, stylesheet "
+      "included — a live rule is how the next agent brings it back",
+      "draft-strip" not in lib and "draft-strip" not in sb_css)
+
+# The unfinished row has no panels, so its thumbnail is a note glyph rather
+# than a cover - asked for by name ("text note jaisa icon dikha dena").
+check("⚠ the unfinished row never pretends to have a picture — a note glyph, "
+      "not a cover",
+      "lib-draft-glyph" in lib and "cover={<span" in lib
+      and "lib-draft-glyph" in sb_lib_css)
 
 print("\n[15] cleanup")
 removed = sum(1 for jid in made if jid and store.delete(jid))

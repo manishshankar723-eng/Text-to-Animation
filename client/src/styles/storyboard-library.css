@@ -487,6 +487,31 @@
   white-space: nowrap;
   text-align: right;
 }
+/* ---- The unfinished storyboard's row ---- */
+/* It is a row in this list like any other project, but it has no picture and
+   cannot be opened, only picked up. Two things say so.
+   ⚠ THE GLYPH IS NOT A THUMBNAIL. There are no panels yet, so drawing a
+   cover frame would be a lie; a note in the picture's slot is the honest
+   placeholder and reads instantly as "written, not drawn". */
+.lib-draft-glyph {
+  font-size: 1.35rem;
+  line-height: 1;
+  filter: grayscale(0.15);
+}
+/* Same shape as `.chip.stale` in final-video.css: warn colour means "look at
+   this before you act", not "something broke". */
+.chip.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+/* ⚠ A WORDED BUTTON AMONG ICON BUTTONS. Every other row's actions are
+   glyphs; this one's whole point is that the work can be continued, and that
+   must not be a fifth glyph to guess at. `margin-top: 0` because `.btn` carries
+   one meant for ending a form — the same fix the top bars state. */
+.lib-resume {
+  margin-top: 0;
+  white-space: nowrap;
+}
 .lib-cell-actions {
   display: flex;
   align-items: center;

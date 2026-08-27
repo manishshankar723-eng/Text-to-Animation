@@ -82,12 +82,6 @@ export function formatRuntime(seconds) {
 
 export default function ScriptToStoryboard({
   onOpenAnimatic,
-  // ⚠ THE ONE CASE WHERE THE DRAFT OPENS ITSELF, and it is not a guess:
-  // the user clicked "Continue" on the dashboard, so opening the board is
-  // literally what they asked for. Every other arrival still lands on the
-  // form with the draft offered as a banner — see the note on `draftOffer`.
-  autoResumeDraft = false,
-  onDraftResumed,
 }) {
   // Open on the library so a returning user sees their saved storyboards first.
   const [step, setStep] = useState("library");
@@ -310,19 +304,29 @@ export default function ScriptToStoryboard({
   // worst kind of bug to chase.
   //
   // So this stops guessing how the user got here. The workflow always opens on
-  // its own front door, and the unfinished board waits at the top of it as a
-  // banner carrying its shot count. Nothing is lost, which was the whole point
-  // of saving it, and nobody is moved somewhere they did not ask to go.
-  const [draftOffer, setDraftOffer] = useState(null);
+  // its own front door — the library — and the unfinished board waits there as
+  // the first ROW of "Recent Storyboards", beside the finished ones, carrying
+  // its shot count and a Resume button. Nothing is lost, which was the whole
+  // point of saving it, and nobody is moved somewhere they did not ask to go.
+  //
+  // ⚠ AND IT IS OFFERED EXACTLY ONCE. It briefly had a strip on the dashboard
+  // AND a banner on this form AND the library row — three places for one
+  // record. *"Script to Storyboard se bhi hata do, only recent mein hi rakho."*
+  // The row is the one place; `StoryboardLibrary.renderDraftRow` owns it.
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const d = await api.getStoryboardDraft();
-        // A draft with no shots is nothing to offer — there is no board in it.
-        if (cancelled || !d?.job_id || !(d.shots || []).length) return;
-        setDraftOffer(d);
+        // ⚠ NOTHING IS READ OFF THIS ANY MORE — the draft is OFFERED IN ONE
+        // PLACE, as a row in "Recent Storyboards" (see StoryboardLibrary's
+        // `renderDraftRow`), and the form used to repeat the same offer as a
+        // banner. What this call is still for is the `draftHydrated` flag
+        // below: `shots` is [] on mount, so an unguarded autosave would PATCH
+        // an empty shot list over a perfectly good draft before the server had
+        // even answered. The await IS the guard.
+        await api.getStoryboardDraft();
+        if (cancelled) return;
       } catch {
         // No draft, or the server is unreachable — start clean.
       } finally {
@@ -334,20 +338,14 @@ export default function ScriptToStoryboard({
     };
   }, []);
 
-  // Home's "Continue" card sets the flag before this workflow mounts, so
-  // the draft is usually still in flight when it does. Waiting on the offer
-  // rather than firing on mount is what makes it land on the board.
-  useEffect(() => {
-    if (!autoResumeDraft || !draftOffer || shots.length) return;
-    resumeDraft();
-    onDraftResumed?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoResumeDraft, draftOffer]);
-
-  /** Take the offered draft: load all of it and reopen the review step. */
-  function resumeDraft() {
-    const d = draftOffer;
-    if (!d) return;
+  /** Take the offered draft: load all of it and reopen the review step.
+   *
+   *  `record` lets the LIBRARY step resume the strip it fetched itself; with
+   *  nothing passed this resumes the banner on the form. Both are the same
+   *  draft — two doors into one room. */
+  function resumeDraft(record) {
+    const d = record;
+    if (!d?.job_id) return;
     // A resumed draft carries the settings it was reviewed with. Those beat the
     // profile defaults — block that effect whichever order they finish in, or
     // reopening a 9:16 draft could snap it back to your usual 16:9.
@@ -366,26 +364,16 @@ export default function ScriptToStoryboard({
     if (d.aspect_ratio) setAspect(d.aspect_ratio);
     if (d.genre) setGenre(d.genre);
     if (d.character_refs) setCharacterRefs(d.character_refs);
+    // ⚠ THE REFERENCES ALREADY PAID FOR COME BACK WITH THE SHOTS. Reported:
+    // *"mai back aaya to mera ananya wala photo dikh hi nhi raha hai … baar
+    // baar generate karna pare, usko paisa lagta hai."* Leaving the workflow
+    // unmounts this component, so the blob previews die with it; only the ids
+    // on the draft survive, and until now they were never handed back to the
+    // cast and props steps at all.
+    restoreSavedRefs(setSavedCastRefs, d.character_refs, d.character_takes);
+    restoreSavedRefs(setSavedAssetRefs, d.asset_refs, d.asset_takes);
     if (d.updated_at) setReviewSavedAt(d.updated_at);
-    setDraftOffer(null);
     setStep("review");
-  }
-
-  /** ⚠ ASK BEFORE THROWING IT AWAY. The breakdown behind these shots has
-   *  already been paid for and there is no undo — same manners as Plan &
-   *  Script's "load this script?" confirm. */
-  function discardDraftOffer() {
-    const d = draftOffer;
-    if (!d) return;
-    const n = (d.shots || []).length;
-    const ok = window.confirm(
-      `Discard the unfinished storyboard (${n} shot${n === 1 ? "" : "s"})?\n\n` +
-        "This cannot be undone, and the breakdown that produced it has already " +
-        "been paid for."
-    );
-    if (!ok) return;
-    api.discardStoryboardDraft(d.job_id).catch(() => {});
-    setDraftOffer(null);
   }
 
   useEffect(() => {
@@ -400,7 +388,18 @@ export default function ScriptToStoryboard({
       style: effectiveStyle(),
       aspect_ratio: effectiveAspect(),
       genre: effectiveGenre(),
-      character_refs: characterRefs || {},
+      // ⚠ THE CAST AND PROPS STEPS ARE THE LIVE TRUTH, and they save as soon
+      // as a reference lands — not when the user walks forward off the step.
+      // `characterRefs` is only filled on the way OUT of the cast step, so a
+      // draft saved before that would have forgotten every image just drawn.
+      // ⚠ ONE KEY SHAPE. `savedCastRefs` is keyed by `refKey` (lower-cased) and
+      // `characterRefs` by the display name, so merging them raw would file
+      // ANANYA twice. The server normalises names before matching, so the
+      // lower-cased key is the one that always works — put both in it.
+      character_refs: { ...refIdsOf(byRefKey(characterRefs)), ...refIdsOf(savedCastRefs) },
+      asset_refs: refIdsOf(savedAssetRefs),
+      character_takes: refTakesOf(savedCastRefs),
+      asset_takes: refTakesOf(savedAssetRefs),
     };
     const sig = JSON.stringify(payload);
     if (sig === reviewLastSaved.current) return;
@@ -415,7 +414,22 @@ export default function ScriptToStoryboard({
       }
     }, 1000);
     return () => clearTimeout(id);
-  }, [draftJobId, shots, characters, assets, world, characterRefs, title, style, aspect, genre]);
+  }, [
+    draftJobId,
+    shots,
+    characters,
+    assets,
+    world,
+    characterRefs,
+    // References are part of the draft now, so drawing one has to trigger the
+    // save that keeps it.
+    savedCastRefs,
+    savedAssetRefs,
+    title,
+    style,
+    aspect,
+    genre,
+  ]);
 
   function refKey(name) {
     return (name || "").trim().toLowerCase();
@@ -427,6 +441,95 @@ export default function ScriptToStoryboard({
     if (!key) return;
     if (fields.previewUrl) previewUrls.current.push(fields.previewUrl);
     setter((m) => ({ ...m, [key]: { ...m[key], ...fields } }));
+  }
+
+  // ⚠ WHAT GOES ON THE DRAFT, AND WHY IT IS NOT THE WHOLE THING. `previewUrl`
+  // is an object URL for a blob this browser holds; it dies with the page and
+  // means nothing to another machine. The reference_id does not — the image is
+  // on the server under it, forever. So the draft stores IDS and the picture is
+  // re-fetched, exactly as the library re-fetches board covers.
+  // `{Name: id}` → `{name: {referenceId}}`, so a display-name map can go
+  // through the same reader as the steps' own saved state.
+  function byRefKey(map) {
+    const out = {};
+    for (const [name, referenceId] of Object.entries(map || {})) {
+      const key = refKey(name);
+      if (key && referenceId) out[key] = { referenceId };
+    }
+    return out;
+  }
+  function refIdsOf(saved) {
+    const out = {};
+    for (const [key, v] of Object.entries(saved || {})) {
+      if (v?.referenceId) out[key] = v.referenceId;
+    }
+    return out;
+  }
+  function refTakesOf(saved) {
+    const out = {};
+    for (const [key, v] of Object.entries(saved || {})) {
+      const takes = (v?.versions || [])
+        .filter((t) => t?.referenceId)
+        .map((t) => ({ reference_id: t.referenceId, uploaded: Boolean(t.uploaded) }));
+      if (takes.length) out[key] = takes;
+    }
+    return out;
+  }
+
+  /** Put a draft's saved references back on the cast / props steps.
+   *
+   *  ⚠ THE PICTURE IS FETCHED, NOT REMEMBERED. Only the ACTIVE take is pulled
+   *  down here: a draft can carry a dozen names with three takes each, and
+   *  fetching every one of them on resume would drag megabytes the user may
+   *  never look at. The other takes keep their ids and their image arrives the
+   *  moment the ‹ › arrows land on them — see `pickVersion` in the steps.
+   */
+  function restoreSavedRefs(setter, ids, takes) {
+    const seeded = {};
+    for (const [key, referenceId] of Object.entries(ids || {})) {
+      const list = (takes || {})[key] || [{ reference_id: referenceId }];
+      const versions = list.map((t) => ({
+        referenceId: t.reference_id,
+        previewUrl: null,
+        uploaded: Boolean(t.uploaded)
+      }));
+      let active = versions.findIndex((v) => v.referenceId === referenceId);
+      if (active < 0) {
+        // The live id isn't in the take list (an older draft, or a list that
+        // was trimmed). Trust the live id and make it the only take, rather
+        // than showing arrows that can't reach what is on screen.
+        versions.push({ referenceId, previewUrl: null, uploaded: false });
+        active = versions.length - 1;
+      }
+      seeded[key] = {
+        referenceId,
+        previewUrl: null,
+        uploaded: Boolean(versions[active].uploaded),
+        versions,
+        activeVersion: active
+      };
+    }
+    if (!Object.keys(seeded).length) return;
+    setter(seeded);
+    // Then fill in the live picture for each, as it arrives.
+    for (const [key, entry] of Object.entries(seeded)) {
+      api
+        .fetchReferenceImage(entry.referenceId)
+        .then((url) => {
+          previewUrls.current.push(url);
+          setter((m) => {
+            const cur = m[key];
+            if (!cur || cur.referenceId !== entry.referenceId) return m;
+            const versions = (cur.versions || []).map((v) =>
+              v.referenceId === entry.referenceId ? { ...v, previewUrl: url } : v
+            );
+            return { ...m, [key]: { ...cur, previewUrl: url, versions } };
+          });
+        })
+        // A reference the server no longer has just leaves the placeholder —
+        // the card still works and the name can be drawn again.
+        .catch(() => {});
+    }
   }
 
   function clearSavedRefs() {
@@ -1237,6 +1340,11 @@ export default function ScriptToStoryboard({
   if (step === "library") {
     return (
       <StoryboardLibrary
+        /* ⚠ THE UNFINISHED BOARD LIVES HERE NOW, and only here. It used to
+           have a strip on the dashboard as well; asked to keep it in ONE place,
+           and this is the page that lists what it will become. Resuming is a
+           read of the same draft the form's banner offers. */
+        onResume={(draft) => resumeDraft(draft)}
         onNew={() => {
           resetWorkflow();
           setStep("form");
@@ -1880,41 +1988,6 @@ export default function ScriptToStoryboard({
           </p>
         </div>
       </div>
-
-      {/* ⚠ OFFERED, NOT OPENED — see the note on `draftOffer`. Hidden the
-          moment this session has shots of its own, so it can never sit above
-          work in progress. The date and the warning live in the tooltip; the
-          line itself stays short enough to read at a glance. */}
-      {draftOffer && !shots.length && (
-        <div
-          className="sts-draft-offer"
-          title={
-            draftOffer.updated_at
-              ? `Saved ${new Date(draftOffer.updated_at).toLocaleString()}. The breakdown behind it has already been paid for.`
-              : "The breakdown behind it has already been paid for."
-          }
-        >
-          <span className="sts-draft-offer-text">
-            📋 Unfinished storyboard
-            {draftOffer.title ? ` · ${draftOffer.title}` : ""}
-            {` · ${(draftOffer.shots || []).length} shot${
-              (draftOffer.shots || []).length === 1 ? "" : "s"
-            }`}
-          </span>
-          <div className="sts-draft-offer-actions">
-            <button type="button" className="btn" onClick={resumeDraft}>
-              Resume
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={discardDraftOffer}
-            >
-              Discard
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className={`sts-hero-grid ${busy ? "busy" : ""}`}>
       <div className="sts-form-wrap">
