@@ -946,6 +946,14 @@ export function createStoryboard({
   });
 }
 
+// ⚠ THIS SPENDS MONEY — one vision call per contact sheet of 24 panels. It is
+// only ever reached from the board's "Check this board" button; the FREE audit
+// (`job.result.audit`) is already there without asking.
+// An empty `findings` is the GOOD answer, not a failure.
+export function checkStoryboard(jobId) {
+  return request(`/storyboards/${jobId}/check`, { method: "POST" });
+}
+
 // --- Storyboard library ("Your Storyboards") ---
 // A saved project IS a storyboard job, so these all read/write the same records
 // the board itself uses — nothing can drift out of sync.

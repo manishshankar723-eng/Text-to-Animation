@@ -390,6 +390,10 @@ def conform_to_style(image: "Image.Image", style: str) -> "Image.Image":
 def stamp_brand(image: "Image.Image", brand: dict | None, style: str) -> "Image.Image":
     """Swap the drawn placeholder for the brand's real logo file.
 
+    Returns the panel. Use `stamped_brand()` when the caller needs to KNOW
+    whether a logo landed — see `qa.audit`'s `logo_never_landed`, which is the
+    only way to notice the brand scheme silently doing nothing.
+
     `brand["logo_path"]` is resolved by the SERVER, not here — the pipeline has
     no business knowing where `_references/` lives, and it is the same division
     `character_ref_paths` already uses.
@@ -403,23 +407,43 @@ def stamp_brand(image: "Image.Image", brand: dict | None, style: str) -> "Image.
     """
     import brand as brand_mod
 
+    return stamped_brand(image, brand, style)[0]
+
+
+def stamped_brand(
+    image: "Image.Image", brand: dict | None, style: str
+) -> tuple["Image.Image", bool]:
+    """`stamp_brand`, and whether a logo actually landed on this panel.
+
+    ⚠ THE BOOLEAN IS NOT BOOKKEEPING. The brand scheme's failure mode is SILENT:
+    if the model never draws the magenta placeholder, every panel still renders,
+    nothing errors, and the board simply has no logo on it anywhere. The only
+    way to notice is to count the panels where a paste really happened, which is
+    what `qa.audit`'s `logo_never_landed` does with this.
+    """
+    import brand as brand_mod
+    from gemini_client import is_greyscale_style
+
     data = brand or {}
     path = str(data.get("logo_path") or "")
     try:
-        if path and os.path.isfile(path):
-            return brand_mod.stamp(image, path, style)
+        if path and os.path.isfile(path) and not is_greyscale_style(style):
+            # Asked BEFORE the paste, because afterwards there is no magenta
+            # left to count — that is the whole point of a successful paste.
+            landed = bool(brand_mod.find_markers(image))
+            return brand_mod.stamp(image, path, style), landed
         # ⚠ ONLY ERASE A PLACEHOLDER THIS BOARD ACTUALLY ASKED FOR. `logo_ref_id`
         # is what put the marker instruction in the prompt, so it is also the
         # only thing that licenses repainting magenta out of the picture. On an
         # unbranded board nothing asked for a marker, and any magenta in frame is
         # something the shot genuinely contains — a neon sign, a lit screen, a
         # jacket. Greying that out would be us breaking the panel, not saving it.
-        if data.get("logo_ref_id"):
-            return brand_mod.erase_markers(image, style)
-        return image
+        if data.get("logo_ref_id") and not is_greyscale_style(style):
+            return brand_mod.erase_markers(image, style), False
+        return image, False
     except Exception:  # noqa: BLE001 — a drawn panel must survive this
         logger.exception("[storyboard] brand stamping failed — panel kept as drawn.")
-        return image
+        return image, False
 
 
 def conform_to_reference(image: "Image.Image", reference: "Image.Image") -> "Image.Image":
@@ -1176,7 +1200,7 @@ def run_storyboard(
             # a mark from its description every time and never twice the same.
             # A no-op when there is no logo, no placeholder, or a greyscale
             # style. See brand.py.
-            image = stamp_brand(image, brand, style)
+            image, logo_landed = stamped_brand(image, brand, style)
             # Version 0 of this panel. Every later redraw appends rather than
             # overwriting — see save_panel_version.
             n = save_panel_version(image, board_dir, variant, i)
@@ -1185,6 +1209,9 @@ def run_storyboard(
                 panel["failed"] = False
                 panel["versions"] = n + 1
                 panel["active_version"] = n
+                # Recorded so the audit can tell "no shot needed a logo" apart
+                # from "the placeholder scheme did nothing" — see qa.audit.
+                panel["brand_stamped"] = logo_landed
                 scene_anchors.setdefault(panel.get("scene_number"), image)
             logger.info("[storyboard %s] panel %d/%d done (variant %d)", job_id, i + 1, total, variant)
         else:
@@ -1278,6 +1305,42 @@ def run_storyboard(
         _emit(100, f"Done — {ok}/{total} panels generated.")
         logger.info("[storyboard %s] complete: %d/%d ok", job_id, ok, total)
 
+    # ⚠ MEASURED BEFORE IT IS HANDED BACK, and free enough to do every time.
+    # Every fix in Phases 1-3 is a PROMPT, which is a request and not a
+    # guarantee: the cast sheet is ASKED to be photographic, the app screen
+    # ASKED to be priced in ₹, the brand mark ASKED to be a flat placeholder.
+    # The panels that got ignored are exactly the ones nobody looks at until a
+    # customer does. This is Pillow and NumPy over files already on disk — no
+    # model call, no network, nothing billed. See qa.py.
+    #
+    # ⚠ A FINDING NEVER BLOCKS THE BOARD. It is reported beside it; the board is
+    # the user's either way.
+    report = None
+    if not stopped:
+        try:
+            import qa
+
+            report = qa.audit(
+                panels,
+                style=style,
+                aspect_ratio=aspect_ratio,
+                brand_data=brand,
+                # The ACTIVE picture, not a numbered version — the audit should
+                # measure what the user is looking at, and after switching
+                # versions those are not the same file.
+                panel_path=lambda p: os.path.join(
+                    write_dir, f"panel_{int(p.get('index', 0)):02d}.png"
+                ),
+            )
+            if report["findings"]:
+                logger.info(
+                    "[storyboard %s] audit: %s", job_id,
+                    ", ".join(f"{f['code']}({len(f['panels'])})" for f in report["findings"]),
+                )
+        except Exception:  # noqa: BLE001 — a finished board must survive its own check
+            logger.exception("[storyboard %s] audit failed — board unaffected.", job_id)
+            report = None
+
     return {
         "style": style,
         "aspect_ratio": aspect_ratio,
@@ -1288,4 +1351,7 @@ def run_storyboard(
         # The run ended early because the user stopped it — the board says so
         # rather than pretending a half-drawn board is a finished one.
         "stopped": stopped,
+        # What the free audit found. None on a stopped run: half a board has
+        # holes in it by definition, and reporting them as faults is noise.
+        "audit": report,
     }

@@ -85,7 +85,14 @@ export const ALL_GENRES = [...GENRES, ...MORE_GENRES];
 // a code it does not recognise is passed through as free text rather than
 // rejected — so a list that drifts loses the money, not the request.
 export const MARKET_COUNTRIES = [
-  { id: "", label: "Not set — show no prices" },
+  // ⚠ AND THIS LIST HAS ONE CALL SITE NOW: the PROFILE. The board form's
+  // country picker was removed — asked on the way to a storyboard, "which
+  // market?" is a question about prices that most people cannot answer, so the
+  // country is worked out from the language, the account or the script
+  // instead (see `LANGUAGE_COUNTRY` in market.py). Neutral wording here for
+  // the same reason: this used to read "Not set — show no prices", which made
+  // a storyboard form look like a checkout.
+  { id: "", label: "Auto — from each script" },
   { id: "IN", label: "🇮🇳 India" },
   { id: "PK", label: "🇵🇰 Pakistan" },
   { id: "BD", label: "🇧🇩 Bangladesh" },
@@ -135,7 +142,10 @@ export const MARKET_COUNTRIES = [
 // actually caption reels in. `plan_agent.LANGUAGES` describes it as Hindi and
 // English mixed in LATIN script, and the video half already honours that.
 export const MARKET_LANGUAGES = [
-  { id: "", label: "Country's own language" },
+  // Overridden at both call sites too: "Auto — from your script" on the board
+  // form, which has no country control, and "Country's own language" on the
+  // profile, which has one right beside it.
+  { id: "", label: "Auto — from your script" },
   { id: "English", label: "English" },
   { id: "Hindi", label: "Hindi" },
   { id: "Hinglish", label: "Hinglish" },

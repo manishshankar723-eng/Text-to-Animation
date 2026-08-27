@@ -16,9 +16,17 @@ why the money rule below is written as "where prices appear AT ALL", never as
 
 THE THREE LAYERS, most specific first (see `resolve`):
 
-  1. What the user picked on THIS board's form.
+  1. The language picked on THIS board's form.
   2. Their account default ("I make films for India").
   3. What the breakdown guessed from the script.
+
+⚠ NOBODY IS ASKED FOR A COUNTRY ON THE BOARD FORM, AND THAT IS DELIBERATE.
+Asked directly, "which market?" reads as a question about PRICES, and a person
+making a film about two friends on a train has no answer and no reason to care.
+So the board form offers ONE control — the language — and the country is worked
+out from it (`LANGUAGE_COUNTRY`) or read out of the script by the breakdown.
+The country picker survives in one place only, the profile, where it is a
+setting somebody chooses once rather than a question asked every time.
 
 ⚠ AND WHEN ALL THREE ARE EMPTY, THE ANSWER IS SILENCE, NOT A GUESS. `no_money`
 below asks for no legible price and no currency symbol anywhere. A wrong `$` is
@@ -82,8 +90,68 @@ COUNTRIES: dict[str, dict[str, str]] = {
 }
 
 
+# Language → the country it implies, used ONLY when no country is known from
+# anywhere else. This is what lets the board form ask one question instead of
+# two: pick Tamil and the money becomes ₹ without anybody typing "India".
+#
+# ⚠ THE AMBIGUOUS LANGUAGES ARE MISSING ON PURPOSE, AND THE MOST IMPORTANT ONE
+# IS ENGLISH. English is what an Indian creator writes their app promo in, and
+# mapping it to the United States would put `$4.50` back on that phone screen —
+# the exact bug this module was written for. Spanish (Spain, Mexico, Argentina)
+# and Arabic (UAE, Saudi, Egypt) are absent for the same reason: a language
+# spoken across markets with different money identifies no market at all, and
+# silence is this module's answer to that. Never add one to "fill the gap".
+#
+# The ones here each have one market that dominates this app's use so heavily
+# that the alternative is a rounding error (Portuguese → Brazil, not Portugal),
+# and a creator in the other one still has the profile default and their own
+# script, both of which outrank this table.
+LANGUAGE_COUNTRY: dict[str, str] = {
+    # India, where the regional languages are the whole reason this table
+    # exists — none of them appear in COUNTRIES, which lists one language per
+    # country and so only ever says "Hindi".
+    "hindi": "IN",
+    "hinglish": "IN",
+    "bengali": "IN",
+    "tamil": "IN",
+    "telugu": "IN",
+    "marathi": "IN",
+    "gujarati": "IN",
+    "kannada": "IN",
+    "malayalam": "IN",
+    "punjabi": "IN",
+    "urdu": "PK",
+    "sinhala": "LK",
+    "nepali": "NP",
+    "malay": "MY",
+    "indonesian": "ID",
+    "filipino": "PH",
+    "thai": "TH",
+    "vietnamese": "VN",
+    "japanese": "JP",
+    "korean": "KR",
+    "chinese": "CN",
+    "german": "DE",
+    "french": "FR",
+    "italian": "IT",
+    "dutch": "NL",
+    "polish": "PL",
+    "swedish": "SE",
+    "turkish": "TR",
+    "russian": "RU",
+    "hebrew": "IL",
+    "portuguese": "BR",
+    "swahili": "KE",
+}
+
+
 def _clean(value) -> str:
     return str(value or "").strip()
+
+
+def country_for_language(language: str) -> str:
+    """The country a language implies, or "" when it implies more than one."""
+    return LANGUAGE_COUNTRY.get(_clean(language).lower(), "")
 
 
 def country_entry(country: str) -> dict[str, str]:
@@ -124,6 +192,14 @@ def resolve(*layers) -> dict[str, str]:
         for field, value in coerce(layer).items():
             if value and not out[field]:
                 out[field] = value
+
+    # ⚠ LAST RESORT, AND BELOW EVERY LAYER ON PURPOSE. The language only names
+    # the country when nothing else did, so a profile set to Singapore or a
+    # script that plainly says Dubai still wins over "they wrote it in Tamil".
+    # It returns "" for a language spoken in several markets, and an unknown
+    # country is left alone — the no-money rule downstream is a safe landing.
+    if not out["country"] and out["language"]:
+        out["country"] = country_for_language(out["language"])
 
     row = country_entry(out["country"])
     if row:
@@ -180,6 +256,26 @@ _NO_MONEY_RULE = (
 )
 
 
+# ⚠ THE MIDDLE CASE, AND IT BECAME A COMMON ONE THE DAY THE BOARD FORM STOPPED
+# ASKING FOR A COUNTRY. Somebody picks English — which names no market, on
+# purpose — and now we know the language and nothing about the money. Handing
+# that to `_MONEY_RULE` produced "shown in this market's own currency, never
+# dollars", which is a riddle: the model is told to draw a currency and not told
+# which, and a model that must pick one picks the dollar. So the two halves are
+# split, and each is answered with what is actually known.
+_LANGUAGE_ONLY_RULE = (
+    "ON-SCREEN TEXT AND MONEY — anything readable inside the frame (a phone or "
+    "computer screen, an app interface, a shop sign, a menu, packaging) is "
+    "written in {language_txt}. No country or market has been set, so the money "
+    "is NOT known: any screen, sign, price tag, menu or packaging must carry NO "
+    "legible price and NO currency symbol of any kind (no $, no €, no £). Show "
+    "those surfaces without a price rather than guessing one. If you cannot "
+    "render the text correctly, show the surface WITHOUT legible text — a clean "
+    "interface with no readable words or numbers is right, invented foreign "
+    "text is not."
+)
+
+
 def describe(market) -> str:
     """The market as prompt lines, or "" when nothing is known."""
     data = coerce(market)
@@ -201,6 +297,12 @@ def on_screen_text_rule(market) -> str:
     data = coerce(market)
     if not data.get("country") and not data.get("language") and not data.get("currency"):
         return _NO_MONEY_RULE
+    # ⚠ A LANGUAGE IS NOT A CURRENCY. Knowing "English" says nothing about the
+    # money, and the money half must stay silent rather than be improvised.
+    if not data.get("currency"):
+        return _LANGUAGE_ONLY_RULE.format(
+            language_txt=data.get("language") or f"the language of {data['country']}",
+        )
     return _MONEY_RULE.format(
         language_txt=data.get("language") or "the language this audience reads",
         currency=data.get("currency") or "this market's own currency, never dollars",

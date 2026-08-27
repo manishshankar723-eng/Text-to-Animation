@@ -17,8 +17,12 @@ no signal draws its default, which is America. `$4.50` on the phone, an English
 app UI, and the same `$` again when the shot was re-rendered with Veo.
 
 ⚠ THE MISSING FACT IS NOT IN THE SCRIPT AT ALL. It is who the film is FOR, which
-only the creator knows. So it is asked for, in two places — an account default
-and this board's form — and GUESSED only as a last resort.
+only the creator knows. So it is asked for — and asked for CAREFULLY, because
+the obvious question is the wrong one. "Which market?" on the way to a
+storyboard reads as a question about PRICES, and somebody drawing two friends on
+a train has no answer and no reason to want one. So the board form asks for the
+LANGUAGE only; the country is derived from it (`LANGUAGE_COUNTRY`), or set once
+on the profile, or read off the script by the breakdown.
 
 ---------------------------------------------------------------------------
 2. THE THREE LAYERS, AND WHY THE FOURTH ANSWER IS SILENCE
@@ -108,7 +112,59 @@ check("the US is the one market that is NOT metric",
       market.resolve({"country": "US"}, {}, {})["units"] == "imperial")
 
 # ---------------------------------------------------------------------------
-print("\n[3] ⚠ nothing known means NO money, not a guessed one")
+print("\n[3] ⚠ the form no longer asks for a country — the language names it")
+
+# The board form used to carry a country dropdown labelled "Not set — show no
+# prices". It was removed: on the way to a storyboard, "which market?" is a
+# question about MONEY that somebody drawing two friends on a train cannot
+# answer and should not be asked. The country is derived instead — and the
+# derivation is deliberately incomplete.
+check("Tamil alone gives India, and India gives the rupee",
+      market.resolve({"language": "Tamil"}, {}, {}) ==
+      {"country": "India", "language": "Tamil",
+       "currency": "₹ (Indian rupee)", "units": "metric"})
+check("…so does Hinglish, which is what Indian creators caption in",
+      market.resolve({"language": "Hinglish"}, {}, {})["currency"] == "₹ (Indian rupee)")
+check("⚠ ENGLISH NAMES NO COUNTRY, and that single omission is the point of "
+      "the table — English → United States is how an Indian creator's app promo "
+      "got priced in dollars in the first place",
+      market.country_for_language("English") == ""
+      and "country" not in market.resolve({"language": "English"}, {}, {}))
+check("⚠ Spanish and Arabic are absent for the same reason — a language "
+      "spoken across markets with different money identifies no market",
+      market.country_for_language("Spanish") == ""
+      and market.country_for_language("Arabic") == "")
+check("a language nobody mapped is left alone, never defaulted",
+      market.country_for_language("Klingon") == ""
+      and market.resolve({"language": "Klingon"}, {}, {}) == {"language": "Klingon"})
+check("the lookup ignores case and stray spaces, because it also reads the "
+      "breakdown's guess and an old saved board",
+      market.country_for_language("  hINDI ") == "IN")
+check("⚠ it is the LAST resort — an account country beats it",
+      market.resolve({"language": "Tamil"}, {"country": "JP"}, {})["currency"]
+      == "¥ (Japanese yen)")
+check("…and so does the script's own guess",
+      market.resolve({"language": "Tamil"}, {}, {"country": "GB"})["currency"]
+      == "£ (pound sterling)")
+
+# ⚠ AND THE CASE THE REDESIGN CREATED: a language and no money at all. This
+# used to fall into the money rule and produce "shown in this market's own
+# currency, never dollars" — a model told to draw a currency and not told which
+# draws the dollar, which is the original bug wearing a new hat.
+english_only = market.on_screen_text_rule({"language": "English"})
+check("⚠ a language with no country writes text in that language…",
+      "written in English" in english_only)
+check("…and shows NO price at all, rather than improvising one",
+      "NO currency symbol of any kind" in english_only
+      and "no $" in english_only)
+check("…and never asks for a currency it cannot name",
+      "this market's own currency" not in english_only)
+check("a language WITH a country still gets the real money rule",
+      "₹ (Indian rupee)" in
+      market.on_screen_text_rule(market.resolve({"language": "Tamil"}, {}, {})))
+
+# ---------------------------------------------------------------------------
+print("\n[4] ⚠ nothing known means NO money, not a guessed one")
 
 nothing = market.resolve({}, {}, {})
 check("all three layers empty resolves to nothing at all",
@@ -125,7 +181,7 @@ check("⚠ the rule is NEVER empty — a caller can append it unconditionally, "
       bool(market.on_screen_text_rule({})) and bool(market.on_screen_text_rule(india)))
 
 # ---------------------------------------------------------------------------
-print("\n[4] the money rule is conditional, so it corrects but never adds")
+print("\n[5] the money rule is conditional, so it corrects but never adds")
 
 rule = market.on_screen_text_rule(india)
 check("⚠ it says WHERE a price appears, not 'add prices' — a mythology board "
@@ -142,7 +198,7 @@ check("the surfaces are named, so 'text' is not left abstract",
       all(w in rule for w in ("phone", "app interface", "price tag", "menu")))
 
 # ---------------------------------------------------------------------------
-print("\n[5] every image prompt carries it")
+print("\n[6] every image prompt carries it")
 
 g = read("gemini_client.py")
 check("the panel prompt appends the market unconditionally",
@@ -158,7 +214,7 @@ check("market is kept apart from the story's world in the prompt builders",
       "def build_world_context" in g and "def build_market_context" in g)
 
 # ---------------------------------------------------------------------------
-print("\n[6] it is resolved on the server, at every drawing route")
+print("\n[7] it is resolved on the server, at every drawing route")
 
 main = read("server", "main.py")
 check("there is ONE resolver, not three",
@@ -191,11 +247,18 @@ breakdown = read("script_breakdown.py")
 check("⚠ the breakdown is told to LEAVE THE MARKET BLANK unless the script "
       "actually says — its guess is the weakest layer, and a wrong guess is "
       "the whole bug",
-      "LEAVE IT EMPTY otherwise" in breakdown
+      "LEAVE IT EMPTY IF THE SCRIPT SHOWS NONE OF THEM" in breakdown
       and "GUESSED_MARKET_FIELDS" in breakdown)
+check("…and it is told what counts as the script SAYING so, since this "
+      "reading is the main path now that the form has no country control",
+      all(w in breakdown for w in ("named city", "festival", "the food they eat")))
+check("⚠ …and told explicitly not to reason from the genre or from 'most "
+      "scripts are American', which is the shape the original bug took",
+      "Do not " in breakdown and "reason from the genre" in breakdown
+      and "most scripts are " in breakdown)
 
 # ---------------------------------------------------------------------------
-print("\n[7] the video half is the same film")
+print("\n[8] the video half is the same film")
 
 animatics = read("server", "animatics.py")
 check("a project made from a board inherits that board's audience",
@@ -225,25 +288,38 @@ check("…without overwriting an explicit 'no language' choice",
       "it is NOT written back onto the project" in director_router)
 
 # ---------------------------------------------------------------------------
-print("\n[8] the user can actually say it — in both places")
+print("\n[9] the user can actually say it — in both places")
 
 options = read("client", "src", "storyboardOptions.js")
-check("the country list exists and leads with the honest empty answer",
+check("the country list exists and leads with a NEUTRAL empty answer",
       "MARKET_COUNTRIES" in options
-      and 'id: "", label: "Not set — show no prices"' in options)
+      and 'label: "Not set — show no prices"' not in options)
 check("⚠ Hinglish is offered, because that is what Indian creators caption in",
       '{ id: "Hinglish"' in options)
 check("the list warns that it must track market.py",
       "KEEP `MARKET_COUNTRIES` IN STEP WITH `COUNTRIES` IN market.py" in options)
 
 form_ui = read("client", "src", "components", "ScriptToStoryboard.jsx")
-check("the storyboard form asks",
-      "Audience" in form_ui and "MARKET_COUNTRIES.map" in form_ui)
-check("⚠ …and says out loud what an unset market means, so a blank app screen "
-      "in a finished panel does not read as a bug",
-      "will show no prices or readable text" in form_ui)
-check("the account default prefills it",
-      "p?.default_country" in form_ui)
+check("the storyboard form asks — for the LANGUAGE, and that alone",
+      "Audience" in form_ui and "MARKET_LANGUAGES.map" in form_ui)
+check("⚠ …and NOT for a country, which is the control that was removed: on "
+      "the way to a storyboard, 'which market?' is a question about money "
+      "that most people cannot answer and should not be asked",
+      "MARKET_COUNTRIES" not in form_ui)
+check("⚠ …with the reason written where the control used to be, because a "
+      "missing field looks like an oversight to the next person",
+      "COUNTRY PICKER WAS HERE AND WAS DELIBERATELY TAKEN OUT" in form_ui)
+check("⚠ …and the form does not explain our engineering back at the user — "
+      "the 'no prices' and 'we never invent a logo' lines are gone",
+      "will show no prices or readable text" not in form_ui
+      and "We never invent a logo" not in form_ui)
+check("the account default is NOT prefilled into a control that no longer "
+      "exists — the server reads it off the account instead",
+      "p?.default_country" not in form_ui
+      and "p?.default_language" in form_ui)
+check("⚠ …and the form sends no country key at all, so the account default "
+      "and the script's guess stay reachable underneath it",
+      "return { language: language.trim() };" in form_ui)
 check("⚠ changing the audience invalidates the board — switching India to the "
       "US changes every price tag in it",
       "market: effectiveMarket()," in form_ui)
@@ -252,8 +328,11 @@ check("it reaches the cast step, the props step and the create call",
       and "market: effectiveMarket()," in form_ui)
 
 profile = read("client", "src", "components", "Profile.jsx")
-check("the profile carries the account default",
-      "default_country" in profile and "default_language" in profile)
+check("the profile carries the account default — and is now the ONLY place "
+      "a country is picked, where it is a setting chosen once rather than a "
+      "question asked on every board",
+      "default_country" in profile and "default_language" in profile
+      and "MARKET_COUNTRIES" in profile)
 check("…and it saves with the rest of the storyboard defaults",
       '"default_country",' in profile.split("SaveRow")[-1] or
       '"default_country",' in profile)

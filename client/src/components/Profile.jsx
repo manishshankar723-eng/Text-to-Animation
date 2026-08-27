@@ -447,12 +447,18 @@ export default function Profile({
             what is DRAWN — the money on a price tag, the language on a shop
             sign. Set once by a creator who always makes films for one market,
             and left blank the films simply show no prices, which is the right
-            answer when nobody has said who is watching. See market.py. */}
+            answer when nobody has said who is watching. See market.py.
+
+            ⚠ AND THIS IS THE ONLY COUNTRY PICKER LEFT IN THE APP. The board
+            form used to carry one too and does not any more: asked on the way
+            to a storyboard, "which market?" is a question about prices that
+            most people have no answer to. Here it is a setting somebody
+            chooses once, which is a different thing entirely — so this is
+            where it belongs, and why it is not simply gone. */}
         <h3 className="profile-subhead">Who your films are for</h3>
         <p className="muted tiny">
           Sets the currency and the on-screen language in every board you draw.
-          Leave it blank and screens and signs are drawn with no prices and no
-          readable text — better than the wrong country&rsquo;s.
+          Leave it blank and each board works it out from your script.
         </p>
         <div className="profile-grid">
           <label className="field">
@@ -463,7 +469,7 @@ export default function Profile({
             >
               {MARKET_COUNTRIES.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.id ? c.label : "Ask me each time"}
+                  {c.id ? c.label : "Auto — from each script"}
                 </option>
               ))}
             </select>

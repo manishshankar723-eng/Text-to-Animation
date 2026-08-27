@@ -222,7 +222,7 @@ check("a speck of magenta is noise, not a placeholder",
 check("⚠ a stamping crash never costs the drawn panel — it has already been "
       "generated and paid for",
       "except Exception" in read("storyboard_pipeline.py").split(
-          "def stamp_brand")[1].split("\ndef ")[0])
+          "def stamped_brand")[1].split("\ndef ")[0])
 
 # ---------------------------------------------------------------------------
 print("\n[5] the logo keeps its transparency on the way in")
@@ -256,16 +256,33 @@ check("…and so does a shot inserted between two others",
       'brand=params.get("brand") or {},' in read("server", "animatics.py"))
 
 sbp = read("storyboard_pipeline.py")
+
+
+def _stamps(func: str) -> bool:
+    """Does this panel path put the logo on? Either spelling counts.
+
+    `run_storyboard` calls `stamped_brand()`, which also reports whether a logo
+    LANDED — the free audit needs that to notice the brand scheme silently doing
+    nothing. The other two only need the picture, so they call `stamp_brand()`.
+    """
+    body = sbp.split(f"\ndef {func}(")[1].split("\ndef ")[0]
+    return "stamp_brand(" in body or "stamped_brand(" in body
+
+
 check("all three panel paths stamp",
-      sbp.count("stamp_brand(") == 4)  # 1 def + 3 call sites
+      all(_stamps(f) for f in
+          ("run_storyboard", "regenerate_panel", "draw_loose_shot")))
+check("⚠ the board run uses the reporting form, so the audit can tell 'no shot "
+      "needed a logo' apart from 'the placeholder scheme did nothing'",
+      "stamped_brand(image, brand, style)" in sbp
+      and 'panel["brand_stamped"] = logo_landed' in sbp)
 def _stamps_after_conform(func: str) -> bool:
     """In this function's body, does the stamp come after the colour pass?"""
     body = sbp.split(f"\ndef {func}(")[1].split("\ndef ")[0]
-    return (
-        "stamp_brand(" in body
-        and "conform_to_style(" in body
-        and body.index("conform_to_style(") < body.index("stamp_brand(")
-    )
+    at = [body.index(n) for n in ("stamp_brand(", "stamped_brand(") if n in body]
+    return bool(at) and "conform_to_style(" in body and body.index(
+        "conform_to_style("
+    ) < min(at)
 
 
 check("⚠ …AFTER conform_to_style in every one of them, so a greyscale pass "
@@ -292,9 +309,14 @@ check("the route passes the name through",
 form = read("client", "src", "components", "ScriptToStoryboard.jsx")
 check("the form offers a brand name and a logo upload",
       "Brand or app name" in form and "Upload logo" in form)
-check("⚠ …and says out loud that we never invent a logo, because that is the "
-      "thing people would otherwise ask for",
-      "never redrawn" in form and "never invent a logo" in form)
+check("⚠ …and does NOT explain that to the user in a line under the row. It "
+      "used to. 'No logo uploaded — we never invent a logo, because it would "
+      "come out different in every panel' is our engineering read back at "
+      "somebody who only wanted to draw a storyboard; an upload slot marked "
+      "'No logo' already says what it wants. The reason lives in the code "
+      "comment beside it, which is who actually needs it",
+      "never invent a logo" not in form
+      and "THE LOGO IS UPLOADED, NEVER GENERATED" in form)
 check("changing the brand invalidates the board",
       "brand: effectiveBrand()," in form)
 check("the name reaches the breakdown as well as the panels",

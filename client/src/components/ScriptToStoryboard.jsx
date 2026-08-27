@@ -49,7 +49,6 @@ import {
   GENRES,
   MORE_GENRES,
   ALL_GENRES,
-  MARKET_COUNTRIES,
   MARKET_LANGUAGES,
 } from "../storyboardOptions.js";
 
@@ -104,11 +103,20 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   const [dragOver, setDragOver] = useState(false);
   const [genre, setGenre] = useState("default"); // "default" = no bias
   const [customGenre, setCustomGenre] = useState("");
-  // WHO THIS FILM IS FOR. ⚠ "" IS A REAL ANSWER, NOT AN UNSET FIELD: it means
-  // the film shows no prices and no readable on-screen text at all, which is
-  // the correct output when nobody has said who is watching. Guessing a market
-  // is how an Indian creator's app promo came back priced in dollars.
-  const [country, setCountry] = useState("");
+  // WHO THIS FILM IS FOR — ONE control, the language, and never a country.
+  //
+  // ⚠ THE COUNTRY PICKER WAS HERE AND WAS DELIBERATELY TAKEN OUT. Asked on the
+  // way to a storyboard, "which market?" reads as a question about PRICES, and
+  // somebody drawing two friends on a train has no answer and no reason to
+  // want one. The country is worked out instead — from the language (see
+  // `LANGUAGE_COUNTRY` in market.py), from the account default, or from the
+  // script itself — so the money still comes out right without the question.
+  // It survives on the profile, where it is a setting chosen once.
+  //
+  // ⚠ "" IS STILL A REAL ANSWER, NOT AN UNSET FIELD: nothing known anywhere
+  // means the film shows no prices and no readable on-screen text at all,
+  // which is the correct output when nobody has said who is watching.
+  // Guessing is how an Indian creator's app promo came back priced in dollars.
   const [language, setLanguage] = useState("");
   // THE BRAND THIS FILM SELLS, if it sells one.
   //
@@ -193,12 +201,15 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         if (p?.default_aspect_ratio)
           setAspect((cur) => (cur === DEFAULT_ASPECT ? p.default_aspect_ratio : cur));
         if (p?.default_genre) setGenre((cur) => (cur === "default" ? p.default_genre : cur));
-        // ⚠ THE AUDIENCE IS PREFILLED HERE TOO, and it is the one default that
+        // ⚠ THE LANGUAGE IS PREFILLED HERE TOO, and it is the one default that
         // changes what is DRAWN rather than how it looks: it decides the money
         // on a price tag and the language on a shop sign. Prefilled so a
         // creator who always makes films for one market never has to say so
         // twice — and still overridable on this form, board by board.
-        if (p?.default_country) setCountry((cur) => (cur === "" ? p.default_country : cur));
+        //
+        // ⚠ `default_country` is NOT prefilled, because there is no longer a
+        // country control to prefill. It is not lost: the server reads it off
+        // the account itself, as a layer under this form. See `_resolve_market`.
         if (p?.default_language) setLanguage((cur) => (cur === "" ? p.default_language : cur));
         profileDefaultsApplied.current = true;
       } catch {
@@ -394,14 +405,17 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   }
 
   // The audience, as the server wants it. ⚠ ALWAYS AN OBJECT, NEVER NULL, even
-  // when both halves are blank: the server has to be able to tell "the form
-  // said nothing" (this, all empty) from "the form was never asked" (an older
-  // client sending no field at all), because only the first one is allowed to
-  // stop the account default being applied. The country is sent as its CODE —
-  // the server owns the currency lookup, so nobody here has to know that India
-  // means ₹.
+  // when it is blank: the server has to be able to tell "the form said nothing"
+  // (this, empty) from "the form was never asked" (an older client sending no
+  // field at all), because only the first one is allowed to stop the account
+  // default being applied.
+  //
+  // ⚠ NO `country` KEY, because this form no longer has a country control and
+  // sending a permanently-blank one would be a lie about what was asked. The
+  // country arrives from the layers underneath instead — the account default,
+  // the script's own guess, and failing both the language above.
   function effectiveMarket() {
-    return { country: country.trim(), language: language.trim() };
+    return { language: language.trim() };
   }
 
   // The brand, as the server wants it. Always an object — an empty one is a
@@ -1475,31 +1489,24 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           />
 
           {/* --- Audience ---
-              ⚠ TWO DROPDOWNS, NOT CHIPS, and not because chips would be
-              prettier — there are thirty-eight countries and twenty-five
-              languages, and a chip row that long buries the Genre and Style
-              rows that matter on every single board. They wear the same pill
-              the board's "Add a style" select does, so the row still reads as
-              part of the same family of controls. */}
+              ⚠ ONE DROPDOWN, AND IT USED TO BE TWO. The country picker beside
+              this one asked, in effect, "what money do you want?" — a question
+              nobody making a film about two friends on a train has an answer
+              to, and a strange thing to meet on the way to a storyboard. The
+              country is worked out from this language, the account default or
+              the script instead (market.py), so the money still comes out right
+              and the form asks one thing rather than two.
+
+              A dropdown and not chips: twenty-five languages in a chip row
+              would bury the Genre and Style rows that matter on every board.
+              It wears the same pill the board's "Add a style" select does. */}
           <label>
             Audience{" "}
             <span className="label-optional">
-              · decides the money and the on-screen language
+              · the language on screens and signs
             </span>
           </label>
           <div className="opt-chips sts-audience">
-            <select
-              className="opt-select"
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              title="The country this film is made for"
-            >
-              {MARKET_COUNTRIES.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
             <select
               className="opt-select"
               value={language}
@@ -1508,28 +1515,23 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             >
               {MARKET_LANGUAGES.map((l) => (
                 <option key={l.id} value={l.id}>
-                  {l.label}
+                  {l.id ? l.label : "Auto — from your script"}
                 </option>
               ))}
             </select>
           </div>
-          {/* ⚠ SAID OUT LOUD, because "no prices" looks like a bug otherwise.
-              A blank app screen in a finished panel is a deliberate choice and
-              the user deserves to know it was theirs. */}
-          <p className="tiny muted sts-audience-note">
-            {country
-              ? "Prices, signs and app screens will match this market."
-              : "No market set — screens and signs will show no prices or readable text."}
-          </p>
 
           {/* --- Brand ---
-              ⚠ THE LOGO IS UPLOADED, NEVER GENERATED, and the copy below says
-              so plainly because it is the thing people will otherwise ask for.
-              An image model rebuilds a mark from its description every time it
-              draws one, so four panels of one brand come back as four different
-              logos. With a file here the model draws a flat placeholder and the
-              server pastes this exact PNG in; with none, it is told to invent
-              nothing at all. */}
+              ⚠ THE LOGO IS UPLOADED, NEVER GENERATED. An image model rebuilds a
+              mark from its description every time it draws one, so four panels
+              of one brand come back as four different logos. With a file here
+              the model draws a flat placeholder and the server pastes this
+              exact PNG in; with none, it is told to invent nothing at all.
+
+              ⚠ THAT USED TO BE SPELLED OUT IN A LINE UNDER THE ROW AND IS NOT
+              ANY MORE — "no logo uploaded, we never invent one" explained our
+              engineering to somebody who only wanted to draw a storyboard. An
+              upload slot marked "No logo" already says what it wants. */}
           <label>
             Brand{" "}
             <span className="label-optional">
@@ -1588,11 +1590,6 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             </div>
           </div>
           {brandError && <div className="error">{brandError}</div>}
-          <p className="tiny muted sts-audience-note">
-            {brandLogoId
-              ? "Your logo will be pasted onto every panel that shows it — the same file each time, never redrawn."
-              : "No logo uploaded — app icons and signs will be drawn blank. We never invent a logo, because it would come out different in every panel."}
-          </p>
 
           {/* --- Genre --- */}
           <label>Genre <span className="label-optional">· shapes the tone</span></label>

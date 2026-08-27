@@ -119,6 +119,27 @@ class MeshyRequest(BaseModel):
     api_key: str | None = None
 
 
+class DeepAuditFinding(BaseModel):
+    """One thing the paid check saw in one panel."""
+
+    panel: int
+    kind: str  # "money" | "language" | "brand" | "placeholder"
+    detail: str = ""
+
+
+class DeepAuditResponse(BaseModel):
+    """The result of POST /storyboards/{job_id}/check.
+
+    ⚠ AN EMPTY `findings` IS THE GOOD ANSWER, and the client says so out loud.
+    A checker whose success state looks identical to "it did not run" gets
+    pressed twice and then distrusted.
+    """
+
+    findings: list[DeepAuditFinding] = Field(default_factory=list)
+    checked: int = 0
+    sheets: int = 0
+
+
 class Brand(BaseModel):
     """The brand this film is for — and, above all, its LOGO FILE.
 

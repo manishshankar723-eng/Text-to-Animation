@@ -69,6 +69,14 @@ export default function StoryboardBoard({
   const [lightbox, setLightbox] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  // The DEEP check: one vision call over a contact sheet of the whole board.
+  // ⚠ IT SPENDS MONEY, so it is a button and never a side effect of generating.
+  // `null` = not run yet, which is deliberately different from `{findings: []}`
+  // = run and found nothing. A checker whose success looks the same as "it
+  // didn't run" gets pressed twice and then distrusted.
+  const [checkResult, setCheckResult] = useState(null);
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [checkError, setCheckError] = useState("");
   const [zipBusy, setZipBusy] = useState(false);
   const [animaticBusy, setAnimaticBusy] = useState(false);
   // A stop has been asked for but the run hasn't wound down yet (the panels
@@ -209,6 +217,26 @@ export default function StoryboardBoard({
   const progress = job?.progress || {};
   const panels = job?.result?.panels || [];
   const total = job?.result?.count || job?.params?.count || panels.length || 0;
+  // The FREE audit, measured by the pipeline the moment the board finished. It
+  // costs nothing, so it is simply there — no button, no call, no spend.
+  const audit = job?.result?.audit || null;
+
+  async function runDeepCheck() {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    setCheckError("");
+    try {
+      setCheckResult(await api.checkStoryboard(jobId));
+    } catch (e) {
+      // ⚠ A FAILURE CLEARS THE PREVIOUS RESULT. Leaving an old clean report on
+      // screen beside an error reads as "checked, all good" for a check that
+      // did not happen.
+      setCheckResult(null);
+      setCheckError(e.message);
+    } finally {
+      setCheckBusy(false);
+    }
+  }
   // The board's saved title and source script. Both live on the job record, so
   // they're here whether the board was just generated or reopened from the
   // library. Falls back while the first poll is still in flight.
@@ -764,9 +792,71 @@ export default function StoryboardBoard({
               )}
             </button>
           )}
+          {/* ⚠ THE CHECK IS A BUTTON, and its label says what it does rather
+              than "QA" — the person pressing it wants to know if their film is
+              wrong, not to run a process. It costs a model call, so it never
+              happens on its own; the free audit above already ran. */}
+          {!sequenceMode && okCount > 0 && (
+            <button
+              type="button"
+              className="btn"
+              disabled={checkBusy}
+              onClick={runDeepCheck}
+              title="Look at every panel for the wrong currency, the wrong language or an invented logo"
+            >
+              {checkBusy ? (
+                <>
+                  <span className="spinner-inline" /> Checking…
+                </>
+              ) : (
+                "🔍 Check this board"
+              )}
+            </button>
+          )}
           {/* In sequenceMode these two live in the TOP row instead — see
               `finishActions`, rendered once in whichever place applies. */}
           {!sequenceMode && finishActions()}
+        </div>
+      )}
+
+      {/* WHAT THE CHECKS FOUND — the free one first, the paid one under it.
+          ⚠ NEITHER BLOCKS ANYTHING. This is a note beside the board, not a gate
+          in front of it: half of these are judgement calls only the film-maker
+          can settle, and a board with a warning on it is still their board. */}
+      {!running && (audit?.findings?.length > 0 || checkResult || checkError) && (
+        <div className="board-audit">
+          {(audit?.findings || []).map((f) => (
+            <div key={f.code} className={`board-audit-row is-${f.severity}`}>
+              <span className="board-audit-msg">{f.message}</span>
+              {f.panels?.length > 0 && (
+                <span className="tiny muted">
+                  {" "}
+                  · shot{f.panels.length === 1 ? " " : "s "}
+                  {f.panels.map((i) => i + 1).join(", ")}
+                </span>
+              )}
+              {f.hint && <div className="tiny muted">{f.hint}</div>}
+            </div>
+          ))}
+
+          {checkError && <div className="board-audit-row is-error">{checkError}</div>}
+
+          {/* ⚠ "NOTHING FOUND" IS PRINTED, not left blank. A check that says
+              nothing when it passes is a check nobody believes ran. */}
+          {checkResult && checkResult.findings.length === 0 && (
+            <div className="board-audit-row is-ok">
+              Checked {checkResult.checked} panel
+              {checkResult.checked === 1 ? "" : "s"} — no wrong currency, wrong
+              language or invented logo found.
+            </div>
+          )}
+          {checkResult?.findings.map((f, i) => (
+            <div key={`${f.panel}-${f.kind}-${i}`} className="board-audit-row is-warning">
+              <span className="board-audit-msg">Shot {f.panel}</span>
+              <span className="tiny muted"> · {f.kind}</span>
+              <div className="tiny muted">{f.detail}</div>
+            </div>
+          ))}
         </div>
       )}
 

@@ -275,7 +275,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **PHASE 3 OF THE PRODUCTION BRIEF: THE LOGO IS NEVER DRAWN BY THE MODEL — IT IS PASTED ON AFTERWARDS.** New `brand.py`. The model draws a flat magenta PLACEHOLDER, `stamp()` finds it and pastes the user's uploaded PNG in, so the mark is bit-identical in every panel because it IS the same file. ⚠ No upload means NO logo, not a generated one: an image model rebuilds a mark from its description every time and never twice the same, which is why one 28-panel promo carried four different "Lickyeat" logos. Only Phase 4 (the QA gate) is left. See the Work Log.
+**Last updated:** 2026-08-27 — **THE BOARD FORM NO LONGER ASKS "WHICH MARKET?", BECAUSE THAT IS A QUESTION ABOUT PRICES.** Phase 2 fixed the `$` and then left the fix's plumbing on the form: a dropdown reading "Not set — show no prices" met somebody who only wanted to draw two friends on a train. The form now asks ONE thing, the language; the country, the money and the units are worked out from it, from the account, or from the script. ⚠ **English is deliberately NOT in the language→country table** — mapping it to the US is how an Indian creator's promo got priced in dollars in the first place, and Spanish and Arabic are absent for the same reason. New `_LANGUAGE_ONLY_RULE` covers the case this created: a language with no country writes text in that language and shows NO price. The two explanatory lines under the form are gone. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 4, THE LAST: THE BOARD IS MEASURED AFTER IT IS DRAWN.** New `qa.py`. Every fix in Phases 1-3 is a PROMPT, which is a request and not a guarantee — so a free Pillow/NumPy audit now runs on every board (a shipped magenta placeholder, colour on a greyscale style, a wrong aspect, and ⚠ **a branded board where the logo never landed anywhere**, which is how the brand scheme would fail SILENTLY), and a paid vision check sits behind a button at ONE call per 24 panels. ⚠ Medium drift is deliberately NOT guessed for free: chroma cannot tell a cartoon from a night shot, and a checker that cries wolf gets switched off. The Production Brief is complete; nothing is verified against the real models yet. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 3 OF THE PRODUCTION BRIEF: THE LOGO IS NEVER DRAWN BY THE MODEL — IT IS PASTED ON AFTERWARDS.** New `brand.py`. The model draws a flat magenta PLACEHOLDER, `stamp()` finds it and pastes the user's uploaded PNG in, so the mark is bit-identical in every panel because it IS the same file. ⚠ No upload means NO logo, not a generated one: an image model rebuilds a mark from its description every time and never twice the same, which is why one 28-panel promo carried four different "Lickyeat" logos. Only Phase 4 (the QA gate) is left. See the Work Log.
 
 **Previously:** 2026-08-27 — **PHASE 2 OF THE PRODUCTION BRIEF: A FILM IS PRICED IN ITS AUDIENCE'S MONEY, AND AN UNSET ONE SHOWS NO PRICE AT ALL.** New `market.py` resolves country/language/currency from three layers — this board's form, the account default, the breakdown's guess — and every image prompt, every prop reference and BOTH Veo render paths now carry it. ⚠ When nobody has said who the film is for, the rule asks for no legible price and no currency symbol anywhere: a wrong `$` is worse than none. Phase 3 (brand kit, the drifting logo) is still UNTOUCHED. See the Work Log.
 
@@ -3414,7 +3418,153 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — FOUR DIFFERENT "LICKYEAT" LOGOS IN ONE 28-PANEL FILM ("logo har jagah change hua ek jaisa hona chahiye tha agar user nahi diya hai to")
+### 2026-08-27 (latest) — THE BOARD FORM ASKED "WHICH MARKET?", WHICH IS A QUESTION ABOUT PRICES ("prices wala function nahi rakhna hai humko … user se direct prices mat pucho, usko hata do frontend se, bas peeche se jitna aur jahan se samajh jaye AI waisa kar do")
+
+⚠ **PHASE 2 SOLVED THE BUG AND THEN PUT THE BUG'S PLUMBING ON THE FORM.** The
+`$4.50` is fixed, but the fix arrived as a dropdown reading **"Not set — show no
+prices"** on the way to a storyboard, plus a line under it explaining what an
+unset market means. Somebody drawing two friends on a train met a question about
+currency and a paragraph about our engineering. Both are gone.
+
+**What the user now answers, and what is worked out:**
+
+- **Answered:** the LANGUAGE, one dropdown, empty option "Auto — from your
+  script".
+- **Worked out:** the country, and from it the money and the units — from the
+  language (`LANGUAGE_COUNTRY`, new in `market.py`), the account default, or the
+  script itself. All three already existed; only the question was removed.
+
+⚠ **AND THE LANGUAGE→COUNTRY TABLE IS DELIBERATELY INCOMPLETE. ENGLISH IS NOT IN
+IT.** English is what an Indian creator writes their app promo in, and mapping
+it to the United States would put `$4.50` straight back on that phone screen —
+this exact bug, re-introduced by the convenience feature meant to prevent it.
+Spanish (Spain / Mexico / Argentina) and Arabic (UAE / Saudi / Egypt) are absent
+for the same reason. **A language spoken across markets with different money
+identifies no market, and silence is this module's answer to that.** The table
+is a last resort, below every layer: a profile set to Singapore or a script that
+plainly says Dubai still beats "they wrote it in Tamil".
+
+⚠ **THE REDESIGN CREATED A NEW CASE AND IT NEEDED A NEW RULE.** "A language and
+no country" used to be rare, because whoever picked a language picked a country
+beside it. It is now the common state — and it fell into `_MONEY_RULE`, which
+rendered as *"shown in this market's own currency, never dollars"*. That is a
+riddle: the model is told to draw a currency and not told which, and a model
+that must pick one picks the dollar. New `_LANGUAGE_ONLY_RULE` splits the two
+halves and answers each with what is actually known — **text in that language,
+no price at all**.
+
+- ⚠ **THE COUNTRY PICKER IS NOT DELETED, IT MOVED.** It lives on the profile
+  only, where it is a setting somebody chooses once rather than a question asked
+  on every board — a different thing entirely. Its empty label was "Ask me each
+  time", which is now a lie, and is "Auto — from each script".
+- **The script reading matters more now**, so the breakdown is told what counts
+  as evidence — a named city, a currency, a festival, an address format, the
+  characters' names, the food, the alphabet, a local brand — any ONE is enough.
+  ⚠ The "leave it empty" rule is UNCHANGED, and it is now also told explicitly
+  not to reason from the genre or from the fact that most scripts are American,
+  which is the shape the original bug took.
+- **Both explanatory lines under the form are gone**: the market one and *"No
+  logo uploaded — we never invent a logo, because it would come out different in
+  every panel."* An upload slot marked "No logo" already says what it wants.
+  ⚠ The reasoning was not thrown away — it moved into the code comment beside
+  each control, which is who actually needed it. A test now pins the ABSENCE of
+  both, and pins the comment that replaced them.
+- `MARKET_COUNTRIES`' own empty label read "Not set — show no prices" and is now
+  neutral: it has one call site today, and a third one must not put money in
+  front of somebody drawing a film.
+- Files: `market.py`, `script_breakdown.py`,
+  `client/src/components/ScriptToStoryboard.jsx`,
+  `client/src/components/Profile.jsx`, `client/src/storyboardOptions.js`,
+  `client/src/styles/storyboard.css` (`.sts-audience-note` deleted),
+  `tests/board_market_check.py`, `tests/board_brand_check.py`.
+- Verified: `board_market_check` (new section 3 — twelve checks on the
+  derivation, including that English, Spanish and Arabic name NO country),
+  `board_look_check`, `board_brand_check`, `board_audit_check`,
+  `panel_border_check`, `panel_normalise_check`, `storyboard_draft_check`,
+  `asset_fields_check`, `capability_check` all pass; `vite build` clean; the
+  server imports.
+- ⚠ **NOT verified against the real model.** The derivation is pure Python and
+  fully tested; the widened breakdown wording is a PROMPT and has never been run
+  against a script. Whether the model now reads "Diwali" as India is the open
+  question, and `qa.deep_audit()` is what would catch it being wrong.
+
+### 2026-08-27 — EVERY FIX IN PHASES 1-3 IS A REQUEST, SO THE BOARD IS NOW MEASURED AFTER IT IS DRAWN
+
+Phase 4 of the **Production Brief** plan, the last one (see Current State). New
+module: **`qa.py`**.
+
+⚠ **A PROMPT IS A REQUEST, NOT A GUARANTEE.** Phases 1-3 all end the same way:
+we ask the model for something and hope. Nothing in the app has ever looked at
+what came back. So a board could ship with a magenta square on the phone, or in
+two mediums, or priced in dollars, and the first person to notice would be the
+user — which is exactly how this whole plan started.
+
+Two checkers, because they cost different amounts:
+
+1. **The free one runs on every board, automatically.** Pillow and NumPy on the
+   finished PNGs — no model, no tokens, no button. Its findings ride back in
+   `job.result["audit"]` and draw as rows on the board.
+2. **The paid one sits behind a button** ("🔍 Check this board"). It is a vision
+   call, so it is the user's choice to spend it, and it reads the panels as
+   pictures — the only thing that can answer "is this priced in the wrong
+   money".
+
+What the free check can honestly prove, and nothing more:
+
+- ⚠ **A branded board where the logo landed on NO panel at all.** This is the
+  one that matters most, because **it is how Phase 3 fails SILENTLY**: if
+  Gemini never draws the magenta placeholder, `stamp()` finds nothing, pastes
+  nothing, raises nothing, and hands back a perfectly nice board with no brand
+  on it. Nobody would notice for weeks. Now it says so on the first board.
+- **A magenta placeholder that shipped** — `erase_markers()` should have caught
+  it, so this is an error, not a warning: it means the safety net tore.
+- **Colour on a greyscale style** — `conform_to_style` was skipped somewhere.
+- **A panel at the wrong aspect ratio**, and any panel that failed outright.
+
+⚠ **AND "HALF THE BOARD IS CARTOON" IS DELIBERATELY *NOT* GUESSED FOR FREE** —
+which is awkward, because it is the Phase 1 symptom the user actually reported.
+A statistical version was written, run, and **deleted the same hour**: it fired
+on my own test board on a night shot sitting next to a bright exterior. Chroma
+and luma cannot separate "a different MEDIUM" from "a different LIGHT", and a
+checker that cries wolf gets ignored, then switched off, and then the real
+finding it had one day is never read. A permanent comment in `qa.py` says this
+so the next agent does not re-add it. It moved to the paid check instead, as
+rule "5. MEDIUM", carved out with "a night scene is NOT a different medium".
+
+The paid check, `deep_audit()`:
+
+- ⚠ **ONE call per 24 panels, not one per panel.** The panels are tiled into a
+  numbered contact sheet, so a 28-panel board is two calls instead of 28. A
+  per-panel check would cost more than the board.
+- The contact sheet computes **per-row heights from the real thumbnails**. The
+  first version reserved a square cell per panel and wasted about half the
+  sheet on white space — and on a vision call, empty space is billable tokens.
+- `temperature=0.0` and a structured schema, so it returns findings and not an
+  essay. It is asked for exactly five things — money, language, brand,
+  placeholders, medium — and then told to **report nothing else**, because a
+  model given an open brief will report the lighting and the composition
+  forever. Findings for panel numbers that are not on the sheet are dropped.
+
+- Files: `qa.py` (new), `storyboard_pipeline.py` (the audit runs at the end of
+  `run_storyboard`, and `stamped_brand()` now reports whether the logo actually
+  landed), `server/main.py` (`POST /storyboards/{job_id}/check`),
+  `server/schemas.py`, `client/src/api.js`,
+  `client/src/components/StoryboardBoard.jsx`,
+  `client/src/styles/storyboard.css`, `tests/board_audit_check.py` (new).
+- ⚠ **The audit can never break a board.** It runs after every panel has been
+  drawn and PAID FOR, so it is wrapped: if the audit itself raises, the board
+  returns without an audit rather than losing the panels. It is also skipped on
+  a stopped run, where "half the panels are missing" is not a finding.
+- Verified: `tests/board_audit_check.py` passes, plus `board_look_check`,
+  `board_market_check`, `board_brand_check`, `panel_border_check`,
+  `panel_normalise_check`, `storyboard_draft_check`, `asset_fields_check`,
+  `capability_check`; `vite build` clean; the server imports.
+- ⚠ **NOT verified against the real vision model.** `deep_audit()` is exercised
+  at its seams — the contact sheet, the prompt, the schema, the panel-number
+  filter — with no model behind it. The free audit is tested on synthesised
+  panels. **No real board has been generated since Phase 1 started.**
+
+### 2026-08-27 — FOUR DIFFERENT "LICKYEAT" LOGOS IN ONE 28-PANEL FILM ("logo har jagah change hua ek jaisa hona chahiye tha agar user nahi diya hai to")
 
 Phase 3 of the **Production Brief** plan (see Current State). New module:
 **`brand.py`**.
@@ -21002,8 +21152,8 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-**🎬 THE PRODUCTION BRIEF — PHASES 1, 2 AND 3 OF 4 ARE BUILT (2026-08-27).
-ONLY PHASE 4 IS LEFT.**
+**🎬 THE PRODUCTION BRIEF — ALL FOUR PHASES ARE BUILT (2026-08-27).
+⚠ AND NOT ONE OF THEM HAS MET THE REAL MODELS YET.**
 
 Reported over five screenshots of a real 28-panel mobile-app promo: a Cinematic
 board whose cast came back as Pixar cartoons, panels drifting between two
@@ -21023,14 +21173,23 @@ agreed shape is ONE `Production Brief` — `{world, market, look, brand, policy}
 | 1 | **Look**: style-aware cast sheet, genre → art direction, anti-collage / one-object rule | ✅ built, `tests/board_look_check.py` |
 | 2 | **Market**: country + language + currency, on-screen-text rule, carried into panels AND Veo | ✅ built, `market.py` + `tests/board_market_check.py` |
 | 3 | **Brand**: logo/name/colours uploaded, composited with Pillow, never generated | ✅ built, `brand.py` + `tests/board_brand_check.py` |
-| 4 | **QA gate**: automated wrong-currency / logo-drift checks after generation | ⬜ not built |
+| 4 | **QA gate**: automated wrong-currency / logo-drift checks after generation | ✅ built, `qa.py` + `tests/board_audit_check.py` |
 
 Decisions already taken with the user, so they do not need re-litigating:
 
 - ✅ **Market comes from BOTH an account default AND a per-board override**, with
   script auto-detection kept only as a fallback. BUILT — `market.resolve()`. ⚠ When the market is genuinely
   unknown, show NO currency and NO legible on-screen prices — a wrong `$` is
-  worse than nothing. `WORLD_FIELDS` gains `country, language, script, currency,
+  worse than nothing.
+
+  ⚠ **AND THE PER-BOARD OVERRIDE IS A LANGUAGE, NOT A COUNTRY (revised
+  2026-08-27).** The country dropdown was removed from the board form: on the
+  way to a storyboard, "which market?" reads as a question about PRICES that
+  most people cannot answer. The country is derived from the language
+  (`LANGUAGE_COUNTRY`), the account, or the script. **English, Spanish and
+  Arabic are deliberately absent from that table** — a language spoken across
+  markets with different money names no market, and guessing one is the
+  original bug. The country picker lives on the PROFILE only. `WORLD_FIELDS` gains `country, language, script, currency,
   units`; `director.language_instruction()` already solves half of this for the
   video editor and should be joined to the brief rather than duplicated.
 - ✅ **A logo is UPLOADED and composited onto the finished panel with Pillow —
@@ -21041,10 +21200,20 @@ Decisions already taken with the user, so they do not need re-litigating:
   the whole reported bug. The model is told to leave a blank/neutral app icon.
   No upload means no logo in frame at all. The flat-paste version comes first;
   matching the phone's perspective is a later refinement.
-- ⬜ **ALL THREE BUILT PHASES ARE UNVERIFIED AGAINST THE REAL MODELS.** What
-  changed is prompts, and prompts are what the three `tests/board_*_check.py`
+- ✅ **THE BOARD CHECKS ITSELF NOW.** BUILT — `qa.py`. A free Pillow/NumPy
+  audit runs on every board and rides back in `job.result["audit"]`; a paid
+  vision check (`POST /storyboards/{job_id}/check`) sits behind a button at ONE
+  call per 24 panels. ⚠ The finding that matters most is
+  **`logo_never_landed`** — a branded board where the marker was found on NO
+  panel — because that is the only way Phase 3 fails without anyone noticing.
+  ⚠ Medium drift is NOT guessed from pixels; the reason is written into `qa.py`
+  where the deleted detector used to be, and it belongs to the paid check.
+
+- ⬜ **ALL FOUR BUILT PHASES ARE UNVERIFIED AGAINST THE REAL MODELS.** What
+  changed is prompts, and prompts are what the four `tests/board_*_check.py`
   suites check; no board and no Veo shot have been generated since. The next
-  real board is the actual test.
+  real board is the actual test. `qa.deep_audit()` has never had a vision model
+  behind it — only its seams are tested.
 
   ⚠ **THE RISKIEST ASSUMPTION IS PHASE 3.** The whole logo scheme rests on
   Gemini actually drawing a FLAT MAGENTA PLACEHOLDER when asked, and that has
@@ -21059,6 +21228,9 @@ Decisions already taken with the user, so they do not need re-litigating:
   2. does a Cinematic cast sheet come back photographic rather than cartoon;
   3. does an app screen on an India board show ₹ — or, with no market set, no
      price at all.
+
+  And then read what the audit says about that same board, because the audit
+  is the other untested thing in the room.
 
 **⬜ Newest follow-ups — Script → Storyboard's "Ask AI" tab (2026-08-26):**
 

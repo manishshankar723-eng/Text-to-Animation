@@ -57,6 +57,7 @@ from .common import (
     board_dir as _board_dir,
     dir_bytes as _dir_bytes,
     get_owned_job as _get_owned_job,
+    panel_path as _panel_file,
     regenerate_board_panel as _regenerate_board_panel,
     sequence_summary as _sequence_summary,
     submit_sequence_run as _submit_sequence_run,
@@ -90,6 +91,7 @@ from .schemas import (
     StoryboardProject,
     StoryboardRenameRequest,
     StoryboardSummary,
+    DeepAuditResponse,
     PublicStoryboard,
     ShareResponse,
     TemplateInfo,
@@ -1445,6 +1447,54 @@ def get_public_storyboard_panel(token: str, index: int):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
     return FileResponse(path, media_type="image/png")
+
+
+@app.post("/storyboards/{job_id}/check", response_model=DeepAuditResponse)
+def deep_check_storyboard(
+    job_id: str,
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Look at a finished board with a vision model. ⚠ THIS SPENDS MONEY.
+
+    ⚠ IT IS A ROUTE AND NOT A STEP OF THE PIPELINE, ON PURPOSE. The free audit
+    (`qa.audit`) runs on every board because it costs nothing; this one bills
+    the customer, so it happens when they press the button and never as a side
+    effect of generating. One call per sheet of 24 panels, not one per panel —
+    a 28-panel board is two calls.
+
+    ⚠ AN EMPTY `findings` IS THE GOOD ANSWER, not a failure. Anything that
+    actually stopped the check from running raises instead, so the two can
+    never be confused by the client.
+    """
+    job = _get_owned_board(job_id, current)
+    variants, active = _variants_of(job.result or {})
+    panels = variants[active].get("panels") or []
+    paths = [
+        _panel_file(job_id, int(p.get("index", 0)), active)
+        for p in panels
+        if p.get("url") and not p.get("failed")
+    ]
+
+    import qa
+
+    try:
+        result = qa.deep_audit(
+            paths,
+            market=(job.params or {}).get("world") or {},
+            brand_data=(job.params or {}).get("brand") or {},
+            provider=(job.params or {}).get("provider"),
+        )
+    except qa.DeepAuditError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from None
+    except Exception as e:  # noqa: BLE001 — report clearly, never a bare 500
+        logger.exception("[qa %s] deep audit crashed", job_id)
+        raise HTTPException(status_code=502, detail=f"Board check failed: {e}") from None
+
+    logger.info(
+        "[qa %s] deep audit: %d finding(s) over %d panel(s) in %d call(s).",
+        job_id, len(result["findings"]), result["checked"], result["sheets"],
+    )
+    return DeepAuditResponse(**result)
 
 
 @app.get("/storyboards/{job_id}/panel/{index}")
