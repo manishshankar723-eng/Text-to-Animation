@@ -11,6 +11,12 @@ import useCapability from "../useCapability.js";
 import DialogueBox from "./DialogueBox.jsx";
 import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
 import PanelVersions from "./PanelVersions.jsx";
+// "Ask AI", at the point where it means something: a board exists and the
+// user wants a specific change to it. See BoardAssistant.jsx.
+import BoardAssistant from "./BoardAssistant.jsx";
+// One runtime formatter for the whole app — a film that reads "82s" on the
+// review step and "1m 22s" here reads as two different numbers.
+import { formatRuntime } from "./ScriptToStoryboard.jsx";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // ONE way to rename a thing, shared with Plan & Script and the video
@@ -37,6 +43,22 @@ const RESTYLE_OPTIONS = [
 // list that drifts.
 export const styleLabelFor = (id) =>
   RESTYLE_OPTIONS.find((s) => s.id === id)?.label || id || "Style";
+
+/** "close-up · slow push-in · 3s" — framing, move and length as one line.
+ *
+ * ⚠ "static" IS NOT PRINTED. It is the answer for most shots, and repeating it
+ * under every panel is noise: the absence of a move is what static means. Same
+ * rule as `storyboard_pdf._shot_line`, and the two must stay in step. */
+function shotLine(p) {
+  const bits = [(p.camera || "").trim()];
+  const move = (p.movement || "").trim();
+  if (move && !["static", "none", "no movement", "still"].includes(move.toLowerCase())) {
+    bits.push(move);
+  }
+  const secs = Number(p.duration_seconds) || 0;
+  if (secs > 0) bits.push(`${secs}s`);
+  return bits.filter(Boolean).join(" · ");
+}
 
 export default function StoryboardBoard({
   jobId,
@@ -372,6 +394,19 @@ export default function StoryboardBoard({
     );
   }
   const okCount = panels.filter((p) => !p.failed && p.url).length;
+  // The film's length, added up from the shots. 0 on a board made before the
+  // breakdown returned one, which is why it is hidden rather than shown as 0s.
+  const boardSeconds = panels.reduce(
+    (sum, p) => sum + (Number(p.duration_seconds) || 0),
+    0
+  );
+
+  // ⚠ THE ASSISTANT NEEDS A FINISHED BOARD TO TALK ABOUT. Not in sequenceMode
+  // (that workflow is about the motion of a board finished elsewhere), not
+  // while panels are still being drawn (the shot numbers are still moving), and
+  // not on an empty one.
+  const canAssist = !sequenceMode && !running && panels.length > 0;
+  const showAssistant = canAssist && assistantOpen;
   const failedCount = panels.filter((p) => p.failed).length;
 
   // Panels with no image and no failure = never drawn. That's what a stopped
@@ -423,6 +458,71 @@ export default function StoryboardBoard({
   }
 
   const [editBusy, setEditBusy] = useState(false);
+
+  // ---- "Ask AI" ------------------------------------------------------------
+  // What the user has clicked, 1-BASED, exactly as printed under the panels —
+  // {kind:"panel", shot} | {kind:"scene", scene} | {kind:"none"}. ⚠ THIS IS
+  // WHAT MAKES "make this one wider" WORK: without it the assistant has no
+  // referent and the only honest answer is "which one?".
+  const [selection, setSelection] = useState({ kind: "none" });
+  const [assistantOpen, setAssistantOpen] = useState(true);
+
+  function toggleSelectPanel(shot) {
+    setSelection((cur) =>
+      cur.kind === "panel" && cur.shot === shot ? { kind: "none" } : { kind: "panel", shot }
+    );
+  }
+  function toggleSelectScene(scene) {
+    setSelection((cur) =>
+      cur.kind === "scene" && cur.scene === scene ? { kind: "none" } : { kind: "scene", scene }
+    );
+  }
+
+  /** Run an approved plan from the assistant, then re-read the board.
+   *
+   * ⚠ DESCENDING INDEX ORDER, AND EDITS BEFORE STRUCTURE AT THE SAME INDEX.
+   * The plan was computed against ONE snapshot, but insert and delete renumber
+   * everything after themselves. Working from the highest index down means no
+   * action can be shifted by one that has not run yet — and an edit at the same
+   * index has to land before an insert there, or it would redraw the blank
+   * panel the insert just put in its place.
+   */
+  async function applyBoardActions(actions) {
+    const ordered = [...actions].sort((a, b) => {
+      if (b.index !== a.index) return b.index - a.index;
+      // same index: edit, then delete, then insert
+      const rank = { edit: 0, delete: 1, insert: 2 };
+      return (rank[a.action] ?? 9) - (rank[b.action] ?? 9);
+    });
+
+    for (const a of ordered) {
+      if (a.action === "delete") {
+        await api.deleteStoryboardPanel(jobId, a.index);
+        continue;
+      }
+      if (a.action === "insert") {
+        await api.insertStoryboardPanel(jobId, a.index, a.description || "");
+        // The panel lands blank; a new shot the user asked for in words is
+        // meant to be a picture, so draw it straight away.
+        await api.regenerateStoryboardPanel(jobId, a.index, {
+          description: a.description || "",
+        });
+        continue;
+      }
+      // edit — only send the fields that were actually changed, or an empty
+      // string would wipe a description the user never asked to lose.
+      const overrides = {};
+      if (a.description) overrides.description = a.description;
+      if (a.camera) overrides.camera = a.camera;
+      if (a.location) overrides.location = a.location;
+      await api.regenerateStoryboardPanel(jobId, a.index, overrides);
+    }
+
+    // Indices have moved; the selection points at a picture that may no longer
+    // be there. Drop it rather than let the next sentence act on the wrong one.
+    setSelection({ kind: "none" });
+    await reloadBoard();
+  }
 
   // Insert a new (empty) panel at position `at`; the user then writes a prompt
   // and generates it with the existing per-panel Generate button.
@@ -600,6 +700,7 @@ export default function StoryboardBoard({
           />
           <p className="muted">
             {styleLabel} · {aspect} · {total} panel{total === 1 ? "" : "s"}
+            {boardSeconds > 0 ? ` · ≈ ${formatRuntime(boardSeconds)}` : ""}
           </p>
         </div>
       </div>
@@ -885,12 +986,24 @@ export default function StoryboardBoard({
           under its panel, so shot 2 reads BELOW shot 1 rather than beside it.
           A grid would put the strip in a narrow column and break the reading
           order the flipbook depends on. */}
+      {/* ⚠ THE ASSISTANT IS OFF IN sequenceMode AND WHILE GENERATING. Image to
+          Animatic Image is about the MOTION of a board that was already
+          finished elsewhere, so editing its shots here would put the key poses
+          out of step with the panels they came from; and a board still drawing
+          has shot numbers that are still moving. */}
+      <div className={`board-workspace ${showAssistant ? "with-ai" : ""}`}>
       <div className={`board-grid ${sequenceMode ? "board-column" : ""}`}>
         {panels.map((p) => {
           // A new panel the user inserted: no image yet, board not generating.
           const isNew = !p.url && !p.failed && !running;
+          const picked =
+            (selection.kind === "panel" && selection.shot === p.index + 1) ||
+            (selection.kind === "scene" && selection.scene === p.scene_number);
           return (
-            <figure className="board-tile" key={p.index}>
+            <figure
+              className={`board-tile ${picked ? "is-selected" : ""}`}
+              key={p.index}
+            >
               <div
                 className={`board-frame ${retrying[p.index] ? "is-redrawing" : ""}`}
                 style={{ aspectRatio: tileRatio }}
@@ -957,10 +1070,37 @@ export default function StoryboardBoard({
               </div>
               <figcaption>
                 <div className="board-caption-head">
+                  {/* ⚠ THE NUMBER IS THE SELECTOR, NOT THE PICTURE. Clicking
+                      the image opens the lightbox and always has; hanging
+                      selection off it would mean choosing between looking at a
+                      shot and talking about one. */}
                   <span className="board-shotnum">
-                    Shot {p.index + 1}
+                    <button
+                      type="button"
+                      className={`board-pick ${
+                        selection.kind === "panel" && selection.shot === p.index + 1
+                          ? "on"
+                          : ""
+                      }`}
+                      onClick={() => toggleSelectPanel(p.index + 1)}
+                      title="Talk to the AI about this shot"
+                    >
+                      Shot {p.index + 1}
+                    </button>
                     {p.scene_number ? (
-                      <span className="board-scene">Scene {p.scene_number}</span>
+                      <button
+                        type="button"
+                        className={`board-scene board-pick ${
+                          selection.kind === "scene" &&
+                          selection.scene === p.scene_number
+                            ? "on"
+                            : ""
+                        }`}
+                        onClick={() => toggleSelectScene(p.scene_number)}
+                        title="Talk to the AI about this whole scene"
+                      >
+                        Scene {p.scene_number}
+                      </button>
                     ) : null}
                   </span>
                   {/* Structural edits only while the board isn't generating. */}
@@ -1003,6 +1143,14 @@ export default function StoryboardBoard({
                     that reads differently in three places reads as three
                     different tools. */}
                 <DialogueBox dialogue={p.dialogue} className="board-dialogue" />
+                {/* Framing · move · length, on one line and in the same order
+                    the PDF prints them. ⚠ NONE OF IT IS IN THE PICTURE — a
+                    still frame cannot show a move or a length; these are the
+                    director's read, and the animatic step is where they
+                    actually do something. */}
+                {shotLine(p) && (
+                  <p className="board-shotline tiny muted">{shotLine(p)}</p>
+                )}
                 {/* ⚠ THE BUTTON STAYS, GREYED AND LABELLED. A board of
                     forty panels with no draw button on any of them and no
                     sentence anywhere saying why is the exact failure this
@@ -1052,6 +1200,7 @@ export default function StoryboardBoard({
                     /* The same shape the panels above are drawn at — a 9:16
                        board's key poses were being cropped to a 16:9 slice. */
                     ratio={aspect || "16:9"}
+                    plannedSeconds={Number(p.duration_seconds) || 0}
                     onError={setPdfError}
                     onStarted={() => setPollNonce((n) => n + 1)}
                   />
@@ -1087,6 +1236,38 @@ export default function StoryboardBoard({
           </button>
         )}
       </div>
+
+      {showAssistant && (
+        <aside className="board-ai">
+          <BoardAssistant
+            jobId={jobId}
+            selection={selection}
+            onClearSelection={() => setSelection({ kind: "none" })}
+            onApply={applyBoardActions}
+            disabled={running || editBusy}
+          />
+          <button
+            type="button"
+            className="btn ghost small board-ai-hide"
+            onClick={() => setAssistantOpen(false)}
+          >
+            Hide the assistant
+          </button>
+        </aside>
+      )}
+      </div>
+
+      {/* Brought back with one click; a board is wide and some people want the
+          whole width for the pictures. */}
+      {canAssist && !assistantOpen && (
+        <button
+          type="button"
+          className="btn secondary board-ai-show"
+          onClick={() => setAssistantOpen(true)}
+        >
+          ✨ Ask AI about this board
+        </button>
+      )}
 
       {lightbox && (
         <div className="lightbox-overlay" onClick={() => setLightbox(null)}>

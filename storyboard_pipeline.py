@@ -1105,6 +1105,11 @@ def run_storyboard(
             "assets": shot.get("assets", []) or [],
             "location": shot.get("location", "") or "",
             "camera": shot.get("camera", "") or "",
+            # ⚠ CARRIED, NOT PROMPTED — like `dialogue` above. The board, the
+            # PDF and the animatic step read these; the image model never sees
+            # them, because a still frame cannot show a move or a length.
+            "movement": shot.get("movement", "") or "",
+            "duration_seconds": int(shot.get("duration_seconds") or 0),
             "url": None,
             "failed": False,
         }

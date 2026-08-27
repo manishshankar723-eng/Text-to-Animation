@@ -363,6 +363,14 @@ class Shot(BaseModel):
     assets: list[str] = Field(default_factory=list)
     location: str = ""
     camera: str = ""
+    # ⚠ MOVEMENT AND DURATION ARE DIRECTOR'S METADATA AND NEVER REACH AN IMAGE
+    # PROMPT — the same arrangement `dialogue` above has, for the same reason. A
+    # still panel cannot show a camera move or a length, and asking for one gets
+    # motion blur, speed lines or an arrow drawn INTO the frame. They are read
+    # by the shot card, the PDF and the animatic step, where motion and timing
+    # are real things.
+    movement: str = ""
+    duration_seconds: int = Field(3, ge=0, le=30)
     # Traceability: the VERBATIM script text this panel was drawn from, with its
     # 1-based line range, so the writer can see which lines became this shot.
     # Empty when the breakdown's quote couldn't be found in the script (it is
@@ -693,6 +701,64 @@ class ConceptScriptResponse(BaseModel):
     script: str = ""
     title: str = ""
     seconds: int = 0
+    usage: dict = Field(default_factory=dict)
+
+
+class BoardSelection(BaseModel):
+    """What the user has clicked on the board, if anything.
+
+    ⚠ THIS IS WHAT MAKES "make this one wider" A SENTENCE THAT WORKS. Without a
+    selection the assistant has no referent and the only honest answer is
+    "which one?". Shot numbers are 1-BASED here, as printed under the panels.
+    """
+
+    kind: str = Field("none", pattern="^(panel|scene|none)$")
+    shot: int = Field(0, ge=0, le=500)
+    scene: int = Field(0, ge=0, le=500)
+
+
+class BoardAskRequest(BaseModel):
+    """Body for POST /storyboards/{job_id}/ask — "what should change?".
+
+    ⚠ THE PANELS ARE NOT SENT. They are read from the job on the server, so the
+    plan is always against what is really stored rather than whatever the tab
+    last rendered — a board edited in another tab would otherwise be planned
+    against stale shot numbers and edit the wrong pictures.
+
+    Stateless like `/script-chat`: the browser owns the transcript.
+    """
+
+    messages: list[ScriptChatMessage] = Field(..., min_length=1, max_length=40)
+    selection: BoardSelection = Field(default_factory=BoardSelection)
+
+
+class BoardAction(BaseModel):
+    """One intended edit. A PLAN — the server does not run it.
+
+    `index` is 0-based, for the endpoints. `shot` is 1-based, for the sentence
+    on screen. `draws` says whether running it costs an image, which is what the
+    Apply button counts up before anything is charged.
+    """
+
+    action: str = Field(..., pattern="^(edit|insert|delete)$")
+    index: int = Field(..., ge=0)
+    shot: int = Field(..., ge=1)
+    description: str = ""
+    camera: str = ""
+    location: str = ""
+    why: str = ""
+    draws: bool = False
+
+
+class BoardAskResponse(BaseModel):
+    """What the assistant said, and what it would change.
+
+    ⚠ An empty `actions` with a reply is a NORMAL answer, not a failure: it is
+    what "I can't do that here" and "which shots do you mean?" both look like.
+    """
+
+    reply: str = ""
+    actions: list[BoardAction] = Field(default_factory=list)
     usage: dict = Field(default_factory=dict)
 
 

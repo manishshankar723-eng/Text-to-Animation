@@ -275,7 +275,19 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **PHASE 3, THE APPROVAL GATE: NOTHING IS DRAWN FROM AN IDEA UNTIL SOMEBODY HAS SEEN WHAT WE MADE OF IT.** A brief or an idea now becomes ONE editable concept card — title, core idea, story direction, key scenes, length, look — and **Approve** is what starts the spending. ⚠ **The approved concept is written out as a real SCRIPT by `plan_agent.write_script()`, never straight to shots**: the review step and every "FROM YOUR SCRIPT · LINE 12" need a script to point at. ⚠ **And unlike `/script-intake`, this gate does NOT fail open** — a dead classifier must not block a board, a dead concept step must. A script still bypasses the screen entirely. Chain live-checked brief → concept → 2.5k-character script in the breakdown's own layout. See the Work Log.
+**Last updated:** 2026-08-27 — **THE REVIEW STEP IS REACHABLE AT LAST, AND THE FIRST THING THE USER TRIED THERE WAS BROKEN TOO.** A real board came through — 29 shots, ≈1m 4s, world card 6/6, hook-first script — but Ctrl+A in the script box selected the ENTIRE page, because `ScriptPanel` is a read-only `<ol>` and not a `<textarea>`. Added a **Copy button** (PlanScriptModal's `copy()` verbatim; ⚠ it is inside a `<summary>` so it must stop the click reaching it) and scoped Ctrl+A to the box via `tabIndex={-1}`. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE APPROVE BUTTON LOOKED DEAD, AND THE SERVER WAS INNOCENT.** Approving a concept fires TWO waits back to back — `write_script()` then the breakdown — but the breakdown's ring is rendered by the `form` step, which the `concept` branch returns before ever reaching. So the script ring hit 100%, handed off, and the concept card re-rendered over a live API call. Guard widened to `writing || busy`; the second half now shows the form's own ring. ⚠ The chain itself was verified healthy offline (2813-char hook-first script → 22 shots, 10 cast, movement varying) — **but a 30s concept broke down to a 55s board**, because `break_down_script()` is never told the target. Left visible, not silently fixed. See the Work Log.
+
+**Previously:** 2026-08-27 — **FIRST LIVE RUN OF THE NEW FLOW, AND THE HOOK FIX IT FOUND.** A real "30 sec viral reel, Ganesh Chaturthi" brief went clean through intake → concept → approval gate — brief correctly named, nothing drawn, 30s read out of the text, and **9:16 gave tight staging throughout** — but the concept opened on hands painting an idol and saved the blazing finished idol for **scene seven**. ⚠ **In a feed the first frame decides whether anyone sees the second**, so `is_short_form()` now spots reel/shorts/tiktok/viral/instagram in plain Python and appends a hook-first rule LAST. ⚠ "short film" is excluded, and the trigger is what the user TYPED, never the 9:16 they clicked. Re-run live: scene 1 is now the radiant finished idol. See the Work Log.
+
+**Previously:** 2026-08-27 — **THE STORY SETTINGS PANEL EXPLAINS ITSELF ON HOVER INSTEAD OF IN PARAGRAPHS.** Four grey lines under the style row told everyone what Rough Sketch is; the explanation now lives in each chip's own `title` — "Cheapest — skips cast step", "Photoreal film-look frames" — 3-5 words, one per style and one per genre, plus the Genre / Audience / Brand hints that used to sit beside their labels. ⚠ **Native `title`, not a new tooltip component** — the aspect chips have worked this way since they were written, and `client/package.json` still has exactly two runtime dependencies. ⚠ The notes live in `storyboardOptions.js` beside the labels, so the form, the "＋ More" popup and any future call site read the same words. **And the Audience/Brand row was then rebuilt to one control height**: it held four controls in four sizes (35px pill, 40px input, 44px logo tile, 30px ghost button) in two corner radii, so nothing lined up top or bottom — all four are `--sts-field-h` and 9px now, the language pill drops the pill (the chips it borrowed it from live in the other card), and the brand field is capped at 20rem instead of growing to 700px for one word. Copy, markup and CSS only; no state, handler or prompt changed. **Then the whole screen was levelled**: the two hero panels measured 692px and 597px side by side (now stretched to one height, with **Create storyboard** pinned to the foot of the shorter one), the chips were 999px pills next to 9px fields (now all 9px and all 2.5rem — chip, dropdown, field and button are one size and one shape on this screen), and **"Upload a script file" was a `ghost` that vanished into the panel's own grey** (now a bordered button with the form's gold edge). ⚠ The chip re-cornering is SCOPED to this screen and its popup — `.opt-chip` is the animatic property pane's chip in nine other components. Copy, markup and CSS only; no state, handler or prompt changed. ⚠ Verified by rendering the real stylesheet against the real markup in headless Chromium (both cards 622px at 1400px and 2000px wide, every control 40px/9px, light + dark, down to 420px); the LIVE form has still not been opened. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 5, THE LAST: A SHOT SAYS HOW IT MOVES AND HOW LONG IT LASTS.** `movement` and `duration_seconds` come out of the breakdown, edit on the shot card, and print on the board and in the PDF as one slug line (`close-up · slow push-in · 3s`). ⚠ **Neither reaches an image prompt** — a still frame cannot show a move or a length, and asking gets motion blur and arrows drawn into the panel; they travel like `dialogue` does. ⚠ **The length is not decoration**: it is the film's runtime on the review step, and the animatic step now opens at the shot's own length instead of a flat 4 seconds. ⚠ The spec asked for thirteen fields and got two — `camera` already IS the shot type. **All five phases of the intake redesign are now built, and not one has been opened in a browser.** See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 4: "ASK AI" IS BACK, BESIDE THE FINISHED BOARD, AS AN EDITOR.** Click a shot (or a scene tag) and say what to change; the assistant answers with a PLAN — edit / insert / delete, at most eight — and **Apply carries the redraw count**, which is the only place the cost of a sentence is stated before it is charged. ⚠ **The route cannot draw**: it returns intentions, and every edit still goes through the endpoints the board's own buttons use. ⚠ **Apply order is descending by index** or a plan edits the wrong pictures once the first insert renumbers. ⚠ The live model refused "reorder" correctly and then invented drag-and-drop — refusals are now a fixed table of real buttons plus an explicit ban on inventing one. See the Work Log.
+
+**Previously:** 2026-08-27 — **PHASE 3, THE APPROVAL GATE: NOTHING IS DRAWN FROM AN IDEA UNTIL SOMEBODY HAS SEEN WHAT WE MADE OF IT.** A brief or an idea now becomes ONE editable concept card — title, core idea, story direction, key scenes, length, look — and **Approve** is what starts the spending. ⚠ **The approved concept is written out as a real SCRIPT by `plan_agent.write_script()`, never straight to shots**: the review step and every "FROM YOUR SCRIPT · LINE 12" need a script to point at. ⚠ **And unlike `/script-intake`, this gate does NOT fail open** — a dead classifier must not block a board, a dead concept step must. A script still bypasses the screen entirely. Chain live-checked brief → concept → 2.5k-character script in the breakdown's own layout. See the Work Log.
 
 **Previously:** 2026-08-27 — **PHASE 2: THE FORM READS WHAT IT WAS HANDED BEFORE IT DRAWS ANYTHING.** New `script_intake.py` sits in front of the breakdown and names the paste — script / brief / idea / vague / empty. A recognisable script is spotted in pure Python and costs nothing; everything else gets one small model call. ⚠ **The tie goes to `idea`, never to `script`** — calling an idea a script invents a whole film and bills for it, calling a script an idea costs one click — and every failure path lands there. ⚠ **But the form FAILS OPEN**: if the route dies the breakdown runs anyway, because a classifier that can block a storyboard is the worse bug. ⚠ Phase 2 is NOT the approval gate — brief/idea still offer "Build it anyway"; Phase 3 replaces it with a concept to approve. See the Work Log.
 
@@ -3426,7 +3438,411 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — PHASE 3, THE APPROVAL GATE: A BRIEF BECOMES A CONCEPT, THE CONCEPT BECOMES A SCRIPT, AND THE USER SAYS YES IN BETWEEN ("AI ko approval ke bina storyboard generate nahi karna hai when the input is a brief/concept that requires creative interpretation")
+### 2026-08-27 (latest) — "CTRL+A DABAYA AUR POORA PAGE SELECT HO GAYA" — THE SCRIPT BOX LOOKED LIKE A TEXT BOX AND BEHAVED LIKE A PARAGRAPH
+
+With the review step finally reachable (see the entry below), the user tried to
+copy their script out of it and could not. **Ctrl+A selected the whole review
+step** — world card, all 29 shot cards, the sidebar — because
+`ScriptPanel` is a read-only `<ol>`, not a `<textarea>`, and the browser has no
+reason to treat a list as its own selection scope. It *looks* like an editor, so
+that is what people do to it.
+
+Two fixes, and the order matters:
+
+1. ⚠ **A COPY BUTTON, WHICH IS THE REAL ANSWER.** It writes `text` — the
+   script exactly as it arrived — not the DOM selection, so it cannot pick up
+   line numbers and cannot be got wrong. Lifted wholesale from
+   `PlanScriptModal`'s `copy()`: same `navigator.clipboard.writeText`, same
+   "Copied" for 2s, same silent handling of a denied permission, same
+   `<Icon name="copy" />`.
+   ⚠ **IT LIVES INSIDE A `<summary>`**, so it must call BOTH
+   `preventDefault()` and `stopPropagation()` — without them, copying collapses
+   the panel the user was reading.
+2. **Ctrl+A scoped to the box** for people who reach for it anyway: the body
+   carries `tabIndex={-1}` (click-focusable, deliberately NOT in the tab order)
+   and a keydown handler that selects only that node's contents. `.spl-num`
+   already had `user-select: none`, so line numbers stay out of the copy — that
+   also silently fixes ordinary drag-select, which was mixing them in.
+
+⚠ **NEXT PERSON: `.script-panel-body:focus` has `outline: none` on purpose.**
+It is not an a11y oversight — `tabIndex={-1}` means nobody arrives there by
+keyboard, so there is no one to show a focus ring to, and the box already reads
+as a box.
+
+Both hooks sit ABOVE the `if (!text.trim()) return null;` early return.
+
+### 2026-08-27 — "APPROVE DABAYA, RING 100% HUA, AUR WAPAS USI PAGE PE" — THE BREAKDOWN WAS RUNNING THE WHOLE TIME WITH NOTHING ON SCREEN SAYING SO
+
+The user pressed **Approve & create storyboard**, watched the "Writing your
+script" ring fill to 100%, and landed back on the concept card. Nothing opened.
+
+**Nothing was broken on the server.** The whole chain was re-run offline against
+the exact concept from their screenshot and it is healthy end to end:
+`concept_to_brief` → `plan_agent.write_script` returned a **2813-char, 7-scene
+script whose SCENE 1 is the hook** (the radiant finished idol — so the hook fix
+survives into the script even though `story_direction` still reads
+chronologically, which is why that line was left alone), and
+`break_down_script` turned it into **22 shots, 10 cast, movement varying
+correctly** (`slow track` on the idol being carried, `tilt up` on the unveiling,
+`static` everywhere it should be).
+
+⚠ **THE FAULT WAS A MISSING RENDER BRANCH, AND IT IS A STRUCTURAL TRAP, NOT A
+TYPO.** Approving fires **two waits back to back** — `write_script()`, then the
+breakdown. The script ring is rendered by the `step === "concept"` branch. The
+**breakdown ring is rendered by the `step === "form"` branch** — and `step` is
+still `"concept"` when `finishScript()` calls `startBreakdown()`, so that branch
+returns long before the form's ring is ever reached. Result: `writing` flipped
+false, `busy` flipped true, and the concept card re-rendered over a live API
+call. To the user, a button that did nothing.
+
+Fixed in `ScriptToStoryboard.jsx` by widening the guard to `if (writing || busy)`
+and rendering the form's own `<BreakdownProgress done={breakdownDone}
+onDone={finishBreakdown} />` for the second half — **the same ring with the same
+words**, because this *is* the breakdown; it merely arrived from a different
+screen. Both `setWriting(false)` and `setBusy(true)` happen inside
+`finishScript`, so React batches them and there is no flash of the card between
+the two rings.
+
+⚠ **NEXT PERSON: any new step that chains two calls will hit this again.** The
+rings are owned by the step that normally starts them, not by the state flags,
+so a step that borrows another step's work must also borrow its ring.
+
+⚠ **ONE THING FOUND AND DELIBERATELY LEFT:** the concept asked for **30
+seconds**, the script was written for 30, but the breakdown's shot lengths add
+up to **55s** — 22 shots at 2-3s each. `break_down_script()` takes no target
+duration, so it cannot pace to one. The runtime chip added in Phase 5 is doing
+exactly its job by making this visible; closing the gap is a separate decision
+(pass `seconds` down and let it fit, or leave the chip as an honest warning) and
+was not taken unilaterally.
+
+### 2026-08-27 — FIRST LIVE RUN OF THE NEW FLOW, AND THE ONE FAULT IT FOUND: A REEL THAT SAVED ITS BEST IMAGE FOR SCENE SEVEN ("ye sahi diya hai mujhe?")
+
+The user ran a real brief through Phases 1-3 in the browser — *"give me 30 sec
+Virl shots/reel script of upcoming festivel besed on ganesh chaturthi"*, with
+Mythology + Cinematic + 9:16.
+
+**Everything else worked, and this is the first evidence of any of it:** the
+intake called it a **brief** (the screen said so), the approval gate appeared
+with **nothing drawn**, **30 seconds was read out of the text** rather than
+defaulted, genre and style reached the look (*"Rich, vibrant, devotional,
+cinematic, intimate"*), and — the one worth noticing — **9:16 produced tight
+staging all the way through**: hands, a face, a diya, a plate of modaks, and not
+one wide crowd shot. That is `_form_context`'s vertical rule doing exactly what
+it was written for.
+
+⚠ **THE FAULT WAS SCENE ORDER, AND IT IS A REAL PRODUCT BUG.** The concept opened
+on *"Close-up of skilled hands meticulously painting the eyes of a small Ganesh
+idol"* and saved *"The fully adorned Ganesh idol, bathed in festive light,
+looking majestic"* for **scene seven**. Beautiful, and wrong for what was asked
+for: in a feed the first frame is what decides whether anybody sees the second
+one, so the best image arriving at second 26 arrives for nobody.
+
+⚠ **AND THE MODEL COULD NOT HAVE KNOWN.** "Reel" told it the LENGTH. Nothing
+anywhere told it that length changes the ORDER. So the word is spotted in plain
+Python — `is_short_form()`, matching reel / shorts / tiktok / viral / instagram
+/ snapchat / scroll-stopping — and `_SHORT_FORM_RULE` is appended **LAST**, the
+position `plan_agent` already reserves for the rule that has to win.
+
+- ⚠ **"short film" and "short story" are deliberately EXCLUDED.** A short film
+  is five to twenty minutes and opens however it likes; that is the word "short"
+  doing double duty, and a hook rule on a narrative film would be wrong.
+- ⚠ **THE TRIGGER IS WHAT THE USER TYPED, NEVER THE 9:16 THEY CLICKED.** An
+  aspect ratio is a frame, not a statement of intent — a vertical narrative
+  film never asked for a hook.
+- ⚠ **The rule bans its own failure mode.** A hook rule invites clickbait, so it
+  says outright: *"the hook must be OF THIS FILM … a hook that lies is worse
+  than a slow open"*, and the rest of the film still has to land the ending.
+
+**Re-run live on the identical brief.** Scene 1 is now *"Close-up on the fully
+adorned, radiant face of Lord Ganesha, eyes sparkling with a soft glow"*, and
+the arc reads *"Radiant Ganesha idol revealed -> Hands shaping clay -> Intricate
+painting -> Final adornments -> Idol installed -> Devotee's joyful prayer"*.
+Hook, build, payoff.
+
+**Verified:** 11 new checks in `tests/script_concept_check.py` (including the
+"short film" exclusion), plus `script_intake_check`, `shot_metadata_check`,
+`board_ask_check`, `script_chat_check`. ⚠ **Only Phases 1-3 have now been seen
+in a browser** — the review step's new metadata, the board's slug line and the
+whole of "Ask AI" still have not.
+
+### 2026-08-27 — THE OPTIONS PANEL STOPPED LECTURING AND STARTED ANSWERING WHEN ASKED ("First rough sketch and all information not view here only user mouse go and on button then see information text … keep 3-5 word in text not long")
+
+Story settings had grown a paragraph. Under the six style chips sat four lines of
+grey text explaining what Rough Sketch is, and three of the labels — Genre,
+Audience, Brand — carried their own "· shapes the tone" clauses. All of it true,
+none of it read: it pushed **Create storyboard** down the column and made a
+six-choice panel look like documentation.
+
+The words are not deleted, they are **moved onto hover**. Every style and every
+genre now carries a `note` of 3-5 words in `client/src/storyboardOptions.js`, and
+the chip renders it as its `title`.
+
+⚠ **NATIVE `title`, NOT A TOOLTIP COMPONENT.** The aspect chips have shown their
+note this way since they were written, so this is the pattern the panel already
+uses — and `client/package.json` still has exactly two runtime dependencies
+(`react`, `react-dom`), which a tooltip library would have been the third of.
+
+⚠ **THE NOTES LIVE BESIDE THE LABELS, NOT IN THE COMPONENT.** They are in the
+same object as `label`, for the same reason the lists moved out of the JSX in the
+first place: the form, the "＋ More" overflow popup and the Profile page all read
+these arrays, and a note typed into one call site would be missing from the next.
+
+⚠ **ONE LINE SURVIVES UNDER THE STYLE ROW, DELIBERATELY.** Reference-free vs
+locked-cast is the only thing on this panel that changes what the app *does*
+(the cast and props steps are skipped or not, which is the cost difference), and
+that is worth a visible sentence rather than a hover. It is now one short line —
+"Quick grey pass — no cast step." / "Locks characters and sets first." — instead
+of four.
+
+**Files:**
+
+- `client/src/storyboardOptions.js` — `note` added to every entry of `STYLES`,
+  `MORE_STYLES`, `GENRES`, `MORE_GENRES` (31 in all). `ASPECTS` already had one.
+- `client/src/components/ScriptToStoryboard.jsx` — `title={…note}` on the genre
+  chips, the style chips, both "＋ More" active chips and the `MorePopup`
+  options; the four-line `.style-note` paragraph cut to one line; the
+  `label-optional` spans on Genre, Audience and Brand replaced by `title` on the
+  label itself.
+
+**Not changed:** `Profile.jsx` renders these lists as `<select>`/`<option>`,
+where a `title` is not shown by browsers — its labels stay as they are.
+
+---
+
+**THEN THE ROW UNDER IT: FOUR CONTROLS, FOUR SIZES, TWO SHAPES** ("dekho yaha
+pary sab alag size and style se dikh raha hai aur uper niche v dikh rha hai").
+
+Clearing the labels made the Audience/Brand row's real problem visible. Measured
+in Chromium, it held:
+
+| Control | Height | Corner |
+|---|---|---|
+| `.opt-select` (language) | 35px | 999px — a pill |
+| `.sts-brand-name` (input) | 40px | 9px |
+| `.sts-brand-empty` (logo tile) | 44px | 9px |
+| `.btn.ghost.small` (Upload) | 30px | 9px, no border |
+
+`.sts-brand` centres its children, so four heights meant four different tops AND
+four different bottoms — the "uper niche" in the report. One `--sts-field-h:
+2.5rem` on `.sts-meta-row` now drives all four, at 9px each.
+
+⚠ **THE PILL WAS THE WRONG SHAPE, NOT JUST THE WRONG SIZE.** `.opt-select` wears
+the chip pill because it was written beside the genre and style chips — and
+those chips moved to the right-hand "Story settings" card two changes ago.
+Everything left in the LEFT card is a rectangular field (title, script, brand),
+so the language control was the only object on it with a different shape. The
+`.opt-select` rule itself is untouched; the override is scoped to
+`.sts-meta-row`, so any select that still sits among chips keeps its pill.
+
+⚠ **`ghost` → `btn.small` ON BOTH LOGO BUTTONS.** A borderless button between two
+bordered fields is the "alag style" half of the complaint: it reads as a link
+that wandered into a form row.
+
+⚠ **AND THE BRAND FIELD IS CAPPED AT 20rem.** On `flex: 1` it grew to ~700px on
+a desktop for an answer that is one word, and a field's width is a promise about
+how much to type. The logo slot now follows it directly instead of being shoved
+to the far edge, so the three brand controls read as one group.
+
+**Verified:** the JSX parses (`esbuild`), and the real `styles/index.css` was
+rendered against the real markup in headless Chromium — all four controls report
+top 80.4 / bottom 120.4 / height 40 / radius 9px, checked in light AND dark, and
+the row still wraps without overflow at 620px and 420px.
+
+---
+
+**AND THEN THE WHOLE SCREEN, THE SAME THREE CLASSES OF PROBLEM ONE LEVEL UP**
+("ye dono panle chota bara lag rha hai … kahi squar and kahi circle ek jaisa
+rakho … upload a script file buttun merge ho raha hai").
+
+**1. Two panels, one height.** Measured at 1100px: left card **692px**, options
+card **597px** — two cards side by side, tops aligned, bottoms 95px apart.
+`.sts-hero-grid` was `align-items: start`; it is `stretch` now, the height is
+passed down through both wrappers to the cards, and **`.sts-generate` gets
+`margin-top: auto`** so the primary button sits at the foot of the stretched
+card instead of leaving the gap under itself. ⚠ **`.sts-options` becoming a flex
+column means margins no longer COLLAPSE** — the chip rows' own `0.3rem` would
+have added to every label's `0.75rem` and loosened the whole panel, so
+`.sts-options > .opt-chips` is zeroed and the labels keep the rhythm alone; the
+gaps come out identical to the block layout. The 1.5rem the button used to carry
+moves onto `*:nth-last-child(2)`, for the case where `auto` resolves to nothing.
+
+**2. One shape.** 999px pills for the chips, 9px rectangles for the fields.
+**Rectangles win, and the 300px script textarea is the reason** — it is the
+biggest object on the screen and the one shape it cannot be is a pill, so a pill
+among rectangles is the odd one out and not the reverse. Chips, the language
+dropdown, the fields and the buttons are all 9px and all **2.5rem** tall now.
+⚠ **SCOPED TO `.sts-hero-grid` AND `.more-panel`, DELIBERATELY.** `.opt-chip` is
+also the animatic editor's property-pane chip across nine other components;
+re-cornering those is a change nobody asked for and nobody would see in the same
+glance as this form.
+
+**3. The upload button was invisible.** `.btn.ghost` on the script panel's own
+grey made "📁 Upload a script file" read as a caption printed inside the box
+rather than the second way of handing over a script — which is the entire reason
+it lives inside the frame. It is `.btn.small` now, on the card's lighter
+surface, with `--border-gold` and 600 weight so it reads as the action in that
+strip, at the row's 2.5rem.
+
+**Verified:** rendered again in headless Chromium — both cards report an
+identical height at 2000px (622/622), 1400px (622/622) and 900px (773/773), and
+every control on the screen reports height 40 / radius 9px. Light AND dark
+checked by screenshot. **The live form has NOT been opened.**
+
+### 2026-08-27 — PHASE 5, THE LAST: A SHOT NOW SAYS HOW IT MOVES AND HOW LONG IT LASTS ("Storyboard ko simple image grid mat banao … user ko image dekh kar aur metadata padh kar shot samajh aana chahiye")
+
+A board already carried framing, location, cast and dialogue. Two things a
+director reads off every real board were missing: **how the camera moves** and
+**how long the shot is**. Both now come out of the breakdown, edit on the shot
+card, print on the board and in the PDF.
+
+⚠ **NEITHER OF THEM REACHES AN IMAGE PROMPT, AND THAT IS THE WHOLE DESIGN.** A
+still panel cannot show a camera move or a length; asking a model for one gets
+motion blur, speed lines or a little arrow drawn INTO the frame — the same class
+of artefact `board_look_check`'s anti-collage rules already exist to stop. They
+travel exactly as `dialogue` does: carried through the pipeline, read by the
+card, the PDF and the animatic step, never by `generate_storyboard_panel`. The
+reason is written beside the field in four files so nobody "fixes" it later, and
+`tests/shot_metadata_check.py` checks the function cannot even take them.
+
+⚠ **THE SPEC ASKED FOR THIRTEEN FIELDS PER SHOT AND GOT TWO.** A separate "shot
+type" beside "camera" was refused: `camera` ALREADY holds "wide establishing" /
+"close-up" / "over-the-shoulder" — a second field is the same fact in two boxes
+that can disagree. It is relabelled **"Shot type"** on the card instead.
+Expression and lighting stay inside the description, where the image model
+actually reads them. Every extra field is one more thing a model gets wrong and
+one more box on a card nobody finishes scanning.
+
+⚠ **THE LENGTH IS NOT DECORATION — IT IS THE FILM'S RUNTIME AND THE ANIMATIC'S
+DEFAULT.** Two real consumers, which is why it earned its place:
+
+- Added up on the review step and the board as **≈ 24s**, which answers the
+  question behind most briefs: *is my 30-second ad actually 30 seconds?*
+- `PanelSequenceStrip` opened at a flat **4 seconds for every shot on every
+  board**. It now opens at the shot's own planned length, and falls back to 4
+  for a board made before this existed.
+
+**Clamped, 1–30s, default 3.** A model asked for a number answers 300 sooner or
+later, and one 300-second "shot" makes the runtime nonsense — the one number
+people will actually trust this field for.
+
+**"static" is never printed.** It is the right answer for most shots, and the
+absence of a move is what it means. Same rule in `storyboard_pdf._shot_line` and
+`StoryboardBoard.shotLine`, and they must stay in step. The PDF prints all three
+as ONE row (`close-up · slow push-in · 3s`) because `META_H` reserves the space
+under every panel and two more rows push the cast chips off a dense page.
+
+⚠ **THE FIRST PROMPT MADE THE FIELD USELESS.** "Say 'static' when it does not
+move, which is most shots" produced **static on all 14 shots** of the live test —
+a column that would never show anything, made invisible by the very rule that
+hides "static". Reworded to name the cases that DO earn a move (walking through
+a space → follow/track, a realisation landing → slow push-in, something above
+the eyeline → tilt, a place being taken in → pan) with "never decorate a still
+moment". Re-run: 12 shots, 24s, and the one shot that is a woman walking out
+through a lobby came back **"track forward"** — the only non-static shot in a
+film that is otherwise a woman sitting at a desk. That is the correct answer.
+
+**Also carried:** `Shot` on the wire (bounded `ge=0, le=30`), the pipeline's
+panel, `common.panel_for_index`'s rebuilt skeleton, a hand-inserted panel's
+blank, and ⚠ **`_PANEL_UNREAD`** — a new panel key that is not on that list
+ships the whole board inside every library card.
+
+**Verified:** `tests/shot_metadata_check.py` (36 checks) plus `board_ask_check`,
+`script_concept_check`, `script_intake_check`, `script_chat_check`,
+`board_look_check`, `board_market_check`, `board_brand_check`,
+`board_audit_check` and a clean `vite build`. The breakdown was run twice
+against the real model. ⚠ **Not opened in a browser** — the two new inputs, the
+runtime chip and the board's slug line have never been seen on screen.
+
+**The intake redesign is complete.** All five phases are built; none of the five
+has been clicked in a browser.
+
+### 2026-08-27 — PHASE 4: "ASK AI" COMES BACK, BESIDE THE BOARD, AS AN EDITOR ("Ask AI storyboard generate hone ke BAAD introduce karo … Yahan Ask AI ka meaning clear hai: existing storyboard ko modify/refine karo")
+
+New `board_agent.py`, `POST /storyboards/{job_id}/ask`,
+`client/src/components/BoardAssistant.jsx`, `tests/board_ask_check.py`.
+
+Phase 1 took the chat OFF the form because on that screen the user is handing
+over material and "Ask AI" had no referent. This is the other half of that move.
+Beside a finished board there IS a referent — "add a close-up before shot 5" is
+a sentence no form field can take.
+
+⚠ **THE DANGEROUS PART WAS NEVER THE PROMPT, IT WAS THE MONEY.** Redrawing a
+panel is an image. An assistant that acts on its own could spend forty of them
+from one typed sentence and the user would find out afterwards. So the shape is:
+
+```
+ask  →  a PLAN  →  the list on screen, with the redraw count  →  Apply
+```
+
+⚠ **THE ROUTE CANNOT DRAW, AND THAT IS ENFORCED BY WHAT IT DOESN'T IMPORT.** It
+returns intentions; every edit then runs through the endpoints the board's own
+buttons already use (`/regenerate-panel`, `/panels/insert`, `/panels/{i}`),
+which carry `cap.image-generate`. The route itself is gated on the WORKFLOW
+only, because asking costs no image. It also refuses a board that is still
+generating — its shot numbers are still moving.
+
+⚠ **THREE VERBS, AND IT SAYS NO TO EVERYTHING ELSE.** `edit`, `insert`,
+`delete`. No reorder (no endpoint exists), no restyle (whole-board spend, own
+button), no dialogue (shot list), no export.
+
+⚠ **AND THE LIVE MODEL FOUND THE REAL BUG IN THAT.** Asked to reorder, the first
+version refused correctly — and then said *"You can drag and drop shots to
+reorder them on the board."* There is no drag-and-drop anywhere on this board.
+A confident instruction for a button that does not exist is worse than a flat
+no, so the refusals are now a fixed table of what is TRUE (`'Restyle all'`,
+`'Download PDF'`, the title at the top, the shot list) plus an explicit
+prohibition naming the things it kept inventing: no drag-and-drop, no
+right-click menu, no settings panel, no `'Export'` button. Re-checked live: all
+five refusals now name a real control.
+
+⚠ **SHOT NUMBERS ARE 1-BASED ON THE WIRE, BECAUSE THAT IS WHAT IS PRINTED.** The
+model reads "Shot 7" and the user types "shot 7"; making it answer in 0-based
+indices invites an off-by-one that silently edits the wrong picture. The
+conversion happens once, in `_coerce_actions`.
+
+⚠ **APPLY ORDER IS DESCENDING BY INDEX, EDITS BEFORE STRUCTURE AT THE SAME
+INDEX.** The plan is computed against ONE snapshot, but insert and delete
+renumber everything after themselves. Highest index first means nothing can be
+shifted by an action that has not run yet; and an edit at index N has to land
+before an insert at N, or it would redraw the blank panel the insert just put
+there. Applying one plan also RETIRES every other plan in the log — their shot
+numbers now point somewhere else.
+
+**Validation is by REJECTION, never repair.** Out-of-range shots, `shot: 0`, an
+edit with nothing changed, a blank insert, an invented verb — all dropped. A
+guessed action is an edit nobody asked for on a picture they will pay to redraw.
+`MAX_ACTIONS = 8` is the hard ceiling behind the prompt's "touch the fewest
+shots".
+
+⚠ **AN UNREADABLE SELECTION FALLS THROUGH TO "nothing selected", NOT TO
+SILENCE** — found while writing the tests. Returning nothing dropped the one
+line that stops a vague sentence redrawing the whole board, which made a junk
+selection more dangerous than no selection.
+
+**On screen:** the shot number and the scene tag under each panel are the
+SELECTORS (clicking the picture still opens the lightbox, as it always has); the
+selected tile gets a gold ring, and the chip in the assistant's header says what
+"this one" means. The panel is sticky beside the grid at ≥1100px, stacks below
+it under that, and can be hidden and brought back. Off entirely in
+`sequenceMode` and while the board is drawing. It wears ScriptChat's `sc-*`
+classes — same kind of object, and a second chat that looks different reads as a
+second product.
+
+**Live-checked against the real model:** "Add a close-up of her face before shot
+5" → one insert at shot 5 with a description it wrote itself; "Make this one a
+low angle" with shot 3 selected → one camera edit on shot 3; "Delete shot 1" →
+one delete, `draws: false`; "Make it more cinematic" on a board with nothing
+selected → **no actions, and a question back**; "shot 2 mein use thoda aur thaka
+hua dikhao" → one edit, **answered in Hinglish**.
+
+**Verified:** `tests/board_ask_check.py` (46 checks) plus `script_concept_check`,
+`script_intake_check`, `script_chat_check`, `board_look_check`,
+`board_market_check`, `board_brand_check`, `board_audit_check` and a clean
+`vite build`. ⚠ **Not opened in a browser.** The planner has met the real model
+repeatedly; the panel, the selection ring and the Apply path have not been
+clicked once.
+
+### 2026-08-27 — PHASE 3, THE APPROVAL GATE: A BRIEF BECOMES A CONCEPT, THE CONCEPT BECOMES A SCRIPT, AND THE USER SAYS YES IN BETWEEN ("AI ko approval ke bina storyboard generate nahi karna hai when the input is a brief/concept that requires creative interpretation")
 
 New `script_concept.py`, `server/script_concept.py`, `tests/script_concept_check.py`.
 
@@ -3628,8 +4044,8 @@ the same commit as the classifier.**
 | 1 | One box, one button; chat off the first screen; compact Story settings | ✅ built |
 | 2 | Input classification — free `INT./EXT.` + `NAME:` sniff first, AI call only on doubt; script → straight to breakdown, brief/idea → named and stopped | ✅ built, `tests/script_intake_check.py` |
 | 3 | Concept card + **approval gate**, then `plan_agent.write_script()` → breakdown | ✅ built, `tests/script_concept_check.py` |
-| 4 | "Ask AI" beside the finished board, with the selected shot/scene as target | ⬜ **next** |
-| 5 | Shot metadata: shot type, camera movement, duration | ⬜ |
+| 4 | "Ask AI" beside the finished board, with the selected shot/scene as target | ✅ built, `tests/board_ask_check.py` |
+| 5 | Shot metadata: camera movement + duration (shot type was already `camera`) | ✅ built, `tests/shot_metadata_check.py` |
 
 ⚠ **PHASE 3 MUST PRODUCE A REAL SCRIPT, NOT SHOTS DIRECTLY** — this is not in
 the user's spec and is the one place the plan had to correct it. The review step,

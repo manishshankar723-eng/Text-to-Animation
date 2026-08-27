@@ -210,6 +210,27 @@
   font-weight: 600;
   color: var(--muted);
 }
+
+/* ⚠ A BUTTON LIVING INSIDE A <summary>. It has to be small enough not to
+   grow the header row, and `copy()` in ScriptPanel.jsx stops its click from
+   reaching the summary — without that, copying collapses the panel. */
+.script-panel-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.3rem 0.62rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+/* Click-focusable so Ctrl+A can be scoped to the script instead of the page
+   (see ScriptPanel.jsx). No focus ring: the box already reads as a box, and
+   tabIndex={-1} keeps it out of the tab order, so nobody arrives here by
+   keyboard and needs to be shown where they are. */
+.script-panel-body:focus,
+.script-panel-body:focus-visible {
+  outline: none;
+}
 .script-panel-body {
   margin-top: 0.8rem;
   max-height: 22rem;

@@ -379,6 +379,18 @@ _PROMPT_TEMPLATE = (
     "  - location: where the shot takes place\n"
     "  - camera: the shot type / angle, e.g. 'wide establishing', 'close-up', "
     "'over-the-shoulder', 'medium two-shot'\n"
+    "  - movement: how the camera MOVES during the shot, two or three words: "
+    "'static', 'slow push-in', 'pan left', 'handheld follow', 'tilt up', "
+    "'crane down'. Most shots are 'static' and that is the right answer for "
+    "them. Use a move where the ACTION asks for one and only there — someone "
+    "walking through a space is a follow or a track; a realisation or a "
+    "reaction landing is a slow push-in; something noticed above or below the "
+    "eyeline is a tilt; a place being taken in is a slow pan. Never decorate a "
+    "still moment with a move it does not need.\n"
+    "  - duration_seconds: how long this shot is on screen, a whole number of "
+    "seconds. A held reaction is 1-2; a line of dialogue is roughly one second "
+    "for every three words spoken; an establishing wide is 2-4. Keep the "
+    "film's total honest — do not pad.\n"
     "Also return `world`: the story's visual world, read from the script itself "
     "(names, places, deities, festivals, food, language). Every field is a short "
     "phrase an artist can draw from:\n"
@@ -468,6 +480,11 @@ def _breakdown_schema() -> types.Schema:
                         ),
                         "location": types.Schema(type=types.Type.STRING),
                         "camera": types.Schema(type=types.Type.STRING),
+                        # ⚠ DIRECTOR'S METADATA, NOT PROMPT MATERIAL — see the
+                        # note in _coerce_shots and in storyboard_pipeline where
+                        # the panel is built.
+                        "movement": types.Schema(type=types.Type.STRING),
+                        "duration_seconds": types.Schema(type=types.Type.INTEGER),
                     },
                 ),
             ),
@@ -664,6 +681,26 @@ MAX_DIALOGUE_PER_SHOT = 6
 MAX_DIALOGUE_CHARS = 300
 
 
+# A shot is one moment. ⚠ THE CEILING IS THE POINT: a model asked for a length
+# will occasionally answer 300, and a single 300-second "shot" quietly makes the
+# runtime on the review step nonsense — which is the one number people will
+# actually trust this field for.
+MIN_SHOT_SECONDS = 1
+MAX_SHOT_SECONDS = 30
+DEFAULT_SHOT_SECONDS = 3
+
+
+def _coerce_seconds(raw) -> int:
+    """A shot's on-screen length, clamped. Junk or nothing → the default."""
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SHOT_SECONDS
+    if seconds <= 0:
+        return DEFAULT_SHOT_SECONDS
+    return max(MIN_SHOT_SECONDS, min(seconds, MAX_SHOT_SECONDS))
+
+
 def _coerce_dialogue(raw) -> list[dict]:
     """Normalise a shot's spoken lines to [{character, line}, …].
 
@@ -739,6 +776,15 @@ def _coerce_shots(raw) -> list[dict]:
                 "assets": [str(a).strip() for a in assets if str(a).strip()],
                 "location": str(item.get("location", "")).strip(),
                 "camera": str(item.get("camera", "")).strip(),
+                # ⚠ THESE TWO NEVER REACH AN IMAGE PROMPT. A still panel cannot
+                # show a camera move or a length; asking for one gets motion
+                # blur, speed lines or a little arrow drawn INTO the frame —
+                # the same class of artefact the anti-collage rules exist to
+                # stop. They are for the shot card, the PDF and the animatic
+                # step, where motion and timing are real. Exactly the
+                # arrangement `dialogue` already has, for the same reason.
+                "movement": str(item.get("movement", "")).strip(),
+                "duration_seconds": _coerce_seconds(item.get("duration_seconds")),
                 # Filled in by _attach_script_lines once the quote below has been
                 # checked against the real script.
                 "script_line": "",

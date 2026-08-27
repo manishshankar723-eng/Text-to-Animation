@@ -86,12 +86,18 @@ export default function PanelSequenceStrip({
   // strip whose entire job is letting you judge the motion. Omit it and the
   // tiles fall back to 16:9, which is what they always were.
   ratio,
+  // ⚠ THE SHOT'S OWN PLANNED LENGTH, from the breakdown. This box used to open
+  // at a flat 4 seconds for every shot on every board, so a 1-second reaction
+  // and a 6-second establishing wide were both offered the same guess and the
+  // number the breakdown had already worked out went unused. 0 (an older board
+  // that carries none) falls back to the old 4.
+  plannedSeconds = 0,
   onError,
   onStarted
 }) {
   const [seq, setSeq] = useState(null);
   const [asking, setAsking] = useState(false);
-  const [duration, setDuration] = useState(4);
+  const [duration, setDuration] = useState(plannedSeconds > 0 ? plannedSeconds : 4);
   const [busy, setBusy] = useState(false);
   const [zipping, setZipping] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);

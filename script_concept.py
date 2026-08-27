@@ -52,6 +52,7 @@ Spends TEXT quota only.
 
 import json
 import logging
+import re
 
 from google.genai import types
 
@@ -79,6 +80,65 @@ MIN_KEY_SCENES = 3
 DEFAULT_SECONDS = {"brief": 30, "idea": 60}
 MIN_SECONDS = 10
 MAX_SECONDS = 600
+
+
+# ---------------------------------------------------------------------------
+# Short-form: the one place where scene ORDER is not a matter of taste
+# ---------------------------------------------------------------------------
+# ⚠ FOUND IN TESTING, ON A REAL BRIEF. Asked for "30 sec viral shots/reel
+# script" for Ganesh Chaturthi, the concept came back opening on a close-up of
+# hands painting an idol's eyes and saving the finished, blazing idol for scene
+# SEVEN. Beautiful, and wrong for the thing that was asked for: in a feed, the
+# first frame is what decides whether anyone sees the second one, and the best
+# image arriving at second 26 arrives for nobody.
+#
+# ⚠ AND THE MODEL CANNOT BE EXPECTED TO NOTICE ON ITS OWN. "Reel" tells it the
+# LENGTH; nothing in the general instruction tells it that length changes the
+# ORDER. So the word is spotted here, in plain Python, and the rule is stated
+# outright rather than hoped for.
+#
+# "short film" is deliberately EXCLUDED — a short film is five to twenty minutes
+# and opens however it likes. It is the word "short" doing double duty, and
+# treating those two the same would put a hook rule on a narrative film.
+_SHORT_FORM_RE = re.compile(
+    r"\b(reels?|shorts|tik\s*tok|viral|instagram|insta|snapchat|"
+    r"scroll[- ]?stopping|short[- ]?form|youtube\s+short)\b",
+    re.IGNORECASE,
+)
+_NOT_SHORT_FORM_RE = re.compile(r"\bshort\s+(film|movie|story)\b", re.IGNORECASE)
+
+
+def is_short_form(text: str) -> bool:
+    """Does this brief describe something that plays in a FEED?
+
+    Keywords only, and deliberately not the aspect ratio: 9:16 is what the user
+    picked for a frame, and inferring intent from it would apply a hook rule to
+    a vertical film that never asked for one. What they typed is evidence; what
+    they picked on a chip row is not.
+    """
+    body = (text or "")
+    if _NOT_SHORT_FORM_RE.search(body):
+        return False
+    return bool(_SHORT_FORM_RE.search(body))
+
+
+_SHORT_FORM_RULE = (
+    "⚠ THIS IS SHORT-FORM — a reel, a short, something that plays inside a "
+    "feed. That changes the ORDER of the scenes, not just the length:\n"
+    "- THE FIRST KEY SCENE IS THE HOOK. It must be the single strongest, most "
+    "striking image in the whole film. The finished thing, the transformation, "
+    "the face, the moment everything is building to. NOT the preparation, NOT "
+    "an establishing shot, NOT a slow build.\n"
+    "- Do not save the best image for the end. In a feed there is no end for "
+    "somebody who scrolled away in the first second.\n"
+    "- ⚠ BUT THE HOOK MUST BE OF THIS FILM. Open on its best real moment, "
+    "never on something unrelated and eye-catching. A hook that lies is worse "
+    "than a slow open.\n"
+    "- After the hook, the rest still has to earn it: build back through the "
+    "story and land the ending.\n"
+    "- Keep the scenes short and plentiful — this cuts every second or two, so "
+    "lean towards the upper end of the scene count."
+)
 
 
 _SYSTEM_INSTRUCTION = (
@@ -268,6 +328,15 @@ def develop(
     context = _form_context(genre, style, aspect_ratio)
     if context:
         ask += ["", context]
+
+    # ⚠ LAST, AND ON PURPOSE. When it applies, this rule OVERRULES the natural
+    # order of a story, and the final thing a model reads before answering is
+    # the rule it holds to most reliably — the same reason
+    # `plan_agent.write_script` puts the language block at the end.
+    short_form = is_short_form(body)
+    if short_form:
+        ask += ["", _SHORT_FORM_RULE]
+
     ask += [
         "",
         f"Give between {MIN_KEY_SCENES} and {MAX_KEY_SCENES} key scenes.",
@@ -309,9 +378,10 @@ def develop(
         )
 
     logger.info(
-        "[concept] %r from %d chars of %s, %d scene(s), %ds — %s",
-        concept["title"], len(body), kind, len(concept["key_scenes"]),
-        concept["duration_seconds"], describe(usage),
+        "[concept] %r from %d chars of %s%s, %d scene(s), %ds — %s",
+        concept["title"], len(body), kind,
+        " (short-form)" if short_form else "",
+        len(concept["key_scenes"]), concept["duration_seconds"], describe(usage),
     )
     return {"concept": concept, "usage": usage.as_dict()}
 

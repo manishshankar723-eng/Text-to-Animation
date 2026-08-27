@@ -109,6 +109,30 @@ def _truncate(draw, text, font, max_width):
     return text.rstrip() + "…"
 
 
+def _shot_line(panel: dict) -> str:
+    """Framing, move and length as ONE line: 'close-up · slow push-in · 3s'.
+
+    ⚠ ONE ROW AND NOT THREE, DELIBERATELY. `META_H` is the height reserved under
+    every panel for its metadata, and it is worked out from the row count — two
+    more rows would push the cast chips off the bottom of a dense page. A
+    director reads framing, move and length together anyway; that is what a slug
+    line is.
+    """
+    bits = [str(panel.get("camera", "") or "").strip()]
+    move = str(panel.get("movement", "") or "").strip()
+    # "static" is the answer for most shots and printing it on every panel is
+    # noise — the absence of a move is what static MEANS.
+    if move and move.lower() not in ("static", "none", "no movement", "still"):
+        bits.append(move)
+    try:
+        seconds = int(panel.get("duration_seconds") or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds > 0:
+        bits.append(f"{seconds}s")
+    return " · ".join(b for b in bits if b)
+
+
 def _meta_row(draw, x, y, label, value, f_label, f_value, max_width):
     """Draw a 'Label  value' metadata row; returns the next y."""
     if not value:
@@ -477,7 +501,7 @@ def build_storyboard_pdf(
 
             # Camera / Location / cast — the shooting detail a board is used for.
             ty += 4
-            ty = _meta_row(draw, x, ty, "Camera", p.get("camera", ""), f_label, f_meta, cell_w)
+            ty = _meta_row(draw, x, ty, "Camera", _shot_line(p), f_label, f_meta, cell_w)
             ty = _meta_row(draw, x, ty, "Location", p.get("location", ""), f_label, f_meta, cell_w)
             ty += 2
             _cast_chips(draw, x, ty, p.get("characters") or [], f_chip, cell_w)

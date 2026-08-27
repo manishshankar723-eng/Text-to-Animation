@@ -67,6 +67,18 @@ const TITLE_WORDS = 4;
 // server-side extraction (not built yet) — user pastes those for now.
 const TEXT_EXTENSIONS = ["txt", "fountain", "fdx", "md", "text"];
 
+/** Seconds as a runtime: "38s" under a minute, "1m 22s" over it.
+ *
+ * Exported so the board prints the same string. A film that reads "82s" in one
+ * place and "1m 22s" in another reads as two different numbers. */
+export function formatRuntime(seconds) {
+  const n = Math.max(0, Math.round(Number(seconds) || 0));
+  if (n < 60) return `${n}s`;
+  const m = Math.floor(n / 60);
+  const rest = n % 60;
+  return rest ? `${m}m ${rest}s` : `${m}m`;
+}
+
 export default function ScriptToStoryboard({ onOpenAnimatic }) {
   // Open on the library so a returning user sees their saved storyboards first.
   const [step, setStep] = useState("library");
@@ -767,6 +779,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   }
 
   // ---- Review handlers ----
+
+  /** The film's length: every shot's own seconds, added up. 0 when none of them
+   *  carry one (an older board, from before the breakdown returned it). */
+  function totalSeconds() {
+    return shots.reduce((sum, sh) => sum + (Number(sh.duration_seconds) || 0), 0);
+  }
+
   function updateShot(i, patch) {
     setShots((s) => s.map((sh, idx) => (idx === i ? { ...sh, ...patch } : sh)));
   }
@@ -1214,18 +1233,31 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
   // breakdown — being asked to approve our reading of your own script would be
   // a step that exists only to annoy.
   if (step === "concept" && concept) {
-    if (writing) {
+    // ⚠ TWO WAITS LIVE ON THIS SCREEN, BACK TO BACK. Approving runs
+    // write_script() AND THEN the breakdown, and the breakdown's own ring is
+    // rendered by the `form` step — which this branch returns before ever
+    // reaching. Without the second case below, the script ring reached 100%,
+    // handed off to startBreakdown(), and the user was dropped back onto the
+    // concept card with a live API call running and nothing on screen saying
+    // so. It read as "I pressed Approve and it did nothing."
+    if (writing || busy) {
       return (
         <div className="workflow-head-wrap sb-form">
           <div className="sts-form-wrap">
-            <BreakdownProgress
-              done={scriptWritten}
-              onDone={finishScript}
-              steps={SCRIPT_STEPS}
-              title="Writing your script"
-              readyLabel="Script ready!"
-              slowLabel="Still writing — a longer film takes a little more time…"
-            />
+            {writing ? (
+              <BreakdownProgress
+                done={scriptWritten}
+                onDone={finishScript}
+                steps={SCRIPT_STEPS}
+                title="Writing your script"
+                readyLabel="Script ready!"
+                slowLabel="Still writing — a longer film takes a little more time…"
+              />
+            ) : (
+              // The same ring the form shows, with the same words — this IS
+              // the breakdown, it just happens to have been reached from here.
+              <BreakdownProgress done={breakdownDone} onDone={finishBreakdown} />
+            )}
           </div>
         </div>
       );
@@ -1477,12 +1509,21 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           </div>
         </div>
 
+        {/* ⚠ THE RUNTIME IS WHY THE LENGTH FIELD EARNS ITS PLACE. Every other
+            piece of shot metadata is read one shot at a time; this is the one
+            number that is about the FILM, and it is the answer to the question
+            behind most briefs — "is my 30-second ad actually 30 seconds?" */}
         <div className="review-summary">
           <span className="chip">{styleLabel}</span>
           <span className="chip">{effectiveAspect()}</span>
           <span className="chip">
             {shots.length} shot{shots.length === 1 ? "" : "s"}
           </span>
+          {totalSeconds() > 0 && (
+            <span className="chip" title="Added up from each shot's length">
+              ≈ {formatRuntime(totalSeconds())}
+            </span>
+          )}
         </div>
 
         {error && <div className="error">{error}</div>}
@@ -1592,7 +1633,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
 
               <div className="grid2 shot-meta">
                 <div>
-                  <label>Camera</label>
+                  <label>Shot type</label>
                   <input
                     value={sh.camera}
                     placeholder="e.g. wide, close-up"
@@ -1606,6 +1647,40 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                     placeholder="e.g. city street, night"
                     onChange={(e) => updateShot(i, { location: e.target.value })}
                   />
+                </div>
+              </div>
+
+              {/* ⚠ NEITHER OF THESE REACHES THE IMAGE PROMPT, and that is not
+                  an oversight. A still panel cannot show a camera move or a
+                  length; asking a model for one gets motion blur, speed lines
+                  or a little arrow drawn INTO the frame. They are read by the
+                  board, the PDF and the animatic step — where motion and
+                  timing are real — exactly as `dialogue` is. */}
+              <div className="grid2 shot-meta">
+                <div>
+                  <label>Camera move</label>
+                  <input
+                    value={sh.movement || ""}
+                    placeholder="e.g. static, slow push-in"
+                    onChange={(e) => updateShot(i, { movement: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label>Length</label>
+                  <div className="shot-seconds">
+                    <input
+                      type="number"
+                      min={0}
+                      max={30}
+                      value={sh.duration_seconds ?? ""}
+                      onChange={(e) =>
+                        updateShot(i, {
+                          duration_seconds: Number(e.target.value) || 0,
+                        })
+                      }
+                    />
+                    <span className="tiny muted">seconds</span>
+                  </div>
                 </div>
               </div>
 
@@ -1732,9 +1807,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             </div>
 
             <div className="sts-source-foot">
+              {/* ⚠ NOT `ghost` — see `.sts-source-foot .btn` in storyboard.css.
+                  Borderless on the panel's own grey, this read as a caption
+                  printed inside the box instead of the second way of handing
+                  over a script. */}
               <button
                 type="button"
-                className="btn ghost small"
+                className="btn small"
                 onClick={() => fileInputRef.current?.click()}
               >
                 📁 Upload a script file
@@ -1850,12 +1929,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               wear the same label + control rhythm, so they line up. */}
           <div className="sts-meta-row">
             <div className="sts-meta-col sts-meta-audience">
-            <label>
-              Audience{" "}
-              <span className="label-optional">
-                · the language on screens and signs
-              </span>
-            </label>
+            <label title="The language on screens and signs">Audience</label>
             <div className="opt-chips sts-audience">
               <select
                 className="opt-select"
@@ -1872,12 +1946,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
             </div>
             </div>
             <div className="sts-meta-col sts-meta-brand">
-            <label>
-              Brand{" "}
-              <span className="label-optional">
-                · only if this film sells a product
-              </span>
-            </label>
+            <label title="Only if this film sells a product">Brand</label>
             <div className="sts-brand">
               <input
                 className="sts-brand-name"
@@ -1906,9 +1975,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                     e.target.value = ""; // allow re-selecting the same file
                   }}
                 />
+                {/* ⚠ NOT `ghost`. A borderless button between two bordered
+                    fields reads as a link that wandered into a form row — see
+                    the `.sts-meta-row` note in storyboard.css. Both buttons in
+                    this row wear `.btn.small` and the row's own height. */}
                 <button
                   type="button"
-                  className="btn ghost small"
+                  className="btn small"
                   disabled={brandBusy}
                   onClick={() => brandFileRef.current?.click()}
                 >
@@ -1923,7 +1996,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                   )}
                 </button>
                 {brandLogoId && (
-                  <button type="button" className="btn ghost small" onClick={clearLogo}>
+                  <button type="button" className="btn small" onClick={clearLogo}>
                     Remove
                   </button>
                 )}
@@ -1942,7 +2015,13 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
         <div className="card sts-options">
           <h3 className="sts-options-title">Story settings</h3>
           {/* --- Genre --- */}
-          <label>Genre <span className="label-optional">· shapes the tone</span></label>
+          {/* ⚠ HINTS LIVE ON HOVER, NOT ON THE PAGE. Every chip and label used to
+              carry its explanation inline and the panel read as a wall of grey
+              text over the choices themselves. The words are all still here —
+              in `title`, the same way the aspect chips have always done it — so
+              a mouse gets the answer and the eye gets a clean row. Keep any new
+              one to 3-5 words; a paragraph in a tooltip is just as unreadable. */}
+          <label title="Shapes the tone">Genre</label>
           <div className="opt-chips">
             {GENRES.map((g) => (
               <button
@@ -1950,13 +2029,19 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 type="button"
                 className={`opt-chip ${genre === g.id ? "active" : ""}`}
                 onClick={() => setGenre(g.id)}
+                title={g.note}
               >
                 {g.label}
               </button>
             ))}
             {/* Show the picked overflow genre so the selection stays visible. */}
             {MORE_GENRES.some((g) => g.id === genre) && (
-              <button type="button" className="opt-chip active" onClick={() => setGenreMoreOpen(true)}>
+              <button
+                type="button"
+                className="opt-chip active"
+                onClick={() => setGenreMoreOpen(true)}
+                title={ALL_GENRES.find((g) => g.id === genre)?.note}
+              >
                 {ALL_GENRES.find((g) => g.id === genre)?.label}
               </button>
             )}
@@ -1978,7 +2063,7 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
           )}
 
           {/* --- Style --- */}
-          <label>Visual style</label>
+          <label title="Hover a style to see it">Visual style</label>
           <div className="opt-chips">
             {STYLES.map((s) => (
               <button
@@ -1986,13 +2071,19 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
                 type="button"
                 className={`opt-chip ${style === s.id ? "active" : ""}`}
                 onClick={() => setStyle(s.id)}
+                title={s.note}
               >
                 {s.label}
               </button>
             ))}
             {/* Show the picked overflow style so the selection stays visible. */}
             {MORE_STYLES.some((s) => s.id === style) && (
-              <button type="button" className="opt-chip active" onClick={() => setStyleMoreOpen(true)}>
+              <button
+                type="button"
+                className="opt-chip active"
+                onClick={() => setStyleMoreOpen(true)}
+                title={ALL_STYLES.find((s) => s.id === style)?.note}
+              >
                 {ALL_STYLES.find((s) => s.id === style)?.label}
               </button>
             )}
@@ -2012,11 +2103,15 @@ export default function ScriptToStoryboard({ onOpenAnimatic }) {
               onChange={(e) => setCustomStyle(e.target.value)}
             />
           )}
-          {/* Say what the default actually does, where the choice is made. */}
+          {/* ⚠ THE PARAGRAPH THAT USED TO SIT HERE IS GONE. Four lines of grey
+              explanation under the style row pushed "Create storyboard" down
+              the panel and got skipped anyway. What it said now rides on the
+              chips themselves: "Cheapest — skips cast step" on Rough Sketch,
+              and the one-line summary below on whichever style is picked. */}
           <p className="tiny muted style-note">
             {skipsRefs()
-              ? "✏️ Rough Sketch is a plain grey storyboard thumbnail — the fastest and cheapest way to check your staging. It draws straight from your shots, so there's no cast or props step. Pick any other style for a detailed, coloured board with locked characters and locations."
-              : "This style locks characters, props and backgrounds first, so they stay consistent across panels — more detail, more images to generate. Choose Rough Sketch for a quick, cheap pass instead."}
+              ? "Quick grey pass — no cast step."
+              : "Locks characters and sets first."}
           </p>
 
           {/* --- Aspect ratio --- */}
@@ -2127,6 +2222,7 @@ function MorePopup({ title, options, selected, onSelect, onClose }) {
                 onSelect(o.id);
                 onClose();
               }}
+              title={o.note}
             >
               {o.label}
             </button>

@@ -93,6 +93,9 @@ from .schemas import (
     StoryboardProject,
     StoryboardRenameRequest,
     StoryboardSummary,
+    BoardAction,
+    BoardAskRequest,
+    BoardAskResponse,
     DeepAuditResponse,
     PublicStoryboard,
     ShareResponse,
@@ -1107,6 +1110,7 @@ def _panel_indexes(job: Job) -> list[int]:
 # differ. See the same note over `SUMMARY_DROP` in animatics.py.
 _PANEL_UNREAD = (
     "description", "location", "characters", "camera",
+    "movement", "duration_seconds",
     "dialogue", "assets", "versions",
 )
 BOARD_SUMMARY_DROP = (
@@ -1463,6 +1467,82 @@ def get_public_storyboard_panel(token: str, index: int):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Panel {index} not found.")
     return FileResponse(path, media_type="image/png")
+
+
+@app.post("/storyboards/{job_id}/ask", response_model=BoardAskResponse)
+def ask_about_board(
+    job_id: str,
+    body: BoardAskRequest,
+    current: CurrentUser = Depends(get_current_user),
+    _gate: CurrentUser = Depends(require_feature('workflow.script-to-storyboard')),
+):
+    """"Ask AI" beside a finished board: one sentence in, a PLAN of edits out.
+
+    ⚠ THIS ROUTE CHANGES NOTHING AND CANNOT DRAW. It returns a list of intended
+    edits; the browser shows them, the user presses Apply, and each one goes
+    through the same endpoint the board's own buttons use — `/regenerate-panel`,
+    `/panels/insert`, `/panels/{index}`. Two reasons and both matter:
+
+      1. Redrawing a panel is an IMAGE. One typed sentence must never be able to
+         spend forty of them unseen, so the spend stays behind routes that
+         already carry `cap.image-generate` and the count is on screen first.
+      2. The board is already editable by hand. A private write path here would
+         be a second implementation of insert/delete/redraw to keep in step with
+         the first.
+
+    ⚠ THE PANELS COME FROM THE JOB, NOT FROM THE REQUEST. Planning against
+    whatever the tab last rendered would mean planning against stale shot
+    numbers — and editing the wrong picture.
+
+    Spends TEXT quota only. Gated on the workflow, not on image capability,
+    because asking costs no image; applying does, and that gate is on the routes
+    that apply.
+    """
+    job = _get_owned_board(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Wait for the board to finish first.")
+
+    variants, active = _variants_of(job.result or {})
+    panels = variants[active].get("panels") or []
+    params = job.params or {}
+
+    from board_agent import BoardChatError, plan as plan_board_edit
+
+    messages = [{"role": m.role, "text": m.text} for m in body.messages]
+    if not messages or messages[-1]["role"] != "user":
+        raise HTTPException(
+            status_code=400,
+            detail="The last message must be the one you just typed.",
+        )
+
+    try:
+        result = plan_board_edit(
+            messages,
+            panels,
+            selection=body.selection.model_dump(),
+            title=job.character_name or "",
+            style=str(params.get("style") or ""),
+            aspect_ratio=str(params.get("aspect_ratio") or ""),
+        )
+    except BoardChatError as e:
+        logger.warning("[board-ask %s] failed: %s", job_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:  # noqa: BLE001 — report the actual cause
+        logger.exception("[board-ask %s] unexpected error", job_id)
+        raise HTTPException(status_code=502, detail=f"Assistant error: {e}")
+
+    # ⚠ The account-level sink — see the same warning in server/plans.py.
+    usage = result.get("usage") or {}
+    if usage:
+        from ai_usage import merge as _merge_usage
+
+        usage_counters.record_tokens(current.email, _merge_usage(None, usage))
+
+    return BoardAskResponse(
+        reply=result.get("reply", ""),
+        actions=[BoardAction(**a) for a in result.get("actions") or []],
+        usage=usage,
+    )
 
 
 @app.post("/storyboards/{job_id}/check", response_model=DeepAuditResponse)
@@ -1937,6 +2017,8 @@ def insert_storyboard_panel(
         "assets": [],
         "location": "",
         "camera": "",
+        "movement": "",
+        "duration_seconds": 0,
         "url": None,
         "failed": False,
     }

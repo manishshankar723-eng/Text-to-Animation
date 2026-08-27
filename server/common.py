@@ -172,6 +172,8 @@ def panel_for_index(job: Job, index: int) -> dict | None:
             "assets": s.get("assets", []) or [],
             "location": s.get("location", "") or "",
             "camera": s.get("camera", "") or "",
+            "movement": s.get("movement", "") or "",
+            "duration_seconds": int(s.get("duration_seconds") or 0),
             "url": None,
             "failed": True,
         }

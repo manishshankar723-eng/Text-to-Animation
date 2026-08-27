@@ -6,23 +6,23 @@
 // wouldn't. Both import from here instead.
 
 export const STYLES = [
-  { id: "rough-sketch", label: "✏️ Rough Sketch" },
-  { id: "sketch", label: "🖊️ Sketch" },
-  { id: "comic", label: "💥 Comic" },
-  { id: "cinematic", label: "🎬 Cinematic" },
-  { id: "animation-3d", label: "🧸 Animation 3D" },
-  { id: "watercolor", label: "🎨 Watercolor Paint" },
+  { id: "rough-sketch", label: "✏️ Rough Sketch", note: "Cheapest — skips cast step" },
+  { id: "sketch", label: "🖊️ Sketch", note: "Clean pencil line art" },
+  { id: "comic", label: "💥 Comic", note: "Bold comic-book panels" },
+  { id: "cinematic", label: "🎬 Cinematic", note: "Photoreal film-look frames" },
+  { id: "animation-3d", label: "🧸 Animation 3D", note: "Soft 3D cartoon look" },
+  { id: "watercolor", label: "🎨 Watercolor Paint", note: "Hand-painted watercolour wash" },
 ];
 
 export const MORE_STYLES = [
-  { id: "photo-commercial", label: "📷 Photo / Commercial" },
-  { id: "charcoal", label: "🖤 Charcoal Sketch" },
-  { id: "dark-anime", label: "🌃 Dark Anime" },
-  { id: "flat-vector", label: "🔷 Flat / Vector" },
-  { id: "noir", label: "🎞️ Noir" },
-  { id: "stick-figure", label: "🏃 Stick Figure" },
-  { id: "graphic-novel", label: "📖 Graphic Novel" },
-  { id: "custom", label: "＋ Custom" },
+  { id: "photo-commercial", label: "📷 Photo / Commercial", note: "Glossy product photo look" },
+  { id: "charcoal", label: "🖤 Charcoal Sketch", note: "Smudged black charcoal strokes" },
+  { id: "dark-anime", label: "🌃 Dark Anime", note: "Moody neon anime look" },
+  { id: "flat-vector", label: "🔷 Flat / Vector", note: "Flat shapes, clean vector" },
+  { id: "noir", label: "🎞️ Noir", note: "High-contrast black and white" },
+  { id: "stick-figure", label: "🏃 Stick Figure", note: "Simplest stick-figure blocking" },
+  { id: "graphic-novel", label: "📖 Graphic Novel", note: "Inked graphic-novel pages" },
+  { id: "custom", label: "＋ Custom", note: "Describe your own style" },
 ];
 
 export const ALL_STYLES = [...STYLES, ...MORE_STYLES];
@@ -48,26 +48,26 @@ export const DEFAULT_ASPECT = "16:9"; // pre-selected standard frame
 // as chips; the rest live behind "＋ More". "default" = no genre bias (let the
 // story decide); "custom" = type your own.
 export const GENRES = [
-  { id: "default", label: "✨ Default" },
-  { id: "animation", label: "🎨 Animation" },
-  { id: "commercial", label: "📢 Commercial" },
-  { id: "documentary", label: "🎥 Documentary" },
-  { id: "educational", label: "📚 Educational" },
-  { id: "mythology", label: "🏛️ Mythology" },
+  { id: "default", label: "✨ Default", note: "No tone bias applied" },
+  { id: "animation", label: "🎨 Animation", note: "Playful animated storytelling" },
+  { id: "commercial", label: "📢 Commercial", note: "Short punchy ad pacing" },
+  { id: "documentary", label: "🎥 Documentary", note: "Real, observational, factual tone" },
+  { id: "educational", label: "📚 Educational", note: "Clear step-by-step explaining" },
+  { id: "mythology", label: "🏛️ Mythology", note: "Epic legend, grand scale" },
 ];
 
 export const MORE_GENRES = [
-  { id: "action", label: "💥 Action" },
-  { id: "comedy", label: "😄 Comedy" },
-  { id: "drama", label: "🎭 Drama" },
-  { id: "fantasy", label: "🐉 Fantasy" },
-  { id: "horror", label: "👻 Horror" },
-  { id: "music-video", label: "🎵 Music Video" },
-  { id: "mystery", label: "🔍 Mystery" },
-  { id: "romance", label: "💕 Romance" },
-  { id: "sci-fi", label: "🚀 Science Fiction" },
-  { id: "thriller", label: "⚡ Thriller" },
-  { id: "custom", label: "＋ Custom" },
+  { id: "action", label: "💥 Action", note: "Fast cuts, high energy" },
+  { id: "comedy", label: "😄 Comedy", note: "Light, funny, timing-driven" },
+  { id: "drama", label: "🎭 Drama", note: "Emotional, character-driven scenes" },
+  { id: "fantasy", label: "🐉 Fantasy", note: "Magical worlds and creatures" },
+  { id: "horror", label: "👻 Horror", note: "Tense, dark, scary mood" },
+  { id: "music-video", label: "🎵 Music Video", note: "Beat-driven visual montage" },
+  { id: "mystery", label: "🔍 Mystery", note: "Clues, suspense, slow reveal" },
+  { id: "romance", label: "💕 Romance", note: "Warm, intimate, emotional beats" },
+  { id: "sci-fi", label: "🚀 Science Fiction", note: "Futuristic tech and worlds" },
+  { id: "thriller", label: "⚡ Thriller", note: "Tight suspense, rising tension" },
+  { id: "custom", label: "＋ Custom", note: "Type your own genre" },
 ];
 
 export const ALL_GENRES = [...GENRES, ...MORE_GENRES];

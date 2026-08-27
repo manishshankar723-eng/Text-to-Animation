@@ -1220,6 +1220,32 @@ export function setActiveVariant(jobId, index) {
   });
 }
 
+// --- "Ask AI" beside a finished board ---
+//
+// ⚠ THIS CALL CHANGES NOTHING. It comes back with { reply, actions[], usage }
+// where each action is an INTENDED edit — the caller shows the list, the user
+// presses Apply, and each one then runs through insertStoryboardPanel /
+// deleteStoryboardPanel / regenerateStoryboardPanel below. Redrawing a panel is
+// an image, and one typed sentence must never spend forty of them unseen.
+//
+// ⚠ THE PANELS ARE NOT SENT — the server reads them off the job, so the plan is
+// always against what is really stored rather than what this tab last drew.
+// `selection` is {kind:"panel"|"scene"|"none", shot, scene} with 1-BASED shot
+// numbers, exactly as they are printed under the panels.
+export function askAboutBoard(jobId, { messages, selection } = {}) {
+  return request(`/storyboards/${jobId}/ask`, {
+    method: "POST",
+    body: {
+      messages: (messages || []).map((m) => ({ role: m.role, text: m.text })),
+      selection: {
+        kind: selection?.kind || "none",
+        shot: selection?.shot || 0,
+        scene: selection?.scene || 0,
+      },
+    },
+  });
+}
+
 // Insert a blank panel at position `at` (shifts the rest down). The new panel
 // has no image — generate it afterwards with regenerateStoryboardPanel.
 export function insertStoryboardPanel(jobId, at, description = "") {

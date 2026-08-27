@@ -109,6 +109,60 @@ check("every field comes back in the user's own language, Hinglish included",
       and "do not switch to Devanagari" in sc._SYSTEM_INSTRUCTION)
 
 # ---------------------------------------------------------------------------
+print("\n[2b] ⚠ short-form: the HOOK comes first, and that is not a matter of taste")
+
+# ⚠ FOUND IN LIVE TESTING, ON THIS EXACT BRIEF. The concept came back opening on
+# a close-up of hands painting an idol's eyes and saved the finished, blazing
+# idol for scene SEVEN. Beautiful — and wrong for a reel, where the first frame
+# is what decides whether anybody sees the second one, so the best image arriving
+# at second 26 arrives for nobody.
+REEL_BRIEF = ("give me 30 sec Virl shots/reel script of upcoming festivel besed "
+              "on ganesh chaturthi")
+
+check("the reported brief is recognised as short-form", sc.is_short_form(REEL_BRIEF))
+check("…and so are the other words people actually type",
+      all(sc.is_short_form(t) for t in (
+          "Make an instagram reel about our new app",
+          "a viral video for diwali",
+          "YouTube Shorts idea about street food",
+          "TikTok for a bakery",
+          "a scroll-stopping ad for a gym")))
+check("⚠ 'SHORT FILM' IS NOT SHORT-FORM. A short film is five to twenty minutes "
+      "and opens however it likes — it is the word 'short' doing double duty, "
+      "and a hook rule on a narrative film would be wrong",
+      not sc.is_short_form("A short film about a courier in Mumbai")
+      and not sc.is_short_form("write a short story about a lost dog"))
+check("an ordinary ad brief is left alone",
+      not sc.is_short_form(
+          "Create a 30 second advertisement for an AI meeting assistant.")
+      and not sc.is_short_form("A man wakes up and everyone has disappeared"))
+
+check("the rule says the first scene IS the hook, in as many words",
+      "THE FIRST KEY SCENE IS THE HOOK" in sc._SHORT_FORM_RULE
+      and "strongest, most" in sc._SHORT_FORM_RULE)
+check("…and names what it must NOT be, since that is what it kept doing",
+      "NOT the preparation" in sc._SHORT_FORM_RULE
+      and "NOT a slow build" in sc._SHORT_FORM_RULE)
+check("⚠ …and forbids the obvious failure mode of a hook rule — opening on "
+      "something eye-catching that has nothing to do with the film",
+      "THE HOOK MUST BE OF THIS FILM" in sc._SHORT_FORM_RULE
+      and "A hook that lies is worse" in sc._SHORT_FORM_RULE)
+check("…and still requires the rest of the film to land",
+      "land the ending" in sc._SHORT_FORM_RULE)
+
+mod_src = read("script_concept.py")
+check("⚠ the rule is appended LAST, because it overrules the natural order of a "
+      "story and the last thing a model reads is what it holds to",
+      "LAST, AND ON PURPOSE" in mod_src
+      and mod_src.index("ask += [\"\", _SHORT_FORM_RULE]")
+      < mod_src.index("Give between {MIN_KEY_SCENES}"))
+check("⚠ …and the trigger is what the user TYPED, never the aspect ratio they "
+      "clicked — 9:16 is a frame, not a statement of intent",
+      "never the aspect ratio" in mod_src or "not the aspect ratio" in mod_src)
+check("a long-form brief never sees the rule at all",
+      "if short_form:" in mod_src)
+
+# ---------------------------------------------------------------------------
 print("\n[3] the concept is cleaned before it is shown")
 
 messy = sc._coerce(

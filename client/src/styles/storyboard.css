@@ -167,6 +167,67 @@
   text-align: center;
 }
 
+/* ⚠ ONE HEIGHT AND ONE CORNER FOR EVERY CONTROL IN THIS ROW.
+   It held four controls and wore four sizes: a 35px pill (`.opt-select`), a
+   40px text input, a 44px logo tile and a 30px small button — in two different
+   corner radii — so nothing lined up along the top OR the bottom and the row
+   read as four parts borrowed from four places (user-reported: "sab alag size
+   and style se dikh raha hai … uper niche v dikh rha hai"). One
+   `--sts-field-h` and one 9px radius now, stated once here so a new control
+   dropped into the row inherits the alignment instead of needing its own rule.
+
+   ⚠ THE PILL GOES, AND THAT IS THE POINT, NOT A TASTE CHANGE. `.opt-select`
+   wears the chip pill because it was written beside the genre and style chips.
+   Those chips live in the right-hand "Story settings" card now; everything
+   still in THIS card is a rectangular field — title, script, brand name — so
+   the language pill was the only object on the card with a different shape.
+   The pill rule stays untouched for the selects that DO sit among chips. */
+.sts-meta-row {
+  --sts-field-h: 2.5rem;
+}
+.sts-meta-row .opt-select {
+  height: var(--sts-field-h);
+  /* Vertical padding is the height's job now; the browser draws the arrow
+     inside the right edge, so this matches the text input's 0.75rem inset. */
+  padding: 0 0.75rem;
+  border-radius: 9px;
+  /* Matched to the text input beside it, weight included: the language pill
+     was 600, so the one control in the row that HAS a value showed it heavier
+     than the box you type a brand into. */
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+/* ⚠ CAPPED, AND NOT BECAUSE OF THE ALIGNMENT. Left to `flex: 1` the name field
+   grew to ~700px on a desktop for an answer that is one word ("Lickyeat"), and
+   a field's width is a promise about how much to type. The logo slot follows it
+   directly instead of being pushed to the far edge of the card, so the three
+   brand controls read as one group. */
+.sts-meta-row .sts-brand-name {
+  height: var(--sts-field-h);
+  flex: 1 1 14rem;
+  max-width: 20rem;
+}
+/* The chequerboard tile is a square OF THE ROW, so it tracks the same variable
+   — it used to be a hardcoded 44px, the tallest thing in the row, and the two
+   shorter controls centred themselves against it. */
+.sts-meta-row .sts-brand-preview,
+.sts-meta-row .sts-brand-empty {
+  width: var(--sts-field-h);
+  height: var(--sts-field-h);
+}
+/* ⚠ AND THESE ARE ORDINARY BORDERED BUTTONS, NOT GHOSTS. A borderless button
+   beside two bordered fields is the "different style" half of the same
+   complaint: it reads as a link that happens to sit in a form row. `.btn.small`
+   is the app's own small-button vocabulary; only the height is added. */
+.sts-meta-row .sts-brand-logo .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  height: var(--sts-field-h);
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
 .opt-chip-note {
   font-size: 0.72rem;
   font-weight: 500;
@@ -418,6 +479,13 @@
   overflow: hidden;
   box-shadow: var(--shadow);
 }
+/* Picked out for the assistant. ⚠ A RING AND NOT A TINT: the tile's whole job
+   is showing a picture honestly, and washing colour over it would change the
+   thing the user is judging. */
+.board-tile.is-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(229, 193, 88, 0.35), var(--shadow);
+}
 .board-frame {
   position: relative; /* anchors the version arrows below */
   width: 100%;
@@ -525,6 +593,160 @@
   color: var(--muted);
   letter-spacing: 0.04em;
 }
+/* The shot number and the scene tag are BUTTONS — clicking one tells the
+   assistant what "this one" means. ⚠ They have to keep looking like the labels
+   they were: a caption row of two more buttons beside ＋ and ✕ would read as
+   four controls on every tile. So: no border, no fill, until hovered or on. */
+.board-pick {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+.board-pick:hover {
+  border-bottom-color: var(--border-gold);
+}
+.board-pick.on {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* Board + assistant, side by side. Collapses to one column early: a chat in a
+   240px gutter beside 340px panels helps nobody. */
+.board-workspace.with-ai {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 1.2rem;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .board-workspace.with-ai {
+    grid-template-columns: 1fr;
+  }
+}
+/* Follows the reader down a forty-panel board — the whole point is to talk
+   about the shot you are looking at. */
+.board-ai {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.board-ai-hide {
+  align-self: flex-start;
+}
+.board-ai-show {
+  margin-top: 1rem;
+}
+.ba-panel {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: calc(100vh - 6rem);
+}
+.ba-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.ba-title {
+  margin: 0;
+  font-size: 1rem;
+}
+/* What the assistant thinks "this one" means, and the way to unsay it. */
+.ba-selection {
+  border: 1px solid var(--border-gold);
+  background: rgba(229, 193, 88, 0.1);
+  color: var(--primary);
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  font-size: 0.74rem;
+  font-weight: 650;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ba-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ba-examples {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.ba-log {
+  overflow-y: auto;
+  max-height: 46vh;
+}
+/* ⚠ THE PLAN, AND NOTHING IN IT HAS HAPPENED YET. It is boxed and separated
+   from the reply for exactly that reason: these are the edits about to be
+   charged for, and they are the last thing anyone reads before Apply. */
+.ba-plan {
+  margin-top: 0.5rem;
+  padding: 0.55rem 0.65rem 0.65rem;
+  border: 1px solid var(--border-gold);
+  border-radius: 10px;
+  background: rgba(229, 193, 88, 0.07);
+}
+.ba-plan-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.ba-plan-list li::before {
+  margin-right: 0.4rem;
+}
+.ba-plan-list li.ba-plan-edit::before {
+  content: "✏️";
+}
+.ba-plan-list li.ba-plan-insert::before {
+  content: "＋";
+}
+.ba-plan-list li.ba-plan-delete::before {
+  content: "✕";
+}
+.ba-plan .btn {
+  margin-top: 0;
+}
+.ba-applied {
+  margin: 0.4rem 0 0;
+}
+
+/* Framing · move · length under a panel — the director's slug line. Quiet:
+   it is a reference, not a headline, and it sits under a picture. */
+.board-shotline {
+  margin: 0.35rem 0 0;
+  letter-spacing: 0.01em;
+}
+/* The seconds box on a review shot card — narrow, because it holds a number. */
+.shot-seconds {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.shot-seconds input {
+  width: 5.5rem;
+}
+
 /* Shot label + add/delete controls on one row. */
 .board-caption-head {
   display: flex;
@@ -951,7 +1173,24 @@
   display: grid;
   grid-template-columns: 1.15fr 1fr;
   gap: 1.5rem;
-  align-items: start;
+  /* ⚠ `stretch`, NOT `start`. The script box is a fixed 300px, so the left card
+     measured 692px against the options card's 597px — two panels of visibly
+     different size sitting side by side with their tops aligned and nothing
+     else (user-reported: "ye dono panle chota bara lag rha hai"). Stretched,
+     whichever card is shorter grows to match, and "Create storyboard" is
+     pinned to the bottom of it so the extra room reads as deliberate. */
+  align-items: stretch;
+}
+/* The height has to travel through the two wrappers to reach the cards. */
+.sts-hero-grid > .sts-form-wrap,
+.sts-hero-grid > .sts-hero-aside {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sts-hero-grid > .sts-form-wrap > .card,
+.sts-hero-grid > .sts-hero-aside > .card {
+  flex: 1 1 auto;
 }
 /* While the breakdown runs the options panel is hidden, so drop back to one
    column instead of leaving an empty gutter. */
@@ -985,8 +1224,56 @@
 .sts-options > label:first-of-type {
   margin-top: 0;
 }
+/* A flex column so the generate button can be pushed to the bottom of the
+   stretched card. ⚠ FLEX DOES NOT COLLAPSE MARGINS — the chip rows' own
+   margins would ADD to the labels' above and below them and loosen every gap
+   in the panel, so they are zeroed and the labels keep the rhythm alone. The
+   gaps come out identical to the block layout this replaced. */
+.sts-options {
+  display: flex;
+  flex-direction: column;
+}
+.sts-options > .opt-chips {
+  margin: 0;
+}
 .sts-options .sts-generate {
-  margin-top: 1.5rem;
+  /* `auto`, so the button sits at the foot of the card however tall the left
+     one makes it. */
+  margin-top: auto;
+}
+/* …and whatever ends up directly above the button keeps the 1.5rem the button
+   used to carry itself, for the case where the two cards come out equal and
+   `auto` resolves to nothing. Written as "second from last" rather than naming
+   the chip row, because on a custom aspect ratio a text input is what sits
+   there instead. */
+.sts-options > *:nth-last-child(2) {
+  margin-bottom: 1.5rem;
+}
+
+/* =========================================================================
+   ONE SHAPE FOR EVERY CONTROL ON THIS SCREEN
+
+   ⚠ The form had both: 999px pills for the genre / style / aspect chips and
+   9px rectangles for the title, script, language and brand fields — "kahi
+   squar and kahi circle", as reported. Rectangles win because they are the
+   only shape a 300px script textarea can be, and that box is the largest
+   object on the screen; a pill among rectangles is the odd one out, not the
+   other way round.
+
+   ⚠ SCOPED TO THIS SCREEN AND ITS OWN POPUP, ON PURPOSE. `.opt-chip` is also
+   the animatic editor's property-pane chip in nine other components, and
+   re-cornering all of them is a change nobody asked for and nobody would see
+   in the same glance as this form. Add a screen here when its chips and its
+   fields sit in one card.
+
+   The height matches too — `2.5rem`, the same as `--sts-field-h` in the meta
+   row — so a chip, a dropdown, a text field and a button are all one size.
+   ========================================================================= */
+.sts-hero-grid .opt-chip,
+.sts-hero-grid .opt-select,
+.more-panel .opt-chip {
+  border-radius: 9px;
+  min-height: 2.5rem;
 }
 
 /* The concept card — the approval gate. Deliberately built out of the SAME
@@ -1552,8 +1839,20 @@
   padding: 0.55rem 0.8rem 0.6rem;
   border-top: 1px solid var(--border);
 }
+/* ⚠ THIS BUTTON WAS A `ghost` AND IT DISAPPEARED. Borderless on the script
+   panel's own grey, "📁 Upload a script file" read as a caption printed inside
+   the box rather than the second way of handing over a script — the whole
+   reason it sits in the frame ("upload a script file buttun merge ho raha
+   hai … thora highlight dikhe"). It is a real bordered button now, on the
+   card's lighter surface so it lifts off the panel, with the gold edge the
+   rest of the form uses for "this is the action here", and the row's own
+   2.5rem height. */
 .sts-source-foot .btn {
   margin-top: 0;
+  min-height: 2.5rem;
+  border-color: var(--border-gold);
+  background: var(--panel);
+  font-weight: 600;
 }
 .sts-file-chip {
   display: inline-flex;
