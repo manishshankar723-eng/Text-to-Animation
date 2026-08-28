@@ -358,6 +358,107 @@ check("…and the pair still states one size family, both buttons equal",
       "flex: 1 1 0;" in css.split(".cast-btn {")[1].split("}")[0])
 
 # ---------------------------------------------------------------------------
+# ⚠ ROUND TWO OF THE END CARD, AND THE RULE FROM ROUND ONE IS WHAT FAILED.
+# `_SPEECH_RULE` banned quoting the line, "superimposed" and "with the text".
+# The model obeyed all three and wrote "A graphic card with text displayed on
+# screen." — the writing as the SUBJECT of the frame, which nothing had
+# forbidden. The panel came back carrying invented Hindi that did not match the
+# ON SCREEN line. So the ban is now stated against the subject as well, AND
+# enforced in Python, because a prompt is a request and this is the second time
+# this exact frame has been paid for twice.
+print("\n[8] THE END CARD, ROUND TWO — a frame that IS writing")
+
+import gemini_client as g  # noqa: E402 — after sys.path is set
+
+check("the prompt forbids naming the frame as a card of text, not just quoting "
+      "the words in it",
+      "NEVER MAKE THE WRITING THE SUBJECT OF THE FRAME" in sb._SPEECH_RULE
+      and "'A graphic card'" in sb._SPEECH_RULE
+      and "'a title card'" in sb._SPEECH_RULE)
+check("⚠ …and bans the one word the failure was built out of",
+      "The word 'text' must not appear" in sb._SPEECH_RULE
+      and "The word 'text' must not appear" in sb._PROMPT_TEMPLATE)
+check("…and says what an end card IS instead, because 'do not' with no "
+      "alternative is what produced the card in the first place",
+      "the last real image of the film" in sb._SPEECH_RULE)
+check("the same ban is repeated where `description` is written",
+      "no 'graphic card'" in sb._PROMPT_TEMPLATE)
+
+check("⚠ THE GUARANTEE, NOT THE REQUEST: the exact reported sentence cannot "
+      "reach an image model",
+      "text" not in g.strip_lettering(
+          "A graphic card with text displayed on screen.", "home altar").lower())
+check("…and what replaces it is the shot's OWN location, not an invention",
+      "home altar" in g.strip_lettering(
+          "A graphic card with text displayed on screen.", "home altar"))
+check("a quoted line is cut together with the words that ordered it — not left "
+      "as 'a shop sign reading.'",
+      g.strip_lettering('A close-up of a shop sign reading "Sharma Sweets".')
+      == "A close-up of a shop sign.")
+check("a lettering clause is cut at its own comma, and the picture before it "
+      "survives",
+      g.strip_lettering(
+          'A wide of the temple, the words "Ganpati Bappa Morya" superimposed '
+          "over the crowd.") == "A wide of the temple.")
+check("⚠ AN ORDINARY DESCRIPTION COMES BACK BYTE FOR BYTE. A scrubber that "
+      "rewrites clean sentences is worse than the bug it fixes",
+      all(g.strip_lettering(s) == s for s in (
+          "A medium shot of ANJALI walking down a bustling street, carrying a "
+          "medium-sized Ganesha idol.",
+          "A wide establishing shot showing the whole village at dawn.",
+          "RAJESH says goodbye as the bus appears at the end of the road.",
+      )))
+check("⚠ …including one full of apostrophes, which is what a naive quote "
+      "stripper eats the middle of",
+      g.strip_lettering("ANJALI's hands and RAJESH's face lit by the lamp.")
+      == "ANJALI's hands and RAJESH's face lit by the lamp.")
+# Caught while building this: the first version listed "letter" as a lettering
+# word and turned the sentence below into "ANJALI, her face falling." A letter
+# in someone's hands is a PROP, and losing the action of a shot is a worse bug
+# than the one being fixed.
+check("⚠ …and one holding a LETTER, which is a prop and not lettering",
+      g.strip_lettering("ANJALI reads a letter at the kitchen table, her face "
+                        "falling.")
+      == "ANJALI reads a letter at the kitchen table, her face falling.")
+check("a sign in shot is still allowed to be a sign — only the words on it go",
+      g.strip_lettering("A wide establishing shot of the crowded market, shop "
+                        "signage and banners lining both sides.")
+      == "A wide establishing shot of the crowded market, shop signage and "
+         "banners lining both sides.")
+check("it runs at BOTH ends — where the sentence is written, so the board shows "
+      "a drawable one…",
+      "strip_lettering(desc" in read("script_breakdown.py"))
+check("…and where it is drawn, so a board saved before any of this cannot slip "
+      "one past",
+      "strip_lettering(description, location)" in read("gemini_client.py"))
+
+# ---------------------------------------------------------------------------
+# Shots 2, 3 and 4 of the same finished board were three near-identical medium
+# shots of one potter's wheel. The merge rule had nothing to say about it: those
+# are three DIFFERENT beats, so merging them would delete story. The missing
+# instruction was to photograph them differently.
+print("\n[9] THREE SHOTS OF ONE WHEEL — the framing has to move too")
+
+check("the prompt says two shots in a row must not be the same picture",
+      "TWO SHOTS IN A ROW MUST NOT BE THE SAME PICTURE" in sb._VARIETY_RULE)
+check("…and names the three things that may differ, so 'vary it' is not left "
+      "as an instruction the model has to invent a meaning for",
+      "the framing (wide / " in sb._VARIETY_RULE
+      and "the angle (eye level" in sb._VARIETY_RULE
+      and "WHAT IS IN FRAME" in sb._VARIETY_RULE)
+check("⚠ …and says explicitly NOT to merge them, or this rule and the density "
+      "rule pull against each other and the film loses beats",
+      "do NOT merge these shots" in sb._VARIETY_RULE
+      and "different beats" in sb._VARIETY_RULE)
+check("⚠ …and forbids inventing action to make a shot look different — the "
+      "framing changes, not the story",
+      "THE FRAMING CHANGES, NOT THE STORY" in sb._VARIETY_RULE)
+check("it reaches the assembled prompt, next to the `camera` field it is about",
+      "TWO SHOTS IN A ROW" in prompt
+      and prompt.index("- camera:") < prompt.index("TWO SHOTS IN A ROW")
+      and prompt.index("TWO SHOTS IN A ROW") < prompt.index("- movement:"))
+
+# ---------------------------------------------------------------------------
 print()
 if failures:
     print(f"❌ {len(failures)} check(s) failed:")

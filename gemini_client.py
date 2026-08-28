@@ -1045,6 +1045,195 @@ _SINGLE_FRAME_RULE = (
 )
 
 
+# ---------------------------------------------------------------------------
+# ⚠ THE LAST GATE BEFORE AN IMAGE MODEL IS ASKED TO LETTER SOMETHING — AND IT
+# IS IN PYTHON BECAUSE THE ENGLISH RULE DID NOT HOLD.
+#
+# `script_breakdown._SPEECH_RULE` already forbids writing words into a
+# `description`, and it bans the phrasings that had caused it: quoting the line,
+# "superimposed", "with the text", "a caption reads". The model then obeyed
+# every one of those and broke the rule anyway — the end card came back as
+#
+#     "A graphic card with text displayed on screen."
+#
+# No quote, nothing on the banned list, and still a flat order to draw
+# lettering. The panel came out carrying invented Hindi ("समाप्त / धन्यवाद")
+# that did not even match the ON SCREEN line the user had asked for. Reported.
+#
+# ⚠ A PROMPT IS A REQUEST. This is the guarantee, and it runs at BOTH ends: in
+# `script_breakdown._coerce_shots`, so the sentence the user READS on the board
+# is a drawable one, and here, so a board saved before any of this existed — or
+# a description somebody typed by hand — cannot reach the model either.
+#
+# It deletes instructions, it does not paraphrase: a clause ordering lettering
+# is cut out and the rest of the sentence is kept exactly as written. Only when
+# what is left is not a picture at all (an "end card" whose entire subject was
+# the writing) is the sentence replaced, and then by the shot's own location.
+
+# A quoted span is the single most reliable "draw these exact letters" signal,
+# and an image prompt has no honest use for one. ⚠ The straight/curly single
+# quote arm is fenced by lookaround so it cannot match an APOSTROPHE: without
+# it, "Anjali's hands and Rajesh's face" reads as one quoted span and the middle
+# of the sentence disappears.
+_QUOTE_SPAN = (
+    r"(?:[“”\"][^“”\"]{1,200}[“”\"]"
+    r"|(?<![A-Za-z0-9])[‘’'][^‘’']{1,200}[‘’'](?![A-Za-z]))"
+)
+_QUOTED_RE = re.compile(_QUOTE_SPAN)
+
+# ⚠ "title", "credits" AND "letter" ARE DELIBERATELY NOT HERE. Every one of them
+# is an ordinary word before it is a lettering word — "the title character", "an
+# opening credit sequence", and the one that was actually caught in testing,
+# "ANJALI reads a letter at the kitchen table", which came back as "ANJALI, her
+# face falling." A letter in someone's hands is a PROP. "title" and "credits"
+# are caught below instead, where a card noun follows them and the meaning is
+# not in doubt; a letter held in shot is simply allowed.
+_TEXT_NOUN = (
+    r"(?:text|texts|word|words|wording|writing|lettering|"
+    r"caption|captions|subtitle|subtitles|headline|message|slogan|tagline|"
+    r"typography|inscription|signage)"
+)
+_TEXT_VERB = (
+    r"(?:display|displays|displayed|displaying|show|shows|shown|showing|"
+    r"read|reads|reading|appear|appears|appearing|write|writes|written|"
+    r"superimpose|superimposed|superimposing|overlay|overlays|overlaid|"
+    r"emblazon|emblazoned|inscribe|inscribed|spell|spells|spelled|spelt|"
+    r"print|prints|printed|stamp|stamps|stamped|say|says|saying)"
+)
+# ⚠ RUNS BEFORE the bare-quote sweep below, and that order is the whole reason
+# it exists. Deleting the quote first leaves the VERB standing — "a shop sign
+# reading" — which is a worse sentence than either the original or the cut one.
+# Trigger word and quote go together, along with the rest of their clause.
+_QUOTED_LETTERING_RE = re.compile(
+    rf"\s*\b(?:that\s+|which\s+)?(?:{_TEXT_VERB}|{_TEXT_NOUN})\s+"
+    rf"(?:the\s+|a\s+|an\s+)?{_QUOTE_SPAN}[^,;.:]*",
+    re.I,
+)
+
+# Each cuts from its trigger to the end of that CLAUSE, never past the next
+# comma or full stop — so "Anjali lights the diya, the words 'Shubh Deepavali'
+# appearing above her" loses the second half and keeps the first.
+_LETTERING_CLAUSE_RES = (
+    # "…with the text …", "…featuring bold Hindi lettering …"
+    re.compile(
+        rf"\s*\b(?:with|bearing|carrying|featuring|containing)\s+"
+        rf"(?:\w+\s+){{0,3}}?{_TEXT_NOUN}\b[^,;.:]*",
+        re.I,
+    ),
+    # "…displaying the words …", "…that reads …", "…printed with …"
+    re.compile(
+        rf"\s*\b(?:that\s+|which\s+)?{_TEXT_VERB}\s+"
+        rf"(?:the\s+|a\s+|an\s+)?(?:\w+\s+){{0,3}}?{_TEXT_NOUN}\b[^,;.:]*",
+        re.I,
+    ),
+    # "…the words appear …", "…a caption reads …"
+    re.compile(
+        rf"\s*\b(?:the|a|an)\s+(?:\w+\s+){{0,2}}?{_TEXT_NOUN}\s+"
+        rf"(?:\w+\s+){{0,2}}?{_TEXT_VERB}\b[^,;.:]*",
+        re.I,
+    ),
+    # bare "on-screen text" / "text on the screen"
+    re.compile(
+        rf"\s*\b(?:on-?screen\s+{_TEXT_NOUN}|{_TEXT_NOUN}\s+on\s+(?:the\s+)?screen)"
+        rf"\b[^,;.:]*",
+        re.I,
+    ),
+)
+
+# The frame whose whole subject IS the writing. Cutting a clause cannot save
+# this one — there is no picture underneath it — so the sentence is replaced.
+_TEXT_CARD_RE = re.compile(
+    r"\b(?:graphic|title|text|end|closing|credit|credits|caption|intertitle|"
+    r"typographic)[\s-]*(?:card|screen|slate|plate)\b",
+    re.I,
+)
+
+# Left behind when a clause is cut out of the middle: "…the altar and ." or
+# "…the altar , the diya lit." Both are tidied rather than shipped.
+_DANGLING_RE = re.compile(
+    r"\s+(?:and|or|but|with|as|while|where|when|that|which|of|in|on|to|the|a|an)"
+    r"\s*(?=[,;.:]|$)",
+    re.I,
+)
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([,;.:!?])")
+_REPEATED_PUNCT_RE = re.compile(r"([,;:])\s*(?=[,;.:])")
+_WORD_COUNT_RE = re.compile(r"[A-Za-z]{2,}")
+
+
+def _tidy_sentence(text: str) -> str:
+    """Close the gap a removed clause leaves, without rewriting what remains."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    for _ in range(3):
+        before = text
+        text = _DANGLING_RE.sub("", text)
+        text = _REPEATED_PUNCT_RE.sub("", text)
+        text = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", text)
+        text = text.strip(" ,;:-–—")
+        if text == before:
+            break
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
+
+
+def _fallback_frame(location: str = "") -> str:
+    """What to draw when the description turned out to be nothing but words.
+
+    ⚠ IT USES THE SHOT'S OWN LOCATION and invents nothing else. An end card is
+    the last image of the film held still; the words that belong on it live in
+    `dialogue` under ON SCREEN, which the board, the PDF and the animatic read
+    and no image prompt ever does.
+    """
+    loc = str(location or "").strip().rstrip(" .")
+    if loc:
+        # "home altar" needs the article; "the family home" and "Shivaji Park"
+        # already read as one, and "a wide shot of the the family home" is the
+        # kind of thing an image model happily draws twice.
+        if not re.match(r"(?i)^(?:a|an|the|his|her|their|its|our|my)\b", loc) and not loc[:1].isupper():
+            loc = f"the {loc}"
+        return f"A wide, still shot of {loc}, held as the film's final image."
+    return (
+        "A wide, still, uncluttered background held as the film's final "
+        "image, with nothing written or printed anywhere in it."
+    )
+
+
+def strip_lettering(description: str, location: str = "") -> str:
+    """Remove any instruction to draw words from a shot description.
+
+    Returns the sentence with lettering clauses cut out, or — when the sentence
+    described nothing but the lettering — a plain frame built from `location`.
+    Text with no such instruction comes back byte-for-byte unchanged.
+    """
+    original = str(description or "").strip()
+    if not original:
+        return original
+
+    # ⚠ ORDER MATTERS: trigger-word-plus-quote first, then any quote left over,
+    # then the unquoted phrasings. See _QUOTED_LETTERING_RE.
+    text = _QUOTED_LETTERING_RE.sub(" ", original)
+    text = _QUOTED_RE.sub(" ", text)
+    for pattern in _LETTERING_CLAUSE_RES:
+        text = pattern.sub(" ", text)
+    # Checked on what SURVIVED the cuts: "a graphic card" is still a graphic
+    # card after its "with text…" clause has gone.
+    is_card = bool(_TEXT_CARD_RE.search(text))
+    text = _tidy_sentence(text)
+    # Fewer than four real words left is not a shot description any more,
+    # whatever it started as.
+    if is_card or len(_WORD_COUNT_RE.findall(text)) < 4:
+        text = _fallback_frame(location)
+
+    if text != original:
+        logger.info(
+            "[panel] lettering instruction removed from a shot description: "
+            "%r -> %r", original, text,
+        )
+    return text
+
+
 # Aspect-ratio phrasing (the image is also post-cropped to the exact ratio).
 _STORYBOARD_ASPECT_HINTS = {
     "21:9": "ultra-wide 21:9 cinemascope framing",
@@ -1257,7 +1446,11 @@ def generate_storyboard_panel(
                 "everything in frame the same — ONLY re-render it in the new art style "
                 "described above. Do not change the layout or what is happening."
             )
-    parts.append(f"Scene: {description}")
+    # ⚠ SCRUBBED HERE, not where it was written. The board being drawn may have
+    # been broken down months ago, or its description edited by hand on the tile
+    # — this is the one line every panel passes through, so it is the one place
+    # a lettering instruction can be stopped for certain. See strip_lettering().
+    parts.append(f"Scene: {strip_lettering(description, location)}")
     parts.append(_SINGLE_FRAME_RULE)
     # Asked for one panel, the model otherwise oscillates between drawing edge to
     # edge and dropping a small sketch onto a big blank page — measured at 64% to

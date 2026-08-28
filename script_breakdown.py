@@ -29,6 +29,14 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+# ⚠ ONE definition of "this sentence orders lettering", not two. It lives on the
+# image side because that is where the ban it enforces lives
+# (`_SINGLE_FRAME_RULE`: no text, no captions, no lettering), and it is called
+# from both ends — here, so the board shows a drawable sentence, and there, so
+# an older board cannot slip one past. A second copy of those regexes would
+# drift, and the two ends would disagree about what is allowed.
+from gemini_client import strip_lettering
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -412,6 +420,25 @@ _SPEECH_RULE = (
     "glowing on the altar') and NEVER quote the words, never say "
     "'superimposed', 'with the text', 'the words appear' or 'a caption "
     "reads'.\n"
+    # ⚠ THE SECOND LIVE RUN CAUGHT THE RULE ABOVE OUT IN TURN. It bans the
+    # phrasings that had gone wrong and says nothing about the SUBJECT, so the
+    # model wrote "A graphic card with text displayed on screen." — no quote,
+    # nothing on the banned list, and still an order to letter. The panel came
+    # back with invented Hindi burnt into it that did not match the ON SCREEN
+    # line at all. Naming the frame is the fault; banning quotes never touched
+    # it. (`gemini_client.strip_lettering()` now enforces this in Python too —
+    # this paragraph is what stops it having to.)
+    "- ⚠ AND NEVER MAKE THE WRITING THE SUBJECT OF THE FRAME. 'A graphic "
+    "card', 'a title card', 'a text card', 'an end screen', 'a caption plate' "
+    "— all forbidden, because there is no photograph underneath them: a frame "
+    "whose only content is words cannot be drawn by a model that is not "
+    "allowed to draw words, and what comes back is invented misspelt "
+    "lettering. The word 'text' must not appear in a `description` at all. An "
+    "end card is described as the PICTURE it is held on — the last real image "
+    "of the film, still: 'a wide of the lamplit altar, the idol glowing, the "
+    "room empty and quiet'. If you cannot name something photographable to "
+    "hold it on, the line does not need a shot of its own — attach it to the "
+    "last shot instead.\n"
     "- The words themselves go in `dialogue`, as one entry with the character "
     "'ON SCREEN' and the line exactly as the script wrote it. That is the one "
     "field the board, the PDF and the animatic read and no image prompt ever "
@@ -425,6 +452,40 @@ _SPEECH_RULE = (
     "the proof the line belongs to an existing shot — attach it there.\n"
     "- The title line, 'LOGLINE:' and the CAST block at the top of the script "
     "are not shots either. They describe the film; they are not in it.\n"
+)
+
+# ⚠ THE COMPLEMENT OF THE MERGE RULE, AND IT HAD TO BE SAID SEPARATELY.
+# `_SYS_DENSITY_*` already says two shots showing the same subject at the same
+# framing are ONE shot — merge them. That rule is about shots which are the same
+# BEAT. It has nothing to say about three different beats all photographed the
+# same way, and that is what came back: shots 2, 3 and 4 of a finished board
+# were three near-identical medium shots of one potter's wheel. The story moved;
+# the pictures did not, and a viewer reads that as a stutter rather than as
+# three shots. Reported.
+#
+# ⚠ SO THE ANSWER HERE IS NOT "MERGE" — merging would delete story. It is to
+# photograph the same place from a different distance, which is what a scene
+# actually is.
+_VARIETY_RULE = (
+    "⚠ TWO SHOTS IN A ROW MUST NOT BE THE SAME PICTURE. Consecutive shots that "
+    "carry DIFFERENT beats but the same `camera` on the same subject are a "
+    "fault: three medium shots of one table in a row read as one shot printed "
+    "three times, however different the actions in them are.\n"
+    "- Consecutive shots must differ in at least ONE of: the framing (wide / "
+    "medium / close-up / extreme close-up / insert), the angle (eye level, "
+    "low, high, over-the-shoulder, from behind, overhead), or WHAT IS IN FRAME "
+    "(a different person, a different part of the action, a different corner "
+    "of the room). A scene reads as a scene when it moves between a WIDE that "
+    "says where we are, a MEDIUM that carries the action, and a CLOSE that "
+    "lands the detail or the feeling.\n"
+    "- ⚠ THE FRAMING CHANGES, NOT THE STORY. Never invent an action, a person "
+    "or a place to make a shot look different, and never choose an angle the "
+    "moment does not support. And do NOT merge these shots — they are "
+    "different beats and the film needs all of them; re-frame them instead. "
+    "(Merging is only for two shots that are the same beat AND the same "
+    "picture — see the rule above.)\n"
+    "- Read your finished list back and check the `camera` values in order. "
+    "Three identical ones in a row is the failure this rule exists to stop.\n"
 )
 
 _PROMPT_TEMPLATE = (
@@ -451,7 +512,9 @@ _PROMPT_TEMPLATE = (
     "is separately told to draw no text, no captions and no lettering of any "
     "kind. So it describes the PICTURE and nothing else: never any words to be "
     "written into the frame, no 'with the text …', no 'superimposed', no "
-    "caption, no title, no subtitle, no logo wording. "
+    "caption, no title, no subtitle, no logo wording — and never a frame that "
+    "IS writing: no 'graphic card', no 'title card', no 'end screen'. ⚠ The "
+    "word 'text' must not appear in this sentence at all. "
     "Write it as the NEXT shot of a film that is already running, and open it at "
     "the START of this shot's action (see the rule above). "
     "Name the characters by their cast names every time — never 'he', 'the "
@@ -509,6 +572,7 @@ _PROMPT_TEMPLATE = (
     "  - location: where the shot takes place\n"
     "  - camera: the shot type / angle, e.g. 'wide establishing', 'close-up', "
     "'over-the-shoulder', 'medium two-shot'\n"
+    + _VARIETY_RULE +
     "  - movement: how the camera MOVES during the shot, two or three words: "
     "'static', 'slow push-in', 'pan left', 'handheld follow', 'tilt up', "
     "'crane down'. Most shots are 'static' and that is the right answer for "
@@ -1006,6 +1070,13 @@ def _coerce_shots(raw) -> list[dict]:
         desc = str(item.get("description", "")).strip()
         if not desc:
             continue
+        # ⚠ THE SENTENCE IS SCRUBBED OF LETTERING INSTRUCTIONS BEFORE ANYONE SEES
+        # IT. `_SPEECH_RULE` asks the model not to write one; this is what makes
+        # sure. Done here rather than only at the image gate because the user
+        # READS this sentence on the board tile and edits it — a description
+        # saying "a graphic card with text displayed on screen" reads as a
+        # promise the picture is never allowed to keep.
+        desc = strip_lettering(desc, str(item.get("location", "") or ""))
         chars = item.get("characters") or []
         if not isinstance(chars, list):
             chars = [str(chars)]

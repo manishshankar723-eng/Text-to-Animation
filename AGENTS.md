@@ -275,7 +275,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-27 — **THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR.** `.cast-desc` was a fixed 76px with its own scrollbar, so every cast and prop description was clipped mid-sentence — ⚠ **on the very text the character is DRAWN from**. Both steps use `GrowTextarea` now. **And the cast step never said who deserved a reference**: `ANANYA` in most of the film and `RAJESH` in one shot were offered the same button at the same price — the second time that exact waste has been reported. ⚠ **Guessing "hands only" from the wording would be a guess; the shot count is a FACT**, already known where the cast list is built, and it answers the same question — so each card now carries `1 shot` (warn colour) or `7 shots`, and skipping becomes an informed choice. The count lower-cases before de-duplicating, so one shot naming "Ananya" and "ANANYA" is one appearance. ⚠ Separately: `tests/plan_script_check.py` fails with **403 on POST /plans for a new account** — confirmed NOT ours by running it on a stashed clean tree, and nobody has looked at it. See the Work Log.
+**Last updated:** 2026-08-28 — **THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED.** `_SPEECH_RULE` banned quoting the ON SCREEN line into a `description`, and named the phrasings that had gone wrong — `'superimposed'`, `'with the text'`. The model obeyed all of them and wrote *"A graphic card with text displayed on screen."* ⚠ **The ban was on the PHRASINGS and never touched the SUBJECT**: a frame whose whole content is writing has nothing else to draw, so the model invented Hindi (*"समाप्त / धन्यवाद"*) that did not even match the line the user asked for. The rule now bans the subject too (no *"graphic card"*, no *"title card"*, and the word *"text"* may not appear in a description at all) and says what an end card IS instead — ⚠ **and it is enforced in Python, because a prompt is a request.** New `gemini_client.strip_lettering()` cuts lettering clauses at their own comma, takes a trigger word and its quote together, replaces a sentence only when it was nothing but writing (using the shot's own `location`, inventing nothing), and runs at BOTH ends — where the breakdown writes the sentence AND on the one line every panel passes through, so an older board cannot slip one past. **Also: three medium shots of one potter's wheel.** ⚠ The merge rule would have made that worse — those were three different beats and merging deletes story — so a new `_VARIETY_RULE` asks for a different framing instead, and says explicitly not to merge. `tests/shot_density_check.py` gains 20 checks and passes. ⚠ The scrubber is tested; both prompt changes are unverified. See the Work Log.
+
+**Previously:** 2026-08-28 — **"RESTYLE ALL" WAS AIMED AT A STYLE NOBODY CHOSE.** The board's restyle picker was `useState("comic")` — a hard-coded literal that never read the board — so a **Cinematic** board showed *"Add a style: 💥 Comic"*, and ⚠ **one press would have redrawn all twelve panels in the wrong style and billed for every one**. The picker now opens on the style the board actually is (read off `variants[activeVariant].style`, not the stale `styleLabel` prop), the variant chip is shown even for a single style so the screen STATES what you are looking at, and **"Restyle all" is disabled for a style the board already has** — those pictures exist and the chips switch to them free. **B4 was on this page too** (`rows={2}` clipped five of twelve descriptions → `GrowTextarea`, third place this box has been fixed), and the draw button, which floated wherever each shot's text ended, is now pinned to the foot of every tile. ⚠ `npm run build` passes; **nothing has been opened in a browser.** See the Work Log.
+
+**Previously:** 2026-08-27 — **THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR.** `.cast-desc` was a fixed 76px with its own scrollbar, so every cast and prop description was clipped mid-sentence — ⚠ **on the very text the character is DRAWN from**. Both steps use `GrowTextarea` now. **And the cast step never said who deserved a reference**: `ANANYA` in most of the film and `RAJESH` in one shot were offered the same button at the same price — the second time that exact waste has been reported. ⚠ **Guessing "hands only" from the wording would be a guess; the shot count is a FACT**, already known where the cast list is built, and it answers the same question — so each card now carries `1 shot` (warn colour) or `7 shots`, and skipping becomes an informed choice. The count lower-cases before de-duplicating, so one shot naming "Ananya" and "ANANYA" is one appearance. ⚠ Separately: `tests/plan_script_check.py` fails with **403 on POST /plans for a new account** — confirmed NOT ours by running it on a stashed clean tree, and nobody has looked at it. See the Work Log.
 
 **Previously:** 2026-08-27 — **THE RING, ROUND THREE: MY OWN FIX MADE IT WORSE.** Giving each chained call its own SLICE of the bar (0-50, 50-100) stopped the restart and created two faults — a ring approaching 50 crawls at half the speed of one approaching 100, and each slice ENDED with a half-second sprint to its own ceiling, so the motion was slow-jump-slow-jump (*"kabhi fast kabhi slow"*). Worse, the sprint handed off on the frame it touched 100, before React painted it (*"laga 100 gaya hi nahi"*) — I had removed the 300ms hold the round before, on the user's own instruction, without noticing it was the only thing making 100 renderable. ⚠ **Both asks were right**: the complaint then was a pause after a THIRTY-SECOND FREEZE; with the freeze gone, a fifth of a second is the completion, not a wait. Now ONE element mounted once, one continuous curve, `final={!writing}` so a non-final call hands off WHERE IT STANDS with no sprint. Simulated: largest single-frame movement while waiting, **1%**. **Also: the unfinished board is now on HOME** — its own strip above Recent work (⚠ not IN it: a draft has no panels and is not a board), resuming in one click via an `autoResumeDraft` flag consumed when the draft ARRIVES, not on mount. See the Work Log.
 
@@ -3450,7 +3454,124 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-27 (latest) — THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR
+### 2026-08-28 (latest) — THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED
+
+Two faults left over from the 12-panel board review.
+
+**1. THE END CARD DREW ITS OWN HINDI, AND THE BAN THAT WAS SUPPOSED TO STOP IT
+WAS THE THING AT FAULT.** Round one (2026-08-27) added `_SPEECH_RULE`, which
+forbids quoting the ON SCREEN line into a `description` and names the phrasings
+that had gone wrong: `'superimposed'`, `'with the text'`, `'a caption reads'`.
+The model obeyed every one of them and wrote:
+
+> *"A graphic card with text displayed on screen."*
+
+No quote, nothing on the banned list, and still a flat order to letter. The
+panel came back carrying invented Hindi (*"समाप्त / धन्यवाद"*) that did not even
+match the ON SCREEN line the user had asked for. ⚠ **The rule banned the
+PHRASINGS and never touched the SUBJECT** — a frame whose entire content is
+writing is unlettered by definition, and an image model handed one invents
+letters, because there is nothing else to draw.
+
+Fixed at three levels, deliberately:
+
+- **The rule now bans the subject**, not just the quote: no *"a graphic card"*,
+  *"a title card"*, *"an end screen"*, and ⚠ **the word "text" may not appear in
+  a `description` at all**. It also says what an end card IS instead — the last
+  real image of the film, held still — because "do not" with no alternative is
+  what produced the card the first time.
+- ⚠ **AND IT IS ENFORCED IN PYTHON, because a prompt is a request.** New
+  `gemini_client.strip_lettering()` cuts lettering instructions out of a
+  sentence: a trigger word and its quote go together (so *"a shop sign reading
+  'Sharma Sweets'"* becomes *"A close-up of a shop sign."*, never *"a shop sign
+  reading."*), clauses are cut **at their own comma** so the picture before them
+  survives, and only when the sentence turns out to be nothing but writing is it
+  replaced — by **the shot's own `location`**, inventing nothing.
+- **It runs at BOTH ends.** In `script_breakdown._coerce_shots`, so the sentence
+  the user reads and edits on the tile is a drawable one; and at
+  `generate_storyboard_panel`'s `Scene:` line, which is the single line every
+  panel passes through — so a board broken down months ago, or a description
+  typed by hand, cannot slip one past either.
+
+⚠ **A scrubber that rewrites clean sentences would be worse than the bug**, so
+it deletes and never paraphrases, and the false positives found while building
+it are now checks: *"ANJALI reads a **letter** at the kitchen table"* (a letter
+in someone's hands is a PROP — `letter` was removed from the word list), and
+*"shop **signage** and banners lining both sides"* (a sign in shot is still a
+sign; only the words on it go). `"title"` and `"credits"` are excluded for the
+same reason and caught only when a card noun follows them.
+
+**2. SHOTS 2, 3 AND 4 WERE THREE MEDIUM SHOTS OF ONE POTTER'S WHEEL.** The
+story advanced; the pictures did not. ⚠ **The existing merge rule had nothing to
+say about this and would have made it worse**: it merges two shots that are the
+same subject at the same framing, and these were three DIFFERENT beats — merging
+would have deleted story. New `_VARIETY_RULE`, sitting next to the `camera`
+field it is about, says consecutive shots must differ in at least one of
+framing / angle / what is in frame, and says **explicitly not to merge them** so
+the two rules cannot pull against each other. It also forbids inventing action
+or an unsupported angle to manufacture variety: *the framing changes, not the
+story*.
+
+`tests/shot_density_check.py` grows sections [8] and [9] (20 new checks) and
+passes, along with `board_look_check`, `shot_metadata_check`, `grounding_check`,
+`shot_infill_check`, `storyboard_draft_check` and `key_pose_scope_check`. ⚠ **The
+scrubber is deterministic and tested; both PROMPT changes are requests and have
+not had a live run.**
+
+### 2026-08-28 — "RESTYLE ALL" WAS AIMED AT A STYLE NOBODY CHOSE, AND B4 WAS ON THE BOARD TOO
+
+Three faults off one screenshot of a finished 12-panel Cinematic board. All three
+are in `client/src/components/StoryboardBoard.jsx` and `client/src/styles/storyboard.css`.
+
+**1. THE EXPENSIVE ONE: THE RESTYLE PICKER OPENED ON `comic`, ALWAYS.**
+`const [newStyle, setNewStyle] = useState("comic")` — a hard-coded literal that
+never looked at the board. So a board drawn in **Cinematic** rendered a bar
+reading *"Add a style: 💥 Comic"*, and ⚠ **one press of "Restyle all" would have
+redrawn all twelve panels in a style nobody asked for and billed for every one
+of them.** The board's own style was not stated anywhere near the button either —
+the variant chips were hidden behind `variants.length > 1`, which is false for
+every board that has never been restyled, i.e. the exact boards at risk.
+
+Four changes, all pulling in the same direction — *the screen must say what the
+board IS before it offers to change it*:
+
+- `newStyle` starts at **`null`**, meaning "the user hasn't picked one yet", and
+  a new `selectedStyle = newStyle ?? currentStyle` is what the `<select>` shows.
+  Open the board, the picker reads the style you are looking at.
+- `currentStyle` is read off **the board** (`variants[activeVariant].style`),
+  never the `styleLabel` prop — the prop is whatever the parent screen was
+  holding at mount and does not follow a restyle or a variant switch. The header
+  line now reads it too, so header, chip and picker cannot disagree.
+- The **variant chips render for a single style as well**, disabled, as a label:
+  *"Style: 🎬 Cinematic"* sits directly beside the picker that spends money.
+- ⚠ **"Restyle all" is now DISABLED when the chosen style is one the board
+  already has** (`alreadyStyled`), with the reason on hover — those pictures
+  exist and the chips switch to them for free. `handleRestyle()` re-checks it,
+  because a guard that only lives on a `disabled` attribute is one stray click
+  from not existing.
+
+Server-side `POST /storyboards/{id}/restyle` is UNCHANGED and still accepts a
+duplicate style — the two locks here are both client-side.
+
+**2. B4 AGAIN, THIRD PLACE: the board tile's description was `rows={2}`.**
+Shots 3, 6, 7, 10 and 11 were cut mid-sentence behind a scrollbar — the same
+fault fixed on the review step and then on cast/props, on the same kind of box,
+for the same reason: ⚠ **it is the sentence the panel is DRAWN from.** Swapped
+for `GrowTextarea` (`rows={2}` is now the floor, not the height).
+
+**3. The draw button floated at a different height in every tile.** A panel with
+a `DIALOGUE` line pushed its button down, a silent one let it ride up, so a row
+of four read as four buttons on four lines. `.board-tile` and its `figcaption`
+are a flex column now and a `.board-tile-fill` spacer eats the leftover height —
+⚠ **the same construction `.board-column` already uses in `key-poses.css` to pin
+the key-pose strip**, and deliberately scoped `:not(.board-column)` so the two
+do not both claim the slack and pin neither. `align-self: flex-start` keeps the
+button its own width, which is the width it has always been.
+
+`npm run build` passes. ⚠ **NOT opened in a browser** — no live board has been
+looked at since these three changes.
+
+### 2026-08-27 — THE CAST PAGE HAD B4 ALL OVER AGAIN, AND NOTHING SAID WHO WAS WORTH PAYING FOR
 
 First look at the cast step in a browser. Two things, one of them a repeat.
 
@@ -22288,6 +22409,32 @@ reported BROKEN and has since been rewritten a second time** (see the top Work
 Log entry — the slice-per-call design crawled, jumped, and never painted 100).
 Nothing has been GENERATED from this board yet — cast, assets, panels, PDF are
 all still unseen.
+
+### 🟠 OPEN, FROM THE 12-PANEL BOARD REVIEW (2026-08-28)
+
+Three faults came out of a finished Cinematic board. **Two are fixed in code and
+unseen in a browser; one is untouched and is a PROMPT fault, not a UI one.**
+
+- ✅ **Restyle was aimed at the wrong style.** Fixed — picker opens on the
+  board's own style, the style is stated on screen beside the button, and
+  restyling into a style the board already has is refused. See the top Work Log
+  entry. ⚠ **The board that was on screen is unaffected**; this only stops the
+  next press.
+- ✅ **B4 on the board tile** (`rows={2}` clipping five of twelve descriptions)
+  and the **draw button floating at a different height in every tile.** Both
+  fixed, both unseen.
+- ✅ **The end card that came back with Hindi lettering burnt into it**
+  (*"समाप्त / धन्यवाद"*), contradicting its own `ON SCREEN` line. Fixed at the
+  rule (the SUBJECT of the frame is banned now, not just the quoted words) and
+  in Python (`gemini_client.strip_lettering()`), at both the breakdown end and
+  the image end. ⚠ **The stored description on the board already on screen is
+  NOT rewritten** — nothing edits the user's text behind their back. Pressing
+  **Regenerate** on that panel now draws a clean picture regardless of what the
+  sentence still says; editing the sentence on the tile is optional.
+- ✅ **Shots 2, 3 and 4 — three near-identical framings of one potter's wheel.**
+  New `_VARIETY_RULE` in the breakdown prompt. ⚠ **This one is a PROMPT change
+  and nothing else** — it will only be known to work from a live run, and it
+  cannot repair the board already drawn.
 
 ### 🔴 NOT OURS, BUT BROKEN — `POST /plans` REFUSES NEW ACCOUNTS
 

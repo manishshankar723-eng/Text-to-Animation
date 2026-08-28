@@ -9,6 +9,10 @@ import * as api from "../api.js";
 // POST /storyboards/{id}/regenerate-panel. Fail-open until the boot call lands.
 import useCapability from "../useCapability.js";
 import DialogueBox from "./DialogueBox.jsx";
+// The shot description is the sentence that gets DRAWN — a fixed two-row box
+// hid the middle of it behind a scrollbar. Same box, same fault, same fix as
+// the review step and the cast/props steps. See GrowTextarea.jsx.
+import GrowTextarea from "./GrowTextarea.jsx";
 import PanelSequenceStrip from "./PanelSequenceStrip.jsx";
 import PanelVersions from "./PanelVersions.jsx";
 // "Ask AI", at the point where it means something: a board exists and the
@@ -113,7 +117,14 @@ export default function StoryboardBoard({
   // so the textarea falls back to the panel's stored description.
   const [editedDesc, setEditedDesc] = useState({});
   // Re-style controls + a nonce to restart polling after a restyle kicks off.
-  const [newStyle, setNewStyle] = useState("comic");
+  //
+  // ⚠ `null` MEANS "THE USER HASN'T PICKED ONE YET", and that is the whole
+  // point. This used to be a hard-coded "comic": a board drawn in Cinematic
+  // opened with the dropdown reading Comic, so one press of "Restyle all" paid
+  // to redraw every panel in a style nobody asked for. Left null, the picker
+  // shows the style the board IS (see `selectedStyle`) until the user chooses
+  // otherwise — and then the button below refuses the style it already has.
+  const [newStyle, setNewStyle] = useState(null);
   const [restyleBusy, setRestyleBusy] = useState(false);
   const [pollNonce, setPollNonce] = useState(0);
 
@@ -303,6 +314,18 @@ export default function StoryboardBoard({
     job?.result?.variants ||
     (panels.length ? [{ style: job?.result?.style, panels }] : []);
   const activeVariant = job?.result?.active_variant || 0;
+  // The style the board is ACTUALLY drawn in right now, read off the board
+  // itself rather than the `styleLabel` prop — the prop is whatever the parent
+  // screen was holding when it mounted this, and it does not follow a restyle
+  // or a variant switch. Everything on this screen that names a style reads
+  // this, so the header, the chip and the picker can never disagree.
+  const currentStyle = variants[activeVariant]?.style || job?.result?.style || "";
+  // What the picker shows: the user's choice if they made one, otherwise the
+  // style the board already is. See the `newStyle` note above.
+  const selectedStyle = newStyle ?? currentStyle ?? "";
+  // Redrawing into a style this board ALREADY has is pure spend for a picture
+  // that exists — the chips above switch to it for free.
+  const alreadyStyled = variants.some((v) => v.style === selectedStyle);
 
   // Switch which style variant is shown (persist server-side, update locally).
   async function switchVariant(idx) {
@@ -333,11 +356,15 @@ export default function StoryboardBoard({
 
   // Re-draw the whole board in a new style (kept as a new variant); resume polling.
   async function handleRestyle() {
-    if (restyleBusy || running || !newStyle) return;
+    // ⚠ THE `alreadyStyled` GUARD IS THE POINT, not a nicety: this call redraws
+    // every panel on the board and bills for every one of them. The button is
+    // disabled in that case too — this is the second lock, for the same reason
+    // the first one exists.
+    if (restyleBusy || running || !selectedStyle || alreadyStyled) return;
     setError("");
     setRestyleBusy(true);
     try {
-      await api.restyleStoryboard(jobId, newStyle);
+      await api.restyleStoryboard(jobId, selectedStyle);
       setPollNonce((n) => n + 1); // restart the poll loop for the running restyle
     } catch (e) {
       setError(e.message);
@@ -712,7 +739,13 @@ export default function StoryboardBoard({
             onSave={renameBoard}
           />
           <p className="muted">
-            {styleLabel} · {aspect} · {total} panel{total === 1 ? "" : "s"}
+            {/* The style the board IS, read off the board. The `styleLabel`
+                prop is only the fallback for the moment before the first poll
+                lands — after a restyle or a variant switch it is stale, and a
+                header naming one style over panels drawn in another is how the
+                wrong "Restyle all" got pressed in the first place. */}
+            {(currentStyle && styleLabelFor(currentStyle)) || styleLabel} · {aspect} ·{" "}
+            {total} panel{total === 1 ? "" : "s"}
             {boardSeconds > 0 ? ` · ≈ ${formatRuntime(boardSeconds)}` : ""}
           </p>
         </div>
@@ -741,31 +774,45 @@ export default function StoryboardBoard({
           Script to Storyboard, then copy the board over. */}
       {!sequenceMode && variants.length > 0 && (
         <div className="board-styles">
-          {variants.length > 1 && (
-            <div className="board-variant-switch">
-              <span className="board-styles-label">Style:</span>
-              {variants.map((v, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={`opt-chip ${i === activeVariant ? "active" : ""}`}
-                  disabled={running}
-                  onClick={() => switchVariant(i)}
-                  title={`Show the ${styleLabelFor(v.style)} version`}
-                >
-                  {styleLabelFor(v.style)}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* ⚠ SHOWN EVEN FOR A SINGLE STYLE, where it switches nothing. It is
+              the one place on this screen that states, in the board's own
+              words, what the panels are drawn in — and it sits directly beside
+              the picker that spends money changing it. Hiding it until a second
+              style existed is exactly why a Cinematic board could be restyled
+              to Comic without anything on screen contradicting it. */}
+          <div className="board-variant-switch">
+            <span className="board-styles-label">Style:</span>
+            {variants.map((v, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`opt-chip ${i === activeVariant ? "active" : ""}`}
+                disabled={running || variants.length === 1}
+                onClick={() => switchVariant(i)}
+                title={
+                  variants.length === 1
+                    ? `This board is drawn in ${styleLabelFor(v.style)}`
+                    : `Show the ${styleLabelFor(v.style)} version`
+                }
+              >
+                {styleLabelFor(v.style)}
+              </button>
+            ))}
+          </div>
           <div className="board-restyle">
             <span className="board-styles-label">Add a style:</span>
             <select
               className="board-style-select"
-              value={newStyle}
+              value={selectedStyle}
               disabled={running || restyleBusy}
               onChange={(e) => setNewStyle(e.target.value)}
             >
+              {/* Only reachable if the board reports a style this build doesn't
+                  know — better an honest blank than silently pointing at
+                  whichever option happens to be first in the list. */}
+              {!RESTYLE_OPTIONS.some((s) => s.id === selectedStyle) && (
+                <option value="">Pick a style…</option>
+              )}
               {RESTYLE_OPTIONS.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
@@ -775,9 +822,13 @@ export default function StoryboardBoard({
             <button
               type="button"
               className="btn secondary"
-              disabled={running || restyleBusy}
+              disabled={running || restyleBusy || !selectedStyle || alreadyStyled}
               onClick={handleRestyle}
-              title="Re-draw every panel in this style, kept as a new switchable version"
+              title={
+                alreadyStyled
+                  ? `This board is already drawn in ${styleLabelFor(selectedStyle)} — pick a different style to add one`
+                  : `Re-draw all ${total} panel${total === 1 ? "" : "s"} in ${styleLabelFor(selectedStyle)}, kept as a new switchable version`
+              }
             >
               {restyleBusy ? (
                 <>
@@ -1140,7 +1191,13 @@ export default function StoryboardBoard({
                     </div>
                   )}
                 </div>
-                <textarea
+                {/* ⚠ GROWS TO ITS TEXT. It was `rows={2}` and every shot whose
+                    description ran past two lines was cut in half behind a
+                    scrollbar — the one thing on the tile the user is meant to
+                    EDIT was the one thing they could not read. Third and last
+                    place this box lives; the review step and cast/props were
+                    already fixed. */}
+                <GrowTextarea
                   className="board-caption-edit"
                   value={editedDesc[p.index] ?? p.description ?? ""}
                   onChange={(e) =>
@@ -1164,6 +1221,13 @@ export default function StoryboardBoard({
                 {shotLine(p) && (
                   <p className="board-shotline tiny muted">{shotLine(p)}</p>
                 )}
+                {/* Eats whatever height is left over, so the draw button below
+                    lands on the SAME line in every tile of a row. Without it
+                    the button rode up under any shot with no dialogue line and
+                    a row of four panels read as four buttons at four different
+                    heights. Inert in sequenceMode — there the key-pose strip is
+                    the thing pinned to the bottom. */}
+                <div className="board-tile-fill" aria-hidden="true" />
                 {/* ⚠ THE BUTTON STAYS, GREYED AND LABELLED. A board of
                     forty panels with no draw button on any of them and no
                     sentence anywhere saying why is the exact failure this
