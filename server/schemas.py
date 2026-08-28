@@ -551,6 +551,12 @@ class ScriptDraft(BaseModel):
 
     text: str = ""
     title: str = ""
+    # ⚠ THE CARD, NOT ONLY THE BOX. The concept the user is part-way through
+    # editing — title, premise, arc, key scenes, length, look. Until this field
+    # existed a refresh kept the script and lost the card, so the only way back
+    # was to generate again, and generating again returns a DIFFERENT film.
+    # `None` means "never had one", which is not the same as an empty one.
+    concept: dict | None = None
     # ISO-8601, set server-side on every save. Empty when never saved.
     updated_at: str = ""
 
@@ -560,6 +566,7 @@ class ScriptDraftUpdate(BaseModel):
 
     text: str = ""
     title: str = ""
+    concept: dict | None = None
 
 
 class ScriptChatMessage(BaseModel):
@@ -1130,6 +1137,22 @@ class StoryboardProject(BaseModel):
     aspect_ratio: str | None = None
     genre: str | None = None
     shots: list[Shot] = Field(default_factory=list)
+    # ⚠ THE CAST AND PROPS COME BACK TOO, and without them re-opening a board
+    # lands on a review step whose cast page knows the NAMES (they are on the
+    # shots) and none of the descriptions — which are what a reference is drawn
+    # from. Stored on the board job as `cast`, since the day boards were first
+    # written; nothing was reading them back.
+    characters: list[Character] = Field(default_factory=list)
+    assets: list[Asset] = Field(default_factory=list)
+    # ⚠ AND THE REFERENCES THAT WERE ALREADY PAID FOR. name → reference_id, the
+    # same shape the draft returns. Without these, re-opening a board shows a
+    # cast page of empty cards and a "(skip refs)" button — every picture the
+    # user has already bought, invisible, and the only visible way forward is
+    # to buy them again. Reported once already on drafts:
+    # *"mai back aaya to mera ananya wala photo dikh hi nahi raha hai … baar
+    # baar generate karna pare, usko paisa lagta hai."*
+    character_refs: dict[str, str] = Field(default_factory=dict)
+    asset_refs: dict[str, str] = Field(default_factory=dict)
     # So a duplicated board redraws in the same culture/period as the original.
     world: World = Field(default_factory=World)
     # The source script, so the review step can still show it line by line.

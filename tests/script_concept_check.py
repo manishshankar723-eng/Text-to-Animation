@@ -37,8 +37,10 @@ Run:
     python tests/script_concept_check.py
 """
 
+import json
 import os
 import sys
+import tempfile
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -60,6 +62,9 @@ def read(*parts: str) -> str:
 
 
 import script_concept as sc  # noqa: E402 — after sys.path is set
+from server import config as _dconfig  # noqa: E402
+from server import drafts as _drafts  # noqa: E402
+from server.schemas import ScriptDraft as _ScriptDraft  # noqa: E402
 
 mod = read("script_concept.py")
 
@@ -372,11 +377,318 @@ check("⚠ THE RING PAINTS 100 BEFORE IT HANDS OVER. Firing on the frame the "
       and "setTimeout(() => onDoneRef.current?.(), SHOW_100_MS)" in bp)
 check("the finish is one fixed sweep from wherever it is, worked out once",
       "finishRate.current === null" in bp and "FINISH_SECONDS" in bp)
+# ---------------------------------------------------------------------------
+# ⚠ THE BOX SURVIVED A REFRESH AND THE CARD DID NOT, WHICH MADE THE WHOLE
+# APPROVAL GATE UNUSABLE WHILE ANYTHING WAS BEING FIXED.
+#
+# Reported after four rounds of testing in one afternoon: "tum kuch karte ho,
+# fir main page refresh karta hun to ye page hat jata hai, isliye mujhe same
+# prompt fir se daalna padta hai — isliye story change ho jaati hai."
+#
+# ⚠ AND RE-GENERATING IS NOT A RECOVERY. The same brief returns a DIFFERENT
+# film every time — that is the whole reason this gate exists — so a lost card
+# is a lost card, along with every edit made to it by hand. `drafts.py` already
+# kept the script box safe for exactly this reason and stopped one field short.
+_dstore = os.path.join(tempfile.gettempdir(), "concept_draft_check.json")
+if os.path.exists(_dstore):
+    os.remove(_dstore)
+_dconfig.USER_STORE = "local"
+_dconfig.LOCAL_DRAFTS_PATH = _dstore
+
+_CONCEPT = {
+    "title": "Ganesh Utsav: Ek Rishta",
+    "premise": "Ek parivaar Ganesh Chaturthi manata hai.",
+    "story_direction": "Ghar ki taiyari -> Bhaavuk visarjan -> Shanti ka ehsaas.",
+    "key_scenes": ["Murti ghar aa rahi hai.", "Visarjan.", "Baccha aasmaan dekh raha hai."],
+    "duration_seconds": 40,
+}
+_drafts.save_draft("check@example.com", "the script", "Bappa", _CONCEPT)
+_back = _drafts.get_draft("check@example.com")
+
+check("⚠ THE CONCEPT IS SAVED WITH THE TEXT IT CAME FROM. One draft, one row — "
+      "restoring the box while dropping the card is what forced a re-generate, "
+      "and a re-generate returns a different film",
+      _back["concept"] == _CONCEPT)
+check("…including the Hinglish, unescaped, through the store and back",
+      "Bhaavuk visarjan" in _back["concept"]["story_direction"]
+      and _back["concept"]["key_scenes"][1] == "Visarjan.")
+
+_drafts.save_draft("check@example.com", "the script", "Bappa", None)
+check("…and null actually CLEARS it — approving and Start over both send null, "
+      "so a finished board must not leave its concept behind to be offered",
+      _drafts.get_draft("check@example.com")["concept"] is None)
+
+# ⚠ A row written before this field existed must still load. There are live
+# drafts in the store right now that have no `concept` key at all.
+_raw = json.loads(open(_dstore, encoding="utf-8").read())
+_raw["older@example.com"] = {"text": "older", "title": "", "updated_at": "2026-01-01"}
+open(_dstore, "w", encoding="utf-8").write(json.dumps(_raw))
+check("⚠ …and a draft saved BEFORE the field existed still loads, with no "
+      "concept rather than an error",
+      _ScriptDraft(**_drafts.get_draft("older@example.com")).concept is None)
+os.remove(_dstore)
+
+check("the client sends the concept up and reads it back down",
+      "concept: concept || null" in api
+      and "{ text, title, concept, updated_at }" in api)
+check("⚠ …and the card is compared BY VALUE before saving, because it is a new "
+      "object on every keystroke and reference equality would never save an "
+      "edited scene line",
+      "const conceptJson = JSON.stringify(concept || null);" in ui
+      and "conceptJson === draftLastConcept.current" in ui
+      and "}, [script, title, concept, draftReady]);" in ui)
+# ⚠ THIS PAIR OF CHECKS USED TO SAY THE OPPOSITE, AND THE CHECKS WERE THE HALF
+# THAT WAS WRONG. They pinned "restore into state, never touch the step, offer
+# it on the form" — and then `tests/workflow_mount_check.py` opened the thing in
+# Chromium and showed the offer could NEVER appear: the only route to the form
+# from a cold start is "New storyboard", which calls `resetWorkflow()` and
+# clears the concept on the way past. A design that reads perfectly in a diff
+# and cannot fire in a browser. The card reopens now, and the form link is the
+# way back from a ← rather than the way back from a refresh.
+check("⚠ A FRESH PAGE LOAD REOPENS THE CARD, and the latch that allows it is at "
+      "MODULE scope — one page LOAD, not one mount. A ref would be spent by "
+      "StrictMode's second mount, which is exactly how the storyboard-draft "
+      "resume bug behaved differently in dev and in the built app",
+      "let conceptReopened = false;" in ui
+      and "if (!conceptReopened) {" in ui
+      and "conceptReopened = true;" in ui
+      # Declared OUTSIDE the component, or it is a per-instance value again.
+      and ui.index("let conceptReopened = false;")
+      < ui.index("export default function ScriptToStoryboard("))
+check("⚠ …and it only ever promotes the DEFAULT step. A user already deeper in "
+      "the workflow — a board, the review step — must not be yanked onto a "
+      "concept card by a draft load that happened to land late",
+      'setStep((cur) => (cur === "library" ? "concept" : cur));' in ui)
+check("…and the form still offers the way back in, for a card you pressed ← on",
+      "↩ Resume your concept" in ui
+      and ui.count("↩ Resume your concept") == 1
+      and "{concept && conceptReady() ? (" in ui)
+check("⚠ …with the behaviour itself pinned in a REAL BROWSER, because none of "
+      "the above can see a white page — `npm run build` shipped one",
+      os.path.exists(os.path.join(ROOT, "tests", "workflow_mount_check.py")))
+
+# ---------------------------------------------------------------------------
+# ⚠ THE WAY FORWARD DISAPPEARED THE MOMENT THE BOARD EXISTED.
+#
+# Reported after the first finished board: coming back from the panels landed
+# on the review step with exactly two buttons — Regenerate and Back to your
+# storyboard — and no route to the cast or props steps. Those are precisely the
+# screens you need then: a character or a prop that came out wrong is fixed
+# THERE, by drawing a reference, not by redrawing panels and hoping.
+#
+# ⚠ Not browser-verified: showing this button needs `boardUpToDate`, which
+# needs a real generation behind it. `tests/workflow_mount_check.py` covers
+# everything on this screen that a served draft can reach.
+check("⚠ cast and props stay REACHABLE after a board has been drawn — the "
+      "up-to-date branch used to collapse to Regenerate + Back, stranding the "
+      "two screens where a wrong character or a drifting prop is actually fixed",
+      "🎭 Cast &amp; props" in ui
+      and 'setStep(activeCast.length > 0 ? "cast" : "assets")' in ui)
+check("…and it never opens an empty screen — it is hidden when there is "
+      "neither cast nor props, and skipped entirely for a style that has no "
+      "reference steps",
+      "!skipsRefs() && (activeCast.length > 0 || activeAssets.length > 0)" in ui)
+
+# ⚠ THE FIRST LINK IN THE PROP CHAIN, AND IT DID NOT EXIST.
+# The Ganesh idol — the subject of the film, in nine of fifteen panels — was
+# redrawn from scratch every time. Characters were consistent; each had a
+# reference. The idol had none, because the breakdown returned an EMPTY asset
+# list and no screen could add to it: `computeAssets()` reads `sh.assets`, the
+# props step only opens when that is non-empty, and nothing could write to it.
+check("⚠ a shot can NAME its props, which is the only thing that makes a "
+      "reference reach a panel — `_gather_refs` matches the shot's own names",
+      'className="shot-assets-row"' in ui
+      and "Props &amp; backgrounds" in ui
+      and "assets: e.target.value.split(\",\")" in ui)
+check("⚠ …split on the comma and NOTHING else, joined back with a bare comma. "
+      "Filtering the empty piece eats the comma as it is typed; trimming each "
+      "piece eats the SPACE inside a name, so 'Ganesh idol' could only be typed "
+      "as 'Ganeshidol'. Both were shipped briefly and both were caught in a "
+      "browser",
+      '(sh.assets || []).join(",")' in ui
+      and '.split(",").map((s) => s.trim())' not in ui)
+
 check("a new storyboard starts with no concept",
       "setConcept(null);" in ui and 'setConceptSource("");' in ui)
+# ---------------------------------------------------------------------------
+# ⚠ THE ONE FIELD THAT MATTERS WAS THE ONE FIELD THAT COULD NOT BE REARRANGED.
+#
+# Reported mid-test. A shot of the idol on its own was added to fill a real gap
+# in the scene list, "＋ Add a scene" appended it at position 7, and it belonged
+# at position 3. There was no way to move it. The concept card exists so the
+# user can change everything before a single panel is paid for — and the CSS
+# comment above `.sts-concept-scenes` had said since it was written that these
+# are the panels and "a blob of prose can't be reordered or deleted". Delete
+# had been built. Reorder never was.
+check("⚠ KEY SCENES CAN BE REORDERED. Order IS the film — these lines become "
+      "the panels in this sequence — and '＋ Add a scene' can only APPEND, so a "
+      "scene thought of late could not reach the middle",
+      "function moveKeyScene(i, dir)" in ui
+      and "onClick={() => moveKeyScene(i, -1)}" in ui
+      and "onClick={() => moveKeyScene(i, 1)}" in ui)
+check("…and it is the SAME control the shot cards already carry, same titles — "
+      "there is one way to reorder a list in this app, not two",
+      ui.count('title="Move up"') == 2 and ui.count('title="Move down"') == 2)
+check("⚠ …and neither end wraps around. The buttons are disabled there, and "
+      "`moveKeyScene` no-ops as well — a keyboard or a double-click that beats "
+      "the re-render must not send scene 1 to the bottom",
+      "disabled={i === 0}" in ui
+      and "disabled={i === scenes.length - 1}" in ui
+      and "if (j < 0 || j >= scenes.length) return c;" in ui)
+
 check("the screen says why it is asking",
       "Is this the right direction?" in ui
       and "nothing is drawn until you approve it" in ui)
+
+# ---------------------------------------------------------------------------
+# ⚠ THE ARC THAT WAS WRITTEN AND THE ARC THAT WAS SHOWN.
+#
+# Reported mid-test on a Hinglish Ganesh Chaturthi concept. The story direction
+# ended "… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai"; the six key
+# scenes ended at the visarjan. The resolution — the blessing that stays after
+# the idol has gone, the whole reason the film is warm and not sad — was
+# written into the approved text and then given to nobody to film.
+#
+# Two more from the same concept: the film opened on a child laying marigolds
+# around an empty puja stall (the run-up, in a forty-second film that has no
+# room for one), and Ganesh ji — the subject of every frame — was carried,
+# touched and prayed to but never once seen on his own.
+DIRECTION = (
+    "Parivaar taiyari karta hai -> Bappa ghar aate hain -> Aarti aur modak -> "
+    "Saanjhi khushi -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai."
+)
+SCENES = [
+    "Ek bachcha puja sthal ke charon or gende ke phool laga raha hai.",
+    "Ek parivaar chhoti Ganesh murti ko darwaze se andar la raha hai.",
+    "Haathon ka close-up aarti karte hue, ek diya jagmaga raha hai.",
+    "Parivaar aankhen band kiye prarthana ke dauran jhoom raha hai.",
+    "Ek bachche ka haath Ganesh murti ki soond ko sehla raha hai.",
+    "Parivaar murti ko visarjan hote hue dekh raha hai.",
+]
+
+check("⚠ THE SCENE LIST HAS TO END WHERE THE ARC ENDS. The two fields were "
+      "only ever asked for separately, so six beats and six scenes read as a "
+      "match while the last beat fell off the end",
+      "THE LAST KEY SCENE IS THE LAST BEAT OF THE STORY DIRECTION"
+      in sc._SYSTEM_INSTRUCTION)
+check("…and every beat before it gets a scene too — a direction and a scene "
+      "list that disagree describe two different films",
+      "COVER EVERY BEAT, NOT ONLY THE ENDING" in sc._SYSTEM_INSTRUCTION)
+check("⚠ the thing the film is ABOUT is seen alone at least once. A subject "
+      "that is only ever carried, held or glimpsed past a shoulder is never "
+      "actually shown — reported on a film about an idol that never framed it",
+      "SHOW WHAT THE FILM IS ABOUT, ALONE, AT LEAST ONCE"
+      in sc._SYSTEM_INSTRUCTION)
+
+# ⚠ THE RE-RUN OF THE SAME BRIEF, WHICH IS WHERE THIS ONE CAME FROM. The three
+# rules above all held — the arc landed on its blessing, every beat had a
+# scene, Ganesh ji finally filled a frame — and the VISARJAN had quietly gone.
+# What was left was anticipation, arrival, devotion, shared joy, blessing: five
+# pleasant beats and nothing that costs anything. A concept gets shorter by
+# dropping the hard beat, because the hard beat is the least comfortable one to
+# keep — and it is the only one an audience feels.
+check("⚠ THE EVENTS THE USER NAMED ARE AS FIXED AS THE CHARACTERS THEY NAMED. "
+      "The list held product / audience / goal / length / tone / setting / "
+      "characters and stopped there, so a visarjan the brief asked for was "
+      "never protected by anything",
+      "and THE EVENTS THEY NAMED" in sc._SYSTEM_INSTRUCTION
+      and "A MOMENT THEY ASKED FOR IS NOT OPTIONAL" in sc._SYSTEM_INSTRUCTION)
+check("…and the film is shortened by tightening scenes, never by deleting one "
+      "of theirs — dropping a beat does not feel like contradicting the user, "
+      "it feels like tightening, which is what makes it the easy mistake",
+      "never by deleting one of theirs" in sc._SYSTEM_INSTRUCTION)
+check("⚠ …and the beat that goes is always the DIFFICULT one. A scene list of "
+      "only pleasant moments has nothing in it to feel — 'jo part zaroori hai, "
+      "emotion yahi sab dekhne se aata hai'",
+      "DO NOT SMOOTH THE HARD BEAT AWAY" in sc._SYSTEM_INSTRUCTION
+      and "let the resolution land after it rather than instead of it"
+      in sc._SYSTEM_INSTRUCTION)
+
+check("the arc's last beat is read straight out of the approved text",
+      sc.final_beat(DIRECTION) == "Aashirwad bana rehta hai."
+      and sc.final_beat("a \u2192 b \u2192 c") == "c")
+check("…and prose with no chain in it has no final beat to demand",
+      sc.final_beat("just a sentence about a family") == ""
+      and sc.final_beat("") == "")
+
+# ⚠ THE PROMPT RULE IS A REQUEST; THIS IS THE GUARANTEE. Whatever the card in
+# front of the user ended up saying — we wrote it, and then they edited it —
+# the brief handed to `write_script()` states where the film stops.
+BRIEF_MISSING = sc.concept_to_brief(
+    {"story_direction": DIRECTION, "key_scenes": SCENES})
+BRIEF_LANDED = sc.concept_to_brief(
+    {"story_direction": DIRECTION,
+     "key_scenes": SCENES + ["Bappa ka aashirwad ghar mein bana rehta hai."]})
+
+check("⚠ A SCENE LIST THAT STOPS SHORT OF THE ARC IS REPAIRED AT THE HANDOFF, "
+      "not hoped about. The writer is told the closing beat outright",
+      "THE FILM ENDS ON THIS" in BRIEF_MISSING
+      and "Aashirwad bana rehta hai." in BRIEF_MISSING.split(
+          "THE FILM ENDS ON THIS")[1])
+check("…and a list that already lands its ending is NOT argued with — a brief "
+      "contradicting itself is the worse failure, so the test for 'covered' "
+      "is deliberately generous",
+      "THE FILM ENDS ON THIS" not in BRIEF_LANDED)
+
+# ---------------------------------------------------------------------------
+# ⚠ A TIGHT RUNTIME IS NOT A FEED, AND IT IS NOT THE HOOK RULE.
+#
+# `is_short_form()` reads the words reel / shorts / viral. A forty-second film
+# that says none of them got no opening rule at all, and opened on preparation.
+check("the runtime the user typed is read, and the SMALLEST one wins — "
+      "'30 second ad for our 5 minute onboarding call' is a 30-second film, "
+      "and reading left to right would have made it a five-minute one",
+      sc.stated_seconds("Make a 40 second Ganesh Chaturthi film") == 40
+      and sc.stated_seconds("30 sec ad for our 5 minute onboarding call") == 30
+      and sc.stated_seconds("a 5 minute documentary") == 300
+      and sc.stated_seconds("no length here") == 0)
+check("…and something that merely looks like a duration is not one",
+      sc.stated_seconds("2 months of work, 3 mm wide") == 0)
+
+_ASKS: dict = {}
+
+
+def _ask_for(text: str, kind: str = "idea") -> str:
+    """What `develop()` actually sends, with the model call stubbed out."""
+    import json as _json
+
+    real = sc._call
+
+    def stub(contents, config, label, spent):
+        _ASKS["last"] = contents[0].parts[0].text
+        return _json.dumps({"title": "T", "premise": "P",
+                            "story_direction": "a -> b",
+                            "key_scenes": ["x", "y", "z"],
+                            "duration_seconds": 40, "visual_direction": "warm"})
+
+    sc._call = stub
+    try:
+        sc.develop(text, kind)
+    finally:
+        sc._call = real
+    return _ASKS["last"]
+
+
+TIGHT_ASK = _ask_for("Ganesh Chaturthi film for one family, 40 seconds, warm")
+REEL_ASK = _ask_for("30 sec viral reel for Ganesh Chaturthi", "brief")
+LONG_ASK = _ask_for("A 5 minute documentary about a potter")
+
+check("⚠ a short film with none of the feed words still gets an opening rule "
+      "— reported as a 40-second film opening on the run-up",
+      "THE RUNTIME IS TIGHT" in TIGHT_ASK and "40 seconds" in TIGHT_ASK)
+check("⚠ …but it MOVES THE OPENING ONLY. Short-form reorders the whole film "
+      "because a feed gives no second chance; a 40-second story still builds "
+      "and still lands its ending",
+      "Only the opening moves." in sc._TIGHT_RUNTIME_RULE
+      and "you are not reordering the story" in sc._TIGHT_RUNTIME_RULE)
+check("⚠ the two never stack — 'put the best image first' and 'only the "
+      "opening moves' underneath it is two instructions arguing in front of "
+      "the model, so the feed rule wins outright",
+      "THIS IS SHORT-FORM" in REEL_ASK
+      and "THE RUNTIME IS TIGHT" not in REEL_ASK)
+check("…and a film with room to breathe is told neither",
+      "THE RUNTIME IS TIGHT" not in LONG_ASK
+      and "THIS IS SHORT-FORM" not in LONG_ASK)
 
 # ---------------------------------------------------------------------------
 print()

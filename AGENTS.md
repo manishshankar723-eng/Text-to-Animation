@@ -263,11 +263,20 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 
 ## ⚙️ Protocol for agents (read this every time)
 
+0. **On start, read [`RULEBOOK.md`](./RULEBOOK.md) FIRST — it is short.** ⚠ This
+   file's Work Log is 22,000 lines ordered by DATE, and nobody reads 22,000 lines
+   before touching one prompt string; that is how the same box got un-grown four
+   times and the same end card was fixed twice. `RULEBOOK.md` is the same history
+   indexed by SCENARIO — read the section for the area you are about to open.
 1. **On start** — read this whole file. The **Work Log** tells you what's already
    done; **Current State / Next Steps** tells you what to do next. When the user
    says "start next", pick the top unchecked item under **Next Steps**.
 2. **While working** — keep changes consistent with the **Conventions** section.
 3. **When done (REQUIRED)** — before ending your turn, update this file:
+   - ⚠ **Add or update a row in [`RULEBOOK.md`](./RULEBOOK.md).** A fix that is
+     only in the Work Log is a fix the next agent will undo. Mark it **PAKKA**
+     (enforced in code) or **GUZARISH** (a prompt rule, unproven until a live
+     run) — and never mark a prompt change PAKKA.
    - Add a dated entry to the **Work Log** describing what you changed (files + why).
    - Tick/adjust items under **Next Steps**; add any new follow-ups you discovered.
    - Update **Current State** if the "where things stand" summary changed.
@@ -275,7 +284,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-28 — **THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED.** `_SPEECH_RULE` banned quoting the ON SCREEN line into a `description`, and named the phrasings that had gone wrong — `'superimposed'`, `'with the text'`. The model obeyed all of them and wrote *"A graphic card with text displayed on screen."* ⚠ **The ban was on the PHRASINGS and never touched the SUBJECT**: a frame whose whole content is writing has nothing else to draw, so the model invented Hindi (*"समाप्त / धन्यवाद"*) that did not even match the line the user asked for. The rule now bans the subject too (no *"graphic card"*, no *"title card"*, and the word *"text"* may not appear in a description at all) and says what an end card IS instead — ⚠ **and it is enforced in Python, because a prompt is a request.** New `gemini_client.strip_lettering()` cuts lettering clauses at their own comma, takes a trigger word and its quote together, replaces a sentence only when it was nothing but writing (using the shot's own `location`, inventing nothing), and runs at BOTH ends — where the breakdown writes the sentence AND on the one line every panel passes through, so an older board cannot slip one past. **Also: three medium shots of one potter's wheel.** ⚠ The merge rule would have made that worse — those were three different beats and merging deletes story — so a new `_VARIETY_RULE` asks for a different framing instead, and says explicitly not to merge. `tests/shot_density_check.py` gains 20 checks and passes. ⚠ The scrubber is tested; both prompt changes are unverified. See the Work Log.
+**Last updated:** 2026-08-28 — **THE CONCEPT WROTE AN ENDING AND THEN GAVE IT TO NOBODY TO FILM, AND EVERY FIX NOW HAS A PLACE TO LIVE.** A Hinglish Ganesh Chaturthi concept came back with a story direction ending *"… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai"* and six key scenes that stopped at the visarjan — ⚠ **the resolution, the whole reason the film is warm and not sad, was written into the approved text and then never given a scene.** Nothing caught it because `story_direction` and `key_scenes` were only ever asked for separately: six beats and six scenes reads as a match, which is exactly what hid a beat falling off the end. New `_SCENE_LIST_RULES` says the scene list must END where the arc ends, cover every beat, and — from the same concept, a film about an idol that never once framed it — **show the subject alone at least once.** ⚠ **And the ending half is enforced, not asked for**: `final_beat()` reads the last step straight out of the approved text and `concept_to_brief()` states it to the writer as a requirement, so the film lands its ending even when the card the user approved never grew a scene for it — with `_covered_by()` deliberately generous, because a brief arguing with itself is the worse failure. **Also: a 40-second film opened on the run-up.** `is_short_form()` reads reel / viral / shorts and this brief said none of them, so nothing knew the film was short; new `TIGHT_RUNTIME_SECONDS` + `stated_seconds()` (smallest duration wins) fire a rule that ⚠ **moves the OPENING only** — it is not the hook rule, the rest of the arc keeps its order, and the two never stack. **And the second half of the session is a file, not a fix: new `RULEBOOK.md`** — every rule this app has learned, indexed by SCENARIO instead of by date, each one marked **PAKKA** (enforced in code) or **GUZARISH** (a prompt rule, unproven until a live run), with the still-open list at the foot. ⚠ This Work Log is 22,000 lines and nobody reads it before editing one prompt string — which is how the same box got un-grown four times and the same end card was fixed twice. The Protocol now makes reading and updating it step 0. **Then the same brief was re-run from a file, and all four new rules held** — the arc landed on *Bhagwan ka aashirwad*, every beat had a scene, Ganesh ji finally filled a frame alone, and the film opened on a child's eyes instead of on laying out marigolds. ⚠ **And the visarjan had quietly gone.** The FIXED list protected the product, the audience, the length, the tone, the setting and the characters — and stopped there, so an EVENT the brief asked for was guarded by nothing; worse, the beat a concept drops when it tightens is always the hard one, and the hard one is the only one an audience feels. Two more rules: an event they named is as fixed as a character they named (shorten by tightening scenes, **never by deleting one of theirs**), and **do not smooth the hard beat away** — keep it, put it late, let the resolution land after it rather than instead of it. `tests/script_concept_check.py` gains 15 checks and passes. ⚠ **Every one of these is a prompt rule; A1–A4 have exactly one live pass logged in `RULEBOOK.md`, A10 and A11 have none.** See the Work Log.
+
+**Previously:** 2026-08-28 — **THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED.** `_SPEECH_RULE` banned quoting the ON SCREEN line into a `description`, and named the phrasings that had gone wrong — `'superimposed'`, `'with the text'`. The model obeyed all of them and wrote *"A graphic card with text displayed on screen."* ⚠ **The ban was on the PHRASINGS and never touched the SUBJECT**: a frame whose whole content is writing has nothing else to draw, so the model invented Hindi (*"समाप्त / धन्यवाद"*) that did not even match the line the user asked for. The rule now bans the subject too (no *"graphic card"*, no *"title card"*, and the word *"text"* may not appear in a description at all) and says what an end card IS instead — ⚠ **and it is enforced in Python, because a prompt is a request.** New `gemini_client.strip_lettering()` cuts lettering clauses at their own comma, takes a trigger word and its quote together, replaces a sentence only when it was nothing but writing (using the shot's own `location`, inventing nothing), and runs at BOTH ends — where the breakdown writes the sentence AND on the one line every panel passes through, so an older board cannot slip one past. **Also: three medium shots of one potter's wheel.** ⚠ The merge rule would have made that worse — those were three different beats and merging deletes story — so a new `_VARIETY_RULE` asks for a different framing instead, and says explicitly not to merge. `tests/shot_density_check.py` gains 20 checks and passes. ⚠ The scrubber is tested; both prompt changes are unverified. See the Work Log.
 
 **Previously:** 2026-08-28 — **"RESTYLE ALL" WAS AIMED AT A STYLE NOBODY CHOSE.** The board's restyle picker was `useState("comic")` — a hard-coded literal that never read the board — so a **Cinematic** board showed *"Add a style: 💥 Comic"*, and ⚠ **one press would have redrawn all twelve panels in the wrong style and billed for every one**. The picker now opens on the style the board actually is (read off `variants[activeVariant].style`, not the stale `styleLabel` prop), the variant chip is shown even for a single style so the screen STATES what you are looking at, and **"Restyle all" is disabled for a style the board already has** — those pictures exist and the chips switch to them free. **B4 was on this page too** (`rows={2}` clipped five of twelve descriptions → `GrowTextarea`, third place this box has been fixed), and the draw button, which floated wherever each shot's text ended, is now pinned to the foot of every tile. ⚠ `npm run build` passes; **nothing has been opened in a browser.** See the Work Log.
 
@@ -3454,7 +3465,263 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-28 (latest) — THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED
+### 2026-08-28 (latest) — THE ENDING THAT WAS WRITTEN AND NEVER FILMED, AND A RULEBOOK SO THE NEXT ONE IS NOT
+
+A Hinglish "Script to Storyboard" test, reviewed on screen before anything was
+drawn. Three faults in one concept card, and then the reason they keep coming
+back.
+
+**1. THE ARC ENDED SOMEWHERE THE SCENE LIST DID NOT.** The story direction read
+
+    Parivaar taiyari karta hai -> Bappa ghar aate hain -> Aarti aur modak ->
+    Saanjhi khushi -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai
+
+and the six key scenes stopped at the visarjan. ⚠ **The resolution — the
+blessing that stays behind after the idol has gone, which is the entire reason
+the film is warm and not sad — was written into the approved text and then given
+to nobody to film.** The film would have ended on the loss.
+
+⚠ **AND NOTHING COULD HAVE CAUGHT IT, because the two fields were only ever
+asked for separately.** `_SYSTEM_INSTRUCTION` described what a `story_direction`
+is and what a `key_scene` is; it never once said the second has to COVER the
+first. Six beats, six scenes — and *the counts matching is precisely what hid a
+beat falling off the end.*
+
+New `_SCENE_LIST_RULES`, concatenated into the system instruction:
+
+- the last key scene IS the last beat of the story direction;
+- every beat gets at least one scene, or comes out of the direction;
+- **show what the film is about, alone, at least once** — from the other half of
+  the same concept, a film entirely about Ganesh ji in which the idol is
+  carried, touched and prayed to and *never once seen on its own*.
+
+⚠ **THE ENDING HALF IS ENFORCED, NOT ASKED FOR.** A prompt is a request, and
+this one is too important to lose to a coin flip — so `final_beat()` splits the
+arrow chain (all five arrow spellings, unicode included) and `concept_to_brief()`
+states the closing beat to `write_script()` as a requirement. The film lands its
+ending even when the card the user approved never grew a scene for it.
+`_covered_by()` decides whether it needs saying, and is **deliberately generous**
+— it reads only the last two scenes, and a false "covered" costs one line of
+instruction while a false "missing" appends a demand to a list that already ends
+correctly, *and a brief arguing with itself is the worse failure.*
+
+**2. A FORTY-SECOND FILM OPENED ON THE RUN-UP.** Scene one was a child laying
+marigolds around an empty puja stall. Nothing is wrong with the image; forty
+seconds simply does not have a run-up in it. ⚠ `is_short_form()` reads reel /
+shorts / viral / tiktok / instagram, **this brief said none of them**, so nothing
+in the prompt knew the film was short at all.
+
+New `TIGHT_RUNTIME_SECONDS = 90` and `stated_seconds()`, which reads the runtime
+out of the user's own words — ⚠ **smallest plausible duration wins**, because
+"30 second ad for our 5 minute onboarding call" is a thirty-second film and
+reading left to right would switch the rule off on exactly the brief that needs
+it. Falls back to `DEFAULT_SECONDS[kind]`, which is already under a minute for
+both kinds.
+
+⚠ **THIS IS NOT THE HOOK RULE AND MUST NOT GROW INTO ONE.** Short-form
+*reorders* the film — best image first, whatever that costs the build — because
+in a feed there is no second chance. A forty-second film still tells its story in
+order; it just cannot afford a warm-up before the story starts. So
+`_TIGHT_RUNTIME_RULE` moves the **opening only** and says so twice. The two are
+mutually exclusive in `develop()` and **the feed rule wins**: stacking "only the
+opening moves" underneath "put the best image first" is two instructions arguing
+with each other in front of the model. The trigger is again what the user
+**typed**, never the aspect chip.
+
+**3. AND THEN THE REAL PROBLEM, WHICH IS NOT IN ANY PROMPT.** The user's ask:
+*"jab jab main test kar raha hun aur tum fix karte ho, har baar yaad rakhna
+chahiye — ye nahi ki purana wala fix bhul jayen."*
+
+⚠ **This Work Log is 22,000 lines ordered by DATE, and nobody reads 22,000 lines
+before touching one prompt string.** That is not a discipline problem, it is a
+shape problem — and it is how the same description box got un-grown **four
+times** and the same end card was fixed **twice**.
+
+New **`RULEBOOK.md`**: the same history indexed by **SCENARIO**, short enough to
+read in full. Seven sections (concept · breakdown · image prompts · money and
+brand · screens · waiting and drafts · working on this repo), 32 rules seeded
+from the existing Work Log — ⚠ **each one verified against the code today**, not
+copied from a summary — plus the still-open list at the foot, marked where it was
+re-checked. Every rule carries a status in the user's own vocabulary:
+
+- **PAKKA** — enforced in code; cannot regress silently, a test will fail.
+- **GUZARISH** — a prompt rule; the model may or may not obey. **Unproven until
+  a live run.**
+- **OPEN** — known, not fixed.
+
+⚠ **The PAKKA / GUZARISH split is the point of the file.** It is the distinction
+that keeps getting lost when a prompt change is reported as "fixed", and it is
+now the first thing anyone reads about any rule.
+
+The Protocol at the top of this file gains a **step 0** (read RULEBOOK.md before
+you open anything) and a required line under "When done" (add a row; never mark a
+prompt change PAKKA). `CLAUDE.md` and `GEMINI.md` carry the same pointer.
+
+**4. THE RE-RUN PASSED, AND THEN LOST THE ONLY BEAT THAT COST ANYTHING.**
+The same brief, regenerated from a file. All four new rules held on sight:
+
+    Bachche ki utsukta -> Idol ka aana -> Parivar ki bhakti ->
+    Saanjhi khushi -> Bhagwan ka aashirwad
+
+— the arc lands on its blessing and so does scene 6 (A1), all five beats have a
+scene (A2), **scene 6 is Ganesh ji alone filling the frame** (A3 — the shot that
+was missing from the entire film the run before), and it opens on a child's eyes
+lighting up rather than on laying out marigolds (A4). `_covered_by()` correctly
+stayed silent, because this scene list already ended where its arc did.
+
+⚠ **And the visarjan had gone.** What was left was anticipation, arrival,
+devotion, shared joy, blessing — five pleasant beats and nothing that costs
+anything. Two separate faults wearing one symptom:
+
+1. **`WHAT YOU MUST NOT OVERRIDE` never protected an EVENT.** It listed the
+   product, the audience, the goal, the length, the tone, the setting and the
+   characters they named, and stopped. A visarjan the brief asked for was
+   guarded by nothing. ⚠ **And dropping a beat does not feel like contradicting
+   the user — it feels like tightening**, which is precisely what makes it the
+   easy mistake to make and a hard one to notice.
+2. **The beat that goes is always the difficult one.** A concept made shorter
+   loses the goodbye, the letting go, the thing that hurts, because that is the
+   least comfortable beat to keep — ⚠ **and it is the only one an audience
+   actually feels.** The user's words: *"jo part zaroori hai, emotion yahi sab
+   dekhne se aata hai."*
+
+So the FIXED list now names events, with a bullet of its own saying a moment
+they asked for gets a beat AND a scene and that the film is shortened by
+tightening scenes, never by deleting one of theirs; and `_SCENE_LIST_RULES`
+gains a fourth rule: keep the hard beat, put it late, and let the resolution
+land **after** it rather than instead of it.
+
+**Files:** `script_concept.py` (`_SCENE_LIST_RULES`, `TIGHT_RUNTIME_SECONDS`,
+`stated_seconds()`, `_TIGHT_RUNTIME_RULE`, `final_beat()`, `_STOPWORDS`,
+`_covered_by()`, the `WHAT YOU MUST NOT OVERRIDE` block, wiring in `develop()`
+and `concept_to_brief()`), `tests/script_concept_check.py` (+15 checks), new
+`RULEBOOK.md` (35 rules, and a **live-run log** under section A — a GUZARISH
+rule earns confidence one real board at a time and one pass is evidence, not
+proof, so runs are recorded rather than the rule being promoted), `AGENTS.md`,
+`CLAUDE.md`, `GEMINI.md`, and — after run 3 — `client/src/components/ScriptToStoryboard.jsx` (`moveKeyScene()` plus ↑/↓ on every key-scene row).
+
+**5. AND THE CARD COULD NOT BE PUT IN ORDER.** A shot of the idol on its own was added by hand to fill the gap A3 had left, "＋ Add a scene" appended it at position 7, and it belonged at position 3. ⚠ **The one screen whose whole purpose is that everything is editable before a panel is paid for, and its most important field was the one thing that could not be rearranged.** The CSS comment above `.sts-concept-scenes` had said since the day it was written that these ARE the panels and that a blob of prose "can't be reordered or deleted" — delete was built, reorder never was. `moveKeyScene()` now mirrors `moveShot()` 800 lines below, same two buttons, same titles, disabled at either end **and** a no-op in the handler so a keypress that beats the re-render cannot wrap scene 1 to the bottom. RULEBOOK **E6**.
+
+**6. AND THE REAL TAX ON ALL OF THIS: EVERY FIX COST A WHOLE RE-TEST.** Reported
+after the fourth round in one afternoon — *"tum kuch karte ho, fir main page
+refresh karta hun to ye page hat jata hai, isliye mujhe same prompt fir se
+daalna padta hai, isliye story change ho jaati hai."* ⚠ **`drafts.py` had kept
+the script box safe since the day it was written, for exactly this reason, and
+stopped one field short of the card.** So a refresh restored the box, dropped
+the concept, and the only way back to a concept was to generate a new one —
+⚠ **and a re-generate is not a recovery: the same brief returns a DIFFERENT
+film every time, which is the entire reason this approval gate exists.** Every
+hand edit went with it.
+
+`concept` is now a field on the same draft row as the text it was developed
+from — one draft, one row — through `ScriptDraft` / `ScriptDraftUpdate`,
+`save_draft()`, `api.saveScriptDraft()` and the existing debounce. Three things
+that are not obvious and are each pinned by a check:
+
+- **Compared by value, not by reference.** The card is rebuilt as a new object
+  on every keystroke, so `draftLastConcept` holds its JSON — otherwise an
+  edited scene line would never save.
+- **`null` genuinely clears it.** Approving and Start over both set the concept
+  to null, and a finished board must not leave a stale card behind to be offered.
+- ⚠ **The restore puts it in STATE and does not touch the step.** Forcing
+  `setStep("concept")` on mount is the storyboard-draft bug over again — this
+  component unmounts when the workflow switches, and the remount would drag the
+  user back into a card they had walked out of. It is **OFFERED** instead, as
+  "↩ Resume your concept", in the left slot of `.sts-script-status` that was
+  left empty when that row was built. **One place, beside the box it came
+  from**, because a form repeating an offer the library already makes is how
+  the last banner got deleted. RULEBOOK **F4**.
+
+A draft row written before the field existed still loads, with no concept
+rather than an error — there are live ones in the store now.
+
+**8. THE FIRST FULL LIVE RUN, AND THE THREE THINGS IT BROKE ON.** A 15-panel
+board came through clean — every concept rule survived to a real image,
+including the hero shot of the idol and an end card with no lettering in it —
+and then: (a) **the Ganesh idol was drawn differently in every panel.** Every
+CHARACTER was consistent, because each had a reference; the idol had none. The
+breakdown returned an EMPTY asset list, the props step only opens when that
+list is non-empty, and ⚠ **no screen could write to it** — the shot card showed
+characters as read-only chips and assets not at all. A shot can now NAME its
+props, which is the only thing that makes a reference reach a panel
+(`_gather_refs` matches the shot's own names). (b) **Once a board existed, cast
+and props became unreachable** — the review step collapsed to Regenerate +
+Back, which is exactly when those screens matter most. (c) **Re-opening a saved
+board landed on the panels with nothing behind them**: `onOpen` restored the
+display settings and the job id only, so ← was wired to the library on purpose.
+`StoryboardProject` now returns the cast and props too (⚠ off the `cast` key,
+which is what the board job has always written), and re-opening loads shots,
+cast, props, world and script, then **stamps the up-to-date signature** so the
+free way back to existing panels survives. RULEBOOK **E7–E9**, **G9**.
+
+⚠ **`tests/workflow_mount_check.py` caught THREE of my own faults in this one
+round** — an offer link on an unreachable screen, a props field whose
+per-keystroke `trim()` made "Ganesh idol" impossible to type, and a signature
+stamp armed on a ref that could never fire. A green build and a fully green
+Python suite shipped all three.
+
+**7. AND THEN THAT CHANGE SHIPPED A WHITE PAGE.** Opening Script → Storyboard
+rendered nothing at all. ⚠ **`concept` went into the autosave effect's
+dependency array at line 294, and `const [concept] = useState(null)` sat at line
+647.** A dependency array is evaluated DURING RENDER and `const` is not hoisted,
+so the first render threw `Cannot access 'concept' before initialization`, React
+unmounted the tree, and the workflow was blank.
+
+⚠ **NOTHING WE HAD COULD SEE IT.** `npm run build` passed — esbuild never
+evaluates the module. Every `tests/*_check.py` passed — they read the file as
+TEXT. The declarations moved above the autosave that needs them, with a comment
+saying that moving either one back is the same crash.
+
+New **`tests/workflow_mount_check.py`**, same shape as
+`monitor_effects_check.py`: it writes a probe page into `client/`, starts Vite,
+mounts `<ScriptToStoryboard>` inside `<React.StrictMode>` and answers every API
+call off Playwright's own router. First assertion is survival — did anything
+reach `pageerror`, is there anything on screen.
+
+⚠ **AND IT IMMEDIATELY CAUGHT A SECOND FAULT, IN THE FEATURE ITSELF.** The
+restored concept was *offered* — a "↩ Resume your concept" link in the form's
+status row — and **the only route to the form from a cold start is "New
+storyboard", which calls `resetWorkflow()` and clears the concept on the way
+past.** The offer could never fire. It read perfectly well in the diff. So the
+card **reopens** now, latched on a **module-scope** binding — one page LOAD, not
+one mount, which is the distinction a `useRef` cannot make and the reason the
+storyboard-draft flag behaved differently under StrictMode. A remount does not
+reopen it (asserted, by remounting), and the reopen only ever promotes the
+DEFAULT step, so nobody deeper in the workflow gets yanked onto a card. The form
+link stays as the way back from a ←.
+
+⚠ **One check in `script_concept_check.py` had to be REPLACED, not deleted** —
+it pinned the offer design. Per this file's own rule: the TEST was the wrong
+half, and the note above it says so. RULEBOOK **G6**, **G7**, and a correction
+to **F4**.
+
+**Verified:** `python tests/script_concept_check.py` passes, all 103 checks, and **`python tests/workflow_mount_check.py` passes all 20 in a real Chromium** — the workflow mounts clean, the saved card reopens with its Hinglish intact, the ↑/↓ reorder a scene, ← and the form link get you out and back, and a REMOUNT does not reopen it.
+The draft store was round-tripped for real against a scratch JSON backend —
+concept in, concept out, Hinglish unescaped, `null` clearing it, and a
+pre-field row still loading. `npm run build` passes twice. `storyboard_draft_check`, `script_intake_check`, `shot_density_check`,
+`dashboard_boot_check`, `features_check` and `capability_check` all pass.
+⚠ `tests/profile_check.py` fails on its last line — it counts the Mongo
+users collection and finds **324 throwaway accounts** left by earlier test
+runs. Residue, not code; nothing here touches the user store. `develop()` exercised with the model call stubbed —
+a 40s brief gets the tight rule and not the feed rule, a "30 sec viral reel"
+brief gets the feed rule and not the tight one, a 5-minute documentary gets
+neither. `concept_to_brief()` appends the closing beat on the exact scene list
+from the report, and stays silent when a seventh scene lands it.
+
+⚠ **NOT VERIFIED BEYOND ONE RUN.** Faults 1 and 2 have exactly one live pass,
+logged in `RULEBOOK.md` under section A. **Fault 4's two rules have none** — they
+were written from the run that exposed them and nothing has been generated
+since. All of it is PROMPT work, which is a request; `RULEBOOK.md` marks them
+GUZARISH for exactly this reason. ⚠ Also seen in that run and **deliberately
+left alone at the user's request**: four of six scenes were close-ups and the
+child's face is never shown, only eyes and then a hand — to be judged from the
+review step. The deterministic
+halves (`final_beat()` → `concept_to_brief()`, and both rule triggers) are
+covered by tests. Nothing has been opened in a browser and nothing is committed.
+
+---
+
+### 2026-08-28 — THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED
 
 Two faults left over from the 12-panel board review.
 

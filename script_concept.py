@@ -141,6 +141,126 @@ _SHORT_FORM_RULE = (
 )
 
 
+# ---------------------------------------------------------------------------
+# A tight runtime is not a feed, and it gets its own, smaller rule
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME GANESH BRIEF, THE OTHER FAULT. Forty seconds, six key scenes, and
+# scene one was a child laying marigolds around an empty puja stall. There is
+# nothing wrong with the image — it is simply the run-up, and forty seconds
+# does not have a run-up in it. `is_short_form()` never fired, because the
+# brief said none of reel / shorts / viral, so nothing in the prompt knew the
+# film was short at all.
+#
+# ⚠ THIS IS NOT THE HOOK RULE AND MUST NOT GROW INTO IT. Short-form REORDERS
+# the film — strongest image first, whatever that costs the build — because in
+# a feed there is no second chance. A forty-second film still tells its story
+# in order; it just cannot afford a warm-up before the story starts. So this
+# rule moves the OPENING only and leaves the rest of the arc alone. The two are
+# mutually exclusive in `develop()`: the feed rule is the stronger claim.
+#
+# ⚠ AND THE TRIGGER IS AGAIN WHAT THE USER TYPED — plus the default we would
+# use had they typed nothing, which for both kinds is already under a minute.
+# Never the aspect chip, for the reason `is_short_form()`'s comment gives.
+TIGHT_RUNTIME_SECONDS = 90
+
+_DURATION_RE = re.compile(
+    r"(\d{1,3}(?:\.\d+)?)\s*(seconds?|secs?|s\b|minutes?|mins?|m\b)",
+    re.IGNORECASE,
+)
+
+
+def stated_seconds(text: str) -> int:
+    """The runtime the user asked for in their own words, or 0 for none.
+
+    ⚠ The SMALLEST plausible duration wins, not the first one read. A brief
+    saying "30 second ad for our 5 minute onboarding call" is a thirty-second
+    film; taking the first match left to right would make it a five-minute one
+    and switch this rule off on exactly the brief that needs it.
+    """
+    best = 0
+    for value, unit in _DURATION_RE.findall(text or ""):
+        try:
+            n = float(value)
+        except ValueError:
+            continue
+        secs = int(round(n * 60)) if unit.lower().startswith("m") else int(round(n))
+        if secs < MIN_SECONDS or secs > MAX_SECONDS:
+            continue
+        if best == 0 or secs < best:
+            best = secs
+    return best
+
+
+_TIGHT_RUNTIME_RULE = (
+    "⚠ THE RUNTIME IS TIGHT — about {seconds} seconds. There is not enough "
+    "film here for a warm-up:\n"
+    "- THE FIRST KEY SCENE IS ALREADY THE FILM, not the run-up to it. "
+    "Preparing, arriving, setting out the things that will matter later — "
+    "those are the second scene at the earliest.\n"
+    "- If your opening scene exists mainly to lead into a stronger moment "
+    "further down the list, OPEN ON THE STRONGER MOMENT instead.\n"
+    "- ⚠ The order of the REST of the film does not change. This is not a feed "
+    "and you are not reordering the story — it still builds and it still lands "
+    "its ending. Only the opening moves.\n"
+    "- One exception, and only one: when the build IS the point of the film, "
+    "keep it, and make the opening the most striking part of that build."
+)
+
+
+# ---------------------------------------------------------------------------
+# The arc that was written and the arc that was shown were not the same arc
+# ---------------------------------------------------------------------------
+# ⚠ FOUND IN TESTING, ON A HINGLISH GANESH CHATURTHI BRIEF. The story
+# direction read "… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai" and
+# the six key scenes stopped at the visarjan. The RESOLUTION — the blessing
+# that stays behind after the idol has gone, which is the entire reason the
+# film is warm and not sad — was written into the direction and then never
+# given a scene. The film would have ended on the loss.
+#
+# ⚠ AND NOTHING CAUGHT IT, because the two fields were only ever asked for
+# separately. The instruction below says what a story_direction is and what a
+# key_scene is; until this block it never once said the second has to COVER
+# the first. Six beats, six scenes — and the counts matching is precisely what
+# hid a beat falling off the end.
+#
+# The same concept showed the other half of this: a film entirely about Ganesh
+# ji in which the idol is carried, touched and prayed to — and never once seen
+# on its own. A subject that only ever appears incidentally is never shown.
+#
+# ⚠ AND THE THIRD BULLET CAME FROM THE RE-RUN OF THE VERY SAME BRIEF. The
+# first three rules held — the arc landed, every beat had a scene, Ganesh ji
+# finally filled a frame — and the visarjan had quietly gone. The film was now
+# anticipation, arrival, devotion, shared joy, blessing: five pleasant beats
+# and nothing that costs anything. ⚠ **A concept gets SHORTER by dropping the
+# hard beat, because the hard beat is the one that is least comfortable to
+# keep** — and it is the only one an audience actually feels. The user's own
+# words: "jo part zaroori hai, emotion yahi sab dekhne se aata hai."
+_SCENE_LIST_RULES = (
+    "WHAT MAKES THE SCENE LIST RIGHT\n"
+    "- ⚠ THE LAST KEY SCENE IS THE LAST BEAT OF THE STORY DIRECTION. Whatever "
+    "the arrow chain ends on, the scene list has to END on it too. A direction "
+    "reading '… -> the goodbye -> what stays behind' whose scenes stop at the "
+    "goodbye has thrown the resolution away: the film ends on the loss and the "
+    "point of it is never seen. Read your own story_direction back before you "
+    "answer and check that its final beat is on screen.\n"
+    "- COVER EVERY BEAT, NOT ONLY THE ENDING. Every step of the arrow chain "
+    "needs at least one scene of its own. If a beat has no scene, either give "
+    "it one or take that beat out of the direction — the two fields describe "
+    "one film and must not disagree.\n"
+    "- ⚠ SHOW WHAT THE FILM IS ABOUT, ALONE, AT LEAST ONCE. If it is about a "
+    "product, a place, a person or an object, one scene must be that subject "
+    "clearly seen and nothing else — not held, not touched, not glimpsed past "
+    "a shoulder, not behind a wider moment. A film whose subject only ever "
+    "appears incidentally never actually shows it.\n"
+    "- ⚠ DO NOT SMOOTH THE HARD BEAT AWAY. Where a story has a difficult "
+    "moment — a goodbye, a letting go, a loss, the thing that costs something "
+    "— that moment is where the film's feeling comes from, and a scene list "
+    "made only of pleasant ones has nothing in it to feel. Keep it, put it "
+    "late, and let the resolution land after it rather than instead of "
+    "it.\n\n"
+)
+
+
 _SYSTEM_INSTRUCTION = (
     "You are the concept developer inside Aniwala AI Studio's 'Script to "
     "Storyboard' page. The user handed over something that is NOT a script — a "
@@ -160,13 +280,22 @@ _SYSTEM_INSTRUCTION = (
 
     "WHAT YOU MUST NOT OVERRIDE\n"
     "- Everything the user actually stated is FIXED: the product, the audience, "
-    "the goal, the length, the tone, the setting, the characters they named. "
-    "Never quietly improve, replace or contradict any of it.\n"
+    "the goal, the length, the tone, the setting, the characters they named — "
+    "and THE EVENTS THEY NAMED. Never quietly improve, replace or contradict "
+    "any of it.\n"
+    "- ⚠ A MOMENT THEY ASKED FOR IS NOT OPTIONAL, AND DROPPING ONE IS THE "
+    "EASIEST MISTAKE HERE TO MAKE — it does not feel like contradicting them, "
+    "it feels like tightening. If their material names a specific event — a "
+    "farewell, a first day, a visarjan, an unboxing — it gets a beat in the "
+    "story direction AND a scene of its own. Make the film shorter by making "
+    "scenes tighter, never by deleting one of theirs.\n"
     "- If they gave an IDEA, their premise stays the premise. You are "
     "developing THEIR story, not swapping it for a better one you thought of.\n"
     "- Invent only what is missing and genuinely needed to make it filmable.\n\n"
 
-    "THE FIELDS\n"
+    + _SCENE_LIST_RULES
+
+    + "THE FIELDS\n"
     "- title: a few words. A name for the film, not a description of it.\n"
     "- premise: one or two sentences — the core idea, in plain words.\n"
     "- story_direction: the shape of the film as a short arrow chain, e.g. "
@@ -334,6 +463,14 @@ def develop(
     # the rule it holds to most reliably — the same reason
     # `plan_agent.write_script` puts the language block at the end.
     short_form = is_short_form(body)
+    # ⚠ MUTUALLY EXCLUSIVE, AND THE FEED RULE WINS. Both move the opening; the
+    # short-form one also reorders everything behind it, and stacking "only the
+    # opening moves" underneath "put the best image first" is two instructions
+    # arguing with each other in front of the model.
+    planned = stated_seconds(body) or DEFAULT_SECONDS[kind]
+    tight = not short_form and planned <= TIGHT_RUNTIME_SECONDS
+    if tight:
+        ask += ["", _TIGHT_RUNTIME_RULE.format(seconds=planned)]
     if short_form:
         ask += ["", _SHORT_FORM_RULE]
 
@@ -380,10 +517,60 @@ def develop(
     logger.info(
         "[concept] %r from %d chars of %s%s, %d scene(s), %ds — %s",
         concept["title"], len(body), kind,
-        " (short-form)" if short_form else "",
+        " (short-form)" if short_form
+        else (" (tight %ds)" % planned if tight else ""),
         len(concept["key_scenes"]), concept["duration_seconds"], describe(usage),
     )
     return {"concept": concept, "usage": usage.as_dict()}
+
+
+# The arrow chain the concept card shows, split back into its beats. Covers
+# every arrow the model has actually written here, the unicode ones included.
+_ARROW_RE = re.compile("\\s*(?:-+>|=+>|\u2192|\u2013>|\u2014>)\\s*")
+
+
+def final_beat(story_direction: str) -> str:
+    """The last step of the arc, or "" when there is no chain to read.
+
+    ⚠ THIS IS THE DETERMINISTIC HALF OF THE ENDING FIX. `_SCENE_LIST_RULES`
+    ASKS the model to put the final beat on the card, and a prompt is a
+    request. This reads the beat straight out of the approved text and hands it
+    to the writer as a requirement, so the film lands its ending even when the
+    card the user approved never grew a scene for it.
+    """
+    beats = [b.strip() for b in _ARROW_RE.split(story_direction or "") if b.strip()]
+    return beats[-1] if len(beats) >= 2 else ""
+
+
+# Words that say nothing about whether a beat is already on the list. The
+# Hinglish ones are here because the concept is written in the user's own
+# language, and "hai" / "ka" / "ke" appear in very nearly every line of it.
+_STOPWORDS = frozenset(
+    """a an the and or of in on at to for with from by is are was were be been
+    it its this that these those he she they we you as but so if then than
+    hai hain ho hota hoti hote ka ki ke ko se me mein aur ya par jo wo ye yeh
+    ek bhi hi na nahi kar karta karte karti raha rahi rahe""".split()
+)
+
+
+def _covered_by(beat: str, scenes: list) -> bool:
+    """Is this closing beat already somewhere at the end of the scene list?
+
+    ⚠ DELIBERATELY GENEROUS, and that direction is the safe one. A false
+    "covered" costs one line of instruction the model would most likely have
+    followed anyway; a false "missing" appends a demand to a scene list that
+    already ends correctly, and a brief arguing with itself is the worse
+    failure. Only the last two scenes are read — a beat mentioned in the middle
+    of the film is not the same as a film that ends on it.
+    """
+    words = {w for w in re.findall("\\w+", (beat or "").lower())
+             if len(w) > 2 and w not in _STOPWORDS}
+    if not words:
+        return True
+    for scene in list(scenes)[-2:]:
+        if words & set(re.findall("\\w+", (scene or "").lower())):
+            return True
+    return False
 
 
 def concept_to_brief(concept: dict, source: str = "") -> str:
@@ -425,6 +612,22 @@ def concept_to_brief(concept: dict, source: str = "") -> str:
     if scenes:
         lines.append("KEY SCENES, in this order — cover every one of them:")
         lines.extend(f"  {i}. {s}" for i, s in enumerate(scenes, 1))
+
+    # ⚠ THE LAST BEAT OF THE ARC IS STATED SEPARATELY, BECAUSE IT IS THE ONE
+    # THE SCENE LIST DROPS. Reported on a Ganesh Chaturthi concept whose
+    # direction ended "-> Aashirwad bana rehta hai" while its scenes ended at
+    # the visarjan: the resolution was there in the approved text and would
+    # have been filmed by nobody. A scene list is a list of moments; the arc
+    # says where the film STOPS, and those are not the same claim.
+    ending = final_beat(direction)
+    if ending and not _covered_by(ending, scenes):
+        lines += [
+            "",
+            f"⚠ THE FILM ENDS ON THIS, and the ending is not optional: {ending}",
+            "The key scenes above stop before it. Write that closing beat "
+            "anyway — the last thing on screen is the last step of the STORY "
+            "DIRECTION, not the last key scene.",
+        ]
 
     src = (source or "").strip()
     if src:

@@ -402,6 +402,16 @@
 .shot-meta label {
   margin-top: 0.6rem;
 }
+/* ⚠ The one field that decides whether a prop stays the same prop across the
+   board — see the long note beside it in ScriptToStoryboard.jsx. Same spacing
+   as `.shot-meta`, so it reads as another row of the card rather than a new
+   section bolted underneath. */
+.shot-assets-row {
+  margin-top: 0.2rem;
+}
+.shot-assets-row label {
+  margin-top: 0.6rem;
+}
 .shot-chars {
   display: flex;
   flex-wrap: wrap;

@@ -110,10 +110,23 @@ def get_draft(email: str) -> dict | None:
     return doc
 
 
-def save_draft(email: str, text: str, title: str = "") -> dict:
-    """Create or overwrite the user's draft. Returns the stored record."""
+def save_draft(
+    email: str, text: str, title: str = "", concept: dict | None = None
+) -> dict:
+    """Create or overwrite the user's draft. Returns the stored record.
+
+    ⚠ `concept` rides along with the text it was developed FROM. Keeping the
+    two in one record is the point: a refresh used to restore the box and lose
+    the card, and the only way back to a card was to generate a new one — which
+    returns a different film. They are one draft, so they are one row.
+    """
     key = (email or "").strip().lower()
-    record = {"text": text, "title": title, "updated_at": _now_iso()}
+    record = {
+        "text": text,
+        "title": title,
+        "concept": concept,
+        "updated_at": _now_iso(),
+    }
     if _use_local():
         with _lock:
             data = _local_load()
@@ -165,7 +178,22 @@ def write_draft(
                 f"({len(body.text):,} characters, limit {config.MAX_SCRIPT_CHARS:,})."
             ),
         )
-    return ScriptDraft(**save_draft(current.email, body.text, body.title))
+    # The same ceiling as the text. A concept is a few hundred characters of
+    # our own JSON; anything near the script limit is a paste into a scene
+    # field, and it is cheaper to refuse it here than to store it for ever.
+    if body.concept is not None:
+        size = len(json.dumps(body.concept))
+        if size > config.MAX_SCRIPT_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Concept is too large to autosave "
+                    f"({size:,} characters, limit {config.MAX_SCRIPT_CHARS:,})."
+                ),
+            )
+    return ScriptDraft(
+        **save_draft(current.email, body.text, body.title, body.concept)
+    )
 
 
 @router.delete("/draft", status_code=204)

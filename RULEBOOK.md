@@ -1,0 +1,216 @@
+# RULEBOOK.md — every rule this app learned from a live test
+
+> **Read the section for the area you are about to change, BEFORE you change it.**
+> Then add or update a row when your fix lands. This file is how a fix made in
+> August survives an edit made in October.
+
+`AGENTS.md` is still the source of truth for *what the project is* and *what
+happened when*. But its Work Log is 22,000 lines of chronology, ordered by date,
+and **nobody reads 22,000 lines before touching one prompt string**. So the same
+box got un-grown four times and the same end card was fixed twice.
+
+This file is the other index: **ordered by SCENARIO, not by date.** Small enough
+to read in full. If you are about to edit the concept prompt, section A tells you
+in thirty seconds what already lives there and must not be lost.
+
+---
+
+## Ise kaise padhein (plain Hinglish)
+
+Ye file ek **niyam ki kitaab** hai. Har baar jab testing mein koi problem milti
+hai aur hum use theek karte hain, ek nayi line yahan add hoti hai.
+
+Agla agent (Claude / Codex / Gemini) kaam shuru karne se pehle apne area ki list
+padhta hai — isliye purana fix dobara nahi tootta.
+
+Har niyam par ek **status** likha hai:
+
+| Status | Matlab |
+|---|---|
+| **PAKKA** | Code mein enforce hai (Python/JS). Silently tut nahi sakta — test fail ho jayega. |
+| **GUZARISH** | Sirf AI ko di gayi request (prompt rule). AI maan bhi sakta hai, nahi bhi. **Live run se hi pata chalega.** |
+| **OPEN** | Problem pata hai, abhi theek nahi hui. |
+
+⚠ **PAKKA aur GUZARISH ka farak sabse zaroori hai.** Agar kisi cheez ka status
+GUZARISH hai, to "ho gaya" mat samajhiye jab tak ek asli board ban kar na dekh lein.
+
+---
+
+## Protocol for agents (required)
+
+1. **Before you edit** — read the section covering the file you are opening.
+   A rule here is a decision that was already paid for once, in a real test.
+2. **While you edit** — do not delete a rule to make room for yours. If two
+   rules genuinely conflict, say so in your reply and let the user choose.
+3. **When your fix lands** — add a row. New rules get the next free ID in that
+   section. Write what the user actually saw, not what the code does.
+4. **When a rule is superseded** — strike it (`~~R~~`) and add the replacement
+   with a note saying which one it replaces. **Never delete history**; a rule
+   that came back is the most useful thing in this file.
+5. **Be honest about status.** A prompt change is GUZARISH until a live run
+   says otherwise. Marking it PAKKA is how a fix gets forgotten twice.
+
+---
+
+## A · Concept — a brief or an idea becomes the card the user approves
+
+`script_concept.py` · pinned by `tests/script_concept_check.py`
+
+> **Live-run log for this section.** A GUZARISH rule earns confidence one real board at a time, and one pass is evidence, not proof — record each run here rather than promoting the rule.
+>
+> - **2026-08-28, Hinglish Ganesh Chaturthi brief, 40s, re-run from a file.** A1 ✅ (arc ended on *Bhagwan ka aashirwad* and so did scene 6) · A2 ✅ (all five beats had a scene) · A3 ✅ (scene 6 was Ganesh ji alone, filling the frame — the shot that was missing entirely the run before) · A4 ✅ (opened on a child's eyes lighting up, not on laying out marigolds). ⚠ **And the same run is where A10/A11 came from:** the visarjan the brief asked for had gone. Close-up-heavy framing (4 of 6 scenes) noted and deferred to the review step by the user.
+> - **2026-08-28, run 3, the same brief again after A10/A11 were added.** A1 ✅ · A2 ✅ (six beats, six scenes, one to one) · **A10 ✅ and A11 ✅ — the visarjan is back, it is scene 5 of 6, and the resolution lands after it, with *"muskaan aur thodi udaasi ke saath"* carrying the feeling.** ⚠ **But A3 ❌ and A4 ❌ REGRESSED, and both had passed in run 2.** Ganesh ji is carried, prayed to, sung around and immersed — and never once framed alone; the hero shot run 2 ended on is simply gone. And scene 1 is *"ek bacche ke haath rangoli bana rahe hain … phool aur diye sajaye ja rahe hain"* — the decorating shot from run 1, back verbatim, under a first beat that is literally *Ghar ki taiyari*.
+> - ⚠ **NO SINGLE RUN HAS YET HAD ALL SIX RIGHT.** Run 2 had the hero shot and the opening and lost the visarjan; run 3 has the visarjan and lost the hero shot and the opening. Six rules are now competing for the same attention in one instruction, and **adding a seventh is not obviously the fix** — the next move is more likely to be making A3 and A4 harder to skip (a named slot in the scene list, or a deterministic check) than another paragraph of prose.
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **A1** | Writing `key_scenes` | **The scene list has to END on the last beat of `story_direction`.** *Found: a Ganesh Chaturthi arc ending "-> Aashirwad bana rehta hai" whose six scenes stopped at the visarjan — the film would have ended on the loss.* Six beats + six scenes looks like a match, which is exactly what hid it. `concept_to_brief()` also states the closing beat outright when the scenes drop it. | **PAKKA** (handoff) + **GUZARISH** (card) |
+| **A2** | Writing `key_scenes` | **Every step of the arrow chain gets at least one scene.** A direction and a scene list that disagree describe two different films. | GUZARISH |
+| **A3** | Writing `key_scenes` | **Whatever the film is ABOUT is seen alone, at least once** — not held, not touched, not glimpsed past a shoulder. *Found: a film entirely about an idol that never once framed it.* | GUZARISH |
+| **A4** | Runtime ≤ 90s, no feed words | **The opening moves, and nothing else does.** A 40-second film has no room for a run-up, so scene 1 is already the film. ⚠ **This is NOT the hook rule** — the rest of the arc keeps its order and still lands its ending. | GUZARISH (trigger is PAKKA) |
+| **A5** | Brief says reel / shorts / viral / tiktok / instagram | **Hook first — strongest image in scene 1, reorder the film if you must.** ⚠ The trigger is what the user **typed**, never the 9:16 they clicked, and "short film" is deliberately excluded. Overrules A4. | GUZARISH (trigger is PAKKA) |
+| **A6** | The concept step fails | **It must BLOCK, and must not fall through to breaking the raw brief down as a script.** ⚠ Opposite of `/script-intake`, which fails OPEN on purpose — a dead classifier must not stop a board, a dead concept step must. | PAKKA |
+| **A7** | An approved concept | **Goes through `plan_agent.write_script()`, never straight to shots.** The review step and every "FROM YOUR SCRIPT · LINE 12" need a real script to point at. | PAKKA |
+| **A8** | Any generated field | **Same language and same script as the user wrote in.** Hinglish in Latin letters stays Hinglish in Latin letters — no switch to Devanagari, no switch to English. | GUZARISH |
+| **A9** | Approving | **The length on the card travels all the way.** `concept_seconds()` → the writer → `break_down_script()`. *Found: a 30s concept boarded as 29 shots / 1m 04s, every extra panel paid for.* | PAKKA |
+| **A10** | Any beat the user's own material named | **An event they named is as fixed as a character they named.** A farewell, a first day, a visarjan, an unboxing — it gets a beat in the direction AND a scene of its own. Shorten the film by tightening scenes, **never by deleting one of theirs.** ⚠ Dropping a beat does not feel like contradicting the user, it feels like *tightening* — which is exactly what makes it the easy mistake. | GUZARISH |
+| **A11** | A story with a difficult moment in it | **Do not smooth the hard beat away.** The goodbye, the letting go, the thing that costs something — that is where the film's feeling comes from, and a scene list of only pleasant moments has nothing in it to feel. Keep it, put it late, and let the resolution land **after** it rather than instead of it. *Found: a re-run that kept anticipation, arrival, devotion, joy and blessing — and quietly dropped the visarjan.* | GUZARISH |
+
+---
+
+## B · Breakdown — a script becomes shots
+
+`script_breakdown.py` · pinned by `tests/shot_density_check.py`
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **B1** | Reading the script | **Know what you are reading.** `_is_beat_script()` routes it: a script from `write_script()` is *one line = one shot, merge repeats*; pasted prose keeps *split into beats*. | PAKKA (routing) |
+| **B2** | Over the runtime budget | **Argue, never clamp.** The model is told to MERGE; truncating to a budget deletes the END of the story. The review chip goes amber when it did not. | PAKKA (chip) + GUZARISH (merge) |
+| **B3** | A `(V.O.)` or speech-only line | **Never gets a panel of its own.** It attaches to a shot that already exists. `_SPEECH_RULE`. | GUZARISH |
+| **B4** | Three shots framed the same way | **Ask for a different framing — do NOT merge them.** ⚠ They are different beats and merging deletes story. `_VARIETY_RULE` says this outright. | GUZARISH |
+
+---
+
+## C · Image prompts — what the model is allowed to draw
+
+`gemini_client.py`
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **C1** | Any panel | **No lettering, ever.** `_SINGLE_FRAME_RULE` forbids the image model all writing — asking for it returns gibberish, and it is paid for. | GUZARISH |
+| **C2** | An end card / title card | **Its WORDS go to `dialogue` under `ON SCREEN`, never into `description`** — and the description may not name the subject either (no *"graphic card"*, no *"title card"*, and the word *"text"* may not appear at all). ⚠ **Enforced in Python**: `strip_lettering()` runs where the breakdown writes the sentence AND on the one line every panel passes through, so an older board cannot slip one past. *Fixed twice — the first rule banned the phrasings and never touched the subject.* | **PAKKA** |
+| **C3** | `movement` / `duration_seconds` | **Never reach an image prompt.** A still frame cannot show a move or a length; asking gets motion blur and arrows drawn into the panel. They travel like `dialogue` does. | PAKKA |
+
+---
+
+## D · Money, locale and brand
+
+`market.py`, `brand.py`
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **D1** | The board form | **Ask the LANGUAGE only.** Country, currency and units are derived from it, from the account, or from the script. ⚠ **English is deliberately NOT in the language→country table** — mapping it to the US is how an Indian creator's promo got priced in dollars. Spanish and Arabic are absent for the same reason. | PAKKA |
+| **D2** | Market unknown | **No legible price and no currency symbol anywhere.** A wrong `$` is worse than none. `_LANGUAGE_ONLY_RULE`. | GUZARISH |
+| **D3** | A brand logo | **Composited, never generated.** The model draws a flat magenta placeholder and `brand.stamp()` pastes the uploaded PNG in, so the mark is bit-identical in every panel because it IS the same file. ⚠ **No upload means NO logo** — one 28-panel promo carried four different generated logos. | PAKKA |
+
+---
+
+## E · Screens — the form, the board, cast and props
+
+`client/src/components/`
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **E1** | Any box the user must EDIT | **It grows to its text — use `GrowTextarea`.** ⚠ **Fixed four separate times** on four screens (shot description, image prompt, cast description, board tile). If you add a `<textarea rows={n}>` on a field that holds model output, you are about to make it five. | PAKKA |
+| **E2** | Any control that spends money | **It must state what it will do before it is pressed**, and be disabled when it would do nothing. *Found: "Restyle all" opened on a hard-coded "Comic" and would have redrawn twelve panels in a style nobody chose, and billed for every one.* | PAKKA |
+| **E3** | Building a new button / modal / panel | **Read how the existing workflows build one and copy it exactly.** This repo has exactly two runtime dependencies (`react`, `react-dom`) — there is no component library to fall back on, and small mismatches are a repeated complaint. | PAKKA (convention) |
+| **E4** | Explaining a control | **Helper text goes in the element's own `title` (hover).** Visible label stays 3–5 words. Native `title`, not a new tooltip component. | PAKKA (convention) |
+| **E5** | Offering a paid reference | **Say how many shots it is worth.** A cast card carries `1 shot` (warn colour) or `7 shots` so skipping is an informed choice, not a guess. ⚠ Guessing "hands only" from the wording would be a guess; the shot count is a fact. | PAKKA |
+| **E9** | Re-opening a saved artefact from a library | ⚠ **Load the WORK behind it, not just the artefact.** *Found: opening a finished board restored the display settings and the job id and nothing else, so review / cast / props had no content and ← was deliberately wired to the library because there was nowhere else with any — "beech ka page nahi aa raha hai".* And **stamp the up-to-date signature** while you are at it, or the free route back to panels that already exist disappears and the only way back is paying to draw them again. Fail soft: a dead lookup keeps the old behaviour, never removes the pictures. | PAKKA |
+| **E7** | A step that can be reached going FORWARD | ⚠ **It must stay reachable going back.** *Found: once a board existed, the review step collapsed to Regenerate + Back to your storyboard and the cast/props screens became unreachable — the exact screens where a wrong character or a drifting prop is fixed.* A finished artefact is when those screens matter MOST, not least. Offer the forward path always; hide it only when the destination would be empty. | PAKKA |
+| **E8** | A comma-separated text field bound to an array | ⚠ **Split on the separator and NOTHING else, and join with the bare separator.** Filtering the empty piece eats the separator as it is typed; trimming each piece eats the SPACE inside a value — *"Ganesh idol" could only be typed as "Ganeshidol"*. Both were shipped, minutes apart, and both were caught only in a browser. Clean at the consumers, never on keystroke. | PAKKA |
+| **E6** | A list where ORDER is the meaning | **Add and delete are not enough — it needs ↑ / ↓ too.** *Found: a scene added to the concept card to fill a real gap landed at position 7, belonged at position 3, and could not be moved.* ⚠ Copy the shot cards' controls exactly — `title="Move up"` / `"Move down"`, disabled at either end, **and the handler no-ops at the ends as well** so a keypress that beats the re-render cannot wrap scene 1 to the bottom. `moveKeyScene()` mirrors `moveShot()`. | PAKKA |
+
+---
+
+## F · Waiting, progress and drafts
+
+`BreakdownProgress.jsx`, `ScriptToStoryboard.jsx`
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **F1** | Two chained calls, one wait | **ONE ring, mounted once.** Two elements or two `key`s are two instances and the second climbs from zero — reported as "a bar finished and a new one started". A non-final call hands off **where it stands**, with no sprint to a ceiling. | PAKKA |
+| **F2** | A long wait | **The fill decelerates and never parks.** Rate is set by the distance still to go, so it is still creeping a minute in; it stops at 96, and **paints 100 for 220ms before handing over** or React never renders it. ⚠ 99% is the worst number to park on — it reads as stuck, not working. | PAKKA |
+| **F3** | An unfinished board from an earlier session | **Offered, never taken.** A banner carrying its SHOT COUNT (which is what makes a stale board recognisable before opening it), with Resume and a Discard that asks first. ⚠ A first-mount-wins flag does NOT work — StrictMode mounts twice in dev. | PAKKA |
+| **F4** | Anything the user has EDITED BY HAND | **It must survive a refresh.** ⚠ The test is not "can we rebuild it" but **"does rebuilding give back the same thing"** — a concept re-generated from the same brief is a *different film*, so the card was unrecoverable and every hand edit with it. *Found after four rounds of testing in one afternoon: the script box was saved and the concept card was not.* It rides on the SAME draft row as the text it came from — one draft, one row — and `null` clears it on approve and Start over. Compare **by value** before saving; the card is a new object every keystroke. ⚠ **Restore REOPENS the screen** — ~~offer it~~ was tried first and `workflow_mount_check.py` proved it unreachable: the only route to the form is "New storyboard", which clears the concept on the way past. The latch is at **module scope** (one page LOAD), so a remount does not re-open it and F3 still holds; it promotes the DEFAULT step only. | PAKKA |
+
+---
+
+## G · Working on this repo
+
+| # | Scenario | The rule | Status |
+|---|---|---|---|
+| **G1** | Patching any file | **Build the new bytes, write a temp file, rename over the target.** ⚠ Never open the target for writing before the new content exists — that destroyed ~442 lines of un-committed `AGENTS.md` once. | PAKKA (convention) |
+| **G2** | Finishing a change | **Do not run the Playwright browser suite unless asked.** Run the relevant `tests/*_check.py` instead. | PAKKA (convention) |
+| **G3** | Reporting a prompt change | **A prompt is a request, not a guarantee.** Say GUZARISH, and say that only a live run can confirm it. Never write "fixed" for a prompt-only change. | PAKKA (convention) |
+| **G4** | Reaching for a library | **`client/package.json` has exactly two runtime deps and that is a decision.** Every widget here is hand-written. | PAKKA |
+| **G5** | A file the user just restored by hand | **Ask before `git checkout` / overwrite.** | PAKKA (convention) |
+| **G6** | Adding state to a hook's dependency array | ⚠ **Declare the `useState` ABOVE the hook that lists it.** A dependency array is evaluated DURING RENDER and `const` is not hoisted, so a state declared further down throws `Cannot access 'x' before initialization` on the first render — **a white page.** *Found by shipping one.* | PAKKA |
+| **G9** | Arming a one-shot effect from an async handler | ⚠ **Use state, not a ref.** A ref does not re-render, so arming it AFTER the value the effect keys on has already settled means the effect ran once against a null ref and never runs again — the work silently never happens. *Shipped and caught in a browser; no build and no source check could see it.* | PAKKA |
+| **G8** | Every reply, while the user is testing | ⚠ **Carry the WHOLE open list in the sign-off, not just this turn's leftovers.** Asked for outright: *"jo jo issue and bug mil raha hai sab mujhe REMAINING mein batana."* A bug reported once and then dropped from the summary reads as fixed. The table above is the source — read it before writing the sign-off, and add to it the moment something new is found. | PAKKA (convention) |
+| **G7** | Any change to a screen | ⚠ **`npm run build` passing is not evidence that the screen renders**, and neither is a `tests/*_check.py` — those read the file as TEXT. esbuild never evaluates the module. Run `tests/workflow_mount_check.py` (starts Vite itself, no backend, ~1 min) after touching a workflow component, and **never report a UI change as working on a green build alone.** | PAKKA |
+
+---
+
+## Still open — known, reported, NOT fixed
+
+⚠ Carried over from the user's own testing list. Marked ✅ where re-verified in
+the repo, and left unmarked where it is the user's report taken at face value.
+
+| Area | What is wrong | Verified |
+|---|---|---|
+| Concept | A typo like "virl" for "viral" silently switches off A5, and nothing on screen says the hook rule did not fire. A decision on how to surface it is pending. | ✅ keyword-only trigger |
+| Props step | `StoryboardAssets.jsx` has no `N shots` badge — the cast step (E5) has one; props does not. | ✅ |
+| Concept card | ⚠ **E1, SITE FIVE.** The key-scene rows in `ScriptToStoryboard.jsx` are `<input>` — one line, no growth — and these are *the lines that become the panels*. A 150-character scene scrolls off the right edge and cannot be read without dragging inside the box. Seen on run 3, scene 5. | ✅ |
+| Concept | No rule says what a GOOD call-to-action looks like; the prompt only says to use the CTA the creator asked for. | ✅ |
+| Board layout | The fourth card sits alone in a row. | — |
+| Board layout | Small cards stretch. ⚠ **Half-fixed by accident**: pinning the draw button to the tile foot moved the empty space above the button instead of below it. The stretch remains. | — |
+| Board | Draft name changes on its own; thumbnail reverts; cast description does not save. | — |
+| Board | "Ganesha idol" name ties between a cast entry and a prop. | — |
+| Board | Shot 5 has no speaker; the PDF slug line is wrong. | — |
+| Script writer | ⚠ **A PROP CAN BE IN TWO PLACES AT ONCE.** The first full run put the Ganesh idol in the *living room* (scenes 2, 5) and the *puja room* (scenes 1, 3, 4) — carried into one and standing in the other. `location` drives the background of every image, so the same idol would have been drawn in two rooms. **Nothing in the prompt says a thing stays where it was put.** | ✅ |
+| Breakdown | All 15 shots came back `movement: static`. Not a rule breach — the rule says most shots should be — but the same rule asks for a slow push-in on *"a realisation or a reaction landing"*, and *"Ananya's eyes light up"* is exactly that. Under-applied, not absent. | ✅ |
+| Cast step | ⚠ **A REFERENCE CAME BACK WITH TWO PEOPLE IN IT** — MOTHER rendered as a mirrored pair. A reference is injected into every panel that character appears in, so one bad sheet corrupts **8 panels**, and the user is the only thing standing between it and the spend. `qa.py` audits the finished board for magenta placeholders, greyscale and aspect — **it cannot see a doubled figure**, and nothing checks a reference BEFORE it is used. | ✅ |
+| Concept | **A3 and A4 regress on a freshly generated card** — see the live-run log in section A. Diagnosed, not fixed: A2 ("every beat gets a scene") beats A4 because the arc's own first beat is *Ghar ki taiyari*, and A3 has no room because six beats fill six scenes. The fix is to reach the STORY DIRECTION, not to add a seventh paragraph. | ✅ |
+| Board | ⚠ **THE FILM'S SUBJECT DRIFTED ACROSS 15 PANELS.** The Ganesh idol is drawn differently in shots 3, 5, 10 and 13 — every CHARACTER is consistent because each got a reference, and the idol got none. ~~The breakdown returned an empty asset list.~~ ⚠ **THAT DIAGNOSIS WAS WRONG, and only the props field (E8) showed it**: the breakdown HAD listed them — shot 1 carries *"Puja Room, marigold garlands, oil lamps"*, shot 3 *"Ganesh idol, Living Room"*. So the props step was reachable all along and no reference was ever drawn there. **Why is not established**: nothing on the review step showed that assets existed or that they were worth a reference, so the step could be walked past without knowing what was being skipped. The props step still has no `N shots` badge and no equivalent of the cast page's warning. | ✅ |
+| Review step | ⚠ **CHANGING `location` DOES NOT REWRITE THE IMAGE PROMPT.** Both reach the panel, and the prompt text wins: shot 11's location was set to Puja Room while its description still read "in the living room", and the panel came back a living room. The field looks like the fix and is only half of it. | ✅ |
+| Cast step | A vague reference description lets the outfit drift even WITH a reference — ANANYA's says "a colorful traditional lehenga", and she wears three different outfits across the 15 panels. The colours have to be named. | ✅ |
+| Cast / props steps | ⚠ **THE SAVED-REFERENCE MAP IS KEYED TWO DIFFERENT WAYS.** A draft's map is written by `saveRefFields`, so its keys are already `refKey`'d (trimmed, lower-cased); a BOARD's map is whatever `StoryboardCast` sent up, which is the character's own name — `ANANYA`. Both steps look themselves up lower-cased, so a board's map matched **nothing**: four empty cards and a "(skip refs)" button over references already paid for and sitting on the server. Normalised inside `restoreSavedRefs` now, which is the one place both paths pass through — but the two producers still disagree. | ✅ |
+| Tests | `tests/plan_script_check.py` fails with **403 on POST /plans** for a new account. Confirmed NOT ours by running it on a stashed clean tree. Nobody has looked at it. | — |
+| Tests | `tests/profile_check.py` fails its last line — *"only the real account remains (got 324)"*. It counts the Mongo users collection and expects 1; **324 throwaway accounts from earlier test runs were never cleaned up.** Environment residue, not code — but it makes the suite read red, which is how a real failure gets ignored. | ✅ |
+
+---
+
+**Last updated:** 2026-08-28 — section A gained A1–A4, then A10–A11,
+across three live runs of one Hinglish Ganesh Chaturthi brief. ⚠ **No run
+has yet had all six right**: run 2 held A1–A4 and dropped the visarjan; run
+3 holds A1/A2/A10/A11 and regressed on A3 and A4. Then two things the
+testing itself exposed, both now **PAKKA**: **E6** (a list whose order is
+its meaning needs ↑/↓, not just add and delete) and **F4** (the concept
+card survives a refresh, because re-generating it returns a different
+film — which had been costing a whole re-test every time anything shipped).
+
+⚠ Still unlooked-at at the user's request: the close-up-heavy framing,
+deferred until the review step can be read.
+
+⚠ **`tests/workflow_mount_check.py` has now caught FOUR faults** that a green
+build and a full green Python suite both shipped: the white page, an offer link
+on a screen the only route to which destroys what it offers, a props field that
+ate the space inside "Ganesh idol", and a signature stamp armed on a ref that
+never fired. Run it after touching a workflow component.
+
+⚠ **G6 and G7 were both bought with a white page.** The concept-draft
+change built clean, passed every Python check, and rendered nothing.
+`tests/workflow_mount_check.py` exists now and caught a SECOND fault the
+same afternoon — an offer link on a screen the only route to which
+destroys the thing being offered.

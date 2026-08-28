@@ -80,6 +80,20 @@ export function formatRuntime(seconds) {
   return rest ? `${m}m ${rest}s` : `${m}m`;
 }
 
+// ⚠ MODULE SCOPE, AND THAT IS THE WHOLE TRICK. This is initialised once per
+// PAGE LOAD and is untouched by the component mounting again, which is exactly
+// the distinction the restore below needs and the one a `useRef` cannot make:
+//
+//   fresh page load   → module re-evaluated → false → the card reopens
+//   workflow switched away and back → same page → true → it does NOT
+//   StrictMode's second mount → same page → true → it does NOT
+//
+// ⚠ It is NOT the "first mount wins" flag that failed for the storyboard draft.
+// That one lived in a ref, StrictMode spent it on a mount nobody saw, and the
+// built app then behaved differently from `npm run dev`. A module binding is
+// not per-instance, so a double mount cannot spend it twice.
+let conceptReopened = false;
+
 export default function ScriptToStoryboard({
   onOpenAnimatic,
 }) {
@@ -223,6 +237,21 @@ export default function ScriptToStoryboard({
     };
   }, []);
 
+  // ⚠ THE APPROVAL GATE. A brief or an idea becomes a concept the user reads
+  // and can edit, and NOTHING is drawn until they approve it. Non-null means
+  // the concept step is what's on screen. `conceptSource` is what they pasted,
+  // kept because a concept has no field for a product name or a required line
+  // and the writer needs those.
+  //
+  // ⚠ DECLARED HERE, ABOVE THE AUTOSAVE, AND NOT DOWN WITH THE REST OF THE GATE
+  // — the autosave below lists `concept` in its dependency array, and a
+  // dependency array is evaluated DURING RENDER. `const` is not hoisted, so
+  // leaving the declaration further down threw "Cannot access 'concept' before
+  // initialization" and rendered the whole workflow as a WHITE PAGE. Moving
+  // either one back is the same crash again.
+  const [concept, setConcept] = useState(null);
+  const [conceptSource, setConceptSource] = useState("");
+
   // --- Script autosave -----------------------------------------------------
   // A script only became durable once it had been turned into a board, so
   // anything typed and not yet generated died with a refresh. The draft is now
@@ -234,6 +263,7 @@ export default function ScriptToStoryboard({
   const [draftReady, setDraftReady] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState(null);
   const draftLastSaved = useRef(null); // last text we actually persisted
+  const draftLastConcept = useRef(null); // …and the last concept, as JSON
 
   useEffect(() => {
     let cancelled = false;
@@ -247,7 +277,29 @@ export default function ScriptToStoryboard({
           setScript((cur) => (cur.trim() ? cur : d.text));
           if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
         }
+        // ⚠ THE CARD COMES BACK, AND ON A FRESH PAGE LOAD IT REOPENS.
+        //
+        // It was offered instead at first — a link in the form's status row —
+        // and `tests/workflow_mount_check.py` proved that could never work: the
+        // only route to the form from a cold start is "New storyboard", which
+        // calls `resetWorkflow()` and clears the concept on the way. The offer
+        // was unreachable by construction.
+        //
+        // ⚠ AND REOPENING IS NOT THE STORYBOARD-DRAFT BUG, because the latch is
+        // per PAGE LOAD, not per mount — see `conceptReopened` above. Leaving
+        // the workflow and coming back does not reopen anything. The two cases
+        // differ in what is at stake as well: that one reopened a 29-shot board
+        // somebody had already paid for; this is an unapproved card with a ←
+        // out of it, and it is the screen the user was on when the page died.
+        if (d?.concept) {
+          setConcept((cur) => cur || d.concept);
+          if (!conceptReopened) {
+            conceptReopened = true;
+            setStep((cur) => (cur === "library" ? "concept" : cur));
+          }
+        }
         draftLastSaved.current = d?.text || "";
+        draftLastConcept.current = JSON.stringify(d?.concept || null);
         if (d?.updated_at) setDraftSavedAt(d.updated_at);
       } catch {
         // Autosave is a convenience — a failed load must never block the form.
@@ -262,11 +314,20 @@ export default function ScriptToStoryboard({
 
   useEffect(() => {
     if (!draftReady) return;
-    if (script === draftLastSaved.current) return; // nothing changed
+    const conceptJson = JSON.stringify(concept || null);
+    // Nothing changed in EITHER half. Editing one scene line has to save, so
+    // the concept is compared too — and by value, because the card is rebuilt
+    // as a new object on every keystroke.
+    if (
+      script === draftLastSaved.current &&
+      conceptJson === draftLastConcept.current
+    )
+      return;
     const id = setTimeout(async () => {
       try {
-        const saved = await api.saveScriptDraft({ text: script, title });
+        const saved = await api.saveScriptDraft({ text: script, title, concept });
         draftLastSaved.current = script;
+        draftLastConcept.current = conceptJson;
         setDraftSavedAt(saved?.updated_at || new Date().toISOString());
       } catch {
         // Stay quiet: the text is still on screen, and the next keystroke
@@ -274,7 +335,7 @@ export default function ScriptToStoryboard({
       }
     }, 1200);
     return () => clearTimeout(id);
-  }, [script, title, draftReady]);
+  }, [script, title, concept, draftReady]);
 
   // --- Storyboard draft (the REVIEW step's backing store) ------------------
   // A breakdown costs quota, and everything after it — edited shots, cast,
@@ -492,8 +553,18 @@ export default function ScriptToStoryboard({
    */
   function restoreSavedRefs(setter, ids, takes) {
     const seeded = {};
-    for (const [key, referenceId] of Object.entries(ids || {})) {
-      const list = (takes || {})[key] || [{ reference_id: referenceId }];
+    for (const [rawKey, referenceId] of Object.entries(ids || {})) {
+      // ⚠ NORMALISED, BECAUSE THE TWO SOURCES DISAGREE ON CASE. A draft's map
+      // was written by `saveRefFields`, so its keys are already `refKey`'d; a
+      // BOARD's map is whatever `StoryboardCast` sent up, which is the
+      // character's own name — "ANANYA". The cast and props steps look
+      // themselves up lower-cased, so an un-normalised key silently matches
+      // nothing: four empty cards and a "(skip refs)" button, over references
+      // that were paid for and are sitting on the server.
+      const key = refKey(rawKey);
+      if (!key) continue;
+      const list = (takes || {})[rawKey] || (takes || {})[key]
+        || [{ reference_id: referenceId }];
       const versions = list.map((t) => ({
         referenceId: t.reference_id,
         previewUrl: null,
@@ -556,6 +627,25 @@ export default function ScriptToStoryboard({
   // content: the review step for a board we just generated, the library for a
   // saved board re-opened from a card (whose shots aren't loaded).
   const [boardOrigin, setBoardOrigin] = useState("review");
+
+  // ⚠ ARMED WHEN A SAVED BOARD IS RE-OPENED, STAMPED ONE RENDER LATER.
+  //
+  // `currentSig()` reads shots, style, aspect, world, market and brand out of
+  // state, and `setState` does not land until the next render — so computing it
+  // inside the open handler would sign the board with the PREVIOUS board's
+  // values. React batches the whole handler into one render, so an effect keyed
+  // on `jobId` runs once everything has actually arrived.
+  //
+  // ⚠ AND IT MATTERS FINANCIALLY. Without the signature the board reads as
+  // out of date, "→ Back to your storyboard" disappears, and the only way back
+  // to panels that already exist is to draw all fifteen again.
+  //
+  // ⚠ STATE, NOT A REF, AND THAT IS THE WHOLE FIX. A ref does not re-render,
+  // so arming it AFTER `setJobId` meant the effect had already run and looked
+  // at a null ref, and `jobId` never changed again to run it a second time —
+  // the stamp silently never happened, and "→ Back to your storyboard"
+  // silently never appeared. Caught in a browser; nothing else could see it.
+  const [sigStampJob, setSigStampJob] = useState(null);
 
   // ⚠ A SESSION WITH SHOTS BUT NO DRAFT SAVES NOTHING, SILENTLY. The autosave
   // below is keyed on `draftJobId`, and only a BREAKDOWN mints one — it has
@@ -622,13 +712,9 @@ export default function ScriptToStoryboard({
   // What the intake said, when it said anything other than "this is a script":
   // {kind, reason, question}. Non-null = the panel under the box is showing.
   const [intake, setIntake] = useState(null);
-  // ⚠ THE APPROVAL GATE. A brief or an idea becomes a concept the user reads
-  // and can edit, and NOTHING is drawn until they approve it. Non-null means
-  // the concept step is what's on screen. `conceptSource` is what they pasted,
-  // kept because a concept has no field for a product name or a required line
-  // and the writer needs those.
-  const [concept, setConcept] = useState(null);
-  const [conceptSource, setConceptSource] = useState("");
+  // ⚠ `concept` and `conceptSource` are declared ABOVE, with the autosave that
+  // persists them — see the note there. Everything else about the gate lives
+  // here.
   const [developing, setDeveloping] = useState(false);
   // Writing the approved concept out as a real script — the long call.
   const [writing, setWriting] = useState(false);
@@ -911,6 +997,29 @@ export default function ScriptToStoryboard({
       ...c,
       key_scenes: (c.key_scenes || []).map((s, idx) => (idx === i ? value : s)),
     }));
+  }
+
+  /** Move one key scene up or down the list.
+   *
+   * ⚠ ORDER IS THE FILM HERE — these lines become the panels in exactly this
+   * sequence — and "＋ Add a scene" can only APPEND. Reported mid-test: a shot
+   * of the idol on its own was added to fill a real gap, landed at position 7,
+   * and belonged at position 3 with no way to get there. The card is the one
+   * screen where everything is meant to be editable, and its most important
+   * field was the one thing that could not be rearranged.
+   *
+   * Mirrors `moveShot()` below, down to the silent no-op at either end — the
+   * buttons are disabled there, and a keyboard or a double-click that beats the
+   * re-render must not wrap the list around.
+   */
+  function moveKeyScene(i, dir) {
+    setConcept((c) => {
+      const scenes = [...((c || {}).key_scenes || [])];
+      const j = i + dir;
+      if (j < 0 || j >= scenes.length) return c;
+      [scenes[i], scenes[j]] = [scenes[j], scenes[i]];
+      return { ...c, key_scenes: scenes };
+    });
   }
 
   /** ⚠ APPROVED → a real SCRIPT → the breakdown. Never concept → shots.
@@ -1203,6 +1312,16 @@ export default function ScriptToStoryboard({
   // True when a board exists and nothing that affects the panels has changed.
   const boardUpToDate = Boolean(jobId) && generatedSig === currentSig();
 
+  useEffect(() => {
+    if (!sigStampJob || sigStampJob !== jobId) return;
+    setSigStampJob(null);
+    setGeneratedSig(currentSig());
+    // ⚠ Keyed on the ARMING value, not on everything the signature reads.
+    // Listing shots/world/style here would re-stamp the board as "up to date"
+    // after a real edit, which is the opposite of what the signature is for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sigStampJob, jobId]);
+
   // Review → cast → assets → board, skipping any step with nothing to set up.
   // When the board is already up to date, just reopen it (unless the user
   // explicitly asks to regenerate) so their drawn panels aren't thrown away.
@@ -1411,14 +1530,44 @@ export default function ScriptToStoryboard({
           resetWorkflow();
           setStep("form");
         }}
-        onOpen={(board) => {
-          // Re-open a saved board read-side: its panels live on the server, so
-          // only the display settings need restoring.
+        onOpen={async (board) => {
+          // ⚠ RE-OPENING LOADS THE WORK, NOT JUST THE PICTURES. It used to
+          // restore the display settings and the job id and nothing else, so
+          // the review, cast and props steps had no content — and ← Back was
+          // wired to the library for exactly that reason (see `boardOrigin`).
+          // Reported: *"recent se khola to direct last page pe chala jata hun,
+          // beech ka page nahi aa raha hai"*. The panels were reachable and
+          // everything they were made from was not.
           setTitle(board.title || "");
           applySavedSettings(board);
           setJobId(board.job_id);
-          setBoardOrigin("library");
           setStep("board");
+          try {
+            const p = await api.getStoryboardProject(board.job_id);
+            setShots(p.shots || []);
+            setCharacters(p.characters || []);
+            setAssets(p.assets || []);
+            setWorld(p.world || {});
+            setScriptText(p.script || "");
+            // ⚠ AND THE PICTURES ALREADY PAID FOR. Without this the cast page
+            // opens on four empty cards and a "Generate panels (skip refs)"
+            // button — every reference the user bought, invisible, and the only
+            // offered way forward is to buy them again. Same restore the draft
+            // path has done since that was reported on drafts.
+            if (p.character_refs) setCharacterRefs(p.character_refs);
+            restoreSavedRefs(setSavedCastRefs, p.character_refs, null);
+            restoreSavedRefs(setSavedAssetRefs, p.asset_refs, null);
+            // Now the middle steps have something to show, so ← goes back one
+            // step instead of all the way out.
+            setBoardOrigin("review");
+            setSigStampJob(board.job_id);
+          } catch {
+            // ⚠ FAILS SOFT, BACK TO EXACTLY THE OLD BEHAVIOUR. The panels are
+            // already on screen and are what the user asked for; a dead lookup
+            // must not take them away. ← keeps going to the library, because
+            // that is still the only place with content.
+            setBoardOrigin("library");
+          }
         }}
         onDuplicate={(project) => {
           // Reuse the saved shots instead of re-running the paid breakdown —
@@ -1628,6 +1777,26 @@ export default function ScriptToStoryboard({
                     placeholder="A moment we can see"
                     onChange={(e) => updateKeyScene(i, e.target.value)}
                   />
+                  {/* The same two controls the shot cards carry, with the same
+                      titles — there is one way to reorder a list in this app. */}
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    title="Move up"
+                    disabled={i === 0}
+                    onClick={() => moveKeyScene(i, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost small"
+                    title="Move down"
+                    disabled={i === scenes.length - 1}
+                    onClick={() => moveKeyScene(i, 1)}
+                  >
+                    ↓
+                  </button>
                   <button
                     type="button"
                     className="btn ghost small"
@@ -1759,6 +1928,27 @@ export default function ScriptToStoryboard({
                 makes boardUpToDate false and this collapses back to one button. */}
             {boardUpToDate && !busy ? (
               <>
+                {/* ⚠ THE WAY FORWARD HAS TO SURVIVE THE BOARD EXISTING. Once
+                    the panels matched the shots, this row collapsed to
+                    Regenerate + Back — and the cast and props steps became
+                    unreachable, which is exactly when they are needed most: a
+                    character or a prop that came out wrong is FIXED on those
+                    screens. Reported after a finished board, with no route to
+                    the props step to lock the idol that was drifting.
+
+                    ⚠ It goes to the FIRST step that has anything on it, so the
+                    button never opens an empty screen. Nothing is spent by
+                    arriving — both steps generate only when asked. */}
+                {!skipsRefs() && (activeCast.length > 0 || activeAssets.length > 0) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setStep(activeCast.length > 0 ? "cast" : "assets")}
+                    title="Edit or redraw the character and prop references this board was built from"
+                  >
+                    🎭 Cast &amp; props
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -1998,6 +2188,44 @@ export default function ScriptToStoryboard({
                 </div>
               </div>
 
+              {/* ⚠ THE ONE FIELD THAT DECIDES WHETHER A PROP STAYS THE SAME
+                  PROP, and until this input there was no way to type into it.
+                  Found on the first finished board: the Ganesh idol — the
+                  subject of the whole film, in nine of fifteen panels — was
+                  drawn differently each time, because the breakdown returned an
+                  EMPTY asset list and nothing downstream could add one. Every
+                  character was consistent; each of them had a reference.
+
+                  The chain runs entirely off these names:
+                    this list → `computeAssets()` → the props step appears
+                    → a reference is drawn → `_gather_refs()` matches the shot's
+                      own names back to it → the panel is drawn holding it.
+                  Break the first link and the other three are unreachable, and
+                  the props step simply never opens.
+
+                  ⚠ SPLIT ON THE COMMA AND NOTHING ELSE — no trim, no filter,
+                  and joined back with a bare comma. Both were tried and both
+                  broke typing, which `tests/workflow_mount_check.py` caught:
+                  filtering the empty piece ate the comma the instant it was
+                  typed (one name, for ever), and trimming each piece ate the
+                  SPACE inside a name — "Ganesh idol" could only ever be typed
+                  as "Ganeshidol". Split/join this way round-trips whatever was
+                  typed, character for character. Cleaning belongs at the far
+                  end, where it already happens: `computeAssets` and
+                  `assetsForBible` trim and drop blanks, and `_gather_refs`
+                  lower-cases and resolves aliases besides. */}
+              <div className="shot-assets-row">
+                <label>Props &amp; backgrounds</label>
+                <input
+                  value={(sh.assets || []).join(",")}
+                  placeholder="e.g. Ganesh idol, puja room"
+                  title="Name anything that must look the SAME in every shot it appears in — you can draw one reference for it on the props step"
+                  onChange={(e) =>
+                    updateShot(i, { assets: e.target.value.split(",") })
+                  }
+                />
+              </div>
+
               {sh.characters?.length > 0 && (
                 <div className="shot-chars">
                   {sh.characters.map((c, ci) => (
@@ -2105,9 +2333,24 @@ export default function ScriptToStoryboard({
               }}
             />
             <div className="sts-script-status">
-              {/* Left slot kept empty so the autosave badge stays on the right
-                  however many things end up wanting to speak here. */}
-              <span />
+              {/* The left slot, finally used. This is the way BACK to a card
+                  you pressed ← on: the concept is still in state, and without
+                  this the only route to it is generating a new one. ⚠ It is
+                  not how a card survives a refresh — that is the reopen in the
+                  draft restore above, because "New storyboard" is the only
+                  path to this screen from cold and it clears the concept. */}
+              {concept && conceptReady() ? (
+                <button
+                  type="button"
+                  className="linklike"
+                  title="Pick up the concept you were reading — nothing has been drawn yet"
+                  onClick={() => setStep("concept")}
+                >
+                  ↩ Resume your concept
+                </button>
+              ) : (
+                <span />
+              )}
               {/* Quiet confirmation that the typing is safe. Only appears once
                   something has actually been saved — an idle "not saved" badge
                   on an empty box is noise. */}

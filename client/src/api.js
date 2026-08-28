@@ -677,12 +677,15 @@ export function adminEvents({ limit = 50, types = [], email = "", days = null } 
 // account; saving overwrites it. Reading never 404s — a user who has never
 // saved gets an empty draft back.
 export function getScriptDraft() {
-  return request("/scripts/draft"); // → { text, title, updated_at }
+  return request("/scripts/draft"); // → { text, title, concept, updated_at }
 }
-export function saveScriptDraft({ text, title } = {}) {
+// ⚠ `concept` travels with the text it came from — a refresh that restored the
+// box and dropped the card meant generating again, and generating again gives
+// back a different film. `null` clears it (approving, or Start over).
+export function saveScriptDraft({ text, title, concept } = {}) {
   return request("/scripts/draft", {
     method: "PUT",
-    body: { text: text || "", title: title || "" },
+    body: { text: text || "", title: title || "", concept: concept || null },
   });
 }
 export function clearScriptDraft() {

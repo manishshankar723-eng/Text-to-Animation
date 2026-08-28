@@ -1066,6 +1066,13 @@ def create_storyboard(
         # Kept so a single panel can be regenerated later with the same refs.
         "character_ref_paths": character_ref_paths,
         "asset_ref_paths": asset_ref_paths,
+        # ⚠ AND THE IDS THEY CAME FROM. The paths above are what the renderer
+        # needs; the IDS are what the cast and props steps need to show a
+        # picture the user has already paid for when they re-open the board.
+        # Derivable from the paths, but only by string-surgery — see
+        # `_ref_ids_from_paths`, which is what older boards still rely on.
+        "character_refs": dict(body.character_refs or {}),
+        "asset_refs": dict(body.asset_refs or {}),
         # Only used to sort the assets ZIP into props/ and backgrounds/.
         "asset_categories": body.asset_categories,
         # Kept so a panel can always be re-drawn (even if it's missing from the
@@ -1301,14 +1308,39 @@ def list_storyboards(
     ]
 
 
+def _ref_ids_from_paths(paths: dict | None) -> dict[str, str]:
+    """Recover reference IDs from the resolved paths stored on a board job.
+
+    ⚠ THE BOARD STORES PATHS, NOT IDS — `…/_references/<id>/reference.png` —
+    because a path is what the renderer needs. The id is simply the directory
+    the file sits in, and it is the only handle the cast and props steps have
+    for showing a picture that has already been paid for.
+
+    Boards generated from now on also store the id maps outright; this is what
+    recovers the ones drawn before that.
+    """
+    out: dict[str, str] = {}
+    for name, path in (paths or {}).items():
+        ref_id = os.path.basename(os.path.dirname(str(path or "")))
+        if ref_id:
+            out[str(name)] = ref_id
+    return out
+
+
 @app.get("/storyboards/{job_id}/project", response_model=StoryboardProject)
 def get_storyboard_project(
     job_id: str,
     current: CurrentUser = Depends(get_current_user),
 ):
-    """Return a saved board's reusable inputs (shots + settings) for Duplicate.
+    """Return a saved board's reusable inputs — shots, cast, props, settings.
 
-    Re-opening a board this way skips the paid script-breakdown call.
+    Powers BOTH "Duplicate" and re-opening a board from the library. Either way
+    it skips the paid script-breakdown call.
+
+    ⚠ Re-opening used to fetch none of this: the library handed the board step
+    the display settings and nothing else, so the review, cast and props steps
+    had no content and ← Back had nowhere to go but the library. The panels were
+    reachable and the work behind them was not.
     """
     job = _get_owned_board(job_id, current)
     params = job.params or {}
@@ -1319,6 +1351,19 @@ def get_storyboard_project(
         aspect_ratio=params.get("aspect_ratio"),
         genre=params.get("genre"),
         shots=params.get("shots") or [],
+        # ⚠ `cast`, not `characters` — that is the key the board job has always
+        # written. Reading the wrong one returns an empty list in silence.
+        characters=params.get("cast") or [],
+        assets=params.get("assets") or [],
+        # Stored outright on new boards; recovered from the paths on old ones.
+        character_refs=(
+            params.get("character_refs")
+            or _ref_ids_from_paths(params.get("character_ref_paths"))
+        ),
+        asset_refs=(
+            params.get("asset_refs")
+            or _ref_ids_from_paths(params.get("asset_ref_paths"))
+        ),
         world=params.get("world") or {},
         script=params.get("script") or "",
     )
