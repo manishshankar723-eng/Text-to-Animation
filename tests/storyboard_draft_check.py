@@ -281,7 +281,12 @@ check("⚠ they are the FIRST rows of the list, above the finished boards",
       < lib.index("{shown.map(renderBoard)}"))
 check("⚠ …and they count, or a user whose only projects are unfinished would "
       "be told they have none — `total: 0` draws the empty state, not rows",
-      "const listTotal = boards.length + (onResume ? drafts.length : 0);" in lib
+      # ⚠ MATCHED AS TERMS, NOT AS ONE LINE. This pinned the whole expression
+      # verbatim and broke the day an unapproved CONCEPT became a row in the
+      # same list and added a third term to the sum — a rename-shaped failure
+      # on a screen that was working perfectly.
+      "boards.length +" in lib
+      and "(onResume ? drafts.length : 0)" in lib
       and "total={listTotal}" in lib and "shown={shownTotal}" in lib)
 check("⚠ …and they NEVER pretend to have a picture — there are no panels yet, "
       "so the thumbnail is a note glyph, not a cover",

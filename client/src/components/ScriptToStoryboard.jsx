@@ -80,19 +80,33 @@ export function formatRuntime(seconds) {
   return rest ? `${m}m ${rest}s` : `${m}m`;
 }
 
-// ⚠ MODULE SCOPE, AND THAT IS THE WHOLE TRICK. This is initialised once per
-// PAGE LOAD and is untouched by the component mounting again, which is exactly
-// the distinction the restore below needs and the one a `useRef` cannot make:
+// ⚠ THERE WAS A `conceptReopened` MODULE LATCH HERE AND IT IS GONE. It existed
+// so that a FRESH PAGE LOAD would jump the user from the library onto the saved
+// concept card — "the screen they were on when the page died" — while a remount
+// would not. It worked exactly as designed and the design was wrong, twice
+// over:
 //
-//   fresh page load   → module re-evaluated → false → the card reopens
-//   workflow switched away and back → same page → true → it does NOT
-//   StrictMode's second mount → same page → true → it does NOT
+//   1. IT BROKE THIS WORKFLOW'S OWN RULE. The storyboard draft learned this the
+//      expensive way (see the long note above the draft effect below): the
+//      workflow always opens on its own front door and unfinished work WAITS
+//      there as a row. The concept card was the one thing still overriding
+//      that, so pressing "Script to Storyboard" landed on the library or on a
+//      half-finished card depending on how long ago the tab was opened.
+//   2. AND THE CARD IT REOPENED WAS USUALLY DEAD. Nothing ever cleared the
+//      concept out of the script draft — `api.clearScriptDraft` was written and
+//      never called from anywhere — so the card of a board that had been
+//      breakdown'd, generated, exported and forgotten was still in the slot,
+//      and still being reopened weeks later. Reported exactly that way: *"jab
+//      user open kar raha hai script to storyboard to first page khulna
+//      chahiye, nhi ki ye page."*
 //
-// ⚠ It is NOT the "first mount wins" flag that failed for the storyboard draft.
-// That one lived in a ref, StrictMode spent it on a mount nobody saw, and the
-// built app then behaved differently from `npm run dev`. A module binding is
-// not per-instance, so a double mount cannot spend it twice.
-let conceptReopened = false;
+// ⚠ AND THE OLD REASON FOR REOPENING IS ANSWERED, NOT IGNORED. It was reopened
+// because the alternative on offer at the time — a link in the FORM's status
+// row — is unreachable from a cold start (the only route to the form is "New
+// storyboard", which clears the concept on the way past), and
+// `tests/workflow_mount_check.py` proved it. The offer now lives in the LIBRARY,
+// which IS the cold-start screen, beside the unfinished boards. Nothing is
+// lost, and nobody is moved somewhere they did not ask to go.
 
 export default function ScriptToStoryboard({
   onOpenAnimatic,
@@ -277,27 +291,15 @@ export default function ScriptToStoryboard({
           setScript((cur) => (cur.trim() ? cur : d.text));
           if (d.title) setTitle((cur) => (cur.trim() ? cur : d.title));
         }
-        // ⚠ THE CARD COMES BACK, AND ON A FRESH PAGE LOAD IT REOPENS.
-        //
-        // It was offered instead at first — a link in the form's status row —
-        // and `tests/workflow_mount_check.py` proved that could never work: the
-        // only route to the form from a cold start is "New storyboard", which
-        // calls `resetWorkflow()` and clears the concept on the way. The offer
-        // was unreachable by construction.
-        //
-        // ⚠ AND REOPENING IS NOT THE STORYBOARD-DRAFT BUG, because the latch is
-        // per PAGE LOAD, not per mount — see `conceptReopened` above. Leaving
-        // the workflow and coming back does not reopen anything. The two cases
-        // differ in what is at stake as well: that one reopened a 29-shot board
-        // somebody had already paid for; this is an unapproved card with a ←
-        // out of it, and it is the screen the user was on when the page died.
-        if (d?.concept) {
-          setConcept((cur) => cur || d.concept);
-          if (!conceptReopened) {
-            conceptReopened = true;
-            setStep((cur) => (cur === "library" ? "concept" : cur));
-          }
-        }
+        // ⚠ THE CARD COMES BACK INTO STATE AND NEVER TOUCHES THE STEP. Which
+        // screen the user is looking at is not this request's business — see
+        // the note where `conceptReopened` used to live. Restoring it here is
+        // what makes it resumable from two places: the library row (the
+        // cold-start route) and the form's own Resume-your-concept link (the
+        // way back from a ←). ⚠ Spelled without the label on purpose:
+        // `script_concept_check.py` counts that string to prove there is ONE
+        // such button, and a comment quoting it breaks the count.
+        if (d?.concept) setConcept((cur) => cur || d.concept);
         draftLastSaved.current = d?.text || "";
         draftLastConcept.current = JSON.stringify(d?.concept || null);
         if (d?.updated_at) setDraftSavedAt(d.updated_at);
@@ -1128,6 +1130,18 @@ export default function ScriptToStoryboard({
     // longer throws away work the breakdown had to be paid for.
     setDraftJobId(res.draft_job_id || null);
     draftHydrated.current = true;
+    // ⚠ THE CARD IS SPENT — DROP IT, AND THE AUTOSAVE WRITES THE `null` THROUGH.
+    // This is the moment the concept BECOMES a shot list, and from here on the
+    // storyboard draft above is the record of this work: it has the shots, the
+    // cast and the id every later edit is written back to. Leaving the concept
+    // behind would mean TWO rows in the library for one film — the thing this
+    // workflow has been asked to stop doing more than once — and, once the
+    // board was generated and forgotten, a card offering to re-plan a film that
+    // already exists. `api.saveScriptDraft` is called by the debounce effect
+    // with `concept: null`; the pasted TEXT stays, because that is still the
+    // user's own brief and losing it is the bug autosave exists to prevent.
+    setConcept(null);
+    setConceptSource("");
     // A new breakdown is a new cast — drop refs saved for the previous script
     // so a same-named character can't inherit the old picture.
     clearSavedRefs();
@@ -1526,6 +1540,48 @@ export default function ScriptToStoryboard({
            and this is the page that lists what it will become. Resuming is a
            read of the same draft the form's banner offers. */
         onResume={(draft) => resumeDraft(draft)}
+        /* ⚠ THE UNAPPROVED CONCEPT, ON THE SAME LIST, FOR THE SAME REASON.
+           This card used to REOPEN ITSELF on a fresh page load — see the note
+           where `conceptReopened` used to live. It is the earliest stage a
+           project can be stuck at, so it belongs in the one place a returning
+           user actually looks, offered rather than forced.
+           ⚠ AND IT IS PASSED FROM HERE, NOT FETCHED THERE. The script draft is
+           already loaded by this component's mount effect (it also feeds the
+           text box and the form's "↩ Resume" link); a second GET inside the
+           library would be the same row read twice, and the two copies would
+           disagree the moment a scene line is edited. */
+        conceptDraft={
+          concept && conceptReady()
+            ? {
+                title: concept.title || title,
+                scenes: (concept.key_scenes || []).filter((s) =>
+                  (s || "").trim()
+                ).length,
+                seconds: concept.duration_seconds || 0,
+                updated_at: draftSavedAt || "",
+              }
+            : null
+        }
+        onResumeConcept={() => {
+          setError("");
+          setStep("concept");
+        }}
+        /* Nothing has been drawn and nothing has been paid for, so this really
+           is just a delete — but it goes through the row's own confirm strip
+           like every other one, and it clears the SERVER slot too. Without the
+           second half the row would come back on the next page load, which is
+           the whole bug this fix exists for. */
+        onDiscardConcept={async () => {
+          setConcept(null);
+          setConceptSource("");
+          draftLastConcept.current = "null";
+          try {
+            await api.saveScriptDraft({ text: script, title, concept: null });
+          } catch {
+            // The row is already gone from the screen and the debounce above
+            // will try again on the next keystroke. Shouting here helps nobody.
+          }
+        }}
         onNew={() => {
           resetWorkflow();
           setStep("form");
@@ -2335,10 +2391,13 @@ export default function ScriptToStoryboard({
             <div className="sts-script-status">
               {/* The left slot, finally used. This is the way BACK to a card
                   you pressed ← on: the concept is still in state, and without
-                  this the only route to it is generating a new one. ⚠ It is
-                  not how a card survives a refresh — that is the reopen in the
-                  draft restore above, because "New storyboard" is the only
-                  path to this screen from cold and it clears the concept. */}
+                  this the only route to it is generating a new one. ⚠ IT IS NOT
+                  HOW A CARD SURVIVES A REFRESH, and it never could be: "New
+                  storyboard" is the only path to this screen from cold and it
+                  calls `resetWorkflow()`, which clears the concept on the way
+                  past. The refresh case belongs to the LIBRARY row — see
+                  `conceptDraft` where this workflow renders StoryboardLibrary.
+                  Two routes, two different journeys, neither guessing. */}
               {concept && conceptReady() ? (
                 <button
                   type="button"

@@ -437,28 +437,90 @@ check("⚠ …and the card is compared BY VALUE before saving, because it is a n
       "const conceptJson = JSON.stringify(concept || null);" in ui
       and "conceptJson === draftLastConcept.current" in ui
       and "}, [script, title, concept, draftReady]);" in ui)
-# ⚠ THIS PAIR OF CHECKS USED TO SAY THE OPPOSITE, AND THE CHECKS WERE THE HALF
-# THAT WAS WRONG. They pinned "restore into state, never touch the step, offer
-# it on the form" — and then `tests/workflow_mount_check.py` opened the thing in
-# Chromium and showed the offer could NEVER appear: the only route to the form
-# from a cold start is "New storyboard", which calls `resetWorkflow()` and
-# clears the concept on the way past. A design that reads perfectly in a diff
-# and cannot fire in a browser. The card reopens now, and the form link is the
-# way back from a ← rather than the way back from a refresh.
-check("⚠ A FRESH PAGE LOAD REOPENS THE CARD, and the latch that allows it is at "
-      "MODULE scope — one page LOAD, not one mount. A ref would be spent by "
-      "StrictMode's second mount, which is exactly how the storyboard-draft "
-      "resume bug behaved differently in dev and in the built app",
-      "let conceptReopened = false;" in ui
-      and "if (!conceptReopened) {" in ui
-      and "conceptReopened = true;" in ui
-      # Declared OUTSIDE the component, or it is a per-instance value again.
-      and ui.index("let conceptReopened = false;")
-      < ui.index("export default function ScriptToStoryboard("))
-check("⚠ …and it only ever promotes the DEFAULT step. A user already deeper in "
-      "the workflow — a board, the review step — must not be yanked onto a "
-      "concept card by a draft load that happened to land late",
-      'setStep((cur) => (cur === "library" ? "concept" : cur));' in ui)
+# ⚠ THIS BLOCK HAS NOW SAID BOTH THINGS, AND THE THIRD VERSION IS THE ONE THAT
+# HOLDS. The history is worth keeping, because each version was a correct fix to
+# the previous one's real failure:
+#
+#   v1  "restore into state, never touch the step, offer it on the form."
+#       Correct instinct, unreachable offer — `tests/workflow_mount_check.py`
+#       opened it in Chromium and showed the form link could never appear: the
+#       only route to the form from a cold start is "New storyboard", which
+#       calls `resetWorkflow()` and clears the concept on the way past.
+#   v2  "a fresh page load REOPENS the card", behind a module-scope latch so a
+#       remount would not. It fired exactly as designed, and it was still wrong:
+#       pressing "Script to Storyboard" landed on the library or on a
+#       half-finished planning card depending on how old the tab was — and
+#       because NOTHING ever cleared a spent concept (`clearScriptDraft` was
+#       written and never called), the card being reopened was usually the plan
+#       for a film that had already been generated and exported weeks earlier.
+#       Reported in as many words: *"jab user open kar raha hai script to
+#       storyboard to first page khulna chahiye, nhi ki ye page."*
+#   v3  v1's rule — the workflow NEVER moves the user — with v1's missing half
+#       supplied: the offer sits in the LIBRARY, which is the cold-start screen,
+#       as a row beside the unfinished boards. Plus the clear v2 never had.
+#
+# ⚠ AND THE RULE IS OLDER THAN THIS FEATURE. The storyboard draft learned it
+# first, at the cost of several sessions: *"mai abhi aage nhi dawaya tha, mai
+# back aaya tha aur Start over button bhi nhi dabaya."* The concept card was the
+# last thing in this workflow still overriding it.
+lib = read("client", "src", "components", "StoryboardLibrary.jsx")
+
+check("⚠ THE DRAFT LOAD NEVER TOUCHES THE STEP. Which screen the user is "
+      "looking at is not that request's business — the workflow opens on its "
+      "own front door and stops guessing how anyone got there",
+      "if (d?.concept) setConcept((cur) => cur || d.concept);" in ui
+      and 'setStep((cur) => (cur === "library" ? "concept" : cur));' not in ui)
+check("⚠ …and the module latch that used to allow the jump is GONE, not merely "
+      "unused — a dead `let` here is the next person's foothold for putting the "
+      "jump back",
+      "conceptReopened = true;" not in ui
+      and "let conceptReopened = false;" not in ui)
+check("⚠ …with a gravestone saying why, because the reopen READ perfectly well "
+      "in a diff and will be proposed again",
+      "THERE WAS A `conceptReopened` MODULE LATCH HERE AND IT IS GONE" in ui)
+
+check("⚠ THE CARD IS OFFERED IN THE LIBRARY, which is the ONLY screen a cold "
+      "start can reach — this is the half v1 was missing and the reason the "
+      "reopen was ever justified",
+      "conceptDraft={" in ui
+      and "onResumeConcept={() => {" in ui
+      and "conceptDraft = null," in lib
+      and "function renderConceptRow()" in lib)
+check("⚠ …and it is drawn as a ROW IN THE LIST, like the unfinished boards "
+      "beside it, not as a banner or a strip above it — asked for twice: "
+      "*\"dance video ke upar hi aa jaye jaise sab dikh rahe hai\"*",
+      "{conceptShown && renderConceptRow()}" in lib
+      and lib.index("{conceptShown && renderConceptRow()}")
+      < lib.index("{draftsShown.map(renderDraftRow)}"))
+check("⚠ …it never claims to be drawn or paid for: 'Not approved yet', a "
+      "lightbulb rather than a cover, scenes rather than shots, and a discard "
+      "warning that does not invent a cost",
+      '<span className="chip warn">Not approved yet</span>' in lib
+      and 'className="lib-draft-glyph">💡' in lib
+      and "nothing you\n                have paid for is lost" in lib)
+check("⚠ …and it COUNTS, or an account whose only project is an unapproved "
+      "concept would be told 'No storyboards yet' with its own work on screen "
+      "— the same trap the draft rows fell into",
+      "(canResumeConcept ? 1 : 0)" in lib
+      and "(conceptShown ? 1 : 0)" in lib)
+check("⚠ …and discarding it clears the SERVER slot, not just the screen. "
+      "Without that the row is back on the next page load, which is the entire "
+      "bug this replaced",
+      "onDiscardConcept={async () => {" in ui
+      and "api.saveScriptDraft({ text: script, title, concept: null })" in ui)
+
+check("⚠ THE SPENT CARD IS DROPPED THE MOMENT IT BECOMES A SHOT LIST. This is "
+      "the fix v2 never had: from `finishBreakdown` on, the storyboard draft is "
+      "the record of this work, so leaving the concept behind means TWO library "
+      "rows for one film and, later, a card offering to re-plan a film that "
+      "already exists",
+      "THE CARD IS SPENT — DROP IT" in ui
+      and ui.index("setDraftJobId(res.draft_job_id || null);")
+      < ui.index("setConcept(null);\n    setConceptSource(\"\");"))
+check("…and the pasted TEXT survives it, because that is the user's own brief "
+      "and losing it is the bug autosave exists to prevent",
+      "the pasted TEXT stays" in ui)
+
 check("…and the form still offers the way back in, for a card you pressed ← on",
       "↩ Resume your concept" in ui
       and ui.count("↩ Resume your concept") == 1

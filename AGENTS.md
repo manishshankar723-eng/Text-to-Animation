@@ -284,7 +284,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-28 — **THE CONCEPT WROTE AN ENDING AND THEN GAVE IT TO NOBODY TO FILM, AND EVERY FIX NOW HAS A PLACE TO LIVE.** A Hinglish Ganesh Chaturthi concept came back with a story direction ending *"… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai"* and six key scenes that stopped at the visarjan — ⚠ **the resolution, the whole reason the film is warm and not sad, was written into the approved text and then never given a scene.** Nothing caught it because `story_direction` and `key_scenes` were only ever asked for separately: six beats and six scenes reads as a match, which is exactly what hid a beat falling off the end. New `_SCENE_LIST_RULES` says the scene list must END where the arc ends, cover every beat, and — from the same concept, a film about an idol that never once framed it — **show the subject alone at least once.** ⚠ **And the ending half is enforced, not asked for**: `final_beat()` reads the last step straight out of the approved text and `concept_to_brief()` states it to the writer as a requirement, so the film lands its ending even when the card the user approved never grew a scene for it — with `_covered_by()` deliberately generous, because a brief arguing with itself is the worse failure. **Also: a 40-second film opened on the run-up.** `is_short_form()` reads reel / viral / shorts and this brief said none of them, so nothing knew the film was short; new `TIGHT_RUNTIME_SECONDS` + `stated_seconds()` (smallest duration wins) fire a rule that ⚠ **moves the OPENING only** — it is not the hook rule, the rest of the arc keeps its order, and the two never stack. **And the second half of the session is a file, not a fix: new `RULEBOOK.md`** — every rule this app has learned, indexed by SCENARIO instead of by date, each one marked **PAKKA** (enforced in code) or **GUZARISH** (a prompt rule, unproven until a live run), with the still-open list at the foot. ⚠ This Work Log is 22,000 lines and nobody reads it before editing one prompt string — which is how the same box got un-grown four times and the same end card was fixed twice. The Protocol now makes reading and updating it step 0. **Then the same brief was re-run from a file, and all four new rules held** — the arc landed on *Bhagwan ka aashirwad*, every beat had a scene, Ganesh ji finally filled a frame alone, and the film opened on a child's eyes instead of on laying out marigolds. ⚠ **And the visarjan had quietly gone.** The FIXED list protected the product, the audience, the length, the tone, the setting and the characters — and stopped there, so an EVENT the brief asked for was guarded by nothing; worse, the beat a concept drops when it tightens is always the hard one, and the hard one is the only one an audience feels. Two more rules: an event they named is as fixed as a character they named (shorten by tightening scenes, **never by deleting one of theirs**), and **do not smooth the hard beat away** — keep it, put it late, let the resolution land after it rather than instead of it. `tests/script_concept_check.py` gains 15 checks and passes. ⚠ **Every one of these is a prompt rule; A1–A4 have exactly one live pass logged in `RULEBOOK.md`, A10 and A11 have none.** See the Work Log.
+**Last updated:** 2026-08-28 — **THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED.** Pressing **Script to Storyboard** after a long gap did not open "Your Storyboards" — it opened **"Is this the right direction?"**, the unapproved concept card, for a film whose two finished 15-panel boards were sitting in the library behind it. *"jab user open kar raha hai script to storyboard to first page khulna chahiye, nhi ki ye page."* It was deliberate code: the script-draft restore promoted `library` → `concept` behind a module-scope latch. ⚠ **And the half nobody had noticed — `api.clearScriptDraft()` was defined and called from NOWHERE in the repo**, so a spent concept was never dropped and the card being reopened was usually the plan for a film already generated, exported and forgotten weeks earlier. A ghost, not a resume. ⚠ **This workflow had already learned this rule and paid several sessions for it** (F3: the front door is the front door, unfinished work WAITS there as a row) — the comment stating it sits twenty lines above the code that was overriding it. The reopen existed only because the first "offer it" attempt put the link on the FORM, which `workflow_mount_check.py` proved unreachable from a cold start. So the offer moved to the screen a cold start actually reaches: the **library**, as a row beside the unfinished boards — same `LibraryRow`, same Resume button, same confirm strip, "Not approved yet", and a discard that clears the SERVER slot so it cannot come back. Plus the clear that was missing: `finishBreakdown()` now drops the card the moment it becomes a shot list, so one film never grows two library rows. New **RULEBOOK F5**. `script_concept_check.py` and the Chromium `workflow_mount_check.py` rewritten and passing; `storyboard_draft_check.py` un-pinned from a verbatim expression. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
+
+**Previously:** 2026-08-28 — **THE CONCEPT WROTE AN ENDING AND THEN GAVE IT TO NOBODY TO FILM, AND EVERY FIX NOW HAS A PLACE TO LIVE.** A Hinglish Ganesh Chaturthi concept came back with a story direction ending *"… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai"* and six key scenes that stopped at the visarjan — ⚠ **the resolution, the whole reason the film is warm and not sad, was written into the approved text and then never given a scene.** Nothing caught it because `story_direction` and `key_scenes` were only ever asked for separately: six beats and six scenes reads as a match, which is exactly what hid a beat falling off the end. New `_SCENE_LIST_RULES` says the scene list must END where the arc ends, cover every beat, and — from the same concept, a film about an idol that never once framed it — **show the subject alone at least once.** ⚠ **And the ending half is enforced, not asked for**: `final_beat()` reads the last step straight out of the approved text and `concept_to_brief()` states it to the writer as a requirement, so the film lands its ending even when the card the user approved never grew a scene for it — with `_covered_by()` deliberately generous, because a brief arguing with itself is the worse failure. **Also: a 40-second film opened on the run-up.** `is_short_form()` reads reel / viral / shorts and this brief said none of them, so nothing knew the film was short; new `TIGHT_RUNTIME_SECONDS` + `stated_seconds()` (smallest duration wins) fire a rule that ⚠ **moves the OPENING only** — it is not the hook rule, the rest of the arc keeps its order, and the two never stack. **And the second half of the session is a file, not a fix: new `RULEBOOK.md`** — every rule this app has learned, indexed by SCENARIO instead of by date, each one marked **PAKKA** (enforced in code) or **GUZARISH** (a prompt rule, unproven until a live run), with the still-open list at the foot. ⚠ This Work Log is 22,000 lines and nobody reads it before editing one prompt string — which is how the same box got un-grown four times and the same end card was fixed twice. The Protocol now makes reading and updating it step 0. **Then the same brief was re-run from a file, and all four new rules held** — the arc landed on *Bhagwan ka aashirwad*, every beat had a scene, Ganesh ji finally filled a frame alone, and the film opened on a child's eyes instead of on laying out marigolds. ⚠ **And the visarjan had quietly gone.** The FIXED list protected the product, the audience, the length, the tone, the setting and the characters — and stopped there, so an EVENT the brief asked for was guarded by nothing; worse, the beat a concept drops when it tightens is always the hard one, and the hard one is the only one an audience feels. Two more rules: an event they named is as fixed as a character they named (shorten by tightening scenes, **never by deleting one of theirs**), and **do not smooth the hard beat away** — keep it, put it late, let the resolution land after it rather than instead of it. `tests/script_concept_check.py` gains 15 checks and passes. ⚠ **Every one of these is a prompt rule; A1–A4 have exactly one live pass logged in `RULEBOOK.md`, A10 and A11 have none.** See the Work Log.
 
 **Previously:** 2026-08-28 — **THE END CARD, ROUND TWO: THE RULE THAT FIXED IT IS THE RULE THAT FAILED.** `_SPEECH_RULE` banned quoting the ON SCREEN line into a `description`, and named the phrasings that had gone wrong — `'superimposed'`, `'with the text'`. The model obeyed all of them and wrote *"A graphic card with text displayed on screen."* ⚠ **The ban was on the PHRASINGS and never touched the SUBJECT**: a frame whose whole content is writing has nothing else to draw, so the model invented Hindi (*"समाप्त / धन्यवाद"*) that did not even match the line the user asked for. The rule now bans the subject too (no *"graphic card"*, no *"title card"*, and the word *"text"* may not appear in a description at all) and says what an end card IS instead — ⚠ **and it is enforced in Python, because a prompt is a request.** New `gemini_client.strip_lettering()` cuts lettering clauses at their own comma, takes a trigger word and its quote together, replaces a sentence only when it was nothing but writing (using the shot's own `location`, inventing nothing), and runs at BOTH ends — where the breakdown writes the sentence AND on the one line every panel passes through, so an older board cannot slip one past. **Also: three medium shots of one potter's wheel.** ⚠ The merge rule would have made that worse — those were three different beats and merging deletes story — so a new `_VARIETY_RULE` asks for a different framing instead, and says explicitly not to merge. `tests/shot_density_check.py` gains 20 checks and passes. ⚠ The scrubber is tested; both prompt changes are unverified. See the Work Log.
 
@@ -3465,7 +3467,150 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-28 (latest) — THE ENDING THAT WAS WRITTEN AND NEVER FILMED, AND A RULEBOOK SO THE NEXT ONE IS NOT
+### 2026-08-28 (latest) — THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED
+
+Reported as a question rather than a bug report, and it was the right question:
+*"jab user open kar raha hai script to storyboard to first page khulna chahiye,
+nhi ki ye page — kya ye sahi hai ya galat?"* The user reopened localhost after
+a long gap, landed on Home, pressed **Script to Storyboard** — and instead of
+"Your Storyboards" got **"Is this the right direction?"**, the unapproved concept
+card, for the Ganesh Chaturthi film whose two finished 15-panel boards were
+sitting in the library behind it.
+
+**It was deliberate code, and it was wrong.** `ScriptToStoryboard.jsx`'s
+script-draft restore read the saved draft on mount, found a `concept` in it and
+did `setStep((cur) => (cur === "library" ? "concept" : cur))` behind a
+module-scope `conceptReopened` latch. The latch worked exactly as designed — one
+page LOAD, not one mount — which is why a remount never reopened anything and
+why this survived so long.
+
+⚠ **THE HALF NOBODY HAD NOTICED: NOTHING EVER CLEARED A SPENT CONCEPT.**
+`api.clearScriptDraft()` is defined in `api.js` and, before today, **was not
+called from a single place in the repo**. `startStoryboard()` promotes and drops
+the storyboard draft (`setDraftJobId(null)`); the *script* draft — text, title
+and concept, one slot per account — was left untouched for ever. So the card
+being reopened was not "the screen the user was on when the page died", which was
+the justification written into the comment. It was **the planning card of a film
+already generated, exported and forgotten weeks earlier.** A ghost, not a resume.
+
+⚠ **AND THIS WORKFLOW HAD ALREADY LEARNED THIS RULE, AT THE COST OF SEVERAL
+SESSIONS.** The storyboard-draft resume did the same thing on every mount
+(*"mai abhi aage nhi dawaya tha, mai back aaya tha"*), and the fix then was the
+rule now in `RULEBOOK.md` as F3: **the workflow always opens on its own front
+door and unfinished work WAITS there as a row.** The long comment stating that is
+still in this file, twenty lines above the code that was overriding it. The
+concept card was the last thing in the workflow breaking it.
+
+**Why the reopen was ever written, and why the fix is different this time.** The
+first attempt at "offer it, do not take it" put a link in the FORM's status row,
+and `tests/workflow_mount_check.py` — which opens the thing in Chromium — proved
+it could never fire: **the only route to the form from a cold start is "New
+storyboard", which calls `resetWorkflow()` and clears the concept on the way
+past.** A design that read perfectly in a diff. So reopening looked like the only
+reachable option. It was not: the reachable screen is the **library**, which is
+where every cold start lands.
+
+**What changed**
+
+- **`client/src/components/ScriptToStoryboard.jsx`** — the draft restore now
+  only does `if (d?.concept) setConcept((cur) => cur || d.concept);`. It never
+  touches `step`. The `conceptReopened` module latch is **deleted**, not left
+  unused, with a gravestone comment saying why — the reopen read well in a diff
+  once and will be proposed again.
+- **⚠ `finishBreakdown()` drops the card**: `setConcept(null)` at the exact
+  moment the concept BECOMES a shot list, so the autosave debounce writes
+  `concept: null` through to the server. From there the storyboard draft is the
+  record of that work. Without this the library would grow **two rows for one
+  film**, and a generated-and-forgotten board would leave its card behind again.
+  The pasted TEXT survives — that is the user's own brief, and losing it is the
+  bug autosave exists to prevent.
+- **`client/src/components/StoryboardLibrary.jsx`** — new `conceptDraft` /
+  `onResumeConcept` / `onDiscardConcept` props and `renderConceptRow()`. Same
+  contract as `onResume`: pass nothing and the row does not exist, so the
+  animatic library never offers a screen it cannot open. ⚠ It is a **summary**
+  (`{title, scenes, seconds, updated_at}`) passed down from the component that
+  already fetched the draft, not a second GET — two copies would disagree the
+  moment a scene line is edited.
+- **The row is the same row.** Same `LibraryRow`, same `lib-resume` button, same
+  per-row confirm strip. The differences are only the honest ones: 💡 instead
+  of 📝, "Not approved yet" instead of "Not drawn yet", scenes instead of
+  shots, and a discard warning that does **not** claim anything has been paid for,
+  because nothing has. It leads the unfinished rows — reading down the list is
+  reading forward through the pipeline.
+- **Discarding it clears the SERVER slot**, not just the screen. Without that the
+  row is back on the next page load, which is the whole bug.
+- **`listTotal` counts it**, or an account whose only project is an unapproved
+  concept would be told "No storyboards yet" with its own work on screen — the
+  same trap the draft rows fell into.
+
+**Tests**
+
+- `tests/script_concept_check.py` — the reopen block rewritten; it has now said
+  both things, and the comment carries all three versions and why each replaced
+  the last. 11 new/changed checks. **Passes.**
+- `tests/workflow_mount_check.py` (Chromium) — sections [2], [2b] and [5]
+  rewritten: a cold start lands on the library, the concept waits there as a row,
+  Resume opens it with every Hinglish scene intact, and a remount lands on the
+  front door too. ⚠ Two selectors had to be scoped, and both were real traps the
+  new row exposed: `.lib-resume` first-match walked into the concept card instead
+  of the board draft, and `get_by_text("Ganesh Utsav: Ek Rishta").first` hit the
+  concept row because **a concept's title is what goes on to name its board** —
+  that collision is the normal case, not a fixture accident. **All sections pass.**
+- `tests/storyboard_draft_check.py` — one check pinned the `listTotal`
+  expression verbatim and broke when it grew a third term; it matches the terms
+  now. **Passes.**
+- `board_brand`, `board_look`, `board_market`, `ref_versions`, `shot_density`,
+  `shot_metadata`, `script_intake` — all still pass. `npm run build` clean.
+
+**`RULEBOOK.md`** — new **F5** (front door; nothing auto-opens a deeper screen;
+and check the saved thing is still alive), and **F4**'s "restore REOPENS the
+screen" clause corrected to point at it.
+
+**AND THE SAME SESSION FOUND A SECOND ONE, ON THE SCREEN THE FIX HAD JUST MADE
+THE FRONT DOOR.** With the library now the first thing anyone sees, its banner
+became impossible to miss: *"mai bar bar ye notice dekh rah hun — Still loading
+your storyboards … kyun?"* — and in the screenshot the banner is sitting **above
+a fully drawn list of seventeen rows**.
+
+⚠ **THE DATABASE WAS INNOCENT AND THE BANNER WAS ACCUSING IT.** Measured before
+touching anything, because the message names MongoDB outright: the Mongo query
+answered in **0.01s** warm / 0.33s cold, and `dir_bytes` walked all 14 job folders
+(1.98 GB, 2.2 GB of `output/` on a OneDrive-synced disk) in **0.03s**. Nothing on
+the server was slow.
+
+**It was a timer nobody disarmed.** `StoryboardLibrary.jsx` arms
+`setTimeout(… setSlow(true), 10000)` to explain a silent backend, and that timer
+was cleared **only in the effect's cleanup** — which runs on unmount, not on the
+request settling. The `finally` called `setSlow(false)`, which does nothing to a
+timer that has not fired yet. So every successful load left a live timer behind
+and, ten seconds later, on a screen already showing every board, the banner
+appeared and stayed until the workflow was left. ⚠ **A warning that fires after
+the thing it warns about has succeeded is worse than no warning** — it teaches the
+user to ignore the banner on the day it is telling the truth.
+
+Fix: `clearTimeout(slowTimer)` in the `finally`. One line. `BreakdownProgress.jsx`
+already got this right by guarding its own slow timer on `doneRef.current`.
+
+⚠ **PINNED IN CHROMIUM, AND THE CHECK WAS PROVED TO BITE FIRST.** New
+`workflow_mount_check.py` section **[8]** loads the library, asserts the banner is
+absent, waits 12 seconds past the component's own threshold and asserts it is
+STILL absent with the rows still on screen. Run against the code with the fix
+removed it **failed exactly as the user described** (clean at load, banner at
+12s, rows present throughout); restored, it passes. ⚠ The wait cannot be
+shortened — a static read of the file cannot see a timer fire, which is this
+file's whole thesis. New **RULEBOOK F6**.
+
+⚠ **STILL OPEN, DELIBERATELY NOT CHANGED:** the banner's own words. It tells a
+non-technical user *"usually a database it needs (MongoDB) being unreachable.
+Check the uvicorn log"* — a developer's sentence in a product UI, and a guess
+stated as a diagnosis. It will now only appear when something really is slow, so
+it is no longer urgent; the rewrite is the user's call.
+
+⚠ **What is NOT verified:** the user has not yet driven this in their own
+browser — that is the next thing. Everything above is pinned by the Chromium
+suite, which is the same rig that caught the previous two attempts.
+
+### 2026-08-28 — THE ENDING THAT WAS WRITTEN AND NEVER FILMED, AND A RULEBOOK SO THE NEXT ONE IS NOT
 
 A Hinglish "Script to Storyboard" test, reviewed on screen before anything was
 drawn. Three faults in one concept card, and then the reason they keep coming
@@ -22676,6 +22821,34 @@ reported BROKEN and has since been rewritten a second time** (see the top Work
 Log entry — the slice-per-call design crawled, jumped, and never painted 100).
 Nothing has been GENERATED from this board yet — cast, assets, panels, PDF are
 all still unseen.
+
+### 🔴 NEXT: CONFIRM THE FRONT DOOR IN A REAL BROWSER (2026-08-28)
+
+Fixed in code and pinned by the Chromium suite, **not yet seen by the user**:
+
+1. **Press Script to Storyboard.** It must open **"Your Storyboards"** — every
+   time, however old the tab is. Never "Is this the right direction?".
+2. **Look at the first row of Recent Storyboards.** The unapproved concept should
+   be there as a row: 💡 glyph, its own title, a **Not approved yet** chip, a
+   scene count, and **Resume →**.
+3. **Press Resume.** The card opens with every scene line and edit intact.
+4. **Press the bin on that row, then Discard — then RELOAD the page.** The row
+   must stay gone. If it comes back, the server slot was not cleared.
+5. **Approve a concept and let the breakdown finish.** The concept row must
+   DISAPPEAR and be replaced by the storyboard-draft row (📝, "Not drawn yet").
+   Two rows for one film means `finishBreakdown()`'s `setConcept(null)` did not
+   reach the server.
+
+6. **Open the workflow and just LOOK at it for fifteen seconds.** No banner
+   should appear. The "Still loading your storyboards" notice used to arrive ten
+   seconds AFTER everything had loaded, every single time, and blame MongoDB for
+   it. If it still shows up on a loaded list, the timer fix did not take.
+
+⚠ **Legacy slots will still have a stale concept in them.** Any account that
+generated a board before today has a spent card in its draft slot — it was never
+cleared, and clearing it retroactively is deliberately NOT done (one slot per
+account, and it may hold a genuine in-progress concept). It now shows up as a row
+with a Discard button, which is the honest outcome.
 
 ### 🟠 OPEN, FROM THE 12-PANEL BOARD REVIEW (2026-08-28)
 

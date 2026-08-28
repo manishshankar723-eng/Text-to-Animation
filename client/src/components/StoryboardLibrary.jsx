@@ -54,6 +54,12 @@ const GHOST_ROWS = 5;
 // bare id risks the moment a draft is promoted to the board of the same name.
 const draftRowId = (jobId) => `draft:${jobId}`;
 
+// The row id the unapproved CONCEPT answers to. A constant is right here where
+// it is wrong for the storyboard drafts above: there is exactly ONE script
+// draft per account, so there can only ever be one of these rows. The prefix
+// still matters — it keeps this out of the way of any board's job_id.
+const CONCEPT_ROW_ID = "concept:draft";
+
 function titleCase(s) {
   return s.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -88,6 +94,19 @@ export default function StoryboardLibrary({
   // component over COPIES) never offers a draft it has no way to open. Omit it
   // and the row does not exist.
   onResume,
+  // ⚠ THE UNAPPROVED CONCEPT CARD, AS A ROW. Given by the workflow that owns
+  // the script draft, already fetched — `{ title, scenes, seconds, updated_at }`
+  // or `null`. Same contract as `onResume`: pass nothing and the row does not
+  // exist, so the animatic library never offers a screen it cannot open.
+  //
+  // ⚠ IT IS A SUMMARY, NOT THE CARD. Everything needed to DRAW the row and
+  // nothing needed to edit one — the caller keeps the concept itself in state
+  // and `onResumeConcept` just asks it to show its own screen. Handing the
+  // whole card down here would make this component the second place that knows
+  // what a concept is shaped like.
+  conceptDraft = null,
+  onResumeConcept,
+  onDiscardConcept,
   // ⚠ A WORKFLOW ID, NOT A GLYPH. This library is rendered by two different
   // workflows and each wants its own face on the header; passing the id rather
   // than the picture keeps the drawing in one file. Defaults to Script to
@@ -182,6 +201,20 @@ export default function StoryboardLibrary({
       } catch (e) {
         if (alive) setError(e.message);
       } finally {
+        // ⚠ DISARM THE TIMER, DO NOT JUST UNSET THE FLAG. This `finally` only
+        // ever called `setSlow(false)`, and the timer above was cleared ONLY in
+        // the cleanup below — which runs on unmount, not on the request
+        // finishing. So a load that answered in 300ms left a live timer behind,
+        // and ten seconds later, on a screen already showing every board, the
+        // banner appeared and stayed: *"mai bar bar ye notice dekh rah hun."*
+        //
+        // ⚠ AND IT ACCUSED THE DATABASE OF BEING UNREACHABLE while the list it
+        // had already fetched was on screen underneath — measured at the time
+        // this was found: Mongo answered in 0.01s and the size walk in 0.03s.
+        // A warning that fires after the thing it warns about has succeeded is
+        // worse than no warning; it teaches the user to ignore the banner for
+        // the day it is telling the truth.
+        clearTimeout(slowTimer);
         if (alive) {
           setLoading(false);
           setSlow(false);
@@ -629,6 +662,132 @@ export default function StoryboardLibrary({
     );
   }
 
+  /** Throw the unapproved concept away. Nothing has been drawn and no quota
+   *  has been spent, so the words are gentler than the storyboard draft's — but
+   *  it is still somebody's writing, so it still goes through the confirm strip
+   *  rather than vanishing on one click. */
+  async function discardConcept() {
+    setBusyId(CONCEPT_ROW_ID);
+    setError("");
+    try {
+      await onDiscardConcept();
+      setConfirmId(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // THE CONCEPT NOBODY HAS APPROVED YET, DRAWN AS A ROW LIKE ANY OTHER PROJECT.
+  //
+  // ⚠ WHY IT IS A ROW AND NOT A REOPENED SCREEN. It used to reopen ITSELF: a
+  // fresh page load read the saved script draft, found a concept in it and
+  // moved the workflow off this library and onto the card. So "Script to
+  // Storyboard" opened on two different screens depending on how old the tab
+  // was, and — because nothing ever cleared a spent concept — the screen it
+  // opened on was often the planning card of a film that had already been
+  // generated weeks earlier. *"jab user open kar raha hai script to storyboard
+  // to first page khulna chahiye, nhi ki ye page."*
+  //
+  // ⚠ AND IT IS THE SAME SHAPE AS THE DRAFT ROW BELOW ON PURPOSE. Both are
+  // "unfinished work waiting on you"; a user should not have to learn two
+  // patterns for that. The differences are only the honest ones: a lightbulb
+  // rather than a note, "Not approved yet" rather than "Not drawn yet", scenes
+  // rather than shots, and a discard warning that does NOT claim anything has
+  // been paid for, because nothing has.
+  function renderConceptRow() {
+    const busy = busyId === CONCEPT_ROW_ID;
+    const name = conceptDraft.title || "Untitled concept";
+    const scenes = conceptDraft.scenes || 0;
+    const seconds = conceptDraft.seconds || 0;
+    return (
+      <LibraryRow
+        key={CONCEPT_ROW_ID}
+        onOpen={onResumeConcept}
+        openTitle="Pick up the concept you were reading — nothing has been drawn yet"
+        /* No panels and no chosen aspect yet, so no bytes and no shape. */
+        size={0}
+        cover={<span className="lib-draft-glyph">💡</span>}
+        name={
+          <div
+            className="lib-title"
+            onClick={onResumeConcept}
+            title={
+              conceptDraft.updated_at
+                ? `Saved ${new Date(conceptDraft.updated_at).toLocaleString()}. Nothing has been drawn from it yet.`
+                : "Nothing has been drawn from it yet."
+            }
+          >
+            {name}
+          </div>
+        }
+        meta={
+          <>
+            <span className="chip warn">Not approved yet</span>
+            {scenes > 0 && (
+              <span className="chip">
+                {scenes} scene{scenes === 1 ? "" : "s"}
+              </span>
+            )}
+            {seconds > 0 && <span className="chip">{seconds}s</span>}
+          </>
+        }
+        date={formatDate(conceptDraft.updated_at)}
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn small lib-resume"
+              disabled={busy}
+              onClick={onResumeConcept}
+            >
+              Resume →
+            </button>
+            <button
+              type="button"
+              className="lib-icon danger"
+              disabled={busy}
+              title="Discard this unapproved concept"
+              onClick={() => setConfirmId(CONCEPT_ROW_ID)}
+            >
+              <Icon name="trash" />
+            </button>
+          </>
+        }
+        below={
+          confirmId === CONCEPT_ROW_ID ? (
+            <div className="lib-confirm">
+              <span className="tiny">
+                Discard “{name}”? Nothing has been drawn from it, so nothing you
+                have paid for is lost — but the writing is, and this cannot be
+                undone.
+              </span>
+              <div className="lib-confirm-btns">
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => setConfirmId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn small lib-delete"
+                  disabled={busy}
+                  onClick={discardConcept}
+                >
+                  {busy ? "Discarding…" : "Discard"}
+                </button>
+              </div>
+            </div>
+          ) : null
+        }
+      />
+    );
+  }
+
   // What the Filter box leaves standing. A pure VIEW of `boards` - nothing is
   // re-fetched - matched against the three things a user actually types when
   // hunting for a board: its name, its genre and its aspect ratio.
@@ -644,8 +803,17 @@ export default function StoryboardLibrary({
         matchesFilter(query, d.title, genreLabel(d.genre), d.aspect_ratio)
       )
     : [];
-  const listTotal = boards.length + (onResume ? drafts.length : 0);
-  const shownTotal = shown.length + draftsShown.length;
+  // The concept is a project in this list too, so it filters and it COUNTS.
+  // Only where the caller can actually open one — same rule as the draft rows.
+  const canResumeConcept = Boolean(conceptDraft && onResumeConcept);
+  const conceptShown =
+    canResumeConcept && matchesFilter(query, conceptDraft.title);
+  const listTotal =
+    boards.length +
+    (onResume ? drafts.length : 0) +
+    (canResumeConcept ? 1 : 0);
+  const shownTotal =
+    shown.length + draftsShown.length + (conceptShown ? 1 : 0);
 
   return (
     <div className="workflow-head-wrap sb-library">
@@ -714,7 +882,12 @@ export default function StoryboardLibrary({
       >
         {/* The unfinished ones LEAD the list — they are the only projects
             still waiting on the user, and newest first among themselves
-            because that is the order the server returns them in. */}
+            because that is the order the server returns them in.
+            ⚠ AND THE CONCEPT LEADS THEM, because it is the EARLIEST stage a
+            project can be stuck at: no shots, no cast, nothing drawn, nothing
+            paid for. Reading down the list is reading forward through the
+            pipeline, which is the only order that needs no explaining. */}
+        {conceptShown && renderConceptRow()}
         {draftsShown.map(renderDraftRow)}
         {shown.map(renderBoard)}
       </LibrarySection>

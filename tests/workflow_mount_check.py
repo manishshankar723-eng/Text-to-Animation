@@ -21,15 +21,20 @@ did anything reach `pageerror`; is there anything on the screen. Same shape as
 monitor was a CRASH before it was a rendering bug.
 
 Then, because the rig is standing anyway, it walks the path that crash was
-hiding, with a draft served off Playwright's own router: the saved card reopens,
-its scenes reorder, ← and the form's own link get you out and back — **and a
-REMOUNT does not reopen it**, which is the storyboard-draft bug this feature was
-one line away from repeating. Nothing without a browser can see any of it.
+hiding, with a draft served off Playwright's own router: a cold start lands on
+the LIBRARY with the saved concept waiting there as a row, Resume opens it, its
+scenes reorder, ← and the form's own link get you out and back — **and neither a
+load nor a REMOUNT ever moves the user by itself**, which is the storyboard-draft
+bug this feature spent two attempts repeating. Nothing without a browser can see
+any of it.
 
-⚠ THIS TEST HAS ALREADY EARNED ITS KEEP TWICE: once on the white page, and once
-on the offer link, which sat in the form's status row where **the only route to
-the form clears the concept on the way past**. It could never have fired, and it
-read perfectly well in the diff.
+⚠ THIS TEST HAS EARNED ITS KEEP THREE TIMES: once on the white page; once on the
+offer link, which sat in the form's status row where **the only route to the form
+clears the concept on the way past**, so it could never have fired and read
+perfectly well in the diff; and once on the fix for THAT, which reopened the card
+on every fresh page load and so opened the workflow on a different screen
+depending on how old the tab was. The offer now lives on the library — the screen
+a cold start actually reaches — and section [2] carries the whole story.
 
 ⚠ MOUNTED INSIDE `<React.StrictMode>`, like `main.jsx` does. StrictMode mounts
 twice, and a double mount is exactly what caught the storyboard-draft resume bug
@@ -343,17 +348,58 @@ def main():
                   not page.evaluate("window.__errors.length"),
                   str(page.evaluate("window.__errors")))
 
-            print("\n[2] the card the page died on is back on screen")
-            # ⚠ IT REOPENS, IT IS NOT OFFERED. The first attempt put a link in
-            # the form's status row and this test is what proved that could
-            # never fire: the only route to the form from a cold start is "New
-            # storyboard", and that calls `resetWorkflow()`, which clears the
-            # concept on the way past. The offer was unreachable by design.
+            print("\n[2] a cold start opens the FRONT DOOR, and the card waits there")
+            # ⚠ THIS SECTION HAS BEEN BOTH WAYS ROUND, AND THAT IS THE POINT OF
+            # KEEPING THE STORY HERE.
+            #
+            # It first asserted that a fresh page load REOPENS the card, because
+            # the alternative on offer then was a link in the FORM's status row
+            # and this very test proved that could never fire: the only route to
+            # the form from a cold start is "New storyboard", and that calls
+            # `resetWorkflow()`, which clears the concept on the way past.
+            #
+            # Reopening then turned out to be the worse half of the trade. The
+            # workflow opened on two different screens depending on how old the
+            # tab was, and — because nothing ever cleared a SPENT concept — the
+            # screen it opened on was usually the planning card of a film that
+            # had already been generated and exported. *"jab user open kar raha
+            # hai script to storyboard to first page khulna chahiye, nhi ki ye
+            # page."*
+            #
+            # So the offer moved to the screen a cold start actually reaches:
+            # the LIBRARY, as a row beside the unfinished boards. Same rule the
+            # storyboard draft already lives by. The card is never lost and the
+            # user is never moved.
             body = page.inner_text("body")
-            check("⚠ a fresh page load reopens the concept the user was "
-                  "editing — a refresh used to lose it, and re-generating from "
-                  "the same brief returns a DIFFERENT film",
-                  "Is this the right direction?" in body)
+            check("⚠ a fresh page load lands on the library — the workflow's own "
+                  "front door — and NOT on the concept card",
+                  "Your Storyboards" in body
+                  and "Is this the right direction?" not in body)
+            check("⚠ …and the concept is waiting there as a row, so nothing the "
+                  "user wrote is lost by not being forced on them",
+                  "Not approved yet" in body)
+            check("…named by the concept's own title, not the draft's — and "
+                  "asserted INSIDE that row, because the finished board in this "
+                  "fixture carries the same name, which is the normal case: a "
+                  "concept's title is what goes on to name its board",
+                  DRAFT["concept"]["title"]
+                  in page.locator(".lib-row", has_text="Not approved yet")
+                  .inner_text())
+            check("⚠ …in the LIST with the unfinished board, not in a strip of "
+                  "its own above it — two Resume buttons, one per unfinished "
+                  "project",
+                  page.get_by_role("button", name="Resume").count() == 2,
+                  str(page.get_by_role("button", name="Resume").count()))
+            check("…with no error on the way", not errors, "; ".join(errors[:2]))
+
+            print("\n[2b] …and Resume on that row opens it, edits and all")
+            concept_row = page.locator(".lib-row", has_text="Not approved yet")
+            concept_row.get_by_role("button", name="Resume").click()
+            page.wait_for_timeout(700)
+            check("⚠ the row opens the card the user was editing — a refresh "
+                  "used to lose it, and re-generating from the same brief "
+                  "returns a DIFFERENT film",
+                  "Is this the right direction?" in page.inner_text("body"))
             for line in DRAFT["concept"]["key_scenes"]:
                 check(f"…scene restored: {line[:38]}…",
                       page.locator(f'input[value="{line}"]').count() > 0)
@@ -391,18 +437,28 @@ def main():
                   page.locator(".sts-concept-scenes input").nth(1).input_value()
                   == DRAFT["concept"]["key_scenes"][2])
 
-            print("\n[5] ⚠ but it does NOT reopen on a REMOUNT")
+            print("\n[5] ⚠ and a REMOUNT lands on the front door too")
             # The storyboard-draft bug, which cost several sessions: leaving the
             # workflow and coming back re-opened a board the user had walked out
-            # of, because the resume ran on every mount. The latch here is module
-            # scope — one page load, not one mount — and this is the difference.
+            # of, because the resume ran on every mount.
+            #
+            # ⚠ THIS USED TO BE THE INTERESTING ASSERTION AND NOW IT IS THE
+            # BORING ONE, WHICH IS THE WHOLE IMPROVEMENT. It once tested a
+            # module-scope latch that had to tell a page LOAD from a mount —
+            # a distinction a `useRef` cannot make, which is exactly how the
+            # storyboard-draft version behaved differently under StrictMode in
+            # dev and in the built app. Nothing has to make that distinction any
+            # more: no path moves the user, so load and remount are the same.
             page.evaluate("window.__remount()")
             page.wait_for_timeout(2500)
             after = page.inner_text("body")
             check("⚠ switching away and back does NOT drag the user into the "
-                  "card again — the latch is per PAGE LOAD, not per mount, and "
-                  "a ref-based one would be spent by StrictMode's second mount",
+                  "card — and neither does a fresh load, so there is no latch "
+                  "left to be spent by StrictMode's second mount",
                   "Is this the right direction?" not in after)
+            check("…it lands on the library, with the concept still offered "
+                  "there rather than quietly dropped",
+                  "Your Storyboards" in after and "Not approved yet" in after)
             check("…and the remount itself was clean",
                   not errors, "; ".join(errors[:2]))
 
@@ -415,12 +471,20 @@ def main():
             # when that list is non-empty, and no screen could add to it.
             page.evaluate("window.__remount()")
             page.wait_for_timeout(2000)
-            # ⚠ `.lib-resume`, not a role lookup: the button reads "Resume →",
-            # so its accessible name carries the arrow and `name="Resume"` finds
-            # nothing. And not a comma-selector either — `.lib-new` sits earlier
-            # in the DOM, so "first match" opened a NEW storyboard instead.
+            # ⚠ `.lib-resume`, not a comma-selector: `.lib-new` sits earlier in
+            # the DOM, so "first match" opened a NEW storyboard instead.
+            #
+            # ⚠ AND IT IS SCOPED TO THE ROW, not `.lib-resume` on its own, which
+            # is what this line used to be. There are TWO resumable rows now —
+            # the unapproved concept leads the list and the unfinished board
+            # follows it — so a bare first-match walked into the concept card
+            # and this section failed on a screen that was working. "Not drawn
+            # yet" is the board row's own chip; the concept's says "Not approved
+            # yet", and neither can be mistaken for the other.
             page.wait_for_selector(".lib-resume", timeout=15000)
-            page.click(".lib-resume")
+            page.locator(".lib-row", has_text="Not drawn yet").locator(
+                ".lib-resume"
+            ).click()
             page.wait_for_timeout(1500)
             check("the review step is reachable from a saved draft",
                   "Review your shots" in page.inner_text("body"))
@@ -465,7 +529,15 @@ def main():
             page.evaluate("window.__remount()")
             page.wait_for_timeout(2000)
             page.wait_for_selector(".lib-title", timeout=15000)
-            page.get_by_text("Ganesh Utsav: Ek Rishta").first.click()
+            # ⚠ SCOPED TO THE FINISHED BOARD'S ROW, and it has to be. This was
+            # `get_by_text("Ganesh Utsav: Ek Rishta").first`, and the concept row
+            # that now leads the list carries THE SAME TITLE — the concept's
+            # title is what names the board, so this collision is the normal
+            # case and not a fixture accident. "Mythology" is the finished
+            # board's genre chip; nothing unfinished has one.
+            page.locator(".lib-row", has_text="Mythology").locator(
+                ".lib-title"
+            ).first.click()
             page.wait_for_timeout(2000)
             check("the board opens from the library", "≈" in page.inner_text("body")
                   or "panels" in page.inner_text("body"))
@@ -505,6 +577,42 @@ def main():
                   cast_body[cast_body.find("Generate panels"):][:40]
                   if "Generate panels" in cast_body else "no generate button")
             check("nothing threw on the way back", not errors, "; ".join(errors[:2]))
+
+            print("\n[8] ⚠ the 'still loading' banner does not fire AFTER it loaded")
+            # ⚠ THE FAULT THIS SECTION EXISTS FOR, AND IT IS A TIMER, NOT A SLOW
+            # SERVER. The library arms a 10-second timer to explain a silent
+            # backend, and that timer was cleared ONLY in the effect's cleanup —
+            # which runs on unmount, not on the request finishing. The `finally`
+            # merely set the flag back to false, which does nothing to a timer
+            # that has not fired yet. So a list that answered in 300ms left a
+            # live timer behind and, ten seconds later, on a screen already
+            # showing every board, up came **"Still loading your storyboards …
+            # usually a database it needs (MongoDB) being unreachable"** — and
+            # stayed until the workflow was left. *"mai bar bar ye notice dekh
+            # rah hun."* Measured while chasing it: Mongo answered in 0.01s, the
+            # size walk in 0.03s. Nothing was slow; the warning was.
+            #
+            # ⚠ IT NEEDS THE FULL WAIT AND CANNOT BE SHORTENED. The threshold is
+            # 10s in the component, this is the one thing in the suite that has
+            # to outlive it, and a static read of the file cannot see a timer
+            # fire. That is the whole reason this file exists.
+            page.evaluate("window.__remount()")
+            page.wait_for_selector(".lib-title", timeout=15000)
+            check("the library is loaded and says nothing about loading",
+                  "Still loading your storyboards" not in page.inner_text("body"))
+            page.wait_for_timeout(12000)  # past the component's 10s threshold
+            late = page.inner_text("body")
+            check("⚠ …and it STILL says nothing 12 seconds later, with the "
+                  "boards on screen the whole time — a warning that fires after "
+                  "the thing it warns about has succeeded teaches the user to "
+                  "ignore it on the day it is true",
+                  "Still loading your storyboards" not in late)
+            check("…and the rows are genuinely still there (so this is not a "
+                  "blank page passing by omission)",
+                  page.locator(".lib-title").count() > 0,
+                  str(page.locator(".lib-title").count()))
+            check("…with nothing thrown while it waited",
+                  not errors, "; ".join(errors[:2]))
 
             check("nothing threw during any of it", not errors, "; ".join(errors[:2]))
             page.screenshot(path=os.path.join(ROOT, "output", "workflow_mount.png"))
