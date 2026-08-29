@@ -284,7 +284,13 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-29 — **THE APP CAN NOW BE RENAMED AND RE-LOGO'D FROM THE ADMIN PANEL, AND ONE SAVE LANDS EVERYWHERE.** Asked for directly: *"mai chahta hun Aniwala icon and Aniwala Ai Studio text ko mai admin panel se change kar sakun … icon ke jagah logo image lagaun … jaha jaha ye icon dikhe waha update ho jaye and text also sab jagah … ek baar mai update ho jaye sab jagah."* New **Admin → Brand** tab: a name field and a logo upload, with a live preview drawn at the sidebar's own size on a checkered ground (so a logo that is NOT transparent is caught before it ships as a white block in the dark rail). ⚠ **The name was typed into EIGHT components and the mark drawn in TWO more** — rail, sign-in card, landing nav, landing footer, admin top bar, shared-storyboard viewer, Explore hero, the tab title and the favicon — so the whole point of the change is that none of them keeps a copy any more. New `server/branding.py` (ONE row, not a list) with a PUBLIC `GET /public/branding`, because the landing page and the sign-in card print the name and have no session; the write side is `/admin/branding` behind `require_admin` like every other panel route. ⚠ **The logo's URL carries the file's id** (`/public/branding/logo/{stamp}`), so a new upload is a NEW address — every browser and proxy picks it up the moment the name call answers, and nothing is cached wrong. ⚠ **The browser remembers the last answer in `localStorage` and stamps the title and favicon BEFORE the first render**, or every reload would flash the built-in name on the one screen where a customer decides whether this is the right site — same fix, same reasoning as the remembered entitlements. ⚠ **The AI assistant's brief was in the blast radius too**: four prompt modules opened with *"You are the … in Aniwala AI Studio"*, so a renamed app had an assistant that still named the old product. `_system_instruction()` now swaps it, by REPLACE not `format()` (those briefs are full of literal braces), with the constant left a plain string so the existing prompt tests keep reading it. ⚠ **The drawn mark is not deleted** — it is the fallback for a deployment that never uploads one, for **Remove logo**, and for the instant before the call answers. ⚠ **AND THEN THE LOGO DISAPPEARED IN LIGHT MODE** — *"jab mai dark mode mai hun to mera logo dikh raha hai magar jab light mode mai karta hun to mera logo white mai merge ho raha hai"* — because an uploaded logo is a FLAT PICTURE and the drawn mark it replaced was painted in `currentColor`, which re-colours itself for free. So there are now **two slots, Dark mode and Light mode**, asked for by name; either fills in for the other, so one upload is still a complete answer. ⚠ **The swap is CSS off `<html data-theme>`, not React state**, because the landing page, the sign-in card and the public storyboard viewer are drawn outside the app shell and never see it — the same three screens that forced the brand store to be a module rather than a Context. The favicon is the one exception (a `<link rel=icon>` cannot be styled) and follows the theme through a `MutationObserver`. ⚠ **The two admin cards show the DARK app and the LIGHT app at the same time, with the grounds hard-coded from `theme.css`** — previewing a logo on whatever theme the panel happens to be in is precisely how the white-on-white fault shipped. New **RULEBOOK D4, E19 and E20**. New `tests/branding_check.py` — **79 checks, all green**, no MongoDB and no browser; ⚠ **its last section is a source grep over `client/src`** that fails if the brand string is hard-coded anywhere a customer can see it, which is the only assertion that survives the next component being written. `npm run build` passes; `admin_check`, `board_ask_check`, `script_intake_check` and `script_concept_check` still pass. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
+**Last updated:** 2026-08-30 — **THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB.** Asked with the Kling AI Explore page as the reference: *"need the side bar explore page like this but with my own services, and when user click on any of this he must get sign in page"*, and *"tum ek explore ka hi banao aur uske under banner and showcase rakho"*. Explore now carries a left rail at the app rail's own collapsed width, reading the **same `live` list the tiles do** (not a second copy) with **every row a sign-in that carries its workflow id**, so the visitor lands inside the workflow afterwards. ⚠ It is `position: fixed` with one `padding-left` on the page, because all eight of this screen's rows are direct children placed by name and a flex shell would have rewritten every one of them; hidden outright below 1000px, where the tile row already lists everything. New `AdminExplore.jsx` folds **Banners and Showcase into one Explore tab** behind the panel's own `admin-segment`, mounting one at a time — neither child rewritten. ⚠ **A patch script ate 39 lines of `AdminPanel.jsx` on the way**: a `re.S` regex whose `.*` ran from the file's first comment to the anchor, taking the header, the imports and six of nine tabs in one silent successful write. **G1 could not catch it — it protects the write, not the match.** Recovered from `git show HEAD:` (not `git checkout`), rebuilt line by line, proved clean by reading the diff; nothing of the user's was lost. New **RULEBOOK E31 and G12**, and `showcase_check.py` §14 now asserts every other tab survived. 33 new checks, all green; `admin_check`, `branding_check` and `npm run build` pass. ⚠ **The rail has never been drawn in a browser** — the two Chromium files were updated but not run (G2). See the Work Log.
+
+**Previously:** 2026-08-29 — **THE MARKETING PAGE GOT AN ADDRESS, AND THE WALL LEARNED TO MAKE ITS OWN THUMBNAILS.** Two reports: *"make it seprate explore page"* and *"when i upload video from admin panel but when i see explore page so no thumbnail show in my upload video"*. ⚠ **Explore was never a URL** — it was `authView` state, so the VS Code task named MARKETING PAGE opened on the sales page and a link to the one screen whose job is to be shown to people could not be sent to anybody. New `EXPLORE_PARAM` copied from `?admin`, one shared `syncUrlFlag()` writing both, `?admin` winning when both appear, and the parameter **dropped on sign-in** because `LANDING_NAV` says a signed-in customer never sees Explore again — the effect watches `authed` as well as the view, or the address goes stale the moment somebody signs in. ⚠ **The missing thumbnail was never missing**: the poster field, route and "Add still" button all worked, and nothing said a video needed a SECOND upload. ⚠ **The reason it was built that way was a wrong fact repeated in three comments** — *"there is no `ffprobe` on an `imageio-ffmpeg` install"*, which is true and beside the point: **`ffprobe` inspects, `ffmpeg` extracts**, and the repo has shipped ffmpeg all along for the exporter. New `showcase.poster_from_video()` grabs the still on upload, **refuses a black frame** (films open on black — it probes 1.0s/2.5s/0.5s/0.0s and falls back to the glyph rather than a wall of black rectangles), seeks with `-ss` BEFORE `-i`, writes the clip to disk first (an MP4's `moov` can live at the end), runs via **`run_in_threadpool`** because the handler is `async def` and the file may be 96MB, and **fails soft** — a thumbnail is never worth failing an upload over. ⚠ **It fills an EMPTY slot only**: a hand-picked still outranks frame one and survives a re-upload. A video's `aspect` is **measured** off the frame now instead of taken from the dropdown. New **RULEBOOK E28 and E29**; `tests/showcase_check.py` gains 17 checks built on **real ffmpeg clips**, all green, and `admin_check`, `admin_fields_check`, `branding_check`, `brand_landing_check` and `npm run build` still pass. ⚠ **Not driven in a browser** — `explore_mount_check.py` not run (G2). See the Work Log.
+
+**Previously:** 2026-08-29 — **ONE START BUTTON BECAME THREE, ONE PER PAGE.** Asked for plainly: *"divide my task.json in three part for start and stop, different one for my workflow page, one for admin panel and one the marketing page."* `.vscode/tasks.json` was a single **Start All** with no way to stop anything; it is now three numbered START/STOP pairs — **workflow 5173**, **admin 5174** (opens on `?admin=1`), **marketing 5175** (signed out) — plus one **STOP EVERYTHING**. ⚠ **The ports are not cosmetic, they are how the three sessions stay apart**: a different port is a different origin, so `cas_token` does not cross between them and you can be an admin on 5174 and an ordinary user on 5173 at the same time, with 5175 permanently a visitor — the only state the marketing page is ever seen in. This app has no router, so the port plus the `--open` path IS the routing. ⚠ **The backend was deliberately NOT split with them**: `server/main.py`'s startup sweep closes out every QUEUED job, so a second API server would have killed the first one's work in progress — the shared-server task is port-guarded and idempotent instead. ⚠ **`--strictPort` is load-bearing now**, because the port Vite silently drifts to is 5174, which is the admin panel's address. New `.vscode/stop-port.ps1` kills **by port, never by process name**, takes the launcher parent with it, and is pure ASCII for the same cp1252 reason as `start-app.ps1`. Verified end-to-end: a client bound to 5174, answered **HTTP 200**, and the STOP task freed the port; a second STOP on a free port is quiet, not red. New **RULEBOOK G11**. ⚠ **Not yet clicked from the VS Code Tasks menu by the user.** See the Work Log.
+
+**Previously:** 2026-08-29 — **THE APP CAN NOW BE RENAMED AND RE-LOGO'D FROM THE ADMIN PANEL, AND ONE SAVE LANDS EVERYWHERE.** Asked for directly: *"mai chahta hun Aniwala icon and Aniwala Ai Studio text ko mai admin panel se change kar sakun … icon ke jagah logo image lagaun … jaha jaha ye icon dikhe waha update ho jaye and text also sab jagah … ek baar mai update ho jaye sab jagah."* New **Admin → Brand** tab: a name field and a logo upload, with a live preview drawn at the sidebar's own size on a checkered ground (so a logo that is NOT transparent is caught before it ships as a white block in the dark rail). ⚠ **The name was typed into EIGHT components and the mark drawn in TWO more** — rail, sign-in card, landing nav, landing footer, admin top bar, shared-storyboard viewer, Explore hero, the tab title and the favicon — so the whole point of the change is that none of them keeps a copy any more. New `server/branding.py` (ONE row, not a list) with a PUBLIC `GET /public/branding`, because the landing page and the sign-in card print the name and have no session; the write side is `/admin/branding` behind `require_admin` like every other panel route. ⚠ **The logo's URL carries the file's id** (`/public/branding/logo/{stamp}`), so a new upload is a NEW address — every browser and proxy picks it up the moment the name call answers, and nothing is cached wrong. ⚠ **The browser remembers the last answer in `localStorage` and stamps the title and favicon BEFORE the first render**, or every reload would flash the built-in name on the one screen where a customer decides whether this is the right site — same fix, same reasoning as the remembered entitlements. ⚠ **The AI assistant's brief was in the blast radius too**: four prompt modules opened with *"You are the … in Aniwala AI Studio"*, so a renamed app had an assistant that still named the old product. `_system_instruction()` now swaps it, by REPLACE not `format()` (those briefs are full of literal braces), with the constant left a plain string so the existing prompt tests keep reading it. ⚠ **The drawn mark is not deleted** — it is the fallback for a deployment that never uploads one, for **Remove logo**, and for the instant before the call answers. ⚠ **AND THEN THE LOGO DISAPPEARED IN LIGHT MODE** — *"jab mai dark mode mai hun to mera logo dikh raha hai magar jab light mode mai karta hun to mera logo white mai merge ho raha hai"* — because an uploaded logo is a FLAT PICTURE and the drawn mark it replaced was painted in `currentColor`, which re-colours itself for free. So there are now **two slots, Dark mode and Light mode**, asked for by name; either fills in for the other, so one upload is still a complete answer. ⚠ **The swap is CSS off `<html data-theme>`, not React state**, because the landing page, the sign-in card and the public storyboard viewer are drawn outside the app shell and never see it — the same three screens that forced the brand store to be a module rather than a Context. The favicon is the one exception (a `<link rel=icon>` cannot be styled) and follows the theme through a `MutationObserver`. ⚠ **The two admin cards show the DARK app and the LIGHT app at the same time, with the grounds hard-coded from `theme.css`** — previewing a logo on whatever theme the panel happens to be in is precisely how the white-on-white fault shipped. New **RULEBOOK D4, E19 and E20**. New `tests/branding_check.py` — **79 checks, all green**, no MongoDB and no browser; ⚠ **its last section is a source grep over `client/src`** that fails if the brand string is hard-coded anywhere a customer can see it, which is the only assertion that survives the next component being written. `npm run build` passes; `admin_check`, `board_ask_check`, `script_intake_check` and `script_concept_check` still pass. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
 
 **Previously:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **114 checks, all green**, both themes, Home included. **The billboard then flinched on the user's own screen** — it took each workflow's FIRST SENTENCE and those run 40 to 176 characters, so the long one grew the banner by two lines and took its neighbour down with it every time the carousel reached it. It shows the short `stage.body` line now, clamped to two lines, on a row sized for its tallest slide; the height check was proved to fail on the old code first. New **RULEBOOK E13**. **And the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Then the coupon learned to come to the customer**: a card slides in from the right of Explore carrying whatever discount is running — the SAME offer the pricing page advertises, opening the SAME pricing modal, with every word of it (heading, bullets, small print, button, and whether it appears at all) typed in **Sales → Offers** as five new optional fields on the offer row. ⚠ One card at a time, dismissal remembered **per offer id** so a new offer still gets its turn, not a modal, and it fails closed. New **RULEBOOK E14 and E15**. **And the tiles lost their gold** — *"ye 3 button ka colour ek jaisa rakho"* — because gold means THE ACTION on this page and a navigation tile wearing it says something nobody meant (**E16**). **And the masonry hole is closed** — reported twice, and the first diagnosis was wrong: it was never the packing, it was the RATIO SPREAD (a 9:16 board is 3.2× the height of a 16:9 one in the same column, and fewer columns only makes it taller). Every card is now drawn between 4:5 and 16:9 and the column count is capped by the item count; the same seven projects went from columns ending at 483/483/323/323/**154** to 430/430/612/403 — shortest reaches 66% of tallest, up from 32%, measured in Chromium and proved to fail on the old code first. ⚠ It is the one screen in the app that crops, deliberately (**E23**). **And the billboards moved into the admin panel** — *"this banner should be change aur hide by the admin, of it text and image"*. Both Explore cards were BUILT FROM THE WORKFLOW LIST (heading from a workflow's name, body from its landing pitch, artwork from its glyph), so the one part of the app whose job is to say something needed a redeploy to change and could not carry a picture. New `server/banners.py` + a **Banners** tab: slot, kicker, heading, body, button and where it goes, order (↑/↓ per **E6**), a Hide that is not a Delete, and a picture per card. ⚠ **An empty store is the shipped state, not an outage** — with nothing live the page draws what it always drew, and hiding the last banner is the same path (**E20**). ⚠ The upload follows the logo's rules exactly — a new id per upload, repoint before delete, only ids we hold get served — but WEBP at 1280px, and the picture COVERS the card under a scrim rather than fading into a corner (**E21**). ⚠ And the form stopped printing *"A banner needs a heading"* under a box nobody had touched (**E22**). **And the collapsed rail learned to say what its icons are** — *"Script to Storyboard ka only Storyboard dikhao"* — each row now stacking its glyph over a short name, the column widened 68px → 92px to hold one, and ⚠ **all six workflows named, including the three switched off**, so turning one back on does not mean doing this again (**E17**). ⚠ The clipping check had to be written twice: `scrollWidth > clientWidth` reads GREEN on a box that is visibly printing "Storyboa…", so it measures the text with a `Range` now and was proved to fail first (**E18**). **The sign-off format changed too** — *"remaining mai pura nhi do … tum rulebook mai likh ke rakho, jab mai mangunga to dena"* — so **G8 is struck and replaced by G10**: REMAINING carries this turn's leftovers, the whole open list stays in RULEBOOK's "Still open" table and is handed over on request. ⚠ The obligation moved rather than went: anything found and not fixed gets a row there the moment it is found. See the Work Log.
 
@@ -3082,6 +3088,45 @@ Pipeline stages (see `pipeline.py`):
 
 ## ▶️ How to run
 
+### From inside VS Code — THREE PAGES, THREE START/STOP PAIRS
+
+`Ctrl+Shift+P` → **Tasks: Run Task**, or `Ctrl+Shift+B` for the workflow page.
+
+| Task | Opens | Port |
+|------|-------|------|
+| **1 ▶ WORKFLOW page — START** | the signed-in app (`/`) | 5173 |
+| **2 ▶ ADMIN panel — START** | `?admin=1` | 5174 |
+| **3 ▶ MARKETING page — START** | the public Explore/Landing page, signed out | 5175 |
+| **0 ✖ STOP EVERYTHING** | frees 5173, 5174, 5175 **and** 8000 | — |
+
+Each page has its own **STOP**, so stopping the admin panel leaves the workflow
+page you had open exactly where it was. Asked for directly: *"divide my task.json
+in three part for start and stop … which makes it easy for me to handle."*
+
+⚠ **A PORT PER PAGE IS ALSO A SESSION PER PAGE, and that is the bigger win.**
+`localhost:5173` and `localhost:5174` are different origins, so `localStorage`
+— and therefore `cas_token` — does not cross between them. You can be signed in
+as an **admin on 5174** and as an **ordinary user on 5173** at the same time,
+while **5175 stays signed out**, which is the only state the marketing page is
+ever seen in (see `LANDING_NAV` in `App.jsx` — Explore is the shop window now).
+The cost is one sign-in per port, once.
+
+⚠ **THERE IS ONE API SERVER AND THERE MUST ONLY EVER BE ONE.** All three pages
+share port 8000. The shared-server task checks the port first and reuses what is
+already there, and that guard is not politeness — `server/main.py`'s startup
+sweep **closes out every job it finds QUEUED**, so a second server booting would
+kill the jobs the first one is in the middle of running. It is stopped only by
+**0 ✖ STOP EVERYTHING**.
+
+⚠ **`--strictPort` on every client task is load-bearing.** Without it a busy
+5173 makes Vite quietly fall through to **5174 — the admin panel's address** —
+and two pages fight over one port with no error printed anywhere.
+
+Stopping is `.vscode/stop-port.ps1`, which **kills by PORT, never by process
+name**: "kill node" and "kill python" are the two obvious ways to write that and
+both are wrong on a laptop that is also running something else. It is **pure
+ASCII** for the same cp1252 reason as `start-app.ps1` (below).
+
 ### One command (Windows)
 ```powershell
 .\start-app.ps1            # backend + frontend + browser
@@ -3473,7 +3518,325 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-29 (latest) — THE APP'S OWN NAME AND MARK BECAME AN ADMIN FIELD
+### 2026-08-30 (latest) — THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB
+
+Two asks, with the Kling AI Explore page attached as the reference:
+*"need the side bar explore page like this but with my own services, and when
+user click on any of this he must get sign in page and after sign in open the
+usual flow"*, and *"admin panel banners and showcase both section same work kar
+raha hai explore page ke liye — so tum ek explore ka hi banao aur uske under
+banner and showcase rakho."*
+
+**1. A rail on the page that has no shell.** Explore is the logged-out marketing
+screen, so there is no `.shell` around it and never was a rail. It has one now:
+the same workflow list, glyph over short name, at the app rail's own collapsed
+width. ⚠ **IT IS THE SAME `live` LIST THE TILES READ**, not a second copy — a
+workflow an administrator switches off has to leave both at once, which is the
+bug `dashboard_feed.js` was extracted to prevent. ⚠ **EVERY ROW IS A SIGN-IN**,
+carrying the workflow id through `onSignIn` so `pendingWorkflow` lands the
+visitor inside it afterwards; that is the "usual flow" half of the request, and
+it is the fifth control on this page that has to gate rather than navigate.
+
+⚠ **THE RAIL IS `position: fixed` AND THE PAGE IS MOVED OFF IT WITH ONE
+`padding-left`.** Every row on this screen is a DIRECT CHILD of `.explore-public`
+and is placed by eight listed selectors; wrapping them in a flex shell to make a
+column for a rail would have rewritten all eight and the masonry maths with them.
+The stylesheet already warns that this page has fixed children and that this is
+why the rows are listed rather than `> *` selected — the rail is a third one, and
+the warning covers it. Below 1000px it is hidden outright rather than shrunk: the
+tile row already names every workflow, so a phone loses nothing but 92px it does
+not have.
+
+**2. Banners and Showcase were two tabs for one screen.** New `AdminExplore.jsx`
+holds both as sections behind the panel's own `admin-segment` control — the same
+one Activity, Sales, Features and the user detail already use. ⚠ **NEITHER CHILD
+WAS REWRITTEN**: the new file is a strip and a switch, and the two editors still
+own their note box, their card and their create form. ⚠ **AND THEY MOUNT ONE AT
+A TIME** rather than both being hidden with CSS — each fetches on mount and holds
+an open create form, so a half-typed banner surviving a trip to Showcase and back
+is state nobody expects and nobody tests. ⚠ The old strip had already admitted
+the fault in a comment — *"they are the SAME PAGE … two tabs apart is two tabs
+too far"* — and answered it with adjacency, which is the workaround. New
+**RULEBOOK E31**.
+
+**⚠ AND A PATCH SCRIPT ATE 39 LINES OF `AdminPanel.jsx` ON THE WAY, WHICH IS THE
+MOST USEFUL THING IN THIS ENTRY.** A regex meant to replace two tab entries began
+`[ ]*//.*NEXT TO BRAND` under `re.DOTALL`, so `.*` ran from the FIRST comment in
+the file down to the anchor: the header, every import and six of the nine tabs
+went with it, in one silent write that reported success. The file went 5,360 to
+3,143 characters.
+
+⚠ **G1 DID NOT CATCH IT AND CANNOT.** Build-bytes-then-rename protects against a
+half-written file; it will happily rename a COMPLETE file with the wrong contents
+into place. G1 is about the write; this is about the match. Recovered with
+`git show HEAD:` — **not `git checkout`** (G5) — rebuilt line by line, and proved
+clean by reading `git diff`, which contained the intended merge and nothing else.
+The uncommitted delta in that file turned out to be the Showcase wiring, which
+this change removes anyway, so nothing was lost. New **RULEBOOK G12**: match an
+exact string or walk lines, assert the COUNT before replacing, and assert the
+SURVIVORS afterwards — a patch that only checks what it added cannot see what it
+removed. `showcase_check.py` §14 now asserts every one of the seven other tabs is
+still present, for exactly this reason.
+
+**Verified.** `tests/showcase_check.py` gains **§13 and §14, 33 new checks, all
+green**; `admin_check` and `branding_check` pass; `npm run build` passes.
+`tests/admin_fields_check.py` gains a `section()` helper and sweeps Explore's two
+halves through the segmented control instead of two tabs, and
+`tests/explore_mount_check.py` gains an `AdminExplore` screen — ⚠ **neither was
+RUN** (G2: not without being asked). **So the rail has never been drawn in a
+browser, and G7 applies: a green build is not a rendered screen.**
+
+---
+
+### 2026-08-29 — THE MARKETING PAGE GOT AN ADDRESS, AND THE WALL LEARNED TO MAKE ITS OWN THUMBNAILS
+
+Two reports in one breath, and they turned out to share a shape: *"make it
+seprate explore page"*, and *"when i upload video from admin panel but when i see
+explore page so no thumbnail show in my upload video"* — with a screenshot of a
+bare grey card under **Made with AI Studio**.
+
+**1. Explore had no address.** The VS Code task named MARKETING PAGE opened on
+the **sales page**, because Explore was never a URL — it was `authView` state,
+reachable only by landing on `/`, reading the sales page and finding "See the
+work" in the nav. ⚠ **A shop window you cannot send anybody a link to is a shop
+window facing a wall**: the one page in this app whose entire job is to be shown
+to people had no way of being shown to anybody directly.
+
+New `EXPLORE_PARAM` in `App.jsx`, copied from `?admin` rather than invented:
+`readExploreRoute()` decides which public screen opens, and one shared
+`syncUrlFlag()` now writes both parameters, because two copies of `replaceState`
+is two places to get the no-router rule wrong. ⚠ **`?admin` WINS when both are in
+one URL** — one is an address somebody was SENT to work at, the other is a shop
+window. ⚠ **AND IT IS DROPPED ON SIGN-IN**, because `LANDING_NAV` is the standing
+decision that a signed-in customer never sees Explore again; the effect watches
+`authed` **as well as** the view, since signing in does not touch the view and
+the address would otherwise still read `?explore` while the customer is looking
+at their own Home. Task 3 now opens `/?explore`. New **RULEBOOK E29**.
+
+**2. The thumbnail was never missing — it had never been asked for.** The poster
+field, the upload route and an "Add still" button all existed and all worked.
+Nothing on the page said a video needed a **second upload**, so the feature was
+invisible and the card simply looked broken. ⚠ **THE MOST USEFUL PART OF THIS IS
+WHY IT WAS BUILT THAT WAY.** Three separate comments — in `showcase.py`, in
+`admin.py` and in `AdminShowcase.jsx` — stated that a frame could not be pulled
+out of a clip because *"there is no `ffprobe` on an `imageio-ffmpeg` install"*.
+That is true, and it is beside the point: **`ffprobe` INSPECTS, `ffmpeg`
+EXTRACTS**, and `imageio-ffmpeg` ships ffmpeg itself — the very binary
+`animatic.ffmpeg_exe()` has been locating for the exporter all along. A
+capability the repo already had was written off in a comment and then designed
+around, and the design that followed was reported as a bug.
+
+New `showcase.poster_from_video()` takes the still on the way in. ⚠ **THE OLD
+REASONING WAS RIGHT ABOUT ONE THING AND IT IS KEPT**: films open on black, so
+second zero is the worst possible guess. `POSTER_PROBE_SECONDS` tries 1.0s, then
+2.5s, then 0.5s, then zero as a last resort for a very short clip, and a frame
+that comes back essentially black is **REFUSED** rather than shipped — no poster
+falls back to the glyph, which is honest, where a wall of black rectangles is
+not. ⚠ **`-ss` GOES BEFORE `-i`** (a keyframe seek, not a decode-and-discard from
+zero) and the bytes go to **disk** first, because an MP4's `moov` index can live
+at the end of the file and a decoder that cannot seek may not read it at all.
+⚠ **IT RUNS OFF THE EVENT LOOP** — `run_in_threadpool`, the first use of it in
+`server/`, because the handler is `async def` and the ceiling on that upload is
+96MB. ⚠ **AND IT FAILS SOFT, ALWAYS**: a missing thumbnail is a worse-looking
+card, a failed upload is lost work.
+
+⚠ **THE GRAB FILLS AN EMPTY SLOT ONLY.** "Add still" is the OVERRIDE now, not
+the only way in, and it still matters — the frame that sells a film is rarely the
+one it opens on — so a still a person chose is never overwritten by a later grab,
+and survives a re-upload of the clip. ⚠ **AND A VIDEO'S `aspect` IS MEASURED
+NOW**, not taken from the dropdown: the grabbed frame IS the clip's real shape,
+which is what a portrait phone clip left on the 16:9 default needed. The row's
+"no still" line was rewritten — it can now only mean *the grab came back black*,
+which is a different sentence from *nobody uploaded one*. New **RULEBOOK E28**.
+
+**Verified, not assumed.** `tests/showcase_check.py` gains **§11 and §12, 17 new
+checks, all green** — and ⚠ **§11 builds REAL clips with ffmpeg** (colour,
+portrait, all-black, and bytes that do not decode) rather than using the file's
+existing fake MP4, because "does a black opening get refused" and "is a portrait
+clip measured" cannot be asked of bytes that never decode. `admin_check`,
+`admin_fields_check`, `branding_check` and `brand_landing_check` still pass;
+`npm run build` passes. ⚠ **NOT DRIVEN IN A BROWSER** — `explore_mount_check.py`
+was not run (RULEBOOK G2: not without being asked), so `?explore` rendering the
+wall is checked by source and by reasoning, not by Chromium. **G7 applies: that
+is not the same as seeing it.**
+
+---
+
+### 2026-08-29 — ONE START BUTTON BECAME THREE, ONE PER PAGE
+
+Asked for plainly: *"divide my task.json in three part for start and stop,
+different one for my workflow page, one for admin panel and one the marketing
+page, now which makes it easy for me to handle."*
+
+`.vscode/tasks.json` was **Start All** and nothing else — one compound task that
+brought up the API server and one Vite dev server on 5173, with no way to stop
+either except hunting for the terminal's bin icon. Working on the admin panel
+therefore meant restarting the workflow page too.
+
+**What it is now.** Three numbered START/STOP pairs plus one big stop:
+
+| | Page | Port | Opens on |
+|---|---|---|---|
+| 1 | Workflow | 5173 | `/` |
+| 2 | Admin | 5174 | `/?admin=1` |
+| 3 | Marketing | 5175 | `/` signed out |
+| 0 | STOP EVERYTHING | — | frees all four ports |
+
+⚠ **THE PORTS ARE NOT COSMETIC — THEY ARE HOW THE THREE SESSIONS STAY APART.**
+A different port is a different origin, so `localStorage` (and therefore
+`cas_token`, `cas_email`, `cas_accounts`) does not cross between them. Admin on
+5174 and ordinary user on 5173, both signed in, at once — no account switching
+to check the other side. And 5175, a port nobody has ever signed in on, IS a
+visitor, which is the only state the marketing page is ever shown in. Neither
+Explore nor the admin panel has an address of its own to start on otherwise:
+this app has no router, `?admin` is the panel's entire URL (`ADMIN_PARAM` in
+`App.jsx`) and the marketing page is simply what `/` draws for somebody logged
+out — so the port and the `--open` path together ARE the routing.
+
+⚠ **THE BACKEND WAS DELIBERATELY *NOT* SPLIT WITH THEM.** Three pages, one API
+server on 8000. Giving each page its own would have been the symmetrical thing
+to do and it would have quietly corrupted work in progress: `server/main.py`'s
+startup sweep **closes out every job still QUEUED**, on the reasoning that a
+QUEUED job with no worker behind it is an interrupted job — which is true for a
+restart and false for a second server. Booting page two would have killed page
+one's running jobs. So the shared-server task is **port-guarded and idempotent**:
+whichever page starts first brings it up, the other two find 8000 busy and print
+*"reusing it"* instead of racing for the port.
+
+⚠ **`--strictPort` IS ON ALL THREE CLIENT TASKS AND IT IS LOAD-BEARING HERE.**
+`client/vite.config.js` already carries the warning that Vite treats a port as a
+*preference* and silently falls to 5174 — that cost a debugging session once,
+back when 5174 was nobody's address. It is the **admin panel's** address now, so
+the same drift would put two pages on one port with no error anywhere. The flag
+is passed explicitly per task because the config's own `port: 5173` is overridden
+on the command line.
+
+New **`.vscode/stop-port.ps1`** — one script, three STOP tasks, different
+`-Port`. ⚠ **It kills by PORT, never by process name.** "Kill node" and "kill
+python" are the two obvious ways to write this and both are wrong on a machine
+that is also running something else in node or python; a port is held by exactly
+one server, so the port IS the identity of the thing being stopped. It also
+kills the **launcher parent** (`npm` → `node`, `uvicorn --reload` → its worker
+child) but only when that parent is one of ours — never the shell it was started
+from — because killing just the child leaves a terminal that looks busy forever
+with nothing behind it. ⚠ It is **pure ASCII**, same rule and same cp1252
+reasoning as `start-app.ps1`. ⚠ And `Get-NetTCPConnection` gets an explicit
+`-ErrorAction SilentlyContinue` even though `$ErrorActionPreference` above says
+the same thing: a **CIM** error ignores the preference variable and prints a wall
+of red, and *"nothing was running"* is the NORMAL answer to a stop request —
+pressing stop twice must not look like a crash.
+
+`start-app.ps1` is untouched and still works; this is the VS Code-native version
+of the same idea, split three ways.
+
+**Verified, not assumed:** the JSONC parses and all `dependsOn` labels resolve;
+the API-guard one-liner and `stop-port.ps1` both pass the PowerShell parser;
+Vite's CLI was checked to actually accept `--port` / `--strictPort` / `--open`;
+and end-to-end — a client was started on **5174**, answered **HTTP 200**, and the
+STOP task freed the port, with a second STOP on the free port printing a clean
+one-line message and no error. New **RULEBOOK G11**. ⚠ **The tasks have not been
+clicked from the VS Code Tasks menu by the user yet** — everything above was
+driven from the shell.
+
+---
+
+### 2026-08-29 — EXPLORE CHANGED SIDES: IT IS THE PUBLIC MARKETING PAGE NOW
+
+Asked for in one breath:
+*"the page we created on explore should be used to market and if anyone clicks
+anywhere to use and create any workflow we must give a user first to login and
+then use, and after login we know how our page which is home must look which is
+going to be different. any logged in user must not see explore which is happening
+right now — from this the explore page is going to be only used for getting users,
+nothing more than that. but the videos or images should be clickable and be able
+to use it properly play."*
+
+**The state before this.** Explore was the SIGNED-IN front door. It opened on
+every sign-in (`LANDING_NAV = "explore"`), sat above Home in the rail, and its
+picture wall was **the customer's own projects**. So the screen whose whole job is
+to sell the product was only ever seen by people who had already bought it, and
+the marketing page a stranger landed on was `Landing.jsx` — six paragraphs and no
+work to look at.
+
+**What was built.**
+
+1. **`server/showcase.py`** — the curated wall. An admin-uploaded list of
+   finished work: an item is an **image or a video**, carries a title, a caption,
+   an optional workflow tag, a shape and a rank. ⚠ **THE READ IS PUBLIC** like
+   `/public/branding`, `/public/workflows` and `/public/banners` — the page it
+   feeds is reached before a token exists. ⚠ **NO CUSTOMER'S WORK IS ON IT**: the
+   old reason for having no public gallery still stands word for word, so every
+   item is one an administrator put there by hand. Copies `banners.py` exactly —
+   a new id per upload, the row repointed BEFORE the old file is deleted, and the
+   id checked against a regex on the way back out (RULEBOOK **E21**).
+2. **Video, stored as it arrived.** MP4 and WEBM only — a `.mov` plays for the
+   admin who uploaded it and for nobody on Chrome/Windows. Its own size ceiling
+   (`SHOWCASE_MAX_VIDEO_BYTES`, 96MB) because `MAX_UPLOAD_BYTES` is sized for a
+   picture. ⚠ **NOT RE-ENCODED** — `FileResponse` answers range requests, which
+   is what lets a browser SEEK instead of pulling the whole clip down first.
+   ⚠ **A POSTER IS A SEPARATE UPLOAD**: there is no `ffprobe` on an
+   `imageio-ffmpeg` install, so a frame cannot be grabbed off a film. An image's
+   aspect IS measured (Pillow is already holding it); a video's is a dropdown.
+3. **Admin → Showcase** (`AdminShowcase.jsx`). Create, upload, add a still,
+   reorder (↑/↓, **E6**), hide, delete. ⚠ It says out loud when an item is
+   switched ON but has no file yet — hunting the live site for a card that was
+   never going to be there is a bad half-hour.
+4. **`Explore.jsx` rewritten as the public page.** It takes **no `workflows`
+   prop** any more — that was the resolved rail, which is one account's
+   entitlements, and there is no account out here. It reads
+   `useLiveWorkflows()`, exported from `Landing.jsx`, so both public screens
+   advertise the identical set. Its banners, its tiles and its toolbar are
+   unchanged; the wall is `/public/showcase`, the view tabs are
+   **Everything / Films / Stills**, and it carries its own nav (the landing
+   page's own `.landing-nav`) because there is no rail beside it.
+5. **`MediaLightbox.jsx`** — the player. Wears `lightbox.css`'s existing shell,
+   ✕, arrows and counter (**E3**). ⚠ The `<video>` is **keyed by the item**, or
+   stepping to the next film leaves the previous one's audio running.
+6. **Every control is a sign-in gate.** A tile, a banner button, ＋, the promo
+   card and the viewer's own CTA all call `onSignIn(workflowId)`. `App.jsx`
+   holds it in `pendingWorkflow` and `onAuthed` opens it — sanitised through
+   `asWorkflow()`, because one of those ids is a banner target an administrator
+   typed and the server only shape-checks it.
+7. **The front door moved to Home.** `LANDING_NAV = "home"`, the Explore row is
+   out of `Sidebar.jsx`, and the `nav === "explore"` branch is out of `App.jsx`.
+   `Landing.jsx` gained the door in: "See the work" in the nav and as the hero's
+   second button.
+
+**Pinned by.** `tests/showcase_check.py` (new, no browser — the store, both
+public routes, the byte-for-byte video round trip, and source greps for "no
+signed-in screen can reach Explore" and "every control is a gate") and
+`tests/explore_mount_check.py` (rewritten — the public page, the player, the
+gate, the rail with no Explore row, and Home still opening).
+
+**One layout fix fell out of it.** `wallColumns` used `ceil(count / 2)`, which
+says "two per column" and does not deliver it: five items asked for three
+columns and the third got ONE card, ending at 463px beside two at 854px — the
+same hole **E23** was written about, in a smaller wall. It is `floor` now.
+
+**And one pre-existing bug fell out of the admin sweep.** `admin_fields_check.py`
+was reporting the offer form's bullet box as clipped — *"content box 34.0px,
+needs 34.6px"*. Real, and older than this change: **`scrollHeight` is an integer
+and a line box is not**, so two 17.3px lines measure 34.6 and the browser hands
+back 34, and `overflow: hidden` eats the descenders on the last line. The height
+maths in `GrowTextarea.jsx` and in `GrowText` (`admin/fields.jsx`) is now
+`scrollHeight + border + 1`; the two are deliberately identical and were changed
+together. ⚠ The banner box beside it had been passing only because its
+`min-height` was taller than the fault — a `min-height` is where this hides, not
+a fix for it.
+
+**And the sweep itself had a hole.** It said *"the six tabs"* and walked six
+while the panel had seven: **Brand and Banners had never been swept once**, and
+they are the two tabs most full of typed copy. All three (plus Showcase) are in
+it now, each with its create form opened — a collapsed form measures an empty
+screen and passes by having nothing to look at, which is how the offer box's
+clip survived in the first place.
+
+**RULEBOOK:** **E24** (which side of the sign-in a screen lives on), **E25** (a
+public control carries what was clicked through the sign-in), **E26** (video on
+a page), **E27** (a new admin tab joins the field sweep in the same commit).
+**E1**, **E11** and **E12** were rewritten rather than added to.
+
+### 2026-08-29 — THE APP'S OWN NAME AND MARK BECAME AN ADMIN FIELD
 
 Asked for directly:
 *"mai chahta hun Aniwala icon and Aniwala Ai Studio text ko mai admin panel se
@@ -23240,38 +23603,40 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟡 NEWEST: EXPLORE IS BUILT AND HAS NOT BEEN SEEN BY THE USER (2026-08-29)
+### 🟡 NEWEST: EXPLORE IS NOW THE PUBLIC PAGE — BUILT, NOT YET SEEN (2026-08-29)
 
-A new **Explore** row sits above Home in the rail. Pinned by 114 Chromium checks
-(`tests/explore_mount_check.py`), light and dark. What to look at when you open it:
+Explore has moved to the other side of the sign-in. Pinned by
+`tests/showcase_check.py` (no browser) and a rewritten
+`tests/explore_mount_check.py` (Chromium, light and dark). ⚠ **NOTHING HERE HAS
+BEEN LOOKED AT BY A PERSON YET.** What to check when you open it:
 
-1. **The rail.** 🧭 Explore above 🏠 Home. ⚠ **The app now OPENS on Explore** —
-   a fresh sign-in, a returning tab, an account switch and leaving the admin
-   panel all land there (`LANDING_NAV` in `App.jsx`, one constant). Home is
-   unchanged and one click below it.
-2. **The billboards.** The left one rotates every 6 seconds and STOPS while your
-   pointer is on it. Dots and the arrows should both move it.
-3. **The tiles.** Six, one per workflow, first one gold. Every name should be
-   readable in full — no "Image to Ani…".
-4. **The wall.** Every project you own, largest-picture-first under
-   **Highlights**. **In progress** should show only what is running or failed.
-   The chips and the search box filter it.
-5. **Ctrl+B.** The narrow rail should show a short name under every icon —
-   Storyboard, Animatics, Editor — with the full name on hover.
-6. **Admin → Banners.** Both Explore billboards — their words, their picture,
-   their order and whether they show at all. Leave it empty and the page keeps
-   the cards it builds from your workflow list.
-7. **The offer card.** It should slide in from the right about a second after
-   Explore opens, carrying whatever discount is running. Close it and it stays
-   closed — until you make a NEW offer. Everything on it (heading, bullets,
-   small print, button words, and whether it appears at all) is typed in
-   **Admin → Sales → Offers**.
-8. **The wall's shape.** The hole a tall 9:16 board used to leave beside it is
-   closed — every card is now drawn between 4:5 and 16:9, so a portrait board is
-   trimmed about 30% of its height rather than towering over its neighbours.
-   That trim is the one crop in the app; say so if you would rather have the
-   tower back.
+1. **Signed OUT, on the landing page.** There is a new **"See the work"** — in
+   the nav and as the second button in the hero. It opens Explore.
+2. **Explore itself.** It should look like the page you already know — the two
+   billboards, the six workflow tiles — but standing on its own, with the brand
+   nav across the top instead of the rail. The brand mark takes you back.
+3. **Click anything.** A tile, a banner button, ＋ Make your own, the footer
+   button: every one of them should land on the **sign-in card**, and after you
+   sign in you should arrive **in the workflow you clicked**, not on a dashboard.
+4. **The wall.** It is empty until you fill it — see (6). Click a card and it
+   should open full screen; a **video should actually play**, with a scrubber,
+   and the arrows should step to the next piece. The button in the viewer
+   ("Make one with Script to Storyboard") is another sign-in.
+5. **Signed IN.** ⚠ **There should be NO Explore row in the rail, and the app
+   should open on Home.** That is the ask — if you can still reach Explore from
+   inside the app, something is wrong.
+6. **Admin → Showcase.** The new tab, next to Banners. Create an item, press
+   **Add file** and give it an MP4 (or a picture). A video also wants **Add
+   still** — the frame shown before anybody presses play; there is no way to
+   grab one off the clip on this install, which is why it asks. ↑/↓ set the
+   order the wall is read in. Hide keeps the file; Delete throws it away.
+7. **Sizes.** Pictures up to 20MB, videos up to **96MB**, MP4 or WEBM only.
+   A `.mov` will be refused on purpose: it plays for you and not for a visitor
+   on Chrome/Windows.
 
+⚠ **THE WALL IS YOURS, NOT YOUR CUSTOMERS'.** Nothing any account has made is on
+it and nothing ever will be — every item is one you uploaded. Say so if you
+wanted the opposite; it is a deliberate line, not an omission.
 
 > ⚠ **START HERE. THE 2026-08-27 LIVE TEST OF SCRIPT → STORYBOARD IS NOW ALL
 > FIXED AND ALL UNVERIFIED.** The user drove the whole new intake flow in a

@@ -173,7 +173,12 @@ const countWord = (n) => COUNT_WORD[n] || String(n);
  *     rail follows: one bad request must not blank the page every prospect
  *     lands on.
  */
-function useLiveWorkflows() {
+// ⚠ EXPORTED, because the PUBLIC Explore page sells the same set to the same
+// stranger. Two public pages asking two different questions about what this
+// studio offers is how one of them ends up advertising a workflow the other
+// says is not there. Same rule as `COPY` above, one level up: that shares the
+// WORDS, this shares the LIST.
+export function useLiveWorkflows() {
   const [live, setLive] = useState(null);
 
   useEffect(() => {
@@ -239,7 +244,7 @@ const FEATURES = [
   },
 ];
 
-export default function Landing({ onGetStarted, theme, onToggleTheme }) {
+export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme }) {
   // The shop window, seen by somebody with no account — which is the whole
   // reason `/public/branding` needs no token. The name appears TWICE on this
   // page (nav and footer) and both read the one store, so they cannot disagree.
@@ -255,6 +260,23 @@ export default function Landing({ onGetStarted, theme, onToggleTheme }) {
           <Logo /> {brand.name}
         </span>
         <div className="landing-nav-links">
+          {/* ⚠ THE SHOP WINDOW, AND IT IS FIRST. Explore is the page that shows
+              the WORK — films and stills somebody can actually watch — and this
+              page is the one that explains it. A prospect who wants to see
+              before they read should not have to scroll to find the door.
+              Rendered only when a handler is handed down, so the page still
+              stands alone in tests and previews. */}
+          {onExplore && (
+            <a
+              href="#explore"
+              onClick={(e) => {
+                e.preventDefault();
+                onExplore();
+              }}
+            >
+              See the work
+            </a>
+          )}
           <a href="#workflows">Workflows</a>
           <a href="#how">How it works</a>
           <a href="#features">Features</a>
@@ -306,9 +328,21 @@ export default function Landing({ onGetStarted, theme, onToggleTheme }) {
             <button className="btn primary lg" onClick={onGetStarted}>
               Get started — it's free →
             </button>
-            <a className="btn lg ghost-bordered" href="#workflows">
-              See the workflows
-            </a>
+            {/* ⚠ THE SECOND HERO BUTTON NOW LEAVES THE PAGE, and that is the
+                point: it used to jump to a grid of PARAGRAPHS further down this
+                same page. Explore carries the films. Somebody who did not
+                believe the headline is not going to be convinced by more
+                writing about it. Falls back to the anchor when this page is
+                rendered without a handler. */}
+            {onExplore ? (
+              <button className="btn lg ghost-bordered" onClick={onExplore}>
+                See the work →
+              </button>
+            ) : (
+              <a className="btn lg ghost-bordered" href="#workflows">
+                See the workflows
+              </a>
+            )}
           </div>
 
           {/* ---------- A live discount, if there is one ----------

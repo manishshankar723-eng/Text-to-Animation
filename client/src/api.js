@@ -722,6 +722,56 @@ export function adminRemoveBannerImage(id) {
   return request(`/admin/banners/${id}/image`, { method: "DELETE" });
 }
 
+// ---------------------------------------------------------------- showcase
+// The picture-and-video wall on the PUBLIC Explore page — curated work an
+// administrator uploaded, not any customer's project. See `server/showcase.py`.
+//
+// ⚠ `publicShowcase` TAKES NO TOKEN, for the same reason `publicBanners` does
+// not: Explore is the page a stranger lands on BEFORE they have one. An EMPTY
+// answer is normal and is not an error — the page simply draws no wall.
+export function publicShowcase() {
+  return request("/public/showcase");
+}
+export function adminListShowcase() {
+  return request("/admin/showcase");
+}
+export function adminCreateShowcase(body) {
+  return request("/admin/showcase", { method: "POST", body });
+}
+export function adminUpdateShowcase(id, fields) {
+  return request(`/admin/showcase/${id}`, { method: "PATCH", body: fields });
+}
+export function adminDeleteShowcase(id) {
+  return request(`/admin/showcase/${id}`, { method: "DELETE" });
+}
+// ⚠ ONE CALL FOR A PICTURE AND FOR A CLIP. The server reads the file's own
+// content type and decides which it is — see `upload_showcase_media`. The panel
+// cannot know in advance which kind somebody is about to pick, and the file
+// picker is the thing that does.
+export function adminUploadShowcaseMedia(id, file) {
+  const fd = new FormData();
+  fd.append("media", file);
+  return request(`/admin/showcase/${id}/media`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
+}
+// The still a VIDEO card shows before anybody presses play. There is no ffprobe
+// on this install, so a frame cannot be grabbed off the clip — it is uploaded.
+export function adminUploadShowcasePoster(id, file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request(`/admin/showcase/${id}/poster`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
+}
+export function adminRemoveShowcasePoster(id) {
+  return request(`/admin/showcase/${id}/poster`, { method: "DELETE" });
+}
+
 export function adminListSubscriptions({ status = null, email = "", limit = 50 } = {}) {
   const q = new URLSearchParams();
   if (status) q.set("status", status);

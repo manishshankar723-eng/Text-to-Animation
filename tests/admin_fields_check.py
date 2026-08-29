@@ -320,6 +320,17 @@ def tab(page, name):
     page.wait_for_timeout(700)
 
 
+def section(page, name):
+    """A section INSIDE a tab — the segmented control, not the tab rail.
+
+    ⚠ EXPLORE HAS TWO OF THESE AND USED TO BE TWO TABS. Banners and Showcase
+    were merged into one Explore tab, so a sweep that only clicks `.admin-tab`
+    now measures the Banners half twice and never opens Showcase at all.
+    """
+    page.locator(".admin-seg-btn", has_text=name).first.click()
+    page.wait_for_timeout(700)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="admin_fields_")
     api = vite = None
@@ -357,7 +368,7 @@ def main():
             page.wait_for_selector(".admin-shell", timeout=30000)
             page.wait_for_selector(".admin-tab", timeout=30000)
 
-            print("\n--- the six tabs ---")
+            print("\n--- every tab ---")
             tab(page, "Overview")
             sweep(page, "Overview")
 
@@ -408,6 +419,38 @@ def main():
             # form and pass by having nothing on screen to measure.
             if click_if(page, '.admin-section-head .btn:has-text("New offer")', 'New offer'):
                 sweep(page, "Sales — the offer form")
+
+            # ⚠ THE THREE "WHAT THE PRODUCT SAYS ABOUT ITSELF" TABS, which
+            # this sweep did not visit at all until Showcase was added and the
+            # gap was noticed. Brand and Banners had been unswept since the day
+            # they shipped — and they are the tabs FULL of typed copy, which is
+            # exactly what this file measures. `.admin-card` is the wait because
+            # it is the one element all three draw whether their store is empty
+            # or not; a row selector would hang on a fresh install.
+            tab(page, "Brand")
+            page.wait_for_selector(".admin-card", timeout=15000)
+            sweep(page, "Brand")
+
+            # ⚠ ONE TAB, TWO SECTIONS. Banners and Showcase were two tabs and
+            # are one Explore tab now, so each half is reached through the
+            # SEGMENTED control rather than the tab rail. Banners is the section
+            # that opens by default; Showcase needs the click.
+            tab(page, "Explore")
+            page.wait_for_selector(".admin-card", timeout=15000)
+            sweep(page, "Explore — Banners")
+            # ⚠ THE FORM IS COLLAPSED UNTIL SOMEBODY PRESSES THE BUTTON, like
+            # the offer form above — and it holds the GrowTextarea whose
+            # sub-pixel clip this file caught on the Sales tab.
+            if click_if(page, '.admin-section-head .btn:has-text("New banner")',
+                        "New banner"):
+                sweep(page, "Explore — the banner form")
+
+            section(page, "Showcase")
+            page.wait_for_selector(".admin-card", timeout=15000)
+            sweep(page, "Explore — Showcase")
+            if click_if(page, '.admin-section-head .btn:has-text("New item")',
+                        "New item"):
+                sweep(page, "Explore — the showcase form")
 
             tab(page, "Activity")
             page.wait_for_selector(".admin-feed, .admin-empty", timeout=15000)

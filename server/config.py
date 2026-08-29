@@ -285,6 +285,32 @@ BANNERS_CACHE_TTL_S = float(os.environ.get("API_BANNERS_CACHE_TTL_S", "60"))
 # bearer token, and these have to be readable by anyone the page is shown to.
 BANNERS_DIR = os.environ.get("API_BANNERS_DIR", os.path.join(UPLOAD_DIR, "_banners"))
 
+# --- Explore showcase ---------------------------------------------------------
+# THE REEL A LOGGED-OUT VISITOR ACTUALLY WATCHES. Explore is the public sales
+# page now, and its picture wall used to be the SIGNED-IN account's own projects
+# — which is nothing at all to somebody who has not signed up yet. So the wall is
+# an admin-curated list of finished work instead: images AND videos, each one
+# clickable and playable. See `server/showcase.py`.
+#
+# ⚠ A LIST LIKE BANNERS, NOT A SINGLE ROW LIKE BRANDING, and an EMPTY store is a
+# legitimate shipped state — the page simply draws no wall.
+SHOWCASE_COLLECTION = os.environ.get("API_SHOWCASE_COLLECTION", "showcase")
+LOCAL_SHOWCASE_PATH = os.environ.get("API_LOCAL_SHOWCASE_PATH", ".local_showcase.json")
+# Read by every visitor on the page they land on, written when marketing changes
+# — cached like branding and banners rather than like a flag.
+SHOWCASE_CACHE_TTL_S = float(os.environ.get("API_SHOWCASE_CACHE_TTL_S", "60"))
+# ⚠ NOT under `_references/`, for the same reason `BANNERS_DIR` is not: a
+# reference is owner-scoped and served behind a bearer token, and these have to
+# be readable by a stranger who has never signed in.
+SHOWCASE_DIR = os.environ.get("API_SHOWCASE_DIR", os.path.join(UPLOAD_DIR, "_showcase"))
+# ⚠ ITS OWN CEILING, WELL ABOVE `MAX_UPLOAD_BYTES`. That limit is 20MB and is
+# sized for a PICTURE; a 15-second show-reel clip is routinely bigger than that,
+# and an admin whose upload is refused simply cannot put video on the page at
+# all. Images on this screen still go through the 20MB rule.
+SHOWCASE_MAX_VIDEO_BYTES = int(
+    os.environ.get("API_SHOWCASE_MAX_VIDEO_BYTES", str(96 * 1024 * 1024))
+)
+
 # --- Usage counters -----------------------------------------------------------
 # What each account has used this calendar month, so a tier's `limits` can be
 # enforced. ⚠ NOT CACHED — a counter that is read from a cache is a counter that

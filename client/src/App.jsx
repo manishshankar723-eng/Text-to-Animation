@@ -80,12 +80,44 @@ function readAdminRoute() {
 // the app has no router and therefore nothing that could answer a Back button
 // walking through a history of nav states; pushing would build a stack that
 // only ever behaves wrongly.
-function syncAdminUrl(onAdmin) {
+function syncUrlFlag(param, on) {
   const url = new URL(window.location.href);
-  if (onAdmin === url.searchParams.has(ADMIN_PARAM)) return;
-  if (onAdmin) url.searchParams.set(ADMIN_PARAM, "1");
-  else url.searchParams.delete(ADMIN_PARAM);
+  if (on === url.searchParams.has(param)) return;
+  if (on) url.searchParams.set(param, "1");
+  else url.searchParams.delete(param);
   window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+}
+
+function syncAdminUrl(onAdmin) {
+  syncUrlFlag(ADMIN_PARAM, onAdmin);
+}
+
+// The public wall is `?explore`. THE THIRD AND LAST THING IN THE URL, and it
+// exists for the reason the marketing page exists at all: Explore is the SHOP
+// WINDOW — the films and stills a stranger can actually watch — and a shop
+// window you cannot send anybody a link to is a shop window facing a wall.
+// Until this, it was reachable only by landing on `/`, reading the sales page
+// and finding "See the work"; the page whose entire job is to be shown to
+// people had no way of being shown to anybody directly.
+//
+// ⚠ IT IS THE LOGGED-OUT VIEW, AND IT STAYS THAT WAY. `LANDING_NAV` above is
+// the standing decision that a signed-in customer never sees Explore again
+// ("any logged in user must not see explore"), so this parameter is honoured
+// for a VISITOR and dropped the moment somebody signs in — a marketing link
+// opened by an existing customer lands them in their own app, which is where
+// they were going anyway. It is not a second front door for the signed-in app.
+//
+// ⚠ `?admin` WINS OVER IT when somebody has managed to put both in one URL.
+// One is an address a person was SENT to work at; this one is a shop window.
+const EXPLORE_PARAM = "explore";
+
+function readExploreRoute() {
+  const q = new URLSearchParams(window.location.search);
+  return q.has(EXPLORE_PARAM) && !q.has(ADMIN_PARAM);
+}
+
+function syncExploreUrl(onExplore) {
+  syncUrlFlag(EXPLORE_PARAM, onExplore);
 }
 
 // ⚠ WHERE THE APP OPENS, IN ONE PLACE. Five separate paths land somebody in the
@@ -96,14 +128,39 @@ function syncAdminUrl(onAdmin) {
 // them are easy to miss: the bug it produces is "it opens on the right page
 // UNLESS you switched account", which nobody reports as one bug.
 //
-// It is Explore, asked for directly: *"jab user aaye to explore page khule,
-// home page nhi"*. Home is still one click away in the rail and is unchanged —
-// it is the DESK (who you are, your plan, where you left off). Explore is the
-// SHOP WINDOW, and a shop window is what a front door should open onto.
+// ⚠ IT IS HOME, AND IT USED TO BE EXPLORE. Explore was the front door for
+// everybody — *"jab user aaye to explore page khule, home page nhi"* — and it
+// has since changed sides entirely: it is the PUBLIC marketing page now, shown
+// only to somebody who has not signed in. Asked for directly: *"any logged in
+// user must not see explore ... after login we know how our page which is home
+// must look"*.
+//
+// So the two screens finally answer the two different questions they were always
+// meant to. Explore is the SHOP WINDOW — what this studio makes, and a wall of
+// work a stranger can watch. Home is the DESK — who you are, your plan, where
+// you left off. A shop window is what a front door opens onto; it is not what
+// you look at once you are inside, and a customer who has already bought does
+// not need selling to every time they sign in.
 //
 // ⚠ THE URL STILL WINS OVER IT. `?admin` is an address somebody was SENT, and a
 // link that lands somewhere other than where it points is a broken link.
-const LANDING_NAV = "explore";
+const LANDING_NAV = "home";
+
+/**
+ * A destination from the PUBLIC page, made safe to navigate to.
+ *
+ * ⚠ WHAT A VISITOR CLICKED IS NOT A NAV ID UNTIL THIS SAYS SO. Explore carries
+ * the workflow somebody clicked THROUGH the sign-in, so they land where they
+ * were headed rather than on a generic dashboard — and one of those ids comes
+ * from a banner's `cta_target`, which an administrator TYPED and the server only
+ * checks the SHAPE of (see `_TARGET_RE` in banners.py). "explore", "admin" and a
+ * plain typo all pass that check. A nav string nothing matches renders no
+ * content at all, and a blank page is a poor first screen after signing up — so
+ * anything that is not a real workflow becomes `null`, which means Home.
+ */
+function asWorkflow(id) {
+  return WORKFLOWS.some((w) => w.id === id) ? id : null;
+}
 
 // Whether the nav rail is collapsed to icons. Remembered per browser, like the
 // theme is: someone who works in the narrow rail wants it narrow next time too.
@@ -124,7 +181,24 @@ export default function App() {
   const [shareToken, setShareToken] = useState(readShareToken);
   const [email, setEmail] = useState(api.getEmail());
   const [authed, setAuthed] = useState(Boolean(api.getToken()));
-  const [authView, setAuthView] = useState("landing");
+  // "landing" | "explore" | "login" — the three logged-out screens.
+  // ⚠ THE URL DECIDES WHICH PUBLIC SCREEN OPENS, exactly as it does for the
+  // admin panel one line down. `?explore` lands on the wall; anything else
+  // lands on the sales page, which is still the front door for a bare `/`.
+  const [authView, setAuthView] = useState(() =>
+    readExploreRoute() ? "explore" : "landing"
+  );
+  // Which of the first two the sign-in card was opened FROM, so its Back button
+  // goes where the person came from. Without it, Back from a sign-in reached
+  // through Explore drops somebody on the landing page they had already left —
+  // which reads as the app losing their place.
+  const [authBack, setAuthBack] = useState("landing");
+  // ⚠ WHAT THEY CLICKED BEFORE THEY HAD AN ACCOUNT. Every control on the public
+  // Explore page is a sign-in gate, and the workflow it was selling is
+  // remembered here so `onAuthed` can open it. Clicking "Script to Storyboard",
+  // typing a password and arriving on a generic dashboard is how an interested
+  // visitor is lost in the two screens between the click and the account.
+  const [pendingWorkflow, setPendingWorkflow] = useState(null);
   // Land on `LANDING_NAV` by default — both a fresh login and a returning
   // session — so opening the app shows what this studio can make and what you
   // have made, rather than dropping you mid-workflow. See that constant for
@@ -231,6 +305,17 @@ export default function App() {
   useEffect(() => {
     syncAdminUrl(nav === "admin");
   }, [nav]);
+
+  // The same one-way rule for the public wall. ⚠ `authed` IS IN HERE ON
+  // PURPOSE: signing in is what makes `?explore` wrong, and the sign-in does
+  // not touch `authView` on its way through — without this the address would
+  // still read `?explore` while the customer is looking at their own Home, and
+  // a reload of that URL is the one case where the parameter would have to be
+  // ignored twice to stay harmless. Written once, at the moment it stops being
+  // true, is cheaper than defending against it everywhere else.
+  useEffect(() => {
+    syncExploreUrl(!authed && authView === "explore");
+  }, [authed, authView]);
 
   useEffect(() => {
     try {
@@ -384,7 +469,25 @@ export default function App() {
   function onAuthed(mail) {
     setEmail(mail);
     setAuthed(true);
-    setNav(LANDING_NAV);
+    // ⚠ WHERE THEY WERE HEADED, AND ONLY THEN THE FRONT DOOR. See
+    // `pendingWorkflow`. A workflow this account cannot have is not a problem
+    // here — the branches below already answer "soon", "locked" and "hidden"
+    // properly, which is a better first screen than silently ignoring the click.
+    setNav(pendingWorkflow || LANDING_NAV);
+    setPendingWorkflow(null);
+  }
+
+  /**
+   * The sign-in gate. Every control on the public Explore page calls this.
+   *
+   * @param {string} [workflowId] what they clicked, if they clicked something
+   *   specific. Sanitised, because some of these ids were typed into the admin
+   *   panel — see `asWorkflow`.
+   */
+  function startSignIn(workflowId = null) {
+    setPendingWorkflow(asWorkflow(workflowId));
+    setAuthBack(authView === "explore" ? "explore" : "landing");
+    setAuthView("login");
   }
 
   function logout() {
@@ -399,6 +502,7 @@ export default function App() {
     setSelectedId(null);
     // Not for the person leaving — for the next one to sign in on this browser.
     setNav(LANDING_NAV);
+    setPendingWorkflow(null);
     setAuthView("landing");
   }
 
@@ -517,42 +621,77 @@ export default function App() {
   }
 
   // ---- Logged-out screens ----
+  //
+  // ⚠ THREE OF THEM NOW, AND EXPLORE IS ONE. It is the marketing page — the
+  // wall of work a stranger can actually watch — and it is reachable ONLY from
+  // here. See the note on `LANDING_NAV` for why a signed-in customer never sees
+  // it again.
   if (!authed) {
     if (authView === "login") {
-      return <Login onAuthed={onAuthed} onBack={() => setAuthView("landing")} />;
+      return (
+        <Login
+          onAuthed={onAuthed}
+          /* Back goes where they came FROM, not always to the landing page.
+             See `authBack`. */
+          onBack={() => setAuthView(authBack)}
+        />
+      );
+    }
+    /* ⚠ THE SAME THEME SWITCH THE SIDEBAR AND THE ADMIN BAR CARRY, handed to
+       both public screens: they are the ONLY screens a visitor can reach with
+       no rail to flip it from. `applyTheme` stamps <html>, so the choice a
+       prospect makes out here is still theirs after they sign in. */
+    const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+    if (authView === "explore") {
+      return (
+        <Explore
+          /* THE ONLY WAY OUT OF THAT PAGE that is not Back — a tile, a banner
+             button, the create button, a card's viewer and the footer all call
+             this, and every one of them names what it was selling. */
+          onSignIn={startSignIn}
+          onBack={() => setAuthView("landing")}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+      );
     }
     return (
       <Landing
-        onGetStarted={() => setAuthView("login")}
-        /* ⚠ THE SAME SWITCH THE SIDEBAR AND THE ADMIN BAR CARRY, and it is here
-           because the landing page is the ONE screen a visitor can reach with
-           no rail to flip it from. `applyTheme` stamps <html>, so the choice a
-           prospect makes here is still theirs after they sign in. */
+        onGetStarted={() => startSignIn()}
+        onExplore={() => setAuthView("explore")}
         theme={theme}
-        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        onToggleTheme={toggleTheme}
       />
     );
   }
 
   // ---- Main content by nav ----
+  // ⚠ A LEFT-OVER "explore" IS HOME, AND THIS LINE IS FIRST BECAUSE EVERYTHING
+  // BELOW READS IT. Nothing in the signed-in shell can reach that nav any more —
+  // but `pendingWorkflow` carries a string from the PUBLIC page across the
+  // sign-in, and a banner target an administrator typed is only shape-checked by
+  // the server. `asWorkflow` already filters that; this is the second net,
+  // because the cost of missing one is a blank first screen and the cost of this
+  // line is nothing.
+  const page = nav === "explore" ? "home" : nav;
   // The rail's own entry for wherever we are, so the branch below can ask
   // whether this workflow is merely a teaser. Looked up in the RESOLVED list,
   // not the fallback: the fallback is always "live", which is exactly the wrong
   // answer for something an administrator has just staged.
-  const soonWorkflow = workflows.find((w) => w.id === nav && w.status === "soon");
+  const soonWorkflow = workflows.find((w) => w.id === page && w.status === "soon");
   // Visible but above this account's tier. ⚠ A DIFFERENT ANSWER FROM "soon":
   // "soon" is not for sale at any price, this one is one click from being
   // bought — so it gets the pricing modal, not a placeholder.
-  const lockedWorkflow = workflows.find((w) => w.id === nav && w.locked);
+  const lockedWorkflow = workflows.find((w) => w.id === page && w.locked);
   // Switched off underneath somebody who was already standing on it — an admin
   // hiding a workflow while a customer has it open. The server refuses the work
   // either way; this stops the page rendering as though it were still there.
   const hiddenWorkflow =
     entitled &&
-    WORKFLOWS.some((w) => w.id === nav) &&
-    !workflows.some((w) => w.id === nav);
+    WORKFLOWS.some((w) => w.id === page) &&
+    !workflows.some((w) => w.id === page);
   let content;
-  if (nav === "home") {
+  if (page === "home") {
     content = (
       <Home
         email={email}
@@ -570,29 +709,13 @@ export default function App() {
         onNavigate={setNav}
       />
     );
-  } else if (nav === "explore") {
-    content = (
-      <Explore
-        /* The RESOLVED rail, objects and all — Explore needs each workflow's
-           label and its locked flag, not just the ids Home gets. Same array the
-           sidebar draws, so a workflow an administrator hides disappears from
-           the tiles, the banners and the filter chips in one go. */
-        workflows={workflows}
-        /* ⚠ AND WHETHER THAT ARRAY IS AN ANSWER OR A GUESS. False draws
-           skeleton tiles rather than the built-in list, for the same reason the
-           rail does — see the note on `workflowsKnown` in Sidebar.jsx. */
-        workflowsKnown={railKnown}
-        onNavigate={setNav}
-        /* Text to Turnaround Image is the one workflow whose cards open a
-           single job rather than the workflow's front door. */
-        onOpenJob={openJobInWorkflow}
-        /* The SAME pricing modal the rail's Upgrade button opens — the offer
-           card that slides in on this page needs somewhere for its button to
-           go, and a second pricing screen would be the mistake. */
-        onUpgrade={() => setUpgradeOpen(true)}
-      />
-    );
-  } else if (nav === "profile") {
+    // ⚠ THERE IS NO `nav === "explore"` BRANCH ANY MORE, and its absence is
+    // the change, not an omission. Explore is the logged-out marketing page and
+    // is returned far above this line; a signed-in customer lands on Home and
+    // the rail no longer carries a row for it. Anything that could still SET
+    // this nav is caught by `page` below, which sends it here instead of
+    // rendering nothing.
+  } else if (page === "profile") {
     content = (
       <Profile
         email={email}
@@ -612,7 +735,7 @@ export default function App() {
         }}
       />
     );
-  } else if (nav === "admin") {
+  } else if (page === "admin") {
     /* ⚠ GUARDED TWICE, AND THE SECOND ONE IS THE REAL GUARD. `isAdmin` only
        stops the panel being DRAWN for somebody who reached this branch by
        switching to a non-admin account while sitting on it; the API behind
@@ -659,12 +782,12 @@ export default function App() {
     // "soon" shows the placeholder rather than its real (working) page. Putting
     // this after them would make the switch do nothing at all.
     content = soonScreenFor(soonWorkflow);
-  } else if (nav === "plan-and-script") {
+  } else if (page === "plan-and-script") {
     // The pipeline handoff: a script written in Plan & Script is saved as the
     // user's script draft server-side, and Script to Storyboard loads that
     // draft on mount — so navigating there is the whole of the client's job.
     content = <PlanAndScript onOpenStoryboard={() => setNav("script-to-storyboard")} />;
-  } else if (nav === "text-to-image") {
+  } else if (page === "text-to-image") {
     content = (
       <div className="workflow-head-wrap">
         <WorkflowHeader
@@ -693,7 +816,7 @@ export default function App() {
         </div>
       </div>
     );
-  } else if (nav === "script-to-storyboard") {
+  } else if (page === "script-to-storyboard") {
     content = (
       <ScriptToStoryboard
         onOpenAnimatic={(id) => {
@@ -702,18 +825,18 @@ export default function App() {
         }}
       />
     );
-  } else if (nav === "storyboard-to-animatics") {
+  } else if (page === "storyboard-to-animatics") {
     content = (
       <StoryboardToAnimatics
         openId={pendingAnimaticId}
         onOpened={() => setPendingAnimaticId(null)}
       />
     );
-  } else if (nav === "animatics-to-video") {
+  } else if (page === "animatics-to-video") {
     content = (
       <AnimaticsToVideo />
     );
-  } else if (nav === "create-animatic-image") {
+  } else if (page === "create-animatic-image") {
     content = (
       <CreateAnimaticImage
         /* This workflow mounts the real board page, so its "Make animatic"
@@ -734,7 +857,7 @@ export default function App() {
   // answer is deliberately not the customer's workflow rail. The modals below
   // do not come with it: "Add another account" and the pricing modal are both
   // about being a customer, and the panel has its own Pricing tab.
-  if (nav === "admin") {
+  if (page === "admin") {
     return (
       <AdminShell
         email={email}
@@ -755,7 +878,7 @@ export default function App() {
   return (
     <div className={`shell ${navCollapsed ? "nav-collapsed" : ""}`}>
       <Sidebar
-        active={nav}
+        active={page}
         onNavigate={navigate}
         workflows={workflows}
         workflowsKnown={railKnown}
@@ -780,7 +903,7 @@ export default function App() {
       />
       {/* Keyed by nav + reset counter: clicking the current workflow again
           changes the key, React remounts it, and it opens on its first page. */}
-      <main className="shell-main" key={`${nav}-${navResetKey}`}>
+      <main className="shell-main" key={`${page}-${navResetKey}`}>
         {content}
       </main>
 

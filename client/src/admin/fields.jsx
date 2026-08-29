@@ -32,11 +32,18 @@ export function GrowText({ value, className = "", ...rest }) {
   // the text — and `overflow: hidden` then eats the bottom of the last line.
   // `offsetHeight - clientHeight` is that border, measured rather than guessed,
   // so the field stays right if the border ever changes.
+  //
+  // ⚠ AND ONE MORE ON TOP, WHICH IS SUB-PIXEL. `scrollHeight` is an INTEGER and
+  // a line box usually is not — 17.3px a line means two lines are 34.6 and the
+  // browser answers 34, so the descenders on the last line are inside the 0.6px
+  // that `overflow: hidden` eats. See the same note in `GrowTextarea.jsx`; the
+  // maths here is deliberately identical and both were fixed together.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${el.scrollHeight + border + 1}px`;
   }, [value]);
 
   return (

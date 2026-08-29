@@ -37,6 +37,7 @@ from . import config
 from . import users
 from .admin import router as admin_router
 from .banners import router as banners_router
+from .showcase import router as showcase_router
 from .branding import router as branding_router
 from .billing import router as billing_router
 from .features import router as features_router, require_feature
@@ -238,6 +239,9 @@ app.include_router(sounds_router)
 # like everything else in the panel. Spends no AI quota. See server/branding.py.
 app.include_router(branding_router)
 app.include_router(banners_router)
+# The picture-and-video wall on the public Explore page. Public read, like
+# branding and banners — the page it feeds is reached BEFORE a token exists.
+app.include_router(showcase_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

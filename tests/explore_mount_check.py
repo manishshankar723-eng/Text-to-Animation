@@ -1,30 +1,46 @@
-"""DOES THE EXPLORE PAGE OPEN, AND DOES HOME STILL OPEN AFTER THE REFACTOR?
+"""DOES THE PUBLIC EXPLORE PAGE OPEN, PLAY AND GATE — AND DOES HOME STILL OPEN?
 
-Two questions, one rig, because one change caused both.
+Three questions, one rig, because one change caused all three.
 
-Explore is a new screen: billboards, a tile per workflow, and every project this
-account owns as one picture wall. It is built out of `dashboard_feed.js` — the
-six workflow groups, the cover fetcher and the cache subscription, which USED TO
-LIVE INSIDE `Home.jsx` and were moved out so two dashboards could not drift into
-two different answers. So this check mounts BOTH screens: the new one, and the
-one whose insides were taken out from under it.
+Explore changed sides. It used to be the SIGNED-IN front door — billboards, a
+tile per workflow, and every project the account owned as one picture wall — and
+it is now the logged-out marketing page. Asked for in one breath:
+
+    *"the page we created on explore should be used to market ... if anyone
+    clicks anywhere to use and create any workflow we must give a user first to
+    login and then use ... any logged in user must not see explore ... but the
+    videos or images should be clickable and be able to use it properly play"*
+
+So this file checks the three halves of that, and a fourth thing it could easily
+have broken:
+
+    1. THE PAGE ITSELF — banners, tiles, and a wall of ADMIN-CURATED work from
+       `GET /public/showcase` rather than the customer's own projects.
+    2. THE GATE — every control on it asks for a sign-in, and carries the
+       workflow it was selling through to the other side.
+    3. THE PLAYER — a card is not a link, it opens a real `<video>`. The whole
+       reason the wall exists is that somebody can watch it.
+    4. HOME, which is where a signed-in customer lands now, and which still runs
+       on `dashboard_feed.js` — the six workflow groups, the cover fetcher and
+       the cache subscription that were moved out of `Home.jsx` so two
+       dashboards could not drift into two different answers.
 
 ⚠ WHY A BROWSER AND NOT A `*_check.py` THAT READS THE FILE. `npm run build`
 passes with a crash in it — esbuild never evaluates the module. The white page
 this suite's sibling (`workflow_mount_check.py`) was written for was a
 `ReferenceError` thrown during the FIRST render, and every static check in this
-repo was green while it shipped. Same rule here, and this screen has more of the
-shapes that only fail at runtime: a `useMemo` whose dependency is computed above
-it, a `setInterval` on a carousel, and a hook (`useCovers`) that now lives in a
-different module from the component that calls it.
+repo was green while it shipped. This screen is full of the shapes that only
+fail at runtime: a `useMemo` whose dependency is computed above it, a
+`setInterval` on a carousel, and a `<video>` element whose `key` is what stops
+one film's audio outliving it. `tests/showcase_check.py` covers the store and the
+routes; this covers the render.
 
 ⚠ MOUNTED INSIDE `<React.StrictMode>`, like `main.jsx` does. StrictMode mounts
 twice with the component's state KEPT, which is exactly the shape `useCovers`
 got wrong once already — its `live` flag was set false on the way out and never
 back to true, so on the second, real mount every cover that arrived was revoked
 and thrown away and not one picture ever appeared. A probe that renders once is
-a probe that would have missed it, and moving that hook to a new file is
-precisely when you would want to know.
+a probe that would have missed it.
 
     pip install -r requirements-dev.txt
     python -m playwright install chromium
@@ -62,11 +78,62 @@ PROBE_JSX = os.path.join(CLIENT, "__probe_explore.jsx")
 API_BASE = "http://127.0.0.1:8000"
 
 # ---------------------------------------------------------------------------
-# The account's work. ⚠ ONE ITEM PER WORKFLOW AT LEAST, because the whole point
-# of the wall is that six workflows land in one grid — a fixture with only
-# storyboards in it would pass while five groups were silently dropped.
-# ⚠ AND THE STATUSES ARE MIXED ON PURPOSE: one running, one failed, the rest
-# finished, so "In progress" has something to be right about.
+# WHAT THE PRODUCT SELLS, in the shape `GET /public/workflows` sends. ⚠ THIS IS
+# THE LIST EXPLORE NOW READS, and that is the change: it used to be handed the
+# resolved rail — what ONE SIGNED-IN ACCOUNT is entitled to see — and there is no
+# account on a public page. ⚠ MUTABLE, because section [6] stages one of them as
+# "soon" and asks whether the page stops SELLING it while still showing it.
+# ---------------------------------------------------------------------------
+PUBLIC_WORKFLOWS = [
+    {"id": "plan-and-script", "label": "Plan & Script", "status": "live"},
+    {"id": "text-to-image", "label": "Text to Turnaround Image", "status": "live"},
+    {"id": "script-to-storyboard", "label": "Script to Storyboard", "status": "live"},
+    {"id": "create-animatic-image", "label": "Image to Animatic Image", "status": "live"},
+    {"id": "animatics-to-video", "label": "Image to AI Video", "status": "live"},
+    {"id": "storyboard-to-animatics", "label": "Video Editor", "status": "live"},
+]
+
+# ---------------------------------------------------------------------------
+# THE CURATED WALL, in the shape `GET /public/showcase` sends.
+#
+# ⚠ A MIX ON PURPOSE, AND EVERY ROW IS ONE QUESTION:
+#   • two videos, because "the videos should play" is the ask;
+#   • one of them with NO poster, because a clip an administrator has not put a
+#     still on has to draw the workflow glyph rather than a black hole;
+#   • one item with NO workflow tag, because a film about the whole pipeline
+#     belongs to none of them and must not vanish from an unfiltered wall;
+#   • 16:9 AND 9:16, because the tall card is what left a hole in the old wall
+#     and `wallAspect` is the clamp that fixed it.
+# ---------------------------------------------------------------------------
+SHOWCASE = [
+    {"id": "sc-1", "title": "Ganesh Utsav spot", "blurb": "Script to cut in a day.",
+     "workflow": "script-to-storyboard", "kind": "video", "aspect": "16:9",
+     "media_url": "/public/showcase/media/aaaaaaaaaaaa",
+     "poster_url": "/public/showcase/media/bbbbbbbbbbbb"},
+    {"id": "sc-2", "title": "Chai break reel", "blurb": "Vertical, for the feed.",
+     "workflow": "animatics-to-video", "kind": "video", "aspect": "9:16",
+     "media_url": "/public/showcase/media/cccccccccccc",
+     "poster_url": ""},
+    {"id": "sc-3", "title": "ANANYA turnaround", "blurb": "Four views, one photo.",
+     "workflow": "text-to-image", "kind": "image", "aspect": "16:9",
+     "media_url": "/public/showcase/media/dddddddddddd", "poster_url": ""},
+    {"id": "sc-4", "title": "Diwali board", "blurb": "Fifteen panels, one brief.",
+     "workflow": "script-to-storyboard", "kind": "image", "aspect": "9:16",
+     "media_url": "/public/showcase/media/eeeeeeeeeeee", "poster_url": ""},
+    {"id": "sc-5", "title": "The whole pipeline", "blurb": "Plan to render.",
+     "workflow": "", "kind": "image", "aspect": "1:1",
+     "media_url": "/public/showcase/media/ffffffffffff", "poster_url": ""},
+]
+WALL_TOTAL = len(SHOWCASE)
+FILMS = len([i for i in SHOWCASE if i["kind"] == "video"])
+STILLS = WALL_TOTAL - FILMS
+BOARD_ITEMS = len([i for i in SHOWCASE if i["workflow"] == "script-to-storyboard"])
+
+# ---------------------------------------------------------------------------
+# The account's own work — for HOME, which is the screen that still shows it.
+# ⚠ ONE ITEM PER WORKFLOW AT LEAST, because Recent work draws a group per
+# workflow and a fixture with only storyboards in it would pass while five
+# groups were silently dropped.
 # ---------------------------------------------------------------------------
 PLANS = [
     {"job_id": "plan-1", "title": "Diwali plan", "item_count": 2,
@@ -105,12 +172,6 @@ VIDEOS = [
      "updated_at": "2026-08-25T12:00:00+00:00"},
 ]
 
-# Everything on the wall, when nothing is hidden and no filter is on.
-WALL_TOTAL = len(PLANS) + len(JOBS) + len(BOARDS) + len(COPIED_BOARDS) \
-    + len(ANIMATICS) + len(VIDEOS)
-# The two that are not finished — see the note on the fixtures.
-UNFINISHED = 2
-
 # ---------------------------------------------------------------------------
 # The discount the pop-up advertises, in the shape `GET /billing/tiers` sends —
 # every field an administrator can type into `AdminSales`, so the card is
@@ -142,14 +203,10 @@ OFFER = {
 
 # ---------------------------------------------------------------------------
 # The billboards an administrator typed, in the shape `GET /public/banners`
-# sends. ⚠ MUTABLE, like OFFER: section [12] empties it to prove the page falls
-# back to the cards it generates from the workflow list, which is both the
-# shipped state and what "hide it" produces.
+# sends. ⚠ MUTABLE, like OFFER: section [12] fills it in and empties it again to
+# prove the page falls back to the cards it generates from the workflow list,
+# which is both the shipped state and what "hide it" produces.
 # ---------------------------------------------------------------------------
-# ⚠ THE STORE STARTS EMPTY, WHICH IS THE SHIPPED STATE. Sections [1]-[11] are
-# written against the cards Explore GENERATES from the workflow list, and that
-# is the path most installations will be on — so it is the one the bulk of this
-# file exercises. Section [12] fills the store in and empties it again.
 BANNERS = {"hero": [], "side": []}
 
 HERO_BANNER = {
@@ -174,13 +231,19 @@ SIDE_BANNER = {
     "image_url": "",
 }
 
-# A 1×1 PNG for every cover the wall asks for. Its pixels do not matter; what is
-# being checked is that a cover ARRIVES AT ALL under StrictMode's double mount.
+# A 1×1 PNG for every picture anything asks for. Its pixels do not matter; what
+# is being checked is that one ARRIVES AT ALL under StrictMode's double mount.
 TINY_PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d494844520000000100000001080600000"
     "01f15c4890000000a49444154789c6360000002000100ffff03000006"
     "0005570cf5a30000000049454e44ae426082"
 )
+
+# ⚠ NOT A PLAYABLE FILM, AND IT DOES NOT NEED TO BE. What is being asserted is
+# that a `<video>` ELEMENT is created, pointed at the right address and given
+# controls — Chromium failing to decode eight bytes of nonsense is not a failure
+# of this page. `tests/showcase_check.py` pins the byte-for-byte round trip.
+FAKE_MP4 = b"\x00\x00\x00\x20ftypisom" + bytes(range(256)) * 8
 
 failures: list[str] = []
 
@@ -196,13 +259,13 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import Explore from "./src/components/Explore.jsx";
 import Home from "./src/components/Home.jsx";
-// ⚠ THE REAL RAIL, not a stand-in. The whole ask was "an Explore button above
-// Home", and a test that asserts the PAGE exists while nothing checks the row
-// that opens it is a test of the half nobody asked for.
+// ⚠ THE REAL RAIL, not a stand-in. The ask was that a signed-in customer never
+// sees Explore again, and "the page is gone" is only half of that — the ROW
+// that used to open it has to be gone too, or the rail navigates to nothing.
 import Sidebar, { WORKFLOWS } from "./src/components/Sidebar.jsx";
-// ⚠ THE WHOLE APP, for one question only: which screen does it OPEN on? That
-// is a `useState` initialiser in App.jsx and no amount of mounting the pages
-// by hand can see it.
+// ⚠ THE WHOLE APP, for one question only: which screen does it OPEN on, signed
+// in and signed out? That is a `useState` initialiser plus an auth branch in
+// App.jsx, and no amount of mounting the pages by hand can see either.
 import App from "./src/App.jsx";
 // ⚠ THE SCREEN THE POP-UP'S WORDS ARE TYPED ON. A card whose copy comes from
 // the admin panel is only half-built until the panel can be opened — and a
@@ -210,6 +273,14 @@ import App from "./src/App.jsx";
 import AdminSales from "./src/admin/AdminSales.jsx";
 // The screen the billboards are typed on.
 import AdminBanners from "./src/admin/AdminBanners.jsx";
+// …and the one the WALL is uploaded on. New with this change, and the half of
+// it a developer cannot see from the public page: a wall nobody can fill is a
+// wall that is empty for ever.
+import AdminShowcase from "./src/admin/AdminShowcase.jsx";
+// ⚠ AND THE TAB THAT NOW HOLDS BOTH OF THEM. Mounting the two children proves
+// each screen renders; it says nothing about the strip that chooses between
+// them, which is the only part of this that is new code.
+import AdminExplore from "./src/admin/AdminExplore.jsx";
 import { applyTheme, getTheme } from "./src/theme.js";
 import "./src/styles/index.css";
 
@@ -217,9 +288,12 @@ import "./src/styles/index.css";
 // failure Playwright somehow misses is still readable off the page.
 window.__errors = [];
 window.addEventListener("error", (e) => window.__errors.push(String(e.message)));
-// Every navigation either screen asks for, in order. This is how "the tile
-// opens the workflow" is asserted without an App shell around it.
+// Every navigation Home asks for, in order.
 window.__nav = [];
+// ⚠ EVERY SIGN-IN THE PUBLIC PAGE ASKS FOR, AND WHAT IT WAS SELLING. This array
+// is the whole of check [3]: a tile that navigated instead of gating would look
+// identical on screen and do nothing at all.
+window.__signin = [];
 
 applyTheme(getTheme());
 
@@ -234,26 +308,41 @@ let collapsed = false;
 function draw() {
   const workflows = WORKFLOWS.filter((w) => !hidden.includes(w.id));
   if (screen === "banners") {
-    root.render(
-      <React.StrictMode>
-        <AdminBanners />
-      </React.StrictMode>
-    );
+    root.render(<React.StrictMode><AdminBanners /></React.StrictMode>);
+    return;
+  }
+  if (screen === "showcase") {
+    root.render(<React.StrictMode><AdminShowcase /></React.StrictMode>);
+    return;
+  }
+  if (screen === "adminexplore") {
+    root.render(<React.StrictMode><AdminExplore /></React.StrictMode>);
     return;
   }
   if (screen === "sales") {
     root.render(
-      <React.StrictMode>
-        <AdminSales onOpenUser={() => {}} />
-      </React.StrictMode>
+      <React.StrictMode><AdminSales onOpenUser={() => {}} /></React.StrictMode>
     );
     return;
   }
   // The real shell draws its own rail, so it is rendered bare — no wrapper.
   if (screen === "app") {
+    root.render(<React.StrictMode><App /></React.StrictMode>);
+    return;
+  }
+  // ⚠ EXPLORE IS RENDERED WITHOUT THE SHELL, and that is not a shortcut — it is
+  // the layout. There is no rail beside a logged-out page, so the page carries
+  // its own nav and its own background. Mounting it inside `.shell-main` would
+  // be testing a screen the product no longer has.
+  if (screen === "explore") {
     root.render(
       <React.StrictMode>
-        <App />
+        <Explore
+          onSignIn={(id) => window.__signin.push(id === undefined ? null : id)}
+          onBack={() => window.__signin.push("back")}
+          theme="dark"
+          onToggleTheme={() => {}}
+        />
       </React.StrictMode>
     );
     return;
@@ -262,7 +351,7 @@ function draw() {
     <React.StrictMode>
       <div className={`shell ${collapsed ? "nav-collapsed" : ""}`}>
       <Sidebar
-        active={screen}
+        active="home"
         onNavigate={(id) => window.__nav.push(id)}
         workflows={workflows}
         workflowsKnown={true}
@@ -278,15 +367,6 @@ function draw() {
         accounts={[]}
       />
       <main className="shell-main">
-      {screen === "explore" ? (
-        <Explore
-          workflows={workflows}
-          workflowsKnown={true}
-          onNavigate={(id) => window.__nav.push(id)}
-          onOpenJob={(id) => window.__nav.push("job:" + id)}
-          onUpgrade={() => window.__nav.push("upgrade")}
-        />
-      ) : (
         <Home
           email="probe@example.com"
           visibleWorkflows={workflows.map((w) => w.id)}
@@ -295,7 +375,6 @@ function draw() {
           onUpgrade={() => {}}
           onOpenProfile={() => {}}
         />
-      )}
       </main>
       </div>
     </React.StrictMode>
@@ -306,6 +385,14 @@ function draw() {
 window.__hide = (ids) => { hidden = ids; draw(); };
 window.__collapse = (on) => { collapsed = on; draw(); };
 window.__screen = (s) => { screen = s; draw(); };
+// ⚠ SIGNED IN OR NOT, from out here. Section [9] asks the ONE question nothing
+// else in this file can: which screen does the real App open on, on each side of
+// the sign-in? `App` reads the token in a `useState` initialiser, so this has to
+// be set BEFORE the shell is mounted.
+window.__token = (on) => {
+  if (on) localStorage.setItem("cas_token", "probe-token");
+  else localStorage.removeItem("cas_token");
+};
 draw();
 """
 
@@ -326,18 +413,55 @@ def free_port():
 
 
 def route_api(route, request):
-    """Answer everything the two dashboards ask the server for.
+    """Answer everything the public page and the dashboard ask the server for.
 
     ⚠ ORDER MATTERS AND THE COMMENTS SAY WHY. A cover's URL contains
     "/storyboards", so the picture rules have to come before the list rules or
-    the wall is handed a JSON array where it expected a PNG.
+    Home is handed a JSON array where it expected a PNG.
     """
     url = request.url
 
-    # The admin panel's banner screen, and the customer-facing list. ⚠ THE
-    # ADMIN PATH IS CHECKED FIRST because "/admin/banners" contains
-    # "/banners", and answering the panel with the public payload would leave
-    # it with no `active` flag and no switches to draw.
+    # ---- the public page's own three reads ---------------------------------
+    # ⚠ THE ADMIN PATH IS CHECKED FIRST in both pairs below, because
+    # "/admin/showcase" contains "/showcase" — answering the panel with the
+    # public payload would leave it with no `active` flag and no switches.
+    if "/admin/showcase" in url and request.method == "GET":
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "items": [
+                {**SHOWCASE[0], "active": True, "rank": 0, "has_media": True,
+                 "has_poster": True, "live": True},
+                {**SHOWCASE[1], "active": False, "rank": 1, "has_media": True,
+                 "has_poster": False, "live": False},
+            ],
+            "max_public": 24,
+            "aspects": ["16:9", "4:5", "1:1", "9:16"],
+            "image_max_px": 1600,
+            "allowed_image_types": ["image/png", "image/jpeg", "image/webp"],
+            "allowed_video_types": ["video/mp4", "video/webm"],
+            "max_video_bytes": 96 * 1024 * 1024,
+            "max_image_bytes": 20 * 1024 * 1024,
+            "limits": {"title": 60, "blurb": 140},
+        }))
+        return
+    # ⚠ THE MEDIA ROUTE ANSWERS BOTH KINDS OFF ONE PATH, exactly as the server
+    # does — `aaaa…` is the clip, everything else is a picture. A single
+    # content type here would hand a `<video>` a PNG and quietly prove nothing.
+    if "/public/showcase/media/" in url:
+        if url.rstrip("/").endswith("aaaaaaaaaaaa") or url.rstrip("/").endswith("cccccccccccc"):
+            route.fulfill(status=200, content_type="video/mp4", body=FAKE_MP4)
+        else:
+            route.fulfill(status=200, content_type="image/png", body=TINY_PNG)
+        return
+    if "/public/showcase" in url:
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"items": SHOWCASE}))
+        return
+    if "/public/workflows" in url:
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"workflows": PUBLIC_WORKFLOWS}))
+        return
+
+    # The admin panel's banner screen, and the customer-facing list.
     if "/admin/banners" in url and request.method == "GET":
         route.fulfill(status=200, content_type="application/json", body=json.dumps({
             "banners": [
@@ -364,7 +488,7 @@ def route_api(route, request):
         route.fulfill(status=200, content_type="image/png", body=TINY_PNG)
         return
 
-    # --- the six dashboard lists ---
+    # --- the six dashboard lists, for Home ---
     if "/plans" in url:
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps(PLANS))
@@ -383,8 +507,8 @@ def route_api(route, request):
         return
     # ⚠ THE TWO BOARD FEEDS ARE ONE ENDPOINT AND A QUERY PARAMETER. Script to
     # Storyboard owns the originals (no `workflow`), Image to Animatic Image its
-    # own copies — and answering both with the same list is how the wall would
-    # show every board twice while the test stayed green.
+    # own copies — and answering both with the same list is how Home would show
+    # every board twice while the test stayed green.
     if "/storyboards" in url:
         body = COPIED_BOARDS if "workflow=animatic-image" in url else BOARDS
         route.fulfill(status=200, content_type="application/json",
@@ -502,23 +626,33 @@ def main():
             check("…including under StrictMode's second mount",
                   not page.evaluate("window.__errors.length"),
                   str(page.evaluate("window.__errors")))
+            check("⚠ …and it is the PUBLIC page — it carries its own nav, "
+                  "because there is no rail beside a logged-out screen",
+                  page.locator(".explore-public").count() == 1
+                  and page.locator(".xp-nav").count() == 1,
+                  str(page.locator(".explore-public").count()))
+            check("…with a way back to the landing page on the brand mark",
+                  page.locator(".xp-nav-brand").count() == 1)
 
             print("")
-            print("[1b] the row that opens it")
+            print("[1b] the rail no longer has a door to it")
+            # ⚠ THE OPPOSITE OF WHAT THIS CHECK USED TO SAY, and the reply that
+            # turned it round is *"any logged in user must not see explore which
+            # is happening right now"*. Explore was the row ABOVE Home; it is
+            # the page you see BEFORE Home now, and never after.
+            page.evaluate("window.__screen('home')")
+            page.wait_for_timeout(1200)
             rail = page.locator(".sidebar")
-            check("the rail carries an Explore row",
-                  rail.locator(".sb-item", has_text="Explore").count() == 1,
+            check("⚠ the rail carries NO Explore row — a signed-in customer has "
+                  "no way back to the sales page and needs none",
+                  rail.locator(".sb-item", has_text="Explore").count() == 0,
                   str(rail.locator(".sb-item", has_text="Explore").count()))
             labels = rail.locator(".sb-item-label").all_inner_texts()
-            check("⚠ …ABOVE Home, which is the order that was asked for",
-                  labels.index("Explore") < labels.index("Home"),
-                  str(labels[:3]))
-            check("…and it is marked as the page you are on",
-                  "active" in (rail.locator(".sb-item", has_text="Explore")
-                               .get_attribute("class") or ""))
+            check("⚠ …and Home is the first row, which is the front door now",
+                  labels[0] == "Home", str(labels[:3]))
             rail.locator(".sb-item", has_text="Home").click()
             page.wait_for_timeout(200)
-            check("…and Home is still one click away, unchanged",
+            check("…and it still navigates",
                   page.evaluate("window.__nav").count("home") == 1,
                   str(page.evaluate("window.__nav")))
 
@@ -534,7 +668,6 @@ def main():
             rail = page.locator(".sidebar.collapsed")
             check("the rail narrows", rail.count() == 1)
             for row, want in [
-                ("Explore", "Explore"),
                 ("Home", "Home"),
                 # ⚠ ALL SIX WORKFLOWS, NOT THE THREE THIS ACCOUNT CAN SEE. Three
                 # are switched off in the admin panel today and are one click
@@ -566,10 +699,7 @@ def main():
             # test — `scrollWidth > clientWidth` — reads EQUAL on a box that is
             # visibly ellipsised here, because the label is a shrink-to-fit
             # block inside a centred flex column: it never gets a scroll extent
-            # to be wider than. Proved by running it against the 84px rail that
-            # really did print "Storyboa…" and watching it report green.
-            # A Range over the text's own contents measures the words, and the
-            # row's content box is what they have to fit in.
+            # to be wider than.
             clipped = page.evaluate(
                 "Array.from(document.querySelectorAll("
                 "'.sidebar.collapsed .sb-item-short')).filter(el => {"
@@ -592,13 +722,16 @@ def main():
                   .first.inner_text())
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
 
+            page.evaluate("window.__screen('explore')")
+            page.wait_for_timeout(1500)
+
             print("")
-            print("[1c] the offer comes to the customer")
+            print("[1c] the offer comes to the visitor")
             # ⚠ IT ARRIVES, IT DOES NOT LOAD WITH THE PAGE. `ENTER_MS` of delay
             # is what makes it read as an arrival; a card that is simply there
             # on the first frame is part of the layout and gets scrolled past
             # like the rest of it.
-            page.wait_for_selector(".promo-pop.in", timeout=4000)
+            page.wait_for_selector(".promo-pop.in", timeout=6000)
             promo = page.locator(".promo-pop")
             check("the offer card slid in", promo.count() == 1)
             check("⚠ …headed by the words an ADMINISTRATOR typed, not by the "
@@ -614,20 +747,25 @@ def main():
                   OFFER["popup_note"] in promo.inner_text())
             check("…their words on the button",
                   OFFER["popup_cta"] in promo.inner_text(), promo.inner_text())
+            before = len(page.evaluate("window.__signin"))
             promo.locator(".promo-cta").click()
             page.wait_for_timeout(250)
-            check("⚠ …and that button opens the pricing modal — the SAME one "
-                  "the rail's Upgrade opens, not a second pricing screen",
-                  page.evaluate("window.__nav").count("upgrade") == 1,
-                  str(page.evaluate("window.__nav")))
+            # ⚠ THE BUTTON CHANGED WHAT IT DOES, AND IT HAD TO. It used to open
+            # the pricing modal; `POST /billing/coupon` is signed-in only and
+            # would 401 in front of a prospect, so out here the only honest
+            # thing a discount can ask for is an account.
+            check("⚠ …and that button asks for a sign-in, not a pricing modal "
+                  "the visitor cannot buy from",
+                  len(page.evaluate("window.__signin")) > before
+                  and page.locator(".modal-overlay").count() == 0,
+                  str(page.evaluate("window.__signin")[-2:]))
             check("⚠ …and the CODE, copyable — a coupon nobody can copy is a "
                   "coupon typed wrong",
                   promo.locator(".promo-code-text").inner_text() == OFFER["code"])
             check("…the discount itself is the card's artwork",
                   promo.locator(".promo-cut").inner_text() == OFFER["summary"])
             check("⚠ …and it is NOT a modal — the page behind it still works",
-                  page.locator(".modal-overlay").count() == 0
-                  and page.locator(".xp-tile").count() > 0)
+                  page.locator(".xp-tile").count() > 0)
 
             page.screenshot(path=os.path.join(ROOT, "output", "explore_promo.png"))
 
@@ -686,48 +824,59 @@ def main():
                   "full stop",
                   all(len(t.strip()) > 1 for t in subs), str(subs))
 
-            print("\n[3] a tile per workflow, and the tiles go somewhere")
-            check("six tiles, one per workflow in the rail",
+            print("\n[3] a tile per workflow, and every tile is a sign-in gate")
+            check("six tiles, one per workflow the product sells",
                   page.locator(".xp-tile").count() == 6,
                   str(page.locator(".xp-tile").count()))
             # ⚠ THE OPPOSITE OF WHAT THIS CHECK USED TO SAY, and the reason is
             # in the reply that changed it: *"ye 3 button ka colour ek jaisa
-            # rakho, ismai golden hata do."* The rail's order is the owner's
-            # pipeline, not a recommendation, and gold means "the action"
-            # everywhere else on this page.
+            # rakho, ismai golden hata do."* The order is the owner's pipeline,
+            # not a recommendation, and gold means "the action" elsewhere here.
             check("⚠ not one of them is gold — the row is one colour end to end",
                   page.locator(".xp-tile-lead").count() == 0,
                   str(page.locator(".xp-tile-lead").count()))
+            page.evaluate("window.__signin = []")
             page.locator(".xp-tile", has_text="Script to Storyboard").click()
-            page.wait_for_timeout(200)
-            check("…and pressing one opens that workflow",
-                  page.evaluate("window.__nav").count("script-to-storyboard") == 1,
-                  str(page.evaluate("window.__nav")))
+            page.wait_for_timeout(250)
+            # ⚠ THE ASK, IN ITS OWN WORDS: *"if anyone clicks anywhere to use
+            # and create any workflow we must give a user first to login and
+            # then use"*. And the second half of that sentence is the second
+            # half of this check: the workflow they clicked has to travel WITH
+            # the sign-in, or the gate costs them the thing they came for.
+            check("⚠ pressing one asks for a sign-in, and NAMES the workflow it "
+                  "was selling — landing a new customer on a generic dashboard "
+                  "is how the click is lost between here and the password",
+                  page.evaluate("window.__signin") == ["script-to-storyboard"],
+                  str(page.evaluate("window.__signin")))
 
-            print("\n[4] the wall — every workflow's work in one grid")
+            print("\n[4] the wall — curated work, not the customer's own")
             cards = page.locator(".xp-card")
-            check(f"⚠ all {WALL_TOTAL} projects are on it, from all six "
-                  "workflows — a wall that quietly drops a group is the exact "
-                  "fault `dashboard_feed.js` exists to make impossible",
+            check(f"⚠ all {WALL_TOTAL} uploaded items are on it — including the "
+                  "one with no workflow tag, which an over-eager filter would "
+                  "drop from a wall nobody has filtered",
                   cards.count() == WALL_TOTAL, str(cards.count()))
-            check("…a finished project wears no badge, and the two unfinished "
-                  "ones do", page.locator(".xp-card-badge").count() == UNFINISHED,
-                  str(page.locator(".xp-card-badge").count()))
-            check("⚠ …and a cover picture actually arrived, which is the thing "
-                  "StrictMode's double mount broke in `useCovers` once before",
+            check(f"⚠ …and the {FILMS} films say so before you click — on a "
+                  "wall of stills, 'this one moves' is the only thing worth "
+                  "seeing without reading",
+                  page.locator(".xp-card-play").count() == FILMS,
+                  str(page.locator(".xp-card-play").count()))
+            check("⚠ …a poster actually arrived, which is the thing StrictMode's "
+                  "double mount broke in the old cover fetcher once before",
                   page.locator(".xp-card-pic img").count() > 0,
                   str(page.locator(".xp-card-pic img").count()))
-            check("…a project with no picture yet falls back to its workflow's "
-                  "own glyph rather than a grey box",
-                  page.locator(".xp-card-glyph").count() > 0)
-            # ⚠ THE HOLE BESIDE THE TALL BOARD, MEASURED RATHER THAN EYED.
+            check("⚠ …and a clip with no still falls back to its workflow's own "
+                  "glyph rather than a black hole in the middle of the wall",
+                  page.locator(".xp-card-glyph").count() == 1,
+                  str(page.locator(".xp-card-glyph").count()))
+            check("…each tagged card says which workflow made it",
+                  page.locator(".xp-card-wf").count() == WALL_TOTAL - 1,
+                  str(page.locator(".xp-card-wf").count()))
+            # ⚠ THE HOLE BESIDE THE TALL CARD, MEASURED RATHER THAN EYED.
             # Reported twice: *"gallery me lamba 9:16 board wala column bagal me
-            # khali jagah chhod raha hai."* On the old wall these seven projects
-            # produced columns ending at 483, 483, 323, 323 and 154 — the last
-            # one two thirds empty. The cause was the SPREAD, not the packing: a
-            # 9:16 board was 3.2× the height of a 16:9 one in the same column.
-            # `wallAspect` pulls every card into 4:5..16:9 and `wallColumns`
-            # stops five columns holding one card each.
+            # khali jagah chhod raha hai."* The cause was the SPREAD, not the
+            # packing: a 9:16 item is 3.2× the height of a 16:9 one in the same
+            # column. `wallAspect` pulls every card into 4:5..16:9 and
+            # `wallColumns` stops five columns holding one card each.
             cols = page.evaluate("""
               (() => {
                 const cards = [...document.querySelectorAll('.xp-card')];
@@ -760,31 +909,81 @@ def main():
                       return h.length ? Math.max(...h) / Math.min(...h) : 0;
                     })()
                   """) <= 2.3)
-            check("…each card says which workflow it came from",
-                  page.locator(".xp-card-wf").count() == WALL_TOTAL,
-                  str(page.locator(".xp-card-wf").count()))
+
+            print("\n[4b] and a card PLAYS — which is the whole point of it")
+            # ⚠ *"the videos or images should be clickable and be able to use it
+            # properly play"*. On the old page a card opened the customer's own
+            # project; out here there is no project and no account, so a card
+            # that merely navigated would be a picture that does nothing.
+            page.locator(".xp-card").filter(
+                has=page.locator(".xp-card-play")).first.click()
+            page.wait_for_timeout(600)
+            check("the viewer opens", page.locator(".lightbox-overlay").count() == 1)
+            check("⚠ …with a REAL player in it, not a still of the film",
+                  page.locator("video.xp-view-video").count() == 1,
+                  str(page.locator("video.xp-view-video").count()))
+            check("…pointed at the clip the card was carrying",
+                  "showcase/media" in (page.locator("video.xp-view-video")
+                                       .get_attribute("src") or ""),
+                  page.locator("video.xp-view-video").get_attribute("src"))
+            check("⚠ …and it has controls, because a blocked autoplay must "
+                  "still leave a play button under the pointer",
+                  page.evaluate(
+                      "document.querySelector('video.xp-view-video').controls"))
+            check("…the caption says what it is",
+                  "Ganesh Utsav spot" in page.inner_text(".xp-view-bar"),
+                  page.inner_text(".xp-view-bar"))
+            page.screenshot(path=os.path.join(ROOT, "output", "explore_player.png"))
+
+            page.evaluate("window.__signin = []")
+            page.locator(".xp-view-cta").click()
+            page.wait_for_timeout(250)
+            check("⚠ …and the viewer's own button is the strongest sign-in gate "
+                  "on the page — it names the workflow the piece was made with, "
+                  "which is the one place 'make one like this' is literally true",
+                  page.evaluate("window.__signin") == ["script-to-storyboard"],
+                  str(page.evaluate("window.__signin")))
+
+            # Stepping has to stay INSIDE what is filtered — see `openAt`.
+            page.locator(".lightbox-nav.next").click()
+            page.wait_for_timeout(400)
+            check("the arrows step through the wall",
+                  page.locator(".lightbox-count").inner_text() != "1 / %d" % WALL_TOTAL,
+                  page.locator(".lightbox-count").inner_text())
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+            check("Escape closes the viewer",
+                  page.locator(".lightbox-overlay").count() == 0)
 
             print("\n[5] the filters")
             page.locator(".xp-chip", has_text="Storyboard").first.click()
             page.wait_for_timeout(300)
             check("the workflow chip narrows the wall to that workflow",
-                  page.locator(".xp-card").count() == len(BOARDS),
+                  page.locator(".xp-card").count() == BOARD_ITEMS,
                   str(page.locator(".xp-card").count()))
-            page.locator(".xp-chip", has_text="For you").first.click()
+            page.locator(".xp-chip", has_text="Everything").first.click()
             page.wait_for_timeout(300)
             check("…and clears again", page.locator(".xp-card").count() == WALL_TOTAL,
                   str(page.locator(".xp-card").count()))
 
-            page.locator(".xp-tab", has_text="In progress").click()
+            # ⚠ THE TABS ARE NOT THE OLD TABS. Highlights / Recent / In progress
+            # described a CUSTOMER'S OWN JOBS — "in progress" is a render that
+            # has not finished, which is meaningless to a stranger and
+            # impossible to answer without an account.
+            page.locator(".xp-tab", has_text="Films").click()
             page.wait_for_timeout(300)
-            check("⚠ 'In progress' keeps only what is NOT finished — a plan has "
-                  "no status and must not be swept in as unfinished work",
-                  page.locator(".xp-card").count() == UNFINISHED,
+            check("'Films' keeps only what moves",
+                  page.locator(".xp-card").count() == FILMS,
                   str(page.locator(".xp-card").count()))
-            page.locator(".xp-tab", has_text="Highlights").click()
+            page.locator(".xp-tab", has_text="Stills").click()
+            page.wait_for_timeout(300)
+            check("…and 'Stills' only what does not",
+                  page.locator(".xp-card").count() == STILLS,
+                  str(page.locator(".xp-card").count()))
+            page.locator(".xp-tab", has_text="Everything").click()
             page.wait_for_timeout(300)
 
-            page.fill(".xp-search-input", "dance")
+            page.fill(".xp-search-input", "chai")
             page.wait_for_timeout(400)
             check("the search box filters by title",
                   page.locator(".xp-card").count() == 1,
@@ -803,26 +1002,31 @@ def main():
             check("nothing threw during any of it",
                   not errors, "; ".join(errors[:2]))
 
-            print("\n[6] a workflow an administrator has hidden is hidden HERE too")
-            page.evaluate("window.__hide(['animatics-to-video'])")
-            page.wait_for_timeout(600)
-            body = page.inner_text("body")
-            check("its tile is gone",
-                  page.locator(".xp-tile").count() == 5,
+            print("\n[6] a workflow staged 'soon' is shown but not SOLD")
+            # ⚠ TWO DIFFERENT ANSWERS, AND THAT IS THE CHECK. A tool nobody can
+            # see is a tool nobody waits for, so it keeps its tile — but sending
+            # a stranger through a sign-up to reach a placeholder is the worst
+            # version of this page, so it is not what a banner points at.
+            PUBLIC_WORKFLOWS[5]["status"] = "soon"
+            page.reload(wait_until="load")
+            page.wait_for_timeout(2500)
+            check("its tile is still there — six, not five",
+                  page.locator(".xp-tile").count() == 6,
                   str(page.locator(".xp-tile").count()))
-            check("⚠ …and so is its work — the rail was filtered and the "
-                  "dashboard was not, once, and the hidden workflow kept a "
-                  "column with a 'View all' into a room with no door",
-                  page.locator(".xp-card").count() == WALL_TOTAL - len(VIDEOS),
-                  str(page.locator(".xp-card").count()))
-            check("…and its name is nowhere on the page",
-                  "Image to AI Video" not in body)
-            page.evaluate("window.__hide([])")
-            page.wait_for_timeout(600)
+            check("…wearing a Soon pill instead of an arrow",
+                  page.locator(".xp-tile-lock").count() == 1
+                  and "Soon" in page.inner_text(".xp-tile-lock"),
+                  page.inner_text(".xp-tiles"))
+            check("⚠ …and the fixed billboard has moved off it, because a "
+                  "banner is an advertisement and that one is not for sale",
+                  page.locator(".tone-side .xp-banner-title").inner_text()
+                  != "Video Editor",
+                  page.locator(".tone-side .xp-banner-title").inner_text())
+            PUBLIC_WORKFLOWS[5]["status"] = "live"
 
-            print("\n[7] Home still opens — its insides moved to dashboard_feed.js")
+            print("\n[7] Home still opens — its insides live in dashboard_feed.js")
             page.evaluate("window.__screen('home')")
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(1600)
             body = page.inner_text("body")
             check("⚠ it mounts with nothing thrown. `buildGroups`, `useCovers`, "
                   "`useDashboard`, `formatDate` and `statusClass` were all cut "
@@ -842,7 +1046,7 @@ def main():
 
             check("nothing threw during any of it", not errors, "; ".join(errors[:2]))
             page.evaluate("window.__screen('explore')")
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(1600)
             page.screenshot(path=os.path.join(ROOT, "output", "explore_mount.png"),
                             full_page=True)
 
@@ -852,8 +1056,6 @@ def main():
             # the LIGHT theme — which is the half of this app that gets a whole
             # second palette in theme.css (a deeper gold, an inverted ink) and
             # is therefore the half a new screen is most likely to get wrong.
-            # The dark theme is the app's default for everybody whose OS says
-            # so, so it does not go unlooked-at.
             page.evaluate(
                 "document.documentElement.dataset.theme = 'dark';"
                 "localStorage.setItem('cas_theme', 'dark');"
@@ -877,41 +1079,65 @@ def main():
                 full_page=True)
 
             print("")
-            print("[9] the WHOLE app, signed in, opens on Explore")
+            print("[9] the WHOLE app: Explore before the sign-in, Home after it")
             # ⚠ THE ONE THING NOTHING ABOVE CAN SEE. Every section so far mounts
-            # the pages by hand and tells them which to draw; where the APP
-            # lands is a `useState` initialiser in App.jsx, and it was spelled
-            # out in five separate places until `LANDING_NAV` gathered them.
-            # Asked for outright: *"jab user aaye to explore page khule, home
-            # page nhi"*.
+            # the pages by hand and tells them which to draw; which screen the
+            # APP lands on is a `useState` initialiser plus an auth branch in
+            # App.jsx. Both halves were asked for outright: *"any logged in user
+            # must not see explore ... after login we know how our page which is
+            # home must look"*.
+            page.evaluate("window.__token(false)")
             page.evaluate("window.__screen('app')")
             page.wait_for_timeout(2500)
-            check("it mounts with nothing thrown",
+            check("it mounts signed out with nothing thrown",
                   not errors, "; ".join(errors[:2]))
-            check("⚠ a signed-in session opens on EXPLORE",
-                  page.locator(".explore").count() == 1,
-                  str(page.locator(".explore").count()))
-            check("…and not on the dashboard",
-                  page.locator(".home").count() == 0,
-                  str(page.locator(".home").count()))
+            check("a visitor gets the landing page",
+                  page.locator(".landing").count() == 1,
+                  str(page.locator(".landing").count()))
+            check("…with a way through to the work",
+                  page.get_by_role("link", name="See the work").count() >= 1)
+            page.get_by_role("link", name="See the work").first.click()
+            page.wait_for_timeout(1600)
+            check("⚠ …and that door opens the PUBLIC Explore — the marketing "
+                  "page, standing on its own with no rail beside it",
+                  page.locator(".explore-public").count() == 1
+                  and page.locator(".sidebar").count() == 0,
+                  str(page.locator(".explore-public").count()))
+
+            page.locator(".xp-tile", has_text="Script to Storyboard").click()
+            page.wait_for_timeout(900)
+            check("⚠ …and clicking a workflow on it lands on the SIGN-IN, which "
+                  "is the whole gate — not on a workflow a visitor has no "
+                  "account for",
+                  page.locator(".auth-card").count() == 1,
+                  str(page.locator(".auth-card").count()))
+
+            page.evaluate("window.__token(true)")
+            page.evaluate("window.__screen('home')")
+            page.wait_for_timeout(400)
+            page.evaluate("window.__screen('app')")
+            page.wait_for_timeout(2500)
+            check("⚠ a signed-in session opens on HOME, not on the sales page",
+                  page.locator(".home").count() == 1
+                  and page.locator(".explore").count() == 0,
+                  f"home={page.locator('.home').count()} "
+                  f"explore={page.locator('.explore').count()}")
             rail = page.locator(".sidebar")
             check("…with the rail agreeing about where you are",
-                  "active" in (rail.locator(".sb-item", has_text="Explore")
+                  "active" in (rail.locator(".sb-item", has_text="Home")
                                .get_attribute("class") or ""))
-            check("⚠ …and Home is still there, one click away and unchanged — "
-                  "moving the front door must not remove the desk",
-                  rail.locator(".sb-item", has_text="Home").count() == 1)
-            rail.locator(".sb-item", has_text="Home").click()
-            page.wait_for_timeout(900)
-            check("…and that click really opens it",
-                  page.locator(".home").count() == 1
-                  and "Welcome back" in page.inner_text("body"))
+            check("⚠ …and no way back to Explore from inside the app, which is "
+                  "the point: it is a shop window, not a screen you work in",
+                  rail.locator(".sb-item", has_text="Explore").count() == 0)
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+
+            page.evaluate("window.__screen('explore')")
+            page.wait_for_timeout(1500)
 
             print("")
             print("[10] a dismissed offer stays dismissed — a NEW one does not")
             # ⚠ THE TRAP A SINGLE "seen the popup" FLAG WOULD HAVE SET. Closing
-            # one card must not silence every offer this account is ever shown,
+            # one card must not silence every offer this visitor is ever shown,
             # and the only way to tell the two apart is to reload with a
             # different id. Section [1c] already pressed Escape on `offer-1`.
             page.reload(wait_until="load")
@@ -923,7 +1149,7 @@ def main():
             OFFER["id"] = "offer-2"
             OFFER["popup_title"] = "Second offer"
             page.reload(wait_until="load")
-            page.wait_for_selector(".promo-pop.in", timeout=5000)
+            page.wait_for_selector(".promo-pop.in", timeout=6000)
             check("⚠ …but a NEW offer still gets its turn",
                   page.locator(".promo-title").inner_text() == "Second offer",
                   page.locator(".promo-title").inner_text())
@@ -970,8 +1196,6 @@ def main():
                   page.locator("textarea.admin-offer-lines").count() == 1,
                   str(page.locator("textarea.admin-offer-lines").count()))
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
-            page.screenshot(path=os.path.join(ROOT, "output", "admin_offer_popup.png"),
-                            full_page=True)
 
             print("")
             print("[12] the billboards say what an administrator typed")
@@ -985,7 +1209,7 @@ def main():
             BANNERS["side"] = [SIDE_BANNER]
             page.evaluate("window.__screen('explore')")
             page.reload(wait_until="load")
-            page.wait_for_timeout(2200)
+            page.wait_for_timeout(2500)
             hero = page.locator(".xp-hero")
             side = page.locator(".tone-side")
             check("the rotating card carries their heading",
@@ -1017,14 +1241,17 @@ def main():
                   side.locator(".xp-banner-art").count() == 1
                   and side.locator("img.xp-banner-photo").count() == 0)
 
-            before = len(page.evaluate("window.__nav"))
+            page.evaluate("window.__signin = []")
             hero.locator(".xp-banner-cta").click()
             page.wait_for_timeout(250)
-            check("…and the button goes where they pointed it",
-                  page.evaluate("window.__nav").count("script-to-storyboard")
-                  > 0 and len(page.evaluate("window.__nav")) > before,
-                  str(page.evaluate("window.__nav")[-3:]))
-            check("⚠ …with only ONE dot, because they wrote one card — the "
+            # ⚠ AN ADMIN'S BUTTON GATES TOO, and it carries what they pointed it
+            # at. Out here there is nowhere to navigate TO — so a banner target
+            # that "worked" without a sign-in would be a button doing nothing.
+            check("…and the button asks for a sign-in, carrying the workflow "
+                  "they pointed it at",
+                  page.evaluate("window.__signin") == ["script-to-storyboard"],
+                  str(page.evaluate("window.__signin")))
+            check("⚠ …with no dots at all, because they wrote one card — the "
                   "carousel is their list, not a fixed four",
                   page.locator(".xp-hero-dot").count() == 0,
                   str(page.locator(".xp-hero-dot").count()))
@@ -1037,7 +1264,7 @@ def main():
             BANNERS["hero"] = []
             BANNERS["side"] = []
             page.reload(wait_until="load")
-            page.wait_for_timeout(2200)
+            page.wait_for_timeout(2500)
             check("⚠ hiding every banner does not empty the page — it falls "
                   "back to the cards built from the workflow list, which is "
                   "what this page drew before the panel could speak",
@@ -1050,7 +1277,7 @@ def main():
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
 
             print("")
-            print("[13] and the screen those billboards are typed on")
+            print("[13] the screen those billboards are typed on")
             page.evaluate("window.__screen('banners')")
             page.wait_for_timeout(1500)
             body = page.inner_text("body")
@@ -1085,6 +1312,51 @@ def main():
             page.screenshot(path=os.path.join(ROOT, "output", "admin_banners.png"),
                             full_page=True)
 
+            print("")
+            print("[14] …and the screen the WALL is uploaded on")
+            # ⚠ THE HALF THE PUBLIC PAGE CANNOT SHOW YOU. Everything in [4] and
+            # [4b] is fed by a fixture; a wall nobody can actually FILL is a wall
+            # that stays empty in production, and `npm run build` is green either
+            # way.
+            page.evaluate("window.__screen('showcase')")
+            page.wait_for_timeout(1500)
+            body = page.inner_text("body")
+            check("Showcase mounts with nothing thrown",
+                  not errors, "; ".join(errors[:2]))
+            check("…with the uploaded items listed",
+                  page.locator(".admin-banner-row").count() == 2,
+                  str(page.locator(".admin-banner-row").count()))
+            check("…and it says which are films",
+                  "Video" in body, body[:160])
+            # ⚠ LOWERCASED, because `.badge` is `text-transform: uppercase`
+            # and `inner_text()` returns what is RENDERED — an exact match here
+            # fails on a row that is perfectly correct. Same rule as the
+            # eyebrow check in [12].
+            check("⚠ …each row saying whether it is actually on the page. An "
+                  "item can be switched ON and still not be there, because "
+                  "nothing has been uploaded to it — and hunting a website for "
+                  "a card that was never going to be there is a bad half-hour",
+                  "showing" in body.lower() and "hidden" in body.lower(),
+                  body[:200])
+            check("⚠ …a clip with no still is offered one, because there is no "
+                  "ffprobe here and a frame cannot be grabbed off it",
+                  page.get_by_role("button", name="Add still").count() >= 1,
+                  str(page.get_by_role("button", name="Add still").count()))
+            check("⚠ …and ↑ / ↓, because the first item is the first thing a "
+                  "visitor's eye lands on (RULEBOOK E6)",
+                  page.locator('button[title="Move up"]').count() == 2)
+
+            page.get_by_role("button", name="＋ New item").first.click()
+            page.wait_for_timeout(400)
+            body = page.inner_text("body")
+            for label in ("Title", "Made with", "Shape"):
+                check(f"…the form asks for it: {label}", label in body)
+            check("⚠ …and the caption box GROWS to its text (E1)",
+                  page.locator("textarea.admin-banner-body").count() == 1)
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+            page.screenshot(path=os.path.join(ROOT, "output", "admin_showcase.png"),
+                            full_page=True)
+
             browser.close()
     finally:
         if vite:
@@ -1101,8 +1373,8 @@ def main():
         for f in failures:
             print(f"   - {f}")
         return 1
-    print("Explore opens, rotates, filters, hides what the account may not see — "
-          "and Home still opens on the shared feed it was refactored onto.")
+    print("Explore sells, plays and gates; the rail has no door to it; and Home "
+          "opens where a signed-in customer now lands.")
     return 0
 
 

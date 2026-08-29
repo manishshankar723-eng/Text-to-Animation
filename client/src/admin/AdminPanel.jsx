@@ -17,7 +17,11 @@ import AdminFeatures from "./AdminFeatures.jsx";
 import AdminPricing from "./AdminPricing.jsx";
 import AdminSales from "./AdminSales.jsx";
 import AdminBrand from "./AdminBrand.jsx";
-import AdminBanners from "./AdminBanners.jsx";
+// ⚠ ONE TAB FOR THE WHOLE PUBLIC PAGE. Banners and Showcase were two
+// separate entries in the rail below; they are two sections of `AdminExplore`
+// now. See the header of that file for why, and for why neither component had
+// to be rewritten to get there.
+import AdminExplore from "./AdminExplore.jsx";
 
 // ⚠ ORDER IS "WHAT IS GOING ON" → "WHO" → "WHAT THEY CAN SEE" → "WHAT HAPPENED",
 // which is the order somebody opening this at speed actually wants. Pricing sits
@@ -38,11 +42,18 @@ const TABS = [
   // down the rail. Its neighbours are the other "what the product IS" tabs.
   { id: "brand", label: "Brand", ico: "✨" },
   // ⚠ NEXT TO BRAND, NOT NEXT TO SALES. Both of these are "what the product
-  // SAYS about itself" — the name and mark on one, the billboards on the front
-  // page on the other — and an operator who has just renamed the app is the one
-  // most likely to want the banner reworded too. It is nowhere near Sales
-  // because a banner is not a discount, even when it is advertising one.
-  { id: "banners", label: "Banners", ico: "🖼️" },
+  // SAYS about itself" — the name and mark on one, the whole public page on the
+  // other — and an operator who has just renamed the app is the one most likely
+  // to want the front page reworded too. It is nowhere near Sales because a
+  // banner is not a discount, even when it is advertising one.
+  //
+  // ⚠ THIS WAS TWO TABS, "Banners" AND "Showcase", AND THEY WERE ONE SCREEN.
+  // The note that used to sit here said so out loud — *"they are the SAME PAGE
+  // … two tabs apart is two tabs too far"* — and then set them side by side,
+  // which is the workaround and not the fix. Asked for outright: *"tum ek
+  // explore ka hi banao aur uske under banner and showcase rakho, to mai
+  // explore ke under ye dono ko handle kar sakun."*
+  { id: "explore", label: "Explore", ico: "🧭" },
   { id: "activity", label: "Activity", ico: "🕑" },
 ];
 
@@ -102,7 +113,7 @@ export default function AdminPanel() {
       {tab === "pricing" && <AdminPricing />}
       {tab === "sales" && <AdminSales onOpenUser={openUser} />}
       {tab === "brand" && <AdminBrand />}
-      {tab === "banners" && <AdminBanners />}
+      {tab === "explore" && <AdminExplore />}
       {tab === "activity" && <AdminActivity onOpenUser={openUser} />}
     </div>
   );

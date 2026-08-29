@@ -27,13 +27,27 @@ export default function GrowTextarea({ value, rows = 3, className = "", ...rest 
   // bottom of the last line. `offsetHeight - clientHeight` is that border,
   // measured rather than guessed, so this stays right if the border changes.
   //
+  // ⚠ AND IT IS SHORT BY ONE MORE, WHICH IS SUB-PIXEL AND WAS NOT OBVIOUS.
+  // `scrollHeight` is an INTEGER and a line box usually is not: at 13px with
+  // `line-height: 1.33` a line is 17.3px, so two lines are 34.6 and the browser
+  // hands back 34 — and the same `overflow: hidden` eats the 0.6px the
+  // descenders on the last line sit in. Caught by `admin_fields_check.py` on
+  // the offer form's bullet box (*"content box 34.0px, needs 34.6px"*); the
+  // banner box beside it escaped only because it carries a `min-height` tall
+  // enough to hide the fault, which is luck rather than a fix.
+  //
+  // So: `+ 1`, the fraction the browser threw away, rounded up. It can never be
+  // more than a pixel — `scrollHeight` rounds, it does not truncate to nothing —
+  // and on a box that was already tall enough it costs one invisible pixel.
+  //
   // `height: auto` first is what lets the box SHRINK again: measured against
   // its current height, `scrollHeight` can only ever grow.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+    const border = el.offsetHeight - el.clientHeight;
+    el.style.height = `${el.scrollHeight + border + 1}px`;
   }, [value]);
 
   return (

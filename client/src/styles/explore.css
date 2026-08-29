@@ -898,3 +898,406 @@
     max-width: none;
   }
 }
+
+/* =========================================================================
+   THE PUBLIC PAGE
+   =========================================================================
+   ⚠ EVERYTHING ABOVE THIS LINE WAS WRITTEN FOR A SCREEN INSIDE THE APP SHELL,
+   and it still is — the billboards, the tiles, the toolbar, the chips and the
+   masonry wall are unchanged. What changed is where they stand: Explore is the
+   logged-out marketing page now, so there is no `.shell-main` around it giving
+   it a background, a width or a margin. This block supplies those three things
+   and nothing else. See the header of Explore.jsx.
+
+   ⚠ AND IT WEARS THE LANDING PAGE'S GROUND, NOT ITS OWN. The two public screens
+   are one site to a visitor — they click between them — and a second, slightly
+   different wash is the exact mismatch this repo keeps paying for. The gradient
+   below is copied from `.landing` deliberately; if that one is retuned, retune
+   this with it. */
+/* ---- The left rail ----------------------------------------------------
+   ⚠ FIXED, NOT A GRID COLUMN, AND THAT IS THE WHOLE DESIGN. Every row on this
+   page is a DIRECT CHILD of `.explore-public` and is positioned by the listed
+   selectors below; wrapping them in a flex shell to make room for a rail would
+   have rewritten all eight of those rules and the masonry column maths with
+   them. A fixed rail plus one `padding-left` on the parent moves the whole page
+   over and touches nothing else. The block below already warns that this page
+   has fixed children and that is why the rows are LISTED rather than `> *`
+   selected — this is a third one, and the warning covers it.
+
+   ⚠ THE WIDTH IS THE APP RAIL'S COLLAPSED WIDTH. 92px, from `.sidebar` in
+   shell.css — widened to that from 68px when the collapsed rail learned to
+   carry a name under each glyph (RULEBOOK E17). Matching it is the point: this
+   is the same rail the visitor keeps after signing in.
+
+   ⚠ AND IT GOES AWAY BELOW 1000px rather than shrinking. The row of tiles
+   already lists every workflow, so a phone loses nothing but 92px it does not
+   have — and 1000px is the breakpoint this stylesheet already uses at the top
+   for the same page. */
+.xp-rail {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 6;
+  box-sizing: border-box;
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 1.1rem 0.5rem;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.xp-rail-brand {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  padding: 0.2rem 0 0.75rem;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--text);
+}
+.xp-rail-brand:hover {
+  color: var(--primary);
+}
+
+/* ⚠ min-height: 0 SO IT CAN SCROLL, and `overflow-y: auto` so a tenth workflow
+   does not push the Sign in button off the bottom of the screen. Standing
+   responsive rule 3: every flex child that holds a scroller needs it. */
+.xp-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Copied from `.sb-item` + `.sidebar.collapsed .sb-item` in shell.css. If the
+   rail's look is retuned there, retune it here with it. */
+.xp-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.5rem 0.15rem;
+  border: 1px solid var(--nav-stroke);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.xp-rail-item:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.xp-rail-ico {
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.xp-rail-ico svg {
+  width: 20px;
+  height: 20px;
+}
+/* ⚠ TWO LINES, CLIPPED WITH AN ELLIPSIS, NEVER ONE. Same reasoning and the
+   same numbers as `.sidebar.collapsed .sb-item-short`. */
+.xp-rail-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+.xp-rail-soon {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.xp-rail-foot {
+  margin-top: auto;
+  width: 100%;
+  padding-top: 0.6rem;
+}
+.xp-rail-cta {
+  width: 100%;
+  justify-content: center;
+}
+
+/* The rail is fixed, so the page is moved off it here rather than by a layout. */
+.explore-public.xp-has-rail {
+  padding-left: 92px;
+}
+
+@media (max-width: 1000px) {
+  .xp-rail {
+    display: none;
+  }
+  .explore-public.xp-has-rail {
+    padding-left: 0;
+  }
+}
+
+.explore-public {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(229, 193, 88, 0.14), transparent 60%),
+    radial-gradient(700px 500px at 5% 10%, rgba(120, 120, 220, 0.08), transparent 55%),
+    var(--bg);
+  padding-bottom: 3rem;
+}
+
+/* ⚠ THE ROWS ARE LISTED, NOT SELECTED WITH `> *`. Three of this page's direct
+   children are `position: fixed` — the viewer's overlay and the promotion — and
+   handing a fixed, inset-0 element a horizontal padding moves things nobody
+   asked to move. Listing the rows costs eight lines and cannot do that.
+
+   The width cap is what stops a five-column wall becoming a nine-column one on
+   a 4K monitor; the padding is the landing nav's own, so the brand mark up top
+   sits on the same left edge as the first card below it. */
+.explore-public > .xp-banners,
+.explore-public > .xp-tiles,
+.explore-public > .xp-work-head,
+.explore-public > .xp-toolbar,
+.explore-public > .xp-chips,
+.explore-public > .xp-gallery,
+.explore-public > .xp-empty,
+.explore-public > .xp-foot {
+  box-sizing: border-box;
+  width: min(100%, 1560px);
+  margin-inline: auto;
+  padding-inline: clamp(1.2rem, 4vw, 4.5rem);
+}
+
+/* The nav is `.landing-nav` — same element, same stylesheet — and only needs
+   the same cap so it lines up with the rows under it. */
+.xp-nav {
+  box-sizing: border-box;
+  width: min(100%, 1560px);
+  margin-inline: auto;
+}
+
+/* ⚠ THE BRAND IS A BUTTON HERE AND A `<span>` ON THE LANDING PAGE, because on
+   this page it does something: it goes back. So it takes `.brand.small`'s type
+   and has the button chrome stripped off it — a bordered grey slab where the
+   logo should be is not a brand mark. */
+.xp-nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.xp-nav-brand:hover {
+  color: var(--primary);
+}
+
+/* ---- "Made with <app>" — the heading over the wall ----
+   The signed-in page had no heading here: the wall was YOUR work and needed no
+   introduction. To a stranger it needs exactly one line saying whose it is and
+   one telling them it is clickable, because a grid of pictures that happens to
+   be interactive is a grid of pictures nobody clicks. */
+.xp-work-head {
+  margin: 2.2rem auto 0.9rem;
+}
+.xp-work-title {
+  margin: 0;
+  font-size: clamp(1.3rem, 2.6vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.xp-work-sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.92rem;
+}
+
+/* ---- "this one moves" ----
+   ⚠ CENTRED, NOT IN THE CORNER WHERE THE STATUS CHIP WAS. A chip in the corner
+   is a LABEL you read; this is a TARGET you press, and the middle of the picture
+   is where a pointer already is. It is the one universally understood control on
+   a wall of stills, so it is drawn the way every player draws it and nowhere
+   else on this page is round.
+
+   `pointer-events: none` because the whole card is already the button — a
+   nested hit target would give two different click points for one action. */
+.xp-card-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  /* Dark in BOTH themes, for the same reason the caption scrim is: it sits over
+     a photograph, not over the page. */
+  background: rgba(8, 9, 12, 0.62);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  color: #fff;
+  font-size: 1.05rem;
+  /* Optically centres the ▶ glyph, which carries its own left bearing. */
+  padding-left: 0.18rem;
+  backdrop-filter: blur(3px);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.xp-card:hover .xp-card-play {
+  transform: translate(-50%, -50%) scale(1.12);
+  background: rgba(8, 9, 12, 0.78);
+}
+
+/* ---- The last word ----
+   A second CTA, at the bottom, and the only repeat on the page. Somebody who has
+   scrolled a wall of films is the most convinced they will ever be, and the
+   nav's Sign in is a whole screen behind them. */
+.xp-foot {
+  margin-top: 3rem;
+  padding-block: 2.6rem;
+  text-align: center;
+}
+.xp-foot-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.xp-foot-sub {
+  margin: 0.5rem 0 1.3rem;
+  font-size: 0.95rem;
+}
+
+/* =========================================================================
+   THE VIEWER — MediaLightbox.jsx
+   =========================================================================
+   ⚠ THE SHELL, THE ✕, THE ARROWS AND THE COUNTER ARE ALL `lightbox.css`'s, and
+   deliberately so: that file already carries the fix that made those controls
+   readable on near-white storyboard paper. Only the four things a PLAYER needs
+   that a picture viewer does not are here. */
+
+/* ⚠ A HEIGHT, NOT A WIDTH, AND THAT IS THE WHOLE TRICK. A `<video>` with no
+   dimensions is 300×150 until its metadata arrives, so the viewer would open
+   at postage-stamp size and then jump. Pinning the HEIGHT and letting the width
+   follow means a 16:9 film and a 9:16 reel both open as tall as each other and
+   neither is letterboxed inside a box the wrong shape. */
+.xp-view-video {
+  height: min(82vh, 900px);
+  width: auto;
+  max-width: 92vw;
+  /* Behind the picture while it is still arriving, and behind the bars of a
+     clip whose ratio does not match its own box exactly. */
+  background: #000;
+  /* `.lightbox-img` sets `cursor: default`; a player wants the pointer it has
+     over its own controls. */
+  cursor: auto;
+}
+
+/* ⚠ THE CAPTION SITS INSIDE THE FIGURE, OVER THE BOTTOM OF THE MEDIA, not under
+   it. The figure is capped at 92vh, so a bar BELOW it would push a tall 9:16
+   clip off the top of the screen — and it would move every time a different
+   shaped item was stepped to.
+
+   ⚠ IT STOPS SHORT OF THE PLAYER'S OWN CONTROLS. `bottom` clears the native
+   control bar of a `<video>`, which is roughly 48px; sitting on top of the
+   scrubber would make a film impossible to seek. */
+.xp-view-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 2.6rem 1.1rem 1rem;
+  border-radius: 0 0 14px 14px;
+  /* The same dark scrim the wall's captions wear, and dark in both themes for
+     the same reason: it is over somebody's artwork, not over the page. */
+  background: var(--xp-veil);
+  pointer-events: none;
+}
+/* Only the button takes clicks — the bar itself must not swallow a press aimed
+   at the picture behind it, or at a player control near its edge. */
+.xp-view-bar .xp-view-cta {
+  pointer-events: auto;
+}
+.xp-view-figure:has(.xp-view-video) .xp-view-bar {
+  bottom: 3.2rem;
+  border-radius: 0;
+}
+.xp-view-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.xp-view-title {
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+.xp-view-blurb {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  /* Two lines, then an ellipsis — a paragraph typed into the admin panel must
+     not grow this bar up over the picture it is captioning. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.xp-view-cta {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The counter would otherwise sit under the caption bar it shares a corner
+   with. Same control, moved to the top. */
+.xp-view-count {
+  bottom: auto;
+  top: 0.7rem;
+}
+
+@media (max-width: 640px) {
+  /* The button drops under the words rather than squeezing them to nothing. */
+  .xp-view-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+  .xp-card-play {
+    width: 42px;
+    height: 42px;
+    font-size: 0.9rem;
+  }
+}

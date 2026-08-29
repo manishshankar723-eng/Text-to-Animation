@@ -203,25 +203,18 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Explore + Home */}
+      {/* Home */}
       <nav className="sb-nav">
-        {/* ⚠ ABOVE HOME, AND THAT IS THE ORDER THAT WAS ASKED FOR. The two are
-            not the same page: Home is the DASHBOARD (who you are, your plan,
-            where you left off), Explore is the SHOP WINDOW (what this studio
-            can make, and every project you own as one picture wall). Discovery
-            sits above the desk, the way the reference has it. See Explore.jsx.
-            Emoji, like Home's — the workflow rows below are the ones that
-            needed drawn glyphs, because two of them shared a picture. */}
-        <button
-          className={`sb-item ${active === "explore" ? "active" : ""}`}
-          onClick={() => onNavigate("explore")}
-          title="Explore"
-        >
-          <span className="sb-ico">🧭</span>
-          <span className="sb-item-label">Explore</span>
-          <span className="sb-item-short" aria-hidden="true">Explore</span>
-        </button>
+        {/* ⚠ THE EXPLORE ROW IS GONE, and its absence is a decision rather than
+            a deletion. Explore used to sit above Home here — the SHOP WINDOW
+            over the DESK — and it has since changed sides entirely: it is the
+            public marketing page a stranger lands on, and nobody who has signed
+            in sees it. Asked for directly: *"any logged in user must not see
+            explore"*. See the note on `LANDING_NAV` in App.jsx.
 
+            ⚠ SO HOME IS THE FIRST ROW AND THE FRONT DOOR. Emoji, like the old
+            Explore row was — the workflow rows below are the ones that needed
+            drawn glyphs, because two of them shared a picture. */}
         <button
           className={`sb-item ${active === "home" ? "active" : ""}`}
           onClick={() => onNavigate("home")}

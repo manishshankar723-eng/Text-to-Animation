@@ -54,6 +54,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+# ⚠ THE ONE PLACE IN THIS FILE THAT LEAVES THE EVENT LOOP. `upload_showcase_media`
+# is `async def` (it awaits the upload), so anything slow it calls DIRECTLY blocks
+# every other request in the process - and grabbing a poster shells out to ffmpeg
+# against a file that may be 96MB. The Pillow work beside it is milliseconds and
+# stays inline; this one does not.
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from . import (
@@ -65,6 +71,7 @@ from . import (
     events,
     features,
     offers,
+    showcase,
     subscriptions,
     usage,
     users,
@@ -1362,6 +1369,324 @@ def delete_banner_image(
         **events.request_context(request),
     )
     return _banner_row(row)
+
+
+# ---------------------------------------------------------------------------
+# Explore showcase — the picture-and-video wall on the PUBLIC page
+# ---------------------------------------------------------------------------
+# ⚠ THE SAME SHAPE AS THE BANNER ROUTES ABOVE, deliberately: create the row,
+# then put a file on it. The difference is that a file here may be a VIDEO, so
+# there are two upload routes with two size limits and two allow-lists — see the
+# note on `SHOWCASE_MAX_VIDEO_BYTES` in config.py for why one limit would not do.
+class ShowcaseBody(BaseModel):
+    """A new wall item. ⚠ ONLY `title` IS REQUIRED — everything else has a
+    sensible absence, and the media arrives on its own route afterwards."""
+
+    title: str = Field(..., min_length=1, max_length=showcase.TITLE_MAX)
+    blurb: str = Field("", max_length=showcase.BLURB_MAX)
+    # A workflow id the shell knows, so the viewer can offer "Use this workflow".
+    # Validated in `showcase._clean` — empty means "no tag".
+    workflow: str = Field("", max_length=64)
+    aspect: str = Field(showcase.DEFAULT_ASPECT, max_length=8)
+    rank: int = Field(0, ge=0, le=999)
+    active: bool = True
+
+
+class ShowcaseUpdate(BaseModel):
+    """⚠ EVERY FIELD OPTIONAL, and the route sends `exclude_unset` — so a panel
+    that only flips `active` does not have to resend the whole item, and a field
+    added later cannot be blanked by an older client."""
+
+    title: str | None = Field(None, min_length=1, max_length=showcase.TITLE_MAX)
+    blurb: str | None = Field(None, max_length=showcase.BLURB_MAX)
+    workflow: str | None = Field(None, max_length=64)
+    aspect: str | None = Field(None, max_length=8)
+    rank: int | None = Field(None, ge=0, le=999)
+    active: bool | None = None
+
+
+def _showcase_row(row: dict) -> dict:
+    """One item plus the facts the panel needs that the customer is not told.
+
+    ⚠ `active` IS RESOLVED HERE, not passed through — a row written before the
+    field existed carries no key, and `all_items` reads that absence as live.
+    The panel's switch has to be fed the same answer the page is.
+
+    ⚠ AND `live` IS NOT `active`. An item can be switched on and still not be on
+    the page because nothing has been uploaded to it yet; the panel says so out
+    loud rather than leaving somebody hunting for a card that is not there.
+    """
+    return {
+        **showcase.public_item(row),
+        "active": bool(row.get("active", True)),
+        "rank": int(row.get("rank") or 0),
+        "has_media": bool(row.get("media_id")),
+        "has_poster": bool(row.get("poster_id")),
+        "live": bool(row.get("active", True) and row.get("media_id")),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+@router.get("/showcase")
+def list_showcase(admin: CurrentUser = Depends(require_admin)) -> dict:
+    """Every wall item, live or not, with the limits the form has to respect."""
+    return {
+        "items": [_showcase_row(i) for i in showcase.all_items(fresh=True)],
+        "max_public": showcase.MAX_PUBLIC,
+        "aspects": list(showcase.ASPECTS),
+        "image_max_px": showcase.IMAGE_MAX_PX,
+        "allowed_image_types": list(showcase.ALLOWED_IMAGE_TYPES),
+        "allowed_video_types": list(showcase.ALLOWED_VIDEO_TYPES),
+        "max_video_bytes": config.SHOWCASE_MAX_VIDEO_BYTES,
+        "max_image_bytes": config.MAX_UPLOAD_BYTES,
+        "limits": {"title": showcase.TITLE_MAX, "blurb": showcase.BLURB_MAX},
+    }
+
+
+@router.post("/showcase", status_code=201)
+def create_showcase(
+    body: ShowcaseBody, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    try:
+        row = showcase.create_item(body.model_dump(), actor=admin.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_created",
+        item=row.get("id"),
+        **events.request_context(request),
+    )
+    logger.info("%s created showcase item %s", admin.email, row.get("id"))
+    return _showcase_row(row)
+
+
+@router.patch("/showcase/{item_id}")
+def update_showcase(
+    item_id: str,
+    body: ShowcaseUpdate,
+    request: Request,
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    try:
+        row = showcase.save_item(item_id, fields, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such showcase item.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_changed",
+        item=item_id,
+        fields=sorted(fields),
+        **events.request_context(request),
+    )
+    return _showcase_row(row)
+
+
+@router.delete("/showcase/{item_id}")
+def remove_showcase(
+    item_id: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """⚠ DELETE IS NOT HIDE, and the panel offers both. Hiding keeps the words
+    and the file for the next campaign; deleting throws the video away."""
+    try:
+        showcase.delete_item(item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such showcase item.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_deleted",
+        item=item_id,
+        **events.request_context(request),
+    )
+    logger.info("%s deleted showcase item %s", admin.email, item_id)
+    return {"ok": True}
+
+
+@router.post("/showcase/{item_id}/media")
+async def upload_showcase_media(
+    item_id: str,
+    request: Request,
+    media: UploadFile = File(..., description="The picture or the clip."),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """Put a picture OR a video on a wall item. Replaces whatever was there.
+
+    ⚠ ONE ROUTE FOR BOTH, and the CONTENT TYPE decides which. Two routes would
+    mean the panel had to know in advance which kind of file somebody was about
+    to pick — and the file picker is the thing that knows that, not the form.
+
+    ⚠ THE SIZE LIMIT FOLLOWS THE KIND. A picture gets `MAX_UPLOAD_BYTES` like
+    every other image in the app; a clip gets `SHOWCASE_MAX_VIDEO_BYTES`, which
+    is deliberately much larger. Checking the cheap thing first — the type, then
+    the length, then Pillow — is the same order the banner and logo routes use.
+    """
+    content_type = media.content_type or ""
+    if content_type in showcase.ALLOWED_IMAGE_TYPES:
+        kind = showcase.KIND_IMAGE
+        cap = config.MAX_UPLOAD_BYTES
+    elif content_type in showcase.ALLOWED_VIDEO_TYPES:
+        kind = showcase.KIND_VIDEO
+        cap = config.SHOWCASE_MAX_VIDEO_BYTES
+    else:
+        allowed = ", ".join(
+            showcase.ALLOWED_IMAGE_TYPES + showcase.ALLOWED_VIDEO_TYPES
+        )
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type {content_type!r}. Allowed: {allowed}.",
+        )
+
+    contents = await media.read()
+    if len(contents) > cap:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(contents)} bytes). Max is {cap}.",
+        )
+
+    aspect = ""
+    blob = contents
+    if kind == showcase.KIND_IMAGE:
+        try:
+            blob, aspect = showcase.normalise_image(contents)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # ⚠ THE CLIP'S OWN FIRST FRAME, TAKEN HERE, BECAUSE THE BYTES ARE IN HAND.
+    # Reported as "no thumbnail show in my upload video": the wall drew a bare
+    # glyph because a video's still was a SECOND upload nobody knew to make. It
+    # is grabbed now - see `showcase.poster_from_video` for why ffmpeg can do
+    # this even though `ffprobe` is absent, and why a black frame is refused.
+    #
+    # ⚠ IT RUNS OFF THE EVENT LOOP. This handler is `async def`; ffmpeg against
+    # a file this size would otherwise stall every other request in the process.
+    #
+    # ⚠ AND IT FAILS SOFT, ALWAYS. A missing thumbnail is a worse-looking card;
+    # a failed upload is lost work. Whatever goes wrong in there, the clip that
+    # was just stored stays stored.
+    grabbed = None
+    if kind == showcase.KIND_VIDEO:
+        try:
+            grabbed = await run_in_threadpool(
+                showcase.poster_from_video, contents, content_type
+            )
+        except Exception:  # noqa: BLE001 - never fail an upload over a thumbnail
+            logger.exception("showcase: poster grab failed for %s (ignored)", item_id)
+
+    try:
+        row = showcase.save_media(
+            item_id, blob, kind, content_type=content_type, actor=admin.email
+        )
+        # ⚠ THE MEASURED RATIO WINS OVER THE TYPED ONE, for both kinds now.
+        # Pillow read a picture's real shape; the grabbed frame IS the video's,
+        # so neither has to keep the dropdown's guess. Leaving the guess on the
+        # row is what cropped a portrait phone clip into a landscape slot.
+        if not aspect and grabbed:
+            aspect = grabbed[1]
+        if aspect:
+            row = showcase.save_item(item_id, {"aspect": aspect}, actor=admin.email)
+
+        # ⚠ ONLY INTO AN EMPTY SLOT. A still an administrator chose by hand is a
+        # better picture than frame one and must survive a re-upload of the clip;
+        # `save_media` has already cleared the poster in the one case where the
+        # old one is certainly wrong (a picture replacing a video).
+        if grabbed and not row.get("poster_id"):
+            row = showcase.save_poster(item_id, grabbed[0], actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such showcase item.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_media_uploaded",
+        item=item_id,
+        kind=kind,
+        **events.request_context(request),
+    )
+    logger.info("%s put a %s on showcase item %s", admin.email, kind, item_id)
+    return _showcase_row(row)
+
+
+@router.post("/showcase/{item_id}/poster")
+async def upload_showcase_poster(
+    item_id: str,
+    request: Request,
+    image: UploadFile = File(..., description="The still shown before play."),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """The frame a video's card shows before anybody presses play.
+
+    ⚠ THIS IS THE OVERRIDE NOW, NOT THE ONLY WAY IN. It used to carry a note
+    saying the server could not pull frame one out of a clip because an
+    `imageio-ffmpeg` install has no `ffprobe` - which was true and irrelevant,
+    since extracting a frame is ffmpeg's job, not ffprobe's. `/media` grabs a
+    still automatically on upload.
+
+    ⚠ SO THE ROUTE STAYED, AND IT HAD TO. Frame one is a good default and a bad
+    poster: the shot that sells the film is rarely the one it opens on, and a
+    clip whose every probe came back black gets no poster at all. This is where
+    a person overrules the machine, and what it writes is never overwritten by a
+    later grab.
+    """
+    if image.content_type not in showcase.ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type {image.content_type!r}. "
+            f"Allowed: {', '.join(showcase.ALLOWED_IMAGE_TYPES)}.",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large ({len(contents)} bytes). "
+            f"Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+    try:
+        webp, _aspect = showcase.normalise_image(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        row = showcase.save_poster(item_id, webp, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such showcase item.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_poster_uploaded",
+        item=item_id,
+        **events.request_context(request),
+    )
+    return _showcase_row(row)
+
+
+@router.delete("/showcase/{item_id}/poster")
+def delete_showcase_poster(
+    item_id: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Back to no still — the card draws the workflow glyph instead."""
+    try:
+        row = showcase.clear_poster(item_id, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such showcase item.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="showcase_poster_removed",
+        item=item_id,
+        **events.request_context(request),
+    )
+    return _showcase_row(row)
+
 
 
 # ---------------------------------------------------------------------------

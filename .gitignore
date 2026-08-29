@@ -14,6 +14,11 @@
 # DEPLOYMENT's branding, not the project's — committing one deployment's name
 # would rename every other checkout on its next start.
 .local_branding.json
+# The billboards on Explore and the wall of work under them. Same reasoning as
+# the line above: these are one DEPLOYMENT's marketing copy, and committing them
+# would put one installation's campaign into every other checkout.
+.local_banners.json
+.local_showcase.json
 
 # Python
 __pycache__/
