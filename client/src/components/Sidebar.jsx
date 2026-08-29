@@ -48,6 +48,12 @@ const MENU_DISMISS = ".sb-account-menu, .sb-workspace";
 //
 // Keep it byte-identical to `_WORKFLOWS` in `server/features.py`, or a database
 // hiccup silently reorders somebody's sidebar.
+// ⚠ WHERE THE RAIL'S OPEN/CLOSED STATE IS REMEMBERED, and it lives here rather
+// than in the shell because there are TWO shells now: the signed-in app and the
+// public Explore page, which draws this same component. Two copies of a
+// localStorage key is two things to keep in step and one of them to forget.
+export const NAV_COLLAPSED_KEY = "cas_nav_collapsed";
+
 export const WORKFLOWS = [
   // FIRST in the pipeline: decide what to make before making any of it.
   { id: "plan-and-script", label: "Plan & Script", icon: "🗓️", status: "live" },
@@ -142,6 +148,24 @@ export default function Sidebar({
   onAddAccount,
   collapsed = false,
   onToggleCollapse,
+  // ⚠ THE SAME RAIL, DRAWN FOR SOMEBODY WITH NO ACCOUNT. The public Explore
+  // page used to carry a hand-built copy of this component — close, and
+  // therefore wrong: it had no brand mark, no app name and no collapse toggle,
+  // and that was the report. *"mai chahta hun ki ye sab waisa hi dikhe jaise
+  // user login kar ke dikhta hai — jaise abhi missing hai collapse bar and logo
+  // and AI Studio name."*
+  //
+  // ⚠ SO THE ANSWER IS THIS FILE, NOT A SECOND ONE. A rail that merely
+  // RESEMBLES this one is the mismatch this repo keeps paying for, and it drifts
+  // the first time either side is touched. What `publicMode` removes is only
+  // what a visitor cannot have — the avatar, the account menu — and the gold
+  // button at the foot becomes the sign-in instead of the upgrade. Everything
+  // else is the same markup and the same stylesheet, which is the point.
+  //
+  // ⚠ THE ROWS STILL CALL `onNavigate`. The public page maps that to a sign-in
+  // rather than to a page, so nothing in here has to know which side it is on.
+  publicMode = false,
+  onSignIn,
 }) {
   // ⚠ FAIL OPEN, EVERY TIME. An empty array is treated as "we don't know yet",
   // not as "this account has no workflows" — the second reading would blank the
@@ -170,7 +194,11 @@ export default function Sidebar({
   const brand = useBranding();
 
   return (
-    <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+    <aside
+      className={`sidebar ${collapsed ? "collapsed" : ""}${
+        publicMode ? " sidebar-public" : ""
+      }`}
+    >
       {/* Brand + the account avatar. The avatar sits here because the top-left
           is where people look for "me" — clicking it opens the profile. */}
       <div className="sb-brand">
@@ -178,15 +206,20 @@ export default function Sidebar({
           <Logo />
         </span>
         <span className="sb-brand-name">{brand.name}</span>
-        <button
-          type="button"
-          className={`sb-brand-avatar ${active === "profile" ? "active" : ""}`}
-          onClick={() => onNavigate("profile")}
-          title="Your profile"
-          aria-label="Your profile"
-        >
-          <Avatar size={30} initial={initial === "?" ? "" : initial} />
-        </button>
+        {/* ⚠ THE ONE THING A VISITOR HAS NO VERSION OF. Everything else in this
+            row — the mark, the name, the collapse toggle — is drawn on the
+            public page too, because it is the same rail. */}
+        {!publicMode && (
+          <button
+            type="button"
+            className={`sb-brand-avatar ${active === "profile" ? "active" : ""}`}
+            onClick={() => onNavigate("profile")}
+            title="Your profile"
+            aria-label="Your profile"
+          >
+            <Avatar size={30} initial={initial === "?" ? "" : initial} />
+          </button>
+        )}
         {/* Stays in the SAME corner in both states, so the button you clicked
             to close the rail is the button that reopens it. */}
         <button
@@ -205,16 +238,41 @@ export default function Sidebar({
 
       {/* Home */}
       <nav className="sb-nav">
-        {/* ⚠ THE EXPLORE ROW IS GONE, and its absence is a decision rather than
-            a deletion. Explore used to sit above Home here — the SHOP WINDOW
-            over the DESK — and it has since changed sides entirely: it is the
-            public marketing page a stranger lands on, and nobody who has signed
-            in sees it. Asked for directly: *"any logged in user must not see
-            explore"*. See the note on `LANDING_NAV` in App.jsx.
+        {/* ⚠ THE EXPLORE ROW IS GONE FROM THE SIGNED-IN RAIL, and its absence
+            there is a decision rather than a deletion. Explore used to sit above
+            Home — the SHOP WINDOW over the DESK — and it has since changed sides
+            entirely: it is the public marketing page a stranger lands on, and
+            nobody who has signed in sees it. Asked for directly: *"any logged in
+            user must not see explore"*. See the note on `LANDING_NAV` in App.jsx.
 
-            ⚠ SO HOME IS THE FIRST ROW AND THE FRONT DOOR. Emoji, like the old
-            Explore row was — the workflow rows below are the ones that needed
-            drawn glyphs, because two of them shared a picture. */}
+            ⚠ SO HOME IS THE FIRST ROW AND THE FRONT DOOR — INSIDE THE APP. Emoji,
+            like the old Explore row was; the workflow rows below are the ones
+            that needed drawn glyphs, because two of them shared a picture. */}
+
+        {/* ⚠ AND ON THE PUBLIC SIDE IT IS BACK, IN ITS OLD PLACE. Out here
+            Explore IS the page, and without a row for it the rail had no way of
+            saying so and no way back to it — pressing Home left for the sales
+            page with only a link buried in its nav to return by. Asked for
+            exactly that way: *"explore ka button kyun nahi dikh raha hai, ye page
+            kahan se khul raha hai? home ke upar explore button daalo, jaise user
+            wale mein tha pehle."*
+
+            ⚠ THE TWO WORDS MEAN DIFFERENT THINGS ON THE TWO SIDES, and that is
+            why this is not the same row twice. Signed in, Home is the desk.
+            Signed out, Home is the sales page and Explore is the shop window —
+            which is the pair this rail was originally built around. */}
+        {publicMode && (
+          <button
+            className={`sb-item ${active === "explore" ? "active" : ""}`}
+            onClick={() => onNavigate("explore")}
+            title="Explore — the work made with this studio"
+          >
+            <span className="sb-ico">🧭</span>
+            <span className="sb-item-label">Explore</span>
+            <span className="sb-item-short" aria-hidden="true">Explore</span>
+          </button>
+        )}
+
         <button
           className={`sb-item ${active === "home" ? "active" : ""}`}
           onClick={() => onNavigate("home")}
@@ -318,6 +376,7 @@ export default function Sidebar({
             positioned, and the menu opens UPWARD from here — this button sits
             at the bottom of a full-height rail, so a list below it would open
             off the bottom of the screen. */}
+        {!publicMode && (
         <span className="sb-account-wrap">
           <button
             className={`sb-workspace ${menu ? "active" : ""}`}
@@ -351,14 +410,29 @@ export default function Sidebar({
             />
           )}
         </span>
+        )}
 
-        <button className="sb-upgrade" onClick={onUpgrade} title="Upgrade">
-          <span className="sb-upgrade-ico">⚡</span>
-          <span className="sb-upgrade-label">Upgrade</span>
+        {/* ⚠ THE SAME GOLD BUTTON IN THE SAME PLACE, SAYING THE OTHER THING.
+            Signed in, the bottom of the rail asks for money; signed out it asks
+            for an account, which is the same question one step earlier. Keeping
+            the slot means the rail does not visibly rearrange itself the moment
+            somebody signs in — which is the whole reason the public page uses
+            this component rather than one that looks like it. */}
+        <button
+          className="sb-upgrade"
+          onClick={publicMode ? () => onSignIn?.(null) : onUpgrade}
+          title={publicMode ? "Sign in" : "Upgrade"}
+        >
+          <span className="sb-upgrade-ico">{publicMode ? "→" : "⚡"}</span>
+          <span className="sb-upgrade-label">
+            {publicMode ? "Sign in" : "Upgrade"}
+          </span>
           {/* ⚠ THE ONE FOOTER CONTROL THAT GETS A NAME WHEN NARROW. A sun and a
               face read on their own; a lightning bolt in a gold box does not
               say what pressing it costs. */}
-          <span className="sb-item-short" aria-hidden="true">Upgrade</span>
+          <span className="sb-item-short" aria-hidden="true">
+            {publicMode ? "Sign in" : "Upgrade"}
+          </span>
         </button>
       </div>
     </aside>

@@ -154,6 +154,15 @@ export function eventDetail(ev) {
       if (meta.action === "renamed") return `renamed: ${meta.was || "—"} → ${meta.now || "—"}`;
       if (meta.action === "logo_uploaded") return "new logo uploaded";
       if (meta.action === "logo_removed") return "logo removed — back to the built-in mark";
+      // ⚠ THE WORKFLOW IS THE HALF WORTH READING BACK. "a landing picture
+      // changed" answers nothing six weeks later; WHICH tile changed is the row
+      // somebody opens the feed to find.
+      if (meta.action === "landing_art_uploaded") {
+        return `landing picture: ${meta.workflow || "a workflow"}`;
+      }
+      if (meta.action === "landing_art_removed") {
+        return `landing picture removed: ${meta.workflow || "a workflow"} — back to the drawing`;
+      }
       return meta.action || "updated";
     case "subscription.started":
       return `${meta.tier} ${meta.period} · ${money(meta.amount)}${

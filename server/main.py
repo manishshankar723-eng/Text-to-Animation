@@ -38,6 +38,7 @@ from . import users
 from .admin import router as admin_router
 from .banners import router as banners_router
 from .showcase import router as showcase_router
+from .landing import router as landing_router
 from .branding import router as branding_router
 from .billing import router as billing_router
 from .features import router as features_router, require_feature
@@ -242,6 +243,11 @@ app.include_router(banners_router)
 # The picture-and-video wall on the public Explore page. Public read, like
 # branding and banners — the page it feeds is reached BEFORE a token exists.
 app.include_router(showcase_router)
+# The four tiles in the LANDING page hero, one picture per workflow. Public read
+# for the third time and for the third identical reason — and the read is FILTERED
+# BY WHAT A STRANGER MAY SEE, so a workflow hidden in the Features tab takes its
+# picture off the front page with it. See server/landing.py.
+app.include_router(landing_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

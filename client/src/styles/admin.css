@@ -1748,3 +1748,90 @@ label.cap-off {
   min-height: 3.2rem;
   resize: none;
 }
+
+/* =========================================================================
+   LANDING HERO PICTURES (AdminLanding.jsx)
+   -------------------------------------------------------------------------
+   A row per WORKFLOW, not per row-somebody-created — so there are three columns
+   here and four on a banner: no ↑ / ↓ pair, because the order is the Features
+   tab's `order` and a second set of arrows for it would be a second answer.
+
+   ⚠ THE THUMBNAIL IS 4 × 3, NOT 16 × 9 LIKE A BANNER'S. It is the shape of the
+   tile in the hero (`.lp-art-sheet` in landing.css), and a thumbnail in a
+   different aspect ratio to the thing it previews is a thumbnail that lies
+   about where the crop falls. Same values as `.admin-banner-*` everywhere else,
+   deliberately — RULEBOOK E3.
+   ========================================================================= */
+.admin-art-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+.admin-art-row {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+@media (max-width: 1100px) {
+  /* The buttons wrap under the words rather than squeezing them to nothing. */
+  .admin-art-row {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+  .admin-art-acts {
+    grid-column: 1 / -1;
+  }
+}
+.admin-art-pic {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.admin-art-pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* The empty slot draws the workflow's own glyph rather than saying "no picture".
+   ⚠ IT SETS `color` AND `font-size`, which is the whole wiring — `WorkflowIcon`
+   strokes itself in `currentColor` and sizes itself in `em`. Same trick as
+   `.lp-art-cell` in landing.css. */
+.admin-art-glyph {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 1.7rem;
+}
+.admin-art-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+.admin-art-title {
+  overflow: hidden;
+  font-size: 0.95rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-art-acts {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

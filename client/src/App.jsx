@@ -28,7 +28,7 @@ import AdminPanel from "./admin/AdminPanel.jsx";
 // header of AdminShell.jsx for why the workflow rail has no business beside it.
 import AdminShell from "./admin/AdminShell.jsx";
 import WorkflowSoon from "./components/WorkflowSoon.jsx";
-import { WORKFLOWS } from "./components/Sidebar.jsx";
+import { NAV_COLLAPSED_KEY, WORKFLOWS } from "./components/Sidebar.jsx";
 import GenerateForm from "./components/GenerateForm.jsx";
 import JobList from "./components/JobList.jsx";
 import JobDetail from "./components/JobDetail.jsx";
@@ -166,7 +166,6 @@ function asWorkflow(id) {
 // theme is: someone who works in the narrow rail wants it narrow next time too.
 // Kept HERE and not in Sidebar because `.shell` is a two-column grid — the rail
 // and the page width have to change in the same render or the layout tears.
-const NAV_COLLAPSED_KEY = "cas_nav_collapsed";
 
 function readNavCollapsed() {
   try {

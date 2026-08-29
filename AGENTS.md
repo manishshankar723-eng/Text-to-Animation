@@ -284,7 +284,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-30 — **THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB.** Asked with the Kling AI Explore page as the reference: *"need the side bar explore page like this but with my own services, and when user click on any of this he must get sign in page"*, and *"tum ek explore ka hi banao aur uske under banner and showcase rakho"*. Explore now carries a left rail at the app rail's own collapsed width, reading the **same `live` list the tiles do** (not a second copy) with **every row a sign-in that carries its workflow id**, so the visitor lands inside the workflow afterwards. ⚠ It is `position: fixed` with one `padding-left` on the page, because all eight of this screen's rows are direct children placed by name and a flex shell would have rewritten every one of them; hidden outright below 1000px, where the tile row already lists everything. New `AdminExplore.jsx` folds **Banners and Showcase into one Explore tab** behind the panel's own `admin-segment`, mounting one at a time — neither child rewritten. ⚠ **A patch script ate 39 lines of `AdminPanel.jsx` on the way**: a `re.S` regex whose `.*` ran from the file's first comment to the anchor, taking the header, the imports and six of nine tabs in one silent successful write. **G1 could not catch it — it protects the write, not the match.** Recovered from `git show HEAD:` (not `git checkout`), rebuilt line by line, proved clean by reading the diff; nothing of the user's was lost. New **RULEBOOK E31 and G12**, and `showcase_check.py` §14 now asserts every other tab survived. 33 new checks, all green; `admin_check`, `branding_check` and `npm run build` pass. ⚠ **The rail has never been drawn in a browser** — the two Chromium files were updated but not run (G2). See the Work Log.
+**Last updated:** 2026-08-30 — **THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE.** *"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai landing page ka fuction bano so mai image dall sakun har workflow ka … jo live hai uska dikhe image yaha pe aur jo hide hai uska nhi dikhe."* The landing hero's four tiles were **four hard-coded lines of JSX** holding four hand-drawn SVGs, with nothing saying which drawing belonged to which workflow — so hiding a workflow left its picture on the front page, and the biggest artwork a prospect sees could not be changed without a developer. New **`server/landing.py`** stores one picture per workflow **keyed by the workflow id** (no create route, no delete route — the rows ARE the `features.py` catalogue, which is what makes a seventh workflow need no plumbing), and a new **Admin → Landing** tab uploads them. ⚠ **The visibility filter is on the server as well as in the browser**, because the client-only version leaves a picture of a switched-off workflow in a public JSON payload; **"soon" keeps its picture, only "hidden" loses it, and the file is kept** so un-hiding restores the tile. ⚠ **The fallback is three rungs — picture, drawing, glyph — and the third one needed a real fix:** `WorkflowIcon` draws NOTHING for an id it has no glyph for, so the server's emoji is now carried through as its `fallback` or a workflow launched after this build would get a **blank white tile**. ⚠ The four-tile cap is a LAYOUT number; which four are drawn is the `order` in the Features tab, and the panel says out loud when a picture is stored but not drawn. New **RULEBOOK E35**. New `tests/landing_art_check.py` — **77 checks green**, including the **hide -> un-hide round trip** and a seventh workflow added the way one actually is; `showcase_check`, `features_check`, `admin_check`, `admin_fields_check`, `brand_landing_check`, `explore_layout_check` and `npm run build` pass. ⚠ **Not seen in a browser with a real uploaded picture** (G2), and `explore_mount_check.py`'s two failures are the in-progress Explore rewrite's, not this work's. See the Work Log.
+
+**Previously:** 2026-08-30 — **THE RAIL NEVER NAMED THE PAGE IT WAS STANDING ON.** *"explore ka button kyun nahi dikh raha hai, ye page kahan se khul raha hai? home ke upar explore button daalo."* The public rail listed Home and the workflows and no **Explore** — nothing highlighted on a page that is one of its own entries, and Home was a one-way door to the sales page. The row is back above Home, **on the public side only** (`{publicMode && …}`), because a signed-in customer still never sees Explore; pressing it while on Explore returns to the top, the app's own convention. ⚠ **Three tests failed the moment it landed, all written as "the string X is not in this component"** — a fair proxy for an absolute rule, meaningless once one component draws both sides. **Adding a mode rots every absence assertion.** The guard is asserted instead, and the new check was **proved to read False with the guard removed**. New **RULEBOOK E34**. Verified in Chromium: `explore_layout_check.py` gains seven checks reading the rows off real boxes — Explore above Home in the DOM **and in pixels**, wearing the highlight, workflows underneath — **32 green**, the blank-screen reproduction included. `showcase_check`, `admin_check`, `branding_check`, `npm run build` pass. See the Work Log.
+
+**Previously:** 2026-08-30 — **THE PAGE OPENED ON A BLANK SCREEN, AND ONLY A BROWSER COULD HAVE SAID SO.** *"pahla image pura blank hai, magar jab scroll kiya to tab aaya ye content."* ⚠ One CSS line: `grid-row: 1 / -1` on the rail. **A negative grid line counts back from the end of the EXPLICIT grid**, and that grid declared no rows — so the span collapsed to a single row as tall as the rail (100dvh), the nav was stretched down it and centred by `.landing-nav`, and the whole page sat below the fold. The fix is the `.xp-page` wrapper the previous entry talked itself out of: the eight "listed selectors" were **one rule**, and the app's shell has had this exact element (`.shell-main`) all along. ⚠ **The header's TOP never moved — its HEIGHT did** (72px vs 900px), so the obvious `nav.top < 160` check passes on the broken page and had to be corrected. ⚠ **`showcase_check.py` was green throughout, and two of its assertions demanded the declarations that caused the bug.** G7 sharpened: a green build is not a rendered screen, **and a source check is not a layout check**. New **`tests/explore_layout_check.py`** — Chromium, its own API and Vite, 25 checks measuring real boxes, and it **reproduces the blank screen in-page** to prove it can still fail (nav 72→900px, first row 72→900px). All green; `showcase_check`, `admin_check` and `npm run build` pass. New **RULEBOOK E33**. See the Work Log.
+
+**Previously:** 2026-08-30 — **THE PUBLIC RAIL BECAME THE REAL ONE.** The hand-built copy shipped hours earlier came straight back: *"mai chahta hun ki ye sab waisa hi dikhe jaise user login kar ke dikhta hai — jaise abhi missing hai collapse bar and logo and AI Studio name"*. ⚠ **A copy is never finished being close** — right width, right metrics, missing the three things that make the rail recognisable. Explore now draws the app's own `Sidebar` in a new **`publicMode`**, which SUBTRACTS (the avatar and the account menu) rather than re-describing, and turns the gold foot button from Upgrade into **Sign in** — same slot, so nothing rearranges at sign-in. ⚠ **Subtracting had its own bug**: `margin-left: auto` lived on the avatar and was holding the brand row's right edge, so hiding it tucked the collapse toggle against the app name. **Whatever a mode hides, check what that element was carrying for its neighbours.** ⚠ The page is now `.shell`'s grid spelt out (280/92/one column under 820px) rather than wrapped in one, because all eight of its rows are direct children placed by name. The brand **left the page header** — it is at the top of the rail, drawn once — and `NAV_COLLAPSED_KEY` moved into `Sidebar.jsx` so both shells read one key and the collapse choice survives the sign-in. ⚠ **One stale assertion fixed on the TEST's side and written down**: `"onNavigate" not in Explore.jsx` stopped meaning anything once the page drew a component that takes that prop; it now checks Explore's own signature and where each handler lands, and was proved to reject the bad signature first. New **RULEBOOK E32**. 28 checks green, `admin_check`, `branding_check`, `brand_landing_check` and `npm run build` pass. ⚠ **Not drawn in a browser** — `explore_mount_check.py` not run (G2). See the Work Log.
+
+**Previously:** 2026-08-30 — **THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB.** Asked with the Kling AI Explore page as the reference: *"need the side bar explore page like this but with my own services, and when user click on any of this he must get sign in page"*, and *"tum ek explore ka hi banao aur uske under banner and showcase rakho"*. Explore now carries a left rail at the app rail's own collapsed width, reading the **same `live` list the tiles do** (not a second copy) with **every row a sign-in that carries its workflow id**, so the visitor lands inside the workflow afterwards. ⚠ It is `position: fixed` with one `padding-left` on the page, because all eight of this screen's rows are direct children placed by name and a flex shell would have rewritten every one of them; hidden outright below 1000px, where the tile row already lists everything. New `AdminExplore.jsx` folds **Banners and Showcase into one Explore tab** behind the panel's own `admin-segment`, mounting one at a time — neither child rewritten. ⚠ **A patch script ate 39 lines of `AdminPanel.jsx` on the way**: a `re.S` regex whose `.*` ran from the file's first comment to the anchor, taking the header, the imports and six of nine tabs in one silent successful write. **G1 could not catch it — it protects the write, not the match.** Recovered from `git show HEAD:` (not `git checkout`), rebuilt line by line, proved clean by reading the diff; nothing of the user's was lost. New **RULEBOOK E31 and G12**, and `showcase_check.py` §14 now asserts every other tab survived. 33 new checks, all green; `admin_check`, `branding_check` and `npm run build` pass. ⚠ **The rail has never been drawn in a browser** — the two Chromium files were updated but not run (G2). See the Work Log.
 
 **Previously:** 2026-08-29 — **THE MARKETING PAGE GOT AN ADDRESS, AND THE WALL LEARNED TO MAKE ITS OWN THUMBNAILS.** Two reports: *"make it seprate explore page"* and *"when i upload video from admin panel but when i see explore page so no thumbnail show in my upload video"*. ⚠ **Explore was never a URL** — it was `authView` state, so the VS Code task named MARKETING PAGE opened on the sales page and a link to the one screen whose job is to be shown to people could not be sent to anybody. New `EXPLORE_PARAM` copied from `?admin`, one shared `syncUrlFlag()` writing both, `?admin` winning when both appear, and the parameter **dropped on sign-in** because `LANDING_NAV` says a signed-in customer never sees Explore again — the effect watches `authed` as well as the view, or the address goes stale the moment somebody signs in. ⚠ **The missing thumbnail was never missing**: the poster field, route and "Add still" button all worked, and nothing said a video needed a SECOND upload. ⚠ **The reason it was built that way was a wrong fact repeated in three comments** — *"there is no `ffprobe` on an `imageio-ffmpeg` install"*, which is true and beside the point: **`ffprobe` inspects, `ffmpeg` extracts**, and the repo has shipped ffmpeg all along for the exporter. New `showcase.poster_from_video()` grabs the still on upload, **refuses a black frame** (films open on black — it probes 1.0s/2.5s/0.5s/0.0s and falls back to the glyph rather than a wall of black rectangles), seeks with `-ss` BEFORE `-i`, writes the clip to disk first (an MP4's `moov` can live at the end), runs via **`run_in_threadpool`** because the handler is `async def` and the file may be 96MB, and **fails soft** — a thumbnail is never worth failing an upload over. ⚠ **It fills an EMPTY slot only**: a hand-picked still outranks frame one and survives a re-upload. A video's `aspect` is **measured** off the frame now instead of taken from the dropdown. New **RULEBOOK E28 and E29**; `tests/showcase_check.py` gains 17 checks built on **real ffmpeg clips**, all green, and `admin_check`, `admin_fields_check`, `branding_check`, `brand_landing_check` and `npm run build` still pass. ⚠ **Not driven in a browser** — `explore_mount_check.py` not run (G2). See the Work Log.
 
@@ -3518,7 +3526,250 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-30 (latest) — THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB
+### 2026-08-30 (latest) — THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE
+
+*"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai
+landing page ka fuction bano so mai image dall sakun har workflow ka aur aisa
+bana hi jo live hai uska dikhe image yaha pe aur jo hide hai uska nhi dikhe magar
+mai jab hode se unhode karun to yeha pe image aa jana chaiye aur aage ami aur v
+workflow banau to o v same fuctiuon mai chale."*
+
+The four tiles in the landing hero were **four hard-coded lines of JSX** holding
+four hand-drawn SVGs (`ScriptArt`, `BoardArt`, `PosesArt`, `TimelineArt`), in
+pipeline order. Two faults in one:
+
+- ⚠ **Nothing in the file said which drawing belonged to which workflow**, so the
+  tiles could not follow the workflow list at all — hide a workflow in the admin
+  panel and its picture stayed in the hero of the page every prospect lands on.
+  The comment above them argued for it on geometry (*"a 2×2 with three things in
+  it is a hole, not a grid"*), which was right about the layout and paid for it
+  with a lie on the front page.
+- ⚠ The **biggest artwork on the public page could only be changed by a
+  developer**, and could never be a real frame from the product.
+
+**What is new**
+
+- **`server/landing.py`** — one row per workflow, **keyed by the workflow id**,
+  which is the structural difference from `banners.py`: there is no create route
+  and no delete route, because the rows ARE the catalogue in `features.py`. WEBP
+  at **900px, not 1280** (a hero tile is one cell of a 2×2, and four of them
+  download on the page everybody lands on), RGBA kept, downscaled rather than
+  refused. PUBLIC `GET /public/landing/art` and `/public/landing/image/{stamp}` —
+  the id in the address IS the cache, same trick as `branding.py`.
+- ⚠ **The visibility filter is on the SERVER as well as in the browser.** The
+  client already draws only the workflows `/public/workflows` named, which is
+  enough to make the page correct — and leaves a picture of a switched-off
+  workflow sitting in a public JSON payload, which is exactly the leak the
+  hand-written workflow list on this page used to be. `public_payload()` drops
+  it. **"soon" keeps its picture**; only "hidden" loses it, and **the file is
+  kept** so un-hiding puts the tile straight back.
+- **`/admin/landing/art`** (+ the two image routes) and a new
+  **Admin → Landing** tab (`AdminLanding.jsx`). ⚠ **Its own tab, next to Explore
+  and not inside it**: the Explore merge (E31) happened because banners and
+  showcase are two halves of ONE screen, and hiding a whole second page behind
+  the same segmented control would be using that control to mean something else.
+- ⚠ **The row says what will ACTUALLY happen to the picture**, because visibility
+  is edited in the Features tab and a second switch here would be two places to
+  disagree about the front page. Three different reasons a picture is not drawn —
+  hidden, not in the first four, or no picture at all — and none of them is
+  visible from a thumbnail. `on_page` and `in_hero` are separate facts for that
+  reason.
+- **`Landing.jsx`** — the tiles are `tiles.map()` over the live list now, with a
+  **three-rung fallback**: the uploaded picture, then `ART_BY_ID` (the four
+  drawings, finally written down against their workflow ids), then the glyph.
+  ⚠ **The third rung needed a fix nobody would have noticed until a launch:**
+  `WorkflowIcon` renders **nothing at all** for an id it has no glyph for — that
+  is deliberate over there ("the wrong picture is worse than the emoji") — so
+  `useLiveWorkflows` now carries the server's `icon` through and it is passed as
+  `fallback`. Without it a workflow launched after this build would draw a **blank
+  white tile** in the hero.
+- The **strip stays glyphs** even when a tile above it is a photograph: the cell
+  is 44px and a photograph in it is a smudge. It shares the one `tiles` slice
+  with the grid, so the two can never disagree about the fourth workflow.
+- CSS: `.lp-art-sheet.has-photo` drops the sheet's 0.3rem padding (right for a
+  drawing on paper, reads as a mistake around a photograph) and `.lp-art-photo`
+  is `object-fit: cover` — `contain` letterboxes an odd-sized upload against the
+  paper colour and looks like a broken image.
+- The tile CAP is **four, and it is a layout number** — the 2×2. Every workflow
+  may hold a picture; **which four are drawn is the `order` an administrator sets
+  in the Features tab**, and the panel says out loud when a picture is stored and
+  not drawn.
+
+**Verified** — new `tests/landing_art_check.py`, **77 checks green**, no MongoDB
+and no browser: the admin-only routes (404 to a user, 401 to a stranger), the
+WEBP normalisation and the downscale, a replacement getting a **new** address and
+the old file leaving the disk, junk refused at all three gates, a path-shaped
+workflow id, and the **hide -> un-hide round trip** (a "hidden" that also deleted
+the file would pass the first half and fail the product). Section 7 adds a
+seventh workflow **the way one is actually added** — patching
+`features._WORKFLOWS`, because `save_feature` cannot set `group` and a stored row
+for an unknown key becomes a *capability* — and proves it gets a row, a picture
+and a place in the payload with no further code. Section 8 is source greps over
+`Landing.jsx`, its CSS and the panel, which are the only assertions that survive
+the next component. `showcase_check`, `features_check`, `admin_check`,
+`admin_fields_check`, `brand_landing_check`, `explore_layout_check` and
+`npm run build` all pass.
+
+⚠ **NOT SEEN IN A BROWSER WITH A REAL UPLOADED PICTURE** (G2).
+`brand_landing_check` renders the new hero in Chromium and passes, so it draws —
+but nobody has looked at a photograph in a tile.
+
+⚠ **`explore_mount_check.py` has two failures and they are NOT from this work** —
+they look for `.xp-nav-brand`, which the in-progress uncommitted Explore rewrite
+removed from `Explore.jsx` while leaving the class in `explore.css`. Untouched
+here; flagged for whoever finishes that.
+
+New **RULEBOOK E35**.
+
+### 2026-08-30 — THE RAIL NEVER NAMED THE PAGE IT WAS STANDING ON
+
+*"explore ka button kyun nahi dikh raha hai, ye page kahan se khul raha hai? home
+ke upar explore button daalo, jaise user wale mein tha pehle."* The public rail
+listed Home and the three workflows and no **Explore** — so nothing on it was
+highlighted, on a page that is one of its own entries, and pressing Home left for
+the sales page with no way back except a link buried in that page's nav.
+
+The row is back, above Home, where it sat on the signed-in rail before Explore
+changed sides. ⚠ **ON THE PUBLIC SIDE ONLY** — `{publicMode && …}` — because
+`LANDING_NAV` is still the standing decision that a signed-in customer never sees
+Explore again. ⚠ **AND THE TWO WORDS MEAN DIFFERENT THINGS ON THE TWO SIDES**:
+signed in, Home is the desk; signed out, Home is the sales page and Explore is the
+shop window, which is the pair this rail was originally built around. Pressing
+Explore while on Explore returns to the top, the same convention the app's own
+rows keep ("click again to go back to the start").
+
+⚠ **THREE TESTS FAILED THE MOMENT THE ROW LANDED, AND THAT IS THE USEFUL PART.**
+All three were of the form *"the string X does not appear in this component"* —
+a fair proxy for a rule that was once absolute (**nobody signed in may see
+Explore**) and meaningless once the SAME component draws both sides. Adding a
+mode to a shared component rots every assertion written as an absence. The guard
+is asserted instead: the row exists exactly once and `{publicMode && (` sits
+above it — **and the new check was proved to read False with the guard removed**,
+rather than being trusted because it was green. The other two had grown a third
+branch and were matching a whole handler as one string; they name the three
+destinations now. New **RULEBOOK E34**.
+
+**Verified in Chromium.** `tests/explore_layout_check.py` gains seven checks and
+reads the rows off the real boxes: Explore is present, is above Home **in the
+DOM and in pixels** (an order, not a presence — a check that only asked whether
+the row existed would pass with it at the bottom of the rail), wears the
+highlight while Home does not, and the workflows still follow underneath. **All
+32 green**, including the section that re-creates the blank-screen bug in-page
+and must still catch it. `showcase_check.py`, `admin_check`, `branding_check` and
+`npm run build` pass.
+
+---
+
+### 2026-08-30 — THE PAGE OPENED ON A BLANK SCREEN, AND ONLY A BROWSER COULD HAVE SAID SO
+
+*"pahla image pura blank hai, magar jab scroll kiya to tab aaya ye content —
+uper mai blank kyun dikh raha hai."* The rail was drawn, the nav's links floated
+in the middle of an empty screen, and every row of Explore was one full viewport
+below the fold.
+
+⚠ **ONE CSS LINE: `grid-row: 1 / -1` ON THE RAIL.** A negative grid line counts
+back from the end of the **EXPLICIT** grid — and that grid declared no rows at
+all, so `-1` resolved to line 1, the span collapsed to a SINGLE row, and that row
+was as tall as the rail: 100dvh. The nav shared it, was stretched down it, and
+`.landing-nav`'s own `align-items: center` did the rest.
+
+⚠ **THE FIX IS THE WRAPPER THE PREVIOUS ENTRY TALKED ITSELF OUT OF.** That entry
+argued a wrapper would turn eight listed selectors into grandchildren; they were
+**one rule with eight selectors**, and re-pointing them at `.xp-page` was a single
+edit. The app's own shell has had this exact element since it was written —
+`.shell-main` — and copying it was always the answer. The grid now has two
+children and nothing spans anything.
+
+⚠ **THE ASSERTION THAT WOULD HAVE MISSED IT IS THE INTERESTING PART.** The
+header's box never moved: it began at y=0 both before and after. What changed was
+its HEIGHT — 72px against 900px — so the obvious check, `nav.top < 160`, passes
+on the broken page. It was written that way first and had to be corrected.
+
+⚠ **AND `showcase_check.py` WAS FULLY GREEN THROUGHOUT.** Thirty source
+assertions about that grid were all true, and **two of them asserted the very
+declarations that caused the bug** (`grid-row: 1 / -1` and `grid-column: 2`, both
+checked for PRESENCE). `npm run build` passed too. G7 says a green build is not a
+rendered screen; this adds that **a source check is not a layout check** — those
+two are now replaced by ones describing the wrapper.
+
+New **`tests/explore_layout_check.py`** — Chromium, boots its own API and Vite on
+free ports, and measures the real boxes: the header is header-sized, the first
+row is above the fold, the page column starts beside the rail and not under it,
+the rail is 280px and full height, collapsing takes it to 92px with the page
+following, under 820px it becomes a block above the page, and nothing scrolls
+sideways. ⚠ **IT PROVES IT CAN FAIL, IN THE PAGE**: `BREAK_CSS` re-creates the
+old arrangement with `display: contents` on the wrapper plus the old span and the
+old column placement, and the measurements must come back wrong — **nav 72px →
+900px, first row 72px → 900px**, which is the blank screen exactly. (Both the
+`display: contents` selector scope and the missing column rule had to be
+corrected before it reproduced; a reproduction that does not reproduce is worse
+than none.) **All 25 checks green.** New **RULEBOOK E33**.
+
+`showcase_check.py`, `admin_check` and `npm run build` pass.
+
+---
+
+### 2026-08-30 — THE PUBLIC RAIL BECAME THE REAL ONE
+
+The rail shipped earlier the same day was a hand-built copy of `.sidebar`, and it
+came back within the hour: *"mera A logo and name page pe hai magar mujhe yaha pe
+nhi chahiye … mai chahta hun ki ye sab waisa hi dikhe jaise user login kar ke
+dikhta hai — jaise abhi missing hai collapse bar and logo and AI Studio name."*
+
+⚠ **A COPY IS NEVER FINISHED BEING CLOSE.** The look-alike had the right width
+and the right row metrics and was missing the three things that make the rail
+recognisable — the mark, the app's name and the collapse toggle — every one of
+which would have come free from the component that already existed. It is gone;
+Explore draws the app's own `Sidebar` in a new `publicMode`.
+
+⚠ **THE MODE SUBTRACTS, IT DOES NOT RE-DESCRIBE.** `publicMode` removes the
+avatar and the account menu, the two things a visitor has no version of, and
+turns the gold button at the foot of the rail from **Upgrade** into **Sign in** —
+same slot, same styling, the same question one step earlier, so the rail does not
+visibly rearrange itself at the moment somebody signs in. Everything else is the
+same markup and the same stylesheet, which is the whole point.
+
+⚠ **AND SUBTRACTING HAD ITS OWN BUG, WHICH IS THE PART WORTH REMEMBERING.** What
+pushes the brand row's buttons to the right is `margin-left: auto` on
+`.sb-brand-avatar` — so hiding the avatar left the collapse toggle tucked against
+the app's name on the public page and against the edge inside the app: a
+difference of exactly the kind the mode exists to prevent. `.sidebar-public
+.sb-collapse` takes the job over. **Whatever a mode hides, check what that
+element was carrying for its neighbours.**
+
+⚠ **THE PAGE IS `.shell`'S GRID NOW, SPELT OUT RATHER THAN WRAPPED IN ONE.**
+`Sidebar` is built to be a sticky, full-height first column. Every row on Explore
+is a DIRECT CHILD of `.explore-public`, placed by eight listed selectors, so a
+`.shell` wrapper would have made them grandchildren and broken all eight plus the
+masonry maths — making the element itself the grid cost one `grid-column: 2` on a
+rule that already existed. The numbers are `.shell`'s own: 280px open, 92px
+collapsed, one column under 820px, the same 0.18s on the track.
+
+⚠ **THE BRAND IS NOT DRAWN TWICE.** It left the page header, because the app
+puts its mark at the top of the rail and that is where it is now; the nav's links
+sit right, and going back is the rail's Home row. ⚠ **AND THE COLLAPSE FLAG HAS
+ONE HOME**: `NAV_COLLAPSED_KEY` moved into `Sidebar.jsx` and `App.jsx` imports it,
+so the choice a visitor makes survives their sign-in instead of being two copies
+of one string in two files.
+
+⚠ **ONE STALE ASSERTION, FIXED ON THE TEST'S SIDE AND WRITTEN DOWN.**
+`showcase_check.py` asserted `"onNavigate" not in Explore.jsx` — a fair proxy for
+"this page cannot navigate" while the file mentioned the word nowhere, and wrong
+the moment it started drawing a component that takes `onNavigate` as its own
+prop. It now asserts the two things actually meant: Explore's OWN signature has
+no such prop, and every handler it passes down lands on a sign-in or the landing
+page. Proved to reject a signature carrying `onNavigate` before it was kept. New
+**RULEBOOK E32**.
+
+**Verified.** `showcase_check.py` §13 rewritten — **28 checks, all green**, plus
+§14 unchanged; `admin_check`, `branding_check` and the Chromium
+`brand_landing_check` pass; `npm run build` passes. ⚠ **`explore_mount_check.py`
+was not run** (G2) — so the new grid and the rail in `publicMode` have not been
+drawn in a browser, and **G7 applies**.
+
+---
+
+### 2026-08-30 — THE PUBLIC PAGE GOT A RAIL, AND THE PANEL GAVE BACK A TAB
 
 Two asks, with the Kling AI Explore page attached as the reference:
 *"need the side bar explore page like this but with my own services, and when
@@ -23602,6 +23853,37 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: THE LANDING HERO'S FOUR PICTURES ARE YOURS — BUILT, NOT YET SEEN (2026-08-30)
+
+The big picture at the top of the landing page was four drawings baked into the
+code. It is four pictures you upload now, one per workflow, and it follows what is
+switched on. Pinned by `tests/landing_art_check.py` (77 checks, no browser).
+⚠ **NOBODY HAS LOOKED AT A REAL PHOTOGRAPH IN A TILE YET.** What to check:
+
+1. **Admin → Landing** (a new tab, next to Explore). One row per workflow — all
+   six, including the two that are switched off. Press **📁 Add picture** on
+   *Plan & Script* and give it any PNG/JPEG/WEBP.
+2. **The landing page.** That workflow's tile should now be your picture instead
+   of the drawing. The others should be unchanged.
+3. ⚠ **A tile is 4 × 3 and crops from the CENTRE.** Something square or wider is
+   safe; a tall photograph will lose its top and bottom. Say so if you would
+   rather it shrank to fit (letterboxed) — that is one CSS line, but it puts a
+   white band round the picture.
+4. **Admin → Features → hide that workflow.** Reload the landing page: the tile
+   should be **gone entirely**, and a fifth workflow should move up into its
+   place. Un-hide it and the picture should come straight back — **the file is
+   never thrown away by hiding**.
+5. **Only the first four visible workflows get a tile** (it is a 2×2). Every
+   workflow can still HOLD a picture, and the panel tells you when one is stored
+   but not drawn. **Which four is the order you set in Features** — reorder there
+   to swap a tile.
+6. **Remove picture** puts the original drawing back. Two workflows
+   (*Text to Turnaround Image*, *Image to AI Video*) never had a drawing and fall
+   back to their glyph instead — upload something for those if you switch them on.
+7. **The small floating strip** at the bottom-right of the hero art is
+   deliberately still icons, not photographs — the cells are 44px and a picture
+   in them is a smudge. Say if you want those to be pictures too.
 
 ### 🟡 NEWEST: EXPLORE IS NOW THE PUBLIC PAGE — BUILT, NOT YET SEEN (2026-08-29)
 

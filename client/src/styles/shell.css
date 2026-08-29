@@ -120,6 +120,17 @@
   white-space: nowrap;
 }
 
+/* ⚠ THE TOGGLE TAKES OVER THE AVATAR'S JOB WHEN THERE IS NO AVATAR. What pushes
+   both buttons to the right of the brand row is `margin-left: auto` on
+   `.sb-brand-avatar` — and the public Explore page draws this rail WITHOUT one,
+   because a visitor has no account. Without this rule the collapse toggle would
+   sit tucked against the app's name out there and against the right edge in the
+   app, which is precisely the "it does not look the same" this mode exists to
+   prevent. Collapsed the row is a column, so it does not apply and does no harm. */
+.sidebar-public .sb-collapse {
+  margin-left: auto;
+}
+
 /* ---- Collapse / expand toggle ------------------------------------------ */
 .sb-collapse {
   flex-shrink: 0;

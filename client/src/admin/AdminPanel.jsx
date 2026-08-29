@@ -22,6 +22,10 @@ import AdminBrand from "./AdminBrand.jsx";
 // now. See the header of that file for why, and for why neither component had
 // to be rewritten to get there.
 import AdminExplore from "./AdminExplore.jsx";
+// ⚠ THE OTHER PUBLIC PAGE. Explore is the wall of work; Landing is the page that
+// explains it — and its hero's four tiles were hand-drawn SVG until this tab
+// existed. See the header of AdminLanding.jsx.
+import AdminLanding from "./AdminLanding.jsx";
 
 // ⚠ ORDER IS "WHAT IS GOING ON" → "WHO" → "WHAT THEY CAN SEE" → "WHAT HAPPENED",
 // which is the order somebody opening this at speed actually wants. Pricing sits
@@ -54,6 +58,14 @@ const TABS = [
   // explore ka hi banao aur uske under banner and showcase rakho, to mai
   // explore ke under ye dono ko handle kar sakun."*
   { id: "explore", label: "Explore", ico: "🧭" },
+  // ⚠ ITS OWN TAB, NEXT TO EXPLORE AND NOT INSIDE IT. Explore and Landing are
+  // both public pages, which is the argument for merging them — and they are
+  // TWO DIFFERENT PAGES, which is the argument against. The Explore merge
+  // happened because banners and showcase are two halves of ONE screen; a
+  // section strip that hid the whole of one page behind the whole of another
+  // would be using the same control to mean something else. Adjacent, not
+  // nested.
+  { id: "landing", label: "Landing", ico: "🏠" },
   { id: "activity", label: "Activity", ico: "🕑" },
 ];
 
@@ -114,6 +126,7 @@ export default function AdminPanel() {
       {tab === "sales" && <AdminSales onOpenUser={openUser} />}
       {tab === "brand" && <AdminBrand />}
       {tab === "explore" && <AdminExplore />}
+      {tab === "landing" && <AdminLanding />}
       {tab === "activity" && <AdminActivity onOpenUser={openUser} />}
     </div>
   );

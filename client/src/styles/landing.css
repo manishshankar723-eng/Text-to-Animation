@@ -351,6 +351,42 @@
   width: 100%;
   height: 100%;
 }
+/* ---- A tile with an UPLOADED picture in it ----
+   The admin panel's Landing tab puts one picture on each workflow; the tile
+   draws it instead of the SVG above. See `ArtStep` in Landing.jsx.
+
+   ⚠ THE PADDING GOES. `.lp-art-sheet` insets by 0.3rem, which is right for a
+   drawing sitting on a sheet of paper and reads as a mistake — a hairline of
+   white all the way round — once the content is a photograph. It has to reach
+   the tile's own edges.
+
+   ⚠ AND IT IS `cover`, NOT `contain`. The tile is a fixed 4/3 and the picture
+   somebody uploads will not be; `contain` letterboxes it against the paper
+   colour, which looks like a broken image, and `cover` crops from the centre.
+   The panel says so out loud next to the upload button. */
+.lp-art-sheet.has-photo {
+  padding: 0;
+}
+.lp-art-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* ---- A tile with NEITHER a picture nor a drawing ----
+   Any workflow added after the four drawings were made. ⚠ IT SETS `color` AND
+   `font-size`, which is the whole wiring — `WorkflowIcon` strokes itself in
+   `currentColor` and sizes itself in `em`, exactly as `.lp-art-cell` below
+   relies on. The ink is the sheet's own, not the palette's: this sits on white
+   paper in both themes. */
+.lp-art-glyph {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--lp-sheet-ink);
+  font-size: 2.4rem;
+}
 /* The ink weights the tile drawings use. Classes rather than inline fills, so
    the whole set retunes from the four tokens above. */
 .lp-fill-ink {

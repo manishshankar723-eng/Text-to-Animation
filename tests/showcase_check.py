@@ -395,9 +395,17 @@ print("\n9. No signed-in screen can reach Explore any more")
 # happening right now"*. Every route check above would still pass with the rail
 # row back in place — this is the assertion that survives the next component.
 sidebar = source("components", "Sidebar.jsx")
+# ⚠ THIS WAS `'onNavigate("explore")' not in sidebar` AND THE APP IS THE SIDE
+# THAT CHANGED, not the test's intent. The PUBLIC rail has an Explore row now,
+# asked for by name — *"home ke upar explore button daalo"* — and it is the
+# same component, so the string is in the file. The rule it was guarding is
+# narrower and still holds: **nobody who has signed in may see that row.** So the
+# check is that the row exists exactly once and sits behind `publicMode`.
+check("the rail has exactly one Explore row", sidebar.count('onNavigate("explore")') == 1)
+_ex = sidebar.index('onNavigate("explore")')
 check(
-    'the rail has no onNavigate("explore")',
-    'onNavigate("explore")' not in sidebar,
+    "and it is behind publicMode, so no signed-in rail can draw it",
+    "{publicMode && (" in sidebar[max(0, _ex - 400):_ex],
 )
 app_jsx = source("App.jsx")
 # ⚠ THE BRANCH, NOT THE STRING. `nav === "explore"` is still in this file once,
@@ -429,7 +437,35 @@ print("\n10. Everything on the public page is a sign-in gate")
 # or a tile wired straight to `onNavigate` would LOOK right on the page and do
 # nothing at all, because a logged-out shell has nowhere to navigate to.
 explore = source("components", "Explore.jsx")
-check("Explore takes no onNavigate prop", "onNavigate" not in explore)
+# ⚠ THIS ASSERTION WAS `"onNavigate" not in explore` AND THE TEST WAS THE SIDE
+# THAT WAS WRONG, not the app — recorded here rather than quietly re-greened.
+# A whole-file grep was a fair proxy while Explore mentioned the word nowhere.
+# It stopped being one when the page started drawing the app's real `Sidebar`,
+# which takes `onNavigate` as ITS prop: the string now appears in this file
+# while the page still cannot navigate anywhere.
+#
+# So the two things that actually matter are asserted instead: Explore's OWN
+# signature has no such prop, and every handler it passes DOWN lands on a
+# sign-in or on the landing page.
+check(
+    "Explore takes no onNavigate prop",
+    re.search(r"export default function Explore\(\{[^}]*\}\)", explore).group(0).find("onNavigate") == -1,
+)
+# ⚠ THIS ONE-LINE MATCH WENT STALE THE MOMENT THE HANDLER GREW A THIRD BRANCH
+# (the Explore row, which is the page you are already on). What it was really
+# asserting is that NOTHING in that handler navigates — so the three
+# destinations are named instead, which is a stronger statement than the string
+# it replaced.
+check(
+    "the Explore row stays on this page rather than going anywhere",
+    'if (id === "explore")' in explore and "window.scrollTo" in explore,
+)
+check("Home leaves for the front page", 'if (id === "home")' in explore and "onBack?.()" in explore)
+check("and everything else is a sign-in", "onSignIn?.(id);" in explore)
+check(
+    "with no navigation left in it at all",
+    "onNavigate?.(" not in explore and "setNav(" not in explore,
+)
 check("it asks for a sign-in instead", "onSignIn" in explore)
 check(
     "and it reads the public workflow list, not an account's entitlements",
@@ -592,48 +628,109 @@ check("both routes share one URL writer", "function syncUrlFlag(" in app_src)
 
 
 # ===========================================================================
-print("\n13. The public page has a rail, and it is a sign-in gate like everything else")
+print("\n13. The public page draws the app\'s OWN rail, not a look-alike")
 # ===========================================================================
-# ⚠ ASKED FOR WITH THE KLING AI PAGE BESIDE IT: *"need the side bar explore page
-# like this but with my own services, and when user click on any of this he must
-# get sign in page and after sign in open the usual flow."* The rail is the fifth
-# thing on this page that has to be a gate rather than a link — tiles, banners,
-# cards, the viewer's button, and now this — and every one of them is one line
-# away from quietly navigating instead.
+# ⚠ A HAND-BUILT COPY SHIPPED HERE FOR EXACTLY ONE SESSION AND WAS REPORTED THE
+# SAME DAY: it had no brand mark, no app name and no collapse toggle. *"mai
+# chahta hun ki ye sab waisa hi dikhe jaise user login kar ke dikhta hai — jaise
+# abhi missing hai collapse bar and logo and AI Studio name."* Close is the one
+# thing a second copy can never stop being, and it drifts the moment either side
+# is touched. So these checks are about SAMENESS, not about features.
 explore_src = source("components", "Explore.jsx")
-check("Explore draws a rail", 'className="xp-rail"' in explore_src)
-# It reads the SAME live list the tiles do. A second copy is how a switched-off
-# workflow comes back on one of the two — the bug `dashboard_feed.js` was
-# extracted to prevent.
-check(
-    "the rail reads the live workflow list, not its own copy",
-    re.search(r'xp-rail-list[\s\S]{0,200}\{live\.map\(', explore_src) is not None,
-)
-check(
-    "every row asks for a sign-in",
-    re.search(r'xp-rail-item[\s\S]{0,220}onSignIn\?\.\(', explore_src) is not None,
-)
-# ⚠ AND IT CARRIES THE WORKFLOW ID, which is what makes "after sign in open the
-# usual flow" true rather than a hope: `pendingWorkflow` lands them in it.
-check(
-    "and carries which workflow it was",
-    re.search(r'xp-rail-item[\s\S]{0,220}onSignIn\?\.\(w\.status', explore_src) is not None,
-)
-check("the rail is the one below the sign-in button", "xp-rail-cta" in explore_src)
-# RULEBOOK E17/E18: a rail is read by glancing, and a clipped name is the bug.
-check("rows use the short name the app rail uses", "shortLabel(w.id, w.title)" in explore_src)
-check("a switched-off workflow still shows, wearing its badge", "xp-rail-soon" in explore_src)
+side_src = source("components", "Sidebar.jsx")
+app_src2 = source("App.jsx")
 
-rail_css = source("styles", "explore.css")
-check("the rail has styles", ".xp-rail {" in rail_css)
-# ⚠ THE PAGE IS MOVED OFF A FIXED RAIL, not wrapped in a new layout — every row
-# on this page is a direct child of `.explore-public` and is positioned by name.
-check("the page makes room for it", ".explore-public.xp-has-rail" in rail_css)
-# Standing responsive rule: nothing with a fixed width may trap a phone.
+check("Explore imports the real Sidebar", "import Sidebar," in explore_src)
+check("and renders it", "<Sidebar" in explore_src)
+check("in public mode", "publicMode" in explore_src)
+# ⚠ THE LOOK-ALIKE MUST BE GONE, not merely unused — a second rail left in the
+# file is a second rail somebody will wire back up.
+check("the hand-built rail is gone from the markup", "xp-rail" not in explore_src)
+check("and its styles are gone too", "xp-rail" not in source("styles", "explore.css"))
+
+# ⚠ ONE LIST, RESHAPED, NOT FETCHED TWICE. The public list calls the name
+# `title`; the rail reads `label`. A second fetch is how a switched-off workflow
+# comes back on one of the two — the bug `dashboard_feed.js` was extracted for.
 check(
-    "and it gets out of the way on a narrow screen",
-    re.search(r'@media \(max-width: 1000px\)[\s\S]{0,220}\.xp-rail\s*\{\s*display:\s*none',
-              rail_css) is not None,
+    "the rail is handed the SAME live list the tiles read",
+    "workflows={live.map(" in explore_src,
+)
+check("reshaped title -> label", "label: w.title" in explore_src)
+
+# ⚠ EVERY ROW IS A SIGN-IN, INCLUDING HOME. Out here "home" is the landing page
+# and everything else is "sign in, then take me there".
+check(
+    "a workflow row asks for a sign-in",
+    "onSignIn?.(id);" in explore_src,
+)
+check("and the rail's own button does too", "onSignIn={() => onSignIn?.(createId)}" in explore_src)
+
+# ⚠ THE THREE THINGS THE REPORT NAMED, checked on the component that draws them.
+check("the rail carries the mark", "<Logo />" in side_src)
+check("the rail carries the app name", 'className="sb-brand-name"' in side_src)
+check("the rail carries the collapse toggle", 'className="sb-collapse"' in side_src)
+# ⚠ AND NONE OF THE THREE IS BEHIND `publicMode` — that is what makes them show
+# on the public page. Only the avatar and the account menu are.
+check("the avatar is the part a visitor does not get", "{!publicMode && (" in side_src)
+check(
+    "and so is the account menu",
+    side_src.count("{!publicMode && (") == 2,
+)
+# The gold button keeps its slot and changes its word, so the rail does not
+# visibly rearrange itself the moment somebody signs in.
+check(
+    "the foot button becomes the sign-in",
+    'publicMode ? () => onSignIn?.(null) : onUpgrade' in side_src,
+)
+check("wearing the right word", 'publicMode ? "Sign in" : "Upgrade"' in side_src)
+
+# ⚠ AND THE BRAND ROW STILL LINES UP WITHOUT THE AVATAR. `margin-left: auto` on
+# `.sb-brand-avatar` is what pushes the buttons to the right of that row, and the
+# public rail has no avatar — so the toggle has to take the job over, or it sits
+# tucked against the app's name out there and against the edge in the app. That
+# one pixel of difference is the whole of what "it does not look the same" means.
+check("the public rail is marked as one", "sidebar-public" in side_src)
+check(
+    "and its collapse toggle keeps the row's right edge",
+    ".sidebar-public .sb-collapse" in source("styles", "shell.css"),
+)
+
+# ⚠ THE BRAND IS NOT DRAWN TWICE. *"mera A logo and name page pe hai magar
+# mujhe yaha pe nhi chahiye."*
+check("the page header no longer repeats the brand", "xp-nav-brand" not in explore_src)
+
+# ⚠ ONE KEY FOR THE COLLAPSE FLAG, in one file, read by both shells.
+check("the collapse key has one home", "export const NAV_COLLAPSED_KEY" in side_src)
+check("the app imports it rather than repeating it", "NAV_COLLAPSED_KEY, WORKFLOWS" in app_src2)
+check('the app no longer defines its own', 'const NAV_COLLAPSED_KEY = "cas_nav' not in app_src2)
+check("and the public page reads the same one", "NAV_COLLAPSED_KEY" in explore_src)
+
+# ⚠ THE PAGE IS THE APP'S GRID, with the shell's own numbers.
+rail_css = source("styles", "explore.css")
+check("the public page is a two-column grid", "grid-template-columns: 280px 1fr" in rail_css)
+check("with the shell's collapsed width", "grid-template-columns: 92px 1fr" in rail_css)
+# ⚠ THIS PAIR USED TO ASSERT `grid-row: 1 / -1` AND `grid-column: 2`, WHICH IS
+# THE BUG, NOT THE FIX — and both were TRUE while the page opened on a blank
+# screen. A negative grid line counts back from the end of the EXPLICIT grid, and
+# that grid declared no rows, so the span collapsed to one row as tall as the
+# rail. The page has a `.xp-page` wrapper now, exactly as the app's shell has
+# `.shell-main`, so the grid is two cells of one row and nothing spans anything.
+check("the page column is one element, like .shell-main", ".xp-page {" in rail_css)
+check("nothing spans rows any more", "  grid-row: 1 / -1;" not in rail_css)
+check("and no row places itself by hand", "  grid-column: 2;" not in rail_css)
+check("the rows hang off the wrapper", ".xp-page > .xp-banners" in rail_css)
+check("and so does the header", ".xp-page > .xp-nav {" in rail_css)
+check("with the wrapper allowed to shrink", re.search(r"\.xp-page \{[^}]*min-width: 0", rail_css) is not None)
+# ⚠ AND THE GEOMETRY ITSELF IS MEASURED IN CHROMIUM, because every assertion in
+# this section was green while the page was visibly broken. See
+# tests/explore_layout_check.py — it reproduces the blank screen in-page and
+# proves it can still catch it.
+check("the layout is measured in a browser too", os.path.exists(
+    os.path.join(ROOT, "tests", "explore_layout_check.py")))
+check(
+    "one column under 820px, like the shell",
+    re.search(r"@media \(max-width: 820px\)[\s\S]{0,320}grid-template-columns: 1fr", rail_css)
+    is not None,
 )
 
 

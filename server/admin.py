@@ -70,6 +70,7 @@ from . import (
     config,
     events,
     features,
+    landing,
     offers,
     showcase,
     subscriptions,
@@ -1369,6 +1370,147 @@ def delete_banner_image(
         **events.request_context(request),
     )
     return _banner_row(row)
+
+
+# ---------------------------------------------------------------------------
+# Landing hero art — ONE PICTURE PER WORKFLOW, in the four tiles of the hero
+# ---------------------------------------------------------------------------
+# ⚠ NO CREATE AND NO DELETE ROUTE, AND THAT IS THE WHOLE DIFFERENCE FROM THE
+# BANNER ROUTES ABOVE. A banner is a row an administrator invents; a hero tile
+# belongs to a WORKFLOW, so the list is the catalogue in `features.py` and the
+# only writes are "put a picture on this workflow" and "take it off again".
+# That is what makes a seventh workflow need no code: it appears in this list the
+# moment it is in the catalogue.
+#
+# ⚠ THE ROW SAYS WHETHER THE PICTURE IS ACTUALLY ON THE PAGE, and it has to.
+# Visibility lives in the Features tab, not here, so an operator who uploads a
+# picture to a hidden workflow would otherwise see a perfectly good thumbnail and
+# no tile on the landing page, with nothing on this screen explaining why.
+def _landing_row(workflow: dict, art: dict, position: int) -> dict:
+    """One workflow as the Landing tab sees it: its picture and its real fate."""
+    row = art.get(workflow["id"]) or {}
+    status = workflow.get("status") or features.STATUS_LIVE
+    hidden = status == features.STATUS_HIDDEN
+    return {
+        "id": workflow["id"],
+        "label": workflow.get("label") or workflow["id"],
+        "icon": workflow.get("icon") or "•",
+        "status": status,
+        # ⚠ TWO SEPARATE FACTS, NOT ONE. `on_page` is "a visitor sees this tile";
+        # `in_hero` is "it is one of the first four". A workflow can be live,
+        # carry a picture, and still not be drawn because it is fifth — and an
+        # operator staring at a picture that is not on the page needs to be told
+        # WHICH of those two reasons it is.
+        "on_page": not hidden,
+        "in_hero": (not hidden) and position < landing.HERO_TILES,
+        "image_url": landing.image_url(row),
+        "has_image": bool(row.get("image_id")),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+@router.get("/landing/art")
+def list_landing_art(admin: CurrentUser = Depends(require_admin)) -> dict:
+    """Every workflow, its hero picture and whether that picture is on the page."""
+    workflows = landing.known_workflows()
+    art = landing.all_art(fresh=True)
+    # `position` counts only the ones a visitor is shown, because that is what
+    # the hero slices — a hidden workflow does not use up one of the four tiles.
+    rows = []
+    shown = 0
+    for workflow in workflows:
+        rows.append(_landing_row(workflow, art, shown))
+        if (workflow.get("status") or features.STATUS_LIVE) != features.STATUS_HIDDEN:
+            shown += 1
+    return {
+        "workflows": rows,
+        "hero_tiles": landing.HERO_TILES,
+        "image_max_px": landing.IMAGE_MAX_PX,
+        "allowed_types": list(landing.ALLOWED_IMAGE_TYPES),
+    }
+
+
+@router.post("/landing/art/{workflow_id}/image")
+async def upload_landing_image(
+    workflow_id: str,
+    request: Request,
+    image: UploadFile = File(..., description="The hero tile for this workflow."),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """Put a picture in this workflow's hero tile. Replaces whatever was there.
+
+    ⚠ THE SAME THREE CHECKS THE APP LOGO AND THE BANNERS GET — type, size, then
+    Pillow — in the same order, because the cheapest refusal should come first
+    and Pillow is the only one that has to read the bytes.
+    """
+    if image.content_type not in landing.ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type {image.content_type!r}. "
+            f"Allowed: {', '.join(landing.ALLOWED_IMAGE_TYPES)}.",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large ({len(contents)} bytes). "
+            f"Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+    try:
+        webp = landing.normalise_image(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        landing.save_image(workflow_id, webp, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such workflow.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="landing_art_uploaded",
+        workflow=workflow_id,
+        **events.request_context(request),
+    )
+    logger.info("%s put a hero picture on %s", admin.email, workflow_id)
+    return _one_landing_row(workflow_id)
+
+
+@router.delete("/landing/art/{workflow_id}/image")
+def delete_landing_image(
+    workflow_id: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Back to no picture — the hero draws this workflow's built-in tile again."""
+    try:
+        landing.clear_image(workflow_id, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such workflow.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="landing_art_removed",
+        workflow=workflow_id,
+        **events.request_context(request),
+    )
+    return _one_landing_row(workflow_id)
+
+
+def _one_landing_row(workflow_id: str) -> dict:
+    """The row for ONE workflow, answered after a write.
+
+    ⚠ IT RECOMPUTES THE POSITION rather than guessing it, because `in_hero`
+    depends on how many VISIBLE workflows sit above this one — a fact the upload
+    route has no business working out for itself.
+    """
+    workflows = landing.known_workflows()
+    art = landing.all_art(fresh=True)
+    shown = 0
+    for workflow in workflows:
+        if workflow["id"] == workflow_id:
+            return _landing_row(workflow, art, shown)
+        if (workflow.get("status") or features.STATUS_LIVE) != features.STATUS_HIDDEN:
+            shown += 1
+    raise HTTPException(status_code=404, detail="No such workflow.")
 
 
 # ---------------------------------------------------------------------------

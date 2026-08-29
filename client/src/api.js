@@ -772,6 +772,39 @@ export function adminRemoveShowcasePoster(id) {
   return request(`/admin/showcase/${id}/poster`, { method: "DELETE" });
 }
 
+// ----------------------------------------------------------------- landing
+// The four tiles in the LANDING page hero — one picture per workflow, uploaded
+// from the panel instead of drawn in `Landing.jsx`. See `server/landing.py`.
+//
+// ⚠ `publicLandingArt` TAKES NO TOKEN, for the same reason `publicBanners` does
+// not. An EMPTY answer is normal and is not an error — the hero falls back to the
+// SVG tiles it drew before this existed.
+//
+// ⚠ AND THE ANSWER IS ALREADY FILTERED BY WHAT A STRANGER MAY SEE. A workflow
+// hidden in the Features tab is not in `/public/workflows` and its picture is not
+// in here either, so the client never has to ask that question twice.
+export function publicLandingArt() {
+  return request("/public/landing/art"); // → { art: { <workflow-id>: url } }
+}
+// ⚠ NO CREATE AND NO DELETE. The rows ARE the workflow catalogue, so the only
+// writes are "put a picture on this workflow" and "take it off again" — which is
+// what makes a seventh workflow work here with no code at all.
+export function adminListLandingArt() {
+  return request("/admin/landing/art");
+}
+export function adminUploadLandingImage(workflowId, file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request(`/admin/landing/art/${workflowId}/image`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
+}
+export function adminRemoveLandingImage(workflowId) {
+  return request(`/admin/landing/art/${workflowId}/image`, { method: "DELETE" });
+}
+
 export function adminListSubscriptions({ status = null, email = "", limit = 50 } = {}) {
   const q = new URLSearchParams();
   if (status) q.set("status", status);

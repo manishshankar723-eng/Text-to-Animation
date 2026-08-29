@@ -914,149 +914,22 @@
    different wash is the exact mismatch this repo keeps paying for. The gradient
    below is copied from `.landing` deliberately; if that one is retuned, retune
    this with it. */
-/* ---- The left rail ----------------------------------------------------
-   ⚠ FIXED, NOT A GRID COLUMN, AND THAT IS THE WHOLE DESIGN. Every row on this
-   page is a DIRECT CHILD of `.explore-public` and is positioned by the listed
-   selectors below; wrapping them in a flex shell to make room for a rail would
-   have rewritten all eight of those rules and the masonry column maths with
-   them. A fixed rail plus one `padding-left` on the parent moves the whole page
-   over and touches nothing else. The block below already warns that this page
-   has fixed children and that is why the rows are LISTED rather than `> *`
-   selected — this is a third one, and the warning covers it.
+/* ⚠ THIS PAGE IS THE APP'S OWN `.shell` GRID, SPELT OUT RATHER THAN BORROWED.
+   Explore draws the real `Sidebar` in `publicMode` now, and that component is
+   built to be a sticky, full-height first column — which is what `.shell` gives
+   it. The numbers are `.shell`'s own (280px open, 92px collapsed, one column
+   under 820px, and the same 0.18s on the TRACK so the rail and the page move
+   together); if they are retuned in shell.css, retune them here with them.
 
-   ⚠ THE WIDTH IS THE APP RAIL'S COLLAPSED WIDTH. 92px, from `.sidebar` in
-   shell.css — widened to that from 68px when the collapsed rail learned to
-   carry a name under each glyph (RULEBOOK E17). Matching it is the point: this
-   is the same rail the visitor keeps after signing in.
-
-   ⚠ AND IT GOES AWAY BELOW 1000px rather than shrinking. The row of tiles
-   already lists every workflow, so a phone loses nothing but 92px it does not
-   have — and 1000px is the breakpoint this stylesheet already uses at the top
-   for the same page. */
-.xp-rail {
-  position: fixed;
-  inset-block: 0;
-  left: 0;
-  z-index: 6;
-  box-sizing: border-box;
-  width: 92px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 1.1rem 0.5rem;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-}
-
-.xp-rail-brand {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  padding: 0.2rem 0 0.75rem;
-  border: 0;
-  background: none;
-  cursor: pointer;
-  color: var(--text);
-}
-.xp-rail-brand:hover {
-  color: var(--primary);
-}
-
-/* ⚠ min-height: 0 SO IT CAN SCROLL, and `overflow-y: auto` so a tenth workflow
-   does not push the Sign in button off the bottom of the screen. Standing
-   responsive rule 3: every flex child that holds a scroller needs it. */
-.xp-rail-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  width: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-/* Copied from `.sb-item` + `.sidebar.collapsed .sb-item` in shell.css. If the
-   rail's look is retuned there, retune it here with it. */
-.xp-rail-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.2rem;
-  width: 100%;
-  padding: 0.5rem 0.15rem;
-  border: 1px solid var(--nav-stroke);
-  border-radius: 10px;
-  background: var(--panel-2);
-  color: var(--text);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-.xp-rail-item:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-}
-.xp-rail-ico {
-  display: grid;
-  place-items: center;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-.xp-rail-ico svg {
-  width: 20px;
-  height: 20px;
-}
-/* ⚠ TWO LINES, CLIPPED WITH AN ELLIPSIS, NEVER ONE. Same reasoning and the
-   same numbers as `.sidebar.collapsed .sb-item-short`. */
-.xp-rail-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 0.62rem;
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: 0.01em;
-}
-.xp-rail-soon {
-  font-size: 0.55rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.xp-rail-foot {
-  margin-top: auto;
-  width: 100%;
-  padding-top: 0.6rem;
-}
-.xp-rail-cta {
-  width: 100%;
-  justify-content: center;
-}
-
-/* The rail is fixed, so the page is moved off it here rather than by a layout. */
-.explore-public.xp-has-rail {
-  padding-left: 92px;
-}
-
-@media (max-width: 1000px) {
-  .xp-rail {
-    display: none;
-  }
-  .explore-public.xp-has-rail {
-    padding-left: 0;
-  }
-}
-
+   ⚠ WHY NOT JUST WRAP THE PAGE IN A `.shell` DIV: every row on this screen is a
+   DIRECT CHILD of `.explore-public` and is placed by the listed selectors below.
+   A wrapper would have made them grandchildren and broken all eight rules plus
+   the masonry maths. Making this element the grid costs one `grid-column: 2`
+   on a rule that already exists. */
 .explore-public {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  transition: grid-template-columns 0.18s ease;
   min-height: 100vh;
   min-height: 100dvh;
   background:
@@ -1064,6 +937,34 @@
     radial-gradient(700px 500px at 5% 10%, rgba(120, 120, 220, 0.08), transparent 55%),
     var(--bg);
   padding-bottom: 3rem;
+}
+.explore-public.nav-collapsed {
+  grid-template-columns: 92px 1fr;
+}
+/* ⚠ NOTHING SPANS ROWS ANY MORE, AND THAT IS THE FIX. This rule used to hand
+   the rail a span of `1` to `-1`. A NEGATIVE GRID LINE COUNTS BACK FROM THE END
+   OF THE *EXPLICIT* GRID — and this grid declares no rows at all, so that line
+   resolved to the first one, the span collapsed to a single row, and that row
+   was as tall as the rail: 100dvh of blank screen with the nav centred in it and
+   the entire page below the fold. Reported as *"pahla image pura blank hai,
+   magar jab scroll kiya to tab aaya ye content."*
+
+   The grid has exactly TWO children now — the rail and `.xp-page` — so they are
+   the two cells of one row and nothing has to span anything. Which is what
+   `.shell` and `.shell-main` have been since the day they were written. */
+.xp-page {
+  /* Standing responsive rule 3: a grid child holding a masonry wall will not
+     shrink below its content without this, and pushes the page sideways. */
+  min-width: 0;
+}
+@media (max-width: 820px) {
+  /* Matches `.shell`: under 820px the rail is a full-width block above the page
+     rather than a narrow column beside it. `.sidebar` already un-sticks itself
+     at this width in shell.css. */
+  .explore-public,
+  .explore-public.nav-collapsed {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ⚠ THE ROWS ARE LISTED, NOT SELECTED WITH `> *`. Three of this page's direct
@@ -1074,14 +975,14 @@
    The width cap is what stops a five-column wall becoming a nine-column one on
    a 4K monitor; the padding is the landing nav's own, so the brand mark up top
    sits on the same left edge as the first card below it. */
-.explore-public > .xp-banners,
-.explore-public > .xp-tiles,
-.explore-public > .xp-work-head,
-.explore-public > .xp-toolbar,
-.explore-public > .xp-chips,
-.explore-public > .xp-gallery,
-.explore-public > .xp-empty,
-.explore-public > .xp-foot {
+.xp-page > .xp-banners,
+.xp-page > .xp-tiles,
+.xp-page > .xp-work-head,
+.xp-page > .xp-toolbar,
+.xp-page > .xp-chips,
+.xp-page > .xp-gallery,
+.xp-page > .xp-empty,
+.xp-page > .xp-foot {
   box-sizing: border-box;
   width: min(100%, 1560px);
   margin-inline: auto;
@@ -1090,10 +991,15 @@
 
 /* The nav is `.landing-nav` — same element, same stylesheet — and only needs
    the same cap so it lines up with the rows under it. */
-.xp-nav {
+.xp-page > .xp-nav {
   box-sizing: border-box;
   width: min(100%, 1560px);
   margin-inline: auto;
+  /* ⚠ THE LINKS SIT RIGHT NOW THAT THE BRAND HAS GONE. `.landing-nav` is
+     `space-between`, which was right when a mark sat on the left of this row;
+     with the mark at the top of the rail instead, space-between would strand
+     the links against the rail's edge. */
+  justify-content: flex-end;
 }
 
 /* ⚠ THE BRAND IS A BUTTON HERE AND A `<span>` ON THE LANDING PAGE, because on

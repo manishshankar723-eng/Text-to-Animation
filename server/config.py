@@ -311,6 +311,28 @@ SHOWCASE_MAX_VIDEO_BYTES = int(
     os.environ.get("API_SHOWCASE_MAX_VIDEO_BYTES", str(96 * 1024 * 1024))
 )
 
+# --- Landing page hero art ----------------------------------------------------
+# THE FOUR TILES IN THE LANDING HERO, one picture per workflow. They were
+# hand-drawn SVG inside `Landing.jsx`, so the biggest picture on the page a
+# stranger lands on could only be changed by a developer. Asked for directly:
+# *"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai
+# landing page ka fuction bano so mai image dall sakun har workflow ka."*
+#
+# ⚠ KEYED BY WORKFLOW ID, NOT BY A ROW ID AN ADMIN INVENTS — unlike banners and
+# showcase. The rows are the workflow catalogue in `features.py`, which is why a
+# seventh workflow needs no code to get a picture. An EMPTY store is the shipped
+# state and is not an error: the hero draws its built-in tiles, exactly as
+# before. See `server/landing.py`.
+LANDING_COLLECTION = os.environ.get("API_LANDING_COLLECTION", "landing_art")
+LOCAL_LANDING_PATH = os.environ.get("API_LOCAL_LANDING_PATH", ".local_landing.json")
+# Read by every visitor on the page they land on, written when marketing changes
+# — cached like branding, banners and showcase rather than like a flag.
+LANDING_CACHE_TTL_S = float(os.environ.get("API_LANDING_CACHE_TTL_S", "60"))
+# ⚠ NOT under `_references/`, for the same reason `BANNERS_DIR` is not: a
+# reference is owner-scoped and served behind a bearer token, and these have to
+# be readable by a stranger who has never signed in.
+LANDING_DIR = os.environ.get("API_LANDING_DIR", os.path.join(UPLOAD_DIR, "_landing"))
+
 # --- Usage counters -----------------------------------------------------------
 # What each account has used this calendar month, so a tier's `limits` can be
 # enforced. ⚠ NOT CACHED — a counter that is read from a cache is a counter that

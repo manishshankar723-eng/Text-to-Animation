@@ -45,9 +45,11 @@ import WorkflowIcon from "./WorkflowIcon.jsx";
 // ⚠ `title` IS A FALLBACK. The label printed is the server's, so renaming a
 // workflow in the admin panel renames it here too.
 //
-// `short` is the one-word name for the pipeline line in the hero. `stage` is
-// this workflow's beat in "How a project moves" — it lives here rather than in
-// its own array so the two can never drift apart.
+// `short` is the one-word name for the pipeline line in the hero. `tile` is the
+// caption under its picture in the hero art, and is only written out where it
+// differs from `short` — a tile has room for three words and the flow line does
+// not. `stage` is this workflow's beat in "How a project moves" — it lives here
+// rather than in its own array so the two can never drift apart.
 const WORKFLOWS = [
   {
     id: "plan-and-script",
@@ -56,6 +58,9 @@ const WORKFLOWS = [
       "Talk to a planning agent that asks clickable questions, researches reference videos on YouTube, then hands you a content calendar and a shot-ready script in your language.",
     tags: ["Chat planning", "YouTube research", "Exports"],
     short: "Plan",
+    // The one label the hero tile has always spelled out in full — the flow line
+    // above it needs one word, the picture under it can carry three.
+    tile: "Plan & script",
     stage: {
       title: "Plan it",
       body:
@@ -197,12 +202,60 @@ export function useLiveWorkflows() {
   }, []);
 
   if (!live?.length) return FALLBACK;
+  // ⚠ `icon` IS CARRIED THROUGH, and it is not decoration. It is the emoji an
+  // administrator typed in the admin panel, and it is the LAST fallback in the
+  // hero art: `WorkflowIcon` draws nothing at all for an id this build has no
+  // glyph for, so a workflow added after this was written would get an empty
+  // tile without it. See `TileArt` below.
   const joined = live
     .filter((w) => COPY[w.id])
-    .map((w) => ({ ...COPY[w.id], title: w.label || COPY[w.id].title, status: w.status }));
+    .map((w) => ({
+      ...COPY[w.id],
+      title: w.label || COPY[w.id].title,
+      status: w.status,
+      icon: w.icon || "",
+    }));
   // An answer that names nothing this page has copy for is not an answer worth
   // drawing — same fail-open rule one more time.
   return joined.length ? joined : FALLBACK;
+}
+
+/**
+ * The picture an administrator uploaded for each workflow's hero tile, by id.
+ *
+ * ⚠ IT IS ALLOWED TO BE EMPTY, AND ON A FRESH INSTALL IT IS. The hero's four
+ * tiles are hand-drawn SVG and stay that way until somebody uploads something;
+ * this hook only ever REPLACES a drawing, so a page that never gets an answer
+ * looks exactly as it did before the panel existed. Same fail-open rule as
+ * `useLiveWorkflows` above, one degree softer — there is not even a fallback to
+ * reach for, because the fallback is the drawing itself.
+ *
+ * ⚠ AND IT IS ALREADY FILTERED. `/public/landing/art` asks `features.py` which
+ * workflows a stranger may see and drops the rest, so a workflow hidden in the
+ * admin panel has no picture in this map even if one is stored — which is what
+ * *"jo hide hai uska nhi dikhe"* asked for. The tile list below is filtered by
+ * `useLiveWorkflows` as well; two filters, because the one in the browser
+ * decides the LAYOUT and the one on the server decides what is PUBLISHED.
+ */
+function useLandingArt() {
+  const [art, setArt] = useState({});
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .publicLandingArt()
+      .then((r) => {
+        if (alive && r?.art && typeof r.art === "object") setArt(r.art);
+      })
+      // Deliberately silent, like the workflow list: there is nothing a visitor
+      // could do about it, and the drawn tiles are already the right thing.
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return art;
 }
 
 // ⚠ WHAT THE LIVE WORKFLOWS ACTUALLY DO. Three of these used to describe the
@@ -250,6 +303,9 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
   // page (nav and footer) and both read the one store, so they cannot disagree.
   const brand = useBranding();
   const shown = useLiveWorkflows();
+  // The hero tiles' pictures, uploaded from the admin panel's Landing tab. An
+  // empty map is normal and means "draw them" — see `useLandingArt`.
+  const art = useLandingArt();
   const allLive = shown.every((w) => !w.status || w.status === "live");
 
   return (
@@ -388,7 +444,7 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
         </div>
 
         <div className="hero-art" aria-hidden="true">
-          <PipelineArt workflows={shown} />
+          <PipelineArt workflows={shown} art={art} />
         </div>
       </header>
 
@@ -524,12 +580,36 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
 // the fixed `--lp-sheet*` constants in landing.css and not from the palette. A
 // palette token here turned the drawings invisible the moment the lights went on.
 //
-// ⚠ THE FOUR TILES ARE FIXED; THE STRIP IS NOT. Each tile is a hand-drawn
-// picture of one workflow's output, laid out as a 2×2 — and a 2×2 with three
-// things in it is a hole, not a grid. So the tiles stay as the picture of the
-// pipeline, and the STRIP, which is a flex row of icons and degrades to any
-// count, is the part that tracks what is actually live.
-function PipelineArt({ workflows = [] }) {
+// ⚠ THE TILES USED TO BE FOUR FIXED, HAND-WRITTEN LINES AND THEY ARE NOT ANY
+// MORE. The note here read *"THE FOUR TILES ARE FIXED; THE STRIP IS NOT"*, on
+// the grounds that a 2×2 with three things in it is a hole rather than a grid —
+// and it was right about the geometry and wrong about the price. What it bought
+// was a hero whose four biggest pictures could not follow the workflow list at
+// all: hide one in the admin panel and its tile stayed on the front page.
+//
+// So the tiles are the LIVE workflows now, same list as the flow line and the
+// cards below, and the hole is handled by capping rather than by hard-coding:
+// `HERO_TILES` of them, and WHICH four is the `order` an administrator sets in
+// the Features tab. Asked for outright: *"jo live hai uska dikhe image yaha pe
+// aur jo hide hai uska nhi dikhe magar mai jab hode se unhode karun to yeha pe
+// image aa jana chaiye aur aage ami aur v workflow banau to o v same fuctiuon
+// mai chale."*
+//
+// ⚠ AND EACH TILE IS A PICTURE FIRST AND A DRAWING SECOND. `art[id]` is what the
+// admin panel's Landing tab uploaded; with nothing uploaded the tile falls back
+// to the SVG it always was (`ART_BY_ID`), and a workflow that never had one —
+// anything added after this was written — falls back to its own glyph. Three
+// steps, so the page is never empty and never needs a code change to grow.
+//
+// ⚠ FOUR IS A LAYOUT NUMBER, NOT A LIMIT ON WHAT MAY HOLD A PICTURE. It matches
+// `landing.HERO_TILES` on the server, which is what the admin panel reads to
+// tell an operator that their fifth workflow has a picture and no tile.
+const HERO_TILES = 4;
+
+function PipelineArt({ workflows = [], art = {} }) {
+  // ⚠ THE SAME SLICE THE STRIP TAKES, and taken once so the two can never show
+  // different workflows in the same corner of one picture.
+  const tiles = (workflows.length ? workflows : FALLBACK).slice(0, HERO_TILES);
   return (
     <div className="lp-art-stack">
       {/* ⚠ NO EMOJI IN THIS CHIP. It was "🎬 Final cut · MP4" and the clapper
@@ -545,18 +625,16 @@ function PipelineArt({ workflows = [] }) {
 
       <div className="art-frame">
         <div className="lp-art-steps">
-          <ArtStep n="1" label="Plan & script">
-            <ScriptArt />
-          </ArtStep>
-          <ArtStep n="2" label="Storyboard">
-            <BoardArt />
-          </ArtStep>
-          <ArtStep n="3" label="Key poses">
-            <PosesArt />
-          </ArtStep>
-          <ArtStep n="4" label="Video">
-            <TimelineArt />
-          </ArtStep>
+          {tiles.map((w, i) => (
+            <ArtStep
+              key={w.id}
+              n={String(i + 1)}
+              label={w.tile || w.short || w.title}
+              photo={art[w.id] || ""}
+            >
+              <TileArt id={w.id} icon={w.icon} />
+            </ArtStep>
+          ))}
         </div>
         {/* ⚠ NO NUMBER IN THIS LINE. It said "Four workflows" and would have
             been wrong the first time a fifth one launched — and unlike the copy
@@ -587,9 +665,17 @@ function PipelineArt({ workflows = [] }) {
           The play button is the point of the whole thing: these four steps, and
           the cut you press at the end of them. */}
       <div className="lp-art-strip">
-        {(workflows.length ? workflows : FALLBACK).slice(0, 4).map((w) => (
+        {/* ⚠ THE SAME `tiles` THE GRID DRAWS, not its own slice of the list.
+            Two slices of one array is how the strip and the tiles end up
+            disagreeing about the fourth workflow. And these stay GLYPHS even
+            when a tile above has a photograph: the cell is 44px, and a
+            photograph in it is a smudge — the strip's job is the composition,
+            not the content. */}
+        {tiles.map((w) => (
           <div className="lp-art-cell" key={w.id}>
-            <WorkflowIcon id={w.id} />
+            {/* The emoji fallback for the same reason `TileArt` needs it: an id
+                this build has no glyph for would otherwise draw an empty cell. */}
+            <WorkflowIcon id={w.id} fallback={w.icon} />
           </div>
         ))}
         <span className="lp-art-play" aria-hidden="true">
@@ -602,14 +688,57 @@ function PipelineArt({ workflows = [] }) {
   );
 }
 
-// One tile: the step number, the drawing, the name of what you get.
-function ArtStep({ n, label, children }) {
+// One tile: the step number, the picture, the name of what you get.
+//
+// ⚠ `photo` WINS OVER `children`, and the children are still passed in every
+// time. That is the fallback in one line: the drawing is always built and is
+// simply not mounted when there is an uploaded picture for this workflow, so a
+// picture that is removed in the admin panel puts the drawing back with no
+// second code path to keep in step.
+//
+// ⚠ AND THE SHEET LOSES ITS PADDING FOR A PHOTOGRAPH. `.lp-art-sheet` insets its
+// contents by 0.3rem, which is right for a drawing sitting on paper and reads as
+// a mistake around a photograph — the picture has to go to the tile's own edges.
+function ArtStep({ n, label, photo = "", children }) {
   return (
     <div className="lp-art-step">
       <span className="lp-art-step-n">{n}</span>
-      <div className="lp-art-sheet">{children}</div>
+      <div className={`lp-art-sheet${photo ? " has-photo" : ""}`}>
+        {photo ? (
+          // `alt=""` on purpose: the whole hero art is `aria-hidden` and this is
+          // decoration. `loading="eager"` is the default and is what we want —
+          // it is above the fold on the page every visitor lands on.
+          <img className="lp-art-photo" src={api.absoluteUrl(photo)} alt="" />
+        ) : (
+          children
+        )}
+      </div>
       <span className="lp-art-step-label">{label}</span>
     </div>
+  );
+}
+
+// The drawing for one workflow — the tile as it looks with no picture uploaded.
+//
+// ⚠ IT IS A LOOKUP, NOT A SWITCH, AND IT HAS TWO DEFAULTS. `ART_BY_ID` at the
+// foot of this file holds the four drawings that have always been here; a
+// workflow with no drawing of its own — the two that were never in the hero, and
+// anything added after this was written — gets its rail glyph instead. That is
+// the reason a new workflow draws SOMETHING on day one, with an uploaded picture
+// replacing it.
+//
+// ⚠ AND `icon` IS THE THIRD RUNG, WHICH IS NOT OPTIONAL. `WorkflowIcon` renders
+// NOTHING for an id it has no glyph for — that is deliberate over there ("the
+// wrong picture is worse than the emoji") — so without the server's emoji passed
+// in as the fallback, a workflow launched after this build would get a blank
+// white tile in the hero. Three rungs: picture, drawing, glyph-or-emoji.
+function TileArt({ id, icon = "" }) {
+  const Drawn = ART_BY_ID[id];
+  if (Drawn) return <Drawn />;
+  return (
+    <span className="lp-art-glyph" aria-hidden="true">
+      <WorkflowIcon id={id} fallback={icon} />
+    </span>
   );
 }
 
@@ -756,3 +885,24 @@ function TimelineArt() {
     </svg>
   );
 }
+
+// The four drawings, BY WORKFLOW ID — which is the only thing that made the
+// old hero honest and was the one thing the old hero did not write down.
+//
+// ⚠ IT WAS FOUR HARD-CODED LINES OF JSX IN PIPELINE ORDER, and that is exactly
+// how the tiles came loose from the workflow list: nothing in the file said
+// which drawing belonged to which workflow, so nothing could follow one being
+// hidden. Named here, they can.
+//
+// ⚠ TWO WORKFLOWS DELIBERATELY HAVE NO ENTRY. `text-to-image` and
+// `animatics-to-video` were never in the hero art and there is no drawing to
+// give them; `TileArt` falls back to their rail glyph, which is what any
+// workflow added later gets too. A missing entry here is a fallback, not a bug —
+// the only thing that must never happen is an id in this map that no workflow
+// has, and that is a dead drawing rather than a broken tile.
+const ART_BY_ID = {
+  "plan-and-script": ScriptArt,
+  "script-to-storyboard": BoardArt,
+  "create-animatic-image": PosesArt,
+  "storyboard-to-animatics": TimelineArt,
+};

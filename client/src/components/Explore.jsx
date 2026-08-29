@@ -26,7 +26,14 @@ import PromoPopup from "./PromoPopup.jsx";
 // ⚠ THE RAIL'S OWN SHORT NAMES, so a workflow is called one thing in the
 // narrow sidebar after somebody signs in and the same thing on this page's
 // chips and cards. See `WORKFLOW_SHORT` in Sidebar.jsx.
-import { shortLabel } from "./Sidebar.jsx";
+// ⚠ THE APP'S OWN RAIL, NOT A COPY OF IT. This page carried a hand-built
+// look-alike for exactly one session and it was reported the same day: no brand
+// mark, no app name, no collapse toggle. *"mai chahta hun ki ye sab waisa hi
+// dikhe jaise user login kar ke dikhta hai."* `publicMode` drops the avatar and
+// the account menu — the two things a visitor has no version of — and turns the
+// gold button at the foot into the sign-in. Everything else is the same
+// component and the same stylesheet, so the two can no longer drift apart.
+import Sidebar, { NAV_COLLAPSED_KEY, shortLabel } from "./Sidebar.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Explore — the PUBLIC SHOP WINDOW. What this studio makes, what it has made,
@@ -328,6 +335,27 @@ export default function Explore({ onSignIn, onBack, theme, onToggleTheme }) {
   // exactly what the server named; the call FAILED → the built-in list again. A
   // marketing page that flashes empty while it asks the server what it sells is
   // worse than one that is a few hundred milliseconds stale.
+  // ⚠ THE SAME KEY THE SIGNED-IN SHELL WRITES, so the choice somebody makes out
+  // here survives the sign-in — a rail that silently re-opens itself the moment
+  // you have an account is the rail visibly rearranging at the one moment this
+  // page is trying to prove it will not.
+  const [railCollapsed, setRailCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(NAV_COLLAPSED_KEY) === "1";
+    } catch {
+      // Private mode. Open is the better default for somebody who has never
+      // seen this rail before: it is the state that says what the rows are.
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_COLLAPSED_KEY, railCollapsed ? "1" : "0");
+    } catch {
+      // Nothing to remember it with. The rail still works for this visit.
+    }
+  }, [railCollapsed]);
+
   const live = useLiveWorkflows();
   // ⚠ "SOON" IS ADVERTISED AND NOT SOLD. It keeps its tile, because a tool
   // nobody can see is a tool nobody waits for — but it is not what a banner
@@ -555,431 +583,434 @@ export default function Explore({ onSignIn, onBack, theme, onToggleTheme }) {
       filtered.length);
 
   return (
-    <div className="explore explore-public xp-has-rail">
-      {/* ---- The left rail ----
-          ⚠ A RAIL ON THE PAGE THAT HAS NO SHELL. Asked for with the Kling AI
-          Explore page beside it: *"need the side bar explore page like this but
-          with my own services, and when user click on any of this he must get
-          sign in page and after sign in open the usual flow."*
+    <div
+      className={`explore explore-public${railCollapsed ? " nav-collapsed" : ""}`}
+    >
+      {/* ---- The rail ----
+          ⚠ THE APP'S RAIL, IN `publicMode` — see the import above for why this
+          is the real component and not something shaped like it.
 
-          ⚠ IT IS THE SAME LIST AS THE TILES BELOW, AND THAT IS NOT A MISTAKE.
-          The reference page carries both, and they answer different questions:
-          the tiles are a row you READ on the way down the page, the rail is a
-          launcher that is still there when you have scrolled to the bottom of
-          the wall. `live` is the one source for both, so a workflow an
-          administrator switches off disappears from the pair of them at once.
+          ⚠ `live` IS RESHAPED, NOT RE-FETCHED. The public workflow list calls the
+          name `title`; the rail reads `label`. One `map` here is the whole of the
+          difference, and it keeps the tiles below and the rail on ONE source — a
+          workflow an administrator switches off has to leave both at once, which
+          is the bug `dashboard_feed.js` was extracted to prevent.
 
-          ⚠ EVERY ROW IS A SIGN-IN, exactly like a tile — `onSignIn` carries the
-          workflow id through the login and `pendingWorkflow` lands them in it
-          afterwards, which is the "usual flow" the request asks for. There is
-          nowhere else for a click to go: this page is drawn for somebody with
-          no account.
+          ⚠ EVERY ROW IS A SIGN-IN, INCLUDING HOME. The rail calls `onNavigate`
+          exactly as it does inside the app; out here "home" means the landing
+          page and anything else means "sign in, then take me there" — the id
+          rides through on `pendingWorkflow`. That is the "after sign in open the
+          usual flow" half of the request, and it is why the rail needs no idea
+          which side of the sign-in it is on. */}
+      <Sidebar
+        publicMode
+        /* ⚠ THIS PAGE IS THE ONE THE RAIL IS STANDING ON, so its row wears the
+           highlight — same as any workflow does inside the app. Without it the
+           rail showed a visitor a list with nothing marked, on a page that is
+           one of the entries. */
+        active="explore"
+        workflows={live.map((w) => ({
+          id: w.id,
+          label: w.title,
+          icon: w.icon,
+          status: w.status,
+        }))}
+        onNavigate={(id) => {
+          // Already here. The rail's own convention inside the app is that
+          // pressing the row you are on takes you back to its start, so this
+          // does the same thing a page with no sub-pages can: the top of it.
+          if (id === "explore") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            return;
+          }
+          // ⚠ "HOME" IS THE SALES PAGE OUT HERE, not a dashboard — a visitor
+          // has no dashboard. Everything else is a workflow, and a workflow is
+          // a sign-in that remembers where it was going.
+          if (id === "home") {
+            onBack?.();
+            return;
+          }
+          onSignIn?.(id);
+        }}
+        onSignIn={() => onSignIn?.(createId)}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        collapsed={railCollapsed}
+        onToggleCollapse={() => setRailCollapsed((c) => !c)}
+      />
 
-          ⚠ IT LOOKS LIKE THE COLLAPSED APP RAIL ON PURPOSE — glyph over a short
-          name, same metrics — so the first thing a visitor sees is the thing
-          they will still be looking at after they sign in. The classes are its
-          own because `.sidebar` is welded to the shell's grid; the measurements
-          are copied from `.sidebar.collapsed` in shell.css. */}
-      <aside className="xp-rail" aria-label="What this studio makes">
-        <button
-          type="button"
-          className="xp-rail-brand"
-          onClick={onBack}
-          title={`${brand.name} — back to the front page`}
-        >
-          <Logo />
-        </button>
+      {/* ⚠ THE PAGE ITSELF, IN ONE ELEMENT — THIS IS `.shell-main`, AND IT HAD
+          TO EXIST. The first version of this grid put every row straight into
+          column 2 and spanned the rail with `grid-row: 1 / -1`, on the
+          reasoning that a wrapper would turn eight listed selectors into
+          grandchildren. Both halves of that were wrong.
 
-        <nav className="xp-rail-list">
+          ⚠ `1 / -1` DOES NOTHING WITHOUT `grid-template-rows`. A negative line
+          counts back from the end of the EXPLICIT grid, and an implicit grid
+          has no explicit rows — so `-1` resolved to line 1, the span collapsed
+          to ONE row, and that row was as tall as the rail (100dvh). The nav
+          landed inside it and was centred in a blank first screen, with the
+          whole page below the fold. Reported exactly that way: *"pahla image
+          pura blank hai, magar jab scroll kiya to tab aaya ye content."*
+
+          ⚠ AND THE EIGHT SELECTORS WERE ONE RULE. Re-pointing them at this
+          element was a single edit. The app's own shell has had this exact
+          wrapper since it was written — `.shell-main` — and copying it was
+          always the answer. */}
+      <div className="xp-page">
+
+        {/* ---- The public nav ----
+            ⚠ IT WEARS THE LANDING PAGE'S OWN CLASSES. This screen used to sit in
+            the app shell and had the rail above it; standing alone it needs a
+            header, and a SECOND header that merely resembled the landing page's
+            is exactly the mismatch this repo keeps paying for. Same markup, same
+            stylesheet, one brand. */}
+        <nav className="landing-nav xp-nav">
+          {/* ⚠ THE MARK AND THE NAME MOVED TO THE RAIL AND ARE NOT DRAWN TWICE.
+              They used to sit here because this page stood alone and needed a
+              header; it has the app's own rail now, and the app puts its brand at
+              the top of that rail. Reported as soon as both were on screen:
+              *"mera A logo and name page pe hai magar mujhe yaha pe nhi chahiye."*
+              Going back is the rail's Home row — same destination, one copy. */}
+          <div className="landing-nav-links">
+            {onBack && (
+              <a
+                href="#back"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onBack();
+                }}
+              >
+                Home
+              </a>
+            )}
+            <a href="#work">The work</a>
+            {/* ⚠ THE ONLY THEME SWITCH A LOGGED-OUT VISITOR CAN REACH, on this
+                page as on the landing one. Icon-only: a nav has no room for a
+                word, and the sun/moon is the one everybody reads. Rendered only
+                when a handler is handed down, so the page still works standalone
+                (tests, previews) without one. */}
+            {onToggleTheme && (
+              <button
+                type="button"
+                className="lp-theme"
+                onClick={onToggleTheme}
+                title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                aria-label={
+                  theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+                }
+              >
+                {theme === "dark" ? "☀️" : "🌙"}
+              </button>
+            )}
+            <button
+              className="btn small primary nav-cta"
+              onClick={() => onSignIn?.(createId)}
+            >
+              Sign in
+            </button>
+          </div>
+        </nav>
+
+        <h1 className="xp-sr-title">Explore {brand.name}</h1>
+
+        {/* ---- Row 1: the billboards ---- */}
+        <div className="xp-banners">
+          <HeroCarousel slides={heroSlides} />
+
+          {side && (
+            <div
+              className={`xp-banner tone-side ${side.image ? "has-photo" : ""}`}
+            >
+              <BannerArt slide={side} />
+              <div className="xp-banner-body">
+                {side.eyebrow && (
+                  <span className="xp-banner-eyebrow">{side.eyebrow}</span>
+                )}
+                <h2 className="xp-banner-title">{side.title}</h2>
+                {side.sub && <p className="xp-banner-sub">{side.sub}</p>}
+                {side.go && side.cta && (
+                  <button
+                    type="button"
+                    className="btn primary xp-banner-cta"
+                    onClick={side.go}
+                    title={side.hint}
+                  >
+                    {side.cta} →
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ---- Row 2: one tile per workflow ----
+            ⚠ ALL ONE COLOUR. The first tile was gold, copied from the reference,
+            and it was asked to stop being: this order is the owner's own pipeline,
+            so painting whatever happens to be first as the recommended one says
+            something nobody meant — and gold means "the action" everywhere else on
+            this page. `title` carries the pitch (helper text on hover, RULEBOOK
+            E4). */}
+        <div className="xp-tiles">
           {live.map((w) => (
             <button
               key={w.id}
               type="button"
-              className="xp-rail-item"
+              className="xp-tile"
               onClick={() => onSignIn?.(w.status === "soon" ? null : w.id)}
-              /* Helper text on hover, visible text short — RULEBOOK E4, and the
-                 same split the tiles keep. */
               title={pitch(w.id) || w.title}
             >
-              <span className="xp-rail-ico">
+              <span className="xp-tile-ico">
                 <WorkflowIcon id={w.id} />
               </span>
-              {/* ⚠ THE SHORT NAME, from the same map the app rail reads. A rail
-                  is read by glancing, and "Text to Turnaround Image" clipped to
-                  "Text to Turnar…" is the bug RULEBOOK E17 and E18 were paid
-                  for. */}
-              <span className="xp-rail-name">{shortLabel(w.id, w.title)}</span>
-              {/* Shown, not hidden — a tool nobody can see is a tool nobody
-                  waits for. Same rule as the tiles and the app rail. */}
-              {w.status === "soon" && (
-                <span className="xp-rail-soon">Soon</span>
+              <span className="xp-tile-name">{w.title}</span>
+              {/* ⚠ "SOON" IS SHOWN, NOT HIDDEN — the same rule the rail keeps for
+                  a locked workflow. A tool nobody can see is a tool nobody waits
+                  for. It still opens the sign-in, just without naming a
+                  destination that is not there yet. */}
+              {w.status === "soon" ? (
+                <span className="xp-tile-lock" title="Not open yet">
+                  Soon
+                </span>
+              ) : (
+                <span className="xp-tile-go" aria-hidden="true">
+                  →
+                </span>
               )}
             </button>
           ))}
-        </nav>
-
-        {/* ⚠ THE BOTTOM OF THE RAIL IS WHERE THE REFERENCE PUTS IT, and it is
-            the right place: the rail is the one part of this page that does not
-            scroll away, so the ask does not either. */}
-        <div className="xp-rail-foot">
-          <button
-            type="button"
-            className="btn small primary xp-rail-cta"
-            onClick={() => onSignIn?.(createId)}
-          >
-            Sign in
-          </button>
         </div>
-      </aside>
 
-      {/* ---- The public nav ----
-          ⚠ IT WEARS THE LANDING PAGE'S OWN CLASSES. This screen used to sit in
-          the app shell and had the rail above it; standing alone it needs a
-          header, and a SECOND header that merely resembled the landing page's
-          is exactly the mismatch this repo keeps paying for. Same markup, same
-          stylesheet, one brand. */}
-      <nav className="landing-nav xp-nav">
-        <button type="button" className="brand small xp-nav-brand" onClick={onBack}>
-          <Logo /> {brand.name}
-        </button>
-        <div className="landing-nav-links">
-          {onBack && (
-            <a
-              href="#back"
-              onClick={(e) => {
-                e.preventDefault();
-                onBack();
-              }}
-            >
-              Home
-            </a>
-          )}
-          <a href="#work">The work</a>
-          {/* ⚠ THE ONLY THEME SWITCH A LOGGED-OUT VISITOR CAN REACH, on this
-              page as on the landing one. Icon-only: a nav has no room for a
-              word, and the sun/moon is the one everybody reads. Rendered only
-              when a handler is handed down, so the page still works standalone
-              (tests, previews) without one. */}
-          {onToggleTheme && (
-            <button
-              type="button"
-              className="lp-theme"
-              onClick={onToggleTheme}
-              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-              aria-label={
-                theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
-              }
-            >
-              {theme === "dark" ? "☀️" : "🌙"}
-            </button>
-          )}
-          <button
-            className="btn small primary nav-cta"
-            onClick={() => onSignIn?.(createId)}
-          >
-            Sign in
-          </button>
-        </div>
-      </nav>
-
-      <h1 className="xp-sr-title">Explore {brand.name}</h1>
-
-      {/* ---- Row 1: the billboards ---- */}
-      <div className="xp-banners">
-        <HeroCarousel slides={heroSlides} />
-
-        {side && (
+        {/* ---- Rows 3-5: the wall ----
+            ⚠ THE WHOLE SECTION IS CONDITIONAL, INCLUDING ITS TOOLBAR. An
+            administrator who has uploaded nothing gets banners and tiles and no
+            empty gallery furniture — a search box over nothing, three tabs that
+            all answer nothing, and a line apologising to a stranger. */}
+        {items === null ? (
           <div
-            className={`xp-banner tone-side ${side.image ? "has-photo" : ""}`}
+            className="xp-gallery xp-ghosts is-loading"
+            aria-hidden="true"
+            style={{ "--xp-cols": wallColumns(10) }}
           >
-            <BannerArt slide={side} />
-            <div className="xp-banner-body">
-              {side.eyebrow && (
-                <span className="xp-banner-eyebrow">{side.eyebrow}</span>
-              )}
-              <h2 className="xp-banner-title">{side.title}</h2>
-              {side.sub && <p className="xp-banner-sub">{side.sub}</p>}
-              {side.go && side.cta && (
-                <button
-                  type="button"
-                  className="btn primary xp-banner-cta"
-                  onClick={side.go}
-                  title={side.hint}
-                >
-                  {side.cta} →
-                </button>
-              )}
-            </div>
+            {Array.from({ length: 10 }, (_, i) => (
+              <div className="xp-card xp-card-ghost" key={i}>
+                {/* The same two shapes the real wall can draw, so the skeleton is
+                    the height of the thing replacing it and nothing jumps. */}
+                <span
+                  className="xp-card-pic xp-ghost-cover"
+                  style={{
+                    "--lib-thumb-ar":
+                      i % 3 === 1 ? `${WALL_AR_MIN} / 1` : `${WALL_AR_MAX} / 1`
+                  }}
+                />
+              </div>
+            ))}
           </div>
-        )}
-      </div>
-
-      {/* ---- Row 2: one tile per workflow ----
-          ⚠ ALL ONE COLOUR. The first tile was gold, copied from the reference,
-          and it was asked to stop being: this order is the owner's own pipeline,
-          so painting whatever happens to be first as the recommended one says
-          something nobody meant — and gold means "the action" everywhere else on
-          this page. `title` carries the pitch (helper text on hover, RULEBOOK
-          E4). */}
-      <div className="xp-tiles">
-        {live.map((w) => (
-          <button
-            key={w.id}
-            type="button"
-            className="xp-tile"
-            onClick={() => onSignIn?.(w.status === "soon" ? null : w.id)}
-            title={pitch(w.id) || w.title}
-          >
-            <span className="xp-tile-ico">
-              <WorkflowIcon id={w.id} />
-            </span>
-            <span className="xp-tile-name">{w.title}</span>
-            {/* ⚠ "SOON" IS SHOWN, NOT HIDDEN — the same rule the rail keeps for
-                a locked workflow. A tool nobody can see is a tool nobody waits
-                for. It still opens the sign-in, just without naming a
-                destination that is not there yet. */}
-            {w.status === "soon" ? (
-              <span className="xp-tile-lock" title="Not open yet">
-                Soon
-              </span>
-            ) : (
-              <span className="xp-tile-go" aria-hidden="true">
-                →
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* ---- Rows 3-5: the wall ----
-          ⚠ THE WHOLE SECTION IS CONDITIONAL, INCLUDING ITS TOOLBAR. An
-          administrator who has uploaded nothing gets banners and tiles and no
-          empty gallery furniture — a search box over nothing, three tabs that
-          all answer nothing, and a line apologising to a stranger. */}
-      {items === null ? (
-        <div
-          className="xp-gallery xp-ghosts is-loading"
-          aria-hidden="true"
-          style={{ "--xp-cols": wallColumns(10) }}
-        >
-          {Array.from({ length: 10 }, (_, i) => (
-            <div className="xp-card xp-card-ghost" key={i}>
-              {/* The same two shapes the real wall can draw, so the skeleton is
-                  the height of the thing replacing it and nothing jumps. */}
-              <span
-                className="xp-card-pic xp-ghost-cover"
-                style={{
-                  "--lib-thumb-ar":
-                    i % 3 === 1 ? `${WALL_AR_MIN} / 1` : `${WALL_AR_MAX} / 1`
-                }}
-              />
-            </div>
-          ))}
-        </div>
-      ) : wall.length > 0 ? (
-        <>
-          <div className="xp-work-head" id="work">
-            <h2 className="xp-work-title">Made with {brand.name}</h2>
-            <p className="xp-work-sub muted">
-              Every one of these started as a line of text. Click any of them.
-            </p>
-          </div>
-
-          {/* ---- Row 3: how to look at the wall ---- */}
-          <div className="xp-toolbar">
-            <div className="xp-tabs" role="tablist" aria-label="Gallery view">
-              {VIEWS.map((v) => (
-                <button
-                  key={v.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === v.id}
-                  className={`xp-tab ${view === v.id ? "active" : ""}`}
-                  onClick={() => setView(v.id)}
-                >
-                  {v.label}
-                </button>
-              ))}
+        ) : wall.length > 0 ? (
+          <>
+            <div className="xp-work-head" id="work">
+              <h2 className="xp-work-title">Made with {brand.name}</h2>
+              <p className="xp-work-sub muted">
+                Every one of these started as a line of text. Click any of them.
+              </p>
             </div>
 
-            <label className="xp-search">
-              <span className="xp-search-ico" aria-hidden="true">
-                ⌕
-              </span>
-              <input
-                className="xp-search-input"
-                type="search"
-                value={query}
-                placeholder="Search the work"
-                aria-label="Search the work"
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              {query && (
-                <button
-                  type="button"
-                  className="xp-search-clear"
-                  onClick={() => setQuery("")}
-                  title="Clear"
-                  aria-label="Clear search"
-                >
-                  ✕
-                </button>
-              )}
-            </label>
+            {/* ---- Row 3: how to look at the wall ---- */}
+            <div className="xp-toolbar">
+              <div className="xp-tabs" role="tablist" aria-label="Gallery view">
+                {VIEWS.map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={view === v.id}
+                    className={`xp-tab ${view === v.id ? "active" : ""}`}
+                    onClick={() => setView(v.id)}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
 
-            <button
-              className="btn primary xp-create"
-              onClick={() => onSignIn?.(createId)}
-              title={
-                createId
-                  ? pitch(createId) || "Create an account and start"
-                  : "Create an account and start"
-              }
-            >
-              ＋ Make your own
-            </button>
-          </div>
+              <label className="xp-search">
+                <span className="xp-search-ico" aria-hidden="true">
+                  ⌕
+                </span>
+                <input
+                  className="xp-search-input"
+                  type="search"
+                  value={query}
+                  placeholder="Search the work"
+                  aria-label="Search the work"
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                {query && (
+                  <button
+                    type="button"
+                    className="xp-search-clear"
+                    onClick={() => setQuery("")}
+                    title="Clear"
+                    aria-label="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </label>
 
-          {/* ---- Row 4: the workflow filter ----
-              One chip is no filter — with everything made by one workflow the
-              row would be "Everything | Storyboard" and both answer the same. */}
-          {chips.length > 2 && (
-            <div className="opt-chips xp-chips">
-              {chips.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`opt-chip xp-chip ${chip === c.id ? "active" : ""}`}
-                  onClick={() => setChip(c.id)}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* ---- Row 5: the wall itself ---- */}
-          {filtered.length === 0 ? (
-            <div className="xp-empty">
-              <span className="xp-empty-ico" aria-hidden="true">
-                {createId ? <WorkflowIcon id={createId} /> : null}
-              </span>
-              <p className="xp-empty-text">Nothing matches that.</p>
               <button
-                className="btn xp-empty-btn"
-                onClick={() => {
-                  setQuery("");
-                  setChip("all");
-                  setView(VIEWS[0].id);
-                }}
+                className="btn primary xp-create"
+                onClick={() => onSignIn?.(createId)}
+                title={
+                  createId
+                    ? pitch(createId) || "Create an account and start"
+                    : "Create an account and start"
+                }
               >
-                Show everything →
+                ＋ Make your own
               </button>
             </div>
-          ) : (
-            <div
-              className="xp-gallery"
-              style={{ "--xp-cols": wallColumns(filtered.length) }}
-            >
-              {filtered.map((it, i) => (
+
+            {/* ---- Row 4: the workflow filter ----
+                One chip is no filter — with everything made by one workflow the
+                row would be "Everything | Storyboard" and both answer the same. */}
+            {chips.length > 2 && (
+              <div className="opt-chips xp-chips">
+                {chips.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`opt-chip xp-chip ${chip === c.id ? "active" : ""}`}
+                    onClick={() => setChip(c.id)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* ---- Row 5: the wall itself ---- */}
+            {filtered.length === 0 ? (
+              <div className="xp-empty">
+                <span className="xp-empty-ico" aria-hidden="true">
+                  {createId ? <WorkflowIcon id={createId} /> : null}
+                </span>
+                <p className="xp-empty-text">Nothing matches that.</p>
                 <button
-                  key={it.id}
-                  type="button"
-                  className="xp-card"
-                  /* ⚠ THIS OPENS THE THING, IT DOES NOT NAVIGATE. On the old
-                     page a card opened the customer's own project; here it
-                     plays the film. Asked for directly: *"the videos or images
-                     should be clickable and be able to use it properly play"*. */
-                  onClick={() => setOpenAt(i)}
-                  title={
-                    it.kind === "video"
-                      ? `Play ${it.title}`
-                      : `View ${it.title}`
-                  }
+                  className="btn xp-empty-btn"
+                  onClick={() => {
+                    setQuery("");
+                    setChip("all");
+                    setView(VIEWS[0].id);
+                  }}
                 >
-                  <span className="xp-card-pic" style={wallAspect(it.aspect)}>
-                    {/* ⚠ THE POSTER, NEVER THE CLIP. Twenty-four `<video>`
-                        elements on the page everybody lands on is twenty-four
-                        downloads before a visitor has clicked anything — on a
-                        phone that is the page not loading. The film is fetched
-                        when it is asked for, in the viewer. */}
-                    {it.poster_url || (it.kind === "image" && it.media_url) ? (
-                      <img
-                        src={it.poster_url || it.media_url}
-                        alt=""
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span className="xp-card-glyph" aria-hidden="true">
-                        <WorkflowIcon id={it.workflow || createId} />
+                  Show everything →
+                </button>
+              </div>
+            ) : (
+              <div
+                className="xp-gallery"
+                style={{ "--xp-cols": wallColumns(filtered.length) }}
+              >
+                {filtered.map((it, i) => (
+                  <button
+                    key={it.id}
+                    type="button"
+                    className="xp-card"
+                    /* ⚠ THIS OPENS THE THING, IT DOES NOT NAVIGATE. On the old
+                       page a card opened the customer's own project; here it
+                       plays the film. Asked for directly: *"the videos or images
+                       should be clickable and be able to use it properly play"*. */
+                    onClick={() => setOpenAt(i)}
+                    title={
+                      it.kind === "video"
+                        ? `Play ${it.title}`
+                        : `View ${it.title}`
+                    }
+                  >
+                    <span className="xp-card-pic" style={wallAspect(it.aspect)}>
+                      {/* ⚠ THE POSTER, NEVER THE CLIP. Twenty-four `<video>`
+                          elements on the page everybody lands on is twenty-four
+                          downloads before a visitor has clicked anything — on a
+                          phone that is the page not loading. The film is fetched
+                          when it is asked for, in the viewer. */}
+                      {it.poster_url || (it.kind === "image" && it.media_url) ? (
+                        <img
+                          src={it.poster_url || it.media_url}
+                          alt=""
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="xp-card-glyph" aria-hidden="true">
+                          <WorkflowIcon id={it.workflow || createId} />
+                        </span>
+                      )}
+                    </span>
+
+                    {/* ⚠ THE PLAY BADGE SITS OVER THE PICTURE, where the status
+                        chip used to. On a wall of stills, "this one moves" is the
+                        one thing worth seeing without reading — and a wall is
+                        read by glancing. A still wears nothing. */}
+                    {it.kind === "video" && (
+                      <span className="xp-card-play" aria-hidden="true">
+                        ▶
                       </span>
                     )}
-                  </span>
 
-                  {/* ⚠ THE PLAY BADGE SITS OVER THE PICTURE, where the status
-                      chip used to. On a wall of stills, "this one moves" is the
-                      one thing worth seeing without reading — and a wall is
-                      read by glancing. A still wears nothing. */}
-                  {it.kind === "video" && (
-                    <span className="xp-card-play" aria-hidden="true">
-                      ▶
+                    <span className="xp-card-veil" aria-hidden="true" />
+                    <span className="xp-card-meta">
+                      <span className="xp-card-name">{it.title}</span>
+                      <span className="xp-card-sub">
+                        {it.short && <span className="xp-card-wf">{it.short}</span>}
+                        {it.blurb && <span>{it.blurb}</span>}
+                      </span>
                     </span>
-                  )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : null}
 
-                  <span className="xp-card-veil" aria-hidden="true" />
-                  <span className="xp-card-meta">
-                    <span className="xp-card-name">{it.title}</span>
-                    <span className="xp-card-sub">
-                      {it.short && <span className="xp-card-wf">{it.short}</span>}
-                      {it.blurb && <span>{it.blurb}</span>}
-                    </span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </>
-      ) : null}
+        {/* ---- The last word ----
+            ⚠ A SECOND CTA AT THE BOTTOM, AND IT IS THE ONLY REPEAT ON THE PAGE.
+            Somebody who has scrolled a wall of films is the most convinced they
+            will ever be, and the nav's Sign in is one whole screen behind them. */}
+        <div className="xp-foot">
+          <h2 className="xp-foot-title">Your turn.</h2>
+          <p className="xp-foot-sub muted">
+            Sign in with Google or an email address. The first project is free.
+          </p>
+          <button
+            className="btn primary lg"
+            onClick={() => onSignIn?.(createId)}
+          >
+            Get started — it's free →
+          </button>
+        </div>
 
-      {/* ---- The last word ----
-          ⚠ A SECOND CTA AT THE BOTTOM, AND IT IS THE ONLY REPEAT ON THE PAGE.
-          Somebody who has scrolled a wall of films is the most convinced they
-          will ever be, and the nav's Sign in is one whole screen behind them. */}
-      <div className="xp-foot">
-        <h2 className="xp-foot-title">Your turn.</h2>
-        <p className="xp-foot-sub muted">
-          Sign in with Google or an email address. The first project is free.
-        </p>
-        <button
-          className="btn primary lg"
-          onClick={() => onSignIn?.(createId)}
-        >
-          Get started — it's free →
-        </button>
+        {/* ⚠ THE VIEWER'S BUTTON IS THE SIGN-IN GATE, and it names the workflow
+            the piece was made with — the strongest moment on the page to ask, and
+            the one place where "make one like this" is literally true. */}
+        <MediaLightbox
+          item={open}
+          onClose={() => setOpenAt(-1)}
+          onStep={filtered.length > 1 ? step : undefined}
+          count={open ? `${openAt + 1} / ${filtered.length}` : ""}
+          onUse={(it) => onSignIn?.(it.workflow || createId)}
+          useLabel={
+            open?.label ? `Make one with ${open.label}` : "Make one like this"
+          }
+        />
+
+        {/* ⚠ LAST IN THE MARKUP AND `position: fixed` IN CSS, so it is over the
+            page rather than in it — and last in the tab order, so a keyboard
+            reaches the page's own content before the advertisement.
+            ⚠ ITS BUTTON IS A SIGN-IN, NOT THE PRICING MODAL. `POST /billing/coupon`
+            is signed-in only and would 401 in front of a prospect; the code is
+            readable and copyable, which is all a visitor needs to carry it
+            through sign-up. Same reasoning as `OfferStrip` in the hero. */}
+        <PromoPopup onCta={() => onSignIn?.(createId)} />
       </div>
-
-      {/* ⚠ THE VIEWER'S BUTTON IS THE SIGN-IN GATE, and it names the workflow
-          the piece was made with — the strongest moment on the page to ask, and
-          the one place where "make one like this" is literally true. */}
-      <MediaLightbox
-        item={open}
-        onClose={() => setOpenAt(-1)}
-        onStep={filtered.length > 1 ? step : undefined}
-        count={open ? `${openAt + 1} / ${filtered.length}` : ""}
-        onUse={(it) => onSignIn?.(it.workflow || createId)}
-        useLabel={
-          open?.label ? `Make one with ${open.label}` : "Make one like this"
-        }
-      />
-
-      {/* ⚠ LAST IN THE MARKUP AND `position: fixed` IN CSS, so it is over the
-          page rather than in it — and last in the tab order, so a keyboard
-          reaches the page's own content before the advertisement.
-          ⚠ ITS BUTTON IS A SIGN-IN, NOT THE PRICING MODAL. `POST /billing/coupon`
-          is signed-in only and would 401 in front of a prospect; the code is
-          readable and copyable, which is all a visitor needs to carry it
-          through sign-up. Same reasoning as `OfferStrip` in the hero. */}
-      <PromoPopup onCta={() => onSignIn?.(createId)} />
     </div>
   );
 }

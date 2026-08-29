@@ -19,6 +19,9 @@
 # would put one installation's campaign into every other checkout.
 .local_banners.json
 .local_showcase.json
+# Which picture sits in each of the landing hero's four tiles. Same reasoning
+# again: one deployment's front page, not every checkout's.
+.local_landing.json
 
 # Python
 __pycache__/
