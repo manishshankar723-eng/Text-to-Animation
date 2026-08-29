@@ -18,6 +18,9 @@
 @import "./text-to-image.css";
 @import "./shell.css";
 @import "./home.css";
+/* Beside home.css, per the note above: Explore is Home's sibling — same
+   dashboard data, a different way of looking at it. */
+@import "./explore.css";
 @import "./soon-upgrade.css";
 @import "./storyboard.css";
 @import "./storyboard-library.css";

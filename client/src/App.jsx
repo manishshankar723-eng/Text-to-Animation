@@ -14,6 +14,7 @@ import Landing from "./components/Landing.jsx";
 import Login from "./components/Login.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import Home from "./components/Home.jsx";
+import Explore from "./components/Explore.jsx";
 import Profile from "./components/Profile.jsx";
 import PlanAndScript from "./components/PlanAndScript.jsx";
 import ScriptToStoryboard from "./components/ScriptToStoryboard.jsx";
@@ -87,6 +88,23 @@ function syncAdminUrl(onAdmin) {
   window.history.replaceState({}, "", url.pathname + url.search + url.hash);
 }
 
+// ⚠ WHERE THE APP OPENS, IN ONE PLACE. Five separate paths land somebody in the
+// app — a returning session, a fresh sign-in, a sign-out (which sets the state
+// the next sign-in starts from), an account switch, and leaving the admin panel
+// — and before this constant existed all five spelled the destination out for
+// themselves. That is five lines to change to move the front door, and four of
+// them are easy to miss: the bug it produces is "it opens on the right page
+// UNLESS you switched account", which nobody reports as one bug.
+//
+// It is Explore, asked for directly: *"jab user aaye to explore page khule,
+// home page nhi"*. Home is still one click away in the rail and is unchanged —
+// it is the DESK (who you are, your plan, where you left off). Explore is the
+// SHOP WINDOW, and a shop window is what a front door should open onto.
+//
+// ⚠ THE URL STILL WINS OVER IT. `?admin` is an address somebody was SENT, and a
+// link that lands somewhere other than where it points is a broken link.
+const LANDING_NAV = "explore";
+
 // Whether the nav rail is collapsed to icons. Remembered per browser, like the
 // theme is: someone who works in the narrow rail wants it narrow next time too.
 // Kept HERE and not in Sidebar because `.shell` is a two-column grid — the rail
@@ -107,14 +125,16 @@ export default function App() {
   const [email, setEmail] = useState(api.getEmail());
   const [authed, setAuthed] = useState(Boolean(api.getToken()));
   const [authView, setAuthView] = useState("landing");
-  // Land on HOME by default — both a fresh login and a returning session. Home
-  // is the dashboard (profile, plan, recent work), so opening the app shows
-  // where things stand rather than dropping you mid-workflow.
+  // Land on `LANDING_NAV` by default — both a fresh login and a returning
+  // session — so opening the app shows what this studio can make and what you
+  // have made, rather than dropping you mid-workflow. See that constant for
+  // which screen it is and why it is not spelled out here.
   // ⚠ THE URL WINS OVER THE DEFAULT, and only for this one destination. A
-  // bookmark or a pasted link has to land where it points; everything else
-  // still opens on Home, which is the dashboard.
-  const [nav, setNav] = useState(() => (readAdminRoute() ? "admin" : "home"));
-  // "home" | "profile" | "admin" | workflow id
+  // bookmark or a pasted link has to land where it points.
+  const [nav, setNav] = useState(() =>
+    readAdminRoute() ? "admin" : LANDING_NAV
+  );
+  // "explore" | "home" | "profile" | "admin" | workflow id
   // Bumped when the user clicks the workflow they are ALREADY in. Every
   // workflow keeps its own screen in local state (library → session → board),
   // so re-selecting it in the sidebar did nothing — you stayed wherever you
@@ -364,7 +384,7 @@ export default function App() {
   function onAuthed(mail) {
     setEmail(mail);
     setAuthed(true);
-    setNav("home");
+    setNav(LANDING_NAV);
   }
 
   function logout() {
@@ -377,7 +397,8 @@ export default function App() {
     setAuthed(false);
     setEmail(null);
     setSelectedId(null);
-    setNav("home");
+    // Not for the person leaving — for the next one to sign in on this browser.
+    setNav(LANDING_NAV);
     setAuthView("landing");
   }
 
@@ -420,7 +441,7 @@ export default function App() {
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
-    setNav("home");
+    setNav(LANDING_NAV);
     setNavResetKey((k) => k + 1);
   }
 
@@ -450,7 +471,7 @@ export default function App() {
     setAccounts(api.listAccounts());
     setSelectedId(null);
     setPendingAnimaticId(null);
-    setNav("home");
+    setNav(LANDING_NAV);
     setNavResetKey((k) => k + 1);
   }
 
@@ -549,6 +570,24 @@ export default function App() {
         onNavigate={setNav}
       />
     );
+  } else if (nav === "explore") {
+    content = (
+      <Explore
+        /* The RESOLVED rail, objects and all — Explore needs each workflow's
+           label and its locked flag, not just the ids Home gets. Same array the
+           sidebar draws, so a workflow an administrator hides disappears from
+           the tiles, the banners and the filter chips in one go. */
+        workflows={workflows}
+        /* ⚠ AND WHETHER THAT ARRAY IS AN ANSWER OR A GUESS. False draws
+           skeleton tiles rather than the built-in list, for the same reason the
+           rail does — see the note on `workflowsKnown` in Sidebar.jsx. */
+        workflowsKnown={railKnown}
+        onNavigate={setNav}
+        /* Text to Turnaround Image is the one workflow whose cards open a
+           single job rather than the workflow's front door. */
+        onOpenJob={openJobInWorkflow}
+      />
+    );
   } else if (nav === "profile") {
     content = (
       <Profile
@@ -583,7 +622,7 @@ export default function App() {
          on a dead end with a top bar. */
       <div className="card placeholder">
         <p className="muted">That page isn't available on this account.</p>
-        <button className="btn" onClick={() => setNav("home")}>
+        <button className="btn" onClick={() => setNav(LANDING_NAV)}>
           Go to the app
         </button>
       </div>
@@ -698,7 +737,7 @@ export default function App() {
         displayName={displayName}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        onExit={() => setNav("home")}
+        onExit={() => setNav(LANDING_NAV)}
         /* Your account is in the app, so this leaves the panel to get there —
            the same door, not a second copy of the profile page. */
         onOpenAccount={() => setNav("profile")}

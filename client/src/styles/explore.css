@@ -1,0 +1,631 @@
+/* explore — the discovery page: billboards, a tile per workflow, and the wall of everything this account has made. Sibling of home.css; nothing here is read by another screen. */
+
+/* ⚠ EVERY CLASS IN THIS FILE IS `xp-` PREFIXED, and the ones that are not are
+   BORROWED ON PURPOSE — `.btn`, `.badge`, `.opt-chip` and `.lib-shimmer` are the
+   app's own, and a second gold pill / status chip / filter chip that merely
+   RESEMBLED them is exactly the mismatch this repo keeps paying for. Where a
+   borrowed class needed one thing changed, the override carries TWO classes
+   (`.xp-create.btn`), because `.btn.primary` is a two-class rule and a one-class
+   override loses to it on specificity regardless of import order. */
+
+.explore {
+  /* The gold wash both billboards are lit with. Kept as tokens because the
+     light theme's gold is a DEEPER one — see theme.css — and a hard-coded
+     #e5c158 glow reads as a smear on a white page. */
+  --xp-glow: rgba(229, 193, 88, 0.3);
+  --xp-glow-soft: rgba(229, 193, 88, 0.14);
+  /* ⚠ THE SCRIM UNDER A CARD'S CAPTION IS DARK IN BOTH THEMES, and that is not
+     an oversight. It sits over the customer's own artwork, not over the page,
+     so it has to be readable against a photograph — which a light-theme scrim
+     would not be. Same reason the caption text below is literal white. */
+  --xp-veil: linear-gradient(
+    to top,
+    rgba(6, 8, 12, 0.92) 0%,
+    rgba(6, 8, 12, 0.58) 46%,
+    rgba(6, 8, 12, 0) 100%
+  );
+  padding-bottom: 1.5rem;
+}
+:root[data-theme="light"] .explore {
+  --xp-glow: rgba(189, 141, 30, 0.26);
+  --xp-glow-soft: rgba(189, 141, 30, 0.11);
+}
+
+/* The page's heading. The reference has no title above its banners and neither
+   does this — but a screen with no <h1> is a screen a screen-reader lands on
+   with nothing to say, so the name is here and only the eyes skip it. */
+.xp-sr-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =========================================================================
+   ROW 1 — the billboards
+   ========================================================================= */
+.xp-banners {
+  display: grid;
+  /* The rotating one is the wider of the two, as in the reference: it is the
+     one carrying four different messages and needs room for the longest. */
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
+@media (max-width: 1000px) {
+  .xp-banners {
+    grid-template-columns: 1fr;
+  }
+}
+/* The right-hand billboard is skipped while nobody has told this browser which
+   workflows the account may see (Explore.jsx, `promoted`). One banner in a
+   two-column grid would sit in the left third with a hole beside it. */
+.xp-banners:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+
+.xp-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  min-height: 14.5rem;
+  padding: 1.5rem 1.8rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+.xp-banner.tone-brand {
+  background:
+    radial-gradient(120% 150% at 6% 115%, var(--xp-glow), transparent 62%),
+    radial-gradient(95% 130% at 92% -15%, var(--xp-glow-soft), transparent 58%),
+    var(--panel);
+}
+.xp-banner.tone-work {
+  background:
+    radial-gradient(110% 150% at 95% 110%, var(--xp-glow-soft), transparent 60%),
+    var(--panel);
+}
+/* The fixed billboard on the right is the PALE one, exactly as in the
+   reference: two identical dark slabs side by side read as one wide banner
+   with a seam down it, and neither headline wins. */
+.xp-banner.tone-side {
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+
+/* The workflow's own glyph, blown up and bled off the corner. This app has no
+   photography of its own, and a flat gradient with two lines on it reads as an
+   empty box waiting for an image that never arrives. Decoration only — the same
+   glyph is on that workflow's tile a row below, where it is the label. */
+.xp-banner-art {
+  position: absolute;
+  right: -1.6rem;
+  bottom: -2.8rem;
+  font-size: 13rem;
+  line-height: 1;
+  color: var(--primary);
+  opacity: 0.12;
+  pointer-events: none;
+}
+.xp-banner-art svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+}
+
+.xp-banner-body {
+  position: relative;
+  z-index: 1;
+  max-width: 36ch;
+}
+.xp-banner-eyebrow {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.xp-banner-title {
+  margin: 0.4rem 0 0.5rem;
+  font-size: clamp(1.35rem, 2.3vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.xp-banner-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+/* `.btn.primary` carries `margin-top: 1.1rem`, which is right under a form and
+   too much under two lines of banner copy. Two classes, so it wins. */
+.xp-banner-cta.btn {
+  margin-top: 0.9rem;
+}
+
+/* ---- The carousel's own controls ---- */
+.xp-hero-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  /* ⚠ INVISIBLE UNTIL THE POINTER IS ON THE BANNER, VISIBLE THE MOMENT IT IS
+     FOCUSED. Two arrows parked over a headline are clutter; two arrows that
+     cannot be tabbed to are a control keyboard users do not have. */
+  opacity: 0;
+  transition: opacity 0.2s, border-color 0.2s, color 0.2s;
+}
+.xp-hero:hover .xp-hero-arrow,
+.xp-hero-arrow:focus-visible {
+  opacity: 1;
+}
+.xp-hero-arrow:hover {
+  border-color: var(--primary);
+  color: var(--text);
+}
+.xp-hero-arrow.prev {
+  left: 0.6rem;
+}
+.xp-hero-arrow.next {
+  right: 0.6rem;
+}
+
+.xp-hero-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.9rem;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.xp-hero-dot {
+  width: 1.5rem;
+  height: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.2s, width 0.2s;
+}
+.xp-hero-dot:hover {
+  background: var(--muted);
+}
+.xp-hero-dot.active {
+  width: 2.2rem;
+  background: var(--primary);
+}
+
+/* =========================================================================
+   ROW 2 — one tile per workflow
+   ========================================================================= */
+.xp-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.3rem;
+}
+.xp-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  /* One height for the row whether a name takes one line or two. */
+  min-height: 3.9rem;
+  padding: 0.85rem 1.05rem;
+  border: 1px solid var(--nav-stroke);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+.xp-tile:hover {
+  border-color: var(--nav-stroke-hover);
+  background: var(--panel-2);
+  transform: translateY(-1px);
+}
+.xp-tile-ico {
+  display: inline-flex;
+  flex: none;
+  font-size: 1.3rem;
+  color: var(--primary);
+}
+/* ⚠ IT WRAPS, IT DOES NOT ELLIPSIS. These labels are long — "Text to
+   Turnaround Image", "Image to Animatic Image" — and at six tiles across a
+   1500px page a single line clipped them to "Text to Turnar…" and "Image to
+   Ani…", which is two tiles you cannot tell apart. Two short lines are
+   readable; half a name is not. */
+.xp-tile-name {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.xp-tile-go,
+.xp-tile-lock {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+/* ⚠ ONE FILLED TILE, AND ONLY THE FIRST. The reference gives its flagship tool
+   a gradient slab and leaves the rest plain, which is what makes the row
+   scannable — six gold tiles is a row with no beginning. */
+.xp-tile-lead {
+  background: var(--gold-grad-rich);
+  border-color: transparent;
+  color: var(--gold-ink);
+  box-shadow: var(--gold-glow);
+}
+.xp-tile-lead:hover {
+  background: var(--gold-grad-rich-hover);
+  border-color: transparent;
+}
+.xp-tile-lead .xp-tile-ico,
+.xp-tile-lead .xp-tile-go {
+  color: var(--gold-ink);
+}
+/* ⚠ AND IT IS THE SAME WIDTH AS THE OTHERS, NOT WIDER. It spanned two columns
+   for one build, the way the reference draws its flagship — and `auto-fit`
+   decides the column count from the page width, so six tiles occupying SEVEN
+   units landed one short at the width the app actually runs at (1780px viewport
+   minus a 280px rail) and pushed "Video Editor" onto a row of its own. A row
+   that wraps to a widow depending on how wide the window happens to be is worse
+   than a lead tile that is only marked by its colour. */
+
+/* =========================================================================
+   ROW 3 — how to look at the wall
+   ========================================================================= */
+.xp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+/* ⚠ NOT `.tab-bar` / `.tab-btn`. Those are a full-width segmented bar whose
+   buttons are `flex: 1` — correct above a form, wrong beside a search box,
+   where three words must not stretch to half the page. Same visual language
+   (a pill inside a track), different geometry. */
+.xp-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+.xp-tab {
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+.xp-tab:hover {
+  color: var(--text);
+}
+.xp-tab.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+/* ⚠ `display: flex` AND `margin: 0`, because this is a <label> and theme.css
+   makes every label a block with 0.75rem of top margin — which would drop the
+   search box onto its own line and misalign it with the tabs. The storyboard
+   library's filter box carries the same note for the same reason. */
+.xp-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 11rem;
+  max-width: 32rem;
+  margin: 0;
+  padding: 0.32rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  transition: border-color 0.2s;
+}
+.xp-search:focus-within {
+  border-color: var(--primary);
+}
+.xp-search-ico {
+  flex: none;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.xp-search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.28rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+.xp-search-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+.xp-search-clear {
+  flex: none;
+  padding: 0.2rem 0.3rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.xp-search-clear:hover {
+  color: var(--primary);
+  background: var(--panel);
+}
+
+/* `.btn.primary`'s top margin is for a form; here it would drop the button off
+   the toolbar's baseline. Two classes — see the file header. */
+.xp-create.btn {
+  margin-top: 0;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   ROW 4 — the workflow filter (the app's own chips, one gap changed)
+   ========================================================================= */
+.opt-chips.xp-chips {
+  margin: 0 0 1rem;
+}
+.xp-chip {
+  padding: 0.4rem 0.85rem;
+  font-size: 0.82rem;
+}
+
+/* =========================================================================
+   ROW 5 — the wall
+   ========================================================================= */
+/* ⚠ COLUMNS, NOT GRID, and that is the whole reason the wall reads as a
+   gallery. This app's projects are 16:9, 9:16, 1:1 and 4:5 in the same library;
+   a grid would either crop every portrait board to a letterbox or leave a hand's
+   width of empty panel under every landscape one. Columns let each card keep its
+   own shape, which is what the reference does too. */
+.xp-gallery {
+  columns: 5 14rem;
+  column-gap: 0.9rem;
+}
+.xp-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  /* Without this a card is sliced in half across a column break. */
+  break-inside: avoid;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.xp-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+.xp-card-pic {
+  position: relative;
+  display: block;
+  width: 100%;
+  /* `aspectStyle` (LibraryList.jsx) sets `--lib-thumb-ar` from the project's own
+     ratio; anything that never recorded one is shown 16:9. */
+  aspect-ratio: var(--lib-thumb-ar, 16 / 9);
+  background: var(--panel-2);
+}
+.xp-card-pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A plan or a character run has no picture yet. Its workflow's glyph is a
+   better answer than a grey rectangle: it still says WHERE the thing lives. */
+.xp-card-glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 2.6rem;
+  color: var(--muted);
+  opacity: 0.5;
+}
+.xp-card-veil {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  /* ⚠ A FIXED HEIGHT, NOT A PERCENTAGE. The wall holds 16:9 and 9:16 in the
+     same column, and 62% of a portrait card is a grey wash over half the
+     artwork — the caption is two lines whatever the card's shape, so the scrim
+     under it should be too. */
+  height: 6.5rem;
+  background: var(--xp-veil);
+  pointer-events: none;
+}
+.xp-card-meta {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.65rem 0.75rem;
+}
+/* Literal white and a literal pale gold, NOT `--text` / `--primary` — see the
+   note on `--xp-veil` at the top. In the light theme those two tokens are near
+   black and a deep bronze, and both would disappear into the dark scrim. */
+.xp-card-name {
+  overflow: hidden;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 650;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.xp-card-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.5rem;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.69rem;
+}
+.xp-card-wf {
+  color: #e9cf86;
+  font-weight: 600;
+}
+.xp-card-badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 1;
+  font-size: 0.6rem;
+  padding: 0.12rem 0.4rem;
+}
+
+/* ---- Nothing to show ---- */
+.xp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 3rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  text-align: center;
+}
+.xp-empty-ico {
+  font-size: 2.6rem;
+  color: var(--muted);
+  opacity: 0.45;
+}
+.xp-empty-ico svg {
+  display: block;
+  width: 1em;
+  height: 1em;
+}
+.xp-empty-text {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.xp-empty-btn.btn {
+  margin-top: 0.3rem;
+}
+
+/* ---- Placeholders, in the storyboard library's own shimmer ----
+   ⚠ THE ANIMATION IS ON `.is-loading`, NOT ON THE GHOST, so a wall that has
+   finished loading and is genuinely empty holds still instead of pulsing at
+   somebody who has nothing. Same switch `.lib-ghosts` uses, and it borrows that
+   file's `lib-shimmer` keyframes rather than declaring a second identical one. */
+.xp-card-ghost {
+  pointer-events: none;
+  opacity: 0.6;
+}
+.xp-ghost-cover,
+.xp-ghost-line {
+  display: block;
+  background: var(--panel-2);
+}
+.xp-ghosts.is-loading .xp-ghost-cover,
+.xp-ghosts.is-loading .xp-ghost-line,
+.xp-tile-ghost .xp-ghost-tile {
+  background: linear-gradient(
+    90deg,
+    var(--panel-2) 25%,
+    var(--border) 50%,
+    var(--panel-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: lib-shimmer 1.3s ease-in-out infinite;
+}
+.xp-tile-ghost {
+  pointer-events: none;
+}
+.xp-ghost-tile {
+  display: block;
+  width: 100%;
+  height: 1.1rem;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .xp-ghosts.is-loading .xp-ghost-cover,
+  .xp-ghosts.is-loading .xp-ghost-line,
+  .xp-tile-ghost .xp-ghost-tile {
+    animation: none;
+  }
+  .xp-card:hover,
+  .xp-tile:hover {
+    transform: none;
+  }
+}
+
+/* ---- Narrow ---- */
+@media (max-width: 700px) {
+  .xp-banner {
+    min-height: 11.5rem;
+    padding: 1.2rem 1.3rem;
+  }
+  .xp-banner-art {
+    font-size: 9rem;
+  }
+  .xp-create.btn {
+    margin-left: 0;
+    width: 100%;
+  }
+  .xp-search {
+    max-width: none;
+  }
+}

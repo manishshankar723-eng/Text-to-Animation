@@ -1,6 +1,15 @@
-import { useEffect, useReducer, useRef, useState } from "react";
-import * as api from "../api.js";
+import { useState } from "react";
 import * as cache from "../session_cache.js";
+// ⚠ THE SIX GROUPS, THE COVER FETCHER AND THE CACHE SUBSCRIPTION LIVE THERE
+// NOW, because the Explore page needs exactly the same answer and Home's own
+// header warned what a second copy of it would cost. See that file's header.
+import {
+  buildGroups,
+  formatDate,
+  statusClass,
+  useCovers,
+  useDashboard
+} from "../dashboard_feed.js";
 import Avatar from "./Avatar.jsx";
 // ⚠ THE SAME CARD THE LANDING PAGE AND THE PRICING MODAL DRAW. A signed-in
 // customer is the one most likely to actually spend a coupon, and before this
@@ -9,9 +18,9 @@ import Avatar from "./Avatar.jsx";
 import { OfferStrip } from "./OfferCard.jsx";
 // ⚠ THE SAME THUMBNAIL THE LIBRARIES DRAW, not a second one that resembles
 // it. `aspectStyle` is what stops a 9:16 project being shown as a slice out
-// of its own middle, and `THUMB_EDGE` is what stops a 72px picture costing a
-// 3.5 MB download — both are worth exactly as much here as they are there.
-import { aspectStyle, formatBytes, THUMB_EDGE } from "./LibraryList.jsx";
+// of its own middle. (`THUMB_EDGE` — what stops a 72px picture costing a 3.5 MB
+// download — moved with the cover fetcher into `dashboard_feed.js`.)
+import { aspectStyle, formatBytes } from "./LibraryList.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Home — the DASHBOARD: who you are, your plan, and the latest work from EVERY
@@ -43,162 +52,9 @@ import WorkflowIcon from "./WorkflowIcon.jsx";
 // left off; more turns the dashboard into four half-libraries.
 const PER_WORKFLOW = 2;
 
-function formatDate(iso) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-}
-
-function statusClass(status) {
-  if (status === "succeeded") return "ok";
-  if (status === "failed") return "fail";
-  if (status === "running") return "running";
-  return "queued";
-}
-
 // How many ghost rows a group shows while it waits. Matches PER_WORKFLOW so the
 // skeleton is the same height as the thing replacing it and nothing jumps.
 const GHOST_ROWS = PER_WORKFLOW;
-
-/**
- * Fetch each row's cover picture once, as an authed object URL.
- *
- * ⚠ THIS IS NOT THE THING THE MODULE HEADER FORBIDS. What that note is about is
- * the seven LIST requests this screen used to fire on mount, which blanked the
- * dashboard until they answered. These are pictures for content that is already
- * on screen: nothing waits for them, a failure leaves the workflow's own icon in
- * place, and they are asked for at `THUMB_EDGE` rather than full size.
- *
- * ⚠ `asked` IS WHAT MAKES IT ONCE. `items` is a fresh array on every render, so
- * the effect re-runs constantly; the set is what stops a re-render becoming a
- * re-fetch.
- *
- * ⚠ AND THE REVOKE IS TIED TO UNMOUNT, NOT TO THE EFFECT RE-RUNNING. Revoking
- * on every cleanup would throw away the URL of a fetch that started one render
- * ago — and because `asked` already holds its key, nothing would ever ask for
- * that picture again and the row would keep the placeholder for ever.
- *
- * ⚠ AND THE UNMOUNT PATH HAS TO UNDO **ALL THREE** PIECES OF STATE, BECAUSE OF
- * `React.StrictMode` (main.jsx). In development it mounts, tears down, and
- * mounts again — with the component's state kept. The first version of this
- * hook only ever set its `live` flag to FALSE on the way out and never back to
- * true, so on the second, real mount:
- *
- *   · `live` was still false, so every picture that arrived was revoked and
- *     thrown away, and
- *   · `asked` still held every key, so nothing was ever requested again.
- *
- * Result: not one cover ever appeared on the dashboard — reported as "see not
- * view image". So the setup RE-ARMS `live`, and the cleanup forgets what was
- * asked for AND clears `urls`: state survives a StrictMode remount, so leaving
- * the map in place would leave `<img src>` pointing at blobs that were just
- * revoked, which is a broken picture rather than a missing one.
- *
- * The cost in dev is that each picture is fetched twice. That is what
- * StrictMode is FOR — it is the same double-fetch it forces on every other
- * effect in the app, and it does not happen in a production build.
- */
-function useCovers(items) {
-  const [urls, setUrls] = useState({});
-  const made = useRef([]);
-  const asked = useRef(new Set());
-  const live = useRef(true);
-
-  useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-      made.current.forEach((u) => URL.revokeObjectURL(u));
-      made.current = [];
-      asked.current = new Set();
-      setUrls({});
-    };
-  }, []);
-
-  useEffect(() => {
-    for (const it of items) {
-      if (!it.loadCover || asked.current.has(it.key)) continue;
-      asked.current.add(it.key);
-      it.loadCover()
-        .then((url) => {
-          if (!live.current) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          made.current.push(url);
-          setUrls((m) => ({ ...m, [it.key]: url }));
-        })
-        .catch(() => {}); // a missing cover just leaves the workflow's icon
-    }
-  }, [items]);
-
-  return urls;
-}
-
-// `/jobs` answers with a bare array; one older shape wrapped it. Normalised in
-// one place rather than at each use.
-function asList(value) {
-  if (Array.isArray(value)) return value;
-  if (value && Array.isArray(value.jobs)) return value.jobs;
-  return [];
-}
-
-/**
- * The number to print in "View all (N)", or `null` for "we can't say".
- *
- * ⚠ THE DASHBOARD ONLY FETCHES A PAGE NOW (`DASH_LIMIT`), so the length of the
- * list it holds is NOT the size of the library — and quietly printing it would
- * turn "View all (40)" into "View all (8)" for the busiest accounts, which is
- * the sort of wrong number nobody reports and everybody half-notices.
- *
- * Two ways to be sure, and if neither applies we print no number at all:
- *   - the page came back SHORT of the limit, so the page is everything;
- *   - the login hint counts these job kinds exactly (see TokenResponse.counts).
- *
- * `kinds` is empty for the two storyboard groups on purpose: both are made of
- * `storyboard` records and the hint cannot tell an original from a copy, so a
- * full page of either is honestly unknown.
- */
-function totalFor(list, kinds) {
-  if (list.length < cache.DASH_LIMIT) return list.length;
-  const counts = cache.hint();
-  if (counts && kinds.length) {
-    const n = kinds.reduce((sum, k) => sum + (Number(counts[k]) || 0), 0);
-    if (n >= list.length) return n;
-  }
-  return null;
-}
-
-/**
- * Subscribe to the session cache and re-render whenever it changes.
- *
- * ⚠ IT READS SYNCHRONOUSLY AND ONLY THEN ASKS FOR A REFRESH. That order is what
- * removes the loader: by the time this runs the prefetch started at sign-in has
- * usually landed, so the first paint is real content and the refresh is a
- * silent top-up behind it. Nothing here can start a duplicate request — the
- * cache joins whatever is already in flight.
- *
- * ⚠ AND IT IS `refresh`, NOT `ensure` — the lists are re-read on EVERY mount,
- * staleness window ignored. This screen has no router: leaving Home unmounts it
- * and coming back mounts it again, and the commonest reason to come back is
- * that you just made something. A cache that answered "still fresh, I read this
- * forty seconds ago" would show a customer a dashboard with their new project
- * missing from it — which is a worse bug than the slowness this all started as.
- *
- * It costs what it should: five small requests that nobody waits for, because
- * what is already cached stays on screen throughout. That is the difference
- * from the version this replaced, which made the same requests and BLANKED THE
- * PAGE until they answered.
- */
-function useDashboard() {
-  const [, bump] = useReducer((n) => n + 1, 0);
-  useEffect(() => cache.subscribe(bump), []);
-  useEffect(() => {
-    // `me` / `entitlements` are deliberately not in here — the shell owns those
-    // and they do not change while you are signed in.
-    cache.refresh(cache.LIST_KEYS);
-  }, []);
-}
 
 export default function Home({
   email,
@@ -219,16 +75,10 @@ export default function Home({
 }) {
   useDashboard();
 
-  // Every one of these is a synchronous read of an answer that, on the ordinary
-  // path, arrived while this component was still being mounted.
+  // A synchronous read of an answer that, on the ordinary path, arrived while
+  // this component was still being mounted. The LISTS are read the same way,
+  // one layer down, by `buildGroups` — see `dashboard_feed.js`.
   const profile = cache.read("me") || null;
-  const jobs = asList(cache.read("jobs"));
-  const boards = asList(cache.read("boards"));
-  // Image to Animatic Image's own copies — a different set from `boards`.
-  const copiedBoards = asList(cache.read("copiedBoards"));
-  const animatics = asList(cache.read("animatics"));
-  const videos = asList(cache.read("videos"));
-  const plans = asList(cache.read("plans"));
 
   // ⚠ "NOTHING HAS ARRIVED YET" — NOT "A REQUEST IS RUNNING". A background
   // refresh of a dashboard that is already on screen is not a loading state and
@@ -269,147 +119,18 @@ export default function Home({
   const displayName = profile?.display_name || profile?.full_name || email;
   const initial = (displayName || "?").trim().charAt(0).toUpperCase();
 
-  // One shape for every workflow, so the groups render from one component
-  // instead of five near-identical blocks. ORDER MATCHES THE SIDEBAR — when a
-  // workflow is added, renamed or moved in Sidebar.jsx, it has to be added,
-  // renamed or moved here too, or Recent work quietly stops showing it (which
-  // is exactly how Image to Video went missing).
-  const groups = [
-    {
-      id: "plan-and-script",
-      icon: "🗓️",
-      label: "Plan & Script",
-      total: totalFor(plans, ["plan"]),
-      items: plans.map((p) => ({
-        key: p.job_id,
-        title: p.title || "Untitled plan",
-        meta: p.item_count > 0 ? `${p.item_count} uploads` : "no plan yet",
-        date: p.updated_at || p.created_at
-      }))
-    },
-    {
-      id: "text-to-image",
-      icon: "🖼️",
-      label: "Text to Turnaround Image",
-      // Both character kinds land in this one list — see CHARACTER_JOB_KINDS.
-      total: totalFor(jobs, ["generate", "meshy"]),
-      items: jobs.map((j) => ({
-        key: j.job_id,
-        title: j.character_name || "Untitled",
-        status: j.status,
-        date: j.created_at,
-        // Only this workflow can open a job detail and serve an asset ZIP.
-        onOpen: () => onOpenJob?.(j.job_id),
-        zip:
-          j.status === "succeeded"
-            ? () =>
-                api
-                  .downloadZip(
-                    j.job_id,
-                    `${j.character_name}_assets.zip`,
-                    j.result?.zip
-                  )
-                  .catch((e) => setActionError(e.message))
-            : null
-      }))
-    },
-    {
-      id: "script-to-storyboard",
-      icon: "📝",
-      label: "Script to Storyboard",
-      // No kinds: originals and copies are both `storyboard` records, so the
-      // hint cannot separate them. See totalFor.
-      total: totalFor(boards, []),
-      items: boards.map((b) => ({
-        key: b.job_id,
-        title: b.title || "Storyboard",
-        status: b.status,
-        meta: b.panel_count ? `${b.panel_count} panels` : "",
-        aspect: b.aspect_ratio,
-        size: b.size_bytes,
-        loadCover:
-          b.cover_index === null || b.cover_index === undefined
-            ? null
-            : () =>
-                api.fetchStoryboardPanel(
-                  b.job_id,
-                  b.cover_index,
-                  b.cover_url,
-                  THUMB_EDGE
-                ),
-        date: b.created_at
-      }))
-    },
-    {
-      // Its OWN boards — independent copies made by its "From a Storyboard"
-      // tile, not the originals. Drawing in a copy must never change the
-      // storyboard it came from, so the two sets are kept apart everywhere.
-      id: "create-animatic-image",
-      icon: "🖼️",
-      label: "Image to Animatic Image",
-      total: totalFor(copiedBoards, []),
-      items: copiedBoards.map((b) => ({
-        key: b.job_id,
-        title: b.title || "Storyboard",
-        status: b.status,
-        meta: b.panel_count ? `${b.panel_count} panels` : "",
-        aspect: b.aspect_ratio,
-        size: b.size_bytes,
-        loadCover:
-          b.cover_index === null || b.cover_index === undefined
-            ? null
-            : () =>
-                api.fetchStoryboardPanel(
-                  b.job_id,
-                  b.cover_index,
-                  b.cover_url,
-                  THUMB_EDGE
-                ),
-        date: b.updated_at || b.created_at
-      }))
-    },
-    {
-      id: "animatics-to-video",
-      icon: "🎞️",
-      label: "Image to AI Video",
-      total: totalFor(videos, ["final_video"]),
-      items: videos.map((v) => ({
-        key: v.job_id,
-        title: v.title || "Final video",
-        status: v.status,
-        // How much is DONE, not just how much is in it — this is the only
-        // workflow where the remainder costs money to finish.
-        meta: v.shot_count
-          ? `${v.rendered_count}/${v.shot_count} rendered`
-          : "",
-        aspect: v.aspect_ratio,
-        size: v.size_bytes,
-        loadCover: v.cover_url
-          ? () => api.fetchFinalVideoMedia(v.cover_url, THUMB_EDGE)
-          : null,
-        date: v.updated_at || v.created_at
-      }))
-    },
-    {
-      id: "storyboard-to-animatics",
-      icon: "🎬",
-      label: "Video Editor",
-      total: totalFor(animatics, ["animatic"]),
-      items: animatics.map((a) => ({
-        key: a.job_id,
-        title: a.title || "Project",
-        status: a.status,
-        // Same shape of hint as the others: how much is in it.
-        meta: a.frame_count ? `${a.frame_count} frames` : "",
-        aspect: a.aspect_ratio,
-        size: a.size_bytes,
-        loadCover: a.cover_url
-          ? () => api.fetchAnimaticMedia(a.cover_url, THUMB_EDGE)
-          : null,
-        date: a.updated_at || a.created_at
-      }))
-    }
-  ];
+  // One shape for every workflow. ⚠ THE ARRAY MOVED TO `dashboard_feed.js` and
+  // is shared with the Explore page, so the six groups, their order and their
+  // labels exist in exactly one file. THAT ORDER STILL MATCHES THE SIDEBAR —
+  // when a workflow is added, renamed or moved in Sidebar.jsx it has to be
+  // added, renamed or moved there too, or Recent work quietly stops showing it
+  // (which is exactly how Image to Video went missing).
+  const groups = buildGroups({
+    // Text to Turnaround Image is the only workflow that can open a single job,
+    // and the only one with a button here that can fail — its asset ZIP.
+    onOpenJob,
+    onError: setActionError
+  });
 
   // ⚠ THE HINT WINS HERE, because it is the only EXACT number available: it is
   // a count of every record this account owns, made by the database at sign-in.

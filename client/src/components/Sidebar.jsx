@@ -148,8 +148,24 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Home */}
+      {/* Explore + Home */}
       <nav className="sb-nav">
+        {/* ⚠ ABOVE HOME, AND THAT IS THE ORDER THAT WAS ASKED FOR. The two are
+            not the same page: Home is the DASHBOARD (who you are, your plan,
+            where you left off), Explore is the SHOP WINDOW (what this studio
+            can make, and every project you own as one picture wall). Discovery
+            sits above the desk, the way the reference has it. See Explore.jsx.
+            Emoji, like Home's — the workflow rows below are the ones that
+            needed drawn glyphs, because two of them shared a picture. */}
+        <button
+          className={`sb-item ${active === "explore" ? "active" : ""}`}
+          onClick={() => onNavigate("explore")}
+          title="Explore"
+        >
+          <span className="sb-ico">🧭</span>
+          <span className="sb-item-label">Explore</span>
+        </button>
+
         <button
           className={`sb-item ${active === "home" ? "active" : ""}`}
           onClick={() => onNavigate("home")}

@@ -128,7 +128,12 @@ const WORKFLOWS = [
 ];
 
 // The copy, by id — what the answer from the server gets joined against.
-const COPY = Object.fromEntries(WORKFLOWS.map((w) => [w.id, w]));
+//
+// ⚠ EXPORTED, because the Explore page pitches the same six workflows to a
+// customer who is already signed in — its banners and its tile tooltips read
+// from here. Two sets of words for one tool is how a workflow ends up
+// described one way to a prospect and another way to the person paying for it.
+export const COPY = Object.fromEntries(WORKFLOWS.map((w) => [w.id, w]));
 
 // ⚠ WHAT TO DRAW WHEN THE SERVER DOES NOT ANSWER, and the ONE hand-maintained
 // list left on this page. It is deliberately the four that are live today

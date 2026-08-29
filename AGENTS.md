@@ -284,7 +284,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-28 — **THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED.** Pressing **Script to Storyboard** after a long gap did not open "Your Storyboards" — it opened **"Is this the right direction?"**, the unapproved concept card, for a film whose two finished 15-panel boards were sitting in the library behind it. *"jab user open kar raha hai script to storyboard to first page khulna chahiye, nhi ki ye page."* It was deliberate code: the script-draft restore promoted `library` → `concept` behind a module-scope latch. ⚠ **And the half nobody had noticed — `api.clearScriptDraft()` was defined and called from NOWHERE in the repo**, so a spent concept was never dropped and the card being reopened was usually the plan for a film already generated, exported and forgotten weeks earlier. A ghost, not a resume. ⚠ **This workflow had already learned this rule and paid several sessions for it** (F3: the front door is the front door, unfinished work WAITS there as a row) — the comment stating it sits twenty lines above the code that was overriding it. The reopen existed only because the first "offer it" attempt put the link on the FORM, which `workflow_mount_check.py` proved unreachable from a cold start. So the offer moved to the screen a cold start actually reaches: the **library**, as a row beside the unfinished boards — same `LibraryRow`, same Resume button, same confirm strip, "Not approved yet", and a discard that clears the SERVER slot so it cannot come back. Plus the clear that was missing: `finishBreakdown()` now drops the card the moment it becomes a shot list, so one film never grows two library rows. New **RULEBOOK F5**. `script_concept_check.py` and the Chromium `workflow_mount_check.py` rewritten and passing; `storyboard_draft_check.py` un-pinned from a verbatim expression. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
+**Last updated:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **47 checks, all green**, both themes, Home included. **And then the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Not yet opened in the user's own browser.** See the Work Log.
+
+**Previously:** 2026-08-28 — **THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED.** Pressing **Script to Storyboard** after a long gap did not open "Your Storyboards" — it opened **"Is this the right direction?"**, the unapproved concept card, for a film whose two finished 15-panel boards were sitting in the library behind it. *"jab user open kar raha hai script to storyboard to first page khulna chahiye, nhi ki ye page."* It was deliberate code: the script-draft restore promoted `library` → `concept` behind a module-scope latch. ⚠ **And the half nobody had noticed — `api.clearScriptDraft()` was defined and called from NOWHERE in the repo**, so a spent concept was never dropped and the card being reopened was usually the plan for a film already generated, exported and forgotten weeks earlier. A ghost, not a resume. ⚠ **This workflow had already learned this rule and paid several sessions for it** (F3: the front door is the front door, unfinished work WAITS there as a row) — the comment stating it sits twenty lines above the code that was overriding it. The reopen existed only because the first "offer it" attempt put the link on the FORM, which `workflow_mount_check.py` proved unreachable from a cold start. So the offer moved to the screen a cold start actually reaches: the **library**, as a row beside the unfinished boards — same `LibraryRow`, same Resume button, same confirm strip, "Not approved yet", and a discard that clears the SERVER slot so it cannot come back. Plus the clear that was missing: `finishBreakdown()` now drops the card the moment it becomes a shot list, so one film never grows two library rows. New **RULEBOOK F5**. `script_concept_check.py` and the Chromium `workflow_mount_check.py` rewritten and passing; `storyboard_draft_check.py` un-pinned from a verbatim expression. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
 
 **Previously:** 2026-08-28 — **THE CONCEPT WROTE AN ENDING AND THEN GAVE IT TO NOBODY TO FILM, AND EVERY FIX NOW HAS A PLACE TO LIVE.** A Hinglish Ganesh Chaturthi concept came back with a story direction ending *"… -> Bhaavnaatmak Visarjan -> Aashirwad bana rehta hai"* and six key scenes that stopped at the visarjan — ⚠ **the resolution, the whole reason the film is warm and not sad, was written into the approved text and then never given a scene.** Nothing caught it because `story_direction` and `key_scenes` were only ever asked for separately: six beats and six scenes reads as a match, which is exactly what hid a beat falling off the end. New `_SCENE_LIST_RULES` says the scene list must END where the arc ends, cover every beat, and — from the same concept, a film about an idol that never once framed it — **show the subject alone at least once.** ⚠ **And the ending half is enforced, not asked for**: `final_beat()` reads the last step straight out of the approved text and `concept_to_brief()` states it to the writer as a requirement, so the film lands its ending even when the card the user approved never grew a scene for it — with `_covered_by()` deliberately generous, because a brief arguing with itself is the worse failure. **Also: a 40-second film opened on the run-up.** `is_short_form()` reads reel / viral / shorts and this brief said none of them, so nothing knew the film was short; new `TIGHT_RUNTIME_SECONDS` + `stated_seconds()` (smallest duration wins) fire a rule that ⚠ **moves the OPENING only** — it is not the hook rule, the rest of the arc keeps its order, and the two never stack. **And the second half of the session is a file, not a fix: new `RULEBOOK.md`** — every rule this app has learned, indexed by SCENARIO instead of by date, each one marked **PAKKA** (enforced in code) or **GUZARISH** (a prompt rule, unproven until a live run), with the still-open list at the foot. ⚠ This Work Log is 22,000 lines and nobody reads it before editing one prompt string — which is how the same box got un-grown four times and the same end card was fixed twice. The Protocol now makes reading and updating it step 0. **Then the same brief was re-run from a file, and all four new rules held** — the arc landed on *Bhagwan ka aashirwad*, every beat had a scene, Ganesh ji finally filled a frame alone, and the film opened on a child's eyes instead of on laying out marigolds. ⚠ **And the visarjan had quietly gone.** The FIXED list protected the product, the audience, the length, the tone, the setting and the characters — and stopped there, so an EVENT the brief asked for was guarded by nothing; worse, the beat a concept drops when it tightens is always the hard one, and the hard one is the only one an audience feels. Two more rules: an event they named is as fixed as a character they named (shorten by tightening scenes, **never by deleting one of theirs**), and **do not smooth the hard beat away** — keep it, put it late, let the resolution land after it rather than instead of it. `tests/script_concept_check.py` gains 15 checks and passes. ⚠ **Every one of these is a prompt rule; A1–A4 have exactly one live pass logged in `RULEBOOK.md`, A10 and A11 have none.** See the Work Log.
 
@@ -3467,7 +3469,105 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-28 (latest) — THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED
+### 2026-08-29 (latest) — A SECOND FRONT PAGE: EXPLORE, AND THE LIST THAT NOW EXISTS ONCE
+
+Asked for directly, with the Kling AI Explore page as the reference:
+*"mai chahta hun ki tum mera home page ke uper Explore buttun bana kar aisa
+page mai dikhna chahiye jaisa mai reference image diya hai waisa hi banao mere
+workflow ke hisaab se."*
+
+**What was built.** A new nav row above Home, and the screen behind it:
+
+1. **A rotating billboard + a fixed one**, in the reference's 1.35 / 1 split.
+   Four slides — the brand mark and its one-line pitch, then the first three
+   workflows the account may see — with dots, arrows that appear on hover or
+   focus, a 6s timer that PAUSES while the pointer or the keyboard is on the
+   banner, and no timer at all under `prefers-reduced-motion`. The right-hand
+   billboard is the pale one, as in the reference, and advertises the Video
+   Editor.
+2. **A tile per workflow**, the first one filled gold. Names WRAP rather than
+   ellipsis — at six across, one line clipped "Text to Turnaround Image" to
+   "Text to Turnar…", and two tiles you cannot tell apart is worse than two
+   lines.
+3. **A toolbar**: Highlights / Recent / In progress, a search box, and a
+   "＋ New storyboard" that is the app's own `.btn primary`.
+4. **The workflow chips**, drawn with the app's own `.opt-chip` — the same pill
+   nine other screens use — labelled with the LANDING PAGE's short names
+   (`COPY` in `Landing.jsx` is now exported, so a workflow is pitched in one
+   place and read in two).
+5. **The wall**: every project this account owns, in one CSS-columns masonry so
+   a 9:16 board keeps its own shape instead of being cropped to a letterbox.
+   Caption on a dark scrim, workflow name in gold, a status chip ONLY on what is
+   not finished.
+
+⚠ **THE WALL IS THE ACCOUNT'S OWN WORK, NOT A COMMUNITY FEED, AND THAT IS A
+DECISION.** The reference fills its grid with strangers' videos; this app has no
+public gallery, nothing is shared by default, and inventing one would mean
+publishing customers' storyboards. If a public feed is ever built it becomes a
+fourth tab — the layout has room. Said plainly to the user rather than quietly
+substituted.
+
+⚠ **AND THE SIX WORKFLOW GROUPS NOW EXIST IN EXACTLY ONE FILE.** `Home.jsx`
+carried that array with its own warning on it — *"ORDER MATCHES THE SIDEBAR —
+when a workflow is added, renamed or moved in Sidebar.jsx, it has to be added,
+renamed or moved here too, or Recent work quietly stops showing it (which is
+exactly how Image to Video went missing)"* — and that warning was written about
+ONE list. Explore would have made it two. So the array, `useCovers`,
+`useDashboard`, `asList`, `totalFor`, `statusClass` and `formatDate` moved into
+new **`client/src/dashboard_feed.js`**, and Home imports them back; Home lost
+10.4 KB and gained nothing it did not already have. New **RULEBOOK E10**.
+
+⚠ **THE BILLBOARDS WAIT FOR THE ENTITLEMENTS ANSWER; THE GALLERY DOES NOT.**
+A banner or tile for a workflow an administrator has HIDDEN is the *"hidden
+feature that reappears on every reload"* fault the rail was fixed for, so
+`promoted` is gated on `workflowsKnown` and draws skeleton tiles until the
+answer lands. The account's own WORK is drawn regardless — failing open is the
+dashboard's rule, and "not answered yet" must never read as "you have nothing".
+New **RULEBOOK E11**.
+
+**Files.** New `client/src/dashboard_feed.js`, `client/src/components/Explore.jsx`,
+`client/src/styles/explore.css`, `tests/explore_mount_check.py`. Changed
+`Home.jsx` (rewired onto the shared feed), `Sidebar.jsx` (the Explore row, above
+Home), `App.jsx` (the nav branch), `Landing.jsx` (`COPY` exported),
+`styles/index.css` (the new sheet, beside home.css).
+
+**Verified.** `npm run build` green, and — because a green build is not evidence
+that a screen renders (**G7**) — a new Chromium probe: `tests/explore_mount_check.py`,
+**47 checks, all passing**. It mounts Explore AND Home inside `<React.StrictMode>`
+(the double mount is what broke `useCovers` once before, and moving that hook to
+a new file is exactly when you would want to know), and asserts: nothing reaches
+`pageerror`; the rail carrying an Explore row ABOVE Home, marked active, with
+Home still one click away; four dots and a dot that actually changes the slide; six tiles, one
+filled, and pressing one navigates; all seven fixture projects on the wall from
+all six workflows; covers arriving; a badge only on the two unfinished ones; the
+chip, the tab and the search box each narrowing it and clearing again; a workflow
+hidden from out here vanishing from the tiles AND from the wall; Home still
+mounting on the shared feed with its six groups, its covers and real dates; and
+the whole page surviving the light to dark palette swap. Screenshots in
+`output/explore_mount.png` and `output/explore_mount_dark.png`.
+
+**Then, same session, the front door moved.** *"so pahle mai chahta hun ki jab
+user aaye to explore page khul home page nhi."* ⚠ **AND IT WAS SPELLED OUT IN
+FIVE PLACES**: the `useState` initialiser, `onAuthed`, `logout` (which sets the
+state the next sign-in starts from), `switchAccount` and `accountAdded`, plus
+the two ways out of the admin panel. Five lines to change to move one door, and
+four of them easy to miss — the bug that produces is *"it opens on the right
+page UNLESS you switched account"*, which nobody reports as one bug. They now
+all read one constant, **`LANDING_NAV`** at the top of `App.jsx`. ⚠ `?admin`
+still wins over it: that is an address somebody was SENT, and a link that lands
+somewhere other than where it points is a broken link. Home is unchanged and one
+click away — moving the front door must not remove the desk. New **RULEBOOK
+E12**, and the probe now mounts the WHOLE signed-in `<App/>` for the one
+question nothing else could see: which screen does it open on.
+
+⚠ **NOT YET OPENED IN THE USER'S OWN BROWSER**, and one thing to look at when it
+is: the masonry balances by column, so with only a handful of projects a single
+9:16 board can own a whole column and leave white space beside it. With a real
+library (the account has ~40) the columns even out; if it still reads badly, the
+answer is a bounded ratio, not a crop.
+
+
+### 2026-08-28 — THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED
 
 Reported as a question rather than a bug report, and it was the right question:
 *"jab user open kar raha hai script to storyboard to first page khulna chahiye,
@@ -22785,6 +22885,27 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: EXPLORE IS BUILT AND HAS NOT BEEN SEEN BY THE USER (2026-08-29)
+
+A new **Explore** row sits above Home in the rail. Pinned by 47 Chromium checks
+(`tests/explore_mount_check.py`), light and dark. What to look at when you open it:
+
+1. **The rail.** 🧭 Explore above 🏠 Home. ⚠ **The app now OPENS on Explore** —
+   a fresh sign-in, a returning tab, an account switch and leaving the admin
+   panel all land there (`LANDING_NAV` in `App.jsx`, one constant). Home is
+   unchanged and one click below it.
+2. **The billboards.** The left one rotates every 6 seconds and STOPS while your
+   pointer is on it. Dots and the arrows should both move it.
+3. **The tiles.** Six, one per workflow, first one gold. Every name should be
+   readable in full — no "Image to Ani…".
+4. **The wall.** Every project you own, largest-picture-first under
+   **Highlights**. **In progress** should show only what is running or failed.
+   The chips and the search box filter it.
+5. ⚠ **The one known rough edge**: with few projects the masonry can leave a tall
+   9:16 board owning a column with space beside it. Say if it still looks wrong
+   with your ~40 projects and it gets a bounded ratio rather than a crop.
+
 
 > ⚠ **START HERE. THE 2026-08-27 LIVE TEST OF SCRIPT → STORYBOARD IS NOW ALL
 > FIXED AND ALL UNVERIFIED.** The user drove the whole new intake flow in a

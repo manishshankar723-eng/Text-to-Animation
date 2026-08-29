@@ -130,6 +130,9 @@ GUZARISH hai, to "ho gaya" mat samajhiye jab tak ek asli board ban kar na dekh l
 | **E7** | A step that can be reached going FORWARD | ⚠ **It must stay reachable going back.** *Found: once a board existed, the review step collapsed to Regenerate + Back to your storyboard and the cast/props screens became unreachable — the exact screens where a wrong character or a drifting prop is fixed.* A finished artefact is when those screens matter MOST, not least. Offer the forward path always; hide it only when the destination would be empty. | PAKKA |
 | **E8** | A comma-separated text field bound to an array | ⚠ **Split on the separator and NOTHING else, and join with the bare separator.** Filtering the empty piece eats the separator as it is typed; trimming each piece eats the SPACE inside a value — *"Ganesh idol" could only be typed as "Ganeshidol"*. Both were shipped, minutes apart, and both were caught only in a browser. Clean at the consumers, never on keystroke. | PAKKA |
 | **E6** | A list where ORDER is the meaning | **Add and delete are not enough — it needs ↑ / ↓ too.** *Found: a scene added to the concept card to fill a real gap landed at position 7, belonged at position 3, and could not be moved.* ⚠ Copy the shot cards' controls exactly — `title="Move up"` / `"Move down"`, disabled at either end, **and the handler no-ops at the ends as well** so a keypress that beats the re-render cannot wrap scene 1 to the bottom. `moveKeyScene()` mirrors `moveShot()`. | PAKKA |
+| **E10** | A SECOND screen that lists the account's work | ⚠ **Read the groups out of `client/src/dashboard_feed.js`; do not map the six workflows again.** `Home.jsx` carried that array with its own warning on it — *"ORDER MATCHES THE SIDEBAR … or Recent work quietly stops showing it (which is exactly how Image to Video went missing)"* — and that warning was written about ONE list. Explore made it two, so the array, `useCovers`, `useDashboard`, `statusClass` and `formatDate` moved into the shared module and Home now imports them back. A workflow added, renamed or hidden is a change in `Sidebar.jsx` + `features.py` + that one file, never in a screen. | PAKKA |
+| **E11** | Any new screen that ADVERTISES a workflow (banner, tile, chip) | ⚠ **It waits for `/auth/me/entitlements`, exactly like the rail does.** The account's own WORK may be drawn while the answer is in flight (failing open is right there — "not answered yet" must never read as "you have nothing"), but a banner or tile for a workflow an administrator has HIDDEN is the *"hidden feature that reappears on every reload"* fault the sidebar already paid for. Explore splits the two: `promoted` is gated on `workflowsKnown`, the gallery is not. | PAKKA |
+| **E12** | Moving WHERE THE APP OPENS | ⚠ **Change `LANDING_NAV` in `App.jsx` and nothing else — it is the one place.** FIVE paths land somebody in the app (a returning session, a fresh sign-in, a sign-out, an account switch, and leaving the admin panel) and every one of them used to name the destination itself. The bug that shape produces is *"it opens on the right page UNLESS you switched account"*, which nobody reports as one bug. `?admin` still wins over it: a link has to land where it points. Today it is **Explore** — *"jab user aaye to explore page khule, home page nhi"* — and Home is unchanged, one click away in the rail. | PAKKA |
 
 ---
 
@@ -195,7 +198,14 @@ the repo, and left unmarked where it is the user's report taken at face value.
 
 ---
 
-**Last updated:** 2026-08-28 — section A gained A1–A4, then A10–A11,
+**Last updated:** 2026-08-29 — section E gained **E10** and **E11** from the
+Explore page: a second dashboard was built, and the six workflow groups were
+moved out of `Home.jsx` into `dashboard_feed.js` rather than copied. Pinned by
+the new Chromium `tests/explore_mount_check.py` (47 checks, both themes, the rail and the whole
+signed-in shell included). **E12** followed the same day: the app now OPENS on
+Explore, from one named constant rather than from five separate handlers.
+
+**Previously:** 2026-08-28 — section A gained A1–A4, then A10–A11,
 across three live runs of one Hinglish Ganesh Chaturthi brief. ⚠ **No run
 has yet had all six right**: run 2 held A1–A4 and dropped the visarjan; run
 3 holds A1/A2/A10/A11 and regressed on A3 and A4. Then two things the
