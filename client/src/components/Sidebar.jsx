@@ -9,6 +9,7 @@ import { useCallback, useState } from "react";
 import Avatar from "./Avatar.jsx";
 import Icon from "./Icon.jsx";
 import Logo from "./Logo.jsx";
+import useBranding from "../useBranding.js";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 // ⚠ THE SAME MENU THE EDITOR'S ⚙ OPENS, not a second list that looks like it.
 // See AccountMenu.jsx.
@@ -56,6 +57,54 @@ export const WORKFLOWS = [
   { id: "animatics-to-video", label: "Image to AI Video", icon: "🎞️", status: "live" },
   { id: "storyboard-to-animatics", label: "Video Editor", icon: "🎬", status: "live" },
 ];
+
+/**
+ * THE SHORT NAME — what a workflow is called where there is no room for what it
+ * is called.
+ *
+ * ⚠ THIS EXISTS BECAUSE THE COLLAPSED RAIL GREW LABELS. It used to be icons
+ * only, and an icon-only rail needs no names; now every row carries one under
+ * its glyph, and "Image to Animatic Image" does not fit under a 24px picture in
+ * an 84px column. Asked for by name, workflow by workflow: *"Script to
+ * Storyboard ka only Storyboard dikhao, second Image to Animatic Image ko
+ * Animatics, aur Video Editor ka Editor only."*
+ *
+ * ⚠ AND IT COVERS THE HIDDEN ONES TOO, WHICH IS THE HALF THAT WAS ASKED FOR
+ * TWICE: *"jo hide mai kiya hai uska bhi kar hi dena, to mai hide wale ko on
+ * karun to ye kaam fir nahi karwana pare."* Three of these six are switched off
+ * in the admin panel today. They are one click from coming back, and a workflow
+ * that returns with its full name spilling out of the rail is the bug this map
+ * is meant to prevent — so all six are named now, not the three on screen.
+ *
+ * ⚠ KEYED BY ID, WITH A FALLBACK, for the same reason `WorkflowIcon` is: the
+ * rail is DATA from `/auth/me/entitlements` and an administrator can add a
+ * workflow this build has never heard of. `shortLabel` then takes the last word
+ * of whatever they typed — which is right far more often than it is wrong
+ * ("Video Editor" → "Editor", "Script to Storyboard" → "Storyboard") and is
+ * never a guess at meaning, only at length.
+ *
+ * ⚠ NOT `COPY[id].short` FROM `Landing.jsx`, and the two are allowed to differ.
+ * That one is the word in the landing page's pipeline line — *Plan → Characters
+ * → Storyboard → Key poses → AI video → Video* — a sentence describing how a
+ * film is made. This one is a NAV LABEL: it has to name the room you are about
+ * to walk into, which is why the same workflow is "Key poses" there and
+ * "Animatics" here.
+ */
+export const WORKFLOW_SHORT = {
+  "plan-and-script": "Plan",
+  "text-to-image": "Characters",
+  "script-to-storyboard": "Storyboard",
+  "create-animatic-image": "Animatics",
+  "animatics-to-video": "AI Video",
+  "storyboard-to-animatics": "Editor",
+};
+
+/** The short name for a workflow, or the last word of its label. */
+export function shortLabel(id, label = "") {
+  if (WORKFLOW_SHORT[id]) return WORKFLOW_SHORT[id];
+  const words = String(label).trim().split(/\s+/);
+  return words[words.length - 1] || label;
+}
 
 export default function Sidebar({
   active,
@@ -114,6 +163,12 @@ export default function Sidebar({
   const closeMenu = useCallback(() => setMenu(false), []);
   useMenuDismiss(menu, closeMenu, MENU_DISMISS);
 
+  // What the app is CALLED, from the admin panel. ⚠ NOT A CONSTANT ANY MORE —
+  // `.sb-brand-name` ellipsises, so a longer name trims here SILENTLY; the
+  // server caps it at `NAME_MAX_CHARS` for exactly that reason and
+  // `tests/branding_check.py` measures the row rather than eyeballing it.
+  const brand = useBranding();
+
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       {/* Brand + the account avatar. The avatar sits here because the top-left
@@ -122,7 +177,7 @@ export default function Sidebar({
         <span className="sb-logo">
           <Logo />
         </span>
-        <span className="sb-brand-name">Aniwala AI Studio</span>
+        <span className="sb-brand-name">{brand.name}</span>
         <button
           type="button"
           className={`sb-brand-avatar ${active === "profile" ? "active" : ""}`}
@@ -164,6 +219,7 @@ export default function Sidebar({
         >
           <span className="sb-ico">🧭</span>
           <span className="sb-item-label">Explore</span>
+          <span className="sb-item-short" aria-hidden="true">Explore</span>
         </button>
 
         <button
@@ -173,6 +229,7 @@ export default function Sidebar({
         >
           <span className="sb-ico">🏠</span>
           <span className="sb-item-label">Home</span>
+          <span className="sb-item-short" aria-hidden="true">Home</span>
         </button>
 
         {/* Workflows. Collapsed there is no room for the heading, so the group
@@ -213,6 +270,17 @@ export default function Sidebar({
               <WorkflowIcon id={w.id} fallback={w.icon} />
             </span>
             <span className="sb-item-label">{w.label}</span>
+            {/* ⚠ BOTH NAMES ARE ALWAYS IN THE DOM; the stylesheet shows one and
+                hides the other. Swapping the TEXT on collapse would mean the
+                rail re-rendered its own labels on a layout change, and the
+                `title` — which is the full name, in both states — would have to
+                be kept in step with whichever one was showing.
+                `aria-hidden` because it is the same row said twice: a screen
+                reader should hear "Script to Storyboard", never "Script to
+                Storyboard Storyboard". */}
+            <span className="sb-item-short" aria-hidden="true">
+              {shortLabel(w.id, w.label)}
+            </span>
             {w.status === "soon" && <span className="sb-badge-soon">Soon</span>}
             {/* ⚠ LOCKED IS NOT HIDDEN, ON PURPOSE. A feature nobody can see is a
                 feature nobody upgrades for — the row stays, wearing the reason
@@ -282,7 +350,7 @@ export default function Sidebar({
               onOpenPricing={onUpgrade}
               onOpenAdmin={onOpenAdmin}
               onLogout={onLogout}
-              helpSubject="Help with Aniwala AI Studio"
+              helpSubject={`Help with ${brand.name}`}
               accounts={accounts}
               activeEmail={email}
               onSwitchAccount={onSwitchAccount}
@@ -294,6 +362,10 @@ export default function Sidebar({
         <button className="sb-upgrade" onClick={onUpgrade} title="Upgrade">
           <span className="sb-upgrade-ico">⚡</span>
           <span className="sb-upgrade-label">Upgrade</span>
+          {/* ⚠ THE ONE FOOTER CONTROL THAT GETS A NAME WHEN NARROW. A sun and a
+              face read on their own; a lightning bolt in a gold box does not
+              say what pressing it costs. */}
+          <span className="sb-item-short" aria-hidden="true">Upgrade</span>
         </button>
       </div>
     </aside>

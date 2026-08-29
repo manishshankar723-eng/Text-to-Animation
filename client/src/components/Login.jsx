@@ -2,11 +2,18 @@ import { useState } from "react";
 import * as api from "../api.js";
 import * as cache from "../session_cache.js";
 import Logo from "./Logo.jsx";
+import useBranding from "../useBranding.js";
 
 // Combined login / register screen. On success, stores the token and calls
 // onAuthed(email) so the app can switch to the dashboard. onBack returns to the
 // public landing page.
 export default function Login({ onAuthed, onBack }) {
+  // ⚠ THE FIRST SCREEN A STRANGER SEES, AND IT HAS NO SESSION — which is why
+  // `/public/branding` is public and why `branding.js` seeds itself from
+  // localStorage before the first paint. A sign-in card that flashed the
+  // built-in name and then corrected itself would do it on the one screen where
+  // a customer is deciding whether this is the right site.
+  const brand = useBranding();
   const [mode, setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,7 +77,7 @@ export default function Login({ onAuthed, onBack }) {
         )}
 
         <h1 className="brand">
-          <Logo /> Aniwala AI Studio
+          <Logo /> {brand.name}
         </h1>
         <p className="muted">
           {mode === "login" ? "Sign in to continue" : "Create an account"}

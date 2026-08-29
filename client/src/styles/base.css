@@ -120,6 +120,48 @@
   vertical-align: -0.15em;
   flex-shrink: 0;
 }
+/* An UPLOADED logo, standing where the drawn mark would be (Logo.jsx).
+   ⚠ HEIGHT IS FIXED, WIDTH IS FREE, and that is the whole rule. The drawn mark
+   is a 1em SQUARE, but a customer's logo is very often a wide wordmark — pinning
+   both dimensions would squash it, and pinning neither would let a 512px master
+   push the sidebar's name off its own row. So: one line tall like a letter,
+   as wide as it needs, and capped before it can crowd the name beside it.
+   `object-fit: contain` keeps the aspect ratio inside that cap. */
+.brand-mark-img {
+  height: 1em;
+  width: auto;
+  max-width: 3em;
+  object-fit: contain;
+  object-position: left center;
+}
+/* ---- One logo per theme ------------------------------------------------
+   ⚠ THIS IS WHY THE SWAP IS CSS AND NOT REACT STATE. `Logo.jsx` renders BOTH
+   uploaded files (only when they are actually different files) and these three
+   rules show one. The landing page, the sign-in card and the public storyboard
+   viewer are drawn OUTSIDE the app shell and never see its theme state, so a
+   JavaScript pick would have needed a theme subscription reaching all three —
+   while `applyTheme` has always stamped `<html data-theme>` for exactly this
+   purpose, and the swap off an attribute cannot flash the wrong mark for a frame.
+
+   ⚠ THE DEFAULT IS THE DARK MARK, NOT "WHICHEVER MATCHES". `data-theme` is
+   always set in practice (`main.jsx` stamps it before the first render), but if
+   it ever were not, BOTH marks would show — two logos side by side in the rail —
+   unless one is hidden by an unconditional rule. Dark is the right default: it
+   is this app's default theme, and it is the slot a pre-existing single upload
+   inherited.
+
+   The FAVICON cannot be done here — a <link rel=icon> has no styling — so
+   `branding.js` watches `data-theme` and restamps it. That is the only place
+   the theme is read in JavaScript for branding. */
+.brand-mark-light {
+  display: none;
+}
+:root[data-theme="light"] .brand-mark-light {
+  display: inline-block;
+}
+:root[data-theme="light"] .brand-mark-dark {
+  display: none;
+}
 /* Every drawn workflow glyph (WorkflowIcon.jsx). Same baseline nudge as the
    brand mark and for the same reason — these sit inline, in a rail row and in a
    dashboard heading, next to text they have to line up with. */

@@ -284,7 +284,9 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **75 checks, all green**, both themes, Home included. **The billboard then flinched on the user's own screen** — it took each workflow's FIRST SENTENCE and those run 40 to 176 characters, so the long one grew the banner by two lines and took its neighbour down with it every time the carousel reached it. It shows the short `stage.body` line now, clamped to two lines, on a row sized for its tallest slide; the height check was proved to fail on the old code first. New **RULEBOOK E13**. **And the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Then the coupon learned to come to the customer**: a card slides in from the right of Explore carrying whatever discount is running — the SAME offer the pricing page advertises, opening the SAME pricing modal, with every word of it (heading, bullets, small print, button, and whether it appears at all) typed in **Sales → Offers** as five new optional fields on the offer row. ⚠ One card at a time, dismissal remembered **per offer id** so a new offer still gets its turn, not a modal, and it fails closed. New **RULEBOOK E14 and E15**. **And the tiles lost their gold** — *"ye 3 button ka colour ek jaisa rakho"* — because gold means THE ACTION on this page and a navigation tile wearing it says something nobody meant (**E16**). **The sign-off format changed too** — *"remaining mai pura nhi do … tum rulebook mai likh ke rakho, jab mai mangunga to dena"* — so **G8 is struck and replaced by G10**: REMAINING carries this turn's leftovers, the whole open list stays in RULEBOOK's "Still open" table and is handed over on request. ⚠ The obligation moved rather than went: anything found and not fixed gets a row there the moment it is found. See the Work Log.
+**Last updated:** 2026-08-29 — **THE APP CAN NOW BE RENAMED AND RE-LOGO'D FROM THE ADMIN PANEL, AND ONE SAVE LANDS EVERYWHERE.** Asked for directly: *"mai chahta hun Aniwala icon and Aniwala Ai Studio text ko mai admin panel se change kar sakun … icon ke jagah logo image lagaun … jaha jaha ye icon dikhe waha update ho jaye and text also sab jagah … ek baar mai update ho jaye sab jagah."* New **Admin → Brand** tab: a name field and a logo upload, with a live preview drawn at the sidebar's own size on a checkered ground (so a logo that is NOT transparent is caught before it ships as a white block in the dark rail). ⚠ **The name was typed into EIGHT components and the mark drawn in TWO more** — rail, sign-in card, landing nav, landing footer, admin top bar, shared-storyboard viewer, Explore hero, the tab title and the favicon — so the whole point of the change is that none of them keeps a copy any more. New `server/branding.py` (ONE row, not a list) with a PUBLIC `GET /public/branding`, because the landing page and the sign-in card print the name and have no session; the write side is `/admin/branding` behind `require_admin` like every other panel route. ⚠ **The logo's URL carries the file's id** (`/public/branding/logo/{stamp}`), so a new upload is a NEW address — every browser and proxy picks it up the moment the name call answers, and nothing is cached wrong. ⚠ **The browser remembers the last answer in `localStorage` and stamps the title and favicon BEFORE the first render**, or every reload would flash the built-in name on the one screen where a customer decides whether this is the right site — same fix, same reasoning as the remembered entitlements. ⚠ **The AI assistant's brief was in the blast radius too**: four prompt modules opened with *"You are the … in Aniwala AI Studio"*, so a renamed app had an assistant that still named the old product. `_system_instruction()` now swaps it, by REPLACE not `format()` (those briefs are full of literal braces), with the constant left a plain string so the existing prompt tests keep reading it. ⚠ **The drawn mark is not deleted** — it is the fallback for a deployment that never uploads one, for **Remove logo**, and for the instant before the call answers. ⚠ **AND THEN THE LOGO DISAPPEARED IN LIGHT MODE** — *"jab mai dark mode mai hun to mera logo dikh raha hai magar jab light mode mai karta hun to mera logo white mai merge ho raha hai"* — because an uploaded logo is a FLAT PICTURE and the drawn mark it replaced was painted in `currentColor`, which re-colours itself for free. So there are now **two slots, Dark mode and Light mode**, asked for by name; either fills in for the other, so one upload is still a complete answer. ⚠ **The swap is CSS off `<html data-theme>`, not React state**, because the landing page, the sign-in card and the public storyboard viewer are drawn outside the app shell and never see it — the same three screens that forced the brand store to be a module rather than a Context. The favicon is the one exception (a `<link rel=icon>` cannot be styled) and follows the theme through a `MutationObserver`. ⚠ **The two admin cards show the DARK app and the LIGHT app at the same time, with the grounds hard-coded from `theme.css`** — previewing a logo on whatever theme the panel happens to be in is precisely how the white-on-white fault shipped. New **RULEBOOK D4, E19 and E20**. New `tests/branding_check.py` — **79 checks, all green**, no MongoDB and no browser; ⚠ **its last section is a source grep over `client/src`** that fails if the brand string is hard-coded anywhere a customer can see it, which is the only assertion that survives the next component being written. `npm run build` passes; `admin_check`, `board_ask_check`, `script_intake_check` and `script_concept_check` still pass. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
+
+**Previously:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **114 checks, all green**, both themes, Home included. **The billboard then flinched on the user's own screen** — it took each workflow's FIRST SENTENCE and those run 40 to 176 characters, so the long one grew the banner by two lines and took its neighbour down with it every time the carousel reached it. It shows the short `stage.body` line now, clamped to two lines, on a row sized for its tallest slide; the height check was proved to fail on the old code first. New **RULEBOOK E13**. **And the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Then the coupon learned to come to the customer**: a card slides in from the right of Explore carrying whatever discount is running — the SAME offer the pricing page advertises, opening the SAME pricing modal, with every word of it (heading, bullets, small print, button, and whether it appears at all) typed in **Sales → Offers** as five new optional fields on the offer row. ⚠ One card at a time, dismissal remembered **per offer id** so a new offer still gets its turn, not a modal, and it fails closed. New **RULEBOOK E14 and E15**. **And the tiles lost their gold** — *"ye 3 button ka colour ek jaisa rakho"* — because gold means THE ACTION on this page and a navigation tile wearing it says something nobody meant (**E16**). **And the masonry hole is closed** — reported twice, and the first diagnosis was wrong: it was never the packing, it was the RATIO SPREAD (a 9:16 board is 3.2× the height of a 16:9 one in the same column, and fewer columns only makes it taller). Every card is now drawn between 4:5 and 16:9 and the column count is capped by the item count; the same seven projects went from columns ending at 483/483/323/323/**154** to 430/430/612/403 — shortest reaches 66% of tallest, up from 32%, measured in Chromium and proved to fail on the old code first. ⚠ It is the one screen in the app that crops, deliberately (**E23**). **And the billboards moved into the admin panel** — *"this banner should be change aur hide by the admin, of it text and image"*. Both Explore cards were BUILT FROM THE WORKFLOW LIST (heading from a workflow's name, body from its landing pitch, artwork from its glyph), so the one part of the app whose job is to say something needed a redeploy to change and could not carry a picture. New `server/banners.py` + a **Banners** tab: slot, kicker, heading, body, button and where it goes, order (↑/↓ per **E6**), a Hide that is not a Delete, and a picture per card. ⚠ **An empty store is the shipped state, not an outage** — with nothing live the page draws what it always drew, and hiding the last banner is the same path (**E20**). ⚠ The upload follows the logo's rules exactly — a new id per upload, repoint before delete, only ids we hold get served — but WEBP at 1280px, and the picture COVERS the card under a scrim rather than fading into a corner (**E21**). ⚠ And the form stopped printing *"A banner needs a heading"* under a box nobody had touched (**E22**). **And the collapsed rail learned to say what its icons are** — *"Script to Storyboard ka only Storyboard dikhao"* — each row now stacking its glyph over a short name, the column widened 68px → 92px to hold one, and ⚠ **all six workflows named, including the three switched off**, so turning one back on does not mean doing this again (**E17**). ⚠ The clipping check had to be written twice: `scrollWidth > clientWidth` reads GREEN on a box that is visibly printing "Storyboa…", so it measures the text with a `Range` now and was proved to fail first (**E18**). **The sign-off format changed too** — *"remaining mai pura nhi do … tum rulebook mai likh ke rakho, jab mai mangunga to dena"* — so **G8 is struck and replaced by G10**: REMAINING carries this turn's leftovers, the whole open list stays in RULEBOOK's "Still open" table and is handed over on request. ⚠ The obligation moved rather than went: anything found and not fixed gets a row there the moment it is found. See the Work Log.
 
 **Previously:** 2026-08-28 — **THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED.** Pressing **Script to Storyboard** after a long gap did not open "Your Storyboards" — it opened **"Is this the right direction?"**, the unapproved concept card, for a film whose two finished 15-panel boards were sitting in the library behind it. *"jab user open kar raha hai script to storyboard to first page khulna chahiye, nhi ki ye page."* It was deliberate code: the script-draft restore promoted `library` → `concept` behind a module-scope latch. ⚠ **And the half nobody had noticed — `api.clearScriptDraft()` was defined and called from NOWHERE in the repo**, so a spent concept was never dropped and the card being reopened was usually the plan for a film already generated, exported and forgotten weeks earlier. A ghost, not a resume. ⚠ **This workflow had already learned this rule and paid several sessions for it** (F3: the front door is the front door, unfinished work WAITS there as a row) — the comment stating it sits twenty lines above the code that was overriding it. The reopen existed only because the first "offer it" attempt put the link on the FORM, which `workflow_mount_check.py` proved unreachable from a cold start. So the offer moved to the screen a cold start actually reaches: the **library**, as a row beside the unfinished boards — same `LibraryRow`, same Resume button, same confirm strip, "Not approved yet", and a discard that clears the SERVER slot so it cannot come back. Plus the clear that was missing: `finishBreakdown()` now drops the card the moment it becomes a shot list, so one film never grows two library rows. New **RULEBOOK F5**. `script_concept_check.py` and the Chromium `workflow_mount_check.py` rewritten and passing; `storyboard_draft_check.py` un-pinned from a verbatim expression. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
 
@@ -2965,6 +2967,7 @@ Pipeline stages (see `pipeline.py`):
 | `server/features.py` | **What an account may SEE and USE, and the ONE place that decides it.** The whole point of the file is that there is only one of it — the sidebar, `/auth/me/entitlements`, every `require_feature` guard and the admin panel are all callers of the same `resolve()`. Precedence, highest first: `hidden` kill switch → per-user override → rollout rule → `soon` → `live`. ⚠ **TWO ANSWERS, NOT ONE — `visible` AND `on`**: a "soon" workflow is drawn with a badge and refuses to run, a hidden one is not drawn at all, and one boolean cannot say that (squashing them is what made the old `status: "soon"` placeholder navigate to a blank page). ⚠ **ADMINS BYPASS THE ROLLOUT GATES BUT NOT `hidden`** — you must be able to look at what you are staging, but the kill switch has to mean everyone; an admin who needs past it gives their own account an override. ⚠ **IT FAILS OPEN**: an unreachable store serves the last known good answer, then the built-in catalogue — never an empty map, which is every sidebar in the app going blank at once. An unknown feature key is ON for the same reason. Percentage rollout is a **salted hash**, not `random()`, or a user flickers in and out between two requests on one page. |
 | `server/billing.py` | **The tiers: what they cost, what they include, who is on one.** ⚠ **"TIERS", NEVER "PLANS"** — `server/plans.py`, `/plans` and `JobKind.PLAN` have meant *Plan & Script* since long before there was billing, and a collection called `plans` here would be the most confusing name in the repo. ⚠ **A TIER DOES NOT LIST WHAT IT INCLUDES; A FEATURE SAYS WHICH TIER IT NEEDS.** The obvious `entitlements: {key: bool}` map on each tier is two places to answer one question — `features.min_tier` is the only statement of it, and `includes()` DERIVES "everything in Pro" by asking every feature, so the two cannot disagree. ⚠ **MONEY IS INTEGER MINOR UNITS** (2800 = $28.00); `_minor_units` REFUSES a float rather than rounding one, because quietly storing 28.5 as 28 cents is a hundredfold error nobody sees until an invoice. ⚠ **`rank` IS THE LADDER, NOT `price`** — a weekend sale on Pro must not reorder it below Starter and silently change what every `min_tier` means. ⚠ **ARCHIVE, NEVER DELETE**, and the default tier cannot be archived at all: every account with no `tier` field falls back to it. `GET /billing/tiers` is PUBLIC — a price list is public by nature, and requiring a session would force a landing page to keep a second copy of the prices. |
 | `server/offers.py` | **Discounts: a site-wide sale, or a coupon somebody types.** ONE ROW SHAPE, TWO THINGS, AND THE DIFFERENCE IS ONE FIELD — `code=None` is a SALE (automatic, changes the pricing page), `code="…"` is a COUPON (applies to nobody until typed). ⚠ **A SALE DRIVES `compare_at`; IT DOES NOT INVENT A SECOND OLD PRICE** — the tier's normal price becomes the struck-through one and the discounted price takes its place, so the card keeps ONE idea of what the old price was. ⚠ **TWO OVERLAPPING SALES DO NOT COMPOUND**: the deeper wins, the only tie-break that cannot be accused of short-changing anybody. ⚠ **DISCOUNTS ROUND DOWN, ONCE** — a customer is never charged a cent more than the sign said. ⚠ **AND IT IS THE ONE STORE IN THE PANEL THAT FAILS *CLOSED***: features and tiers serve stale data when the database is gone because a blank app is worse, but an unreadable offer is a discount nobody is entitled to, and inventing one gives money away. |
+| `server/branding.py` | **What the app is CALLED and what its mark looks like — the product's own brand, made editable.** ⚠ **ONE ROW, NOT A LIST**: there is exactly one product being named, so it holds a single document and every reader asks for that same one. ⚠ **THE READ IS PUBLIC** (`GET /public/branding`) because the landing page, the sign-in card and a shared storyboard link all print the name and none of them has a session — same reasoning as `/public/workflows` and `GET /billing/tiers`. The WRITE half is `/admin/branding` in `admin.py`, behind `require_admin`. ⚠ **THE LOGO'S URL CARRIES THE FILE'S ID** (`/public/branding/logo/{stamp}`), so a new upload is a NEW address and every cache picks it up for free; the old file is deleted only AFTER the document points at the new one. ⚠ **NOT `brand.py`** — that composites a CUSTOMER's logo into storyboard panels, per account, behind a token. This is the app's own, public, and there is one of it. Fails back to the compiled-in name, never to nothing. |
 | `server/subscriptions.py` | **Who is paying for what, and what they agreed to pay.** ⚠ **THE PRICE IS COPIED ONTO THE SUBSCRIPTION AT PURCHASE TIME, NEVER READ BACK OFF THE TIER** — a tier's `monthly` is what a NEW customer would be quoted; a subscriber pays what they agreed to. Without this, editing a price in the panel silently re-prices every existing customer, which is the most expensive bug this feature could have because nobody notices until the invoices go out. The offer code and discount are frozen the same way, so ending a sale cannot retroactively un-discount the people who bought during it. ⚠ **EXPIRY IS LAZY, NOT SCHEDULED** — there is no cron in this app; `users.tier_expires_at` is compared to the clock inside `billing.tier_of`, off the document already being read. ⚠ **NOTHING HERE TAKES MONEY**: `source="manual"` is an administrator's bookkeeping entry, and Phase 6's webhooks write the SAME record with a different source. |
 | `server/usage.py` | **What an account has used this month, and what it may.** ⚠ **A SINK, NOT A SECOND COUNTER** — `ai_usage.Usage` already counts tokens additively with retries included; `record_tokens` folds one into a per-account, per-month row and re-derives nothing. ⚠ **TWO KINDS OF LIMIT, NOT THE SAME SHAPE**: COUNTERS (`projects`, `image_generations`) accumulate and need storage; PER-REQUEST CAPS (`shots_per_project`, `story_pages`) describe one request and need none — conflating them turns "9 shots per project" into "9 shots ever". ⚠ **MISSING MEANS UNLIMITED, NOT ZERO**: a tier that does not mention a limit must not be read as allowing none of it. ⚠ **`require_quota` SITS BESIDE `require_feature`** so an over-quota request is refused BEFORE the model call — checking after bills the customer for the call telling them they are over; 402 Payment Required is the honest code. ⚠ **A FAILED READ COUNTS AS ZERO** (generous: an unreachable counter must never lock out a paying customer) and `increment` NEVER RAISES (the work already happened). ⚠ `watermark` / `commercial_use` are deliberately NOT enforced and say so. |
 | `server/admin.py` | **The `/admin` router.** Three rules it is built on: (1) **the guard asks the database, not the token** — `ACCESS_TOKEN_EXPIRE_MINUTES` is 1440, so a role baked into a JWT would outlive its own revocation by a day; (2) **an administrator cannot act on themselves** (`_target`), which is the only thing between a mis-click and a site with no administrators left; (3) **every mutation records the actor**. ⚠ **IT ANSWERS 404, NOT 403, TO A NON-ADMIN** — a 403 confirms the panel exists and is a map of the site handed to anyone with an account. Every path that disables, demotes or deletes calls `auth.forget_cached_email`, or the lock-out lands up to 30s late. |
@@ -3339,6 +3342,7 @@ binary files themselves.**
 | **Sales and coupons** | **Mongo `offers`** | **`server/offers.py`** |
 | **Who purchased, and what they froze in at** | **Mongo `subscriptions`** | **`server/subscriptions.py`** |
 | **What each account used this month** | **Mongo `usage_counters`** | **`server/usage.py`** |
+| **The app's own name and logo** | **Mongo `branding`** (one row) + the logo file under `uploads/_branding/` | **`server/branding.py`** |
 | **Every job: character runs, storyboards, animatics, and anything added later** | **Mongo `jobs`** | **`server/jobs.py` → `get_store()`** |
 | Image / video BYTES | disk (`output/`, `uploads/`) — GCS when enabled | `storage.py` |
 | **URLs of those files** | **Mongo, inside the job's `result`** | written by the pipeline |
@@ -3469,7 +3473,219 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-29 (latest) — A SECOND FRONT PAGE: EXPLORE, AND THE LIST THAT NOW EXISTS ONCE
+### 2026-08-29 (latest) — THE APP'S OWN NAME AND MARK BECAME AN ADMIN FIELD
+
+Asked for directly:
+*"mai chahta hun Aniwala icon and Aniwala Ai Studio text ko mai admin panel se
+change kar sakun. mai chahta hun icon ke jagah logo image lagaun admin panel se
+kyun ki tune jo icon banaya hai wo sahi nhi lag raha hai and text name also main
+change kar sakun. aur sabse jaruri baat jab mai icon y name change karun admin
+panel se to jaha jaha ye icon dikhne wala waha update ho jaye and text also sab
+jagah update ho jaye … ek baar mai update ho jaye sab jagah."*
+
+**The state before this.** The product name was a STRING LITERAL in eight
+components and the mark was drawn twice — as inline SVG in `Logo.jsx` and again,
+by hand, as `client/public/favicon.svg`. Renaming the app meant a developer, an
+editor and a redeploy; replacing the drawn mark with the company's real logo was
+not possible at all.
+
+**What was built.**
+
+1. **`server/branding.py`** — the store. ⚠ **ONE ROW, NOT A LIST**: there is
+   exactly one product being named, so it holds a single document under
+   `_DOC_ID` and every reader asks for that same one. A "brandings" collection
+   with one row in it invites a second row nobody can explain, and a
+   `GET /public/branding` that has to pick which one is live. Follows the USER
+   STORE like features, offers and tiers; falls back to the compiled-in name on
+   an unreachable database, and to the last known-good answer if it had one.
+2. **`GET /public/branding` — PUBLIC and unauthenticated.** ⚠ The landing page,
+   the sign-in card and a shared storyboard link all print the name and none of
+   them has a session; a branding call that needed one would leave the first
+   screen anybody sees wearing the built-in name forever. Same reasoning as
+   `/public/workflows` and `GET /billing/tiers`. The payload is three fields —
+   name, logo URL, stamp — and leaks nothing else.
+3. **`/admin/branding` (GET / PATCH) and `/admin/branding/logo` (POST /
+   DELETE)** — behind `require_admin`, 404 to everybody else, every change
+   recorded as `admin.branding_changed` with the actor and what it was before.
+4. **`client/src/branding.js` + `useBranding()`** — a module store, not a
+   Context, exactly like `entitlements.js`: a provider would have to wrap the
+   app shell AND the logged-out landing page AND the public storyboard viewer,
+   which are three different roots.
+5. **`Logo.jsx` now picks.** An uploaded logo when there is one, the drawn mark
+   when there is not — decided INSIDE the component, so all eight callers got it
+   for free rather than eight chances to miss one.
+6. **Admin → Brand** (`client/src/admin/AdminBrand.jsx`), a new tab between
+   Sales and Activity. Name + Save, logo upload / replace / remove, and a live
+   preview drawn with the real `<Logo/>` at the rail's own font sizes.
+
+⚠ **THE LOGO'S URL CARRIES THE FILE'S ID, AND THAT IS THE CACHE STRATEGY.**
+`/public/branding/logo/{stamp}` — a new upload is a new id and therefore a NEW
+ADDRESS, so every browser, proxy and already-open tab picks it up the moment the
+name call answers and nobody has to reason about cache headers. Writing the bytes
+over one fixed path is exactly how a logo change fails to appear for the one
+person who most needed to see it. A stale stamp still SERVES the live file (an
+open tab must never show a broken image) but is sent `no-store`, so today's bytes
+are never pinned under yesterday's URL.
+
+⚠ **THE OLD FILE IS DELETED AFTER THE DOCUMENT POINTS AT THE NEW ONE, NEVER
+BEFORE** — a crash mid-upload leaves the app wearing its previous mark rather
+than a broken image. And a `logo_id` whose file has vanished (a restored
+database, a wiped uploads volume) reads as NO logo, because the alternative is
+every screen in the app drawing a broken-image icon where its mark should be.
+
+⚠ **THE TAB TITLE AND THE FAVICON ARE PART OF "EVERYWHERE", AND THEY ARE THE
+HALF PEOPLE FORGET.** A rail that says "Acme Studio" above a tab that still says
+"Aniwala AI Studio" is the exact bug this change exists to remove — and a stale
+favicon is worse, because it survives in the bookmark. `applyToDocument()` runs
+in `main.jsx` BEFORE the first render, from what this browser remembered LAST
+time, so there is no flash of the built-in name on any reload. Same fix and same
+reasoning as the remembered entitlements and the remembered work counts.
+
+⚠ **THE AI ASSISTANT WAS IN THE BLAST RADIUS.** Four prompt modules
+(`board_agent.py`, `script_agent.py`, `script_concept.py`, `script_intake.py`)
+open with *"You are the … in Aniwala AI Studio"*, so a renamed app would have
+had an assistant introducing itself by the old product's name, inside the
+customer's own product. New `_system_instruction()` in each swaps it at call
+time. ⚠ **A `.replace()`, not a `format()`** — those briefs are full of literal
+braces (JSON examples, shot templates) and a format string would either blow up
+or need every one of them doubled. ⚠ **And `_SYSTEM_INSTRUCTION` stays a plain
+string constant**, because `tests/board_ask_check.py`,
+`tests/script_concept_check.py` and `tests/script_intake_check.py` assert on
+phrases inside it directly.
+
+⚠ **THE DRAWN MARK IS NOT DEAD CODE AND WAS NOT DELETED.** It is what a
+deployment that has never uploaded anything shows, what **Remove logo** goes back
+to, and what is on screen for the instant before the branding call answers on a
+browser with nothing remembered. Everything its header says about the A-frame,
+the punched sprocket holes and the two gold sparkles still applies.
+
+⚠ **`plain` DOES NOT APPLY TO AN UPLOADED LOGO.** It recolours the drawn mark
+for an inverted surface; the app does not get to recolour somebody's brand. A
+customer whose mark needs two versions uploads the one that works on both, which
+is what every other product asks of them.
+
+**Not changed, deliberately:** the shield glyph in the admin top bar and on the
+panel's own header. It marks the ROOM (paired with a gold "Admin" tag), not the
+product — it is not the mark the user was asking to replace. Say the word and it
+becomes `<Logo/>` too.
+
+**Files.** New: `server/branding.py`, `client/src/branding.js`,
+`client/src/useBranding.js`, `client/src/admin/AdminBrand.jsx`,
+`tests/branding_check.py`. Changed: `server/config.py` (four keys),
+`server/admin.py` (four routes + `BrandingBody`), `server/events.py` (a type),
+`server/main.py` (the router), the four prompt modules,
+`client/src/components/{Logo,Sidebar,Login,Landing,PublicStoryboard,Explore}.jsx`,
+`client/src/admin/{AdminShell,AdminPanel,format}.js*`, `client/src/api.js`,
+`client/src/main.jsx`, `client/src/styles/{base,admin}.css`,
+`client/index.html`, `.gitignore`.
+
+**Tested.** `python tests/branding_check.py` — 56 checks at this point (79
+once the light-mode work below landed), all green: the public
+read needs no token, the write is 404 to a non-admin, whitespace inside a name is
+collapsed and a 200-character name is capped, an empty name falls back to the
+built-in one, an uploaded PNG keeps its alpha, a 2000×1000 master is scaled to
+the 512px cap with its shape kept, a replaced logo changes the stamp and deletes
+the old file, a stale stamp serves but is not cached, a PDF is 415 and a fake PNG
+is 400, a refused upload leaves the good logo alone, removal goes back to the
+drawn mark, a vanished file reads as no logo, and every change reaches the
+activity feed naming the administrator. ⚠ **The last section is a source grep**
+over `client/src` — it fails if the brand string is hard-coded in any `.js`/`.jsx`
+outside `branding.js`, and separately checks that the six screens which DO print
+it are reading the store. That is the only assertion that survives the next
+component being written. `npm run build` passes; `admin_check`,
+`board_ask_check`, `script_intake_check` and `script_concept_check` still pass.
+
+⚠ **NOT YET DRIVEN IN A REAL BROWSER** — no Playwright run, and no manual pass
+over Admin → Brand with a real logo file.
+
+New **RULEBOOK D4** (the app's own brand is an admin field, and it is NOT the
+customer's board logo of D3) and **E19** (a new screen uses `useBranding()` and
+`<Logo/>`, never a literal).
+
+### AND THEN IT VANISHED IN LIGHT MODE — TWO SLOTS, ONE PER THEME
+
+The first real logo went up and worked. Then:
+
+*"dekho ek problem mila jab mai dark mode mai hun to mera logo dikh raha hai
+magar mai jab light mode mai karta hun to mera logo white mai merge ho raha hai
+so ek kaam karo admin panel mai 2 image upload ke liye banao aur name rakho dark
+mode and light mode image so mai light mode ke liye black logo daal saku."*
+
+⚠ **AN UPLOADED LOGO IS THE FIRST IMAGE IN THIS APP THAT CANNOT RE-COLOUR
+ITSELF, AND THAT IS WHY NOBODY SAW IT COMING.** `Logo.jsx`, `Icon.jsx` and
+`WorkflowIcon.jsx` are all drawn in `currentColor` — they turn dark on the light
+theme and light on the dark one with no second copy existing anywhere, and the
+header of `Logo.jsx` says so proudly. A PNG does none of that. A white wordmark
+that reads perfectly on the `#13161f` rail is white-on-`#ffffff` the moment
+somebody presses the theme switch.
+
+**Two slots.** `dark` and `light`, named on the admin cards with the same words
+the sidebar's own toggle uses. ⚠ **The dark slot keeps the un-suffixed
+`logo_id`** — that is the field every deployment that uploaded before the split
+already has, and renaming it to `logo_dark_id` would orphan those files and bring
+the built-in mark back with nobody able to say why.
+
+⚠ **EITHER SLOT FILLS IN FOR THE OTHER (`resolve_slot`), AND THAT IS A PRODUCT
+DECISION.** The commonest logo is a full-colour mark that reads on both grounds;
+demanding the same file twice before anything appears would have made the simple
+case worse than the one-slot version this replaces. The second slot is for a mark
+that genuinely cannot do both. The fallback is resolved ON THE SERVER, so both
+URLs come down already pointing at a real file and the browser needs no rule of
+its own — a rule written twice is a rule that disagrees with itself.
+
+⚠ **THE SWAP IS CSS, NOT REACT STATE.** `Logo.jsx` renders both files (only when
+they are actually different files — one upload still draws one element) and
+`base.css` shows one, keyed off `<html data-theme>`, which `applyTheme` has
+stamped since the theme system was built. The alternative was a theme
+subscription inside `Logo`, and the three screens that would have broken are the
+same three that forced the brand store to be a module instead of a Context: the
+landing page, the sign-in card and the public storyboard viewer are drawn OUTSIDE
+the app shell and never see its state. ⚠ **The default rule is unconditional** —
+`.brand-mark-light { display: none }` — because without it a missing `data-theme`
+would draw both marks side by side in the rail.
+
+⚠ **THE FAVICON IS THE ONE THING THAT STILL NEEDS JAVASCRIPT**, because a
+`<link rel=icon>` has no styling and a browser will not pick between two of them.
+`branding.js` watches `data-theme` with a `MutationObserver` rather than asking
+the four places that flip the theme (App.jsx's effect, the landing switch, the
+admin bar's, `main.jsx` at boot) to each also re-stamp it — four call sites and a
+fifth waiting to be forgotten is the same "everywhere" bug the whole feature
+exists to end.
+
+⚠ **AND THE ADMIN PREVIEW SHOWS BOTH GROUNDS AT ONCE.** Each card draws the rail
+row — mark, then the app name — on its own theme's background, and those two
+colours are **hard-coded from `theme.css`** rather than `var(--panel)`. That is
+the fix for the actual cause: a white logo previewed on a dark card looks
+perfect, and you cannot check a mark against a ground you are not being shown.
+Each card also says what is really happening when its slot is empty — *"Right now
+it is borrowing the other one"* / *"Right now it is the built-in mark"* — and
+**Remove** on one slot falls back to the other rather than blanking the app,
+which the button's own tooltip states.
+
+**Files.** `server/branding.py` (`SLOTS`, `slot_field`, `resolve_slot`, per-slot
+`save_logo` / `clear_logo`, both URLs in `public_payload`, one serve route for
+both), `server/admin.py` (`/admin/branding/logo/{slot}` for POST and DELETE, the
+`logos` map in `_branding_row`, the slot on the event), `client/src/api.js`,
+`client/src/branding.js` (two URLs + the theme observer),
+`client/src/components/Logo.jsx`, `client/src/admin/AdminBrand.jsx` (rebuilt
+around two cards), `client/src/styles/base.css`, `client/src/styles/admin.css`,
+`tests/branding_check.py`.
+
+**Tested.** `python tests/branding_check.py` — now **79 checks, all green**. The
+new ones: one upload covers both themes, a second upload for `light` is a
+different file and leaves `dark` alone, both addresses serve and both are
+`immutable`, removing ONE slot falls back to the other instead of going bare and
+deletes only its own file, a LIGHT-only deployment works with the dark theme
+borrowing it, removing BOTH brings the drawn mark back, an invented slot name is
+a 404, and every logo event names the theme it was for. `npm run build` passes;
+`admin_check` still passes. ⚠ **Still not driven in a real browser.**
+
+New **RULEBOOK E20** — an uploaded image on a themed surface needs one file per
+theme, swapped in CSS, with the admin preview showing both grounds.
+
+---
+
+### 2026-08-29 — A SECOND FRONT PAGE: EXPLORE, AND THE LIST THAT NOW EXISTS ONCE
 
 Asked for directly, with the Kling AI Explore page as the reference:
 *"mai chahta hun ki tum mera home page ke uper Explore buttun bana kar aisa
@@ -3533,7 +3749,7 @@ Home), `App.jsx` (the nav branch), `Landing.jsx` (`COPY` exported),
 
 **Verified.** `npm run build` green, and — because a green build is not evidence
 that a screen renders (**G7**) — a new Chromium probe: `tests/explore_mount_check.py`,
-**75 checks, all passing**. It mounts Explore AND Home inside `<React.StrictMode>`
+**114 checks, all passing**. It mounts Explore AND Home inside `<React.StrictMode>`
 (the double mount is what broke `useCovers` once before, and moving that hook to
 a new file is exactly when you would want to know), and asserts: nothing reaches
 `pageerror`; the rail carrying an Explore row ABOVE Home, marked active, with
@@ -3613,11 +3829,96 @@ whatever happens to be first as the recommended one says something nobody meant
 Open), which it stops meaning the moment a navigation tile wears it. New
 **RULEBOOK E16**, and the test's assertion is now the opposite of what it was.
 
-⚠ **THE MASONRY IS STILL THE OPEN QUESTION**, and one thing to look at:
-the masonry balances by column, so with only a handful of projects a single
-9:16 board can own a whole column and leave white space beside it. With a real
-library (the account has ~40) the columns even out; if it still reads badly, the
-answer is a bounded ratio, not a crop.
+**And the narrow rail learned to say what its icons are.** *"Jab collapse
+sidebar mai user kare to Script to Storyboard ka only Storyboard dikhao, Image
+to Animatic Image ko Animatics, aur Video Editor ka Editor only."* Collapsed, the
+rail was icons and nothing else — six drawn glyphs you had to have learned. Each
+row now stacks its icon over a SHORT name, the way the reference does, and the
+column went 68px → 92px to hold one.
+
+⚠ **ALL SIX ARE NAMED, NOT THE THREE ON SCREEN**, and that was asked for in the
+same breath: *"jo hide mai kiya hai uska bhi kar hi dena, to mai hide wale ko on
+karun to ye kaam fir nahi karwana pare."* Three workflows are switched off in the
+admin panel today and are one click from returning; one that came back with its
+full name spilling out of the rail is exactly the fault this prevents.
+`WORKFLOW_SHORT` in `Sidebar.jsx` carries all six, `shortLabel()` falls back to
+the label's LAST WORD for a workflow an administrator adds later, and the same
+names are now used by Explore's chips and card captions — one nav vocabulary,
+not two. (Landing's `COPY[id].short` stays what it was: the word in the
+marketing pipeline line, a different job.) Both names are in the DOM at once and
+the stylesheet picks one; the full name is still the `title` on hover. New
+**RULEBOOK E17**.
+
+⚠ **AND THE CLIPPING CHECK HAD TO BE WRITTEN TWICE.** The obvious test —
+`scrollWidth > clientWidth` — reported GREEN on a rail that was visibly printing
+*"Storyboa…"*, because a shrink-to-fit block inside a centred flex column never
+gets a scroll extent to exceed. It measures the text with
+`document.createRange().selectNodeContents(el)` now, and was proved to fail
+first at 70px, where it named all three offenders. New **RULEBOOK E18**.
+
+**And then the billboards stopped being the developer's.** *"This banner should
+be change aur hide by the admin — of it text and image."* Both cards were BUILT
+FROM THE WORKFLOW LIST: the heading was a workflow's name, the body was the first
+line of its landing-page pitch, and the artwork was that workflow's own glyph at
+12% opacity. So the one part of the app whose entire job is to say something to a
+customer could only be changed by a developer, and could not carry a picture at
+all.
+
+New **`server/banners.py`** — a list store in the shape of `offers.py` with
+`branding.py`'s image handling on top. A row is a slot (`hero`, the rotating one;
+`side`, the fixed one), a kicker, a heading, a body, a button and where it goes,
+a rank, a switch and a picture. New **Banners** tab in the panel next to Brand,
+with ↑ / ↓ (**E6** — the rotating card's order is what a customer sees first),
+Hide (reversible, silent) beside Delete (asks first, takes the picture with it),
+and a per-row upload.
+
+⚠ **AN EMPTY STORE IS THE SHIPPED STATE, NOT AN OUTAGE.** With no live banner in
+a slot, Explore draws exactly what it drew before this existed — and because the
+server drops an inactive row from the public payload, HIDING the last banner is
+the same code path. That is asserted: the check empties the store and watches
+the generated cards come back rather than the page going blank. The two slots
+fall back independently, so setting a hero card cannot blank the one beside it.
+New **RULEBOOK E20**.
+
+⚠ **THE PICTURE FOLLOWS THE LOGO'S RULES EXACTLY** — a new id per upload (the id
+IS the cache), the row repointed before the old file is deleted, the id checked
+against a regex on the way back out, and only ids the store actually holds
+served. Two things differ and both are deliberate: **WEBP at 1280px** rather
+than PNG at 512 (a banner is a photograph and the logo is a mark, and a megabyte
+on the front page is not the same trade), and the picture COVERS the card with a
+scrim over it rather than fading into a corner — it is the point of the card, not
+decoration on it. New **RULEBOOK E21**.
+
+⚠ **AND THE FORM STOPPED ACCUSING PEOPLE.** It opened with *"A banner needs a
+heading"* already in red under a box nobody had typed in. It waits for `touched`
+now; the disabled Create button is the signal until then. New **RULEBOOK E22**.
+
+**And the masonry hole is closed.** Reported twice — *"gallery me lamba 9:16
+board wala column bagal me khali jagah chhod raha hai"* — and the first diagnosis
+in this log ("with a real library the columns even out") was wrong enough to be
+worth writing down. ⚠ **MEASURED IN CHROMIUM, seven projects gave columns ending
+at 483, 483, 323, 323 and 154** — the last one two thirds empty.
+
+⚠ **IT WAS NEVER THE PACKING.** CSS multi-column balances by height, and
+shortest-column-first placement gives the same answer, because a 9:16 board is
+**3.2×** the height of a 16:9 one in the same column: two of them tower and
+nothing exists that could fill the gap they leave. ⚠ **AND FEWER COLUMNS MAKES
+IT WORSE, which is the trap I nearly fell into** — fewer columns are WIDER
+columns, and at three the tall card grows from 466px to 843px.
+
+Two changes, both in `Explore.jsx`. `wallAspect()` pulls every card into
+**4:5 … 16:9**, so the tallest is 2.2× the shortest instead of 3.2×;
+`wallColumns()` caps the column count at `ceil(count / 2)`, so five columns can
+never hold one card each. Result on the same seven projects: **430, 430, 612,
+403 — the shortest column now reaches 66% of the tallest, up from 32%.**
+
+⚠ **THIS IS THE ONE SCREEN IN THE APP THAT CROPS, and it is a deliberate
+exception.** `aspectStyle` exists so a 9:16 project is never "shown as a slice
+out of its own middle" — but that rule is about a THUMBNAIL you identify a
+project by, in a list, at 86px. This is a picture wall: the caption underneath
+says which project it is and clicking opens the real thing. A 9:16 board loses
+about 30% of its height here, evenly, top and bottom. New **RULEBOOK E23**, and
+the two checks were **proved to fail on the old code first**.
 
 
 ### 2026-08-28 — THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED
@@ -22941,7 +23242,7 @@ still occasionally be safety-filtered.
 
 ### 🟡 NEWEST: EXPLORE IS BUILT AND HAS NOT BEEN SEEN BY THE USER (2026-08-29)
 
-A new **Explore** row sits above Home in the rail. Pinned by 75 Chromium checks
+A new **Explore** row sits above Home in the rail. Pinned by 114 Chromium checks
 (`tests/explore_mount_check.py`), light and dark. What to look at when you open it:
 
 1. **The rail.** 🧭 Explore above 🏠 Home. ⚠ **The app now OPENS on Explore** —
@@ -22955,14 +23256,21 @@ A new **Explore** row sits above Home in the rail. Pinned by 75 Chromium checks
 4. **The wall.** Every project you own, largest-picture-first under
    **Highlights**. **In progress** should show only what is running or failed.
    The chips and the search box filter it.
-5. **The offer card.** It should slide in from the right about a second after
+5. **Ctrl+B.** The narrow rail should show a short name under every icon —
+   Storyboard, Animatics, Editor — with the full name on hover.
+6. **Admin → Banners.** Both Explore billboards — their words, their picture,
+   their order and whether they show at all. Leave it empty and the page keeps
+   the cards it builds from your workflow list.
+7. **The offer card.** It should slide in from the right about a second after
    Explore opens, carrying whatever discount is running. Close it and it stays
    closed — until you make a NEW offer. Everything on it (heading, bullets,
    small print, button words, and whether it appears at all) is typed in
    **Admin → Sales → Offers**.
-6. ⚠ **The one known rough edge**: with few projects the masonry can leave a tall
-   9:16 board owning a column with space beside it. Say if it still looks wrong
-   with your ~40 projects and it gets a bounded ratio rather than a crop.
+8. **The wall's shape.** The hole a tall 9:16 board used to leave beside it is
+   closed — every card is now drawn between 4:5 and 16:9, so a portrait board is
+   trimmed about 30% of its height rather than towering over its neighbours.
+   That trim is the one crop in the app; say so if you would rather have the
+   tower back.
 
 
 > ⚠ **START HERE. THE 2026-08-27 LIVE TEST OF SCRIPT → STORYBOARD IS NOW ALL

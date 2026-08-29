@@ -24,6 +24,7 @@
 import { useCallback, useState } from "react";
 import Avatar from "../components/Avatar.jsx";
 import AccountMenu, { useMenuDismiss } from "../components/AccountMenu.jsx";
+import useBranding from "../useBranding.js";
 
 // The menu and its button, for the outside-press close. The button is in the
 // list because it TOGGLES — see `useMenuDismiss`.
@@ -46,6 +47,12 @@ export default function AdminShell({
   const closeMenu = useCallback(() => setMenu(false), []);
   useMenuDismiss(menu, closeMenu, MENU_DISMISS);
 
+  // ⚠ THE PANEL IS WHERE THE NAME IS EDITED, SO IT IS THE FIRST PLACE THAT HAS
+  // TO SHOW THE EDIT. An administrator who renames the app in Admin → Brand and
+  // then reads the OLD name in the bar above the form has no way to tell whether
+  // the save worked. It reads the same store as the rail, so it changes with it.
+  const brand = useBranding();
+
   const who = displayName || email || "";
   const initial = (who || "?").trim().charAt(0).toUpperCase();
 
@@ -57,7 +64,7 @@ export default function AdminShell({
             rather than a page that failed to draw its sidebar. */}
         <span className="admin-brand">
           <span className="admin-brand-ico">🛡️</span>
-          <span className="admin-brand-name">Aniwala AI Studio</span>
+          <span className="admin-brand-name">{brand.name}</span>
           <span className="admin-brand-tag">Admin</span>
         </span>
 
@@ -109,7 +116,7 @@ export default function AdminShell({
                 onPick={closeMenu}
                 onOpenAccount={onOpenAccount}
                 onLogout={onLogout}
-                helpSubject="Help with Aniwala AI Studio"
+                helpSubject={`Help with ${brand.name}`}
               />
             )}
           </span>

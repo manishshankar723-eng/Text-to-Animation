@@ -146,6 +146,39 @@ _SYSTEM_INSTRUCTION = (
     "text only: no markdown, no bold, no code fences."
 )
 
+# ⚠ THE ASSISTANT MUST NOT INTRODUCE ITSELF BY A NAME THE APP NO LONGER USES.
+# The product is renameable from the admin panel now (`server/branding.py`), and
+# this brief tells the model where it is standing — so an owner who renames the
+# app and then asks the assistant "what are you?" would otherwise be told the old
+# name, in their own product, by their own product.
+#
+# ⚠ A REPLACE, NOT A `format()`. The brief is full of literal braces (JSON
+# examples, shot templates), so a format string would either blow up or need
+# every one of them doubled — one escaping mistake away from a mangled prompt.
+#
+# ⚠ AND IT STAYS A PLAIN STRING CONSTANT ABOVE. The prompt checks in `tests/`
+# assert on phrases inside `_SYSTEM_INSTRUCTION` directly, and a brief that could
+# only be read by calling something would put those out of reach.
+_BUILT_IN_APP = "Aniwala AI Studio"
+
+
+def _system_instruction() -> str:
+    """The brief, wearing whatever the app is currently CALLED.
+
+    Falls back to the built-in name on any failure — a naming lookup must never
+    be the reason a chat turn fails.
+    """
+    try:
+        from server import branding
+
+        name = branding.get_branding().get("name") or _BUILT_IN_APP
+    except Exception:  # noqa: BLE001 — cosmetic; see the docstring
+        return _SYSTEM_INSTRUCTION
+    if name == _BUILT_IN_APP:
+        return _SYSTEM_INSTRUCTION
+    return _SYSTEM_INSTRUCTION.replace(_BUILT_IN_APP, name)
+
+
 
 def _schema() -> types.Schema:
     """`{reply, actions[]}` — a plan, never a result."""
@@ -378,7 +411,7 @@ def plan(
         raise BoardChatError("There are no shots on this board yet.")
 
     system = (
-        _SYSTEM_INSTRUCTION
+        _system_instruction()
         + "\n\n"
         + board_context(panels, title, style, aspect_ratio, selection)
     )

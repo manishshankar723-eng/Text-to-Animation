@@ -1512,3 +1512,239 @@ label.cap-off {
 .view-as-hidden {
   margin-top: 0.5rem;
 }
+
+/* ===========================================================================
+   Brand — the app's own name and mark (AdminBrand.jsx)
+   ===========================================================================
+   ⚠ THE PREVIEW IS DRAWN AT THE SIDEBAR'S SIZE, NOT AT A SIZE THAT LOOKS GOOD
+   IN THIS CARD. `Logo.jsx` is sized in `em` and follows whatever it is dropped
+   into, so 1.3rem here is literally `.sb-logo`'s font-size and 1.02rem is
+   `.sb-brand-name`'s. A preview drawn twice the real size would let somebody
+   approve a logo that turns to mud in the rail — which is the only place it is
+   ever actually seen. Keep these two numbers in step with shell.css. */
+.admin-brand-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.admin-brand-preview-mark {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.admin-brand-preview-name {
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+}
+.admin-brand-preview .muted {
+  margin-left: auto;
+}
+
+.admin-brand-form {
+  margin-left: 0;
+  margin-bottom: 1rem;
+}
+.admin-brand-count {
+  align-self: flex-end;
+}
+.admin-brand-acts {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---- One card per theme ------------------------------------------------
+   ⚠ THE GROUNDS ARE HARD-CODED, NOT `var(--panel)`, AND THAT IS THE WHOLE
+   FEATURE. These two cards must show the DARK app and the LIGHT app at the same
+   time, whatever theme the panel itself is in — a white wordmark previewed on a
+   dark card looks perfect and then vanishes into the light rail, which is the
+   fault that produced this screen: "jab mai light mode mai karta hun to mera
+   logo white mai merge ho raha hai."
+
+   The four values are copied from `theme.css` — `--panel` and `--text` under
+   `:root` for dark, and under `:root[data-theme="light"]` for light — so each
+   card is the real sidebar colour and not an approximation. ⚠ If those tokens
+   are ever retuned, retune these with them: they are copies, not references,
+   for the reason above. */
+.admin-brand-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+.admin-brand-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.admin-brand-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 650;
+}
+.admin-brand-slot-ico {
+  line-height: 1;
+}
+/* The rail row, as that theme draws it. ⚠ A CHECKERED GROUND UNDER THE PANEL
+   COLOUR would hide the very thing being checked here — on this screen the
+   question is "does the mark read on THIS background", not "is the file
+   transparent", and a chessboard behind a logo answers neither cleanly. The
+   transparency question is answered by the two cards disagreeing. */
+.admin-brand-slot-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 64px;
+  padding: 0.8rem 0.9rem;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.admin-brand-slot.dark .admin-brand-slot-stage {
+  background: #13161f;
+  color: #f4f6fa;
+}
+.admin-brand-slot.light .admin-brand-slot-stage {
+  background: #ffffff;
+  color: #141824;
+}
+/* Same 1.3rem / 1.02rem as `.sb-logo` and `.sb-brand-name` in shell.css, so the
+   preview is the rail at the rail's own size. A preview drawn twice as large
+   would let somebody approve a logo that turns to mud where it is actually
+   used. Keep these in step with shell.css. */
+.admin-brand-slot-img {
+  height: 1.3rem;
+  width: auto;
+  max-width: 4rem;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.admin-brand-slot-drawn {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.admin-brand-slot-name {
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-brand-slot-says {
+  margin: 0;
+  flex: 1;
+}
+
+.admin-brand-when {
+  margin-top: 1rem;
+}
+
+/* =========================================================================
+   EXPLORE BANNERS (AdminBanners.jsx)
+   -------------------------------------------------------------------------
+   A row per billboard: what it looks like, what it says, where it sits, and
+   the four switches. ⚠ THE PICTURE IS FIRST AND IT IS THE REAL ONE — a list of
+   banners whose thumbnails were all the same grey box would be a list you have
+   to read rather than scan, which is the opposite of what a picture is for.
+   ========================================================================= */
+.admin-banner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0 0 1.1rem;
+  padding: 0;
+  list-style: none;
+}
+.admin-banner-row {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+@media (max-width: 1100px) {
+  /* The switches wrap under the words rather than squeezing them to nothing. */
+  .admin-banner-row {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+  }
+  .admin-banner-order,
+  .admin-banner-acts {
+    grid-column: 1 / -1;
+  }
+}
+.admin-banner-pic {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.admin-banner-pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.admin-banner-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+.admin-banner-kicker {
+  color: var(--primary);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.admin-banner-title {
+  overflow: hidden;
+  font-size: 0.95rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-banner-order {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.admin-banner-acts {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+/* The one full-width sentence in the create form. See the note in the JSX for
+   why it is not an `admin-rollout-row`. */
+.admin-banner-hint {
+  grid-column: 1 / -1;
+  margin: 0.2rem 0 0;
+}
+
+/* The body box in the create form. It grows (GrowTextarea) — this only stops
+   it starting out as a single squashed line. */
+.admin-banner-body {
+  min-height: 3.2rem;
+  resize: none;
+}

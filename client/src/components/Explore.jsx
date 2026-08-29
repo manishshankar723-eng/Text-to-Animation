@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as api from "../api.js";
 import {
   buildGroups,
   formatDate,
@@ -19,9 +20,14 @@ import { COPY } from "./Landing.jsx";
 // The brand slide has no workflow to draw, so it draws the mark itself —
 // the same one the rail and the favicon carry. See Logo.jsx.
 import Logo from "./Logo.jsx";
+import useBranding from "../useBranding.js";
 // The discount that comes to the customer instead of waiting to be found. It
 // fetches its own offer and draws nothing at all when there isn't one.
 import PromoPopup from "./PromoPopup.jsx";
+// ⚠ THE RAIL'S OWN SHORT NAMES, so a workflow is called one thing in the
+// narrow sidebar and the same thing on this page's chips and cards. See
+// `WORKFLOW_SHORT` in Sidebar.jsx for why they are not `COPY[id].short`.
+import { shortLabel } from "./Sidebar.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Explore — the DISCOVERY page: what you can make, and what you have made.
@@ -61,6 +67,63 @@ const SIDE_PREFERRED = "storyboard-to-animatics";
 // What "＋" on the toolbar starts, when this account may see it.
 const CREATE_PREFERRED = "script-to-storyboard";
 
+// ---------------------------------------------------------------------------
+// THE WALL'S SHAPE. Two numbers, and between them they are the whole fix for
+// "the tall board leaves a hole beside it".
+//
+// ⚠ WHAT WAS ACTUALLY WRONG, MEASURED: with seven projects the five columns
+// ended at 483, 483, 323, 323 and 154 pixels — the last one two thirds empty.
+// It was NOT that the columns were badly packed; CSS multi-column balances by
+// height and shortest-column-first packing gives the same answer. The cause is
+// the SPREAD: a 9:16 board is 3.2× the height of a 16:9 one in the same column,
+// so two of them tower over everything and nothing can fill the gap they leave.
+//
+// ⚠ AND FEWER COLUMNS DOES NOT FIX IT, WHICH IS THE TRAP. Fewer columns are
+// WIDER columns, and a 9:16 card in a wider column is taller still — at three
+// columns the tall card grows from 466px to 843px and the hole gets bigger.
+// ---------------------------------------------------------------------------
+
+// The tallest and shortest a card may be drawn, as width ÷ height.
+//
+// ⚠ THIS IS THE ONE PLACE ON THIS SCREEN THAT CROPS, and it is a deliberate
+// exception to the rule the libraries keep. `aspectStyle` exists so a 9:16
+// project is never "shown as a slice out of its own middle" — but that rule is
+// about a THUMBNAIL you identify a project by, in a list, at 86px. This is a
+// picture wall, the caption underneath says which project it is, and clicking
+// opens the real thing. A 9:16 board lands at 4:5 here, which trims about 30%
+// of its height, evenly, top and bottom.
+const WALL_AR_MIN = 0.8; // 4:5 — the tallest a card gets
+const WALL_AR_MAX = 16 / 9; // the widest
+
+/**
+ * A project's own ratio, pulled into the range the wall can lay out.
+ *
+ * Returns the same `--lib-thumb-ar` custom property `aspectStyle` does, so the
+ * card's CSS does not have to know which of the two it was handed.
+ */
+function wallAspect(aspect) {
+  const style = aspectStyle(aspect);
+  if (!style) return undefined;
+  const [w, h] = String(style["--lib-thumb-ar"]).split("/").map(Number);
+  if (!(w > 0) || !(h > 0)) return style;
+  const ratio = Math.min(WALL_AR_MAX, Math.max(WALL_AR_MIN, w / h));
+  return { "--lib-thumb-ar": `${ratio} / 1` };
+}
+
+// How many columns, given how much there is to put in them.
+//
+// ⚠ THIS IS A CEILING, NOT A COUNT — `columns: N 14rem` means "at most N, each
+// at least 14rem", so a narrow window still uses fewer. It exists because five
+// columns holding one card each is not a wall, it is a row with gaps: with
+// seven projects the fifth column got a single card and ended less than a third
+// of the way down. Two per column is the floor at which masonry starts looking
+// like masonry.
+const WALL_MAX_COLS = 5;
+
+function wallColumns(count) {
+  return Math.max(2, Math.min(WALL_MAX_COLS, Math.ceil(count / 2)));
+}
+
 // The three ways of looking at the wall. `id` is state, `label` is the tab.
 //
 // ⚠ "HIGHLIGHTS" IS AN ORDERING, NOT A JUDGEMENT. It puts the projects that
@@ -95,7 +158,27 @@ function prefersReducedMotion() {
  * do. `prefers-reduced-motion` switches the timer off altogether; the arrows and
  * dots still work, so nothing is unreachable, it just never moves on its own.
  */
-function HeroCarousel({ slides, onOpen }) {
+/**
+ * A banner's picture — an administrator's, or the built-in glyph.
+ *
+ * ⚠ A REAL PHOTOGRAPH COVERS THE WHOLE CARD AND A GLYPH DOES NOT, and that is
+ * why they are not the same element. The glyph is decoration bled off one
+ * corner at 12% opacity; an uploaded picture is the point of the card, so it
+ * fills it and the words move onto a scrim. `.has-photo` on the banner is what
+ * flips the text to light in BOTH themes — see explore.css.
+ */
+function BannerArt({ slide }) {
+  if (slide.image) {
+    return <img className="xp-banner-photo" src={slide.image} alt="" />;
+  }
+  return (
+    <span className="xp-banner-art" aria-hidden="true">
+      {slide.workflow ? <WorkflowIcon id={slide.workflow} /> : <Logo />}
+    </span>
+  );
+}
+
+function HeroCarousel({ slides }) {
   const [at, setAt] = useState(0);
   const [held, setHeld] = useState(false);
   const still = prefersReducedMotion();
@@ -119,7 +202,9 @@ function HeroCarousel({ slides, onOpen }) {
 
   return (
     <div
-      className={`xp-banner xp-hero tone-${slide.tone}`}
+      className={`xp-banner xp-hero tone-${slide.tone} ${
+        slide.image ? "has-photo" : ""
+      }`}
       onMouseEnter={() => setHeld(true)}
       onMouseLeave={() => setHeld(false)}
       onFocus={() => setHeld(true)}
@@ -127,22 +212,22 @@ function HeroCarousel({ slides, onOpen }) {
       role="region"
       aria-label="Highlights"
     >
-      {/* The workflow's own glyph, blown up and faded into the corner — the
-          page has no photography of its own and a flat gradient reads as an
-          empty box. Decoration only; the same glyph is on the tile below. */}
-      <span className="xp-banner-art" aria-hidden="true">
-        {slide.workflow ? <WorkflowIcon id={slide.workflow} /> : <Logo />}
-      </span>
+      <BannerArt slide={slide} />
 
       <div className="xp-banner-body">
-        <span className="xp-banner-eyebrow">{slide.eyebrow}</span>
+        {/* An administrator may leave either of these empty; a generated slide
+            always has both. An empty <span> would still take its line height
+            and push the heading down on one card out of four. */}
+        {slide.eyebrow && (
+          <span className="xp-banner-eyebrow">{slide.eyebrow}</span>
+        )}
         <h2 className="xp-banner-title">{slide.title}</h2>
-        <p className="xp-banner-sub">{slide.sub}</p>
-        {slide.workflow && (
+        {slide.sub && <p className="xp-banner-sub">{slide.sub}</p>}
+        {slide.go && slide.cta && (
           <button
             type="button"
             className="btn primary xp-banner-cta"
-            onClick={() => onOpen(slide.workflow)}
+            onClick={slide.go}
             title={slide.hint}
           >
             {slide.cta} →
@@ -212,6 +297,30 @@ export default function Explore({
 }) {
   useDashboard();
 
+  // The first hero slide is the PRODUCT rather than a workflow, so it is the one
+  // place on this page that prints the app's own name.
+  const brand = useBranding();
+
+  // ⚠ THE ADMIN PANEL'S BILLBOARDS, AND AN EMPTY ANSWER IS THE NORMAL ONE. With
+  // no banner set for a slot this stays `[]` and the generated card below is
+  // what gets drawn — exactly what this page did before the panel could speak.
+  // Fails closed like every other decorative fetch here: an unreadable endpoint
+  // is the same as an empty one.
+  const [madeBanners, setMadeBanners] = useState({ hero: [], side: [] });
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .publicBanners()
+      .then((r) => {
+        if (cancelled) return;
+        setMadeBanners({ hero: r?.hero || [], side: r?.side || [] });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [view, setView] = useState(VIEWS[0].id);
   const [chip, setChip] = useState("all");
   const [query, setQuery] = useState("");
@@ -255,7 +364,7 @@ export default function Explore({
           group: g.id,
           label: g.label,
           icon: g.icon,
-          short: COPY[g.id]?.short || g.label
+          short: shortLabel(g.id, g.label)
         });
       }
     }
@@ -328,31 +437,86 @@ export default function Explore({
     return text && !text.endsWith(".") ? `${text}.` : text;
   };
 
-  const heroSlides = [
-    {
-      key: "brand",
-      tone: "brand",
-      eyebrow: "Aniwala AI Studio",
-      title: "Everything from one script",
-      sub: "Plan it, board it, block the motion, render the cut — in one place.",
-      workflow: null
-    },
-    ...promoted.slice(0, HERO_WORKFLOWS).map((g) => ({
-      key: g.id,
-      tone: "work",
-      eyebrow: COPY[g.id]?.short || "Workflow",
-      title: g.label,
-      sub: blurb(g.id),
-      cta: "Open",
-      hint: pitch(g.id),
-      workflow: g.id
-    }))
-  ];
+  /**
+   * Where a banner's button goes.
+   *
+   * ⚠ A WORKFLOW ID NAVIGATES; AN ADDRESS OPENS A TAB. Those are the only two
+   * shapes the server will store (`_TARGET_RE` in banners.py), and the
+   * `noopener` is not optional — a `target="_blank"` without it hands the page
+   * it opened a handle on this one.
+   */
+  const goTo = (target) => {
+    if (!target) return null;
+    if (/^https?:/i.test(target)) {
+      return () => window.open(target, "_blank", "noopener,noreferrer");
+    }
+    return () => onNavigate?.(target);
+  };
 
-  const side =
+  /** One admin banner → the shape the carousel and the side card both draw. */
+  const fromAdmin = (b, tone) => ({
+    key: b.id,
+    tone,
+    eyebrow: b.kicker,
+    title: b.title,
+    sub: b.body,
+    cta: b.cta_label,
+    hint: b.body,
+    // Relative on the wire, because only this side knows `VITE_API_BASE`.
+    image: b.image_url ? api.absoluteUrl(b.image_url) : "",
+    workflow: null,
+    go: goTo(b.cta_target)
+  });
+
+  // ⚠ THE PANEL WINS WHERE IT HAS SPOKEN, SLOT BY SLOT. Setting a hero banner
+  // must not blank the fixed one beside it, so the two fall back independently.
+  const heroSlides = madeBanners.hero.length
+    ? madeBanners.hero.map((b) => fromAdmin(b, "work"))
+    : [
+        {
+          key: "brand",
+          tone: "brand",
+          eyebrow: brand.name,
+          title: "Everything from one script",
+          sub: "Plan it, board it, block the motion, render the cut — in one place.",
+          image: "",
+          workflow: null,
+          go: null
+        },
+        ...promoted.slice(0, HERO_WORKFLOWS).map((g) => ({
+          key: g.id,
+          tone: "work",
+          eyebrow: shortLabel(g.id, g.label),
+          title: g.label,
+          sub: blurb(g.id),
+          cta: "Open",
+          hint: pitch(g.id),
+          image: "",
+          workflow: g.id,
+          go: () => onNavigate?.(g.id)
+        }))
+      ];
+
+  const generatedSide =
     promoted.find((g) => g.id === SIDE_PREFERRED) ||
     promoted[promoted.length - 1] ||
     null;
+  const side = madeBanners.side.length
+    ? fromAdmin(madeBanners.side[0], "side")
+    : generatedSide
+      ? {
+          key: generatedSide.id,
+          tone: "side",
+          eyebrow: shortLabel(generatedSide.id, generatedSide.label),
+          title: generatedSide.label,
+          sub: blurb(generatedSide.id),
+          cta: "Open",
+          hint: pitch(generatedSide.id),
+          image: "",
+          workflow: generatedSide.id,
+          go: () => onNavigate?.(generatedSide.id)
+        }
+      : null;
 
   const createId =
     (promoted.find((g) => g.id === CREATE_PREFERRED) || promoted[0] || {}).id ||
@@ -361,7 +525,7 @@ export default function Explore({
     createId === CREATE_PREFERRED ? "New storyboard" : "Start something";
 
   const chips = [{ id: "all", label: "For you" }].concat(
-    promoted.map((g) => ({ id: g.id, label: COPY[g.id]?.short || g.label }))
+    promoted.map((g) => ({ id: g.id, label: shortLabel(g.id, g.label) }))
   );
 
   return (
@@ -373,29 +537,29 @@ export default function Explore({
 
       {/* ---- Row 1: the billboards ---- */}
       <div className="xp-banners">
-        <HeroCarousel slides={heroSlides} onOpen={onNavigate} />
+        <HeroCarousel slides={heroSlides} />
 
         {side && (
-          <div className="xp-banner tone-side">
-            <span className="xp-banner-art" aria-hidden="true">
-              <WorkflowIcon id={side.id} />
-            </span>
+          <div
+            className={`xp-banner tone-side ${side.image ? "has-photo" : ""}`}
+          >
+            <BannerArt slide={side} />
             <div className="xp-banner-body">
-              <span className="xp-banner-eyebrow">
-                {COPY[side.id]?.short || "Workflow"}
-              </span>
-              <h2 className="xp-banner-title">{side.label}</h2>
-              <p className="xp-banner-sub">
-                {blurb(side.id)}
-              </p>
-              <button
-                type="button"
-                className="btn primary xp-banner-cta"
-                onClick={() => onNavigate?.(side.id)}
-                title={pitch(side.id)}
-              >
-                Open →
-              </button>
+              {side.eyebrow && (
+                <span className="xp-banner-eyebrow">{side.eyebrow}</span>
+              )}
+              <h2 className="xp-banner-title">{side.title}</h2>
+              {side.sub && <p className="xp-banner-sub">{side.sub}</p>}
+              {side.go && side.cta && (
+                <button
+                  type="button"
+                  className="btn primary xp-banner-cta"
+                  onClick={side.go}
+                  title={side.hint}
+                >
+                  {side.cta} →
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -514,12 +678,21 @@ export default function Explore({
 
       {/* ---- Row 5: the wall ---- */}
       {showGhosts ? (
-        <div className="xp-gallery xp-ghosts is-loading" aria-hidden="true">
+        <div
+          className="xp-gallery xp-ghosts is-loading"
+          aria-hidden="true"
+          style={{ "--xp-cols": wallColumns(10) }}
+        >
           {Array.from({ length: 10 }, (_, i) => (
             <div className="xp-card xp-card-ghost" key={i}>
+              {/* The same two shapes the real wall can draw, so the skeleton is
+                  the height of the thing replacing it and nothing jumps. */}
               <span
                 className="xp-card-pic xp-ghost-cover"
-                style={{ "--lib-thumb-ar": i % 3 === 1 ? "9 / 16" : "16 / 9" }}
+                style={{
+                  "--lib-thumb-ar":
+                    i % 3 === 1 ? `${WALL_AR_MIN} / 1` : `${WALL_AR_MAX} / 1`
+                }}
               />
             </div>
           ))}
@@ -544,7 +717,10 @@ export default function Explore({
           )}
         </div>
       ) : (
-        <div className="xp-gallery">
+        <div
+          className="xp-gallery"
+          style={{ "--xp-cols": wallColumns(filtered.length) }}
+        >
           {filtered.map((it) => (
             <button
               key={`${it.group}:${it.key}`}
@@ -555,7 +731,7 @@ export default function Explore({
               }
               title={`Open ${it.title} — ${it.label}`}
             >
-              <span className="xp-card-pic" style={aspectStyle(it.aspect)}>
+              <span className="xp-card-pic" style={wallAspect(it.aspect)}>
                 {covers[it.key] ? (
                   <img src={covers[it.key]} alt="" loading="lazy" />
                 ) : (

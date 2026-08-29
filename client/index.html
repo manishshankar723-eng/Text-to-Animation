@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- ⚠ EVERYTHING IN THIS HEAD IS THE FALLBACK, NOT THE ANSWER. The app's
+         name and mark are an admin-panel field (see server/branding.py), and
+         `src/branding.js` restamps the title and this icon before the first
+         render — from what the browser remembered last time, so there is no
+         flash. What is written here is what a visitor sees for the instant
+         before any JavaScript runs, and what they keep if it never does. -->
+
     <!-- ⚠ THE SAME MARK AS `Logo.jsx`, WITH ITS COLOURS FROZEN. A tab has no
          CSS variables and no fixed background — it is white on one platform and
          near-black on another — so the favicon cannot use `currentColor` the way

@@ -7,9 +7,13 @@ import { useEffect, useState } from "react";
 import * as api from "../api.js";
 import ImageLightbox from "./ImageLightbox.jsx";
 import Logo from "./Logo.jsx";
+import useBranding from "../useBranding.js";
 
 import WorkflowIcon from "./WorkflowIcon.jsx";
 export default function PublicStoryboard({ token, onExit }) {
+  // Shown to somebody who was sent a link and has no account. The name is the
+  // only thing on this page that says whose product made the board.
+  const brand = useBranding();
   const [board, setBoard] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -53,7 +57,7 @@ export default function PublicStoryboard({ token, onExit }) {
             sharing it.
           </p>
           <button type="button" className="btn primary" onClick={onExit}>
-            Go to Aniwala AI Studio
+            Go to {brand.name}
           </button>
         </div>
       </div>
@@ -66,7 +70,7 @@ export default function PublicStoryboard({ token, onExit }) {
     <div className="public-wrap">
       <div className="public-topbar">
         <span className="brand small">
-          <Logo /> Aniwala AI Studio
+          <Logo /> {brand.name}
         </span>
         <button type="button" className="btn small" onClick={onExit}>
           Make your own →

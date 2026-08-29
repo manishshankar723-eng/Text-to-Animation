@@ -53,10 +53,22 @@ site, and unlike every other action here it cannot lock anybody out of anything.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
-from . import auth, billing, config, events, features, offers, subscriptions, usage, users
+from . import (
+    auth,
+    banners,
+    billing,
+    branding,
+    config,
+    events,
+    features,
+    offers,
+    subscriptions,
+    usage,
+    users,
+)
 from .auth import CurrentUser, get_current_user
 from .jobs import get_store
 from .schemas import JobKind
@@ -993,6 +1005,363 @@ def update_offer(
         **events.request_context(request),
     )
     return _offer_row(offer)
+
+
+# ---------------------------------------------------------------------------
+# Branding — what the app is CALLED and what its mark looks like
+# ---------------------------------------------------------------------------
+# ⚠ THE WRITE IS HERE, THE READ IS PUBLIC AND LIVES IN `server/branding.py`.
+# Same split as features (panel writes `/admin/features`, the world reads
+# `/public/workflows`) and for the same reason: a logged-OUT visitor on the
+# landing page needs the name and the mark, and must not need a token to get
+# them. Everything below is behind `require_admin` like every other route in
+# this file.
+class BrandingBody(BaseModel):
+    """The one editable text field. ⚠ `name` is OPTIONAL so a PATCH that only
+    changes something added later does not have to resend it — `exclude_unset`
+    below is what makes that true."""
+
+    name: str | None = Field(None, max_length=200)
+
+
+def _branding_row() -> dict:
+    """What the panel is shown: the public answer plus the facts only an
+    administrator needs — who changed it, when, and what the built-in default
+    was, so "put it back" is a visible option rather than a guess.
+
+    ⚠ `logos` SAYS WHICH SLOT IS *ITS OWN* AND WHICH IS BORROWED, and the panel
+    needs both. `public_payload` has already resolved the fallback, so a
+    deployment with one upload sends the same URL twice — without `own` the Brand
+    screen would draw a Remove button beside a logo that slot does not have, and
+    pressing it would do nothing.
+    """
+    row = branding.get_branding(fresh=True)
+    return {
+        **branding.public_payload(row),
+        "logos": {
+            slot: {
+                "own": bool(row.get(branding.slot_field(slot))),
+                "stamp": branding.resolve_slot(row, slot),
+            }
+            for slot in branding.SLOTS
+        },
+        "slots": list(branding.SLOTS),
+        "has_logo": any(row.get(branding.slot_field(s)) for s in branding.SLOTS),
+        "default_name": branding.DEFAULT_NAME,
+        "name_max": branding.NAME_MAX_CHARS,
+        "logo_max_px": branding.LOGO_MAX_PX,
+        "allowed_types": list(branding.ALLOWED_LOGO_TYPES),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+@router.get("/branding")
+def get_branding(admin: CurrentUser = Depends(require_admin)) -> dict:
+    """The app's current name and mark."""
+    return _branding_row()
+
+
+@router.patch("/branding")
+def update_branding(
+    body: BrandingBody, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Rename the app. Lands on every screen at once — see `branding.py`."""
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    was = branding.get_branding(fresh=True).get("name") or ""
+    row = branding.save_branding(fields, actor=admin.email)
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="renamed",
+        was=was,
+        now=row.get("name"),
+        **events.request_context(request),
+    )
+    logger.info("%s renamed the app: %r -> %r", admin.email, was, row.get("name"))
+    return _branding_row()
+
+
+@router.post("/branding/logo/{slot}")
+async def upload_branding_logo(
+    slot: str,
+    request: Request,
+    image: UploadFile = File(..., description="The app logo, ideally a transparent PNG."),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """Put an uploaded logo in one theme's slot — `dark` or `light`.
+
+    ⚠ TWO SLOTS BECAUSE A LOGO IS A FLAT PICTURE. The drawn mark re-colours
+    itself (`currentColor`); an uploaded white wordmark disappears into the light
+    theme, which is exactly what happened to the first one. Either slot fills in
+    for the other, so ONE upload is still a complete answer — see `branding.py`.
+
+    ⚠ THIS IS NOT `POST /brand/logo`, WHICH IS A CUSTOMER'S LOGO FOR A BOARD.
+    That one is per-account, owner-scoped and composited into panels; this one is
+    the APP'S OWN mark and is served to anonymous visitors. They share nothing but
+    the word "logo".
+    """
+    if slot not in branding.SLOTS:
+        raise HTTPException(
+            status_code=404, detail=f"No such logo slot: {slot!r}."
+        )
+    if image.content_type not in branding.ALLOWED_LOGO_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type {image.content_type!r}. "
+            f"Allowed: {', '.join(branding.ALLOWED_LOGO_TYPES)}.",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Logo too large ({len(contents)} bytes). Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+    try:
+        png = branding.normalise_logo(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    row = branding.save_logo(png, slot=slot, actor=admin.email)
+    stamp = row.get(branding.slot_field(slot))
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="logo_uploaded",
+        slot=slot,
+        stamp=stamp,
+        **events.request_context(request),
+    )
+    logger.info("%s uploaded a new %s-mode app logo (%s)", admin.email, slot, stamp)
+    return _branding_row()
+
+
+@router.delete("/branding/logo/{slot}")
+def delete_branding_logo(
+    slot: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Empty one theme's slot.
+
+    ⚠ THAT THEME THEN BORROWS THE OTHER SLOT rather than going bare; only
+    clearing BOTH brings back the mark the app ships with
+    (`client/src/components/Logo.jsx`). The panel says so on the card.
+    """
+    if slot not in branding.SLOTS:
+        raise HTTPException(status_code=404, detail=f"No such logo slot: {slot!r}.")
+    branding.clear_logo(slot=slot, actor=admin.email)
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="logo_removed",
+        slot=slot,
+        **events.request_context(request),
+    )
+    logger.info("%s removed the %s-mode app logo", admin.email, slot)
+    return _branding_row()
+
+
+# ---------------------------------------------------------------------------
+# Explore banners — the billboards, their words and their pictures
+# ---------------------------------------------------------------------------
+class BannerBody(BaseModel):
+    """A new billboard. ⚠ ONLY `title` IS REQUIRED — a card with a heading and
+    nothing else is a legitimate card, and every other field has a sensible
+    absence: no button, no picture, no kicker."""
+
+    slot: str = Field(banners.SLOT_HERO, pattern="^(hero|side)$")
+    kicker: str = Field("", max_length=banners.KICKER_MAX)
+    title: str = Field(..., min_length=1, max_length=banners.TITLE_MAX)
+    body: str = Field("", max_length=banners.BODY_MAX)
+    cta_label: str = Field("", max_length=banners.CTA_MAX)
+    # A workflow id the shell knows, or an http(s) address. Validated in
+    # `banners._clean` — see the note on `_TARGET_RE` there.
+    cta_target: str = Field("", max_length=320)
+    rank: int = Field(0, ge=0, le=999)
+    active: bool = True
+
+
+class BannerUpdate(BaseModel):
+    """⚠ EVERY FIELD OPTIONAL, and the route sends `exclude_unset` — so a panel
+    that only flips `active` does not have to resend the whole card, and a field
+    added later cannot be blanked by an older client."""
+
+    slot: str | None = Field(None, pattern="^(hero|side)$")
+    kicker: str | None = Field(None, max_length=banners.KICKER_MAX)
+    title: str | None = Field(None, min_length=1, max_length=banners.TITLE_MAX)
+    body: str | None = Field(None, max_length=banners.BODY_MAX)
+    cta_label: str | None = Field(None, max_length=banners.CTA_MAX)
+    cta_target: str | None = Field(None, max_length=320)
+    rank: int | None = Field(None, ge=0, le=999)
+    active: bool | None = None
+
+
+def _banner_row(row: dict) -> dict:
+    """One banner plus the facts the panel needs that the customer is not told.
+
+    ⚠ `active` IS RESOLVED HERE, not passed through — a row written before the
+    field existed carries no key, and `all_banners` reads that absence as live.
+    The panel's switch has to be fed the same answer the page is.
+    """
+    return {
+        **banners.public_banner(row),
+        "active": bool(row.get("active", True)),
+        "rank": int(row.get("rank") or 0),
+        "has_image": bool(row.get("image_id")),
+        "updated_at": row.get("updated_at"),
+        "updated_by": row.get("updated_by"),
+    }
+
+
+@router.get("/banners")
+def list_banners(admin: CurrentUser = Depends(require_admin)) -> dict:
+    """Every billboard, live or not, with the limits the form has to respect."""
+    return {
+        "banners": [_banner_row(b) for b in banners.all_banners(fresh=True)],
+        "slots": list(banners.SLOTS),
+        "max_per_slot": banners.MAX_PER_SLOT,
+        "image_max_px": banners.IMAGE_MAX_PX,
+        "allowed_types": list(banners.ALLOWED_IMAGE_TYPES),
+        "limits": {
+            "kicker": banners.KICKER_MAX,
+            "title": banners.TITLE_MAX,
+            "body": banners.BODY_MAX,
+            "cta_label": banners.CTA_MAX,
+        },
+    }
+
+
+@router.post("/banners", status_code=201)
+def create_banner(
+    body: BannerBody, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    try:
+        row = banners.create_banner(body.model_dump(), actor=admin.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="banner_created",
+        banner=row.get("id"),
+        slot=row.get("slot"),
+        **events.request_context(request),
+    )
+    logger.info("%s created a %s banner (%s)", admin.email, row.get("slot"), row.get("id"))
+    return _banner_row(row)
+
+
+@router.patch("/banners/{banner_id}")
+def update_banner(
+    banner_id: str,
+    body: BannerUpdate,
+    request: Request,
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to change.")
+    try:
+        row = banners.save_banner(banner_id, fields, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such banner.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="banner_changed",
+        banner=banner_id,
+        fields=sorted(fields),
+        **events.request_context(request),
+    )
+    return _banner_row(row)
+
+
+@router.delete("/banners/{banner_id}")
+def remove_banner(
+    banner_id: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """⚠ DELETE IS NOT HIDE, and the panel offers both. Hiding keeps the words
+    for the next campaign; deleting throws away the picture with them."""
+    try:
+        banners.delete_banner(banner_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such banner.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="banner_deleted",
+        banner=banner_id,
+        **events.request_context(request),
+    )
+    logger.info("%s deleted banner %s", admin.email, banner_id)
+    return {"ok": True}
+
+
+@router.post("/banners/{banner_id}/image")
+async def upload_banner_image(
+    banner_id: str,
+    request: Request,
+    image: UploadFile = File(..., description="The banner picture."),
+    admin: CurrentUser = Depends(require_admin),
+) -> dict:
+    """Put a picture on a billboard. Replaces whatever was there.
+
+    ⚠ THE SAME THREE CHECKS THE APP LOGO GETS — type, size, then Pillow — in the
+    same order, because the cheapest refusal should come first and Pillow is the
+    only one that has to read the bytes.
+    """
+    if image.content_type not in banners.ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type {image.content_type!r}. "
+            f"Allowed: {', '.join(banners.ALLOWED_IMAGE_TYPES)}.",
+        )
+    contents = await image.read()
+    if len(contents) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large ({len(contents)} bytes). "
+            f"Max is {config.MAX_UPLOAD_BYTES}.",
+        )
+    try:
+        webp = banners.normalise_image(contents)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        row = banners.save_image(banner_id, webp, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such banner.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="banner_image_uploaded",
+        banner=banner_id,
+        **events.request_context(request),
+    )
+    logger.info("%s put a picture on banner %s", admin.email, banner_id)
+    return _banner_row(row)
+
+
+@router.delete("/banners/{banner_id}/image")
+def delete_banner_image(
+    banner_id: str, request: Request, admin: CurrentUser = Depends(require_admin)
+) -> dict:
+    """Back to no picture — the card draws the workflow glyph instead."""
+    try:
+        row = banners.clear_image(banner_id, actor=admin.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="No such banner.")
+    events.record(
+        events.TYPE_ADMIN_BRANDING_CHANGED,
+        actor=admin.email,
+        action="banner_image_removed",
+        banner=banner_id,
+        **events.request_context(request),
+    )
+    return _banner_row(row)
 
 
 # ---------------------------------------------------------------------------

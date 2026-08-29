@@ -643,6 +643,85 @@ export function adminUpdateOffer(id, fields) {
     body: fields,
   });
 }
+// ---------------------------------------------------------------- branding
+// What the app is CALLED and what its mark looks like. The store and the
+// browser-side rules are in `src/branding.js`; these are just the four calls.
+//
+// ⚠ `publicBranding` TAKES NO TOKEN AND NEEDS NO ACCOUNT. It is read by the
+// LOGGED-OUT landing page and the sign-in card, which is exactly why the route
+// is public — see `server/branding.py`. (`request` attaches a bearer when one
+// happens to be in storage; the route ignores it.)
+export function publicBranding() {
+  return request("/public/branding");
+}
+// ⚠ THE API'S ADDRESS, NOT THE PAGE'S. The server answers with a relative path
+// because only this side knows `VITE_API_BASE`; an `<img src>` would otherwise
+// resolve it against Vite on :5173 instead of the API on :8000.
+export function absoluteUrl(path) {
+  if (!path) return "";
+  return /^https?:/i.test(path) ? path : `${BASE}${path}`;
+}
+export function adminGetBranding() {
+  return request("/admin/branding");
+}
+export function adminSaveBranding(fields) {
+  return request("/admin/branding", { method: "PATCH", body: fields });
+}
+// ⚠ ONE SLOT PER THEME — "dark" or "light". A logo is a flat picture and does not
+// re-colour itself the way the drawn mark does, so a white wordmark that reads
+// perfectly on the dark rail disappears into the light one. Either slot fills in
+// for the other, so one upload is still a complete answer.
+export function adminUploadBrandingLogo(slot, file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request(`/admin/branding/logo/${encodeURIComponent(slot)}`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
+}
+export function adminRemoveBrandingLogo(slot) {
+  return request(`/admin/branding/logo/${encodeURIComponent(slot)}`, {
+    method: "DELETE",
+  });
+}
+
+// ----------------------------------------------------------------- banners
+// The billboards on Explore — their words, their pictures and whether they are
+// showing at all. See `server/banners.py`.
+//
+// ⚠ `publicBanners` TAKES NO TOKEN, for the same reason `publicBranding` does
+// not: what you advertise is public by nature, and the answer is words, an
+// address and a rank. An EMPTY answer is normal and is not an error — Explore
+// falls back to the slides it builds from the workflow list.
+export function publicBanners() {
+  return request("/public/banners");
+}
+export function adminListBanners() {
+  return request("/admin/banners");
+}
+export function adminCreateBanner(body) {
+  return request("/admin/banners", { method: "POST", body });
+}
+export function adminUpdateBanner(id, fields) {
+  return request(`/admin/banners/${id}`, { method: "PATCH", body: fields });
+}
+export function adminDeleteBanner(id) {
+  return request(`/admin/banners/${id}`, { method: "DELETE" });
+}
+export function adminUploadBannerImage(id, file) {
+  const fd = new FormData();
+  fd.append("image", file);
+  return request(`/admin/banners/${id}/image`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+  });
+}
+export function adminRemoveBannerImage(id) {
+  return request(`/admin/banners/${id}/image`, { method: "DELETE" });
+}
+
 export function adminListSubscriptions({ status = null, email = "", limit = 50 } = {}) {
   const q = new URLSearchParams();
   if (status) q.set("status", status);

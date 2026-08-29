@@ -127,6 +127,43 @@
   height: 1em;
 }
 
+/* ---- An uploaded picture ----
+   ⚠ IT COVERS THE WHOLE CARD, unlike the glyph, because it is the point of the
+   card rather than decoration on it. The words then need a scrim, and the scrim
+   is dark in BOTH themes for the same reason the gallery captions are: it sits
+   over somebody's photograph, not over the page. */
+.xp-banner-photo {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.xp-banner.has-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(6, 8, 12, 0.94) 0%,
+    rgba(6, 8, 12, 0.78) 44%,
+    rgba(6, 8, 12, 0.15) 100%
+  );
+  pointer-events: none;
+}
+/* Literal colours, not tokens — see the note above. In the light theme `--text`
+   is near black and would disappear into the scrim. */
+.xp-banner.has-photo .xp-banner-title {
+  color: #ffffff;
+}
+.xp-banner.has-photo .xp-banner-sub {
+  color: rgba(255, 255, 255, 0.82);
+}
+.xp-banner.has-photo .xp-banner-eyebrow {
+  color: #e9cf86;
+}
+
 .xp-banner-body {
   position: relative;
   z-index: 1;
@@ -431,11 +468,16 @@
    ========================================================================= */
 /* ⚠ COLUMNS, NOT GRID, and that is the whole reason the wall reads as a
    gallery. This app's projects are 16:9, 9:16, 1:1 and 4:5 in the same library;
-   a grid would either crop every portrait board to a letterbox or leave a hand's
-   width of empty panel under every landscape one. Columns let each card keep its
-   own shape, which is what the reference does too. */
+   a uniform grid would crop a portrait board to a letterbox, or a landscape one
+   to a slot, whichever ratio it picked. Columns let each card keep its shape.
+
+   ⚠ THE COLUMN COUNT IS A CEILING SET BY THE ITEM COUNT — see `wallColumns` in
+   Explore.jsx. It was a flat 5, and with seven projects the fifth column held
+   ONE card and ended less than a third of the way down the wall, which is the
+   hole this was reported as. `14rem` is still the minimum width, so a narrow
+   window uses fewer than the ceiling allows. */
 .xp-gallery {
-  columns: 5 14rem;
+  columns: var(--xp-cols, 5) 14rem;
   column-gap: 0.9rem;
 }
 .xp-card {
@@ -464,8 +506,10 @@
   position: relative;
   display: block;
   width: 100%;
-  /* `aspectStyle` (LibraryList.jsx) sets `--lib-thumb-ar` from the project's own
-     ratio; anything that never recorded one is shown 16:9. */
+  /* `wallAspect` (Explore.jsx) sets `--lib-thumb-ar` from the project's own
+     ratio, PULLED INTO the range the wall can lay out — see the note there for
+     why this one screen crops when the libraries never do. Anything that never
+     recorded a ratio is shown 16:9. */
   aspect-ratio: var(--lib-thumb-ar, 16 / 9);
   background: var(--panel-2);
 }

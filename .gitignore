@@ -10,6 +10,10 @@
 .local_jobs.json.tmp
 # Autosaved script drafts (local fallback store — the user's own writing)
 .local_drafts.json
+# The app's own name and mark, when the local store is in use. It is a
+# DEPLOYMENT's branding, not the project's — committing one deployment's name
+# would rename every other checkout on its next start.
+.local_branding.json
 
 # Python
 __pycache__/

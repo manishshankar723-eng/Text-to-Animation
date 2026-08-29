@@ -1,4 +1,33 @@
-// Logo.jsx — the Aniwala mark, as inline SVG.
+// Logo.jsx — the app's mark: an UPLOADED logo when there is one, the drawn
+// mark below when there is not.
+//
+// ⚠ THE UPLOAD WINS, AND EVERY CALLER GETS IT FOR FREE. `Logo` reads the
+// branding store (`src/branding.js`) itself rather than taking a prop, so the
+// eight places that draw a mark — rail, sign-in card, landing nav, landing
+// footer, admin top bar, public storyboard, Explore hero, favicon — all change
+// together the moment an administrator saves one in Admin → Brand. That is the
+// whole requirement: ONE save, EVERY screen. Threading a prop would have meant
+// eight chances to miss one.
+//
+// ⚠ TWO UPLOADED LOGOS, ONE PER THEME, AND CSS PICKS — NOT JAVASCRIPT. A logo is
+// a flat picture; the drawn mark below re-colours itself with `currentColor` and
+// an uploaded white wordmark does not, so the first one vanished into the light
+// theme. Both files are rendered and `base.css` shows one, keyed off
+// `<html data-theme>`. That is deliberate over reading the theme in React:
+//
+//   · the landing page, the sign-in card and the public storyboard viewer are
+//     drawn OUTSIDE the app shell and never see its theme state;
+//   · the swap is then instant and cannot flash the wrong mark for a frame;
+//   · and it is one rule in one stylesheet rather than a theme subscription in
+//     a component eight screens depend on.
+//
+// The FAVICON is the exception and is the one thing that does need JS, because a
+// `<link rel=icon>` cannot be styled — see the observer in `branding.js`.
+//
+// ⚠ AND THE DRAWN MARK BELOW IS NOT DEAD CODE. It is what a deployment that has
+// never uploaded anything shows, what REMOVING both logos goes back to, and what
+// is on screen for the moment before the branding call answers on a browser with
+// nothing remembered. Everything written about it below still applies.
 //
 // ⚠ THIS REPLACES AN EMOJI (🎭), AND THE EMOJI WAS WRONG TWICE OVER. It was the
 // theatre-masks glyph, picked back when the whole product was "Character Asset
@@ -35,6 +64,7 @@
 // font-size of whatever it sits in — which is why the sidebar's collapsed rail
 // grows it (`.sb-logo` goes 1.3rem → 1.5rem) with no rule of its own here.
 import { useId } from "react";
+import useBranding from "../useBranding.js";
 
 // The A, the ribbon and its centreline, in a 64×64 box.
 //
@@ -54,15 +84,76 @@ const SPARKLE =
   "C -0.13 0.38, -0.38 0.13, -1 0 C -0.38 -0.13, -0.13 -0.38, 0 -1 Z";
 
 /**
- * The Aniwala AI Studio mark.
+ * The app's mark, whichever one that currently is.
  *
  * @param {string} [className] — extra classes; `.brand-mark` (base.css) is
  *   always applied and carries the baseline nudge that keeps it sitting level
  *   with the text beside it.
  * @param {boolean} [plain] — draw it in ONE colour (no gold sparkles). For
  *   places where the mark is already inside a coloured or inverted surface.
+ *   ⚠ IT ONLY APPLIES TO THE DRAWN MARK. An uploaded logo is a picture and the
+ *   app does not get to recolour somebody's brand — which is precisely why there
+ *   are two upload slots: a mark that cannot work on both grounds gets a second
+ *   file, not a filter.
  */
 export default function Logo({ className = "", plain = false, ...rest }) {
+  const { logoUrl, logoUrlLight } = useBranding();
+
+  if (!logoUrl && !logoUrlLight) {
+    return <DrawnMark className={className} plain={plain} {...rest} />;
+  }
+
+  // ⚠ ONE ELEMENT WHEN BOTH SLOTS RESOLVE TO THE SAME FILE, which is the normal
+  // case — one upload covers both themes and the server sends the same address
+  // twice. Drawing two identical images and hiding one would put a permanently
+  // invisible node in the rail, the sign-in card and the landing page for no
+  // reason, and it would need the theme rules below to be right to show anything
+  // at all. A single mark with no theme class is unconditional.
+  if (logoUrl === logoUrlLight) {
+    return <Mark src={logoUrl} className={className} {...rest} />;
+  }
+
+  // Two different files: both are in the DOM and `base.css` shows one, keyed off
+  // `<html data-theme>`. See the header for why this is CSS and not React state.
+  return (
+    <>
+      <Mark src={logoUrl} className={`brand-mark-dark ${className}`.trim()} {...rest} />
+      <Mark src={logoUrlLight} className={`brand-mark-light ${className}`.trim()} {...rest} />
+    </>
+  );
+}
+
+/** One uploaded logo, drawn where the mark goes. */
+function Mark({ src, className = "", ...rest }) {
+  return (
+    <img
+      src={src}
+      // ⚠ `alt=""` AND `aria-hidden`, LIKE THE DRAWN MARK. Every place this is
+      // used prints the app's name in text directly beside it, so a screen
+      // reader that announced the logo too would read the name twice — and with
+      // two marks in the DOM it would read it three times. `title` is left off
+      // for the same reason: it would put a tooltip on a decoration.
+      alt=""
+      aria-hidden="true"
+      // ⚠ SIZED BY CSS, NOT BY ATTRIBUTES. `.brand-mark-img` is 1em tall with
+      // its width free, so a SQUARE icon and a WIDE wordmark both sit on the
+      // text baseline at the size of whatever they were dropped into — the rail
+      // grows the mark by changing a font-size (`.sb-logo`), and an uploaded
+      // logo has to follow that the way the drawn one does.
+      className={`brand-mark brand-mark-img ${className}`.trim()}
+      // A logo that 404s (a wiped uploads volume, a half-finished deploy) must
+      // not leave a broken-image glyph where the brand goes. Hiding the element
+      // leaves the name beside it, which still reads correctly.
+      onError={(e) => {
+        e.currentTarget.style.display = "none";
+      }}
+      {...rest}
+    />
+  );
+}
+
+/** The built-in mark, drawn. See the header for what each part is doing. */
+function DrawnMark({ className = "", plain = false, ...rest }) {
   // ⚠ ONE ID PER INSTANCE, AND IT MATTERS. The landing page draws this mark
   // twice — nav and footer — and two `<mask id="film">` in one document is a
   // duplicate id: the browser resolves both references to the FIRST one, so

@@ -251,6 +251,40 @@ LOCAL_SUBSCRIPTIONS_PATH = os.environ.get(
 )
 OFFER_CACHE_TTL_S = float(os.environ.get("API_OFFER_CACHE_TTL_S", "30"))
 
+# --- App branding -------------------------------------------------------------
+# THE APP'S OWN NAME AND MARK, owned by the admin panel rather than by a JSX
+# file. ⚠ ONE ROW, NOT A LIST — there is exactly one product being named, so the
+# store holds a single document under `_DOC_ID` and every reader asks for the
+# same one. Follows the USER STORE for the same reason features and offers do:
+# one switch, one place.
+BRANDING_COLLECTION = os.environ.get("API_BRANDING_COLLECTION", "branding")
+LOCAL_BRANDING_PATH = os.environ.get("API_LOCAL_BRANDING_PATH", ".local_branding.json")
+# Read on EVERY page load by EVERY visitor, signed in or not, and written about
+# once in the life of a deployment — so it is cached harder than the flags are.
+# An upload bumps the cache in-process immediately; this TTL is only what the
+# OTHER workers in a multi-process deployment wait. See FEATURE_CACHE_TTL_S.
+BRANDING_CACHE_TTL_S = float(os.environ.get("API_BRANDING_CACHE_TTL_S", "60"))
+# Where the uploaded logo file lives. ⚠ NOT under `_references/`: a reference is
+# owner-scoped and served behind a bearer token, and this file has to be
+# readable by a logged-OUT visitor looking at the landing page.
+BRANDING_DIR = os.environ.get("API_BRANDING_DIR", os.path.join(UPLOAD_DIR, "_branding"))
+
+# --- Explore banners ----------------------------------------------------------
+# THE BILLBOARDS ON THE EXPLORE PAGE, owned by the admin panel rather than
+# generated from the workflow list. ⚠ A LIST, unlike branding's single row —
+# there are two slots and up to four cards in one of them. An EMPTY store is the
+# shipped state and is not an error: the client falls back to the slides it
+# generated before this existed. See `server/banners.py`.
+BANNERS_COLLECTION = os.environ.get("API_BANNERS_COLLECTION", "banners")
+LOCAL_BANNERS_PATH = os.environ.get("API_LOCAL_BANNERS_PATH", ".local_banners.json")
+# Read on every visit to Explore and written about as often as a marketing
+# campaign changes, so it is cached like branding rather than like a flag.
+BANNERS_CACHE_TTL_S = float(os.environ.get("API_BANNERS_CACHE_TTL_S", "60"))
+# Where the uploaded pictures live. ⚠ NOT under `_references/`, for the same
+# reason `BRANDING_DIR` is not: a reference is owner-scoped and served behind a
+# bearer token, and these have to be readable by anyone the page is shown to.
+BANNERS_DIR = os.environ.get("API_BANNERS_DIR", os.path.join(UPLOAD_DIR, "_banners"))
+
 # --- Usage counters -----------------------------------------------------------
 # What each account has used this calendar month, so a tier's `limits` can be
 # enforced. ⚠ NOT CACHED — a counter that is read from a cache is a counter that

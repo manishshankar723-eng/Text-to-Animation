@@ -95,6 +95,7 @@ const EVENT_LABELS = {
   "admin.tier_changed": { label: "Price changed", tone: "warn", ico: "💳" },
   "admin.user_tier_changed": { label: "Moved tier", tone: "ok", ico: "⬆" },
   "admin.offer_changed": { label: "Offer changed", tone: "warn", ico: "🏷" },
+  "admin.branding_changed": { label: "Brand changed", tone: "warn", ico: "✨" },
   "subscription.started": { label: "Subscribed", tone: "ok", ico: "🧾" },
   "subscription.cancelled": { label: "Subscription cancelled", tone: "fail", ico: "⊘" },
 };
@@ -146,6 +147,14 @@ export function eventDetail(ev) {
       return `${meta.code || "sale"} ${meta.action || "changed"}${
         meta.summary ? ` (${meta.summary})` : ""
       }`;
+    case "admin.branding_changed":
+      // The rename is the one worth reading back months later, and it is the one
+      // that needs both halves: "the app was renamed" without saying FROM WHAT
+      // is the row somebody opens the feed to answer.
+      if (meta.action === "renamed") return `renamed: ${meta.was || "—"} → ${meta.now || "—"}`;
+      if (meta.action === "logo_uploaded") return "new logo uploaded";
+      if (meta.action === "logo_removed") return "logo removed — back to the built-in mark";
+      return meta.action || "updated";
     case "subscription.started":
       return `${meta.tier} ${meta.period} · ${money(meta.amount)}${
         meta.code ? ` with ${meta.code}` : ""

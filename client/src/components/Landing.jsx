@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import * as api from "../api.js";
 import { OfferStrip } from "./OfferCard.jsx";
 import Logo from "./Logo.jsx";
+import useBranding from "../useBranding.js";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // ⚠ THIS IS COPY, NOT A LIST OF WHAT IS LIVE — AND THAT SPLIT IS THE POINT.
@@ -239,6 +240,10 @@ const FEATURES = [
 ];
 
 export default function Landing({ onGetStarted, theme, onToggleTheme }) {
+  // The shop window, seen by somebody with no account — which is the whole
+  // reason `/public/branding` needs no token. The name appears TWICE on this
+  // page (nav and footer) and both read the one store, so they cannot disagree.
+  const brand = useBranding();
   const shown = useLiveWorkflows();
   const allLive = shown.every((w) => !w.status || w.status === "live");
 
@@ -247,7 +252,7 @@ export default function Landing({ onGetStarted, theme, onToggleTheme }) {
       {/* ---------- Top nav ---------- */}
       <nav className="landing-nav">
         <span className="brand small">
-          <Logo /> Aniwala AI Studio
+          <Logo /> {brand.name}
         </span>
         <div className="landing-nav-links">
           <a href="#workflows">Workflows</a>
@@ -452,7 +457,7 @@ export default function Landing({ onGetStarted, theme, onToggleTheme }) {
 
       <footer className="landing-footer">
         <span className="brand small">
-          <Logo /> Aniwala AI Studio
+          <Logo /> {brand.name}
         </span>
         <span className="tiny muted">
           AI planning · character assets · storyboards · projects · video

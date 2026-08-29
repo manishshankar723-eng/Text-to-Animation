@@ -16,6 +16,8 @@ import AdminActivity from "./AdminActivity.jsx";
 import AdminFeatures from "./AdminFeatures.jsx";
 import AdminPricing from "./AdminPricing.jsx";
 import AdminSales from "./AdminSales.jsx";
+import AdminBrand from "./AdminBrand.jsx";
+import AdminBanners from "./AdminBanners.jsx";
 
 // ⚠ ORDER IS "WHAT IS GOING ON" → "WHO" → "WHAT THEY CAN SEE" → "WHAT HAPPENED",
 // which is the order somebody opening this at speed actually wants. Pricing sits
@@ -30,6 +32,17 @@ const TABS = [
   // discounts that shaped them. Kept apart because they are edited at
   // completely different moments.
   { id: "sales", label: "Sales", ico: "🧾" },
+  // ⚠ LAST BEFORE ACTIVITY, NOT FIRST. It is the tab an operator opens ONCE —
+  // when the app is first set up, and again the day the logo is redrawn — and
+  // putting a once-a-year screen in front of Users would push the daily work
+  // down the rail. Its neighbours are the other "what the product IS" tabs.
+  { id: "brand", label: "Brand", ico: "✨" },
+  // ⚠ NEXT TO BRAND, NOT NEXT TO SALES. Both of these are "what the product
+  // SAYS about itself" — the name and mark on one, the billboards on the front
+  // page on the other — and an operator who has just renamed the app is the one
+  // most likely to want the banner reworded too. It is nowhere near Sales
+  // because a banner is not a discount, even when it is advertising one.
+  { id: "banners", label: "Banners", ico: "🖼️" },
   { id: "activity", label: "Activity", ico: "🕑" },
 ];
 
@@ -88,6 +101,8 @@ export default function AdminPanel() {
       {tab === "features" && <AdminFeatures />}
       {tab === "pricing" && <AdminPricing />}
       {tab === "sales" && <AdminSales onOpenUser={openUser} />}
+      {tab === "brand" && <AdminBrand />}
+      {tab === "banners" && <AdminBanners />}
       {tab === "activity" && <AdminActivity onOpenUser={openUser} />}
     </div>
   );

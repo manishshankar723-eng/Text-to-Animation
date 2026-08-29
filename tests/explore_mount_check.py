@@ -140,6 +140,40 @@ OFFER = {
     "popup_cta": "See the plans",
 }
 
+# ---------------------------------------------------------------------------
+# The billboards an administrator typed, in the shape `GET /public/banners`
+# sends. ⚠ MUTABLE, like OFFER: section [12] empties it to prove the page falls
+# back to the cards it generates from the workflow list, which is both the
+# shipped state and what "hide it" produces.
+# ---------------------------------------------------------------------------
+# ⚠ THE STORE STARTS EMPTY, WHICH IS THE SHIPPED STATE. Sections [1]-[11] are
+# written against the cards Explore GENERATES from the workflow list, and that
+# is the path most installations will be on — so it is the one the bulk of this
+# file exercises. Section [12] fills the store in and empties it again.
+BANNERS = {"hero": [], "side": []}
+
+HERO_BANNER = {
+    "id": "ban-hero-1",
+    "slot": "hero",
+    "kicker": "Festival season",
+    "title": "Ganesh Utsav films, in a day",
+    "body": "One brief in, fifteen drawn panels out — then a cut you can post.",
+    "cta_label": "Start one",
+    "cta_target": "script-to-storyboard",
+    "image_url": "/public/banners/image/aaaaaaaaaaaa",
+}
+
+SIDE_BANNER = {
+    "id": "ban-side-1",
+    "slot": "side",
+    "kicker": "New",
+    "title": "Bring your own footage",
+    "body": "Drop a clip into the editor and cut it against your board.",
+    "cta_label": "Open the editor",
+    "cta_target": "storyboard-to-animatics",
+    "image_url": "",
+}
+
 # A 1×1 PNG for every cover the wall asks for. Its pixels do not matter; what is
 # being checked is that a cover ARRIVES AT ALL under StrictMode's double mount.
 TINY_PNG = bytes.fromhex(
@@ -174,6 +208,8 @@ import App from "./src/App.jsx";
 // the admin panel is only half-built until the panel can be opened — and a
 // green `npm run build` says nothing about whether it renders.
 import AdminSales from "./src/admin/AdminSales.jsx";
+// The screen the billboards are typed on.
+import AdminBanners from "./src/admin/AdminBanners.jsx";
 import { applyTheme, getTheme } from "./src/theme.js";
 import "./src/styles/index.css";
 
@@ -193,9 +229,18 @@ localStorage.setItem("cas_token", "probe-token");
 const root = ReactDOM.createRoot(document.getElementById("root"));
 let hidden = [];
 let screen = "explore";
+let collapsed = false;
 
 function draw() {
   const workflows = WORKFLOWS.filter((w) => !hidden.includes(w.id));
+  if (screen === "banners") {
+    root.render(
+      <React.StrictMode>
+        <AdminBanners />
+      </React.StrictMode>
+    );
+    return;
+  }
   if (screen === "sales") {
     root.render(
       <React.StrictMode>
@@ -215,12 +260,14 @@ function draw() {
   }
   root.render(
     <React.StrictMode>
-      <div className="shell">
+      <div className={`shell ${collapsed ? "nav-collapsed" : ""}`}>
       <Sidebar
         active={screen}
         onNavigate={(id) => window.__nav.push(id)}
         workflows={workflows}
         workflowsKnown={true}
+        collapsed={collapsed}
+        onToggleCollapse={() => {}}
         email="probe@example.com"
         displayName="Probe"
         theme="dark"
@@ -257,6 +304,7 @@ function draw() {
 
 // An administrator hiding a workflow, from out here.
 window.__hide = (ids) => { hidden = ids; draw(); };
+window.__collapse = (on) => { collapsed = on; draw(); };
 window.__screen = (s) => { screen = s; draw(); };
 draw();
 """
@@ -285,6 +333,31 @@ def route_api(route, request):
     the wall is handed a JSON array where it expected a PNG.
     """
     url = request.url
+
+    # The admin panel's banner screen, and the customer-facing list. ⚠ THE
+    # ADMIN PATH IS CHECKED FIRST because "/admin/banners" contains
+    # "/banners", and answering the panel with the public payload would leave
+    # it with no `active` flag and no switches to draw.
+    if "/admin/banners" in url and request.method == "GET":
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "banners": [
+                {**HERO_BANNER, "active": True, "rank": 0, "has_image": True},
+                {**SIDE_BANNER, "active": False, "rank": 0, "has_image": False},
+            ],
+            "slots": ["hero", "side"],
+            "max_per_slot": 4,
+            "image_max_px": 1280,
+            "allowed_types": ["image/png", "image/jpeg", "image/webp"],
+            "limits": {"kicker": 40, "title": 60, "body": 200, "cta_label": 30},
+        }))
+        return
+    if "/public/banners/image/" in url:
+        route.fulfill(status=200, content_type="image/png", body=TINY_PNG)
+        return
+    if "/public/banners" in url:
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps(BANNERS))
+        return
 
     # --- pictures first, for the reason above ---
     if "/panel/" in url or "/media/" in url:
@@ -450,6 +523,76 @@ def main():
                   str(page.evaluate("window.__nav")))
 
             print("")
+            print("[1d] the narrow rail says what each row IS")
+            # ⚠ IT USED TO BE ICONS ONLY. Six drawn glyphs with nothing under
+            # them is six things you have to have learned, and the names would
+            # not fit — "Image to Animatic Image" under a 24px picture in an
+            # 84px column. Each row carries a SHORT name now, chosen workflow by
+            # workflow in `WORKFLOW_SHORT`.
+            page.evaluate("window.__collapse(true)")
+            page.wait_for_timeout(500)
+            rail = page.locator(".sidebar.collapsed")
+            check("the rail narrows", rail.count() == 1)
+            for row, want in [
+                ("Explore", "Explore"),
+                ("Home", "Home"),
+                # ⚠ ALL SIX WORKFLOWS, NOT THE THREE THIS ACCOUNT CAN SEE. Three
+                # are switched off in the admin panel today and are one click
+                # from coming back; a workflow that returns with its full name
+                # spilling out of the rail is the fault this map prevents, and
+                # only naming what is on screen would have left it in place.
+                ("Plan & Script", "Plan"),
+                ("Text to Turnaround Image", "Characters"),
+                ("Script to Storyboard", "Storyboard"),
+                ("Image to Animatic Image", "Animatics"),
+                ("Image to AI Video", "AI Video"),
+                ("Video Editor", "Editor"),
+            ]:
+                item = rail.locator(".sb-item", has_text=row).first
+                got = item.locator(".sb-item-short").inner_text()
+                check(f"…{row} → {want}", got == want, got)
+
+            check("⚠ …and the full name is still on hover, so nothing is lost "
+                  "by shortening it",
+                  rail.locator(".sb-item", has_text="Script to Storyboard").first
+                  .get_attribute("title").startswith("Script to Storyboard"))
+
+            # ⚠ MEASURED, NOT EYED. `text-overflow: ellipsis` fails silently:
+            # the longest name would simply come out as "Storyboa…" and read
+            # like a rendering glitch rather than a layout that is one word too
+            # wide. This is the check that fails when somebody adds a workflow
+            # called "Turnarounds".
+            # ⚠ MEASURED WITH A `Range`, NOT WITH `scrollWidth`. The obvious
+            # test — `scrollWidth > clientWidth` — reads EQUAL on a box that is
+            # visibly ellipsised here, because the label is a shrink-to-fit
+            # block inside a centred flex column: it never gets a scroll extent
+            # to be wider than. Proved by running it against the 84px rail that
+            # really did print "Storyboa…" and watching it report green.
+            # A Range over the text's own contents measures the words, and the
+            # row's content box is what they have to fit in.
+            clipped = page.evaluate(
+                "Array.from(document.querySelectorAll("
+                "'.sidebar.collapsed .sb-item-short')).filter(el => {"
+                "  const r = document.createRange();"
+                "  r.selectNodeContents(el);"
+                "  return r.getBoundingClientRect().width"
+                "       > el.getBoundingClientRect().width + 0.5;"
+                "}).map(el => el.textContent)"
+            )
+            check("⚠ …and not one of them is clipped at the rail's width",
+                  not clipped, str(clipped))
+            page.screenshot(path=os.path.join(ROOT, "output", "sidebar_collapsed.png"))
+
+            page.evaluate("window.__collapse(false)")
+            page.wait_for_timeout(400)
+            check("…and the wide rail is back to full names",
+                  page.locator(".sidebar .sb-item", has_text="Script to Storyboard")
+                  .first.inner_text().strip().startswith("Script to Storyboard"),
+                  page.locator(".sidebar .sb-item", has_text="Script to Storyboard")
+                  .first.inner_text())
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+
+            print("")
             print("[1c] the offer comes to the customer")
             # ⚠ IT ARRIVES, IT DOES NOT LOAD WITH THE PAGE. `ENTER_MS` of delay
             # is what makes it read as an arrival; a card that is simply there
@@ -577,6 +720,46 @@ def main():
             check("…a project with no picture yet falls back to its workflow's "
                   "own glyph rather than a grey box",
                   page.locator(".xp-card-glyph").count() > 0)
+            # ⚠ THE HOLE BESIDE THE TALL BOARD, MEASURED RATHER THAN EYED.
+            # Reported twice: *"gallery me lamba 9:16 board wala column bagal me
+            # khali jagah chhod raha hai."* On the old wall these seven projects
+            # produced columns ending at 483, 483, 323, 323 and 154 — the last
+            # one two thirds empty. The cause was the SPREAD, not the packing: a
+            # 9:16 board was 3.2× the height of a 16:9 one in the same column.
+            # `wallAspect` pulls every card into 4:5..16:9 and `wallColumns`
+            # stops five columns holding one card each.
+            cols = page.evaluate("""
+              (() => {
+                const cards = [...document.querySelectorAll('.xp-card')];
+                const top = document.querySelector('.xp-gallery')
+                  .getBoundingClientRect().top;
+                const ends = {};
+                for (const c of cards) {
+                  const r = c.getBoundingClientRect();
+                  const k = Math.round(r.left);
+                  ends[k] = Math.max(ends[k] || 0, r.bottom - top);
+                }
+                return Object.values(ends).map(Math.round);
+              })()
+            """)
+            filled = min(cols) / max(cols) if cols else 0
+            check("⚠ the wall's shortest column reaches at least 55% of its "
+                  "tallest — no column may end a third of the way down while "
+                  "its neighbour runs the whole height",
+                  filled >= 0.55, f"{cols} -> {filled:.0%}")
+            # 2.3 is the declared range and nothing else: WALL_AR_MAX / MIN =
+            # (16/9) / 0.8 = 2.22. It was 3.2 before the clamp, and that is the
+            # number the hole was made of.
+            check("…and no card is more than 2.3× the height of another, which "
+                  "is what made a hole nothing could fill",
+                  page.evaluate("""
+                    (() => {
+                      const h = [...document.querySelectorAll('.xp-card-pic')]
+                        .map(e => e.getBoundingClientRect().height)
+                        .filter(n => n > 0);
+                      return h.length ? Math.max(...h) / Math.min(...h) : 0;
+                    })()
+                  """) <= 2.3)
             check("…each card says which workflow it came from",
                   page.locator(".xp-card-wf").count() == WALL_TOTAL,
                   str(page.locator(".xp-card-wf").count()))
@@ -788,6 +971,118 @@ def main():
                   str(page.locator("textarea.admin-offer-lines").count()))
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
             page.screenshot(path=os.path.join(ROOT, "output", "admin_offer_popup.png"),
+                            full_page=True)
+
+            print("")
+            print("[12] the billboards say what an administrator typed")
+            # ⚠ THE WHOLE POINT OF THE FEATURE. Both banners used to be BUILT
+            # from the workflow list — the heading was a workflow's name, the
+            # body was its landing-page pitch, the artwork was its own glyph —
+            # so the one part of the app whose job is to say something could
+            # only be changed by a developer. *"This banner should be change aur
+            # hide by the admin, of it text and image."*
+            BANNERS["hero"] = [HERO_BANNER]
+            BANNERS["side"] = [SIDE_BANNER]
+            page.evaluate("window.__screen('explore')")
+            page.reload(wait_until="load")
+            page.wait_for_timeout(2200)
+            hero = page.locator(".xp-hero")
+            side = page.locator(".tone-side")
+            check("the rotating card carries their heading",
+                  hero.locator(".xp-banner-title").inner_text()
+                  == HERO_BANNER["title"],
+                  hero.locator(".xp-banner-title").inner_text())
+            # ⚠ CASE-INSENSITIVE. `.xp-banner-eyebrow` is `text-transform:
+            # uppercase`, and `inner_text()` returns what is RENDERED — so an
+            # exact match here fails on a card that is perfectly correct.
+            check("…their small line above it",
+                  hero.locator(".xp-banner-eyebrow").inner_text().lower()
+                  == HERO_BANNER["kicker"].lower(),
+                  hero.locator(".xp-banner-eyebrow").inner_text())
+            check("…their line under it",
+                  HERO_BANNER["body"] in hero.inner_text())
+            check("…their words on the button",
+                  HERO_BANNER["cta_label"] in hero.inner_text())
+            check("⚠ …and THEIR PICTURE, filling the card rather than the faded "
+                  "glyph the generated version draws",
+                  hero.locator("img.xp-banner-photo").count() == 1
+                  and "has-photo" in (hero.get_attribute("class") or ""),
+                  hero.get_attribute("class"))
+            check("the fixed card is theirs too",
+                  side.locator(".xp-banner-title").inner_text()
+                  == SIDE_BANNER["title"],
+                  side.locator(".xp-banner-title").inner_text())
+            check("⚠ …and a banner with NO picture still draws the glyph — "
+                  "every field is optional and the card has to stand without it",
+                  side.locator(".xp-banner-art").count() == 1
+                  and side.locator("img.xp-banner-photo").count() == 0)
+
+            before = len(page.evaluate("window.__nav"))
+            hero.locator(".xp-banner-cta").click()
+            page.wait_for_timeout(250)
+            check("…and the button goes where they pointed it",
+                  page.evaluate("window.__nav").count("script-to-storyboard")
+                  > 0 and len(page.evaluate("window.__nav")) > before,
+                  str(page.evaluate("window.__nav")[-3:]))
+            check("⚠ …with only ONE dot, because they wrote one card — the "
+                  "carousel is their list, not a fixed four",
+                  page.locator(".xp-hero-dot").count() == 0,
+                  str(page.locator(".xp-hero-dot").count()))
+            page.screenshot(path=os.path.join(ROOT, "output", "explore_banners.png"))
+
+            # ⚠ HIDING ONE IS THE SAME THING AS HAVING NONE, from out here: the
+            # server drops an inactive row from the public payload. So this is
+            # the check that the page does not go BLANK when an administrator
+            # hides the last banner — it goes back to the built-in cards.
+            BANNERS["hero"] = []
+            BANNERS["side"] = []
+            page.reload(wait_until="load")
+            page.wait_for_timeout(2200)
+            check("⚠ hiding every banner does not empty the page — it falls "
+                  "back to the cards built from the workflow list, which is "
+                  "what this page drew before the panel could speak",
+                  page.locator(".xp-hero .xp-banner-title").inner_text()
+                  == "Everything from one script",
+                  page.locator(".xp-hero .xp-banner-title").inner_text())
+            check("…and the four generated slides are back",
+                  page.locator(".xp-hero-dot").count() == 4,
+                  str(page.locator(".xp-hero-dot").count()))
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+
+            print("")
+            print("[13] and the screen those billboards are typed on")
+            page.evaluate("window.__screen('banners')")
+            page.wait_for_timeout(1500)
+            body = page.inner_text("body")
+            check("Banners mounts with nothing thrown",
+                  not errors, "; ".join(errors[:2]))
+            check("…both slots are listed",
+                  "Rotating (left)" in body and "Fixed (right)" in body)
+            check("…with the banner rows in them",
+                  page.locator(".admin-banner-row").count() == 2,
+                  str(page.locator(".admin-banner-row").count()))
+            # Same uppercase rule as above — `.badge` transforms its text.
+            check("⚠ …each saying whether it is showing — hide is not delete, "
+                  "and the row has to say which state it is in",
+                  "showing" in body.lower() and "hidden" in body.lower(),
+                  body[:120])
+            check("…and offering a picture for the one that has none",
+                  page.get_by_role("button", name="Add picture").count() == 1,
+                  str(page.get_by_role("button", name="Add picture").count()))
+            check("⚠ …and ↑ / ↓, because the rotating card's ORDER is what a "
+                  "customer sees first (RULEBOOK E6)",
+                  page.locator('button[title="Move up"]').count() == 2)
+
+            page.get_by_role("button", name="＋ New banner").first.click()
+            page.wait_for_timeout(400)
+            body = page.inner_text("body")
+            for label in ("Where it goes", "Heading", "Button words",
+                          "The button opens"):
+                check(f"…the form asks for it: {label}", label in body)
+            check("⚠ …and the body box GROWS to its text (E1)",
+                  page.locator("textarea.admin-banner-body").count() == 1)
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+            page.screenshot(path=os.path.join(ROOT, "output", "admin_banners.png"),
                             full_page=True)
 
             browser.close()

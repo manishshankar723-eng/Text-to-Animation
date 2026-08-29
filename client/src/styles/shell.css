@@ -24,11 +24,16 @@
      page edge jumping a frame ahead of it. */
   transition: grid-template-columns 0.18s ease;
 }
-/* Icon-only rail (Ctrl+B, or the toggle in the brand row). Wide enough for a
-   40px hit target plus the sidebar's own padding, and no wider — the point of
-   it is the space it gives back to the page. */
+/* Narrow rail (Ctrl+B, or the toggle in the brand row). ⚠ 68px UNTIL THE ROWS
+   GREW NAMES. At 68 there was room for a 40px hit target and nothing else,
+   which was right while the rail was icons only; a row that now says
+   "Storyboard" under its glyph needs about 58px of readable line, and 92 is
+   that plus the rail's padding, the row's padding and its border — measured in
+   Chromium rather than guessed, because the first attempt at this was 84 and
+   came out as "Storyboa…". It is still less than a third of the wide
+   rail — the point of collapsing is the space it gives back to the page. */
 .shell.nav-collapsed {
-  grid-template-columns: 68px 1fr;
+  grid-template-columns: 92px 1fr;
 }
 @media (max-width: 820px) {
   .shell,
@@ -675,15 +680,20 @@
 }
 
 /* =========================================================================
-   COLLAPSED RAIL (icon only)
+   COLLAPSED RAIL (icon over a short name)
    -------------------------------------------------------------------------
-   Same DOM as the wide rail — the labels are HIDDEN, not unmounted, so the
-   `title` on every row survives and hovering an icon still tells you what it
-   is. Every row keeps its full height and its outline, so the thing you aim at
-   doesn't move when the rail narrows.
+   Same DOM as the wide rail — the long labels are HIDDEN, not unmounted, so the
+   `title` on every row survives and hovering still tells you the full name.
+   Every row keeps its outline, so the thing you aim at doesn't move when the
+   rail narrows.
+
+   ⚠ IT USED TO BE ICONS ONLY, and it was asked to stop being: six drawn glyphs
+   with nothing under them is six things you have to have learned. Each row now
+   stacks its icon over a SHORT name — `WORKFLOW_SHORT` in Sidebar.jsx, which is
+   where the words themselves are chosen and why.
    ========================================================================= */
 .sidebar.collapsed {
-  padding: 1.1rem 0.7rem;
+  padding: 1.1rem 0.5rem;
   align-items: center;
 }
 .sidebar.collapsed .sb-brand {
@@ -713,17 +723,50 @@
 .sidebar.collapsed .sb-footer {
   width: 100%;
 }
-.sidebar.collapsed .sb-item,
 .sidebar.collapsed .sb-theme,
-.sidebar.collapsed .sb-workspace,
-.sidebar.collapsed .sb-upgrade {
+.sidebar.collapsed .sb-workspace {
   justify-content: center;
   gap: 0;
   padding-left: 0;
   padding-right: 0;
 }
+/* Icon over its name, centred, in a box the same shape as the wide rail's. */
+.sidebar.collapsed .sb-item,
+.sidebar.collapsed .sb-upgrade {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.5rem 0.15rem;
+  text-align: center;
+}
 .sidebar.collapsed .sb-ico {
   width: auto;
+  font-size: 1.15rem;
+}
+/* ⚠ HIDDEN IN THE WIDE RAIL, SHOWN IN THE NARROW ONE — the long label does the
+   opposite, and both are in the DOM at once. See the note in Sidebar.jsx.
+   `nowrap` with a hidden overflow rather than wrapping: a name that folded onto
+   a second line would make one row taller than its neighbours, and a rail whose
+   rows are different heights reads as broken long before it reads as full. */
+.sb-item-short {
+  display: none;
+}
+.sidebar.collapsed .sb-item-short {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The Upgrade button is gold-filled, so its name takes the ink of the fill
+   rather than the rail's own text colour. */
+.sidebar.collapsed .sb-upgrade .sb-item-short {
+  color: inherit;
 }
 
 /* =========================================================================

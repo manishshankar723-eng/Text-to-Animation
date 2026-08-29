@@ -36,6 +36,8 @@ from fastapi.responses import FileResponse, RedirectResponse
 from . import config
 from . import users
 from .admin import router as admin_router
+from .banners import router as banners_router
+from .branding import router as branding_router
 from .billing import router as billing_router
 from .features import router as features_router, require_feature
 # ⚠ THE QUOTA GUARD SITS BESIDE `require_feature`, ON THE SAME ROUTES. A limit
@@ -229,6 +231,13 @@ app.include_router(billing_router)
 # SHARED Freesound rate limit. Read the licence note at the top of `freesound.py`
 # before shipping this commercially — the free API key is a non-commercial one.
 app.include_router(sounds_router)
+# The app's own name and mark (/public/branding). ⚠ PUBLIC AND UNAUTHENTICATED,
+# for the same reason `GET /billing/tiers` is: the landing page, the sign-in card
+# and a shared storyboard link all print the name and draw the mark, and none of
+# them has a session. The WRITE side is `/admin/branding`, behind `require_admin`
+# like everything else in the panel. Spends no AI quota. See server/branding.py.
+app.include_router(branding_router)
+app.include_router(banners_router)
 
 # View order Meshy expects for multi-image-to-3d.
 _MESHY_VIEW_ORDER = ["front", "left", "three_quarter", "back"]

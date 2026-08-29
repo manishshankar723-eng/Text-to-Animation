@@ -85,6 +85,11 @@ TYPE_ADMIN_USER_TIER_CHANGED = "admin.user_tier_changed"
 # (`email`) AS WELL AS THE ADMIN (`actor`); an offer change is about the site and
 # so, like a price change, carries only the actor.
 TYPE_ADMIN_OFFER_CHANGED = "admin.offer_changed"
+# Phase 5 — the app's own name and mark. ⚠ ABOUT THE SITE, NOT ABOUT A CUSTOMER,
+# so like a price change it carries only the actor. It is recorded because
+# "the logo changed and nobody knows who did it" is exactly the question an
+# activity feed exists to answer.
+TYPE_ADMIN_BRANDING_CHANGED = "admin.branding_changed"
 TYPE_SUBSCRIPTION_STARTED = "subscription.started"
 TYPE_SUBSCRIPTION_CANCELLED = "subscription.cancelled"
 
@@ -106,6 +111,7 @@ KNOWN_TYPES = (
     TYPE_ADMIN_TIER_CHANGED,
     TYPE_ADMIN_USER_TIER_CHANGED,
     TYPE_ADMIN_OFFER_CHANGED,
+    TYPE_ADMIN_BRANDING_CHANGED,
     TYPE_SUBSCRIPTION_STARTED,
     TYPE_SUBSCRIPTION_CANCELLED,
 )
