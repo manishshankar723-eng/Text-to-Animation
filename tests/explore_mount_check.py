@@ -111,6 +111,35 @@ WALL_TOTAL = len(PLANS) + len(JOBS) + len(BOARDS) + len(COPIED_BOARDS) \
 # The two that are not finished — see the note on the fixtures.
 UNFINISHED = 2
 
+# ---------------------------------------------------------------------------
+# The discount the pop-up advertises, in the shape `GET /billing/tiers` sends —
+# every field an administrator can type into `AdminSales`, so the card is
+# rendered from a real row rather than from its own fallbacks.
+#
+# ⚠ MUTABLE ON PURPOSE. Section [10] rewrites it between page loads to ask the
+# two questions a single fixture cannot: does a NEW offer get its turn after the
+# last one was dismissed, and does `popup: false` really draw nothing.
+# ---------------------------------------------------------------------------
+OFFER = {
+    "id": "offer-1",
+    "code": "LAUNCH50",
+    "label": "Launch week",
+    "summary": "50% off",
+    "kind": "percent",
+    "value": 50,
+    "period": "both",
+    "applies_to": [],
+    "ends_at": "",
+    "banner": "",
+    "is_sale": False,
+    "remaining": 34,
+    "popup": True,
+    "popup_title": "Aniwala launch offer",
+    "popup_lines": ["Every plan, monthly or yearly.", "Cancel whenever you like."],
+    "popup_note": "New customers only.",
+    "popup_cta": "See the plans",
+}
+
 # A 1×1 PNG for every cover the wall asks for. Its pixels do not matter; what is
 # being checked is that a cover ARRIVES AT ALL under StrictMode's double mount.
 TINY_PNG = bytes.fromhex(
@@ -141,6 +170,10 @@ import Sidebar, { WORKFLOWS } from "./src/components/Sidebar.jsx";
 // is a `useState` initialiser in App.jsx and no amount of mounting the pages
 // by hand can see it.
 import App from "./src/App.jsx";
+// ⚠ THE SCREEN THE POP-UP'S WORDS ARE TYPED ON. A card whose copy comes from
+// the admin panel is only half-built until the panel can be opened — and a
+// green `npm run build` says nothing about whether it renders.
+import AdminSales from "./src/admin/AdminSales.jsx";
 import { applyTheme, getTheme } from "./src/theme.js";
 import "./src/styles/index.css";
 
@@ -163,6 +196,14 @@ let screen = "explore";
 
 function draw() {
   const workflows = WORKFLOWS.filter((w) => !hidden.includes(w.id));
+  if (screen === "sales") {
+    root.render(
+      <React.StrictMode>
+        <AdminSales onOpenUser={() => {}} />
+      </React.StrictMode>
+    );
+    return;
+  }
   // The real shell draws its own rail, so it is rendered bare — no wrapper.
   if (screen === "app") {
     root.render(
@@ -196,6 +237,7 @@ function draw() {
           workflowsKnown={true}
           onNavigate={(id) => window.__nav.push(id)}
           onOpenJob={(id) => window.__nav.push("job:" + id)}
+          onUpgrade={() => window.__nav.push("upgrade")}
         />
       ) : (
         <Home
@@ -274,6 +316,42 @@ def route_api(route, request):
         body = COPIED_BOARDS if "workflow=animatic-image" in url else BOARDS
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps(body))
+        return
+
+    # The admin panel's Sales screen. ⚠ `_offer_row` RESOLVES `popup` for the
+    # panel exactly as `public_offer` does for the customer, so the fixture
+    # carries it — a row without it would be testing the fallback, not the
+    # switch.
+    if "/admin/offers" in url and request.method == "GET":
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            # ⚠ `popup` AND `promoted` ARE STATED HERE, not inherited from
+            # OFFER — section [10] flips `OFFER["popup"]` to False on its way
+            # through, and a panel fixture that quietly followed it would make
+            # this section's result depend on the order the sections run in.
+            "offers": [{**OFFER, "live": True, "active": True, "redeemed": 6,
+                        "max_redemptions": 40, "promoted": True, "popup": True}],
+            "kinds": ["percent", "amount"],
+            "periods": ["monthly", "yearly", "both"],
+            # ⚠ `tier_ids`, NOT `tiers` — the panel reads `offers.tier_ids[1]`
+            # for the plan the record form opens on, and the wrong key name here
+            # is a crash rather than an empty dropdown.
+            "tier_ids": [{"id": "starter", "name": "Starter"},
+                         {"id": "studio", "name": "Studio"}],
+            "currency": "USD",
+        }))
+        return
+    if "/admin/subscriptions" in url and request.method == "GET":
+        route.fulfill(status=200, content_type="application/json", body=json.dumps({
+            "subscriptions": [], "total": 0, "active": 0,
+            "recorded_monthly": 0, "currency": "USD",
+        }))
+        return
+
+    # ⚠ BEFORE the catch-all, which answers "{}" — and an offer strip handed an
+    # empty object draws nothing, so the pop-up would never have been tested.
+    if "/billing/tiers" in url:
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"tiers": [], "offers": [OFFER]}))
         return
 
     if url.rstrip("/").endswith("/auth/me"):
@@ -372,6 +450,49 @@ def main():
                   str(page.evaluate("window.__nav")))
 
             print("")
+            print("[1c] the offer comes to the customer")
+            # ⚠ IT ARRIVES, IT DOES NOT LOAD WITH THE PAGE. `ENTER_MS` of delay
+            # is what makes it read as an arrival; a card that is simply there
+            # on the first frame is part of the layout and gets scrolled past
+            # like the rest of it.
+            page.wait_for_selector(".promo-pop.in", timeout=4000)
+            promo = page.locator(".promo-pop")
+            check("the offer card slid in", promo.count() == 1)
+            check("⚠ …headed by the words an ADMINISTRATOR typed, not by the "
+                  "component's own fallback",
+                  promo.locator(".promo-title").inner_text()
+                  == OFFER["popup_title"],
+                  promo.locator(".promo-title").inner_text())
+            check("…with a bullet per line they wrote",
+                  promo.locator(".promo-lines li").count()
+                  == len(OFFER["popup_lines"]),
+                  str(promo.locator(".promo-lines li").count()))
+            check("…their small print under them",
+                  OFFER["popup_note"] in promo.inner_text())
+            check("…their words on the button",
+                  OFFER["popup_cta"] in promo.inner_text(), promo.inner_text())
+            promo.locator(".promo-cta").click()
+            page.wait_for_timeout(250)
+            check("⚠ …and that button opens the pricing modal — the SAME one "
+                  "the rail's Upgrade opens, not a second pricing screen",
+                  page.evaluate("window.__nav").count("upgrade") == 1,
+                  str(page.evaluate("window.__nav")))
+            check("⚠ …and the CODE, copyable — a coupon nobody can copy is a "
+                  "coupon typed wrong",
+                  promo.locator(".promo-code-text").inner_text() == OFFER["code"])
+            check("…the discount itself is the card's artwork",
+                  promo.locator(".promo-cut").inner_text() == OFFER["summary"])
+            check("⚠ …and it is NOT a modal — the page behind it still works",
+                  page.locator(".modal-overlay").count() == 0
+                  and page.locator(".xp-tile").count() > 0)
+
+            page.screenshot(path=os.path.join(ROOT, "output", "explore_promo.png"))
+
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(600)
+            check("Escape closes it", page.locator(".promo-pop").count() == 0)
+
+            print("")
             print("[2] the billboards")
             check("the rotating banner is there", page.locator(".xp-hero").count() == 1)
             check("⚠ …with a dot per slide — the brand one plus three "
@@ -394,13 +515,46 @@ def main():
                   "what a workflow with no pitch written for it used to print",
                   page.locator(".xp-banner-sub").nth(0).inner_text().strip() != ".")
 
+            # ⚠ THE BUG THIS BLOCK EXISTS FOR. The two billboards share a grid
+            # row, so a slide whose body ran two lines longer pushed BOTH of
+            # them taller and then let them snap back — the page flinching every
+            # six seconds. Reported as *"image to animatics image ka panel bara
+            # ho jata hai kyun ismai text jayada hai"*. Measured, not eyed.
+            #
+            # ⚠ AND IT WALKS EVERY SLIDE. The first version of the doubled-stop
+            # check read slide 0 only — and the workflow that produced ".." is
+            # never slide 0, so it reported green on the broken build.
+            heights = []
+            subs = []
+            for n in range(page.locator(".xp-hero-dot").count()):
+                page.locator(".xp-hero-dot").nth(n).click()
+                page.wait_for_timeout(350)
+                heights.append(round(page.locator(".xp-banners").bounding_box()["height"]))
+                subs.append(page.locator(".xp-hero .xp-banner-sub").inner_text())
+            check("⚠ every slide leaves the billboard row exactly the same "
+                  "height — the longest body must not be the one that moves the "
+                  "page",
+                  len(set(heights)) == 1, str(heights))
+            check("⚠ …and no slide ends in a doubled full stop, which is what "
+                  "gluing a '.' onto a sentence that already had one produced",
+                  not [t for t in subs if ".." in t],
+                  str([t for t in subs if ".." in t]))
+            check("…every slide has a body worth reading, none of them a lone "
+                  "full stop",
+                  all(len(t.strip()) > 1 for t in subs), str(subs))
+
             print("\n[3] a tile per workflow, and the tiles go somewhere")
             check("six tiles, one per workflow in the rail",
                   page.locator(".xp-tile").count() == 6,
                   str(page.locator(".xp-tile").count()))
-            check("⚠ exactly ONE of them is the filled one — six gold tiles is "
-                  "a row with no beginning",
-                  page.locator(".xp-tile-lead").count() == 1)
+            # ⚠ THE OPPOSITE OF WHAT THIS CHECK USED TO SAY, and the reason is
+            # in the reply that changed it: *"ye 3 button ka colour ek jaisa
+            # rakho, ismai golden hata do."* The rail's order is the owner's
+            # pipeline, not a recommendation, and gold means "the action"
+            # everywhere else on this page.
+            check("⚠ not one of them is gold — the row is one colour end to end",
+                  page.locator(".xp-tile-lead").count() == 0,
+                  str(page.locator(".xp-tile-lead").count()))
             page.locator(".xp-tile", has_text="Script to Storyboard").click()
             page.wait_for_timeout(200)
             check("…and pressing one opens that workflow",
@@ -570,6 +724,71 @@ def main():
                   page.locator(".home").count() == 1
                   and "Welcome back" in page.inner_text("body"))
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+
+            print("")
+            print("[10] a dismissed offer stays dismissed — a NEW one does not")
+            # ⚠ THE TRAP A SINGLE "seen the popup" FLAG WOULD HAVE SET. Closing
+            # one card must not silence every offer this account is ever shown,
+            # and the only way to tell the two apart is to reload with a
+            # different id. Section [1c] already pressed Escape on `offer-1`.
+            page.reload(wait_until="load")
+            page.wait_for_timeout(2500)
+            check("⚠ the card somebody closed does not come back",
+                  page.locator(".promo-pop").count() == 0,
+                  str(page.locator(".promo-pop").count()))
+
+            OFFER["id"] = "offer-2"
+            OFFER["popup_title"] = "Second offer"
+            page.reload(wait_until="load")
+            page.wait_for_selector(".promo-pop.in", timeout=5000)
+            check("⚠ …but a NEW offer still gets its turn",
+                  page.locator(".promo-title").inner_text() == "Second offer",
+                  page.locator(".promo-title").inner_text())
+
+            OFFER["id"] = "offer-3"
+            OFFER["popup"] = False
+            page.reload(wait_until="load")
+            page.wait_for_timeout(2500)
+            check("⚠ …and an offer an administrator switched the pop-up OFF for "
+                  "draws nothing at all — the panel is the control, not a "
+                  "suggestion",
+                  page.locator(".promo-pop").count() == 0,
+                  str(page.locator(".promo-pop").count()))
+            check("…and the page is still fine without it",
+                  page.locator(".xp-tile").count() == 6,
+                  str(page.locator(".xp-tile").count()))
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+
+            print("")
+            print("[11] and the panel those words are typed on still opens")
+            page.evaluate("window.__screen('sales')")
+            page.wait_for_timeout(1600)
+            check("Sales mounts with nothing thrown",
+                  not errors, "; ".join(errors[:2]))
+            check("…and its offer is listed", "LAUNCH50" in page.inner_text("body"))
+            check("⚠ …with the pop-up switch on the row — a third question, not "
+                  "a second name for Show/Hide",
+                  page.get_by_role("button", name="No pop-up").count() == 1,
+                  page.inner_text(".admin-offer-acts") if
+                  page.locator(".admin-offer-acts").count() else "no acts")
+
+            # ⚠ THE FIELDS ARE INSIDE THE CREATE FORM, which is collapsed until
+            # somebody presses the button — so the check has to press it. A
+            # form nobody can open is a form nobody can fill in.
+            page.get_by_role("button", name="New offer").first.click()
+            page.wait_for_timeout(400)
+            body = page.inner_text("body")
+            for label in ("Also slide it in as a card on Explore",
+                          "Card heading", "Bullet points", "Small print",
+                          "Button words"):
+                check(f"…the form asks for it: {label}", label in body)
+            check("⚠ …and the bullet box GROWS to its text (E1) rather than "
+                  "clipping the third line out of sight",
+                  page.locator("textarea.admin-offer-lines").count() == 1,
+                  str(page.locator("textarea.admin-offer-lines").count()))
+            check("nothing threw on the way", not errors, "; ".join(errors[:2]))
+            page.screenshot(path=os.path.join(ROOT, "output", "admin_offer_popup.png"),
+                            full_page=True)
 
             browser.close()
     finally:

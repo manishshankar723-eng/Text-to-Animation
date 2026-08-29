@@ -19,6 +19,11 @@
 // most misleading thing an admin panel can show.
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../api.js";
+// ⚠ RULEBOOK E1: a box somebody must EDIT grows to its text. The pop-up's
+// bullet lines are the only multi-line field on this screen, and a fixed
+// `rows={3}` would clip the third one out of sight — which is the exact fault
+// that has been fixed on four other screens.
+import GrowTextarea from "../components/GrowTextarea.jsx";
 import { formatDate, formatDateTime, money, num, timeAgo } from "./format.js";
 
 export default function AdminSales({ onOpenUser }) {
@@ -428,6 +433,19 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
     // exists in this panel; somebody creating one has, by default, decided
     // customers should hear about it.
     promoted: true,
+    // --- The pop-up card on Explore. Ticked by default for the same reason,
+    // and it can only ever fire for an offer that is ALSO promoted — see
+    // `offers.is_popup`. Every text field below is optional; left empty, the
+    // card heads itself with the offer's own label and summary. ---
+    popup: true,
+    popup_title: "",
+    // ⚠ HELD AS THE RAW TEXT OF THE BOX, split only on the way OUT. Splitting
+    // and re-joining on every keystroke is what ate the separator in the props
+    // field (RULEBOOK E8) — pressing Enter for a second bullet would have
+    // deleted the newline as fast as it was typed.
+    popup_lines: "",
+    popup_note: "",
+    popup_cta: "",
   });
 
   // Editing anything clears the last complaint from the server — it was about
@@ -557,6 +575,75 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
                 : "A sale changes every price whether or not this is ticked; ticking it also prints an offer card saying what the discount is."}
             </span>
           </label>
+          <label className="admin-rollout-row wide admin-check-row">
+            <span className="admin-check">
+              <input
+                type="checkbox"
+                checked={form.popup}
+                onChange={(e) => update({ popup: e.target.checked })}
+              />
+              Also slide it in as a card on Explore
+            </span>
+            <span className="muted tiny">
+              The card arrives from the right a moment after Explore opens, and
+              is dismissed for good once a customer closes it — until you make a
+              new offer. Only an offer that is shown on the pricing page can
+              appear here.
+            </span>
+          </label>
+
+          {/* ⚠ THE FOUR TEXT FIELDS ONLY EXIST WHEN THE CARD DOES. Four empty
+              boxes for a card nobody is going to show is four questions the
+              form did not need to ask. Every one of them is optional even when
+              it is on screen — see the placeholders, which are what the card
+              falls back to. */}
+          {form.popup && (
+            <>
+              <label className="admin-rollout-row wide">
+                <span className="muted tiny">Card heading (optional)</span>
+                <input
+                  className="admin-search"
+                  value={form.popup_title}
+                  placeholder={form.label || "Launch week offer"}
+                  onChange={(e) => update({ popup_title: e.target.value })}
+                />
+              </label>
+              <label className="admin-rollout-row wide">
+                <span className="muted tiny">
+                  Bullet points — one per line, up to four
+                </span>
+                <GrowTextarea
+                  className="admin-search admin-offer-lines"
+                  rows={2}
+                  value={form.popup_lines}
+                  placeholder={
+                    "Every plan, monthly or yearly.\n" +
+                    "Cancel whenever you like."
+                  }
+                  onChange={(e) => update({ popup_lines: e.target.value })}
+                />
+              </label>
+              <label className="admin-rollout-row wide">
+                <span className="muted tiny">Small print under them (optional)</span>
+                <input
+                  className="admin-search"
+                  value={form.popup_note}
+                  placeholder="New customers only."
+                  onChange={(e) => update({ popup_note: e.target.value })}
+                />
+              </label>
+              <label className="admin-rollout-row wide">
+                <span className="muted tiny">Button words (optional)</span>
+                <input
+                  className="admin-search"
+                  value={form.popup_cta}
+                  placeholder="View plans"
+                  onChange={(e) => update({ popup_cta: e.target.value })}
+                />
+              </label>
+            </>
+          )}
+
           {(problem || formError) && (
             <p className="error admin-offer-error">{problem || formError}</p>
           )}
@@ -577,6 +664,10 @@ function Offers({ data, currency, busy, onCreate, onUpdate }) {
                       : Number(form.value),
                   code: form.code.trim() || null,
                   ends_at: form.ends_at || null,
+                  // ⚠ SPLIT ON THE NEWLINE AND NOTHING ELSE, here at the
+                  // boundary rather than on keystroke — RULEBOOK E8. The
+                  // server trims, drops the blanks and caps the count.
+                  popup_lines: form.popup_lines.split("\n"),
                 });
                 // ⚠ ONLY CLOSES WHEN IT WORKED. Closing regardless loses every
                 // field that was filled in, so the person retypes the whole
@@ -671,6 +762,24 @@ function OfferTable({ title, rows, empty, busy, onUpdate }) {
                   onClick={() => onUpdate(o.id, { promoted: !o.promoted })}
                 >
                   {o.promoted ? "Hide" : "Show"}
+                </button>
+                {/* ⚠ A THIRD SWITCH, AND IT IS A THIRD QUESTION. "Show" puts
+                    the offer on the pricing page; this puts it in front of
+                    somebody who did not go looking for it. Disabled while the
+                    offer is hidden, because the pop-up reads the promoted list
+                    and a button that changes nothing is worse than no button —
+                    the title says why. */}
+                <button
+                  className="btn ghost small"
+                  disabled={busy === o.id || !o.promoted}
+                  title={
+                    o.promoted
+                      ? "The card that slides in on Explore."
+                      : "Show this offer first — the pop-up only draws from what is on the pricing page."
+                  }
+                  onClick={() => onUpdate(o.id, { popup: !o.popup })}
+                >
+                  {o.popup ? "No pop-up" : "Pop-up"}
                 </button>
                 <button
                   className="btn ghost small"

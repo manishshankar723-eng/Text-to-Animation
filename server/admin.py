@@ -871,6 +871,15 @@ class OfferBody(BaseModel):
     # decided customers should hear about it. Untick it for a code you intend to
     # email to one person — it still works when typed, it is just not printed.
     promoted: bool = True
+    # --- The pop-up on Explore. ⚠ ALL OPTIONAL, and the card draws without any
+    # of them: an offer that predates these fields still pops up, headed by its
+    # own label and summary. `popup_lines` arrives as a list; `offers._clean`
+    # trims it, drops the blanks and caps it. ---
+    popup: bool = True
+    popup_title: str = Field("", max_length=80)
+    popup_lines: list[str] = Field(default_factory=list, max_length=8)
+    popup_note: str = Field("", max_length=200)
+    popup_cta: str = Field("", max_length=40)
 
 
 class OfferUpdate(BaseModel):
@@ -885,6 +894,11 @@ class OfferUpdate(BaseModel):
     max_redemptions: int | None = Field(None, ge=1, le=1_000_000)
     banner: str | None = Field(None, max_length=160)
     promoted: bool | None = None
+    popup: bool | None = None
+    popup_title: str | None = Field(None, max_length=80)
+    popup_lines: list[str] | None = Field(None, max_length=8)
+    popup_note: str | None = Field(None, max_length=200)
+    popup_cta: str | None = Field(None, max_length=40)
 
 
 def _offer_row(offer: dict) -> dict:
@@ -902,6 +916,9 @@ def _offer_row(offer: dict) -> dict:
         "summary": offers.summary(offer),
         "is_sale": not offer.get("code"),
         "promoted": offers.is_promoted(offer),
+        # Resolved for the same reason `promoted` is: the stored row need not
+        # carry the key, and absence reads as YES.
+        "popup": offers.is_popup(offer),
     }
 
 

@@ -19,6 +19,9 @@ import { COPY } from "./Landing.jsx";
 // The brand slide has no workflow to draw, so it draws the mark itself —
 // the same one the rail and the favicon carry. See Logo.jsx.
 import Logo from "./Logo.jsx";
+// The discount that comes to the customer instead of waiting to be found. It
+// fetches its own offer and draws nothing at all when there isn't one.
+import PromoPopup from "./PromoPopup.jsx";
 import WorkflowIcon from "./WorkflowIcon.jsx";
 
 // Explore — the DISCOVERY page: what you can make, and what you have made.
@@ -201,7 +204,11 @@ export default function Explore({
   workflows = [],
   workflowsKnown = true,
   onNavigate,
-  onOpenJob
+  onOpenJob,
+  // The pricing modal. The offer card's button is the only thing that uses it —
+  // without a handler no button is drawn, which is right: a promotion whose
+  // action does nothing is worse than one that only states the code.
+  onUpgrade
 }) {
   useDashboard();
 
@@ -294,16 +301,31 @@ export default function Explore({
   // rule — not knowing yet must never read as "you have nothing".
   const promoted = workflowsKnown ? live : [];
   const pitch = (id) => COPY[id]?.body || "";
-  // A banner gets the pitch's FIRST SENTENCE — the one that says what the tool
-  // does; the rest is written to be read at leisure and belongs in the tooltip.
-  // ⚠ AND IT RETURNS "" RATHER THAN "." FOR A WORKFLOW WITH NO PITCH. An
-  // administrator can launch one from the panel before anybody writes its
-  // paragraph (see the note above `COPY` in Landing.jsx), and a banner whose
-  // whole body is a full stop is worse than a banner with no body.
-  const firstLine = (id) => {
-    const body = pitch(id);
-    if (!body) return "";
-    return `${body.split(". ")[0].trim()}.`;
+  /**
+   * The one line a banner shows.
+   *
+   * ⚠ IT IS THE `stage` LINE, NOT THE FIRST SENTENCE OF THE PITCH, and that is
+   * a bug fix. The pitches are paragraphs and their first sentences run from 40
+   * to 176 characters — Image to Animatic Image is ONE sentence with two em
+   * dashes in it — so the banner grew by two lines whenever the carousel
+   * reached that slide, and BOTH billboards grew with it because they share a
+   * grid row. Reported exactly that way: *"image to animatics image ka panel
+   * bara ho jata hai kyun ismai text jayada hai"*.
+   *
+   * `stage.body` is the same workflow described in one line for the landing
+   * page's "How a project moves" strip — written short on purpose, 67 to 115
+   * characters across all six. The long pitch is still the tooltip.
+   *
+   * ⚠ AND THE FALLBACK TRIMS RATHER THAN APPENDS. The old version glued a "."
+   * onto whatever it got, which is how the banner ended up reading "never
+   * drifts.." on a sentence that already had one. A workflow an administrator
+   * launched before anybody wrote its copy gets "" and no body at all, which
+   * is better than a lone full stop.
+   */
+  const blurb = (id) => {
+    const line = COPY[id]?.stage?.body || pitch(id).split(". ")[0] || "";
+    const text = line.trim();
+    return text && !text.endsWith(".") ? `${text}.` : text;
   };
 
   const heroSlides = [
@@ -320,7 +342,7 @@ export default function Explore({
       tone: "work",
       eyebrow: COPY[g.id]?.short || "Workflow",
       title: g.label,
-      sub: firstLine(g.id),
+      sub: blurb(g.id),
       cta: "Open",
       hint: pitch(g.id),
       workflow: g.id
@@ -364,7 +386,7 @@ export default function Explore({
               </span>
               <h2 className="xp-banner-title">{side.label}</h2>
               <p className="xp-banner-sub">
-                {firstLine(side.id)}
+                {blurb(side.id)}
               </p>
               <button
                 type="button"
@@ -380,10 +402,12 @@ export default function Explore({
       </div>
 
       {/* ---- Row 2: one tile per workflow ----
-          ⚠ THE FIRST ONE IS THE FILLED ONE, and only the first. The reference
-          gives its flagship tool a gradient slab and leaves the rest plain,
-          which is what makes the row scannable — six gold tiles would be a row
-          with no beginning. `title` carries the pitch (helper text on hover). */}
+          ⚠ ALL ONE COLOUR. The first tile was gold, copied from the reference,
+          and it was asked to stop being: this rail's order is the owner's own
+          pipeline, so painting whatever happens to be first as the recommended
+          one says something nobody meant — and gold means "the action"
+          everywhere else on this page. `title` carries the pitch (helper text
+          on hover, RULEBOOK E4). */}
       <div className="xp-tiles">
         {!workflowsKnown
           ? Array.from({ length: 6 }, (_, i) => (
@@ -391,13 +415,13 @@ export default function Explore({
                 <span className="xp-ghost-line xp-ghost-tile" />
               </div>
             ))
-          : shown.map((g, i) => {
+          : shown.map((g) => {
               const locked = workflows.find((w) => w.id === g.id)?.locked;
               return (
                 <button
                   key={g.id}
                   type="button"
-                  className={`xp-tile ${i === 0 ? "xp-tile-lead" : ""}`}
+                  className="xp-tile"
                   onClick={() => onNavigate?.(g.id)}
                   title={pitch(g.id) || g.label}
                 >
@@ -566,6 +590,11 @@ export default function Explore({
           ))}
         </div>
       )}
+
+      {/* ⚠ LAST IN THE MARKUP AND `position: fixed` IN CSS, so it is over the
+          page rather than in it — and last in the tab order, so a keyboard
+          reaches the page's own content before the advertisement. */}
+      <PromoPopup onCta={onUpgrade} />
     </div>
   );
 }

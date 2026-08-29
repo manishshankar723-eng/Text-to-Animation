@@ -586,6 +586,10 @@ export default function App() {
         /* Text to Turnaround Image is the one workflow whose cards open a
            single job rather than the workflow's front door. */
         onOpenJob={openJobInWorkflow}
+        /* The SAME pricing modal the rail's Upgrade button opens — the offer
+           card that slides in on this page needs somewhere for its button to
+           go, and a second pricing screen would be the mistake. */
+        onUpgrade={() => setUpgradeOpen(true)}
       />
     );
   } else if (nav === "profile") {

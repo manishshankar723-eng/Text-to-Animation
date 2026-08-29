@@ -284,7 +284,7 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **47 checks, all green**, both themes, Home included. **And then the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Not yet opened in the user's own browser.** See the Work Log.
+**Last updated:** 2026-08-29 — **A SECOND FRONT PAGE: EXPLORE.** Asked for with the Kling AI Explore page as the reference — *"mera home page ke uper Explore buttun bana kar aisa page … mere workflow ke hisaab se"*. A new 🧭 row above Home opens a discovery screen built out of this app's own parts: a four-slide billboard that pauses under the pointer and never auto-runs under `prefers-reduced-motion`, a pale fixed billboard beside it, a tile per workflow (names WRAP — one line clipped "Text to Turnaround Image" to "Text to Turnar…"), the Highlights / Recent / In progress tabs with a search box, the app's own `.opt-chip` as the workflow filter, and every project the account owns as one CSS-columns wall so a 9:16 board keeps its shape instead of being cropped. ⚠ **The wall is the account's OWN work, not a community feed** — this app has no public gallery and inventing one would mean publishing customers' storyboards; said out loud rather than quietly substituted. ⚠ **And the six workflow groups now exist in exactly one file**: Home's array carried its own warning that a second copy would silently drop a workflow (*"which is exactly how Image to Video went missing"*), so it moved with `useCovers`, `useDashboard`, `statusClass` and `formatDate` into new `client/src/dashboard_feed.js` and Home imports them back. ⚠ **The banners wait for entitlements; the gallery does not** — advertising a hidden workflow is the reappearing-feature bug the rail already paid for, while the customer's own work must fail open. New **RULEBOOK E10 and E11**. New Chromium `tests/explore_mount_check.py` — **75 checks, all green**, both themes, Home included. **The billboard then flinched on the user's own screen** — it took each workflow's FIRST SENTENCE and those run 40 to 176 characters, so the long one grew the banner by two lines and took its neighbour down with it every time the carousel reached it. It shows the short `stage.body` line now, clamped to two lines, on a row sized for its tallest slide; the height check was proved to fail on the old code first. New **RULEBOOK E13**. **And the front door moved**: *"jab user aaye to explore page khule, home page nhi"* — the app now OPENS on Explore. ⚠ **It was spelled out in five places** (the initial state, sign-in, sign-out, account switch, leaving the admin panel), which is the shape that produces *"it opens on the right page UNLESS you switched account"*; all five now read one `LANDING_NAV` constant, and `?admin` still wins over it. Home is unchanged, one click below Explore in the rail. New **RULEBOOK E12**, and the probe now mounts the whole signed-in `<App/>` to prove it. ⚠ **Then the coupon learned to come to the customer**: a card slides in from the right of Explore carrying whatever discount is running — the SAME offer the pricing page advertises, opening the SAME pricing modal, with every word of it (heading, bullets, small print, button, and whether it appears at all) typed in **Sales → Offers** as five new optional fields on the offer row. ⚠ One card at a time, dismissal remembered **per offer id** so a new offer still gets its turn, not a modal, and it fails closed. New **RULEBOOK E14 and E15**. **And the tiles lost their gold** — *"ye 3 button ka colour ek jaisa rakho"* — because gold means THE ACTION on this page and a navigation tile wearing it says something nobody meant (**E16**). **The sign-off format changed too** — *"remaining mai pura nhi do … tum rulebook mai likh ke rakho, jab mai mangunga to dena"* — so **G8 is struck and replaced by G10**: REMAINING carries this turn's leftovers, the whole open list stays in RULEBOOK's "Still open" table and is handed over on request. ⚠ The obligation moved rather than went: anything found and not fixed gets a row there the moment it is found. See the Work Log.
 
 **Previously:** 2026-08-28 — **THE WORKFLOW OPENED ON A PLANNING CARD FOR A FILM THAT WAS ALREADY FINISHED.** Pressing **Script to Storyboard** after a long gap did not open "Your Storyboards" — it opened **"Is this the right direction?"**, the unapproved concept card, for a film whose two finished 15-panel boards were sitting in the library behind it. *"jab user open kar raha hai script to storyboard to first page khulna chahiye, nhi ki ye page."* It was deliberate code: the script-draft restore promoted `library` → `concept` behind a module-scope latch. ⚠ **And the half nobody had noticed — `api.clearScriptDraft()` was defined and called from NOWHERE in the repo**, so a spent concept was never dropped and the card being reopened was usually the plan for a film already generated, exported and forgotten weeks earlier. A ghost, not a resume. ⚠ **This workflow had already learned this rule and paid several sessions for it** (F3: the front door is the front door, unfinished work WAITS there as a row) — the comment stating it sits twenty lines above the code that was overriding it. The reopen existed only because the first "offer it" attempt put the link on the FORM, which `workflow_mount_check.py` proved unreachable from a cold start. So the offer moved to the screen a cold start actually reaches: the **library**, as a row beside the unfinished boards — same `LibraryRow`, same Resume button, same confirm strip, "Not approved yet", and a discard that clears the SERVER slot so it cannot come back. Plus the clear that was missing: `finishBreakdown()` now drops the card the moment it becomes a shot list, so one film never grows two library rows. New **RULEBOOK F5**. `script_concept_check.py` and the Chromium `workflow_mount_check.py` rewritten and passing; `storyboard_draft_check.py` un-pinned from a verbatim expression. ⚠ **Not yet driven in the user's own browser.** See the Work Log.
 
@@ -3533,7 +3533,7 @@ Home), `App.jsx` (the nav branch), `Landing.jsx` (`COPY` exported),
 
 **Verified.** `npm run build` green, and — because a green build is not evidence
 that a screen renders (**G7**) — a new Chromium probe: `tests/explore_mount_check.py`,
-**47 checks, all passing**. It mounts Explore AND Home inside `<React.StrictMode>`
+**75 checks, all passing**. It mounts Explore AND Home inside `<React.StrictMode>`
 (the double mount is what broke `useCovers` once before, and moving that hook to
 a new file is exactly when you would want to know), and asserts: nothing reaches
 `pageerror`; the rail carrying an Explore row ABOVE Home, marked active, with
@@ -3560,8 +3560,61 @@ click away — moving the front door must not remove the desk. New **RULEBOOK
 E12**, and the probe now mounts the WHOLE signed-in `<App/>` for the one
 question nothing else could see: which screen does it open on.
 
-⚠ **NOT YET OPENED IN THE USER'S OWN BROWSER**, and one thing to look at when it
-is: the masonry balances by column, so with only a handful of projects a single
+**And then it WAS opened, and the billboard flinched.** *"image to animatics
+image ka panel bara ho jata hai kyun ismai text jayada hai … jab slide ho raha
+hai."* ⚠ **THE BANNER WAS TAKING EACH WORKFLOW'S FIRST SENTENCE, AND THOSE ARE
+NOT THE SAME LENGTH** — 40 characters for Text to Turnaround Image, 176 for
+Image to Animatic Image, which is one sentence with two em dashes in it. So that
+slide ran two lines longer, and because the two billboards share a grid row it
+pushed the NEIGHBOUR down with it and let both snap back six seconds later. The
+banner now shows `stage.body` — the same workflow in one line, written short for
+the landing page's "How a project moves" strip, 67 to 115 characters across all
+six — with the title and the body each clamped to two lines in CSS so a rename
+cannot bring the flinch back, and the row given the height of its tallest
+possible slide. ⚠ **Also fixed on the way: "never drifts.."** — the old helper
+glued a "." onto whatever it got, including sentences that already had one.
+Pinned by walking every slide and comparing `bounding_box()`, and ⚠ **proved to
+FAIL on the old code first**: 232, 254, 232, 233. New **RULEBOOK E13**.
+
+**Then the offer came to the customer, and the gold came off the tiles.** Two
+asks off one screenshot of the reference: *"coupon side se animation ho kar aa
+raha hai, mujhe aise hi chahiye … aur admin panel se main control kar saku,
+coupon editable admin panel se"* and *"ye 3 button ka colour ek jaisa rakho,
+ismai golden hata do."*
+
+**The pop-up.** New `PromoPopup.jsx` — a card that slides in from the right of
+Explore a moment after the page draws, carrying whatever discount is running.
+⚠ **IT IS THE SAME OFFER THE PRICING PAGE ADVERTISES, NOT A SECOND CONTENT
+TYPE**: it reads `GET /billing/tiers` → `offers`, the list `OfferStrip` already
+draws, and its button opens the SAME pricing modal the rail's Upgrade does. Four
+rules, all in the component and now **RULEBOOK E14**: one card at a time (the
+FIRST promoted offer — two live discounts are still one card); closing it is
+remembered ⚠ **keyed by the offer's id**, so a card somebody shut stays shut but
+a NEW offer still gets its turn; it arrives after the page rather than with it;
+and it is not a modal — nothing dimmed, nothing trapped, Escape and a ✕ both
+close it. It fails closed like the strip does.
+
+**And every word in it is typed in the admin panel.** Five new optional fields
+on the offer row — `popup`, `popup_title`, `popup_lines`, `popup_note`,
+`popup_cta` — editable in **Sales → Offers**, capped server-side
+(`POPUP_MAX_LINES`, `POPUP_LINE_CHARS`), plus a third per-row switch beside
+Show/Hide and Switch on/off. ⚠ **ABSENT READS AS YES**, the same reading
+`is_promoted` takes and for the same reason: every offer predates the field, and
+one an administrator went to the trouble of PROMOTING is one they meant a
+customer to notice. ⚠ And the bullet box is a `GrowTextarea` (**E1**) whose text
+is split on the newline **only on the way out** (**E8**) — splitting on keystroke
+is what ate the separator in the props field. New **RULEBOOK E15**.
+
+**The tiles lost their gold.** The first one was a filled slab, copied from the
+reference, which gives its flagship tool a gradient and leaves the rest plain.
+The ask was right: this rail's order is the owner's own pipeline, so painting
+whatever happens to be first as the recommended one says something nobody meant
+— and gold means "the action" everywhere else on this page (＋ New storyboard,
+Open), which it stops meaning the moment a navigation tile wears it. New
+**RULEBOOK E16**, and the test's assertion is now the opposite of what it was.
+
+⚠ **THE MASONRY IS STILL THE OPEN QUESTION**, and one thing to look at:
+the masonry balances by column, so with only a handful of projects a single
 9:16 board can own a whole column and leave white space beside it. With a real
 library (the account has ~40) the columns even out; if it still reads badly, the
 answer is a bounded ratio, not a crop.
@@ -22888,7 +22941,7 @@ still occasionally be safety-filtered.
 
 ### 🟡 NEWEST: EXPLORE IS BUILT AND HAS NOT BEEN SEEN BY THE USER (2026-08-29)
 
-A new **Explore** row sits above Home in the rail. Pinned by 47 Chromium checks
+A new **Explore** row sits above Home in the rail. Pinned by 75 Chromium checks
 (`tests/explore_mount_check.py`), light and dark. What to look at when you open it:
 
 1. **The rail.** 🧭 Explore above 🏠 Home. ⚠ **The app now OPENS on Explore** —
@@ -22902,7 +22955,12 @@ A new **Explore** row sits above Home in the rail. Pinned by 47 Chromium checks
 4. **The wall.** Every project you own, largest-picture-first under
    **Highlights**. **In progress** should show only what is running or failed.
    The chips and the search box filter it.
-5. ⚠ **The one known rough edge**: with few projects the masonry can leave a tall
+5. **The offer card.** It should slide in from the right about a second after
+   Explore opens, carrying whatever discount is running. Close it and it stays
+   closed — until you make a NEW offer. Everything on it (heading, bullets,
+   small print, button words, and whether it appears at all) is typed in
+   **Admin → Sales → Offers**.
+6. ⚠ **The one known rough edge**: with few projects the masonry can leave a tall
    9:16 board owning a column with space beside it. Say if it still looks wrong
    with your ~40 projects and it gets a bounded ratio rather than a crop.
 

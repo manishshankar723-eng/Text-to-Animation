@@ -75,7 +75,14 @@
   display: flex;
   align-items: center;
   overflow: hidden;
-  min-height: 14.5rem;
+  /* ⚠ TALL ENOUGH FOR THE LONGEST SLIDE, so no slide is the one that makes the
+     row grow. The two billboards share a grid row: a body two lines longer on
+     one slide pushed BOTH of them down and then let them snap back, which reads
+     as the page flinching every six seconds. With the title and the body each
+     clamped to two lines below, the tallest possible slide fits inside this and
+     the row never moves. `min-height`, not `height`, so an unusually large
+     browser font makes the banner taller rather than cutting its button off. */
+  min-height: 16rem;
   padding: 1.5rem 1.8rem;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -133,13 +140,24 @@
   text-transform: uppercase;
   color: var(--primary);
 }
+/* Both clamped to two lines — see the note on `.xp-banner`'s height. Nothing
+   in the app writes a title that long today; the clamp is what GUARANTEES the
+   row cannot move, whatever an administrator renames a workflow to. */
 .xp-banner-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   margin: 0.4rem 0 0.5rem;
   font-size: clamp(1.35rem, 2.3vw, 2rem);
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
 .xp-banner-sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
@@ -274,30 +292,20 @@
   color: var(--muted);
   font-size: 0.95rem;
 }
-/* ⚠ ONE FILLED TILE, AND ONLY THE FIRST. The reference gives its flagship tool
-   a gradient slab and leaves the rest plain, which is what makes the row
-   scannable — six gold tiles is a row with no beginning. */
-.xp-tile-lead {
-  background: var(--gold-grad-rich);
-  border-color: transparent;
-  color: var(--gold-ink);
-  box-shadow: var(--gold-glow);
-}
-.xp-tile-lead:hover {
-  background: var(--gold-grad-rich-hover);
-  border-color: transparent;
-}
-.xp-tile-lead .xp-tile-ico,
-.xp-tile-lead .xp-tile-go {
-  color: var(--gold-ink);
-}
-/* ⚠ AND IT IS THE SAME WIDTH AS THE OTHERS, NOT WIDER. It spanned two columns
-   for one build, the way the reference draws its flagship — and `auto-fit`
-   decides the column count from the page width, so six tiles occupying SEVEN
-   units landed one short at the width the app actually runs at (1780px viewport
-   minus a 280px rail) and pushed "Video Editor" onto a row of its own. A row
-   that wraps to a widow depending on how wide the window happens to be is worse
-   than a lead tile that is only marked by its colour. */
+/* ⚠ NO LEAD TILE. THE ROW IS ONE COLOUR AND ONE WIDTH, END TO END. The first
+   tile was a gold slab, copied from the reference, which gives its flagship
+   tool a gradient and leaves the rest plain. Asked for the other way once it
+   was on screen: *"ye 3 button ka colour ek jaisa rakho, ismai golden hata do,
+   ye dono jaisa kar do."* And the ask is right — the reference is a shop with
+   ONE product it wants sold; this rail's order is the owner's own pipeline, so
+   painting whatever happens to be first as the recommended one says something
+   nobody meant. Gold still means "the action" everywhere else on this page (＋
+   New storyboard, Open), and it stops meaning that if a navigation tile wears
+   it too.
+   The lead tile also spanned two columns for one build, and `auto-fit` decides
+   the column count from the page width — so six tiles occupying SEVEN units
+   landed one short at the width the app actually runs at and pushed "Video
+   Editor" onto a row of its own. Both are gone. */
 
 /* =========================================================================
    ROW 3 — how to look at the wall
@@ -612,10 +620,227 @@
   }
 }
 
+/* =========================================================================
+   THE OFFER THAT COMES TO YOU — the card that slides in from the right
+   ========================================================================= */
+/* ⚠ FIXED, RIGHT, AND NOT A MODAL. Nothing behind it is dimmed and nothing is
+   trapped: it interrupts the eye, not the page. It sits BELOW the rail's
+   z-index neighbourhood and far below the modals and the lightbox (9999/10000),
+   which must still cover it. See PromoPopup.jsx for the four rules it keeps. */
+.promo-pop {
+  position: fixed;
+  /* High and right, over the billboard — where the reference puts it. Lower
+     down it sat across the workflow tiles instead, which are the row somebody
+     actually came to press. */
+  top: 1.5rem;
+  right: 1.5rem;
+  z-index: 95;
+  width: min(23rem, calc(100vw - 3rem));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  /* Parked off the right edge until `.in` — the class the component adds after
+     the page has drawn, which is what makes it an ARRIVAL rather than part of
+     the layout. */
+  transform: translateX(calc(100% + 2.5rem));
+  opacity: 0;
+  transition:
+    transform 0.38s cubic-bezier(0.22, 0.9, 0.28, 1),
+    opacity 0.26s ease;
+}
+.promo-pop.in {
+  transform: none;
+  opacity: 1;
+}
+/* ⚠ IT STILL ARRIVES AND STILL LEAVES — it just does not slide. Removing the
+   transition altogether would make the card blink in and out, which is the
+   thing this setting exists to prevent. */
+@media (prefers-reduced-motion: reduce) {
+  .promo-pop {
+    transform: none;
+    transition: opacity 0.2s ease;
+  }
+}
+
+.promo-close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.promo-close:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.promo-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.8rem;
+  /* ⚠ THE RIGHT PADDING IS THE ✕'s ROOM. Without it the discount — which is
+     the biggest thing on the card — was printed underneath the close button. */
+  padding: 1.15rem 2.6rem 1rem 1.2rem;
+  background:
+    radial-gradient(120% 160% at 85% -20%, var(--xp-glow), transparent 62%),
+    var(--panel);
+}
+.promo-head-text {
+  min-width: 0;
+}
+.promo-kicker {
+  display: block;
+  color: var(--primary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.promo-title {
+  margin: 0.3rem 0 0;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+/* The discount, as the card's artwork — see the note in PromoPopup.jsx. */
+.promo-cut {
+  flex: none;
+  margin-left: auto;
+  color: var(--primary);
+  font-size: 1.35rem;
+  font-weight: 750;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* The lower half sits a shade lighter, so the card reads as a ticket with a
+   stub rather than as one flat panel. */
+.promo-body {
+  padding: 1rem 1.2rem 1.2rem;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.promo-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.promo-lines li {
+  position: relative;
+  padding-left: 0.95rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.promo-lines li::before {
+  content: "";
+  position: absolute;
+  top: 0.55em;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+.promo-note {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.promo-meta {
+  display: flex;
+  gap: 0.9rem;
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.promo-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+/* The code, as a thing you can take away with you. Same idea as the offer
+   card's — a coupon nobody can copy is a coupon typed wrong. */
+.promo-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px dashed var(--border-gold);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.promo-code:hover {
+  border-style: solid;
+  background: var(--panel);
+}
+.promo-code-text {
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.promo-code-copy {
+  flex: none;
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+/* `.btn.primary` carries a form's top margin; on a card's action row it would
+   drop the button below the code beside it. Two classes — see the file head. */
+.promo-cta.btn {
+  margin: 0 0 0 auto;
+  white-space: nowrap;
+}
+
 /* ---- Narrow ---- */
 @media (max-width: 700px) {
+  /* ⚠ A SHEET AT THE BOTTOM, NOT A CARD IN THE CORNER. At 380px a 23rem card
+     pinned to the top right covers the page it is advertising. */
+  .promo-pop {
+    top: auto;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    transform: translateY(calc(100% + 1.5rem));
+  }
+  .promo-pop.in {
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .promo-pop {
+      transform: none;
+    }
+  }
+
   .xp-banner {
-    min-height: 11.5rem;
+    min-height: 14rem;
     padding: 1.2rem 1.3rem;
   }
   .xp-banner-art {

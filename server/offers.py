@@ -74,7 +74,17 @@ EDITABLE = frozenset({
     "label", "kind", "value", "applies_to", "period",
     "starts_at", "ends_at", "active", "max_redemptions", "banner",
     "promoted",
+    # --- the pop-up on Explore. Five fields, all optional, all typed by an
+    # administrator. See `is_popup` and `POPUP_*` below. ---
+    "popup", "popup_title", "popup_lines", "popup_note", "popup_cta",
 })
+
+# What an administrator may write into the pop-up. ⚠ CAPPED HERE RATHER THAN
+# TRUSTED FROM THE PANEL, because the panel is not the only thing that can PATCH
+# an offer — and a card whose body is nine bullets of 400 characters is not a
+# card, it is a page nobody can close.
+POPUP_MAX_LINES = 4
+POPUP_LINE_CHARS = 160
 
 
 def _now() -> datetime:
@@ -293,6 +303,20 @@ def _clean(fields: dict) -> dict:
             raise ValueError("A percentage discount can't be more than 100.")
     if "applies_to" in out:
         out["applies_to"] = [str(t).strip().lower() for t in (out["applies_to"] or []) if t]
+    if "popup_lines" in out:
+        # ⚠ TRIMMED AND EMPTIES DROPPED **HERE**, at the boundary, and nowhere
+        # near the typing. The panel sends the textarea's raw text split on
+        # newlines; cleaning that on every keystroke is what ate the separator
+        # in the props field (RULEBOOK E8). One blank line while somebody is
+        # still typing is not an error, it just does not get stored.
+        lines = out["popup_lines"] or []
+        if isinstance(lines, str):
+            lines = lines.split("\n")
+        out["popup_lines"] = [
+            str(t).strip()[:POPUP_LINE_CHARS]
+            for t in lines
+            if str(t).strip()
+        ][:POPUP_MAX_LINES]
     if out.get("starts_at") and out.get("ends_at") and out["starts_at"] > out["ends_at"]:
         raise ValueError("The offer would end before it started.")
     return out
@@ -406,6 +430,23 @@ def is_promoted(offer: dict) -> bool:
     return bool(offer.get("promoted", True))
 
 
+def is_popup(offer: dict) -> bool:
+    """Whether this offer also arrives as the sliding card on Explore.
+
+    ⚠ ABSENT MEANS YES, the same reading `is_promoted` takes, and for the same
+    reason: every offer predates this field, and one an administrator went to
+    the trouble of PROMOTING is one they meant a customer to notice. Only an
+    explicit `False` keeps an advertised offer off the pop-up.
+
+    ⚠ AND IT IS ONLY EVER ASKED OF AN OFFER THAT IS ALREADY LIVE AND PROMOTED —
+    see `promoted_offers`, which is the only list the pop-up reads. A quiet
+    coupon emailed to one customer (`promoted: false`) can never pop up, whatever
+    this field says. The client shows ONE card, the first in that list, so two
+    live offers are still one pop-up.
+    """
+    return bool(offer.get("popup", True))
+
+
 def public_offer(offer: dict) -> dict:
     """One offer as the PRICING PAGE may see it. Public — no token needed.
 
@@ -434,6 +475,14 @@ def public_offer(offer: dict) -> dict:
         "banner": offer.get("banner") or "",
         "is_sale": not offer.get("code"),
         "remaining": remaining,
+        # The pop-up on Explore. ⚠ EVERY ONE OF THESE IS OPTIONAL and the card
+        # is written to draw without any of them — an offer created before this
+        # existed still pops up, headed by its `label` and its own `summary`.
+        "popup": is_popup(offer),
+        "popup_title": offer.get("popup_title") or "",
+        "popup_lines": list(offer.get("popup_lines") or []),
+        "popup_note": offer.get("popup_note") or "",
+        "popup_cta": offer.get("popup_cta") or "",
     }
 
 
