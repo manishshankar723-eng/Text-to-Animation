@@ -596,12 +596,15 @@ export default function Explore({ onSignIn, onBack, theme, onToggleTheme }) {
           workflow an administrator switches off has to leave both at once, which
           is the bug `dashboard_feed.js` was extracted to prevent.
 
-          ⚠ EVERY ROW IS A SIGN-IN, INCLUDING HOME. The rail calls `onNavigate`
-          exactly as it does inside the app; out here "home" means the landing
-          page and anything else means "sign in, then take me there" — the id
-          rides through on `pendingWorkflow`. That is the "after sign in open the
-          usual flow" half of the request, and it is why the rail needs no idea
-          which side of the sign-in it is on. */}
+          ⚠ EVERY ROW IS A SIGN-IN. The rail calls `onNavigate` exactly as it
+          does inside the app, and out here everything means "sign in, then take
+          me there" — the id rides through on `pendingWorkflow`. That is the
+          "after sign in open the usual flow" half of the request, and it is why
+          the rail needs no idea which side of the sign-in it is on.
+
+          ⚠ HOME IS NOT ONE OF THE ROWS OUT HERE. `publicMode` drops it in
+          Sidebar.jsx — *"not need to show home buttun in explore page"* — so
+          the visitor's rail is Explore and the workflows, and nothing else. */}
       <Sidebar
         publicMode
         /* ⚠ THIS PAGE IS THE ONE THE RAIL IS STANDING ON, so its row wears the
@@ -626,6 +629,14 @@ export default function Explore({ onSignIn, onBack, theme, onToggleTheme }) {
           // ⚠ "HOME" IS THE SALES PAGE OUT HERE, not a dashboard — a visitor
           // has no dashboard. Everything else is a workflow, and a workflow is
           // a sign-in that remembers where it was going.
+          //
+          // ⚠ NO ROW EMITS THIS ANY MORE — AND THE BRANCH STAYS. `publicMode`
+          // hides the rail's Home row (see Sidebar.jsx), so today nothing on
+          // this page can reach it. It is kept because the rail is the APP'S
+          // component, not this page's: the next mode, row or banner target that
+          // says "home" would otherwise fall through to `onSignIn("home")` and
+          // push a visitor into a sign-in for a workflow that does not exist.
+          // One line, and it is the only door backwards left in the file.
           if (id === "home") {
             onBack?.();
             return;
@@ -672,18 +683,22 @@ export default function Explore({ onSignIn, onBack, theme, onToggleTheme }) {
               the top of that rail. Reported as soon as both were on screen:
               *"mera A logo and name page pe hai magar mujhe yaha pe nhi chahiye."*
               Going back is the rail's Home row — same destination, one copy. */}
+          {/* ⚠ AND HOME IS GONE FROM HERE TOO, WHICH IS THE SECOND HALF OF THE
+              SAME REPORT. The link above this nav's "The work" used to call
+              `onBack` — and with the rail's Home row beside it the word was on
+              this page TWICE, four rows apart, both meaning "leave for the sales
+              page". Asked for with a picture of each: *"not need to show home
+              buttun in explore page"*.
+              ⚠ SO THIS PAGE NO LONGER OFFERS A DOOR BACKWARDS, and that is the
+              decision rather than an oversight. Explore is the shop window and
+              its exits are forwards — the tiles, the banners, the cards, the
+              footer and the nav's Sign in all sell. `?explore` is a real address
+              a stranger is sent straight to, and a page reached by a link has
+              nothing behind it to go back TO. ⚠ Note `syncExploreUrl` uses
+              `replaceState`, so the browser's own Back does not return to the
+              landing page either — if a way back is ever wanted again, it is
+              this link that should come back, not the rail row. */}
           <div className="landing-nav-links">
-            {onBack && (
-              <a
-                href="#back"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onBack();
-                }}
-              >
-                Home
-              </a>
-            )}
             <a href="#work">The work</a>
             {/* ⚠ THE ONLY THEME SWITCH A LOGGED-OUT VISITOR CAN REACH, on this
                 page as on the landing one. Icon-only: a nav has no room for a

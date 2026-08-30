@@ -126,8 +126,16 @@
    because a visitor has no account. Without this rule the collapse toggle would
    sit tucked against the app's name out there and against the right edge in the
    app, which is precisely the "it does not look the same" this mode exists to
-   prevent. Collapsed the row is a column, so it does not apply and does no harm. */
-.sidebar-public .sb-collapse {
+   prevent.
+   ⚠ AND IT IS SCOPED TO THE WIDE RAIL, which the note here used to get
+   wrong: it read "collapsed the row is a column, so it does not apply and does
+   no harm". It applies. In a COLUMN flex box a `margin-left: auto` still eats
+   the free space on the left and shoves the button to the RIGHT edge — so on
+   the collapsed public rail the toggle sat off-centre under a centred logo,
+   which is exactly what got reported on Explore. Collapsed, `.sb-brand`'s own
+   `align-items: center` is already the right answer, so the override has to
+   stay out of its way. */
+.sidebar-public:not(.collapsed) .sb-collapse {
   margin-left: auto;
 }
 

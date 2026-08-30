@@ -407,6 +407,19 @@ check(
     "and it is behind publicMode, so no signed-in rail can draw it",
     "{publicMode && (" in sidebar[max(0, _ex - 400):_ex],
 )
+# ⚠ AND HOME IS THE MIRROR IMAGE — ONE ROW, BEHIND `!publicMode`. The pair is
+# the whole rule and neither half survives alone: signed in, Home is the front
+# door (`LANDING_NAV`); signed out, Explore IS the page and Home is a second
+# word for "leave", which is what got reported — *"not need to show home buttun
+# in explore page"*. Asserted as a GUARD rather than an absence, because
+# deleting the row would take the app's first row out with it and a plain
+# `'onNavigate("home")' not in sidebar` would call that a pass.
+check("the rail has exactly one Home row", sidebar.count('onNavigate("home")') == 1)
+_hm = sidebar.index('onNavigate("home")')
+check(
+    "and it is behind !publicMode, so no visitor's rail can draw it",
+    "{!publicMode && (" in sidebar[max(0, _hm - 400):_hm],
+)
 app_jsx = source("App.jsx")
 # ⚠ THE BRANCH, NOT THE STRING. `nav === "explore"` is still in this file once,
 # on purpose: it is the line that turns a left-over nav into Home. What must be
@@ -460,7 +473,20 @@ check(
     "the Explore row stays on this page rather than going anywhere",
     'if (id === "explore")' in explore and "window.scrollTo" in explore,
 )
-check("Home leaves for the front page", 'if (id === "home")' in explore and "onBack?.()" in explore)
+# ⚠ THE BRANCH IS A NET NOW, NOT A DOOR — and it is kept on purpose. Nothing on
+# this page emits "home" any more: `publicMode` drops the rail's Home row and the
+# link beside "The work" is gone too (*"not need to show home buttun in explore
+# page"*). It stays because the rail is the APP'S component and the fall-through
+# for an unrecognised id is `onSignIn(id)` — so a future row, mode or banner
+# target saying "home" would push a visitor into a sign-in for a workflow that
+# does not exist.
+check(
+    "an id of 'home' still lands on the landing page rather than a sign-in",
+    'if (id === "home")' in explore and "onBack?.()" in explore,
+)
+# ⚠ AND THE SECOND COPY OF THE WORD IS GONE FROM THE PAGE'S OWN NAV. The link
+# was the only `#back` href in the file, which is what makes this specific.
+check("no Home link left in Explore's nav", '"#back"' not in explore)
 check("and everything else is a sign-in", "onSignIn?.(id);" in explore)
 check(
     "with no navigation left in it at all",
@@ -670,11 +696,18 @@ check("the rail carries the mark", "<Logo />" in side_src)
 check("the rail carries the app name", 'className="sb-brand-name"' in side_src)
 check("the rail carries the collapse toggle", 'className="sb-collapse"' in side_src)
 # ⚠ AND NONE OF THE THREE IS BEHIND `publicMode` — that is what makes them show
-# on the public page. Only the avatar and the account menu are.
+# on the public page. Three things ARE: the avatar, the account menu, and now
+# the Home row.
 check("the avatar is the part a visitor does not get", "{!publicMode && (" in side_src)
+# ⚠ A COUNT, AND IT MOVED FROM 2 TO 3 ON PURPOSE. The third guard is the Home
+# row — *"not need to show home buttun in explore page"*. Left at 2 this check
+# reads as "somebody added a guard nobody meant to", which is exactly the alarm
+# it should raise; raised deliberately, the number is the record of the decision.
+# The row itself is pinned by name further up (`onNavigate("home")` behind
+# `{!publicMode && (`), so this stays a count of the WHOLE rule, not a duplicate.
 check(
-    "and so is the account menu",
-    side_src.count("{!publicMode && (") == 2,
+    "and so are the account menu and the Home row",
+    side_src.count("{!publicMode && (") == 3,
 )
 # The gold button keeps its slot and changes its word, so the rail does not
 # visibly rearrange itself the moment somebody signs in.
@@ -690,9 +723,20 @@ check("wearing the right word", 'publicMode ? "Sign in" : "Upgrade"' in side_src
 # tucked against the app's name out there and against the edge in the app. That
 # one pixel of difference is the whole of what "it does not look the same" means.
 check("the public rail is marked as one", "sidebar-public" in side_src)
+# ⚠ AND THE OVERRIDE IS SCOPED TO THE WIDE RAIL, which this check used to miss:
+# it matched the bare `.sidebar-public .sb-collapse`, so it stayed green while
+# the toggle sat off-centre on the COLLAPSED public rail — *"collapse bar ka icon
+# center mai nhi hai"*. In a column flex box a `margin-left: auto` still eats the
+# free space on the left and shoves the button to the RIGHT edge; it does not
+# switch itself off. The `:not(.collapsed)` is the fix, so it is what is asserted.
+_shell_css = source("styles", "shell.css")
 check(
-    "and its collapse toggle keeps the row's right edge",
-    ".sidebar-public .sb-collapse" in source("styles", "shell.css"),
+    "and its collapse toggle keeps the row's right edge in the WIDE rail",
+    ".sidebar-public:not(.collapsed) .sb-collapse" in _shell_css,
+)
+check(
+    "…and nothing pushes it off centre in the collapsed one",
+    ".sidebar-public .sb-collapse" not in _shell_css,
 )
 
 # ⚠ THE BRAND IS NOT DRAWN TWICE. *"mera A logo and name page pe hai magar

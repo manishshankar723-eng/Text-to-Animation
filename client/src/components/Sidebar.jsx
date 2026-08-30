@@ -273,15 +273,29 @@ export default function Sidebar({
           </button>
         )}
 
-        <button
-          className={`sb-item ${active === "home" ? "active" : ""}`}
-          onClick={() => onNavigate("home")}
-          title="Home"
-        >
-          <span className="sb-ico">🏠</span>
-          <span className="sb-item-label">Home</span>
-          <span className="sb-item-short" aria-hidden="true">Home</span>
-        </button>
+        {/* ⚠ AND HOME IS THE MIRROR OF IT — SIGNED-IN ONLY. Read the pair
+            together or one of them will come back: inside the app Home is the
+            desk and Explore does not exist; outside it Explore IS the page and
+            Home does not. Asked for directly, with both copies on screen at
+            once (the rail row and the link in the page's own nav): *"not need
+            to show home buttun in explore page"*.
+
+            ⚠ THIS IS A GUARD, NOT A DELETION. The row is the front door of the
+            signed-in rail — `LANDING_NAV` in App.jsx is literally "home" — so
+            removing the markup would take the app's first row out with it. The
+            handler for "home" is still live in Explore.jsx on purpose; see the
+            note there. */}
+        {!publicMode && (
+          <button
+            className={`sb-item ${active === "home" ? "active" : ""}`}
+            onClick={() => onNavigate("home")}
+            title="Home"
+          >
+            <span className="sb-ico">🏠</span>
+            <span className="sb-item-label">Home</span>
+            <span className="sb-item-short" aria-hidden="true">Home</span>
+          </button>
+        )}
 
         {/* Workflows. Collapsed there is no room for the heading, so the group
             is marked by the rule the heading would have sat above. */}

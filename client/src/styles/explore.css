@@ -475,7 +475,10 @@
    Explore.jsx. It was a flat 5, and with seven projects the fifth column held
    ONE card and ended less than a third of the way down the wall, which is the
    hole this was reported as. `14rem` is still the minimum width, so a narrow
-   window uses fewer than the ceiling allows. */
+   window uses fewer than the ceiling allows.
+
+   ⚠ A COLUMN HAS A CEILING TOO NOW, and it is set where the rest of this page's
+   width maths lives — `.xp-page > .xp-gallery`, at the foot of this file. */
 .xp-gallery {
   columns: var(--xp-cols, 5) 14rem;
   column-gap: 0.9rem;
@@ -899,6 +902,29 @@
   }
 }
 
+/* ---- Wide (the 27" case) ----
+   ⚠ RESPONSIVE RULE 4 — A MIDDLE STAGE, NOT ONLY A NARROW ONE. Letting the page
+   grow past a laptop width is only half the answer: the billboards keep the
+   16rem they were cut for while their row gets 600px wider, so the top of the
+   page turns into a letterbox strip with two lines of type lost in it. These
+   three numbers are the same shapes, re-cut for the width they now stand in.
+   1800px is chosen to land just above where `--xp-max` starts growing, so the
+   page never gets wider and taller in two separate steps. */
+@media (min-width: 1800px) {
+  .xp-banner {
+    min-height: 18rem;
+    padding: 1.8rem 2.2rem;
+  }
+  .xp-banner-art {
+    font-size: 15rem;
+  }
+  /* The body is clamped to two lines (see `.xp-banner`), so a wider measure is
+     more words on screen, not a taller box. */
+  .xp-banner-body {
+    max-width: 44ch;
+  }
+}
+
 /* =========================================================================
    THE PUBLIC PAGE
    =========================================================================
@@ -927,6 +953,28 @@
    the masonry maths. Making this element the grid costs one `grid-column: 2`
    on a rule that already exists. */
 .explore-public {
+  /* ⚠ THE PAGE'S WIDTH IS A RANGE NOW, NOT ONE NUMBER, and this variable is the
+     whole of that change — the rows below and the nav both read it.
+     It was a flat `1560px`. On the 1440-wide laptop it was cut for that is the
+     full column and nothing shows; on a 27" monitor (2560 CSS px) the same cap
+     left ~700px of dead ground on either side of the content while the cards in
+     the middle ballooned to fill what was left. Reported as the page not being
+     "screen responsive" on a big display.
+
+     ⚠ THE OLD NUMBER IS THE FLOOR, ON PURPOSE. `clamp` cannot go below 1560px,
+     so every screen up to ~1770px lays out EXACTLY as it did — no laptop, no
+     tablet and no phone moves by a pixel, and every existing measurement in
+     `tests/explore_layout_check.py` (taken at 1440 and at 760) still holds.
+     Above that the cap follows the viewport at 88vw, leaving the page a margin
+     rather than letting the rows run into the screen edge.
+
+     ⚠ AND THERE IS STILL A CEILING. `none` was the other option and it is
+     wrong twice over: a line of body text 2400px wide is unreadable, and the
+     masonry wall would go back to being the nine-column grid this cap was
+     written to stop. 2200px is about 20 columns of the wall's 14rem minimum —
+     wide enough that a 4K screen is used, narrow enough that a card is still a
+     card. */
+  --xp-max: clamp(1560px, 88vw, 2200px);
   display: grid;
   grid-template-columns: 280px 1fr;
   transition: grid-template-columns 0.18s ease;
@@ -974,7 +1022,8 @@
 
    The width cap is what stops a five-column wall becoming a nine-column one on
    a 4K monitor; the padding is the landing nav's own, so the brand mark up top
-   sits on the same left edge as the first card below it. */
+   sits on the same left edge as the first card below it. `--xp-max` is that cap
+   and it GROWS with the screen — see the note on `.explore-public`. */
 .xp-page > .xp-banners,
 .xp-page > .xp-tiles,
 .xp-page > .xp-work-head,
@@ -984,16 +1033,50 @@
 .xp-page > .xp-empty,
 .xp-page > .xp-foot {
   box-sizing: border-box;
-  width: min(100%, 1560px);
+  width: min(100%, var(--xp-max, 1560px));
   margin-inline: auto;
   padding-inline: clamp(1.2rem, 4vw, 4.5rem);
+}
+
+/* ⚠ THE WALL IS THE ONE ROW THAT MUST NOT ALWAYS FILL THE WIDTH, and this is
+   the other half of the big-monitor fix. Its column count is capped by the ITEM
+   COUNT (`wallColumns` in Explore.jsx: three projects get two columns, however
+   wide the screen is) and multi-column stretches its columns to fill whatever
+   box it is handed — so on a 27" screen those two cards came out about 1000px
+   wide each: two billboards where a gallery should be.
+
+   ⚠ IT CAPS THE WALL, NOT THE CARD. A `max-width` on `.xp-card` would leave a
+   1000px column with a 400px card sitting in it and 600px of hole beside it —
+   the card has to fill its column, so the column is what has to be narrowed.
+   26rem is a little over what a card is at the full five columns, so this only
+   ever bites while the item count is holding the column count down.
+
+   ⚠ AND IT HAS A FLOOR OF 72rem, WHICH IS WHAT KEEPS SMALL SCREENS EXACTLY AS
+   THEY WERE. 72rem (1152px) is the page's content width on the 1440 laptop this
+   screen was drawn for — so at that width and below the cap can never be the
+   thing deciding the wall, the row fills as it always did, and not one existing
+   measurement moves. The cap only ever takes effect on a screen WIDER than the
+   one the complaint came from.
+
+   ⚠ AND THE LEFT EDGE IS SPELT OUT RATHER THAN LEFT TO `auto`. Every other row
+   is CENTRED in the page column; a narrower box with `margin-inline: auto`
+   would centre on its own smaller width and sit inboard of the heading directly
+   above it. This is that same centring offset, written out, so the wall starts
+   exactly where "Made with …" starts however wide the screen is. */
+.xp-page > .xp-gallery {
+  --xp-wall-max: calc(
+    var(--xp-cols, 5) * 26rem + (var(--xp-cols, 5) - 1) * 0.9rem +
+      2 * clamp(1.2rem, 4vw, 4.5rem)
+  );
+  width: min(100%, var(--xp-max, 1560px), max(72rem, var(--xp-wall-max)));
+  margin-inline: max(0px, (100% - var(--xp-max, 1560px)) / 2) auto;
 }
 
 /* The nav is `.landing-nav` — same element, same stylesheet — and only needs
    the same cap so it lines up with the rows under it. */
 .xp-page > .xp-nav {
   box-sizing: border-box;
-  width: min(100%, 1560px);
+  width: min(100%, var(--xp-max, 1560px));
   margin-inline: auto;
   /* ⚠ THE LINKS SIT RIGHT NOW THAT THE BRAND HAS GONE. `.landing-nav` is
      `space-between`, which was right when a mark sat on the left of this row;

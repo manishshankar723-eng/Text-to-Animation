@@ -27,6 +27,7 @@ direct grid child, and the span goes back on the rail — then the same
 measurements are taken and must come back WRONG. A check that has never failed
 is not a check.
 """
+import json
 import os
 import shutil
 import socket
@@ -62,6 +63,44 @@ def free_port():
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+# ⚠ THE WALL HAS TO BE ON THE PAGE OR HALF THIS FILE MEASURES NOTHING. The
+# stores this check boots are EMPTY temp files, so `/public/showcase` answered
+# no items at all and Explore drew `.xp-empty` - no gallery, no cards. The
+# big-screen section below then skipped its two most important assertions with a
+# printed note, which is a check quietly not running: the card that ballooned to
+# ~1000px on the reported 27" screen was never once measured.
+#
+# ⚠ THREE ITEMS, AND THE NUMBER IS THE POINT. `wallColumns` in Explore.jsx is
+# `floor(count / 2)` with a floor of 2, so three items give TWO columns however
+# wide the screen is - which is exactly the arrangement that was reported, and
+# the one where multi-column has the most room to stretch a card.
+#
+# ⚠ THE FILES BEHIND THE URLS DO NOT EXIST, AND MUST NOT. `SHOWCASE_DIR` is not
+# redirected by an env var, so writing real media would drop test files into the
+# repo's own `uploads/`. A 404 on an `<img>` costs the layout nothing: the box is
+# `.xp-card-pic`, which is sized by `aspect-ratio`, not by the picture inside it.
+# `public_payload` only requires `media_id` and `media_kind` to serve a row.
+def seed_showcase(tmp):
+    """Three live items in the local showcase store, written before boot."""
+    rows = {}
+    for i, aspect in enumerate(("16:9", "4:5", "1:1")):
+        item_id = f"a1b2c3d4e5f{i}"
+        rows[item_id] = {
+            "id": item_id,
+            "title": f"Seeded item {i + 1}",
+            "blurb": "A wall needs cards to be measured.",
+            "workflow": "",
+            "aspect": aspect,
+            "rank": i,
+            "active": True,
+            "media_id": f"b1b2c3d4e5f{i}",
+            "media_kind": "image",
+            "poster_id": "",
+        }
+    with open(os.path.join(tmp, "showcase.json"), "w", encoding="utf-8") as fh:
+        json.dump(rows, fh, indent=2)
 
 
 def start_api(port, tmp):
@@ -148,6 +187,11 @@ GEOMETRY_JS = r"""
     nav: box(".xp-nav"),
     banners: box(".xp-banners"),
     tiles: box(".xp-tiles"),
+    // The wall and one of its cards — the pair the big-screen section reads.
+    // Either can be absent (an empty showcase draws `.xp-empty` instead), so
+    // the checks that use them are guarded rather than assumed.
+    wall: box(".xp-gallery"),
+    card: box(".xp-card"),
     brandName: (document.querySelector(".sb-brand-name") || {}).textContent || "",
     // ⚠ THE ROWS, IN THE ORDER THEY ARE DRAWN, with the one wearing the
     // highlight named. "Explore above Home" is an ORDER, and an order can only
@@ -193,6 +237,22 @@ BREAK_CSS = """
   .xp-page > .xp-gallery,
   .xp-page > .xp-empty,
   .xp-page > .xp-foot { grid-column: 2 !important; }
+"""
+
+
+# ⚠ THE OTHER BUG, PUT BACK: the flat cap Explore shipped with. Both halves are
+# needed - the row rule alone leaves the wall capped and the cards sane, which is
+# only half of what was reported.
+WIDE_BREAK_CSS = """
+  .xp-page > .xp-banners,
+  .xp-page > .xp-tiles,
+  .xp-page > .xp-work-head,
+  .xp-page > .xp-toolbar,
+  .xp-page > .xp-chips,
+  .xp-page > .xp-gallery,
+  .xp-page > .xp-empty,
+  .xp-page > .xp-foot { width: min(100%, 1560px) !important; }
+  .xp-page > .xp-gallery { margin-inline: auto !important; }
 """
 
 
@@ -270,35 +330,43 @@ def run(page, app):
         repr(g["footButton"]),
     )
 
-    print("\n--- the rail says which page this is, and how to get back to it ---")
+    print("\n--- the rail names this page, and offers nothing backwards ---")
     # ⚠ *"explore ka button kyun nahi dikh raha hai, ye page kahan se khul raha
     # hai? home ke upar explore button daalo."* Without a row for it the rail was
-    # a list of places to go from a page it never named — and pressing Home left
-    # for the sales page with no way back except a link buried in its nav.
+    # a list of places to go from a page it never named.
     labels = [r["label"].strip() for r in g["rows"]]
     check("there is an Explore row", "Explore" in labels, str(labels))
-    check("there is still a Home row", "Home" in labels, str(labels))
-    if "Explore" in labels and "Home" in labels:
-        # ⚠ AN ORDER, NOT A PRESENCE. "Above Home" is the whole of the request,
-        # and a check that only asks whether the row exists would pass with it
-        # sitting at the bottom of the rail.
-        check(
-            "Explore sits ABOVE Home, as it did on the old signed-in rail",
-            labels.index("Explore") < labels.index("Home"),
-            f"order: {labels}",
-        )
-        # DOM order is not screen order. Check the pixels as well.
-        ex = g["rows"][labels.index("Explore")]
-        hm = g["rows"][labels.index("Home")]
-        check("and is drawn above it", ex["top"] < hm["top"],
-              f"{ex['top']:.0f} vs {hm['top']:.0f}")
-        check("and it is the row wearing the highlight", ex["active"], str(labels))
-        check("while Home is not", not hm["active"], str(labels))
     check(
-        "the workflows follow underneath",
-        len(labels) >= 3 and labels[:2] == ["Explore", "Home"],
+        "and it is the row wearing the highlight",
+        "Explore" in labels and g["rows"][labels.index("Explore")]["active"],
         str(labels),
     )
+    # ⚠ AND HOME IS GONE FROM THE VISITOR'S RAIL. It used to sit directly under
+    # Explore and this file asserted that ORDER, in DOM and in pixels. The order
+    # was not what was wanted: *"not need to show home buttun in explore page"*,
+    # reported with a picture of the rail row AND a picture of the link in the
+    # page's own nav — which is why the two checks here are a PAIR. Removing one
+    # copy leaves the word on screen and reads as half a fix.
+    #
+    # ⚠ IT IS A `publicMode` GUARD, NOT A DELETION, and that is why the assertion
+    # has to live on both sides: inside the app Home is still the first row and
+    # the front door (`LANDING_NAV`), pinned by `explore_mount_check.py`. Absence
+    # HERE and presence THERE is the only pair of checks that keeps both true —
+    # either one alone can be made to pass by deleting the row outright.
+    check("⚠ the visitor's rail carries NO Home row", "Home" not in labels,
+          str(labels))
+    check(
+        "Explore is the FIRST row, with the workflows straight underneath",
+        len(labels) >= 2 and labels[0] == "Explore",
+        str(labels),
+    )
+    nav_links = [
+        t.strip() for t in page.locator(".xp-nav .landing-nav-links a").all_inner_texts()
+    ]
+    check("⚠ …and no Home link in the page's own nav either",
+          not any(t.lower() == "home" for t in nav_links), str(nav_links))
+    check("while 'The work' is still there, so the nav was not emptied by mistake",
+          any("work" in t.lower() for t in nav_links), str(nav_links))
 
     print("\n--- collapsing narrows the rail and the page follows ---")
     page.click(".sb-collapse")
@@ -336,6 +404,100 @@ def run(page, app):
         n["docScrollW"] <= n["docClientW"] + 1,
         f"scrollW={n['docScrollW']} clientW={n['docClientW']}",
     )
+
+    print("\n--- a 27-inch screen uses the screen, and nothing balloons ---")
+    # ⚠ THE OTHER HALF OF "RESPONSIVE", AND IT HAD NEVER BEEN MEASURED. Every
+    # check in this file was taken at 1440 and at 760, so a page that was correct
+    # at both and wasted 700px on either side of a 2560-wide monitor passed
+    # everything. Reported with a screenshot of a 27" display: the content sat in
+    # a narrow column in the middle with the cards inside it blown up to fill it.
+    page.set_viewport_size({"width": 2560, "height": 1440})
+    page.wait_for_timeout(400)
+    w = measure(page)
+    # The row cap used to be a flat 1560px whatever the screen was.
+    check(
+        "the rows grow past the laptop cap",
+        w["banners"] and w["banners"]["width"] > 1700,
+        f"row width={(w['banners'] or {}).get('width')} on a {w['view']['w']}px screen",
+    )
+    # ⚠ AND THEY STILL STOP. `none` would put a line of body text 2400px wide
+    # on screen and hand the wall nine columns.
+    check(
+        "and they still stop short of the screen edge",
+        w["banners"] and w["banners"]["width"] <= w["view"]["w"] - RAIL_OPEN,
+        f"row width={(w['banners'] or {}).get('width')}, "
+        f"page column={w['view']['w'] - RAIL_OPEN}",
+    )
+    check(
+        "no sideways scroll on a wide screen either",
+        w["docScrollW"] <= w["docClientW"] + 1,
+        f"scrollW={w['docScrollW']} clientW={w['docClientW']}",
+    )
+    # ⚠ NOT A GUARD ANY MORE. `seed_showcase` puts three items in the store
+    # before the api boots precisely so these can run; if the wall is missing the
+    # seed broke, and skipping silently is how this section passed while
+    # measuring nothing at all.
+    check(
+        "the wall and its cards are on screen",
+        bool(w["wall"] and w["card"]),
+        f"wall={w['wall']}, card={w['card']}",
+    )
+    if w["wall"] and w["card"]:
+        # ⚠ THE WALL IS CAPPED AND THE OTHER ROWS ARE NOT, so its left edge is
+        # the thing that can slip. `margin-inline: auto` centred it on its own
+        # smaller width and it sat inboard of the heading directly above it.
+        check(
+            "the wall starts on the same left edge as the rows above it",
+            abs(w["wall"]["left"] - w["banners"]["left"]) <= 1,
+            f"wall left={w['wall']['left']:.0f}, rows left={w['banners']['left']:.0f}",
+        )
+        # The column count is capped by the ITEM count, so a short wall would
+        # otherwise stretch two cards right across the screen.
+        check(
+            "a card is still a card, not a billboard",
+            w["card"]["width"] <= 560,
+            f"card width={w['card']['width']:.0f}px",
+        )
+        print(
+            f"       (at {w['view']['w']}px: row {w['banners']['width']:.0f}px, "
+            f"wall {w['wall']['width']:.0f}px, card {w['card']['width']:.0f}px)"
+        )
+
+        # ⚠ AND THE SAME PROOF THE REST OF THIS FILE INSISTS ON: the flat cap,
+        # put back in the page. Without it the rows shrink to 1560 again and the
+        # two columns stretch a card back to a billboard. If this goes green, the
+        # three checks above are measuring nothing.
+        page.evaluate(
+            """(css) => {
+                 const s = document.createElement("style");
+                 s.id = "wide-break";
+                 s.textContent = css;
+                 document.head.appendChild(s);
+               }""",
+            WIDE_BREAK_CSS,
+        )
+        page.wait_for_timeout(300)
+        wb = measure(page)
+        check(
+            "the flat 1560px cap, put back, wastes the screen again",
+            wb["banners"]["width"] <= 1600,
+            f"row width={wb['banners']['width']:.0f} - the old cap did NOT "
+            f"reproduce, so the checks above prove nothing",
+        )
+        check(
+            "and the cards balloon again without the wall's own cap",
+            wb["card"]["width"] > 560,
+            f"card width={wb['card']['width']:.0f} - the ballooning did NOT "
+            f"reproduce, so 'a card is still a card' proves nothing",
+        )
+        print(
+            f"       (reproduced: row {w['banners']['width']:.0f}px -> "
+            f"{wb['banners']['width']:.0f}px, card {w['card']['width']:.0f}px -> "
+            f"{wb['card']['width']:.0f}px)"
+        )
+        page.evaluate("() => document.getElementById('wide-break')?.remove()")
+        page.wait_for_timeout(200)
+
     page.set_viewport_size({"width": 1440, "height": 900})
     page.wait_for_timeout(400)
 
@@ -367,6 +529,7 @@ def main():
     try:
         api_port, app_port = free_port(), free_port()
         print("booting the api…")
+        seed_showcase(tmp)
         api_proc, base = start_api(api_port, tmp)
         if not api_proc:
             print("could not start the api")

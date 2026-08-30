@@ -284,7 +284,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-30 — **THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE.** *"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai landing page ka fuction bano so mai image dall sakun har workflow ka … jo live hai uska dikhe image yaha pe aur jo hide hai uska nhi dikhe."* The landing hero's four tiles were **four hard-coded lines of JSX** holding four hand-drawn SVGs, with nothing saying which drawing belonged to which workflow — so hiding a workflow left its picture on the front page, and the biggest artwork a prospect sees could not be changed without a developer. New **`server/landing.py`** stores one picture per workflow **keyed by the workflow id** (no create route, no delete route — the rows ARE the `features.py` catalogue, which is what makes a seventh workflow need no plumbing), and a new **Admin → Landing** tab uploads them. ⚠ **The visibility filter is on the server as well as in the browser**, because the client-only version leaves a picture of a switched-off workflow in a public JSON payload; **"soon" keeps its picture, only "hidden" loses it, and the file is kept** so un-hiding restores the tile. ⚠ **The fallback is three rungs — picture, drawing, glyph — and the third one needed a real fix:** `WorkflowIcon` draws NOTHING for an id it has no glyph for, so the server's emoji is now carried through as its `fallback` or a workflow launched after this build would get a **blank white tile**. ⚠ The four-tile cap is a LAYOUT number; which four are drawn is the `order` in the Features tab, and the panel says out loud when a picture is stored but not drawn. New **RULEBOOK E35**. New `tests/landing_art_check.py` — **77 checks green**, including the **hide -> un-hide round trip** and a seventh workflow added the way one actually is; `showcase_check`, `features_check`, `admin_check`, `admin_fields_check`, `brand_landing_check`, `explore_layout_check` and `npm run build` pass. ⚠ **Not seen in a browser with a real uploaded picture** (G2), and `explore_mount_check.py`'s two failures are the in-progress Explore rewrite's, not this work's. See the Work Log.
+**Last updated:** 2026-08-30 — **HOME WAS ON THE EXPLORE PAGE TWICE, AND A VISITOR HAS NO HOME.** *"not need to show home buttun in explore page"* — reported with a picture of the rail's **Home** row AND of the **Home** link beside "The work" in the page's own nav: two copies of one word, four rows apart, both meaning "leave for the sales page". The rail row is now behind `{!publicMode && (`, the exact mirror of the Explore row's `{publicMode && (` above it — ⚠ **a guard, not a deletion**, because `LANDING_NAV` is `"home"` and deleting the markup would take the signed-in rail's FIRST ROW with it. The nav's `#back` link is gone. ⚠ The `id === "home"` branch STAYS as a net: nothing emits it today, but the fall-through for an unknown id is `onSignIn(id)`. ⚠ **Explore now offers no door backwards at all** — deliberate: its exits are forwards, `?explore` is an address a stranger is sent straight to, and `syncExploreUrl` uses `replaceState` so Back never returned there either. ⚠ **Two `showcase_check` assertions were WRONG rather than newly broken** — the `publicMode` guard COUNT (2→3), and `".sidebar-public .sb-collapse"`, which stayed green right through the off-centre-toggle bug below and now pins the `:not(.collapsed)` scope. `explore_layout_check.py` swaps its "Explore above Home" order checks for absence on the visitor's rail and in its nav. **`showcase_check.py` and `npm run build` pass.** ⚠ **No browser run** — including the layout suite this work edited. New **RULEBOOK E37**. See the Work Log.
+
+**Previously:** 2026-08-30 — **THE COLLAPSE TOGGLE SAT OFF-CENTRE ON THE COLLAPSED EXPLORE RAIL.** *"collapse bar ka icon center mai nhi hai please fix this in explore page."* ⚠ One CSS line: `.sidebar-public .sb-collapse { margin-left: auto }`, written so the toggle reaches the right edge in the WIDE public rail (a visitor has no avatar, and it is `.sb-brand-avatar`'s auto margin that pushes that row over in the app). The comment above it claimed *"collapsed the row is a column, so it does not apply"* — **it applies: in a column flex box `margin-left: auto` still eats the free space on the left and shoves the item to the RIGHT edge, beating the container's `align-items: center`.** So only the PUBLIC collapsed rail was wrong, which is why the signed-in one looked fine. Now scoped `.sidebar-public:not(.collapsed) .sb-collapse`, with the wrong comment replaced by the reason. New **RULEBOOK E36**. ⚠ **Not verified in a browser** — no live run was made (G2/G7). See the Work Log.
+
+**Previously:** 2026-08-30 — **THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE.** *"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai landing page ka fuction bano so mai image dall sakun har workflow ka … jo live hai uska dikhe image yaha pe aur jo hide hai uska nhi dikhe."* The landing hero's four tiles were **four hard-coded lines of JSX** holding four hand-drawn SVGs, with nothing saying which drawing belonged to which workflow — so hiding a workflow left its picture on the front page, and the biggest artwork a prospect sees could not be changed without a developer. New **`server/landing.py`** stores one picture per workflow **keyed by the workflow id** (no create route, no delete route — the rows ARE the `features.py` catalogue, which is what makes a seventh workflow need no plumbing), and a new **Admin → Landing** tab uploads them. ⚠ **The visibility filter is on the server as well as in the browser**, because the client-only version leaves a picture of a switched-off workflow in a public JSON payload; **"soon" keeps its picture, only "hidden" loses it, and the file is kept** so un-hiding restores the tile. ⚠ **The fallback is three rungs — picture, drawing, glyph — and the third one needed a real fix:** `WorkflowIcon` draws NOTHING for an id it has no glyph for, so the server's emoji is now carried through as its `fallback` or a workflow launched after this build would get a **blank white tile**. ⚠ The four-tile cap is a LAYOUT number; which four are drawn is the `order` in the Features tab, and the panel says out loud when a picture is stored but not drawn. New **RULEBOOK E35**. New `tests/landing_art_check.py` — **77 checks green**, including the **hide -> un-hide round trip** and a seventh workflow added the way one actually is; `showcase_check`, `features_check`, `admin_check`, `admin_fields_check`, `brand_landing_check`, `explore_layout_check` and `npm run build` pass. ⚠ **Not seen in a browser with a real uploaded picture** (G2), and `explore_mount_check.py`'s two failures are the in-progress Explore rewrite's, not this work's. See the Work Log.
 
 **Previously:** 2026-08-30 — **THE RAIL NEVER NAMED THE PAGE IT WAS STANDING ON.** *"explore ka button kyun nahi dikh raha hai, ye page kahan se khul raha hai? home ke upar explore button daalo."* The public rail listed Home and the workflows and no **Explore** — nothing highlighted on a page that is one of its own entries, and Home was a one-way door to the sales page. The row is back above Home, **on the public side only** (`{publicMode && …}`), because a signed-in customer still never sees Explore; pressing it while on Explore returns to the top, the app's own convention. ⚠ **Three tests failed the moment it landed, all written as "the string X is not in this component"** — a fair proxy for an absolute rule, meaningless once one component draws both sides. **Adding a mode rots every absence assertion.** The guard is asserted instead, and the new check was **proved to read False with the guard removed**. New **RULEBOOK E34**. Verified in Chromium: `explore_layout_check.py` gains seven checks reading the rows off real boxes — Explore above Home in the DOM **and in pixels**, wearing the highlight, workflows underneath — **32 green**, the blank-screen reproduction included. `showcase_check`, `admin_check`, `branding_check`, `npm run build` pass. See the Work Log.
 
@@ -3526,7 +3530,178 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-30 (latest) — THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE
+### 2026-08-30 (latest) — EXPLORE WAS BUILT FOR A LAPTOP AND OPENED ON A 27-INCH SCREEN
+
+*"make it screen responsive either 27 inch screen and what so ever — fix it in
+explore page"*, with a screenshot of a 2560px-wide display.
+
+**Two faults, and they look like opposites.** The page's rows were pinned at a
+flat `width: min(100%, 1560px)`, so on a 27" monitor the whole page sat in a
+narrow column with about 700px of empty ground on either side of it — while the
+picture wall INSIDE that column stretched its two cards to roughly 1000px each.
+The wall's column count is capped by the ITEM count (`wallColumns` — three
+projects get two columns, however wide the screen is) and multi-column stretches
+whatever columns it has to fill its box. So the page looked too small and the
+cards looked enormous at the same time, from one missing cap and one missing
+range.
+
+**What changed — `client/src/styles/explore.css` only. No JSX.**
+
+- **`--xp-max: clamp(1560px, 88vw, 2200px)`** on `.explore-public`, read by the
+  row rule and by the nav rule. ⚠ **The old number is the FLOOR**: every screen
+  up to ~1770px lays out byte-identically to before, so no laptop, tablet or
+  phone moves and no existing measurement in the test file changes. ⚠ **And
+  there is still a ceiling** — `none` was the other option and it is wrong
+  twice: a 2400px line of body text is unreadable, and the wall goes back to
+  being the nine-column grid the cap was written to stop.
+- **`.xp-page > .xp-gallery`** caps the WALL — not the card. A `max-width` on
+  `.xp-card` would leave a 1000px column with a 400px card in it and a hole
+  beside it; the card has to fill its column, so the column is what narrows.
+  26rem a column, with a **72rem floor** (the content width of the 1440 laptop
+  this screen was drawn for) so nothing at or below that width is touched.
+- ⚠ **Its left edge is spelt out rather than left to `auto`.** Every other row is
+  CENTRED in the page column; a narrower box with `margin-inline: auto` centres
+  on its own smaller width and sits inboard of the "Made with …" heading directly
+  above it. `margin-inline: max(0px, (100% - var(--xp-max)) / 2) auto` is that
+  same offset, written out.
+- **A `min-width: 1800px` stage for the billboards** (18rem tall, more padding,
+  a bigger glyph, a 44ch measure). Responsive rule 4 cuts both ways: letting the
+  page grow without re-cutting the banners turns the top of the screen into a
+  letterbox strip with two lines of type lost in it.
+
+**Measured in Chromium, not guessed.** First with a throwaway harness (the BUILT
+stylesheet against a copy of the page's markup) at 2560, 1920, 1440, 1100, 760
+and 390 — and then, when asked, on the REAL page by
+`tests/explore_layout_check.py`, which reports the same numbers at 2560: row
+2200px, wall 1152px, card 497px.
+
+| viewport | row width | card | sideways scroll |
+|---|---|---|---|
+| 2560 | 1560 → **2200** | ~1000 → **497** | no |
+| 1920 | 1560 → **1640** | ~1000 → **497** | no |
+| 1440 | 1160 (unchanged) | 517 → **511** | no |
+| 1100 / 760 / 390 | unchanged | unchanged | no |
+
+**Tests — `tests/explore_layout_check.py`, RUN, 33 checks green.** It gains a
+**2560×1440 section**: the rows grow past the laptop cap, they still stop short
+of the screen edge, no sideways scroll, the wall and its cards are on screen, the
+wall's left edge equals the rows' left edge, and a card is ≤560px. ⚠ Every check
+in that file had been taken at 1440 and 760 only, which is exactly why a page
+that was correct at both could waste half a 27" screen and pass everything.
+
+**⚠ AND THE FIRST RUN FOUND THE SECTION SKIPPING ITSELF.** The two card
+assertions sat behind `if w["wall"] and w["card"]:` with an `else: print("no wall
+on screen")` — and the check boots EMPTY temp stores, so `/public/showcase`
+answered nothing, Explore drew `.xp-empty`, and **the ballooning card was never
+measured once**. It printed a friendly note and went green. `seed_showcase()`
+now writes three live items into the local store before the api boots (three
+because `wallColumns` is `floor(count / 2)` — three items give the TWO columns
+that were reported), the wall's presence is a CHECK rather than a guard, and the
+files behind the media URLs deliberately do not exist: `SHOWCASE_DIR` takes no
+env override, and a 404 on an `<img>` costs the layout nothing because
+`.xp-card-pic` is sized by `aspect-ratio`.
+
+**⚠ And the new checks are proved to FAIL first**, the way the rest of the file
+is: `WIDE_BREAK_CSS` puts the flat `1560px` cap back in the page, and the same
+measurements must come back wrong. Measured on the real page at 2560:
+
+- **row 2200px → 1560px**, and **card 497px → 701px** with the old cap restored.
+
+`npm run build` passes. `tests/showcase_check.py` passes in full.
+
+**RULEBOOK** — new row **E38**.
+
+### 2026-08-30 — HOME WAS ON THE EXPLORE PAGE TWICE, AND A VISITOR HAS NO HOME
+
+*"not need to show home buttun in explore page"* — reported with two pictures:
+the rail's **Home** row, and the **Home** link beside "The work" in the page's
+own nav.
+
+**Two copies of one word, four rows apart, both meaning "leave for the sales
+page".** The rail row arrived in an earlier fix (*"home ke upar explore button
+daalo"*) and the nav link predates the rail entirely — back when this page stood
+alone and its header was the only way out. Once the rail moved in beside it,
+nobody removed the older one.
+
+**What changed**
+
+- **`Sidebar.jsx`** — the Home row is behind `{!publicMode && (`, the exact
+  mirror of the Explore row's `{publicMode && (` directly above it. ⚠ **A guard,
+  not a deletion:** `LANDING_NAV` is literally `"home"`, so deleting the markup
+  would take the signed-in rail's FIRST ROW out with it.
+- **`Explore.jsx`** — the nav's `#back` link is gone; the nav is now "The work",
+  the theme switch and Sign in.
+- ⚠ **The `id === "home"` branch in the rail's `onNavigate` STAYS, as a net.**
+  Nothing emits it today, but the rail is the APP'S component and the
+  fall-through for an unknown id is `onSignIn(id)` — a future row, mode or
+  banner target saying "home" would otherwise push a visitor into a sign-in for
+  a workflow that does not exist.
+
+**⚠ Explore now has no door backwards at all**, and that is the decision rather
+than an oversight: its exits are forwards (tiles, banners, cards, footer, Sign
+in), `?explore` is a real address a stranger is sent straight to, and
+`syncExploreUrl` uses `replaceState` — so the browser's own Back would not have
+returned to the landing page either. If a way back is ever wanted again, it is
+the nav LINK that should come back, not the rail row.
+
+**Tests.** `showcase_check.py` had **two checks that were wrong rather than
+newly broken**, and both are recorded here rather than quietly re-greened:
+
+- `side_src.count("{!publicMode && (") == 2` — now **3**, and the number is the
+  record of the decision. Alongside it the Home row is pinned by name (one
+  `onNavigate("home")`, behind `{!publicMode && (`), because a bare
+  `'onNavigate("home")' not in sidebar` would call "the app's front row deleted"
+  a pass.
+- ⚠ `".sidebar-public .sb-collapse" in shell.css` — **this one was green
+  through the off-centre-toggle bug in the entry below and would have stayed
+  green after a bad fix.** It now asserts the `:not(.collapsed)` scope AND that
+  the unscoped selector is gone.
+
+`explore_layout_check.py` swaps its "Explore sits ABOVE Home" order assertions
+for the pair that matters now: no Home row on the visitor's rail, no Home link
+in its nav, Explore first and still wearing the highlight. **`showcase_check.py`
+passes in full; `npm run build` passes.**
+
+**RULEBOOK** — new row **E37**.
+
+**⚠ Not run:** the browser suites (`explore_layout_check.py` — which is the file
+this work edited — `explore_mount_check.py`, `branding_check.py`). Nothing has
+been seen on a real page. `explore_mount_check.py` also still carries its two
+pre-existing failures from the Explore rewrite (it asserts the public page has
+NO rail).
+
+### 2026-08-30 — THE COLLAPSE TOGGLE SAT OFF-CENTRE ON EXPLORE, BECAUSE A `margin-left: auto` DOES NOT SWITCH ITSELF OFF IN A COLUMN
+
+*"collapse bar ka icon center mai nhi hai please fix this in explore page"*
+
+On the **collapsed public rail** (Explore) the sidebar-toggle glyph sat visibly
+right of the logo above it, in a rail whose whole job is one centred column.
+
+**Why.** `.sidebar-public .sb-collapse { margin-left: auto }` exists for a real
+reason: in the WIDE rail it is `.sb-brand-avatar`'s `margin-left: auto` that
+pushes the top-row buttons to the right edge, and a visitor has no avatar — so
+the toggle has to do that job itself out there. The note above the rule then
+claimed *"collapsed the row is a column, so it does not apply and does no
+harm"*, and that is simply not how auto margins work: **in a column flex box a
+`margin-left: auto` still absorbs the free space on the left and shoves the item
+to the RIGHT edge**, overriding the container's `align-items: center`. So the
+override kept firing after `.sb-brand` turned into a column, and only on the
+public rail — which is why the signed-in collapsed rail looked fine and Explore
+did not. Same component, same CSS, different mode.
+
+**The fix** — `client/src/styles/shell.css`: the rule is now scoped
+`.sidebar-public:not(.collapsed) .sb-collapse`. Collapsed, nothing overrides
+`.sb-brand`'s own `align-items: center` and the toggle centres under the mark.
+The wrong comment is replaced with the reason, so the next agent does not
+"simplify" the `:not()` back off.
+
+**RULEBOOK** — new row **E36**.
+
+**Not verified in a browser** — no live run was made; this is a CSS
+specificity/geometry fix read off the rules, so it wants one look on the real
+page at both rail widths.
+
+### 2026-08-30 — THE HERO'S FOUR PICTURES BELONG TO THE OWNER NOW, AND THEY FOLLOW WHAT IS LIVE
 
 *"mai chahta hun ki ye four icon ke jagh mai image lagun so admin panel mai
 landing page ka fuction bano so mai image dall sakun har workflow ka aur aisa
@@ -23853,6 +24028,29 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: EXPLORE FITS A BIG SCREEN NOW — MEASURED IN CHROMIUM, NOT YET SEEN BY A PERSON (2026-08-30)
+
+The public Explore page was pinned to a 1560px column whatever the monitor was.
+It now grows with the screen (up to 2200px), and the picture wall is capped
+separately so a short wall stops blowing its cards up to fill the width.
+⚠ **NOBODY HAS OPENED IT ON THE REAL 27" SCREEN YET.** What to check:
+
+1. **On the big monitor, signed out (`?explore=1`).** The banners, the three
+   workflow tiles and the toolbar should reach much closer to the right-hand
+   edge than before — a margin, not a third of the screen empty.
+2. **The picture cards should NOT have grown with it.** They should look about
+   the size they do on the laptop; with only three items on the wall the row
+   will simply end early and leave space to its right. That is deliberate — say
+   so if you would rather they filled the width again.
+3. **The wall's left edge must line up** with "Made with …" and with the banners
+   above it. If it looks pushed inwards, that is the one thing this change could
+   get wrong.
+4. **On the laptop (1440) and on a phone — nothing should have changed at all.**
+   That is the point of the floor in the new cap; if anything moved there, it is
+   a bug in this change.
+5. **The billboards get taller above 1800px wide.** They should read as cards,
+   not as a letterbox strip.
 
 ### 🟡 NEWEST: THE LANDING HERO'S FOUR PICTURES ARE YOURS — BUILT, NOT YET SEEN (2026-08-30)
 
