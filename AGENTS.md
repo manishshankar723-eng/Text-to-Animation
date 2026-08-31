@@ -284,7 +284,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-30 — **HOME WAS ON THE EXPLORE PAGE TWICE, AND A VISITOR HAS NO HOME.** *"not need to show home buttun in explore page"* — reported with a picture of the rail's **Home** row AND of the **Home** link beside "The work" in the page's own nav: two copies of one word, four rows apart, both meaning "leave for the sales page". The rail row is now behind `{!publicMode && (`, the exact mirror of the Explore row's `{publicMode && (` above it — ⚠ **a guard, not a deletion**, because `LANDING_NAV` is `"home"` and deleting the markup would take the signed-in rail's FIRST ROW with it. The nav's `#back` link is gone. ⚠ The `id === "home"` branch STAYS as a net: nothing emits it today, but the fall-through for an unknown id is `onSignIn(id)`. ⚠ **Explore now offers no door backwards at all** — deliberate: its exits are forwards, `?explore` is an address a stranger is sent straight to, and `syncExploreUrl` uses `replaceState` so Back never returned there either. ⚠ **Two `showcase_check` assertions were WRONG rather than newly broken** — the `publicMode` guard COUNT (2→3), and `".sidebar-public .sb-collapse"`, which stayed green right through the off-centre-toggle bug below and now pins the `:not(.collapsed)` scope. `explore_layout_check.py` swaps its "Explore above Home" order checks for absence on the visitor's rail and in its nav. **`showcase_check.py` and `npm run build` pass.** ⚠ **No browser run** — including the layout suite this work edited. New **RULEBOOK E37**. See the Work Log.
+**Last updated:** 2026-08-31 — **A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4).** The last format on the plan was Premiere's own save file. ⚠ **Adobe has never published its structure and it moved again in Premiere 2026, so this is a GUESS and the whole design is about saying so.** `POST /interchange/import` still answers a `.prproj` with the same refusal it always did — naming *File › Export › Final Cut Pro XML*, the route that always works — and only when the user reads that and presses **“Try to read it anyway”** does the dialog resend with `experimental=true` and `interchange._read_prproj` run (new **RULEBOOK E47**). ⚠ **An experimental reader offered as a checkbox up front is one most people tick without ever seeing the reliable door beside it** — hence a button under the error, not an option above the file picker. ⚠ **A `.prproj` is a flat pile of objects wired by `ObjectRef`, not a tree**, so a clip's POSITION is four hops from the clip and nothing here uses a fixed XPath the way `_read_fcp7` safely can; it indexes by `ObjectID` and follows references, with a stop list so a shared `Media` object cannot walk back up into the bin and read another sequence's numbers. ⚠ **Two layers, and the model records which one answered**: `structured` keeps every clip's real row, `flat` puts them on one row per media type and SAYS the rows are wrong rather than refusing. ⚠ **Ticks, not frames** — Premiere counts 254,016,000,000 per second — and the file's OWN rate is used, never the caller's. ⚠ **Every import it makes carries “best-effort, check it against Premiere” as `warnings[0]` and the dialog badges the report `best guess`** for as long as it is on screen. ⚠ **A gzip bomb is refused inside the reader** (new **RULEBOOK E48**): the upload cap counts COMPRESSED bytes and this XML packs at better than 1000:1, so the only place that can stop it is where it is unpacked. Effects, titles, colour, speed, volume and nested sequences are **not attempted** and are named in `warnings`. ⚠ **A REVIEW PASS AFTER IT WAS BUILT FOUND THREE FAULTS, AND TWO OF THEM WERE SERIOUS.** (1) `_read_prproj` picked the right sequence and then read the frame rate off the FIRST one in the file — a project holding a 30fps sequence above the 24fps one being imported read every clip **25% adrift**, silently (new **RULEBOOK E49**, fixed by `_prproj_rate_near`, which stays inside the chosen sequence's own subgraph). (2) ⚠ **`to_project` could hand the route a clip Pydantic rejects, which reaches the user as a 500 with the whole import lost** — `AnimaticFrame` caps a clip at TEN MINUTES and forbids a negative start, and a fifteen-minute take or a record-in before the sequence starts are ordinary things to find in somebody else's timeline. **This was never a `.prproj` bug**: the clamp is in `to_project`, so it had been true of the FCP7 XML and EDL readers since Phase 3 (new **RULEBOOK E50**). (3) Clips found but unplaceable fell through to the route's *“There was nothing on that timeline to bring in”*, which named the wrong reason; they are refused with the real one now. `tests/interchange_check.py` is now **309 checks, all green** — new §8c and §8d, plus a sixth guard proving the quietest fault here (`onClick={readFile}` hands React's click event in as `experimental`, and an event object is truthy, so every ordinary read would have asked the server to guess). ⚠ **Both new guards were re-run against the pre-fix code and proved to fail on it**, so neither is decoration. ⚠ **§12's guard loop was itself broken** and is fixed (new **RULEBOOK G14**): it re-ran every guard against `apply_src` whatever file the guard was about, so the first guard over another file reported *itself* broken. `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check` and `npm run build` pass. ⚠ **NO REAL PREMIERE `.prproj` HAS EVER BEEN OPENED BY IT** (G2/G7) — the fixture is a hand-built imitation and there is no writer to round-trip against, so green means “it behaves as it claims on the shape it claims” and NOT “it opens your project”. That is the top of Next Steps and it is why E47 is logged **PAKKA (policy) / OPEN (unproven)**. See the Work Log.
+
+**Previously:** 2026-08-31 — **THE EDITOR CAN READ SOMEBODY ELSE'S CUT NOW (PHASE 3).** The gear gains **📥 Import project file**, above Export: a **Final Cut Pro XML** (what Premiere Pro, Resolve and Avid export), a **CMX3600 EDL**, or **a .zip exported from here** — which carries its own media, so nothing else need be attached. ⚠ **THE PARSER IS THE EASY HALF; THE MEDIA IS THE HARD ONE**: a project file names files by a path on the machine that wrote it, so the footage comes too and is matched by FILENAME, case-insensitively and by the stem as well (a transcode leaves `shot_03.mov` in the XML and `shot_03.mp4` on disk). ⚠ **A clip whose file did not arrive becomes a LABELLED COLOUR CARD** at its exact place and length (new **RULEBOOK E45**) — leaving it out hands back a timeline with invisible holes; a named card keeps the cut whole and is fixed by dropping the real file on that row. Sound gets no placeholder: a silent card is readable, a silent audio clip is a lie you cannot see. ⚠ **IT ADDS ONTO NEW ROWS AND NEVER REPLACES** (new **RULEBOOK E44**), the dialog is two steps (reading changes nothing), and **the whole import is ONE `flush`** — so Ctrl+Z takes all of it back out in one step. ⚠ **The server produces the material, the CLIENT decides the timeline** — row numbers come back RELATIVE and are re-based in the browser, counting EMPTY rows too. ⚠ **Refusals are a feature**: `.prproj` (gzip `1F 8B`) and `.aep` (RIFX) are recognised **by their bytes** and refused with a sentence naming what to export instead; `.fcpxml` likewise. ⚠ **A round trip is FRAME-exact, not millisecond-exact** (new **RULEBOOK E46**) — three assertions failed on correct code before that was understood: at 25 fps a clip at 500ms is frame 12.5, so it snaps to 520ms once and never drifts. Reading in converts through MILLISECONDS at the document's own rate, which is what lets a 25fps XML open correctly in a 24fps project. New `ProjectImportModal.jsx`, `applyProjectImport`, `_store_import_media` (every file through the same checks as the ordinary uploads), `AnimaticImportResponse`. `tests/interchange_check.py` is now **239 checks, all green** — §8b exports this app's own zip and imports it straight back, and §12 guards the client faults a browser would show only by ACTING NORMAL (the `audioTracks` patch key, un-rebased rows, two writes), **each proved to read False when broken**. `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check`, `npm run build` and — run without being asked — the Chromium `editor_picture_tracks_check` all pass. ⚠ **NO FILE FROM A REAL PREMIERE PRO HAS EVER BEEN IMPORTED** (G2/G7); everything is proved against files this app wrote itself. **`.fcpxml` and `.prproj` reading are not built and are refused on purpose.** See the Work Log.
+
+**Previously:** 2026-08-30 — **AFTER EFFECTS AND AN EDL JOIN THE EXPORT (PHASE 2).** The gear's export dialog now opens with an **"Open it in"** menu — Premiere/Resolve/Avid/Final Cut, **After Effects**, or an **EDL** — all three written off the ONE model `build_sequence` already produced. ⚠ **AFTER EFFECTS GETS A SCRIPT, NOT A PROJECT FILE**: AE reads no exchange format at all, so `write_ae_jsx` emits an **ExtendScript** that builds the comp through AE's own public API (`File > Scripts > Run Script File…`) and **finds its own media** via `$.fileName` — sturdier than forging Adobe's private `.aep`, and there is no "where did you unzip it" question. ⚠ **Three things about writing a file another PROGRAM parses, all paid for here** (new **RULEBOOK E43**): ExtendScript is **ES3**, so `{in: 0}` is a *syntax error* and the script would not load at all — the keys are `srcIn`/`tlStart`/`tlEnd`; the generated script is **pure ASCII** because ExtendScript guesses encodings, with the title carried through `json.dumps` instead; and an **EDL reel name is 8 characters**, where a silent truncation conforms two files as one tape. ⚠ **The EDL sorted its events wrong first time** — the channel was sorted as a STRING, so `"A"` beat `"V"` and a film opened on its voiceover; ranked explicitly now. ⚠ **The EDL is CUTS ONLY on purpose**: a CMX dissolve starts at the edit point where this app's straddles it, and an EDL is a conform reference where every frame number must be exact. New **RULEBOOK E42**: one model, one writer per format, and each format's ceiling is **added to** the base losses — so the preview endpoint takes the format and the dialog re-asks when the dropdown changes, because a dropdown that changes the download but not the warning is worse than none. One zip kept per format (`<title>-edl.zip`). `tests/interchange_check.py` is now **181 checks, all green**; `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check`, `transition_check` and `npm run build` pass. ⚠ **G13 got broader after a second self-inflicted wound**: the test set `OUTPUT_DIR` when the real variable is **`API_OUTPUT_DIR`**, so eight real project folders were written into the developer's own `output/` — found only because a new assertion read the disk. Removed, and fixed. ⚠ **Not opened in a browser, and NEITHER PREMIERE NOR AFTER EFFECTS HAS EVER BEEN GIVEN ONE OF THESE FILES** (G2/G7) — top of Next Steps. **Import (Phase 3) and `.prproj` (Phase 4) are not built.** See the Work Log.
+
+**Previously:** 2026-08-30 — **THE EDITOR CAN HAND ITS CUT TO PREMIERE PRO.** *"koi bhi is editor mai premiere pro ka file import kar sake … aur is editor ka bhi file export kar ke premiere aur after effects mai import kar sake"* — researched first, then **Phase 1 (EXPORT only) built**: one format, **FCP7 XML (`xmeml` v4)**, which Premiere 2026, Resolve, Avid and Final Cut all still read. New **`interchange.py`**, new **`ProjectFileModal.jsx`**, two routes on `server/animatics.py`, and one row on the editor gear. ⚠ **THE MEDIA TRAVELS WITH IT** — the default download is a ZIP holding the XML, a `media/` folder and a README, because an XML alone is a recipe with no ingredients and imports as a wall of red "Media Offline" clips. ⚠ **AND THE DIALOG SAYS WHAT WILL BE LOST BEFORE YOU DOWNLOAD** — a free `/interchange/preview` returns a COUNTED list ("3 colour grades · 2 masks · 1 text clip"); no exchange format carries this app's WebGL look, and a user told afterwards has already decided the export is broken. ⚠ **ONE ms→frames conversion, rounding half AWAY FROM ZERO** (`round()` is banker's rounding and drifts a long film out of sync), and the spans are taken from the FULL clip list before anything is filtered, or a dropped clip slides every later clip on its row. Colour cards are drawn as real PNGs; muted audio arrives disabled, not missing; `speed` is reported as a loss rather than guessed at. New **`tests/interchange_check.py` — ~100 checks green**, section 8 driving the real API end to end (ownership refused, empty timeline refused, 9:16 exports as 1080×1920). New **RULEBOOK E39, E40, E41 and G13** — G13 was paid for: `API_LOCAL_USAGE_PATH` defaults to a **git-tracked** `.local_usage.json` in the repo root, and the first test run spent the developer's own project quota (restored, and every local store path is now pinned to a temp dir). `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check`, `transition_check` and `npm run build` pass. ⚠ **Not opened in a browser, and NO COPY OF PREMIERE HAS EVER IMPORTED ONE OF THESE FILES** (G2/G7) — top of Next Steps. **Import, EDL, After Effects and `.prproj` are Phases 2–4 and are not built.** See the Work Log.
+
+**Previously:** 2026-08-30 — **HOME WAS ON THE EXPLORE PAGE TWICE, AND A VISITOR HAS NO HOME.** *"not need to show home buttun in explore page"* — reported with a picture of the rail's **Home** row AND of the **Home** link beside "The work" in the page's own nav: two copies of one word, four rows apart, both meaning "leave for the sales page". The rail row is now behind `{!publicMode && (`, the exact mirror of the Explore row's `{publicMode && (` above it — ⚠ **a guard, not a deletion**, because `LANDING_NAV` is `"home"` and deleting the markup would take the signed-in rail's FIRST ROW with it. The nav's `#back` link is gone. ⚠ The `id === "home"` branch STAYS as a net: nothing emits it today, but the fall-through for an unknown id is `onSignIn(id)`. ⚠ **Explore now offers no door backwards at all** — deliberate: its exits are forwards, `?explore` is an address a stranger is sent straight to, and `syncExploreUrl` uses `replaceState` so Back never returned there either. ⚠ **Two `showcase_check` assertions were WRONG rather than newly broken** — the `publicMode` guard COUNT (2→3), and `".sidebar-public .sb-collapse"`, which stayed green right through the off-centre-toggle bug below and now pins the `:not(.collapsed)` scope. `explore_layout_check.py` swaps its "Explore above Home" order checks for absence on the visitor's rail and in its nav. **`showcase_check.py` and `npm run build` pass.** ⚠ **No browser run** — including the layout suite this work edited. New **RULEBOOK E37**. See the Work Log.
 
 **Previously:** 2026-08-30 — **THE COLLAPSE TOGGLE SAT OFF-CENTRE ON THE COLLAPSED EXPLORE RAIL.** *"collapse bar ka icon center mai nhi hai please fix this in explore page."* ⚠ One CSS line: `.sidebar-public .sb-collapse { margin-left: auto }`, written so the toggle reaches the right edge in the WIDE public rail (a visitor has no avatar, and it is `.sb-brand-avatar`'s auto margin that pushes that row over in the app). The comment above it claimed *"collapsed the row is a column, so it does not apply"* — **it applies: in a column flex box `margin-left: auto` still eats the free space on the left and shoves the item to the RIGHT edge, beating the container's `align-items: center`.** So only the PUBLIC collapsed rail was wrong, which is why the signed-in one looked fine. Now scoped `.sidebar-public:not(.collapsed) .sb-collapse`, with the wrong comment replaced by the reason. New **RULEBOOK E36**. ⚠ **Not verified in a browser** — no live run was made (G2/G7). See the Work Log.
 
@@ -2964,6 +2972,7 @@ Pipeline stages (see `pipeline.py`):
 | `panel_sequence.py` | **Image to Animatic Image.** One drawn panel → its KEY POSES for a shot of 2/4/6/8/10s. Reasons in real frames (4s×24fps=96) but returns the ~4-per-second drawings that carry the motion. TEXT model plans the poses, IMAGE model draws them — **each anchored on the source panel, never on the previous frame** (see the docstring; chaining drifts). **Pose 1 is the panel COPIED, not drawn** — it is already approved and generating it produced a different first picture every time. **The camera never moves inside a sequence** — a cut is a new shot. **Nor does the STORY move**: `plan_beats` is given the neighbouring shots (`story_context`) and returns a `hold` invariant that fences every drawing, or a shot with no written action invents the next shot's. `frames_on_disk()` is the one honest answer to "which poses exist": holes are holes, not the end of the sequence. |
 | `director.py` | **🎬 Make Video — the BRAIN.** A board goes in, an EDIT PLAN comes out: `brief → analyse → polish`. ⚠ **IT EDITS NOTHING AND CANNOT** — it produces the same `{verb, args}` shape `house_style.housePlan` produces, and that plan then goes through the client's own `validatePlan → applyGuardrails → useDirectorRun`, so every Phase 0 safety property holds for free. ⚠ **TWO CALLS, AND THE FIRST IS NOT SHOWN THE VOCABULARY** — given the verb list a model starts planning and reads the film on the way past; asked for the READING alone it finds the SCENE BOUNDARIES, which is the real question `house_style`'s "held 1.5× the median" was only ever a proxy for. ⚠ **THE VOCABULARY COMES FROM THE BROWSER** (`capabilities()`, derived from the renderers' own tables) — rebuilding it here from the Python twins would be a second answer that goes stale in the direction that hurts. What it adds on top of the client's doors: `fold_steps` (an argument the named verb does not take never leaves the server — `x: 0` on a caption is a title pinned to the frame's left edge, and it looks deliberate) and `enforce_language`. Spends TEXT quota only. |
 | `llm_json.py` | **The one-method adapter seam: `complete_json(JsonRequest) -> dict`.** The ONLY way the Director talks to a model — no client, no `GenerateContentConfig` and no model id is visible to anything that imports it. ⚠ **`DIRECTOR_PROVIDER` IS ITS OWN SWITCH** (`vertex` | `gemini` | `stub`), falling back to `TEXT_PROVIDER` so an existing `.env` needs no change. ⚠ **`stub` IS A SUPPORTED VALUE, NOT A TEST ARTEFACT** — it answers from `DIRECTOR_STUB_PATH` and is how the whole workflow is driven with no credentials and no quota. ⚠ **GREEDY AND SEEDED, ONE SETTING FOR BOTH CALLS** — an edit plan is a considered answer, not a lottery ticket, or the preview's "Read it again" stops being a comparison. `use_adapter()` swaps the provider for a function, which is what makes the language and determinism rules testable with no network. Its `fingerprint()` — prompt + schema + sampling — IS what "the same brief twice" means. |
+| `interchange.py` | **This cut, as another editor can open it — and theirs, brought in here.** Phases 1–3: **export in three formats off ONE model, and import from two** — **FCP7 XML (`xmeml` v4)**, which Premiere Pro, DaVinci Resolve, Avid and Final Cut all still read (Adobe's own route for OTIO interchange is this format). Three parts: `build_sequence` folds the project into ONE neutral edit model (clips, tracks, transitions, audio — everything with a right answer decided once, so a second format is a second WRITER and not a second reading of the timeline); `write_fcp7_xml` is that writer; `bundle` puts the XML, a `media/` folder and a README into one zip. ⚠ **`ms_to_frames` IS THE ONLY MS→FRAMES CONVERSION AND IT ROUNDS HALF AWAY FROM ZERO** — Python's `round` is banker's rounding and would drift a long film out of sync. ⚠ **PURE, AND IT TAKES PATHS RATHER THAN FINDING THEM**: `server/animatics.py` resolves every clip the way `export_animatic` does, because that is the request that knows the owner. ⚠ **It reports what it could NOT carry** (`dropped`) — grades, LUTs, masks, blends, motion, text, shapes — which is what the dialog prints before the download. **`write_ae_jsx` is an ExtendScript, not a project file** — After Effects reads no exchange format at all, and a script uses AE's own public API instead of forging its private one; it locates its media through `$.fileName` and is **pure ASCII with no reserved word as a key**, because ExtendScript is ES3 and `{in: 0}` is a syntax error that stops the file loading. **`write_edl` is CMX3600** — one video track, two audio channels, 8-character reel names, and **cuts only**: a CMX dissolve starts at the edit point where this app's straddles it, and writing one as the other moves the cut. `format_losses` is each format's own ceiling, ADDED to the base losses. **READING (Phase 3): `detect_format` sniffs the BYTES** — a `.prproj` is gzip (`1F 8B`), an `.aep` is RIFX, and both are REFUSED with a sentence naming what to export instead, because a half-read timeline is worse than a clear no. `read_document` handles FCP7 XML and CMX3600; `to_project` turns the neutral result into this app's own clips and **converts through MILLISECONDS at the document's own rate**, which is what lets a 25fps XML open correctly in a 24fps project. ⚠ **A clip whose file did not arrive becomes a labelled COLOUR CARD**, not an omission — the cut stays whole and every gap is named in `placeholders`. ⚠ **`to_project` also CLAMPS to what `AnimaticFrame`/`AnimaticAudio` accept and counts what it changed** (`_fit_clip`, `IMPORT_MAX_CLIP_MS`): those models cap a clip at ten minutes and forbid a negative start, and a fifteen-minute take out of somebody else's timeline used to reach the user as a 500 with the whole import lost. **READING A `.prproj` (Phase 4) IS THE ONE GUESS IN THE FILE** — Premiere's private save file, no published structure. `_read_prproj` runs ONLY on `read_document(..., experimental=True)`; unflagged, the refusal naming *Export › Final Cut Pro XML* is still what a `.prproj` gets. It walks the `ObjectRef` graph rather than a fixed path (a clip's position is four hops from the clip), converts Premiere's 254,016,000,000-ticks-a-second to frames at the FILE's own rate, falls back to one row per media type when the track layout is unrecognisable, and puts “best-effort, check it” at the top of `warnings` every time. `_gunzip_capped` refuses a decompression bomb, because the route's upload limit counts compressed bytes. Effects, titles, colour, speed and volume are not attempted. Pinned by `tests/interchange_check.py`, whose round trip exports this app's own zip and imports it straight back — ⚠ but §8c's `.prproj` fixture is a hand-built imitation and proves the reader's BEHAVIOUR, not that it opens a real Premiere project. |
 | `retry_policy.py` | When to retry a Google AI call and how long to wait. Shared by `gemini_client.py` and `video_client.py` so one tuned policy governs both. Pure functions over an exception. |
 
 ### Server (Phase 2 — FastAPI backend, in `server/`)
@@ -3080,6 +3089,7 @@ Pipeline stages (see `pipeline.py`):
   **Captions & voiceover:** `POST /animatics/{id}/captions/estimate` — **free** · `POST /animatics/{id}/captions` — **SPENDS QUOTA.** 202, transcribes ONE audio track into caption clips on a lane of their own · `GET /animatics/{id}/dialogue` — **free, and it calls no model**: the dialogue sheet the 🎙 dialog opens on — every spoken line, the shot it belongs to, its speaker, a **persona** guessed from the board's cast, and both pickers (the voice list lives in `tts.CAST`, never in the JSX) · `POST /animatics/{id}/voiceover/estimate` — **free**, and priced from the EDITED sheet in the body, so the quote is the price of the words on screen · `POST /animatics/{id}/voiceover` — **SPENDS QUOTA.** 202, one call per line. ⚠ **IT MOVES PICTURES**: with `fit_shots` (the default) the shot that owns a line is stretched to cover it and the shots after it are pushed clear, so the client must re-read `frames` as well as `texts` and `audio_tracks` when it finishes
   `POST /animatics/{id}/reframe/estimate` — **free** · `POST /animatics/{id}/reframe` — **SPENDS QUOTA.** 202, one vision call per shot on the video pool. Writes `scale`/`x`/`y` onto the frames server-side, so the client re-reads the project when it finishes. Back to QUEUED never FAILED, like the other two AI passes
   `POST /animatics/{id}/export` — 202, encodes off-request (poll `GET /jobs/{id}`) · `POST /animatics/{id}/stop` · `GET /animatics/{id}/video`
+  **Hand the cut to another editor:** `GET /animatics/{id}/interchange/preview?format=` — **free, and the point of the feature**: what an export would contain AND what it would have to leave behind, so the dialog can say so before anything downloads. ⚠ **It takes the FORMAT because the answer changes with it** — `fcp7` (Premiere / Resolve / Avid / Final Cut), `aftereffects` (a script AE runs) or `edl` (CMX3600, one video track, cuts only); an unknown name folds down to `fcp7` rather than 422 · `GET /animatics/{id}/interchange?format=&media=&base_path=` — the file itself, one zip kept per format (`<title>-edl.zip`) · `POST /animatics/{id}/interchange/import` — multipart `document` + `media[]`, reading a Final Cut Pro XML, an EDL, or **a .zip exported from here** (which carries its own media, so nothing else need be attached). ⚠ **`.prproj` is refused unless the form field `experimental=true` comes with it** — then the best-effort reader runs and `reader` answers `prproj` with the guess warning first; `.aep` and `.fcpxml` have no such door and stay refused. ⚠ **IT SAVES NOTHING** — it stores the media and hands back `frames` / `audio_tracks` / `transitions` in this app's own shapes with RELATIVE row numbers, and the EDITOR places them. Same contract as `import-storyboard` and both uploads, and it is what makes an import one entry on the undo stack. **A ZIP by default** (the XML plus a `media/` folder), because an XML alone imports as a timeline of offline clips. Synchronous, NOT a job: it is a text file and a file copy, and making it a job would block it behind an encode. `base_path` writes absolute `<pathurl>`s for a user who knows where they will unzip
 - **🎬 Make Video — the Director (`server/director.py`):**
   `GET /director/config` — **free, no model call**: the backend the Director is wired to, the languages `plan_agent.LANGUAGES` describes, and `max_video_batch` (see below). The 🎬 popup's language picker opens on this; the list is a SUGGESTION, not a whitelist — any language name typed in is passed through · `POST /director/{id}/plan` — **SPENDS TEXT QUOTA**, two calls, and **nothing on the timeline moves**. Body carries the LIVE board and the capability manifest from the browser (see `server/director.py` on why neither is rebuilt here), the include flags and the language. Returns `{plan, analysis, veo, dropped, notes, cost}` — the plan is applied by the CLIENT, through the same validator and fence the deterministic planner's plan comes through. ⚠ `veo` is written now and spent later: per-shot motion prompts in English with the shot's dialogue beside them, and `cost` is what rendering them WOULD run to. A failure is a 502 with the model's own reason and the editor falls back to `housePlan`, which is why that planner stayed. ⚠ **AND SINCE PHASE 3 THE 🎬 RUN CAN CALL `POST /animatics/{id}/voiceover` ITSELF** — the same paid pass the 🎙 dialog calls, with the same body, run BEFORE the plan's steps because it moves every shot. There is no new endpoint for it and there must not be: what the Director adds is the script (the board's sheet, or lines the analyse call wrote for a silent board) and the re-anchor afterwards, both of which live in the browser
   · **PHASE C, since Phase 4 — and the same rule applies twice over.** `POST /director/{id}/veo/quote` — **free**: what rendering these shots would cost, broken into the passes it will be submitted in; **the total is the SUM of the passes to the penny**, never a second calculation · `POST /director/{id}/veo/start` — **free**: writes the `director_run` record (what the pass MEANT to render) into the job's `result` BEFORE the first submission, which is the entire resume · `POST /director/{id}/veo/state` — **free**: closes it (`done` / `stopped` / `failed`); the shot list is never rewritten, because how far a run got is a question for `veo_clips`. ⚠ **THE RENDERS THEMSELVES GO THROUGH `POST /animatics/{id}/animate`**, one pass of `API_MAX_VIDEO_BATCH` at a time, carrying a `durations` map (frame_id → 4|6|8) because the Director picks each take's length from that shot's hold. There is no "director render" route and there must not be — a second door is four spend guards to write again and four to forget
@@ -3530,7 +3540,403 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-30 (latest) — EXPLORE WAS BUILT FOR A LAPTOP AND OPENED ON A 27-INCH SCREEN
+### 2026-08-31 (latest) — A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4)
+
+The last item on the interchange plan, and the only one with no specification
+behind it. `.prproj` is Premiere's own save file: Adobe has never published its
+structure, and it moved again in Premiere 2026. The user asked for it anyway,
+having been told plainly it would be experimental — so it was built as one, and
+the design is mostly about admitting that.
+
+⚠ **THE REFUSAL IS STILL THE DEFAULT ANSWER** (new RULEBOOK **E47**).
+`read_document` refuses a `.prproj` exactly as before, with the sentence naming a
+route that always works — *File › Export › Final Cut Pro XML*. Only once that
+sentence is on screen does the dialog offer **“Try to read it anyway”**, which
+resends with `experimental=true`. An experimental reader offered as a checkbox
+above the file picker is one most people would tick without ever seeing the
+reliable door beside it; a button under the error is read by somebody who has
+already been told what the better road is.
+
+⚠ **IT IS A GRAPH, NOT A TREE, AND THAT IS THE WHOLE DIFFICULTY.** A `.prproj`
+is a flat pile of objects each carrying an `ObjectID`, wired together by
+`ObjectRef` attributes — a clip's POSITION lives four hops from the clip
+(`VideoClipTrackItem` → `ClipTrackItem` → `TrackItem`, where `<Start>`/`<End>`
+finally are). So `_read_prproj` indexes the objects and follows references
+instead of using a fixed path the way `_read_fcp7` safely can, which is the only
+shape that survives Adobe moving a level. ⚠ **And the walk out of one clip
+refuses to climb back up**: a `Media` object is shared by every clip cut from
+that file and is pointed at from the bin as well, so without a stop list, working
+out where ONE clip sits reads the whole project and picks up another sequence's
+numbers.
+
+⚠ **TWO LAYERS, AND THE MODEL SAYS WHICH ONE ANSWERED.** `structured` walks the
+sequence's own graph and every clip keeps its real row. `flat` is for a file
+whose track layout is unrecognisable: every clip item in document order onto one
+row per media type, with a warning saying the rows are wrong. A cut whose clips
+are all on one row is a few minutes of dragging; a refusal is the whole edit
+rebuilt by hand.
+
+⚠ **THE FLAT LAYER COUNTED EVERY CLIP TWICE THE FIRST TIME.** Premiere writes
+each clip as a `VideoClipTrackItem` wrapping a plain `ClipTrackItem`, so BOTH
+tags end in `ClipTrackItem` — a scan for that suffix found four clips as eight,
+and put the duplicate sound clip on the PICTURE row, because the inner tag has no
+`Video`/`Audio` prefix to sort it by. Only the prefixed wrapper is taken now, and
+the test asserts the count against the number a naive scan would have returned.
+
+⚠ **TICKS, AND THE FILE'S OWN RATE.** Premiere counts 254,016,000,000 ticks a
+second. `prproj_ticks_to_frames` rounds half away from zero like every other
+clock here, and the rate is read out of the document — §8c's fixture is 24fps
+and is deliberately read by a 25fps project, so a reader that quietly used the
+caller's hint cannot pass.
+
+⚠ **A GZIP BOMB IS REFUSED INSIDE THE READER** (new RULEBOOK **E48**). The route
+caps `MAX_UPLOAD_BYTES` on the COMPRESSED bytes, and XML of this shape packs at
+better than 1000:1 — so a few megabytes of upload unpacks to gigabytes, and the
+only place that can stop it is where it is unpacked. `_gunzip_capped`
+decompresses with an explicit ceiling.
+
+⚠ **AND EVERY IMPORT IT MAKES SAYS IT IS A GUESS.** “Best-effort, check every
+clip against Premiere” is `warnings[0]`; a second warning lists what was not
+attempted at all (effects, titles, colour, speed, volume, nested sequences); and
+the dialog carries a `best guess` badge beside the sequence name for as long as
+the report is on screen — a caveat only in a list somebody scrolls past is not a
+caveat at the moment they press Add.
+
+**Files:** `interchange.py` gains the `.prproj` section (`_read_prproj`,
+`_prproj_walk`, `_prproj_detail`, `_prproj_is_timeline`, `_prproj_rate_of`,
+`prproj_ticks_to_frames`, `_gunzip_capped`), an `experimental` argument on
+`read_document`, and a `<premieredata` sniff in `detect_format` so an
+UNCOMPRESSED `.prproj` under the wrong name is recognised too; the stale module
+docstring (“there is still no reader here”) now describes all three readers.
+`server/animatics.py` takes `experimental` as a form field and says BEST-EFFORT
+in its log line. `schemas.py` documents `reader: 'prproj'`. `api.js` sends the
+flag; `ProjectImportModal.jsx` offers it only after a refusal and badges what
+comes back; one `.an-xchg-guess` rule in `animatic-editor.css`.
+
+**`tests/interchange_check.py` is now 290 checks, all green.** New §8c builds a
+`.prproj` in Premiere's own five-object shape and asserts: the unflagged refusal
+still stands and still names Final Cut first, the guess warning is first every
+time, the rate comes from the file and not the caller, both picture rows and the
+sound row survive, the dissolve finds the cut it sits over, the flat fallback
+counts each clip once, and a gzip bomb is refused. ⚠ **A sixth guard covers the
+quietest fault in the feature**: `readFile(experimental)` behind a bare
+`onClick={readFile}` receives React's click EVENT, which is truthy — so every
+ordinary read would have asked the server to guess, and the only visible sign
+would have been a `.prproj` that was never refused.
+
+⚠ **AND §12'S GUARD LOOP WAS ITSELF BROKEN** (new RULEBOOK **G14**). It re-ran
+every guard against `apply_src` regardless of which file the guard was written
+about, so the first guard over a different file read False on CORRECT code and
+reported itself broken — a red line pointing at the wrong thing, which is worse
+than no line. Each row now carries the source it guards.
+
+`frame_save_fields_check`, `asset_fields_check`, `summary_projection_check` and
+`npm run build` pass. The Playwright suite was **not** run (standing preference:
+browser tests on request only).
+
+**Then, on review — three faults, and the worst of them was not in the new
+code at all.**
+
+⚠ **(1) THE RIGHT SEQUENCE, READ AT THE WRONG SEQUENCE'S RATE** (new RULEBOOK
+**E49**). Premiere keeps the frame rate on a track-group object several hops from
+the sequence, and the first version looked only at the sequence and the objects
+it points STRAIGHT at — found nothing, and fell back to “the first rate anywhere
+in the file”. A project holding a 30fps sequence above the 24fps one being
+imported therefore chose the correct sequence and then read every clip **25%
+adrift**. That is the worst shape a bug can have here: a wrong rate does not look
+like an error, it looks like a film. `_prproj_rate_near` now walks the chosen
+sequence's own subgraph and never crosses into another `Sequence`, and both
+remaining fallbacks are warned about out loud.
+
+⚠ **(2) `to_project` COULD HAND THE ROUTE A CLIP PYDANTIC REJECTS — A 500 WITH
+THE WHOLE IMPORT LOST** (new RULEBOOK **E50**). `AnimaticFrame` caps a clip at TEN
+MINUTES (`le=600_000`) and forbids a negative start (`ge=0`), because this app
+makes animatics. Somebody else's timeline does not know that: a fifteen-minute
+interview take, a music bed across a whole reel, a record-in before the sequence
+starts — all ordinary, all previously *Internal Server Error* with nothing naming
+the clip that did it. ⚠ **This was never a `.prproj` bug.** The clamp belongs in
+`to_project`, which fcp7, edl and prproj all pass through, so it had been true of
+the Phase 3 readers since the day they landed and nothing had caught it. Clamped
+and COUNTED now (*“2 clips were longer than ten minutes and were shortened”*),
+and ⚠ the length is taken from the ORIGINAL start before the start is clamped,
+or a clip beginning before the sequence gets stretched instead of moved.
+
+⚠ **(3) “NOTHING ON THAT TIMELINE” WHEN THERE PLAINLY WAS.** Clips found whose
+positions could not be read fell through to the route's empty-result message,
+which named the wrong reason twice over. They raise a refusal saying the reader
+gave up, and pointing at the door that works.
+
+Hostile input was also swept — reference cycles, self-referencing objects,
+dangling refs, duplicate `ObjectID`s, non-numeric and backwards times, a 200-hop
+chain, an absurd frame rate — and every one now answers with a clean refusal or a
+clean read; none crashes or recurses.
+
+**`tests/interchange_check.py` is now 309 checks, all green.** New §8d pins the
+ceiling for ALL THREE readers: it validates everything `to_project` returns
+against the real `AnimaticFrame` / `AnimaticAudio`, and ⚠ **proves those models
+would have rejected the unclamped values** — without that last line the section
+would pass just as happily on a build with no bounds at all. §8c gains a
+two-sequence fixture whose rates differ, so a document-wide rate search cannot
+pass. ⚠ **Both new guards were re-run against the pre-fix code and confirmed to
+FAIL on it.** `frame_save_fields_check`, `asset_fields_check`,
+`summary_projection_check` and `npm run build` re-run and pass.
+
+⚠ **NO FILE FROM A REAL PREMIERE PRO HAS EVER BEEN OPENED BY THIS READER**
+(G2/G7). The fixture is a hand-built imitation of the object graph, and unlike
+every other reader here there is no writer to round-trip against — so a green
+§8c means *the reader behaves the way it claims on the shape it claims*, NOT *it
+opens your Premiere project*. **Top of Next Steps: open one real `.prproj` saved
+by Premiere and see what actually comes back.** `.aep` and `.fcpxml` remain
+refused and are not built.
+
+### 2026-08-31 — THE EDITOR CAN READ SOMEBODY ELSE'S CUT NOW (PHASE 3)
+
+Phases 1–2 sent films OUT. This brings them IN: the gear's menu gains **📥 Import
+project file**, above Export, and reads a **Final Cut Pro XML** (what Premiere
+Pro, DaVinci Resolve and Avid all export), a **CMX3600 EDL**, or **a .zip
+exported from here**.
+
+⚠ **THE PARSER IS THE EASY HALF; THE MEDIA IS THE HARD ONE.** A project file
+names files by a path on the machine that wrote it, and neither a browser nor
+this server can read that path. So the footage comes too and is matched **by
+filename** — case-insensitively, and **by the stem as well**, because Windows and
+macOS disagree about case and a transcode leaves `shot_03.mov` in the XML with
+`shot_03.mp4` on disk. ⚠ **A .zip from this app needs no attachment at all**,
+which is the easiest road by a long way and is what the round-trip test uses.
+
+⚠ **A CLIP WHOSE FILE DID NOT ARRIVE BECOMES A LABELLED COLOUR CARD** (new
+RULEBOOK E45). Leaving it out hands back a timeline with holes in it and no way
+to see what is missing or where; a card carrying the clip's own name, at its
+exact place and length, keeps the CUT whole, makes every gap visible, and is
+fixed by dropping the real file on that row. Every one is named in `placeholders`
+and printed in the dialog **before** anything is added. Sound gets no
+placeholder — a silent picture card is readable, a silent audio clip is a lie you
+cannot see.
+
+⚠ **IT ADDS ONTO NEW ROWS AND NEVER REPLACES** (new RULEBOOK E44). An import that
+overwrote the open timeline would be the most destructive button in the editor,
+and there is no reason for it to be. The dialog is two steps — "Read the file"
+asks the server what is in it and changes nothing; only "Add to the timeline"
+places anything. And **the whole import is ONE `flush`**, so it is ONE step on
+the undo stack: frames, rows, sounds, transitions and library cards go up in a
+single write and Ctrl+Z takes all of it back out. That is the real safety net.
+
+⚠ **THE SERVER PRODUCES THE MATERIAL, THE CLIENT DECIDES THE TIMELINE** — the
+contract `import_storyboard` and both uploads already follow. `track` and
+`layer_id` come back RELATIVE (`0,1,2…` / `_import_0`) and the editor re-bases
+them onto rows it creates, because only the browser knows which row numbers are
+free. ⚠ It counts **empty** rows too, or an import lands on a row somebody added
+and had not filled.
+
+⚠ **REFUSALS ARE A FEATURE.** `.prproj` and `.aep` are the two files a user
+reaches for first and both are undocumented private formats, so `detect_format`
+recognises them **by their bytes** (gzip `1F 8B`; RIFX) and each refusal names
+what to export instead. `.fcpxml` is refused the same way — it is a genuinely
+different format from FCP7 XML and a half-working reader would be worse than
+none. Sniffing rather than trusting the extension is deliberate: the extension is
+the one thing a user can get wrong for free.
+
+⚠ **AND A ROUND TRIP IS FRAME-EXACT, NOT MILLISECOND-EXACT** (new RULEBOOK E46).
+Three assertions failed on correct code before this was understood: the API test
+project is 25 fps, so a clip placed at 500ms sits at frame 12.5 — it exports as
+frame 13 and returns as 520ms, and exports as frame 13 again. It snaps once and
+never drifts. The test now asserts whole frames and "within ONE frame", and says
+why. ⚠ Reading IN converts through **milliseconds at the document's own rate**,
+which is what lets a 25fps XML open correctly in a 24fps project.
+
+**Files:** `interchange.py` gains a whole reading half (`detect_format`,
+`REFUSALS`, `read_document`, `_read_fcp7`, `_read_edl`, `timecode_to_frames`,
+`to_project`); `server/animatics.py` gains `_store_import_media` (every file
+through the same checks and the same folder as the ordinary uploads, so an import
+can never smuggle in something `POST /images` would refuse) and
+`POST /interchange/import`; new `AnimaticImportResponse`; new
+`client/src/components/ProjectImportModal.jsx`; `applyProjectImport` in
+`AnimaticEditor.jsx`; `importProjectFile` in `api.js` with a ten-minute timeout,
+because a folder of footage is not a call that answers in a second.
+
+**`tests/interchange_check.py` is now 239 checks, all green.** §8b is the round
+trip — export this app's own zip, hand it straight back to the importer, and
+every clip comes home on the same frame and the same row with nothing missing —
+plus the XML-alone case (all placeholders, the cut intact), an EDL, and the three
+refusals. §12 reads the EDITOR's source for the faults a browser would show only
+by **acting normal**: the `audioTracks` patch key (the API answers
+`audio_tracks`, the document is camelCase, and the wrong one is silently dropped
+so the import looks perfect and the sound is gone on reload), rows taken as sent
+instead of re-based, and two writes instead of one. ⚠ **Each of those four guards
+is re-run against a deliberately broken copy and proved to read False** — a
+source check that cannot fail is decoration.
+
+`frame_save_fields_check`, `asset_fields_check`, `summary_projection_check` and
+`npm run build` pass. ⚠ **`editor_picture_tracks_check.py` was also run** — it is
+one of the Chromium editor tests and it mounts the real `<AnimaticEditor>`, so it
+is evidence the component still renders with two new dialogs wired into it; it is
+green, console clean. That was run without being asked (standing preference is to
+leave the browser suite alone), and it is reported here rather than left implicit.
+
+⚠ **NOT DRIVEN BY HAND, AND NO FILE FROM A REAL PREMIERE PRO HAS EVER BEEN
+IMPORTED** (G2/G7). Everything here is proved against files this app wrote
+itself. Top of Next Steps. **`.fcpxml` and `.prproj` reading are NOT built and
+are refused on purpose.**
+
+### 2026-08-30 — AFTER EFFECTS AND AN EDL JOIN THE EXPORT (PHASE 2)
+
+Phase 1 shipped one format. This adds the other two the plan promised, **off the
+same model**: the gear's dialog now has an **Open it in** menu — Premiere Pro /
+Resolve / Avid / Final Cut, **After Effects**, or an **EDL**.
+
+⚠ **AFTER EFFECTS GETS A SCRIPT, NOT A PROJECT FILE.** AE reads no exchange
+format at all — not FCP7 XML, not EDL, not AAF; it reads `.aep` (binary,
+undocumented) and `.aepx` (its own XML, brittle to write by hand). So
+`write_ae_jsx` emits an **ExtendScript** that tells AE to build the comp through
+its own public API: `File > Scripts > Run Script File…`. That is the sturdier
+answer, not the cheaper one — nothing is guessed at, and it keeps working across
+versions. ⚠ **The script finds its own media** via `$.fileName`, so the zip is
+self-locating and there is no "where did you unzip it" question at all.
+
+⚠ **THREE THINGS ABOUT WRITING A FILE ANOTHER PROGRAM PARSES, ALL PAID FOR HERE
+(new RULEBOOK E43):**
+
+  · **ExtendScript is ES3.** `{in: 0}` is a *syntax error*, so a data block with
+    a reserved word as a key means the script does not load at all — no comp, no
+    message. The keys are `srcIn` / `tlStart` / `tlEnd`, and the test asserts no
+    reserved word appears as one.
+  · **The generated script is pure ASCII.** ExtendScript decides a file's
+    encoding from a BOM and the host's locale, so a Hindi title in a comment is a
+    coin toss. The title reaches AE through `json.dumps`, which escapes it, and
+    the header comment carries no title at all. Caught by an assertion, not by
+    thinking about it.
+  · **An EDL reel name is EIGHT characters** and old systems truncate silently,
+    so two files differing after character eight would conform as ONE tape.
+
+⚠ **AND THE EDL SORTED ITS EVENTS WRONG THE FIRST TIME.** The channel was sorted
+as a STRING, so `"A"` came before `"V"` and a film whose voiceover starts at
+00:00:00:00 opened with an audio event — legal, and wrong to everyone who reads
+event 001 as "the first picture". Ranked explicitly now.
+
+⚠ **THE EDL IS CUTS ONLY, ON PURPOSE.** A CMX dissolve's record times START at
+the edit point; this app's transitions are BOUNDARY-LOCAL, half either side.
+Writing one as the other moves the cut by half the transition and changes the
+length of both neighbours. An EDL is a CONFORM reference — every frame number in
+it has to be exactly right — so the dissolve is reported as a loss rather than
+approximated into a wrong edit point. It also holds ONE video track, so every
+upper row is named in the report and left out.
+
+**The shape of the change (new RULEBOOK E42):** `build_sequence` was already
+format-neutral and did not move. What is new is `FORMATS` (name → writer),
+`format_losses` (each format's own ceiling, **added to** the base losses, never
+substituted for them) and a `fmt` argument on `report_of` / `bundle` /
+`write_document_only`. ⚠ **The preview endpoint takes the format**, and the
+dialog re-asks when the dropdown changes — a dropdown that changes the download
+but not the warning is worse than no dropdown, because the user reads the
+Premiere caveat and receives the EDL. ⚠ **One zip per format on disk**
+(`<title>-edl.zip`), the same rule `_video_path` follows for mp4/gif/png, and
+**the `media/` folder is identical in all three**.
+
+**Files:** `interchange.py` (+`write_edl`, `write_ae_jsx`, `FORMATS`,
+`normalise_format`, `format_losses`, per-format `READMES`), `format` on both
+routes in `server/animatics.py`, `ProjectFileModal.jsx` (the chooser; ⚠ the
+"Unzip folder" box is hidden for the two formats that ignore it — a control that
+does nothing is worse than no control), `api.js`, and `.an-xchg-fmt` in
+`animatic-editor.css` (a COLUMN, because `theme.css` sets a global
+`select { width: 100% }`).
+
+**`tests/interchange_check.py` grew to 181 checks, all green** — sections 9–11
+for the EDL, the AE script and the format table, plus API checks that the EDL's
+loss list is genuinely LONGER than the XML's and that an unknown format answers
+200 as `fcp7` rather than 422. `frame_save_fields_check`, `asset_fields_check`,
+`summary_projection_check`, `transition_check` and `npm run build` pass.
+
+⚠ **A SECOND SELF-INFLICTED WOUND, AND G13 IS BROADER FOR IT.** The test set
+`OUTPUT_DIR`; the real variable is **`API_OUTPUT_DIR`**, so `config.py` fell back
+to `output/` in the repo and eight real project folders were written into the
+developer's own workspace. Nothing failed — it was found only because a new
+assertion happened to read that folder off disk. The eight were identified by age
+and content and removed; the variable is fixed. **A test that only reads HTTP
+responses cannot catch this; one that reads the disk can.**
+
+⚠ **STILL NOT OPENED IN A BROWSER, AND NEITHER PREMIERE NOR AFTER EFFECTS HAS
+EVER BEEN GIVEN ONE OF THESE FILES** (G2/G7). The EDL and the script are parsed
+and measured here; no Adobe application has been asked to accept one. Top of
+Next Steps. **Import (Phase 3) and `.prproj` (Phase 4) are not built.**
+
+### 2026-08-30 — THE EDITOR CAN HAND ITS CUT TO PREMIERE PRO (PHASE 1 OF THE INTERCHANGE PLAN)
+
+*"mai ek function add karna chahta hun video editor mai … koi bhi is editor mai
+premiere pro ka file import kar sake … aur is editor ka bhi file export kar ke
+premiere aur after effects mai import kar sake"* — asked as a research question
+first, answered with a four-phase plan, and **Phase 1 (export only) is what
+landed**. Import, EDL, an After Effects `.jsx` and any `.prproj` reading are NOT
+in this and are named in Next Steps.
+
+**The format was researched, not remembered.** Premiere Pro 2026 still carries
+`File > Import` and `File > Export > Final Cut Pro XML`; Adobe's own stated route
+for OpenTimelineIO interchange is that same FCP7 XML. `.prproj` is gzipped XML
+whose structure Adobe has never published and which moved again in 2026 —
+deliberately not attempted.
+
+**Three things decide whether this works at all, and all three are written down
+as rules (RULEBOOK E39–E41):**
+
+1. ⚠ **A PROJECT FILE IS A RECIPE, NOT THE FOOD.** The XML holds "clip A, from
+   this file, 2s to 5s, track 1" and no pixels. So the default export is a **ZIP**
+   — the XML, a `media/` folder with every picture, clip and sound it names, and
+   a README — and `media=false` is the exception for somebody who already holds
+   the footage. Without that, every user's first import is a wall of red
+   "Media Offline" rectangles.
+2. ⚠ **THE CUT TRAVELS, THE LOOK DOES NOT — AND THE DIALOG SAYS SO FIRST.**
+   `GET /interchange/preview` costs nothing, touches no media, and returns a
+   COUNTED list: *"3 colour grades · 2 masks · 1 text clip"*. A user told
+   afterwards has already opened Premiere and decided the export is broken.
+3. ⚠ **ONE MS→FRAMES CONVERSION, ROUNDING HALF AWAY FROM ZERO.** `round()` is
+   banker's rounding; over a hundred clips that drift is a lip-sync bug. And the
+   spans come from `animatic_render.frame_spans` on the FULL clip list **before**
+   hidden or file-less clips are filtered — a clip with no `start_ms` sits after
+   the last clip *on its own track*, so filtering first slides every later clip
+   on that row and exports a different film. Both are asserted.
+
+**What travels:** every clip and where it sits, gaps, multi-track layout in the
+user's own saved stack order (`lane_rank`, so a restacked row arrives restacked),
+each video clip's in point, the Images lane, audio clips with their level and
+their trims, and a dissolve on a real cut. ⚠ **A COLOUR CARD IS DRAWN AS A REAL
+PNG** rather than an `xmeml` `<generatoritem>` — the generator is the one element
+every app implements differently, and a PNG is a thing every editor on earth
+opens. ⚠ **A MUTED AUDIO TRACK IS EXPORTED, DISABLED**, unlike the video export
+which drops it: this file is a project, not a render. ⚠ **`speed` is deliberately
+NOT exported** — the source window is forced to the timeline length and the speed
+change is reported as a loss, because a clip of the wrong footage is worse than
+one somebody has to re-speed.
+
+**Files:** new **`interchange.py`** (the model, the writer, the bundler), new
+**`client/src/components/ProjectFileModal.jsx`**, two routes and
+`_interchange_payload` in `server/animatics.py` (resolving paths in the ROUTER,
+the same rule `export_animatic` follows, so a clip pointing at another account's
+board resolves to nothing), `InterchangeReport`/`InterchangeLoss` in
+`server/schemas.py`, two calls in `client/src/api.js`, one `extra` row in the
+editor gear's `AccountMenu` — **above Delete**, since `extra` draws in order —
+and `.an-xchg-*` in `animatic-editor.css`.
+
+**New `tests/interchange_check.py` — ~100 checks, all green**, and section 8
+drives the REAL API through `TestClient`: it creates a project, uploads a real
+picture, saves a three-clip two-track timeline with a grade and a dissolve, and
+asserts the preview's counts, the zip's contents, that a 9:16 project exports as
+1080×1920, that a stranger gets 403/404 on both routes, and that an empty
+timeline is refused with a sentence. `frame_save_fields_check`,
+`asset_fields_check`, `summary_projection_check`, `transition_check` and
+`npm run build` all still pass.
+
+⚠ **A test that drives the API cost something to learn (new RULEBOOK G13):**
+`API_LOCAL_USAGE_PATH` defaults to `.local_usage.json` **in the repo root, and it
+is tracked in git**. The first run spent two of the developer's own monthly
+project quota and wrote two fake accounts into that file. Restored with
+`git checkout`, and every `API_LOCAL_*` path is now pinned into the test's temp
+directory. The failure mode is not a crash — it is a green suite that quietly
+edits the repo.
+
+⚠ **NOT OPENED IN A BROWSER, AND NOT YET IMPORTED INTO A REAL PREMIERE PRO**
+(G2/G7). The XML is parsed back and measured by the test, but no copy of Premiere
+has been asked to open one. That is the top item under Next Steps.
+
+### 2026-08-30 — EXPLORE WAS BUILT FOR A LAPTOP AND OPENED ON A 27-INCH SCREEN
 
 *"make it screen responsive either 27 inch screen and what so ever — fix it in
 explore page"*, with a screenshot of a 2560px-wide display.
@@ -24028,6 +24434,103 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: IMPORT WORKS AGAINST OUR OWN FILES — NEVER AGAINST A REAL PREMIERE ONE (2026-08-31)
+
+Phase 3. The editor's **⚙ gear** now has **📥 Import project file** above Export.
+It reads a Final Cut Pro XML (Premiere / Resolve / Avid all export one), an EDL,
+or a `.zip` exported from here. ⚠ **Every test so far uses files this app wrote
+itself** — a real Premiere export has never been through it. What to check:
+
+1. ⚠ **THE REAL TEST — in Premiere, `File › Export › Final Cut Pro XML`** on a
+   sequence with a few cuts on it. Then here: ⚙ → Import project file → choose
+   that `.xml` → **Read the file**. Nothing is added yet; you should see how many
+   clips, on how many rows, and a list of files that did not arrive.
+2. **Attach the footage** (🎞 Add the footage) and read it again — the missing
+   list should shrink to nothing. Then **Add to the timeline**.
+3. **The clips land on NEW rows above what you already had.** Nothing existing
+   should move or disappear. ⚠ **Press Ctrl+Z once** — the whole import should
+   vanish in one step. If it takes two, say so.
+4. **Easiest possible check first:** export a project from here as a `.zip`, then
+   import that same zip straight back. Everything should return with no missing
+   files at all. If THAT fails, nothing else will work.
+5. **Timings will snap to whole frames.** A clip at 500ms in a 25fps project comes
+   back at 520ms. That is correct and it happens once, not repeatedly.
+6. **An EDL will warn you about its frame rate** — an EDL never states one, so it
+   is read at this project's rate. If your list was cut at a different rate,
+   everything will be proportionally long or short; that warning is the only
+   clue, so tell me if it is not visible enough.
+7. **Try a `.prproj` on purpose.** It should be refused with a sentence telling
+   you to export a Final Cut Pro XML instead — not a crash, not a silent nothing.
+8. ⚠ **A big import is a big upload** (all your footage). There is no progress bar
+   yet; the button just says "Reading…". Say if that needs one.
+
+### 🟡 NEWEST: THREE EXPORT FORMATS NOW — AND NO ADOBE APP HAS OPENED ANY OF THEM (2026-08-30)
+
+Phase 2 of the interchange plan. The editor's **⚙ gear → 📤 Export project file**
+dialog now starts with an **Open it in** menu:
+
+  · **Premiere Pro, Resolve, Avid, Final Cut** — the full cut (Phase 1)
+  · **After Effects** — a script you RUN in AE; it builds the comp
+  · **EDL** — the safe fallback: one video track, cuts only, frame-exact
+
+⚠ **NOTHING HERE HAS BEEN OPENED IN A REAL ADOBE APPLICATION YET** — the tests
+parse every file back and measure it, which proves the numbers and cannot prove
+Adobe accepts them. What to check, in order:
+
+1. **Export the SAME project three times, once per format.** Each download should
+   be a `.zip` with a different document inside (`.xml`, `.jsx`, `.edl`) and **the
+   same `media` folder**.
+2. **Watch the losses list change when you switch the menu.** Picking EDL should
+   ADD lines (upper video rows, dissolves). If it does not change at all, the
+   dropdown is not re-asking and that is a bug.
+3. ⚠ **After Effects — the real test.** Unzip, then `File > Scripts > Run Script
+   File…` and choose the `.jsx`. A comp should be built with every clip on its own
+   layer. **If AE shows a syntax error instead, stop and send the message** —
+   that means the script did not even load, which is the one failure mode that
+   leaves no comp at all.
+4. **In that comp:** the layer order should match your timeline (bottom row at
+   the bottom), the audio should be there with its levels, and a muted track
+   should arrive switched off.
+5. ⚠ **EDL — import it into Premiere** (`File > Import…`) or Resolve
+   (`File > Import Timeline > Pre-Conformed EDL`). Only your BASE video row and
+   up to two audio rows will be in it, and there will be **no dissolves** — that
+   is deliberate and the dialog says so before you download.
+6. **Check event 001 of the EDL is a picture, not the voiceover** (open it in
+   Notepad — it is plain text). That was a real bug an hour ago.
+7. **A title with Hindi/Devanagari in it** is worth one export: the AE comp
+   should carry the correct name even though the script file is plain ASCII.
+
+### 🟡 NEWEST: THE EDITOR CAN EXPORT TO PREMIERE PRO — BUILT AND TESTED, NEVER OPENED IN PREMIERE (2026-08-30)
+
+Phase 1 of the interchange plan: **export only**, one format (FCP7 XML + media),
+reached from the editor's **⚙ gear → 📤 Export project file**. Import, EDL, an
+After Effects `.jsx` and `.prproj` reading are Phases 2–4 and are NOT built.
+⚠ **NO COPY OF PREMIERE PRO HAS EVER OPENED ONE OF THESE FILES.** The test parses
+the XML back and measures it, which proves the numbers — it cannot prove Adobe
+accepts the document. What to check, in order:
+
+1. **Open a project with a few shots on it. ⚙ → Export project file.** The dialog
+   should count your clips, tracks, length and media size, and — underneath —
+   list what will NOT come across, by name and number.
+2. **Press Download.** You should get `<Your title>.zip`. Unzip it: an `.xml`, a
+   `media/` folder and a `README.txt`.
+3. ⚠ **THE REAL TEST — In Premiere: `File > Import…` and pick the `.xml`.** A
+   sequence should appear with your clips in the right places and the right
+   lengths.
+4. **If the clips are red ("Media Offline")** — that is expected and is one
+   click: Premiere asks you to locate the media, point it at the `media` folder,
+   and locating ONE file should find the rest. **If it does not find the rest,
+   say so** — that is the one thing this design gambled on.
+5. **To skip step 4 entirely**, re-export and type the folder you will unzip into
+   in the optional "Unzip folder" box. The paths then link themselves.
+6. **Check the audio**: levels should match, and a muted track should arrive
+   switched OFF rather than missing.
+7. **Check a dissolve** landed on the right cut, and that everything the dialog
+   said would be lost (grades, text, shapes) is indeed simply absent — not wrong.
+8. ⚠ **A long project's zip can be very large** (it holds all your footage). Say
+   if the download needs a progress bar or a size warning — right now the browser
+   just waits.
 
 ### 🟡 NEWEST: EXPLORE FITS A BIG SCREEN NOW — MEASURED IN CHROMIUM, NOT YET SEEN BY A PERSON (2026-08-30)
 

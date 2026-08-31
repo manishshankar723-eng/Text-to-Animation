@@ -2118,3 +2118,161 @@
   text-align: right;
   overflow-wrap: anywhere;
 }
+
+/* --- Export project file (ProjectFileModal) ---------------------------------
+   The gear's "Export project file" dialog. Wider than `.an-ws-modal` because
+   its middle is a LIST OF LOSSES rather than a column of choices — the whole
+   point of the dialog is that "3 colour grades · 2 masks · 1 text clip" can be
+   read at a glance, and at 26rem that list wraps into an unreadable stack.
+
+   ⚠ IT SCROLLS INSIDE ITSELF. A film with a dozen kinds of effect on it makes a
+   long list, and a dialog taller than the window puts Download off the bottom of
+   the screen with no way to reach it. */
+.an-xchg-modal {
+  max-width: 34rem;
+  width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+/* The four facts about what is being exported, two per row. Not a table: the
+   pairs are independent, and a grid keeps them aligned when one wraps. */
+.an-xchg-sum {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.4rem 1rem;
+  margin: 0.9rem 0 0.2rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.an-xchg-sum strong {
+  color: var(--text);
+}
+/* The `.prproj` badge. ⚠ AMBER AND ALWAYS VISIBLE, because it is the one report
+   in this dialog that was read out of an undocumented format — the caveat has to
+   still be on screen at the moment somebody presses "Add to the timeline", not
+   only in the warnings list they scrolled past. `justify-self: start` keeps it
+   the width of its two words instead of stretching down the grid column. */
+.an-xchg-guess {
+  justify-self: start;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: help;
+}
+
+/* ⚠ WARN, NOT FAIL. Nothing here is broken — this is the honest half of a
+   feature that works, so it is the amber of a caveat rather than the red of an
+   error. The missing-media block below it IS closer to a fault, and takes the
+   red. */
+.an-xchg-loss {
+  margin-top: 0.85rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+.an-xchg-loss > .tiny {
+  color: var(--muted);
+  display: block;
+}
+.an-xchg-loss ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.15rem 1rem;
+  font-size: 0.82rem;
+}
+.an-xchg-loss li {
+  color: var(--text);
+}
+.an-xchg-loss b {
+  color: var(--warn);
+}
+.an-xchg-gone {
+  border-left-color: var(--fail);
+}
+.an-xchg-gone b {
+  color: var(--fail);
+}
+
+.an-xchg-opt {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+/* The format chooser. A column, because the row underneath the menu is a
+   sentence about what you just picked — and ⚠ `theme.css` sets a global
+   `select { width: 100% }`, so a flex ROW here would stretch the menu across
+   the dialog and shove its label off the edge. That one line has caused more
+   than one "why is this control full width" bug; a column simply agrees with it. */
+.an-xchg-fmt {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.3rem;
+  cursor: default;
+  margin-top: 1rem;
+}
+/* One "choose a file" row: the button, then what was chosen. A row rather than
+   a drop zone because the editor has no other drop zone in a dialog, and the
+   OS picker is the gesture people already know from every ＋ in the timeline. */
+.an-xchg-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.85rem;
+}
+.an-xchg-pick .btn {
+  flex: 0 0 auto;
+}
+.an-xchg-pick > .tiny {
+  /* The filename can be long; it shrinks rather than pushing the button off. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.an-xchg-fmt-note {
+  /* Reserves its own line so switching format never re-flows the dialog. */
+  min-height: 1.1em;
+}
+.an-xchg-opt input[type="checkbox"] {
+  width: auto;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+/* The optional "where will you unzip this" field. A column, not a row, because
+   its label is a question and its value is a long path. */
+.an-xchg-path {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  cursor: default;
+}
+.an-xchg-path input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.an-xchg-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 1.1rem;
+}
+.an-xchg-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}

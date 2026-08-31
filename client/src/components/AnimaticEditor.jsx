@@ -197,6 +197,11 @@ import Icon from "./Icon.jsx";
 // it is one component and not two lists that agree until somebody edits one.
 import AccountMenu, { useMenuDismiss } from "./AccountMenu.jsx";
 import PaneSplitter from "./PaneSplitter.jsx";
+// The gear's "Export project file" dialog — the cut, as Premiere Pro,
+// Resolve, Avid or Final Cut can open it. See ProjectFileModal.jsx.
+import ProjectFileModal from "./ProjectFileModal.jsx";
+// …and its opposite: somebody else's cut, read in. See ProjectImportModal.jsx.
+import ProjectImportModal from "./ProjectImportModal.jsx";
 import MediaBin from "./MediaBin.jsx";
 import DirectorPanel from "./DirectorPanel.jsx";
 import ProgramCanvas from "./ProgramCanvas.jsx";
@@ -877,6 +882,12 @@ export default function AnimaticEditor({
   const [confirmDelete, setConfirmDelete] = useState(false);
   // The ⚙ dropdown in the top bar (account, plan, help, delete, log out).
   const [settingsMenu, setSettingsMenu] = useState(false);
+  // The gear's "Export project file" dialog. Its own flag rather than a
+  // branch of `settingsOpen`, because that one is the Workspace dialog and
+  // the two are different questions opened from the same button.
+  const [projectFileOpen, setProjectFileOpen] = useState(false);
+  const [projectImportOpen, setProjectImportOpen] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   // Stable, because `useMenuDismiss` lists it in its deps — a fresh function
   // every render would tear the listeners down and put them back on each one.
   const closeSettingsMenu = useCallback(() => setSettingsMenu(false), []);
@@ -5996,6 +6007,139 @@ export default function AnimaticEditor({
     }
   }
 
+  /**
+   * A PROJECT FILE HAS BEEN READ — put its clips on the timeline.
+   *
+   * ⚠ IT ADDS ONTO NEW ROWS AND REPLACES NOTHING. An import that overwrote the
+   * open timeline would be the most destructive button in the editor, and there
+   * is no reason for it to be: rows are cheap, the incoming clips carry their own
+   * absolute starts, and anything the user does not want can be deleted a row at
+   * a time.
+   *
+   * ⚠ THE SERVER'S `track` AND `layer_id` ARE RELATIVE (0,1,2… / "_import_0")
+   * and are RE-BASED here, because only the browser knows which row numbers this
+   * project already uses. That is the same division `import_storyboard` follows:
+   * the server produces the material, the client decides the timeline.
+   *
+   * ⚠ AND IT IS ONE WRITE, so it is ONE step on the undo stack. Ctrl+Z takes the
+   * whole import back out — which is the real safety net behind "adds, never
+   * replaces", and the reason the frames, the rows, the sounds, the transitions
+   * and the library cards all go up in a single `flush`.
+   */
+  async function applyProjectImport(res) {
+    if (importBusy) return;
+    const added = res.frames || [];
+    const sounds = res.audio_tracks || [];
+    if (!added.length && !sounds.length) {
+      setNotice("There was nothing on that timeline to bring in.");
+      return;
+    }
+
+    // Where the new picture rows start: above every row this project uses —
+    // counting EMPTY rows too (`videoTracks`), or an import would land on a row
+    // the user had added and not filled yet.
+    const base =
+      Math.max(-1, ...pictureTracks(framesRef.current), ...videoTracks.map((r) => r.track)) + 1;
+    const needed = Math.max(0, res.video_tracks || 0);
+    if (needed && base + needed - 1 > MAX_PICTURE_TRACK) {
+      setNotice(
+        `That file needs ${needed} picture rows and this project has no room — ` +
+          `the limit is ${MAX_PICTURE_TRACK + 1}.`
+      );
+      return;
+    }
+
+    setImportBusy(true);
+    try {
+      const label = (res.name || "Imported").slice(0, 40);
+      const newRows = [];
+      for (let i = 0; i < needed; i += 1) {
+        newRows.push({
+          id: newId(),
+          kind: "video",
+          name: needed === 1 ? label : `${label} ${i + 1}`,
+          track: base + i,
+        });
+      }
+      // One audio lane per lane the file had, keyed by the placeholder the
+      // server sent. `layer_id: ""` is the DEFAULT lane and would pile an
+      // import into whatever is already there, so every one gets a real row.
+      const laneFor = new Map();
+      const audioRows = [];
+      for (const track of sounds) {
+        const key = track.layer_id || "_import_0";
+        if (laneFor.has(key)) continue;
+        const row = {
+          id: newId(),
+          kind: "audio",
+          name: audioRows.length ? `${label} audio ${audioRows.length + 1}` : `${label} audio`,
+        };
+        laneFor.set(key, row.id);
+        audioRows.push(row);
+      }
+
+      const frames = added.map((f) => ({
+        ...f,
+        track: base + (f.track || 0),
+        // The route these pictures are served out of — same as the board
+        // import: they arrive on screen already pointing at something that
+        // answers, and `url` is not part of what gets saved.
+        url: `/animatics/${animaticId}/frame/${f.id}`,
+      }));
+      const tracks = sounds.map((a) => ({
+        ...a,
+        layer_id: laneFor.get(a.layer_id || "_import_0") || "",
+        url: `/animatics/${animaticId}/media/${a.upload_id}`,
+      }));
+
+      const nextFrames = [...framesRef.current, ...frames];
+      const nextAudio = [...audioTracks, ...tracks];
+      const nextTransitions = [...transitions, ...(res.transitions || [])];
+      const nextLayers = [...layers, ...newRows, ...audioRows];
+      // ⚠ THE LIBRARY GOES UP IN THE SAME WRITE, for the reason the board import
+      // gives: a clip imported and deleted before the debounce fired would
+      // otherwise be gone from both lists, and the file would have to be found
+      // and attached all over again.
+      const cards = mergeAssets(assets, [
+        ...frames.map((f) => assetFromFrame(f, newId())),
+        ...tracks.map((a) => assetFromAudio(a, newId())),
+      ]);
+
+      await flush({
+        frames: nextFrames,
+        audioTracks: nextAudio,
+        transitions: nextTransitions,
+        layers: nextLayers,
+        assets: cards,
+      });
+      framesRef.current = nextFrames;
+      setFrames(nextFrames);
+      setAudioTracks(nextAudio);
+      setTransitions(nextTransitions);
+      setLayers(nextLayers);
+      setAssets(cards);
+      for (const row of newRows) seatNewLane(layerTokenOf(row));
+      for (const row of audioRows) seatNewLane(layerTokenOf(row));
+
+      setProjectImportOpen(false);
+      const gaps = (res.placeholders || []).length;
+      setNotice(
+        `Imported “${res.name || "sequence"}” — ${added.length} clip` +
+          `${added.length === 1 ? "" : "s"}` +
+          `${sounds.length ? ` and ${sounds.length} sound${sounds.length === 1 ? "" : "s"}` : ""}.` +
+          (gaps
+            ? ` ${gaps} file${gaps === 1 ? "" : "s"} didn't arrive — those are colour cards.`
+            : "") +
+          " Undo takes it all back out."
+      );
+      setMediaTab("media");
+    } catch (e) {
+      setNotice(e.message || "That import could not be added.");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   // Opening the OS file dialog is the whole action for the audio layer, so both
   // entry points (the tools row and the ＋ on the Audio track) share this.
   function openAudioPicker() {
@@ -10097,6 +10241,26 @@ export default function AnimaticEditor({
                 help={false}
                 extra={[
                   {
+                    // ⚠ IMPORT ABOVE EXPORT, in the order a person meets them:
+                    // you bring a cut in before you send one out, and File menus
+                    // everywhere put Import first.
+                    id: "project-import",
+                    ico: "📥",
+                    label: "Import project file",
+                    note: "Read a cut from Premiere Pro, Resolve, Avid — or a .zip from here",
+                    on: () => setProjectImportOpen(true),
+                  },
+                  {
+                    // ⚠ ABOVE DELETE, because `extra` is drawn in order and the
+                    // destructive row belongs last — the same reason Log out is
+                    // the final row of the sidebar's copy of this menu.
+                    id: "project-file",
+                    ico: "📤",
+                    label: "Export project file",
+                    note: "Open this cut in Premiere Pro, Resolve, Avid or Final Cut",
+                    on: () => setProjectFileOpen(true),
+                  },
+                  {
                     id: "delete",
                     ico: "🗑",
                     label: "Delete project",
@@ -11896,6 +12060,29 @@ export default function AnimaticEditor({
           </div>
         </div>
       )}
+
+      {/* --- The cut, as another editor can open it ------------------------ */}
+      {/* ⚠ SPENDS NOTHING and touches no media until Download is pressed: the
+          dialog's numbers come from `/interchange/preview`, which only reads the
+          timeline. The whole reason it is a dialog is the list of what will NOT
+          come across — see ProjectFileModal.jsx. */}
+      <ProjectFileModal
+        open={projectFileOpen}
+        animaticId={animaticId}
+        title={title}
+        onClose={() => setProjectFileOpen(false)}
+      />
+
+      {/* ⚠ READING CHANGES NOTHING. The dialog's own button asks the server what
+          is in the file and prints it; only `applyProjectImport` puts anything on
+          the timeline, and it ADDS on new rows. See ProjectImportModal.jsx. */}
+      <ProjectImportModal
+        open={projectImportOpen}
+        animaticId={animaticId}
+        busy={importBusy}
+        onClose={() => !importBusy && setProjectImportOpen(false)}
+        onApply={applyProjectImport}
+      />
 
       {/* --- Import a storyboard onto a row of its own --------------------- */}
       {/* ⚠ SPENDS NOTHING. The panels are already drawn and already paid for;

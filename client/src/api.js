@@ -2141,6 +2141,74 @@ export function stopAnimaticExport(id) {
   return request(`/animatics/${id}/stop`, { method: "POST" });
 }
 
+// --- Hand this cut to another editor (Premiere Pro, Resolve, Avid, FCP) ---
+//
+// ⚠ TWO CALLS FOR ONE BUTTON, AND THE FIRST ONE IS THE POINT. A project file
+// carries the CUT — which clip, where, how long, on which track — and no
+// exchange format carries this app's own look: the grades, the LUTs, the masks,
+// the fourteen transition shapes, the text and shape clips. `interchangePreview`
+// is what lets the dialog SAY so before anything is downloaded, because the
+// download itself answers with a file and cannot carry a message.
+// ⚠ IT TAKES THE FORMAT, because the answer changes with it: an EDL holds ONE
+// video track and no dissolves, so switching the dropdown has to re-ask rather
+// than re-print the same list.
+export function interchangePreview(id, format = "fcp7") {
+  return request(`/animatics/${id}/interchange/preview${qs({ format })}`);
+}
+
+// The download itself. `media` (the default) fetches a ZIP holding the XML AND
+// every picture, clip and sound it names — an XML on its own imports as a
+// timeline of offline clips, which is the whole reason it is not the default.
+//
+// `basePath` is the folder on the user's own computer where they will keep the
+// media. Given one, the paths inside the file are absolute and the import is
+// silent; without one Premiere asks to locate the media once.
+// Read another editor's cut. ⚠ IT SAVES NOTHING — the server hands back clips in
+// this app's own shapes and the EDITOR decides where they land, which is the
+// contract `importStoryboardIntoAnimatic` and both uploads already follow. It is
+// also what makes an import undoable: one entry on the editor's undo stack.
+//
+// `document` is a Final Cut Pro XML (what Premiere, Resolve and Avid export), an
+// EDL, or a .zip exported from here — a zip carries its own media, so `media`
+// can be left empty for it.
+//
+// ⚠ `experimental` IS THE SECOND ANSWER FOR A `.prproj`, NOT THE FIRST. Premiere's
+// own save file is refused by default with a sentence naming the route that
+// always works (export a Final Cut Pro XML from Premiere). This flag asks the
+// server to guess at it anyway — for somebody who no longer HAS Premiere to
+// export from — and every import it returns carries a warning saying the result
+// must be checked. The dialog only sends it after the user has read the refusal
+// and asked again, which is why it is not a checkbox sitting there beforehand.
+export function importProjectFile(id, { document, media = [], experimental = false } = {}) {
+  const fd = new FormData();
+  fd.append("document", document);
+  for (const file of media) fd.append("media", file);
+  if (experimental) fd.append("experimental", "true");
+  return request(`/animatics/${id}/interchange/import`, {
+    method: "POST",
+    body: fd,
+    isForm: true,
+    // A folder of footage is a big upload and the server stores every file
+    // before it can match a single clip — the default timeout is for calls that
+    // answer in a second.
+    timeoutMs: 10 * 60 * 1000,
+  });
+}
+
+export function downloadProjectFile(
+  id,
+  { format = "fcp7", media = true, basePath = "", filename } = {}
+) {
+  return downloadAuthed(
+    `/animatics/${id}/interchange${qs({
+      format,
+      media: media ? "true" : "false",
+      base_path: basePath,
+    })}`,
+    filename || (media ? "project.zip" : "project.txt")
+  );
+}
+
 // Frames and audio live behind the bearer token, so an <img>/<audio> src can't
 // point straight at them — fetch as a blob and hand back an object URL. The
 // CALLER owns the URL and must revoke it.

@@ -2376,6 +2376,106 @@ class AnimaticAudioResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Interchange — this cut, as another editor can open it
+# ---------------------------------------------------------------------------
+class InterchangeLoss(BaseModel):
+    """ONE THING THIS EXPORT COULD NOT CARRY, and how much of it there was.
+
+    ⚠ THE WHOLE POINT OF THE FEATURE IS THIS LIST. A project-exchange file holds
+    the CUT — which clip, where, how long, on which track — and no exchange
+    format on earth holds a WebGL grade, a mask, a blend mode or a text clip. An
+    export that quietly left those behind would be reported as "it didn't work";
+    an export that says "3 colour grades will not come across" is a tool.
+    """
+
+    what: str = Field(..., description="e.g. 'effects and colour grades'.")
+    count: int = Field(0, ge=0)
+
+
+class InterchangeReport(BaseModel):
+    """What GET /animatics/{id}/interchange/preview answers.
+
+    Shown in the dialog BEFORE the download, which is the only moment saying it
+    is any use.
+    """
+
+    format: str = Field(
+        "fcp7",
+        description=(
+            "'fcp7' (Premiere / Resolve / Avid / Final Cut), 'aftereffects' "
+            "(a script AE runs) or 'edl' (CMX3600). ⚠ THE REPORT IS PER "
+            "FORMAT: an EDL holds one video track and no dissolves, so the "
+            "losses below grow when it is chosen."
+        ),
+    )
+    clips: int = 0
+    audio_clips: int = 0
+    video_tracks: int = 0
+    audio_tracks: int = 0
+    files: int = Field(0, description="Distinct media files the zip will carry.")
+    duration_frames: int = 0
+    fps: int = 24
+    # Rough, and labelled as such in the UI: it is the sum of the source files
+    # BEFORE zip compression, which is the honest direction to be wrong in.
+    media_bytes: int = Field(0, description="Total size of the media, uncompressed.")
+    dropped: list[InterchangeLoss] = Field(default_factory=list)
+    missing: list[str] = Field(
+        default_factory=list, description="Clips whose file has gone — left out."
+    )
+
+
+class AnimaticImportResponse(BaseModel):
+    """What POST /animatics/{id}/interchange/import hands back.
+
+    ⚠ IT SAVES NOTHING, and that is the contract every producer in this router
+    follows — `import_storyboard`, the image upload, the video upload: **the
+    server produces the material, the client decides the timeline.** Here it also
+    buys the one thing an import most needs: the whole thing lands as ONE entry on
+    the editor's own undo stack, so a user who does not like what arrived presses
+    Ctrl+Z rather than rebuilding their film.
+
+    The media, by contrast, IS stored — it had to be, to be matched at all — and
+    it lists in the Media pane whether or not the clips are taken.
+    """
+
+    # The clips themselves, in this app's own shapes, ready to be placed.
+    # ⚠ `track` AND `layer_id` ARE RELATIVE (0,1,2… / "_import_0"): the client
+    # re-bases them onto rows it creates, because only the browser knows which
+    # row numbers this project already uses.
+    frames: list[AnimaticFrame] = Field(default_factory=list)
+    audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
+    transitions: list[AnimaticTransition] = Field(default_factory=list)
+
+    # --- what to SAY about it ----------------------------------------------
+    name: str = Field("", description="What the sequence was called in the file.")
+    reader: str = Field(
+        "",
+        description=(
+            "'fcp7' | 'edl' | 'prproj' — what it turned out to be. ⚠ 'prproj' is "
+            "the BEST-EFFORT read of Premiere's private save file: the first "
+            "entry in `warnings` says so, and the dialog must show it."
+        ),
+    )
+    fps: int = Field(24, description="The rate the document was read at.")
+    clips: int = 0
+    audio_clips: int = 0
+    video_tracks: int = 0
+    audio_lanes: int = 0
+    transitions_read: int = 0
+    matched: int = Field(0, description="Media files matched to a clip by name.")
+    # ⚠ THE TWO HONEST LISTS. `placeholders` names every clip whose file did not
+    # arrive — it is on the timeline as a labelled colour card, so the cut is
+    # whole and the gaps are visible. `warnings` is everything the reader had to
+    # assume (an EDL's frame rate, an NTSC rate read as a whole number, dissolves
+    # read as cuts).
+    placeholders: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    rejected: list[str] = Field(
+        default_factory=list, description="Media files that could not be stored."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Animatics → Final Video
 # ---------------------------------------------------------------------------
 # Three steps, in the order the workflow screen shows them:

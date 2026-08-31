@@ -28,8 +28,9 @@ import os
 import re
 import shutil
 import uuid
+import zipfile
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import animatic_render
@@ -73,6 +74,7 @@ from .schemas import (
     AnimaticGeneratedImage,
     AnimaticImageBackend,
     AnimaticImageGenerateRequest,
+    AnimaticImportResponse,
     AnimaticAsset,
     AnimaticLayer,
     AnimaticMediaItem,
@@ -103,6 +105,8 @@ from .schemas import (
     AudioCostEstimate,
     CostEstimate,
     DialogueLine,
+    InterchangeLoss,
+    InterchangeReport,
     Job,
     JobCreatedResponse,
     JobKind,
@@ -2486,6 +2490,477 @@ def download_video(job_id: str, current: CurrentUser = Depends(get_current_user)
         path,
         media_type=export_presets.CONTAINER_MIME[container],
         filename=f"{safe}.{export_presets.CONTAINER_EXT[container]}",
+    )
+
+
+
+
+# ---------------------------------------------------------------------------
+# Interchange — hand this cut to Premiere Pro, Resolve, Avid or Final Cut
+# ---------------------------------------------------------------------------
+# Phase 1 is EXPORT ONLY, in ONE format: FCP7 XML (`xmeml` v4), which is the
+# common language every one of those apps still reads. The whole of the format
+# lives in `interchange.py`; this is only the part that needs to know WHO IS
+# ASKING.
+#
+# ⚠ RESOLVED HERE, NOT IN `interchange.py`, FOR EXACTLY THE REASON
+# `export_animatic` RESOLVES ITS OWN PATHS HERE: this is the request that knows
+# the owner, so a clip pointing at somebody else's board resolves to nothing
+# before it can be copied into a zip and downloaded. An exporter that took ids
+# and went looking for the files itself would be a way to read another account's
+# pictures.
+#
+# ⚠ AND IT IS A PLAIN, SYNCHRONOUS DOWNLOAD, NOT A JOB. A video export is
+# minutes of ffmpeg and owns `JobStatus.RUNNING` while it runs; this is a text
+# file plus a file copy. Making it a job would mean a project file could not be
+# exported while an encode was running (and the other way round), and would put
+# the autosave into `serverBusy` for a second's work.
+def _interchange_payload(job: Job) -> dict:
+    """This project as `interchange.build_sequence` wants it — paths resolved."""
+    import animatic
+
+    settings = _settings_of(job)
+    frames = _frames_of(job)
+    hidden = set(settings.hidden_lanes or [])
+    width, height = animatic.resolve_size(settings.aspect_ratio, settings.resolution)
+
+    # ⚠ DUMP THE MODEL, never rebuild it field by field — the same rule, learned
+    # the same expensive way, as the two loops in `export_animatic` above. A
+    # field this feature does not read today is one the NEXT format (an EDL, an
+    # After Effects script) will, and a hand-written dict literal is exactly how
+    # `track` and `start_ms` once went missing from an export.
+    resolved = []
+    for f in frames:
+        item = f.model_dump(exclude={"url", "src"})
+        item["path"] = None
+        item["video_path"] = None
+        if f.kind == "video":
+            item["video_path"] = _video_file(job.job_id, f.src.upload_id or "")
+        elif f.kind != "color":
+            item["path"] = _resolve_frame_path(job, f)
+        resolved.append(item)
+
+    overlays = []
+    for overlay in _overlays_of(job):
+        item = overlay.model_dump(exclude={"url"})
+        item["path"] = _image_path(job.job_id, overlay.upload_id)
+        overlays.append(item)
+
+    # ⚠ A MUTED TRACK IS EXPORTED, DISABLED — unlike the video export, which
+    # drops it. This file is a PROJECT, not a render: a track the user silenced
+    # while cutting is still part of the cut, and arriving in Premiere as a
+    # switched-off clip is exactly what they left behind here. `include_audio`
+    # is ignored for the same reason — it is an encoder setting, not a fact
+    # about the film.
+    audio_tracks = []
+    for track in _audio_tracks_of(job):
+        item = track.model_dump(exclude={"url"})
+        item["path"] = _audio_file(job.job_id, track.upload_id)
+        audio_tracks.append(item)
+
+    return {
+        "title": job.character_name or "Project",
+        "fps": settings.fps,
+        "width": width,
+        "height": height,
+        "background": settings.background,
+        "show_labels": settings.show_labels,
+        # ⚠ NO `end_ms`. `frame_spans` uses it to HOLD THE LAST PICTURE out to
+        # the end of a music bed, which is right for a video file and wrong for
+        # a project file: it would hand Premiere a clip stretched past its own
+        # length. An NLE shows the real lengths and lets the audio run on.
+        "end_ms": 0,
+        "frames": resolved,
+        "overlays": overlays,
+        "audio_tracks": audio_tracks,
+        "transitions": [t.model_dump() for t in _transitions_of(job)],
+        # Counted, never written: there is no box for either in xmeml, and the
+        # report is what tells the user so before they download.
+        "texts": [t.model_dump() for t in _texts_of(job)],
+        "shapes": [sh.model_dump() for sh in _shapes_of(job)],
+        "lane_order": list(settings.lane_order or []),
+        "hidden_lanes": list(hidden),
+    }
+
+
+def _interchange_name(job: Job) -> str:
+    """The project's title, as a filename. Same rule as `download_video`."""
+    safe = "".join(
+        c if c.isalnum() or c in "-_ " else " " for c in (job.character_name or "project")
+    )
+    return " ".join(safe.split()).strip(" -_") or "project"
+
+
+def _interchange_dir(job_id: str) -> str:
+    """Where a built project file waits to be served.
+
+    INSIDE the animatic's own folder, for the reason `_stills_dir` gives:
+    `delete_animatic`'s rmtree collects it, and there is no second garbage
+    collector to forget to run.
+    """
+    return os.path.join(_animatic_dir(job_id), "_interchange")
+
+
+@router.get("/{job_id}/interchange/preview", response_model=InterchangeReport)
+def preview_interchange(
+    job_id: str,
+    format: str = "fcp7",
+    current: CurrentUser = Depends(get_current_user),
+):
+    """What an export WOULD contain — and what it would have to leave behind.
+
+    ⚠ THIS ROUTE IS THE FEATURE'S HONESTY, and it exists because the download
+    itself cannot carry a message: it answers with a file. A user told
+    afterwards that their colour grades did not travel has already opened
+    Premiere and decided the export is broken.
+
+    ⚠ AND IT TAKES THE FORMAT, because the answer changes with it: an EDL holds
+    ONE video track and no dissolves, so choosing it in the dropdown has to make
+    the list of losses grow before the download, not after the conform. An
+    unknown name folds down to `fcp7` rather than answering 422 — the same rule
+    an unrecognised transition or clip kind follows everywhere else here.
+
+    Costs nothing: it builds the model and never touches a byte of media.
+    """
+    import interchange
+
+    job = _get_owned_animatic(job_id, current)
+    fmt = interchange.normalise_format(format)
+    model = interchange.build_sequence(_interchange_payload(job))
+    report = interchange.report_of(model, fmt)
+    size = 0
+    for entry in model["files"]:
+        if entry.get("path") and os.path.isfile(entry["path"]):
+            size += os.path.getsize(entry["path"])
+    return InterchangeReport(
+        media_bytes=size,
+        dropped=[InterchangeLoss(**row) for row in report["dropped"]],
+        **{k: v for k, v in report.items() if k != "dropped"},
+    )
+
+
+@router.get("/{job_id}/interchange")
+def export_interchange(
+    job_id: str,
+    format: str = "fcp7",
+    media: bool = True,
+    base_path: str = "",
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Download this cut as a project file another editor can open.
+
+    `format` is `fcp7` (Premiere / Resolve / Avid / Final Cut), `aftereffects`
+    (a script AE runs to build the comp) or `edl` (CMX3600, cuts only). An
+    unknown name folds down to `fcp7`.
+
+    `media=true` (the default) answers with a ZIP: the document and a `media/`
+    folder holding every picture, clip and sound it names. ⚠ THAT IS THE DEFAULT
+    BECAUSE A DOCUMENT ON ITS OWN IMPORTS AS A TIMELINE OF OFFLINE CLIPS — the
+    file is a recipe, and without the ingredients it is a row of red rectangles.
+
+    `base_path` is the folder on the user's own computer where the media will
+    end up. ⚠ IT ONLY MEANS ANYTHING FOR `fcp7`: given one, every `<pathurl>` is
+    absolute and the import is silent, and without one they are relative and
+    Premiere asks to locate the media once. The AE script finds its own media and
+    an EDL names reels rather than paths, so both ignore it.
+
+    ⚠ THE ZIP IS NAMED AFTER THE FORMAT (`Film-fcp7.zip`), because all three are
+    exports of the same project and a single `Film.zip` would mean downloading
+    the EDL destroyed the XML you fetched a minute ago — one file per format, the
+    same rule `_video_path` follows for mp4 / gif / png.
+    """
+    import interchange
+
+    job = _get_owned_animatic(job_id, current)
+    fmt = interchange.normalise_format(format)
+    ext = interchange.format_ext(fmt)
+    model = interchange.build_sequence(_interchange_payload(job))
+    if not model["video"] and not model["audio"]:
+        raise HTTPException(
+            status_code=409,
+            detail="There is nothing on the timeline to export yet.",
+        )
+
+    name = _interchange_name(job)
+    out_dir = _interchange_dir(job_id)
+    os.makedirs(out_dir, exist_ok=True)
+    if media:
+        path = os.path.join(out_dir, f"{name}-{fmt}.zip")
+        interchange.bundle(model, path, f"{name}.{ext}", fmt=fmt, base_path=base_path)
+        logger.info(
+            "[animatic %s] project file exported — %s, %d clips, %d media files, zip",
+            job_id,
+            fmt,
+            sum(len(lane["clips"]) for lane in model["video"]),
+            len(model["files"]),
+        )
+        return FileResponse(path, media_type="application/zip", filename=f"{name}.zip")
+
+    path = os.path.join(out_dir, f"{name}.{ext}")
+    interchange.write_document_only(model, path, fmt=fmt, base_path=base_path)
+    logger.info("[animatic %s] project file exported — %s, document only", job_id, fmt)
+    return FileResponse(
+        path,
+        media_type=interchange.FORMATS[fmt]["mime"],
+        filename=f"{name}.{ext}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Import — somebody else's cut, brought in here (Phase 3)
+# ---------------------------------------------------------------------------
+# ⚠ THE SERVER PRODUCES THE MATERIAL, THE CLIENT DECIDES THE TIMELINE. Exactly
+# the contract `import_storyboard` and both uploads follow, and here it earns its
+# keep twice: the editor puts the clips on rows it creates (only the browser
+# knows which row numbers are free), and the whole import lands as ONE entry on
+# the undo stack — so a user who does not like what arrived presses Ctrl+Z
+# instead of rebuilding their film. Nothing below writes to the project.
+#
+# ⚠ THE MEDIA IS STORED THOUGH, and has to be: matching a clip to a file means
+# having the file. Every one goes through the same checks and the same folder as
+# the ordinary uploads, so an import can never be a way to get a file into a
+# project that `POST /images` or `/videos` would have refused. Whether the clips
+# are then taken or not, the files list in the Media pane.
+def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
+    """One file out of an import, stored the way its own upload route stores it.
+
+    Returns `{"kind", "upload_id", "duration_ms", "filename"}`, or None if it is
+    not a kind we take (the caller names it in `rejected`).
+    """
+    import interchange
+
+    kind = interchange.media_kind(name)
+    if not kind:
+        return None
+    media = _media_dir(job_id)
+    os.makedirs(media, exist_ok=True)
+    upload_id = uuid.uuid4().hex[:12]
+
+    if kind == "image":
+        from PIL import Image as PILImage
+
+        if len(data) > config.MAX_UPLOAD_BYTES:
+            return None
+        path = _image_path(job_id, upload_id)
+        try:
+            # Normalised to a clean RGB PNG, exactly as `upload_images` does —
+            # one shape of picture on disk, whatever came in.
+            with PILImage.open(io.BytesIO(data)) as im:
+                im.convert("RGB").save(path, "PNG")
+        except Exception:  # noqa: BLE001 — bad/corrupt upload
+            return None
+        return {"kind": "image", "upload_id": upload_id, "duration_ms": 0, "filename": name}
+
+    if kind == "video":
+        import video_frames
+
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in config.ALLOWED_VIDEO_EXTS:
+            ext = ".mp4"
+        if len(data) > config.MAX_VIDEO_BYTES:
+            return None
+        path = os.path.join(media, f"vid_{upload_id}{ext}")
+        try:
+            with open(path, "wb") as fh:
+                fh.write(data)
+        except OSError:
+            logger.exception("[animatic %s] could not store imported video %s", job_id, name)
+            return None
+        # ⚠ MEASURED HERE, exactly as `upload_videos` measures — the exporter has
+        # to work from the same number, and there is no ffprobe on this install.
+        return {
+            "kind": "video",
+            "upload_id": upload_id,
+            "duration_ms": video_frames.probe_duration(path),
+            "filename": name,
+        }
+
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in config.ALLOWED_AUDIO_EXTS:
+        ext = ".mp3"
+    if len(data) > config.MAX_AUDIO_BYTES:
+        return None
+    try:
+        with open(os.path.join(media, f"audio_{upload_id}{ext}"), "wb") as fh:
+            fh.write(data)
+    except OSError:
+        logger.exception("[animatic %s] could not store imported audio %s", job_id, name)
+        return None
+    # ⚠ 0, NOT A GUESS. This server has no audio decoder; the browser measures a
+    # track with `decodeAudioData` and `interchange.to_project` falls back to
+    # "offset + what plays", which is an honest lower bound.
+    return {"kind": "audio", "upload_id": upload_id, "duration_ms": 0, "filename": name}
+
+
+@router.post("/{job_id}/interchange/import", response_model=AnimaticImportResponse)
+async def import_interchange(
+    job_id: str,
+    document: UploadFile = File(..., description="A Final Cut Pro XML, an EDL, or a .zip from here."),
+    media: list[UploadFile] = File(default=[], description="The footage the document names."),
+    experimental: bool = Form(
+        default=False,
+        description="Read a .prproj with the best-effort reader instead of refusing it.",
+    ),
+    current: CurrentUser = Depends(get_current_user),
+):
+    """Read another editor's cut and hand back the clips. **Saves nothing.**
+
+    Takes a **Final Cut Pro XML** (what Premiere Pro, DaVinci Resolve and Avid
+    all export), a **CMX3600 EDL**, or a **.zip this app exported** — in which
+    case the media inside it is used and nothing else need be attached.
+
+    ⚠ THE MEDIA IS THE HARD HALF. A project file names files by a path on the
+    machine that wrote it, and neither a browser nor this server can read that
+    path — so the footage has to come too, and is matched BY FILENAME.
+    ⚠ **A clip whose file did not arrive becomes a labelled colour card** rather
+    than being left out: the cut stays whole, every gap is visible and named in
+    `placeholders`, and dropping the real file on that row fixes it.
+
+    `.prproj` and `.aep` are refused ON PURPOSE, with a sentence saying what to
+    export instead — both are undocumented private formats, and a half-read
+    timeline is worse than a clear "no".
+
+    ⚠ `experimental=true` IS THE SECOND ANSWER FOR `.prproj`, NEVER THE FIRST.
+    It opens Premiere's private save file with the best-effort reader in
+    `interchange._read_prproj` — a guess, unverified against a real Premiere
+    file, which puts the sentence saying so at the top of `warnings` on every
+    import it produces. The refusal is still what an unflagged request gets,
+    because the route it names (export a Final Cut Pro XML) always works and
+    this does not. `.aep` has no equivalent and stays refused outright.
+    """
+    import interchange
+
+    job = _get_owned_animatic(job_id, current)
+    if job.status == JobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="This project is exporting.")
+
+    raw = await document.read()
+    if len(raw) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"That project file is larger than {config.MAX_UPLOAD_BYTES // 1_048_576} MB.",
+        )
+
+    # ⚠ A ZIP IS THE ROUND TRIP, and it is the easiest path for a user by a long
+    # way: the bundle this app exported already holds the document AND every file
+    # it names, so re-importing one needs no second attachment and nothing can be
+    # missing. The document inside is found by sniffing, not by extension, for
+    # the same reason `detect_format` sniffs at all.
+    attached: list[tuple[str, bytes]] = []
+    doc_name = document.filename or "project.xml"
+    if interchange.detect_format(raw, doc_name) == "zip":
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                found_doc = None
+                for info in zf.infolist():
+                    if info.is_dir() or info.file_size > config.MAX_VIDEO_BYTES:
+                        continue
+                    base = os.path.basename(info.filename)
+                    if not base or base.startswith("."):
+                        continue
+                    if interchange.media_kind(base):
+                        attached.append((base, zf.read(info)))
+                    elif found_doc is None:
+                        body = zf.read(info)
+                        if interchange.detect_format(body, base) in ("fcp7", "edl"):
+                            found_doc, doc_name = body, base
+                if found_doc is None:
+                    raise HTTPException(
+                        status_code=415,
+                        detail="That zip has no project file in it — expected an .xml or an .edl.",
+                    )
+                raw = found_doc
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=415, detail="That .zip could not be opened.") from None
+
+    for upload in media or []:
+        attached.append((upload.filename or "file", await upload.read()))
+
+    settings = _settings_of(job)
+    try:
+        # ⚠ THE PROJECT'S OWN fps IS THE HINT, and an EDL needs it: a CMX list
+        # states drop or non-drop and never its rate, so the only number in the
+        # room that anybody chose is this project's. `read_document` warns.
+        incoming = interchange.read_document(
+            raw, doc_name, fps_hint=settings.fps, experimental=bool(experimental)
+        )
+    except interchange.ImportRefused as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+
+    stored: dict = {}
+    rejected: list[str] = []
+    for name, data in attached:
+        entry = _store_import_media(job_id, name, data)
+        if entry is None:
+            rejected.append(name)
+            continue
+        # ⚠ KEYED CASE-INSENSITIVELY, AND ALSO WITHOUT THE EXTENSION. Windows and
+        # macOS disagree about case, and an app that transcoded a clip on the way
+        # out leaves `shot_03.mov` in the XML and `shot_03.mp4` on disk — matching
+        # the stem as well is what saves that import from being all placeholders.
+        base = os.path.basename(name)
+        stored.setdefault(base.lower(), entry)
+        stored.setdefault(os.path.splitext(base)[0].lower(), entry)
+
+    def resolve(wanted: str):
+        base = os.path.basename((wanted or "").replace("\\", "/"))
+        return stored.get(base.lower()) or stored.get(os.path.splitext(base)[0].lower())
+
+    built = interchange.to_project(
+        incoming, resolve, background=settings.background, new_id=lambda: uuid.uuid4().hex[:12]
+    )
+    report = built["report"]
+
+    # ⚠ COUNTED AGAINST WHAT IS ALREADY ON THE TIMELINE, the way the board import
+    # counts. Refused BEFORE the clips are handed over, because the editor would
+    # otherwise place them and then fail to save.
+    existing = len((job.params or {}).get("frames") or [])
+    if existing + len(built["frames"]) > config.MAX_ANIMATIC_FRAMES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"That file holds {len(built['frames'])} clips and this project already has "
+                f"{existing}, over the limit of {config.MAX_ANIMATIC_FRAMES}."
+            ),
+        )
+    existing_audio = len((job.params or {}).get("audio_tracks") or [])
+    if existing_audio + len(built["audio_tracks"]) > config.MAX_ANIMATIC_AUDIO_CLIPS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"That file holds {len(built['audio_tracks'])} audio clips and this project "
+                f"already has {existing_audio}, over the limit of "
+                f"{config.MAX_ANIMATIC_AUDIO_CLIPS}."
+            ),
+        )
+    if not built["frames"] and not built["audio_tracks"]:
+        raise HTTPException(
+            status_code=409, detail="There was nothing on that timeline to bring in."
+        )
+
+    logger.info(
+        "[animatic %s] imported %s%s: %d clips, %d sounds, %d placeholders, %d media matched",
+        job_id, report["reader"],
+        f" ({incoming.get('route')}, BEST-EFFORT)" if report["reader"] == "prproj" else "",
+        report["clips"], report["audio_clips"],
+        len(report["placeholders"]), report["matched"],
+    )
+    return AnimaticImportResponse(
+        frames=[AnimaticFrame(**f) for f in built["frames"]],
+        audio_tracks=[AnimaticAudio(**a) for a in built["audio_tracks"]],
+        transitions=[AnimaticTransition(**t) for t in built["transitions"]],
+        name=report["name"],
+        reader=report["reader"],
+        fps=report["fps"],
+        clips=report["clips"],
+        audio_clips=report["audio_clips"],
+        video_tracks=report["video_tracks"],
+        audio_lanes=report["audio_lanes"],
+        transitions_read=report["transitions"],
+        matched=report["matched"],
+        placeholders=report["placeholders"],
+        warnings=report["warnings"],
+        rejected=rejected,
     )
 
 
