@@ -2541,7 +2541,7 @@ def to_project(
     }
     files = incoming.get("files") or {}
     seen: dict = {}
-    tally = {"moved": 0, "shortened": 0, "silent": 0}
+    tally = {"moved": 0, "shortened": 0, "silent": 0, "overlaid": 0}
 
     def source_for(key: str):
         """One file, resolved once — several clips usually share it."""
@@ -2557,6 +2557,13 @@ def to_project(
     frames: list = []
     transitions: list = []
     video_lanes = (incoming.get("video") or [])[:MAX_IMPORT_TRACKS]
+    # ⚠ THE LOWEST ROW THAT ACTUALLY HOLDS CLIPS — the BACKGROUND of this cut,
+    # and the only row on which a placeholder card may be opaque. See the
+    # `not found` branch below. Taken from the clips rather than from the lane
+    # count because a sequence whose V1 is empty still lists V1.
+    base_track = next(
+        (i for i, lane in enumerate(video_lanes) if lane.get("clips")), 0
+    )
     for track, lane in enumerate(video_lanes):
         # `by_end` is how a transition finds the clip it comes after: this app
         # anchors one to a FRAME ID, and the XML anchors it to a position.
@@ -2584,11 +2591,34 @@ def to_project(
             if not found:
                 # The labelled gap. `src` is still sent because the schema wants
                 # one; nothing resolves it for a colour clip.
+                #
+                # ⚠ AND IT ONLY PAINTS ON THE BOTTOM ROW. A card is the right
+                # answer for missing footage in the BACKGROUND — the frame would
+                # otherwise be empty and the gap invisible. On any row above it
+                # the clip is an OVERLAY, and an opaque card there hides the
+                # whole film behind it. Premiere is where this bites: a title, a
+                # Graphic and an Adjustment Layer have no media file to attach,
+                # so every one of them arrives here unmatched — and a real
+                # project put four of them full-length over the cut, which
+                # previewed and exported as **68 seconds of black**. Reported as
+                # "audio, image and video show but text not show": where the
+                # lettering should have been there was a black rectangle over
+                # everything, so it read as the TEXT being broken.
+                #
+                # ⚠ INVISIBLE IS NOT OMITTED, which is what E45 is about. The
+                # clip is still on the timeline, still carries its own name,
+                # still selectable, and still counted in `placeholders` — and
+                # `opacity` is an ordinary field, so anyone who wants to see
+                # where the gap is drags it back up in Properties.
+                blank = track != base_track
                 frame.update({
                     "kind": "color",
                     "color": background or "#000000",
                     "src": {"kind": "upload"},
+                    "opacity": 0.0 if blank else 1.0,
                 })
+                if blank:
+                    tally["overlaid"] += 1
                 report["placeholders"].append(
                     (files.get(clip.get("file") or "") or {}).get("name")
                     or clip.get("name")
@@ -2702,6 +2732,22 @@ def to_project(
             f"{tally['moved']} clip(s) sat outside the timeline this app can hold "
             "(before the start, or past 24 hours) and were moved to the nearest "
             "point it can. Check where they landed."
+        )
+    # ⚠ THE SENTENCE THAT NAMES THE TITLES. Most unmatched clips on an upper row
+    # are not missing footage at all — they are a Graphic, a title or an
+    # Adjustment Layer, which have no file to attach and never will. Saying
+    # "attach the files" to somebody whose only gaps are titles sends them
+    # looking for files that do not exist, and saying nothing leaves the words
+    # they typed in Premiere simply absent with no explanation.
+    if tally["overlaid"]:
+        report["warnings"].append(
+            f"{tally['overlaid']} clip(s) on rows above the bottom one had no file "
+            "to go with them, so they are on the timeline but draw nothing — a "
+            "solid card there would hide the whole film behind it. Titles, "
+            "Graphics and Adjustment Layers always land here: they are not files, "
+            "so no import can carry them. Any LETTERING they held has to be typed "
+            "again with the Text tool, or exported from the other app as PNGs "
+            "with transparency and dropped on those rows."
         )
     report["clips"] = len(frames)
     report["audio_clips"] = len(audio_tracks)

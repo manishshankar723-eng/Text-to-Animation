@@ -526,6 +526,32 @@ export default function useTimelineTransport({
  * the SCENE — and the scene is derived from the clock the transport owns.
  */
 export function useMonitorVideo({ scene, frames, videoElsRef, playing, rate }) {
+  /**
+   * THE CLIP A RESOLVED PICTURE POINTS AT — by ID, never by `.index`.
+   *
+   * ⚠ TWIN OF THE SAME MAP IN `ProgramCanvas.jsx`, and it is here for the same
+   * reason it is there. `picture.index` is a position in the array `sceneAt` was
+   * given, and the editor gives it the HIDDEN-LANE-FILTERED one (`shown.frames`);
+   * `frames` here is the FULL, unfiltered project. The two agree only while
+   * nothing is hidden — switch a picture row off and every index after it shifts
+   * down, so `frames[picture.index]` names the WRONG CLIP.
+   *
+   * ⚠ AND THE WRONG CLIP IS SILENT HERE, which is why it survived the round of
+   * fixes that caught the same fault in the monitor and in `currentIndex`: the
+   * cue then carries some other clip's id, `videoElsRef` has no element under it,
+   * the loop below skips, and the <video> that IS on screen is simply never told
+   * to play. It sits on the frame it was parked at for the whole clip while the
+   * monitor keeps re-uploading that one still — reported as "video ka sirf ek
+   * thumbnail jaisa dikhta hai … pura clip mein ek image jaisa", on a project
+   * with six of its eight picture rows switched off. Nothing threw, nothing
+   * logged, and the images and the sound on the same timeline played perfectly.
+   */
+  const framesById = useMemo(() => {
+    const map = new Map();
+    for (const f of frames || []) map.set(f.id, f);
+    return map;
+  }, [frames]);
+
   const videoCues = useMemo(() => {
     const cues = [];
     // ⚠ EVERY PICTURE TRACK, and both sides of each track's transition. Reading
@@ -538,7 +564,9 @@ export function useMonitorVideo({ scene, frames, videoElsRef, playing, rate }) {
     }
     for (const picture of showing) {
       if (!picture || picture.kind !== "video") continue;
-      const clip = frames[picture.index];
+      // ⚠ BY ID. See `framesById` above — `picture.index` indexes the filtered
+      // array and this one is the whole project.
+      const clip = framesById.get(picture.id);
       const uploadId = clip?.src?.upload_id;
       if (!clip || !uploadId) continue;
       const outMs = clip.out_ms ?? null;
@@ -553,7 +581,7 @@ export function useMonitorVideo({ scene, frames, videoElsRef, playing, rate }) {
       });
     }
     return cues;
-  }, [scene, frames]);
+  }, [scene, framesById]);
 
   useEffect(() => {
     const live = new Set(videoCues.map((c) => c.clipId));

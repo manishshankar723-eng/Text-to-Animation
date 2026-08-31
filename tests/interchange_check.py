@@ -1485,6 +1485,109 @@ check("…and the model really would have rejected the unclamped values (a 500)"
 
 
 # ---------------------------------------------------------------------------
+# 8e · A placeholder must not hide the film behind it
+# ---------------------------------------------------------------------------
+# ⚠ ALSO `to_project`'s, SO ALSO EVERY READER'S. E45 says a clip whose file did
+# not arrive becomes a labelled COLOUR CARD rather than being left out, and that
+# is right — on the BOTTOM row, where the alternative is an empty frame and an
+# invisible gap. On any row ABOVE it the clip is an OVERLAY, and an opaque card
+# there paints over everything beneath.
+#
+# Premiere is where this bites and it is not an edge case: a title, a Graphic and
+# an Adjustment Layer have NO media file to attach and never will, so every one
+# of them arrives unmatched. A real project carried four of them at full length
+# over the cut, and the import previewed and exported as 68 seconds of BLACK —
+# reported as "audio, image and video show but text not show", because where the
+# lettering should have been there was a black rectangle over the whole film.
+#
+# ⚠ INVISIBLE IS NOT OMITTED. The clip is still on the timeline, still named,
+# still counted in `placeholders`, and `opacity` is an ordinary editable field.
+# The checks below hold BOTH halves of that at once — a fix that dropped the
+# clips would pass an "it is not black" test and fail this section.
+print("\n8e · a placeholder does not hide the film")
+
+
+def _lanes(*lanes):
+    """An incoming model with SEVERAL video rows — `_incoming` only makes one,
+    and one row cannot express "above" and "below" at all."""
+    return {
+        "reader": "test", "name": "Titles", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"f": {"name": "shot.png", "pathurl": ""}},
+        "video": [{"clips": list(clips), "transitions": []} for clips in lanes],
+        "audio": [],
+        "warnings": [],
+    }
+
+
+# Bottom row: a clip whose picture DID arrive. Above it: two that did not — the
+# Graphic and the Adjustment Layer a Premiere sequence always has.
+_stack = interchange.to_project(
+    _lanes(
+        [_c(0, 240, name="footage", file="f")],
+        [_c(0, 240, name="Graphic", file="")],
+        [_c(0, 240, name="Adjustment Layer", file="")],
+    ),
+    _as_image,
+    background="#000000",
+)
+_by_track = {f["track"]: f for f in _stack["frames"]}
+
+check("the matched clip on the bottom row is the picture it always was",
+      _by_track[0]["kind"] == "image", str(_by_track.get(0)))
+check("a title on a row ABOVE it is still on the timeline",
+      set(_by_track) == {0, 1, 2}, f"tracks {sorted(_by_track)}")
+check("…still carrying its own name",
+      [_by_track[1]["label"], _by_track[2]["label"]] == ["Graphic", "Adjustment Layer"],
+      str([_by_track[1]["label"], _by_track[2]["label"]]))
+check("…still counted as a placeholder, so the dialog names it",
+      len(_stack["report"]["placeholders"]) == 2,
+      str(_stack["report"]["placeholders"]))
+# ⚠ THE ONE THE BLACK SCREEN WAS. Two of these at full length over a cut is a
+# film nobody can see, and nothing anywhere reported a fault.
+check("…and it draws NOTHING, so the film behind it is visible",
+      _by_track[1]["opacity"] == 0 and _by_track[2]["opacity"] == 0,
+      f"opacities {[_by_track[1]['opacity'], _by_track[2]['opacity']]}")
+check("the report says so, and says a title is not a file that can be attached",
+      any("draw nothing" in w and "Text tool" in w
+          for w in _stack["report"]["warnings"]),
+      str(_stack["report"]["warnings"]))
+
+# ⚠ THE BOTTOM ROW KEEPS ITS CARD. Blanking that one would put the gap back to
+# being invisible, which is the whole of E45 undone in the name of fixing this.
+_ground = interchange.to_project(
+    _lanes([_c(0, 240, name="Graphic", file="")]), _as_image, background="#000000"
+)
+check("a missing clip on the BOTTOM row is still an opaque card (E45 holds)",
+      _ground["frames"][0]["kind"] == "color"
+      and _ground["frames"][0]["opacity"] == 1,
+      str(_ground["frames"][0]))
+check("…and one row of nothing but gaps raises no overlay warning",
+      not any("draw nothing" in w for w in _ground["report"]["warnings"]),
+      str(_ground["report"]["warnings"]))
+
+# ⚠ AND "BOTTOM" IS THE LOWEST ROW WITH CLIPS ON IT, not row 0. A sequence whose
+# V1 is empty still lists V1, and reading the count instead of the clips would
+# blank the real background and put the black screen back.
+_empty_v1 = interchange.to_project(
+    _lanes([], [_c(0, 240, name="Graphic", file="")]), _as_image, background="#000000"
+)
+check("an empty V1 does not make row 2 an overlay",
+      _empty_v1["frames"][0]["opacity"] == 1, str(_empty_v1["frames"][0]))
+
+# Every frame this produced must still satisfy the model the route builds — an
+# opacity outside 0..1 would be the 8d failure over again.
+try:
+    for _f in _stack["frames"] + _ground["frames"] + _empty_v1["frames"]:
+        AnimaticFrame(**_f)
+    _ok = True
+except Exception as exc:  # noqa: BLE001
+    _ok = False
+    _why = str(exc)
+check("every frame still validates as an AnimaticFrame", _ok,
+      "" if _ok else _why)
+
+
+# ---------------------------------------------------------------------------
 # 9 · The EDL — the floor, and it has to be frame-exact
 # ---------------------------------------------------------------------------
 # ⚠ AN EDL IS A CONFORM REFERENCE, so "roughly right" is worthless: every

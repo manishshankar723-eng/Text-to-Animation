@@ -423,12 +423,24 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs }
     // part-way through a large upload — the browser does not tell JS which. So
     // the sentence has to name both, and name the size when there was one,
     // rather than sending the reader to check a server that is fine.
-    const big = payload instanceof FormData;
+    // ⚠ THREE DIFFERENT FAULTS ARRIVE HERE AS THE SAME TypeError, and the browser
+    // will not say which. Naming only the backend cost two long debugging
+    // sessions: once when uvicorn's --reload was mid-restart, and once when the
+    // backend was healthy the whole time and ONE attached file was being blocked
+    // before a byte left the machine (`net::ERR_ALPN_NEGOTIATION_FAILED`, 1-3ms,
+    // 0 bytes sent — security software scanning the upload). A single bad file
+    // takes the whole request with it, so the advice that actually works is to
+    // narrow the attachment down, not to go and check a server that is fine.
+    const withFiles = payload instanceof FormData;
     const offline = new Error(
-      `Couldn't complete the request to ${BASE}. Either the backend isn't ` +
-        `running (check uvicorn), or the connection dropped part-way` +
-        (big ? " — which is what a large upload usually hits." : ".") +
-        (big ? " Try again, or add the footage a folder at a time." : " Try again.")
+      `Couldn't complete the request to ${BASE}. ` +
+        (withFiles
+          ? "Either the backend isn't running (check uvicorn), or the upload was " +
+            "blocked before it left this machine — security software can do that, " +
+            "and ONE file is enough to stop the whole request. Try again with " +
+            "fewer files (a folder at a time) to find which one."
+          : "Either the backend isn't running (check uvicorn), or the connection " +
+            "dropped. Try again.")
     );
     offline.offline = true;
     throw offline;
