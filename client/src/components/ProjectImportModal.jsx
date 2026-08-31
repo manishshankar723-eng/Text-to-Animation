@@ -38,6 +38,14 @@ import * as api from "../api.js";
 // and the refusal is what offers the experimental route.
 const DOC_ACCEPT = ".xml,.edl,.zip,.prproj";
 
+// What the server will actually store, mirrored from `interchange.py`'s
+// IMAGE_EXTS / VIDEO_EXTS / AUDIO_EXTS. ⚠ FILTERED HERE RATHER THAN UPLOADED AND
+// REFUSED: "add a whole folder" otherwise sends the project file itself, every
+// Premiere auto-save beside it and any stray document in the tree — megabytes
+// the user waits for so the server can say no to them one at a time.
+const MEDIA_RE =
+  /\.(png|jpe?g|webp|bmp|gif|tiff?|mp4|mov|webm|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|oga|flac)$/i;
+
 export default function ProjectImportModal({ open, animaticId, busy, onClose, onApply }) {
   const [doc, setDoc] = useState(null);
   const [media, setMedia] = useState([]);
@@ -50,6 +58,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   const [guessed, setGuessed] = useState(false);
   const docRef = useRef(null);
   const mediaRef = useRef(null);
+  const folderRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -84,6 +93,26 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     setGuessed(false);
   };
 
+  // ⚠ IT ADDS, IT DOES NOT REPLACE — and replacing is what it used to do. The
+  // media for one project file is routinely spread over several folders
+  // (`Images/`, `Videos/`, `Audio/`), and a file picker can only ever see inside
+  // ONE folder at a time. So the second pick silently threw the first away, and
+  // what the user saw was an import where "only the one image I chose came in".
+  // ⚠ KEYED BY NAME, because that is what the server matches on: two files with
+  // the same name are the same file whichever folder they were picked from, and
+  // re-picking a folder should not double the upload.
+  const addMedia = (files) => {
+    const picked = Array.from(files || []).filter((f) => MEDIA_RE.test(f.name || ""));
+    if (!picked.length) return;
+    setMedia((prev) => {
+      const byName = new Map(prev.map((f) => [f.name.toLowerCase(), f]));
+      for (const file of picked) byName.set(file.name.toLowerCase(), file);
+      return Array.from(byName.values());
+    });
+    // The report belongs to the files it was read with.
+    setRead(null);
+  };
+
   const readFile = async (experimental = false) => {
     if (!doc || reading) return;
     setReading(true);
@@ -96,6 +125,11 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     } catch (e) {
       setRead(null);
       setError(e.message || "That file could not be read.");
+      // ⚠ A BACKEND THAT NEVER ANSWERED IS NOT A REFUSAL, so the guess was not
+      // actually spent. Hiding the offer here left the user looking at a
+      // network error with no way back to the button they had just pressed —
+      // seen live, when uvicorn's --reload happened to be restarting.
+      if (e?.offline) setGuessed(false);
     } finally {
       setReading(false);
     }
@@ -179,19 +213,57 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
             >
               🎞 Add the footage
             </button>
+            {/* ⚠ ONE CLICK PER FOLDER, not one per file. The media for a real
+                project is spread across `Images/`, `Videos/` and `Audio/`, and
+                picking the folder ABOVE those takes all three at once. Both
+                pickers add to the same list. */}
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => folderRef.current?.click()}
+              disabled={reading || busy}
+              title="Choose a whole folder — everything inside it, including its sub-folders. Only pictures, clips and sounds are taken."
+            >
+              📁 …or a whole folder
+            </button>
             <span className="tiny muted">
               {media.length
-                ? `${media.length} file${media.length === 1 ? "" : "s"}`
+                ? `${media.length} file${media.length === 1 ? "" : "s"} — choose again to add another folder`
                 : "Optional — without it, clips arrive as labelled gaps"}
             </span>
+            {media.length > 0 && (
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setMedia([]);
+                  setRead(null);
+                }}
+                disabled={reading || busy}
+                title="Forget the footage chosen so far and start again"
+              >
+                Clear
+              </button>
+            )}
             <input
               ref={mediaRef}
               type="file"
               multiple
               hidden
               onChange={(e) => {
-                setMedia(Array.from(e.target.files || []));
-                setRead(null);
+                addMedia(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={folderRef}
+              type="file"
+              multiple
+              hidden
+              webkitdirectory=""
+              directory=""
+              onChange={(e) => {
+                addMedia(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -281,8 +353,16 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
               and effects, titles, colour, speed and volume are not read at all.
             </span>
             <div className="an-xchg-actions" style={{ marginTop: "0.55rem" }}>
+              {/* ⚠ A BORDERED `.btn`, NOT A `ghost`, AND NOT `primary` EITHER.
+                  A ghost draws no border and no background, so on screen this
+                  read as a line of text rather than the control it is — and it
+                  is the only thing on the panel there is to press. Gold would
+                  be the other mistake: that would put the experimental route
+                  level with "Read the file" and undo the whole point of making
+                  the refusal come first. Visible, clearly a button, plainly the
+                  second choice. */}
               <button
-                className="btn ghost"
+                className="btn"
                 onClick={() => readFile(true)}
                 disabled={reading || busy}
                 title="Open Premiere's own save file with the experimental reader. Check every clip afterwards."

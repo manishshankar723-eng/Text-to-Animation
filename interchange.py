@@ -1858,6 +1858,31 @@ def _gunzip_capped(data: bytes, limit: int = PRPROJ_MAX_XML_BYTES) -> bytes:
     return out
 
 
+def _prproj_index(root) -> dict:
+    """Every object in the file, keyed by BOTH kinds of name it can be called by.
+
+    ⚠ **PREMIERE USES TWO KINDS OF REFERENCE AND MISSING ONE COSTS THE WHOLE
+    TIMELINE.** An object is named either by a numeric `ObjectID` or by a GUID
+    `ObjectUID`, and it is pointed at by `ObjectRef` or `ObjectURef` to match.
+    The first version of this reader followed only `ObjectRef` — and the link
+    from a track group to its TRACKS is an `ObjectURef`, so it found no tracks
+    at all, fell back to the flat route, and reported 167 clips it could not
+    place. One dictionary holds both: a GUID and a decimal id cannot collide.
+    """
+    found: dict = {}
+    for el in root.iter():
+        for attr in ("ObjectID", "ObjectUID"):
+            key = el.get(attr)
+            if key and key not in found:
+                found[key] = el
+    return found
+
+
+def _prproj_ref(el) -> str:
+    """What this element points at, whichever kind of reference it uses."""
+    return el.get("ObjectRef") or el.get("ObjectURef") or ""
+
+
 def _prproj_int(el, tag: str):
     """A direct child read as an integer, or None when there isn't one.
 
@@ -1876,6 +1901,24 @@ def _prproj_int(el, tag: str):
         return None
 
 
+def _prproj_looks_like_path(value: str) -> bool:
+    """Is this `<FilePath>` really a path, or one of Premiere's internal ids?
+
+    ⚠ **A TITLE HAS A `<FilePath>` AND IT IS A NUMBER.** A Graphic is drawn
+    inside Premiere and has no file on disk, but it still carries the tag — with
+    something like `1196574294` in it. Taken at face value that becomes a
+    "missing media" line reading `1196574294`, which names a file the user cannot
+    go and find and cannot ever match. A real path has a separator or an
+    extension; an id has neither.
+    """
+    value = (value or "").strip()
+    if not value:
+        return False
+    if "/" in value or "\\" in value:
+        return True
+    return "." in os.path.basename(value)
+
+
 def _prproj_is_timeline(tag: str) -> bool:
     """Objects a CLIP's walk must never climb into.
 
@@ -1892,6 +1935,38 @@ def _prproj_is_timeline(tag: str) -> bool:
         or tag.endswith("ProjectItem")
         or tag in ("Sequence", "Project")
     )
+
+
+def _prproj_times(el) -> tuple:
+    """A clip item's place on the timeline: `(start, end)` in ticks, or `(None, None)`.
+
+    ⚠ **THE TIMES ARE NESTED INSIDE THE CLIP, NOT A SEPARATE OBJECT.** Premiere
+    writes `<VideoClipTrackItem><ClipTrackItem><TrackItem><End>` — all one
+    element, no references in between. The first version of this reader looked
+    for `<Start>`/`<End>` as DIRECT children and followed `ObjectRef`s to find
+    the `TrackItem`, so on a real project it read nothing at all from any of the
+    167 clips it had found.
+
+    ⚠ **AND A `<Start>` OF ZERO IS SIMPLY NOT WRITTEN.** Of those 167, seventeen
+    had no `<Start>` element because they begin at the head of their track;
+    requiring one (as the first version did, demanding Start AND End together)
+    throws away every clip that starts the film. Missing means zero. `<End>` is
+    the one that must really be there — without it there is no clip.
+    """
+    # ⚠ NESTED FIRST, THEN THE ELEMENT ITSELF. `.//` searches DESCENDANTS and
+    # never the node it is called on, so a file that DOES keep its `TrackItem`
+    # as its own referenced object (which is the shape this reader was first
+    # written against) would answer None for the very object holding the times.
+    # Real Premiere nests it; both shapes are read.
+    track_item = el.find(".//TrackItem")
+    if track_item is None and el.tag.endswith("TrackItem"):
+        track_item = el
+    if track_item is None:
+        return None, None
+    end = _prproj_int(track_item, "End")
+    if end is None:
+        return None, None
+    return (_prproj_int(track_item, "Start") or 0), end
 
 
 def _prproj_detail(by_id: dict, objid: str) -> dict:
@@ -1913,15 +1988,15 @@ def _prproj_detail(by_id: dict, objid: str) -> dict:
             continue
         tag = el.tag
 
-        # ⚠ THE POSITION IS ON THE PLAIN `TrackItem`, NOT ON THE CLIP. Premiere
-        # builds a clip out of parts — `VideoClipTrackItem` → `ClipTrackItem` →
-        # `TrackItem` — and only the last of them carries `<Start>`/`<End>`.
-        # Both are required together: an object with one and not the other is a
-        # different kind of object that happens to share a tag name.
-        if got["start"] is None and tag.endswith("TrackItem"):
-            start, end = _prproj_int(el, "Start"), _prproj_int(el, "End")
-            if start is not None and end is not None:
+        # The place on the timeline — see `_prproj_times`, which reads it out of
+        # the clip's own nested `<TrackItem>`. It is tried on every object the
+        # walk reaches rather than only the first, so a file that DOES keep its
+        # `TrackItem` as a separate referenced object still works.
+        if got["start"] is None:
+            start, end = _prproj_times(el)
+            if end is not None:
                 got["start"], got["end"] = start, end
+        if tag.endswith("TrackItem"):
             disabled = (el.findtext("Disabled") or "").strip().lower()
             if disabled in ("true", "1"):
                 got["enabled"] = False
@@ -1938,12 +2013,12 @@ def _prproj_detail(by_id: dict, objid: str) -> dict:
         if not got["path"]:
             for path_tag in _PRPROJ_PATH_TAGS:
                 found = (el.findtext(path_tag) or "").strip()
-                if found:
+                if _prproj_looks_like_path(found):
                     got["path"] = found
                     break
 
         for child in el.iter():
-            ref = child.get("ObjectRef")
+            ref = _prproj_ref(child)
             if not ref or ref in seen:
                 continue
             target = by_id.get(ref)
@@ -1986,7 +2061,7 @@ def _prproj_walk(by_id: dict, root_ref: str):
             if track not in lanes:
                 lanes.append(track)
         for child in el.iter():
-            ref = child.get("ObjectRef")
+            ref = _prproj_ref(child)
             if ref:
                 visit(ref, track, depth + 1)
 
@@ -1994,15 +2069,20 @@ def _prproj_walk(by_id: dict, root_ref: str):
     return items, lanes
 
 
-def _prproj_rate_of(el) -> int:
-    """The fps of a sequence, worked back from its ticks-per-frame.
+def _prproj_rate_of(el) -> float:
+    """The fps of a sequence, worked back from its ticks-per-frame. EXACT.
 
     Premiere stores the RATE as the length of one frame in ticks, so 24fps is
-    10,584,000,000. Anything that does not come back as a sane whole number of
-    frames per second is ignored rather than believed.
+    10,584,000,000. ⚠ **THE EXACT VALUE IS RETURNED, NOT THE ROUNDED ONE**, so
+    the caller can tell 24 from 23.976 — a real project turned out to be
+    23.976, and rounding it away silently is how a long cut drifts.
+
+    ⚠ AND `<FrameRate>` IS ALSO WHAT AUDIO USES. The same tag carries 44100 and
+    48000 on the sound streams, so anything outside a sane picture rate is
+    ignored rather than believed.
     """
     if el is None:
-        return 0
+        return 0.0
     for tag in ("VideoFrameRate", "FrameRate", "VideoTimebase", "Timebase"):
         for node in el.iter(tag):
             try:
@@ -2010,13 +2090,13 @@ def _prproj_rate_of(el) -> int:
             except (TypeError, ValueError):
                 continue
             if ticks > 0:
-                fps = int(round(PRPROJ_TICKS_PER_SECOND / ticks))
+                fps = PRPROJ_TICKS_PER_SECOND / ticks
                 if 1 <= fps <= 240:
                     return fps
-    return 0
+    return 0.0
 
 
-def _prproj_rate_near(by_id: dict, seq_el, max_depth: int = 6) -> int:
+def _prproj_rate_near(by_id: dict, seq_el, max_depth: int = 6) -> float:
     """The frame rate belonging to THIS sequence, found by following its refs.
 
     ⚠ **NOT A DOCUMENT-WIDE SEARCH, AND THAT IS THE WHOLE POINT.** Premiere does
@@ -2033,7 +2113,7 @@ def _prproj_rate_near(by_id: dict, seq_el, max_depth: int = 6) -> int:
     there are thousands of them.
     """
     if seq_el is None:
-        return 0
+        return 0.0
     found = _prproj_rate_of(seq_el)
     if found:
         return found
@@ -2044,7 +2124,7 @@ def _prproj_rate_near(by_id: dict, seq_el, max_depth: int = 6) -> int:
         if depth >= max_depth:
             continue
         for child in el.iter():
-            ref = child.get("ObjectRef")
+            ref = _prproj_ref(child)
             if not ref or ref in seen:
                 continue
             seen.add(ref)
@@ -2057,7 +2137,7 @@ def _prproj_rate_near(by_id: dict, seq_el, max_depth: int = 6) -> int:
             if rate:
                 return rate
             queue.append((target, depth + 1))
-    return 0
+    return 0.0
 
 
 def _read_prproj(data: bytes, fps_hint: int) -> dict:
@@ -2103,35 +2183,73 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
             "even less of it may be right than usual."
         )
 
-    by_id: dict = {}
-    for el in root.iter():
-        objid = el.get("ObjectID")
-        if objid and objid not in by_id:
-            by_id[objid] = el
+    by_id = _prproj_index(root)
     if not by_id:
         raise ImportRefused(
             "Nothing inside that .prproj looked like a Premiere project. In "
             "Premiere: File › Export › Final Cut Pro XML, and bring that instead."
         )
 
-    # --- which sequence -----------------------------------------------------
-    # ⚠ A PROJECT HOLDS MANY SEQUENCES AND THIS IMPORTS ONE. Taking every clip
-    # item in the file would stack every sequence in the project on top of each
-    # other at frame zero. The biggest one is the guess, and the others are named
-    # so the user knows one was chosen for them.
-    sequences = [el for el in root.iter() if el.tag == "Sequence" and el.get("ObjectID")]
-    best, items, lanes = None, [], []
-    for seq in sequences:
-        found, seq_lanes = _prproj_walk(by_id, seq.get("ObjectID"))
-        clips = [i for i in found if i[0].endswith("ClipTrackItem")]
-        if len(clips) > len([i for i in items if i[0].endswith("ClipTrackItem")]):
-            best, items, lanes = seq, found, seq_lanes
-    # ⚠ ONLY WHEN ONE WAS ACTUALLY CHOSEN. If no sequence yielded a clip the
-    # flat route runs instead, and saying "the one with the most clips was taken"
+    # --- which timeline -----------------------------------------------------
+    # ⚠ **A REAL PROJECT HAS NO `<Sequence>` OBJECT IN IT AT ALL.** The first
+    # version looked for one, found none, and dropped straight to the flat route
+    # on a file whose tracks were perfectly readable. What a sequence actually IS
+    # here is a `VideoTrackGroup` and an `AudioTrackGroup` — each holding
+    # `<Tracks>`, each `<Track>` pointing at a `VideoClipTrack` BY `ObjectURef`,
+    # and that track listing its clips by `ObjectRef`. `<Sequence>` is still
+    # tried first in case another Premiere version writes one.
+    #
+    # ⚠ A PROJECT HOLDS MANY TIMELINES AND THIS IMPORTS ONE. Taking every clip in
+    # the file would stack every sequence on top of the others at frame zero, so
+    # the busiest is the guess and the user is told one was chosen.
+    def _key(el):
+        return el.get("ObjectID") or el.get("ObjectUID") or ""
+
+    def _busiest(roots):
+        """The root with the most CLIPS, and what walking it found."""
+        best_el, best_items, best_lanes = None, [], []
+        for candidate in roots:
+            found, found_lanes = _prproj_walk(by_id, _key(candidate))
+            clips = [i for i in found if i[0].endswith("ClipTrackItem")]
+            if len(clips) > len([i for i in best_items if i[0].endswith("ClipTrackItem")]):
+                best_el, best_items, best_lanes = candidate, found, found_lanes
+        return best_el, best_items, best_lanes
+
+    sequences = [el for el in root.iter() if el.tag == "Sequence" and _key(el)]
+    if sequences:
+        best, items, lanes = _busiest(sequences)
+        timelines = len(sequences)
+    else:
+        # ⚠ PICTURE AND SOUND ARE SEPARATE ROOTS HERE, so each is chosen on its
+        # own and the two are merged. `DataTrackGroup` holds captions and markers
+        # and is deliberately left alone.
+        groups = [el for el in root.iter() if el.tag.endswith("TrackGroup") and _key(el)]
+        video_root, video_items, video_lanes_ = _busiest(
+            [g for g in groups if g.tag.startswith("Video")])
+        audio_root, audio_items, audio_lanes_ = _busiest(
+            [g for g in groups if g.tag.startswith("Audio")])
+        best = video_root if video_root is not None else audio_root
+        items = video_items + audio_items
+        lanes = video_lanes_ + audio_lanes_
+        timelines = max(
+            len([g for g in groups if g.tag.startswith("Video")]),
+            len([g for g in groups if g.tag.startswith("Audio")]),
+        )
+        # ⚠ SAID OUT LOUD, because picture and sound were chosen SEPARATELY: with
+        # nothing in the file tying a picture group to its sound group, two
+        # sequences in one project can in principle contribute a row each.
+        if video_root is not None and audio_root is not None and timelines > 1:
+            warnings.append(
+                "This project holds more than one sequence, and nothing in the "
+                "file says which sound belongs to which picture — the busiest of "
+                "each was taken. Check that the sound matches the cut."
+            )
+    # ⚠ ONLY WHEN ONE WAS ACTUALLY CHOSEN. If nothing yielded a clip the flat
+    # route runs instead, and saying "the one with the most clips was taken"
     # would describe something that did not happen.
-    if len(sequences) > 1 and best is not None:
+    if timelines > 1 and best is not None and sequences:
         warnings.append(
-            f"That project holds {len(sequences)} sequences and only one can be "
+            f"That project holds {timelines} sequences and only one can be "
             "imported; the one with the most clips was taken."
         )
 
@@ -2175,17 +2293,29 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
     # ⚠ THE CHOSEN SEQUENCE'S OWN RATE FIRST, and both fallbacks below say so.
     # A wrong rate does not look like an error: every clip is simply the wrong
     # length and the whole cut drifts, which is why neither fallback is silent.
-    fps = _prproj_rate_near(by_id, best)
-    if not fps:
-        loose = _prproj_rate_of(root)
-        if loose:
-            fps = loose
+    exact = _prproj_rate_near(by_id, best)
+    if not exact:
+        exact = _prproj_rate_of(root)
+        if exact:
             warnings.append(
                 f"The frame rate was not on that sequence, so the first one found "
-                f"anywhere in the project was used ({fps} fps). If this project "
-                f"holds sequences at different rates, check the clip lengths."
+                f"anywhere in the project was used ({exact:.3f} fps). If this "
+                f"project holds sequences at different rates, check the clip lengths."
             )
-    if not fps:
+    if exact:
+        fps = max(1, int(round(exact)))
+        # ⚠ 23.976 AND 29.97 ARE REAL AND THIS PROJECT CANNOT HOLD THEM.
+        # `AnimaticSettings.fps` is a whole number, so an NTSC rate is READ as the
+        # nearest one and NAMED rather than silently rounded — over a long cut it
+        # is about a frame a minute, which is worth knowing and not worth
+        # refusing an import over.
+        if abs(exact - fps) > 0.001:
+            warnings.append(
+                f"That sequence is {exact:.3f} fps (NTSC). It was read as {fps} fps, "
+                f"because this app's timeline only holds whole numbers \u2014 over a "
+                f"long cut expect a frame or two of drift."
+            )
+    else:
         fps = max(1, int(fps_hint))
         warnings.append(
             f"The frame rate could not be found in that .prproj, so it was read at "
@@ -2411,7 +2541,7 @@ def to_project(
     }
     files = incoming.get("files") or {}
     seen: dict = {}
-    tally = {"moved": 0, "shortened": 0}
+    tally = {"moved": 0, "shortened": 0, "silent": 0}
 
     def source_for(key: str):
         """One file, resolved once — several clips usually share it."""
@@ -2516,6 +2646,7 @@ def to_project(
                     or clip.get("name")
                     or "an audio clip"
                 )
+                tally["silent"] += 1
                 continue
             start_ms = frames_to_ms(clip["start"], fps)
             # ⚠ SAME ORDER AS THE PICTURE: length from the original start, then
@@ -2553,6 +2684,18 @@ def to_project(
             f"{tally['shortened']} clip(s) were longer than the "
             f"{IMPORT_MAX_CLIP_MS // 60_000} minutes a single clip can be here and "
             "were shortened to fit. They are in the right places; their tails are not."
+        )
+    # ⚠ "0 sounds on 0 rows" IS TRUE AND STILL MISLEADING ON ITS OWN. The reader
+    # found the sound; what it could not find was the FILES, and a summary line
+    # reading zero looks like a file with no audio in it. Sound gets no
+    # placeholder (see above), so this sentence is the only thing that can say
+    # the difference between "there was none" and "none of it arrived".
+    if tally["silent"]:
+        report["warnings"].append(
+            f"{tally['silent']} sound clip(s) were found but none of their files "
+            "were attached, so no sound was brought in. Pictures become labelled "
+            "cards; sound cannot, because a silent clip is a gap you cannot see. "
+            "Attach the audio files and import again to get them."
         )
     if tally["moved"]:
         report["warnings"].append(

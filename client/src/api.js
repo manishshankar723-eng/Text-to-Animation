@@ -343,7 +343,18 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeout
         );
       }
       if (i >= attempts) throw e;
-      await new Promise((r) => setTimeout(r, delayMs));
+      // ⚠ THE WAIT DOUBLES, because a flat 700ms three times covers 1.4s and a
+      // `--reload` restart is not that quick: uvicorn re-imports the whole app
+      // and reconnects to Mongo, which is three to five seconds. Paid for live
+      // — an editor source change restarted the backend while the user was
+      // mid-import, all three attempts hit a refused connection inside 3ms
+      // (0 bytes sent, so it was never an upload problem at all), and what they
+      // saw was "the backend isn't running" about a server that was fine two
+      // seconds later. 700/1400/2800/5600 rides out a real restart.
+      // ⚠ Only a REFUSED connection gets here; a timeout threw above. So the
+      // extra patience is spent only when the server is genuinely unreachable,
+      // which is exactly when it is worth spending.
+      await new Promise((r) => setTimeout(r, delayMs * 2 ** (i - 1)));
     } finally {
       clearTimeout(timer);
     }
@@ -389,7 +400,7 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs }
     res = await fetchWithRetry(
       `${BASE}${path}`,
       { method, headers, body: payload },
-      3,
+      5,
       700,
       timeoutMs || REQUEST_TIMEOUT_MS
     );
@@ -399,10 +410,28 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs }
     // timeout message says the server is UP but stuck, which is the harder
     // case to diagnose and the one worth naming.
     if (e?.message?.includes("didn't respond")) throw e;
-    throw new Error(
-      `Can't reach the server at ${BASE}. Make sure the backend is running ` +
-        `(uvicorn) and reachable, then try again.`
+    // ⚠ MARKED, because "the server said no" and "the server never answered"
+    // are different facts and a caller can act on the difference. The import
+    // dialog uses it: a `.prproj` whose experimental read died on a dead
+    // backend was never actually tried, so the offer to try it must stay up.
+    // A flag, not a string match — this sentence is written for a person to
+    // read and will be reworded.
+    // ⚠ THIS MESSAGE USED TO BLAME THE BACKEND AND ONLY THE BACKEND, and that
+    // cost a long debugging session: a 35MB import failed here while the server
+    // was up, healthy and answering every other request. `fetch` rejects with
+    // the SAME TypeError whether nothing was listening or the connection died
+    // part-way through a large upload — the browser does not tell JS which. So
+    // the sentence has to name both, and name the size when there was one,
+    // rather than sending the reader to check a server that is fine.
+    const big = payload instanceof FormData;
+    const offline = new Error(
+      `Couldn't complete the request to ${BASE}. Either the backend isn't ` +
+        `running (check uvicorn), or the connection dropped part-way` +
+        (big ? " — which is what a large upload usually hits." : ".") +
+        (big ? " Try again, or add the footage a folder at a time." : " Try again.")
     );
+    offline.offline = true;
+    throw offline;
   }
 
   if (res.status === 401) {

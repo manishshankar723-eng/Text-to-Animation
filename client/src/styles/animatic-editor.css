@@ -2273,6 +2273,57 @@
 }
 .an-xchg-actions {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   margin-left: auto;
+}
+/* ⚠ TWO BUTTONS SIDE BY SIDE ARE ONE PAIR AND MUST BE ONE SIZE — and this
+   dialog shipped with them mismatched, which is the fault the rest of the app
+   already has a rule for. `.btn.primary` in `base.css` carries a global
+   `margin-top: 1.1rem` because it is normally the last control in a FORM; in a
+   ROW that margin pushes the gold button down, the ghost beside it stretches to
+   the taller line, and Cancel ends up visibly bigger than the button that does
+   the work. Every button row in the app resets it (`.export-modal-actions`,
+   `.an-name-actions`, `.plan-chat-input`, the explore and admin bars) — this row
+   was simply missed.
+   ⚠ AND `margin-top: 0` ALONE IS NOT ENOUGH, which is why this copies the
+   `.export-modal-actions` rule rather than half of it: a gold `.btn.primary`
+   carries its own glow and a heavier weight, so beside a ghost it still reads
+   as the larger object. Fixing the height and zeroing the vertical padding is
+   what makes every variant in the row the SAME rectangle, whatever it holds —
+   including the primary's spinner, which is why the box is a centred inline-flex
+   with a gap rather than plain text. */
+.an-xchg-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 40px;
+  /* ⚠ A FLOOR, NOT A STRETCH — the same trick `.an-gen-actions` uses. It makes
+     the pair identical in the state they are usually seen in ("Cancel" beside
+     "Read the file" / "Download"), which is the whole complaint. It is not
+     `flex: 1`, because the primary's label GROWS ("Add 12 clips to the
+     timeline") and an equal share would then blow Cancel up to match it. */
+  min-width: 7.5rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+  margin-top: 0;
+  box-sizing: border-box;
+}
+/* The two file pickers are the same control twice, one under the other, so they
+   get the same box for the same reason. The footage one stays a `ghost` — the
+   document is required and the footage is not, and that hierarchy is deliberate
+   — but a lighter button is not a SMALLER one. */
+.an-xchg-pick .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+  margin-top: 0;
+  box-sizing: border-box;
 }

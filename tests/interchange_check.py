@@ -45,6 +45,7 @@ Needs Pillow (already a dependency). No server, no ffmpeg, no network.
 """
 
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -1182,9 +1183,13 @@ check("…and says that is what it did",
 # ⚠ THE ROUTE'S OWN EMPTY-RESULT MESSAGE IS "There was nothing on that timeline
 # to bring in", which is wrong twice over here: there WAS something, and the
 # reason it did not arrive is this reader giving up, not the file being empty.
+# ⚠ `<End>`, NOT `<Start>`. A missing or unreadable `<Start>` means ZERO — that
+# is how Premiere really writes a clip at the head of a track, and treating it
+# as unreadable threw away every clip that starts the film. `<End>` is the one
+# a clip cannot be without.
 BAD_TIMES = PRPROJ_XML
-for _n in (0, _ticks(2), _ticks(0.5), _ticks(1.75)):
-    BAD_TIMES = BAD_TIMES.replace(f"<Start>{_n}</Start>", "<Start>not-a-number</Start>")
+for _n in (_ticks(2), _ticks(3.5), _ticks(1.5), _ticks(2.25)):
+    BAD_TIMES = BAD_TIMES.replace(f"<End>{_n}</End>", "<End>not-a-number</End>")
 try:
     interchange.read_document(
         _gzip.compress(BAD_TIMES.encode("utf-8")), "x.prproj", fps_hint=25, experimental=True
@@ -1194,6 +1199,158 @@ except interchange.ImportRefused as exc:
     check("clips found but none readable is refused, not reported as empty", True)
     check("…and the sentence says the READER gave up, not that the file was empty",
           "none of their positions" in str(exc).lower(), str(exc)[:140])
+
+
+# --- the shape a REAL Premiere file turned out to have ---------------------
+# ⚠ **EVERYTHING ABOVE THIS LINE WAS WRITTEN AGAINST A GUESS, AND THE GUESS WAS
+# WRONG.** The first live test — one real `.prproj` from Premiere 2026 — found
+# 167 clips and could not place a single one, and the fixture above had been
+# passing the whole time. That is the trap this file's own docstring names: a
+# reader checked only against a hand-written fixture proves it can read that
+# fixture. Three things were different in the real file, and each one on its own
+# was fatal:
+#
+#   1. **`ObjectURef`.** Premiere names objects by a numeric `ObjectID` OR a GUID
+#      `ObjectUID`, and points at them with `ObjectRef` OR `ObjectURef`. The link
+#      from a track group to its TRACKS is the GUID kind — follow only the
+#      numeric one and the timeline has no tracks at all.
+#   2. **The times are NESTED, not referenced.** `<VideoClipTrackItem>` contains
+#      `<ClipTrackItem>` contains `<TrackItem>` contains `<End>` — one element,
+#      no references in between.
+#   3. **A `<Start>` of zero is not written down.** Seventeen of the 167 had no
+#      `<Start>`; demanding one throws away every clip at the head of a track.
+#
+# So this fixture is built to the real file's shape, and the one above is kept as
+# the OTHER shape a Premiere version might write. Both are read.
+_UID_A = "de531674-9015-4a3a-ad0d-9226d691ca65"
+_UID_B = "46f7e0a6-89c0-4bd4-a37e-b218a406da14"
+
+
+def _real_clip(oid, name, path, end, start=None, media="Video"):
+    """A clip the way Premiere really writes one: everything nested, and no
+    `<Start>` element at all when the clip begins at zero."""
+    start_el = f"<Start>{start}</Start>" if start is not None else ""
+    return f"""
+  <{media}ClipTrackItem ObjectID="{oid}" ClassID="aab0946b" Version="1">
+    <ClipTrackItem Version="1">
+      <ComponentOwner Version="1"><Components ObjectRef="{oid + 9}"/></ComponentOwner>
+      <TrackItem Version="4">
+        <Node Version="1"><Properties Version="1"/></Node>
+        {start_el}<End>{end}</End>
+      </TrackItem>
+      <SubClip ObjectRef="{oid + 1}"/>
+    </ClipTrackItem>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </{media}ClipTrackItem>
+  <VideoComponentChain ObjectID="{oid + 9}" Version="1"><DefaultMotion>true</DefaultMotion></VideoComponentChain>
+  <SubClip ObjectID="{oid + 1}" ClassID="62f4ee9f" Version="1">
+    <Clip ObjectRef="{oid + 2}"/>
+    <Name>{name}</Name>
+  </SubClip>
+  <VideoClip ObjectID="{oid + 2}" ClassID="1c31d4c6" Version="1">
+    <Source ObjectRef="{oid + 3}"/>
+    <InPoint>0</InPoint>
+    <OutPoint>{end}</OutPoint>
+  </VideoClip>
+  <VideoMediaSource ObjectID="{oid + 3}" Version="1">
+    <Media ObjectURef="media-uid-{oid}"/>
+  </VideoMediaSource>
+  <Media ObjectUID="media-uid-{oid}" Version="1">
+    <ActualMediaFilePath>{path}</ActualMediaFilePath>
+    <Title>{path.replace(chr(92), "/").rsplit("/", 1)[-1]}</Title>
+  </Media>"""
+
+
+# 23.976 fps, exactly as the real file: 254016000000 / 10594584000.
+_NTSC_TICKS = 10594584000
+REAL_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3">
+  <VideoTrackGroup ObjectID="260" ClassID="1d7fbd0a" Version="1">
+    <TrackGroup Version="1">
+      <Tracks Version="1">
+        <Track Index="0" ObjectURef="{_UID_A}"/>
+        <Track Index="1" ObjectURef="{_UID_B}"/>
+      </Tracks>
+    </TrackGroup>
+    <FrameRate>{_NTSC_TICKS}</FrameRate>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoTrackGroup>
+  <VideoClipTrack ObjectUID="{_UID_A}" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><Track Version="1"><Index>0</Index></Track>
+      <ClipItems Version="1"><TrackItems Version="1">
+        <TrackItem Index="0" ObjectRef="700"/>
+        <TrackItem Index="1" ObjectRef="720"/>
+      </TrackItems></ClipItems>
+    </ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrack ObjectUID="{_UID_B}" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><Track Version="1"><Index>1</Index></Track>
+      <ClipItems Version="1"><TrackItems Version="1">
+        <TrackItem Index="0" ObjectRef="740"/>
+      </TrackItems></ClipItems>
+    </ClipTrack>
+  </VideoClipTrack>
+  <AudioTrackGroup ObjectID="261" ClassID="2d7fbd0a" Version="1">
+    <TrackGroup Version="1">
+      <Tracks Version="1"><Track Index="0" ObjectURef="audio-track-uid"/></Tracks>
+    </TrackGroup>
+    <FrameRate>5292000</FrameRate>
+  </AudioTrackGroup>
+  <AudioClipTrack ObjectUID="audio-track-uid" ClassID="aaa2" Version="1">
+    <ClipTrack Version="1">
+      <ClipItems Version="1"><TrackItems Version="1">
+        <TrackItem Index="0" ObjectRef="760"/>
+      </TrackItems></ClipItems>
+    </ClipTrack>
+  </AudioClipTrack>
+{_real_clip(700, "Opening", r"C:\Footage\open.png", end=_NTSC_TICKS * 48)}
+{_real_clip(720, "Second", r"C:\Footage\two.mp4", end=_NTSC_TICKS * 120, start=_NTSC_TICKS * 48)}
+{_real_clip(740, "Overlay", r"C:\Footage\logo.png", end=_NTSC_TICKS * 24)}
+{_real_clip(760, "Voice", r"C:\Footage\vo.wav", end=_NTSC_TICKS * 120, media="Audio")}
+</PremiereData>
+"""
+
+real = interchange.read_document(
+    _gzip.compress(REAL_XML.encode("utf-8")), "Real.prproj", fps_hint=25, experimental=True
+)
+# ⚠ STRUCTURED, NOT FLAT. The whole failure was that a perfectly readable
+# timeline fell through to the flat route, so this is the assertion that would
+# have caught it.
+check("a real-shaped .prproj reads by the STRUCTURED route, not the flat one",
+      real.get("route") == "structured", str(real.get("route")))
+check("…with no <Sequence> object anywhere in it, which a real one has none of",
+      "<Sequence" not in REAL_XML, "")
+check("…its tracks reached through ObjectURef, not ObjectRef",
+      len(real["video"]) == 2, f'{len(real["video"])} picture rows')
+check("…and its sound row too", len(real["audio"]) == 1, str(len(real["audio"])))
+check("…every clip placed, none skipped",
+      sum(len(l["clips"]) for l in real["video"]) == 3
+      and sum(len(l["clips"]) for l in real["audio"]) == 1,
+      str([[c["name"] for c in l["clips"]] for l in real["video"]]))
+# ⚠ THE CLIP WITH NO <Start> ELEMENT. Premiere omits it at zero; the first
+# version treated that as "no position" and threw the clip away.
+check("a clip with NO <Start> element starts at zero, not nowhere",
+      real["video"][0]["clips"][0]["start"] == 0
+      and real["video"][0]["clips"][0]["name"] == "Opening",
+      str(real["video"][0]["clips"][0]))
+check("…and the one after it keeps the start it does have",
+      real["video"][0]["clips"][1]["start"] == 48,
+      str(real["video"][0]["clips"][1]["start"]))
+check("times come out of the NESTED TrackItem, so the lengths are right",
+      real["video"][0]["clips"][0]["end"] == 48
+      and real["video"][0]["clips"][1]["end"] == 120,
+      str([(c["start"], c["end"]) for c in real["video"][0]["clips"]]))
+# ⚠ 23.976, WHICH THIS APP CANNOT HOLD. Read as 24 and NAMED — the audio group's
+# own 48000 "FrameRate" beside it must not be mistaken for a picture rate.
+check("an NTSC 23.976 sequence is read as 24 and said out loud",
+      real["fps"] == 24 and any("23.976" in w for w in real["warnings"]),
+      f'{real["fps"]} / {[w for w in real["warnings"] if "NTSC" in w]}')
+check("…and the sound track's 48000 is not mistaken for a frame rate",
+      real["fps"] == 24, str(real["fps"]))
+check("media is found through ObjectURef, by basename",
+      sorted(f["name"] for f in real["files"].values())
+      == ["logo.png", "open.png", "two.mp4", "vo.wav"],
+      str(sorted(f["name"] for f in real["files"].values())))
 
 
 # ---------------------------------------------------------------------------
@@ -1497,6 +1654,9 @@ modal = open(
 ).read()
 apijs = open(os.path.join(root, "client", "src", "api.js"), encoding="utf-8").read()
 prproj_src = open(os.path.join(root, "interchange.py"), encoding="utf-8").read()
+editorcss = open(
+    os.path.join(root, "client", "src", "styles", "animatic-editor.css"), encoding="utf-8"
+).read()
 
 check("the gear offers both directions",
       '"project-import"' in editor and '"project-file"' in editor)
@@ -1569,6 +1729,66 @@ check("what comes back is badged a guess on screen",
 check("the flag reaches the server as form data",
       'fd.append("experimental"' in apijs, "")
 
+# --- the footage picker ADDS, because one project's media is in many folders
+# ⚠ REPORTED FROM A LIVE TEST: "maine ek image select kiya to sirf wahi image
+# aaya". It was not the user's mistake. A file picker can only see inside ONE
+# folder at a time, and a real project keeps its media in `Images/`, `Videos/`
+# and `Audio/` — so a picker that REPLACES its list on every pick can never
+# collect more than one of them, and silently drops what was chosen before.
+check("choosing footage adds to what is there rather than replacing it",
+      "const addMedia" in modal and "setMedia((prev)" in modal, "")
+check("…de-duplicated by NAME, which is what the server matches on",
+      "byName.set(file.name.toLowerCase()" in modal, "")
+check("…and a whole folder can be taken in one go",
+      "webkitdirectory" in modal, "")
+check("…with only real media sent, not the project file beside it",
+      "MEDIA_RE.test" in modal, "")
+check("…and a way to undo the choice",
+      "Forget the footage chosen so far" in modal, "")
+# ⚠ SEEN LIVE: uvicorn's --reload was restarting when the button was pressed, so
+# the guess died on a dead backend and the offer to try it vanished — leaving a
+# network error and no way back to the button. A server that never answered said
+# nothing about the file, so the offer must survive it. A FLAG from `api.js`,
+# not a match on the sentence, which is written for a person and will be reworded.
+check("a dead backend does not count as having spent the .prproj offer",
+      "e?.offline" in modal and "offline.offline = true" in apijs, "")
+# ⚠ AND THE RETRY HAS TO OUTLAST A `--reload` RESTART. Paid for live: a source
+# edit restarted uvicorn mid-import, all three attempts hit a refused connection
+# inside 3ms — 0 bytes sent, so it was never the upload — and the user was told
+# the backend was not running about a server that was fine two seconds later. A
+# flat 700ms x3 covers 1.4s; a restart that reconnects to Mongo takes 3-5s.
+check("a refused connection is retried with a DOUBLING wait, not a flat one",
+      "delayMs * 2 ** (i - 1)" in apijs, "")
+# ⚠ WHITESPACE-INSENSITIVE, because the two arguments sit on their own lines
+# and any reformat would break a literal match without the behaviour changing.
+# `5` alone appears everywhere in this file and the delay alone says nothing
+# about how many times it is waited, so they are matched TOGETHER.
+_retry_args = re.sub(r"\s+", " ", apijs)
+check("…for long enough to outlast a backend restart",
+      "body: payload }, 5, 700," in _retry_args, "attempts/delay pair not found")
+
+# --- two buttons side by side are one pair, and one size -------------------
+# ⚠ REPORTED FROM A SCREENSHOT, AND IT IS A REPEAT. `.btn.primary` in `base.css`
+# carries a global `margin-top: 1.1rem` because it is normally the last control
+# in a FORM. In a ROW it pushes the gold button down; the ghost beside it
+# stretches to the taller line and ends up BOTTOM-aligned and visibly bigger.
+# Nine other rows in the app already reset it, each with a comment; this dialog
+# shipped without one. Pinned because it costs one line to lose again and the
+# only thing that reports it is somebody looking at the screen.
+# ⚠ SLICED TO THE CLOSING BRACE, not to a fixed number of characters. A fixed
+# window silently stops covering the end of the rule the moment somebody adds a
+# comment inside it — which is exactly what happened the first time this was
+# written, and it read as the FIX being missing rather than the slice.
+_actions_at = editorcss.index(".an-xchg-actions .btn {")
+_actions_css = editorcss[_actions_at: editorcss.index("}", _actions_at) + 1]
+check("the dialog's button row cancels the primary's form margin",
+      "margin-top: 0" in _actions_css, _actions_css[:80])
+check("…and gives both buttons the same box, not just the same minimum",
+      "height: 40px" in _actions_css and "min-width" in _actions_css, "")
+check("…and the row centres them rather than letting one stretch taller",
+      "align-items: center" in editorcss[
+          editorcss.index(".an-xchg-actions {"): _actions_at], "")
+
 # ⚠ AND THE FOUR THAT MATTER ARE PROVED TO READ **False** WHEN THE CODE IS
 # BROKEN. A source check that cannot fail is decoration, and three of these guard
 # faults that a browser would show only by ACTING NORMAL — the import looks
@@ -1622,6 +1842,23 @@ for _name, _good, _broken, _guard in (
         prproj_src,
         prproj_src.replace("experimental: bool = False", "experimental: bool = True"),
         lambda b: "experimental: bool = False" in b,
+    ),
+    # ⚠ The one the user reported twice. Losing this line does not break a test
+    # anywhere else — it just makes the pair look like two different controls.
+    (
+        "the primary's form margin left on in a button row",
+        _actions_css,
+        _actions_css.replace("margin-top: 0;", ""),
+        lambda b: "margin-top: 0" in b,
+    ),
+    # ⚠ The one the live test found. Going back to `setMedia(Array.from(...))`
+    # looks harmless and costs the user every folder but the last — with no
+    # error, just an import where most of the pictures are missing.
+    (
+        "the footage picker replacing its list instead of adding to it",
+        modal,
+        modal.replace("setMedia((prev) => {", "setMedia(() => {"),
+        lambda b: "setMedia((prev) => {" in b,
     ),
 ):
     check(f"the guard against “{_name}” really can fail",
