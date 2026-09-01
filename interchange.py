@@ -92,6 +92,7 @@ loudly and partially rather than quietly and completely, and the refusal that
 points at Final Cut Pro XML remains the DEFAULT answer.
 """
 
+import base64
 import json
 import os
 import posixpath
@@ -103,6 +104,7 @@ import zlib
 import uuid
 from urllib.parse import quote, unquote
 
+import animatic_fonts
 import animatic_render
 
 # Where the media goes INSIDE the zip, and the first half of every relative
@@ -1815,6 +1817,13 @@ PRPROJ_MAX_XML_BYTES = 96 * 1024 * 1024
 # exists only so a file with a cycle in it cannot hang the request.
 PRPROJ_MAX_DEPTH = 32
 
+# The longest caption a Premiere graphic is allowed to hand over. It is a guard
+# on a BINARY SCAN, not a style rule: `_prproj_arb_strings` decides where a
+# string ends by trusting a length it read out of the file, so without a ceiling
+# a corrupt four bytes could claim the rest of the blob. Long enough that no real
+# title is ever cut (the longest in the reference project is 46 characters).
+PRPROJ_MAX_TEXT_CHARS = 2000
+
 # Where Premiere writes the thing this app actually needs: the path of the file
 # on the machine that saved the project. Only the BASENAME is ever used — see
 # `to_project`, which matches media by name because a path from someone else's
@@ -1969,6 +1978,364 @@ def _prproj_times(el) -> tuple:
     return (_prproj_int(track_item, "Start") or 0), end
 
 
+def _prproj_in_point(el):
+    """How far into the FILE this clip starts reading, in ticks, or None.
+
+    ⚠ NESTED, EXACTLY LIKE THE TIMES ABOVE — and missing it cost a whole
+    soundtrack. Premiere writes `<AudioClip><Clip><InPoint>`, so `<InPoint>` is a
+    GRANDCHILD of the clip object, and `_prproj_int` reads a DIRECT child. Every
+    clip therefore answered None, `to_project` read that as 0, and every clip
+    played its file **from the beginning**.
+
+    ⚠ IT IS INVISIBLE UNTIL ONE FILE IS CUT INTO SEVERAL CLIPS. A timeline of
+    whole takes has every in-point at 0 already, which is why the four video
+    clips in the first real import looked perfectly correct. The same project's
+    voiceover was ONE mp3 razored into 23 pieces with the silences taken out —
+    and all 23 restarted the recording, so the film played its first few seconds
+    over and over. Reported as "har clip audio ka starting hi play ho raha hai".
+
+    ⚠ AND `MasterClip` CARRIES NO `<InPoint>` (verified against a real project:
+    only `VideoClip` and `AudioClip` do, both at the same depth), so searching
+    descendants cannot pick up the bin's in-point by mistake — which is the one
+    thing that would make this worse than reading nothing.
+    """
+    if el is None:
+        return None
+    # `.//` searches descendants and never the node itself, so the element's own
+    # `<InPoint>` is tried too — the shape the hand-built fixture was written in.
+    node = el.find(".//InPoint")
+    if node is None:
+        node = el.find("InPoint")
+    if node is None or not (node.text or "").strip():
+        return None
+    try:
+        return int(float(node.text.strip()))
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# THE LETTERING — reading a Premiere title out of a .prproj
+# ---------------------------------------------------------------------------
+# ⚠ **THIS APP TOLD USERS THAT PREMIERE TITLES COULD NOT BE IMPORTED, AND THAT
+# WAS WRONG.** It was wrong because only the clip's `<Name>` was ever looked at.
+# Every title, caption and lower third in a Premiere project is a clip NAMED
+# "Graphic" — the name says nothing at all — so a project with forty captions in
+# it reads as forty empty clips, and the honest-sounding warning that came out
+# of that ("any LETTERING has to be typed again") sent users off to retype work
+# the file was holding the whole time.
+#
+# The words are one level further in, on a `<VideoFilterComponent>` whose
+# `<MatchName>` is `AE.ADBE Text`, and they are there TWICE:
+#
+#   1. `<InstanceName>` — Premiere names a text layer after its own text. Plain
+#      XML, trivially readable, and STALE the moment somebody renames the layer
+#      in Premiere, which is a thing people do.
+#   2. The `Source Text` parameter's `<StartKeyframeValue>` — a base64 FlatBuffer
+#      holding the real string. It cannot go stale, so it is read FIRST and
+#      `<InstanceName>` is only the fallback.
+#
+# ⚠ **THE BLOB IS READ FOR ITS STRINGS AND NOTHING ELSE.** A FlatBuffer addresses
+# its fields through a vtable, so field N sits at a different byte offset in
+# every record — 83 records out of one real project were measured and the floats
+# moved in every one. What does NOT move is how a string is encoded:
+# `<uint32 length><bytes><NUL>`. Two appear in every text record, in this order,
+# and that is the whole of what this reads:
+#
+#       [0] the FONT's PostScript name  ("Tahoma", "Tahoma-Bold")
+#       [1] the TEXT                    ("like a database, a calendar")
+#
+# Anything that needs a vtable to find is deliberately NOT attempted — and the
+# FILL COLOUR, which is the first thing anybody asks for, is exactly that. See
+# `_prproj_text_style` for where it was looked for and why it is not there.
+_PRPROJ_TEXT_MATCH = "AE.ADBE Text"
+_PRPROJ_SHAPE_MATCH = "AE.ADBE Shape"
+
+# How big the type is. Premiere keeps the point size inside the FlatBuffer (not
+# reachable — see above) and the `Scale` percentage in plain XML (reachable), so
+# the SIZE has to be carried by the scale and this constant.
+#
+# ⚠ IT IS FITTED, NOT GUESSED, and the fit is checkable. Premiere stores a text
+# layer's position as the LEFT EDGE of the line, so for a row of CENTRED captions
+# `left + half the line's width` has to come back to 0.5 for every one of them.
+# Solving that over 78 captions of 10–46 characters gives a mean of 0.4956 with a
+# spread of 0.013 — this constant reproduces where Premiere actually put the
+# words to within half a percent of the frame width. 0.85 and 0.95 both come out
+# visibly worse (0.4866 / 0.5046). `tests/interchange_check.py` §8h pins the fit,
+# so a tidier-looking number cannot be swapped in unnoticed.
+PRPROJ_TEXT_SIZE_PER_SCALE = 0.9
+# Average glyph advance as a fraction of the size, used ONLY to turn that left
+# edge into a centre. Half the size is the ordinary rule of thumb for a
+# proportional sans, and it is what the fit above was solved with.
+PRPROJ_TEXT_ASPECT = 0.5
+# The frame a caption is measured in. `size_px` means "pixels at 1080p"
+# everywhere else in this app, so the width has to be worked in the same frame or
+# the centre lands somewhere else the moment the project is 720p.
+PRPROJ_TEXT_FRAME_W = 1920
+
+# Premiere writes a font's POSTSCRIPT name ("Tahoma-Bold", "ArialMT"); this app
+# ships fourteen faces and can only draw one of those. The mapping is by FAMILY,
+# lower-cased, with the weight suffix already stripped — so "Tahoma-Bold" and
+# "Tahoma" land on the same face, which is right: this app has one weight per
+# family too.
+#
+# ⚠ A FONT NOBODY HAS IS NOT AN ERROR. Anything unlisted folds down to the
+# default, exactly the way an unknown font id already does in `font_entry`.
+_PRPROJ_FONT_FAMILIES = {
+    "arial": "inter", "helvetica": "inter", "helveticaneue": "inter",
+    "tahoma": "inter", "verdana": "inter", "segoeui": "inter",
+    "calibri": "inter", "opensans": "inter", "roboto": "inter",
+    "sourcesans": "inter", "lato": "inter", "notosans": "inter",
+    "inter": "inter",
+    "montserrat": "montserrat", "poppins": "poppins", "nunito": "nunito",
+    "anton": "anton", "bebasneue": "bebas", "bebas": "bebas",
+    "oswald": "oswald", "impact": "anton",
+    "archivoblack": "archivo", "archivo": "archivo",
+    "playfairdisplay": "playfair", "playfair": "playfair",
+    "merriweather": "merriweather", "georgia": "merriweather",
+    "timesnewroman": "merriweather", "times": "merriweather",
+    "garamond": "playfair", "baskerville": "playfair",
+    "bangers": "bangers", "lobster": "lobster", "caveat": "caveat",
+    "brushscript": "caveat",
+    "courierprime": "courier", "couriernew": "courier", "courier": "courier",
+    "consolas": "courier", "menlo": "courier", "monaco": "courier",
+}
+
+# The weight words Premiere hangs off a PostScript name, stripped before the
+# lookup so "Montserrat-SemiBold" finds "montserrat". Longest first, so
+# "semibold" is never left as a trailing "bold".
+_PRPROJ_FONT_WEIGHTS = (
+    "bolditalic", "boldoblique", "extralight", "ultralight", "extrabold",
+    "semibold", "demibold", "oblique", "regular", "italic", "medium", "light",
+    "black", "heavy", "roman", "book", "bold", "thin",
+    "psmt", "std", "pro", "mt", "ms",
+)
+
+
+def prproj_font_id(name: str) -> str:
+    """A Premiere PostScript font name → one of this app's bundled font ids.
+
+    ⚠ NEVER RAISES AND NEVER RETURNS SOMETHING UNBUNDLED. An unknown face is the
+    ordinary case, not a failure: this app has fourteen fonts and a Premiere user
+    has hundreds. See `_PRPROJ_FONT_FAMILIES`.
+    """
+    key = re.sub(r"[^a-z]", "", str(name or "").split("-")[0].lower())
+    while True:
+        for suffix in _PRPROJ_FONT_WEIGHTS:
+            if key.endswith(suffix) and len(key) > len(suffix):
+                key = key[: -len(suffix)]
+                break
+        else:
+            break
+    return _PRPROJ_FONT_FAMILIES.get(key, animatic_fonts.DEFAULT_FONT)
+
+
+def _prproj_arb_strings(payload: str) -> list:
+    """The printable strings inside one base64 `Arb…Param` blob, in order.
+
+    `<uint32 length><bytes><NUL>`, scanned byte by byte. ⚠ THE SCAN STEPS OVER A
+    STRING IT ACCEPTS rather than moving on one byte, so the bytes of a caption
+    can never be re-read as the length of another — a sentence whose own bytes
+    happen to spell a plausible length would otherwise yield a second, invented
+    entry, and this reader's whole job is to not invent anything.
+
+    Returns `[]` for anything that will not decode. This runs on a file format
+    nobody documented: it has to come back empty, never raise.
+    """
+    try:
+        raw = base64.b64decode(re.sub(r"\s+", "", payload or ""), validate=False)
+    except Exception:
+        return []
+    out: list = []
+    i, n = 0, len(raw)
+    limit = PRPROJ_MAX_TEXT_CHARS * 4
+    while i + 4 < n:
+        size = int.from_bytes(raw[i:i + 4], "little")
+        end = i + 4 + size
+        if 1 <= size <= limit and end < n and raw[end] == 0:
+            try:
+                word = raw[i + 4:end].decode("utf-8")
+            except UnicodeDecodeError:
+                word = ""
+            if word and word.isprintable():
+                out.append(word)
+                i = end + 1
+                continue
+        i += 1
+    return out
+
+
+def _prproj_param(by_id: dict, comp, wanted: str):
+    """One named `<Param>` of a component, followed through its ObjectRef."""
+    for ref in comp.iter("Param"):
+        target = by_id.get(_prproj_ref(ref) or "")
+        if target is None:
+            continue
+        if (target.findtext("Name") or "").strip() == wanted:
+            return target
+    return None
+
+
+def _prproj_keyframe_value(el) -> str:
+    """The FIRST value of a `<StartKeyframe>`, as text. '' when there is none.
+
+    A keyframe reads `<time>,<value>,0,0,…`; the value is one field and may be a
+    number ("50."), a boolean ("true") or a point ("0.279:0.521"). ⚠ ONLY THE
+    START IS READ. This app imports the CUT — a title that moves is a title whose
+    first frame is the honest answer, and half an animation is worse than none.
+    """
+    row = (el.findtext("StartKeyframe") or "").split(",")
+    return row[1].strip() if len(row) > 1 else ""
+
+
+def _prproj_text_style(by_id: dict, comp) -> dict:
+    """The reachable half of a text component's look. See the section header.
+
+    ⚠ **THE FILL COLOUR IS NOT IN HERE, AND THAT IS A FINDING RATHER THAN A GAP.**
+    It was looked for in a real project, in every place it could be:
+      · there is no colour `<Param>` on the component — its eighteen named
+        parameters are Source Text, Transform, Position, Scale, Horizontal Scale,
+        Rotation, Opacity, Anchor Point, start, end and Parent W/H/Rotation;
+      · the `Source Text` blob holds no float in 0..1, no `00 00 80 3F` (1.0f) and
+        no `FF FF FF FF` in ANY of its 83 records — white would have shown as one
+        of the three;
+      · the `<PremiereFilterPrivateData>` elements that would carry a serialised
+        appearance are EMPTY. They carry a `BinaryHash` attribute and no body,
+        because Premiere keeps that payload outside the project XML altogether —
+        184 of the 206 in the reference file are self-closing.
+    So an imported caption takes THIS APP'S colour, and `to_project` says so in
+    the import report rather than inventing a white that might have been yellow.
+    """
+    style = {"font": animatic_fonts.DEFAULT_FONT, "scale": 100.0, "opacity": 1.0}
+    scale = _prproj_param(by_id, comp, "Scale")
+    if scale is not None:
+        try:
+            style["scale"] = float(_prproj_keyframe_value(scale).rstrip("."))
+        except ValueError:
+            pass
+    opacity = _prproj_param(by_id, comp, "Opacity")
+    if opacity is not None:
+        try:
+            style["opacity"] = max(0.0, min(1.0, float(
+                _prproj_keyframe_value(opacity).rstrip(".")) / 100.0))
+        except ValueError:
+            pass
+    point = _prproj_param(by_id, comp, "Position")
+    value = _prproj_keyframe_value(point) if point is not None else ""
+    if ":" in value:
+        try:
+            left, top = (float(v) for v in value.split(":", 1))
+        except ValueError:
+            return style
+        style["left"], style["y"] = left, top
+    return style
+
+
+def _prproj_text_component(by_id: dict, el) -> dict:
+    """One `AE.ADBE Text` component → a caption, or `{}` if it holds no words.
+
+    An EMPTY text layer is a real thing and not an error: Premiere leaves one
+    behind whenever a graphic is built from a template and a field is not filled
+    in. `{}` means "nothing to import", never "stop looking" — see
+    `_prproj_graphic`, which was returning the first answer and losing the second.
+    """
+    source = _prproj_param(by_id, el, "Source Text")
+    words: list = []
+    if source is not None:
+        node = source.find("StartKeyframeValue")
+        if node is not None:
+            words = _prproj_arb_strings(node.text or "")
+    # [font, text] — see the section header. The LAST string is the caption: a
+    # record carrying only one string has lost its font, not its words.
+    text = words[-1] if words else ""
+    font_name = words[0] if len(words) > 1 else ""
+    if not text:
+        # The stale-able fallback, and the reason it is second.
+        node = el.find(".//InstanceName")
+        text = (node.text or "").strip() if node is not None else ""
+    text = " ".join(text.split())
+    if not text:
+        return {}
+    style = _prproj_text_style(by_id, el)
+    size_px = max(8.0, min(400.0, style["scale"] * PRPROJ_TEXT_SIZE_PER_SCALE))
+    got = {
+        "text": text[:PRPROJ_MAX_TEXT_CHARS],
+        "font": prproj_font_id(font_name),
+        "size_px": round(size_px, 2),
+        "opacity": style["opacity"],
+    }
+    if "left" in style:
+        # LEFT EDGE → CENTRE. See `PRPROJ_TEXT_SIZE_PER_SCALE`.
+        half = (len(got["text"]) * size_px * PRPROJ_TEXT_ASPECT) / 2.0
+        got["x"] = round(style["left"] + half / PRPROJ_TEXT_FRAME_W, 4)
+        got["y"] = round(style["y"], 4)
+    return got
+
+
+def _prproj_graphic(by_id: dict, objid: str) -> dict:
+    """A track item → what its Premiere GRAPHIC actually is, if it is one.
+
+    `{}` for an ordinary clip; otherwise `{"kind": "text"|"shape", "texts": […]}`
+    where each entry is `{text, font, size_px, opacity, x, y}`.
+
+    ⚠ **ONE PREMIERE GRAPHIC CAN HOLD SEVERAL TEXT LAYERS** — that is what an
+    `AE.ADBE Graphic Group` is, and it is how anybody builds a title with a
+    subtitle under it. The first version of this returned the FIRST text
+    component it reached and stopped; in the reference project one clip's group
+    began with an EMPTY layer, so that clip imported as no text at all while its
+    words sat in the very next component. Every layer at the shallowest level is
+    read now, and an empty one is skipped rather than treated as an answer.
+
+    ⚠ SHALLOWEST LEVEL ONLY, and for a sharper reason than tidiness. A clip's own
+    component chain hangs off the TRACK ITEM, while the MASTER clip behind it
+    carries a chain of its own holding the text it was FIRST made with. In the
+    reference project all 82 captions share ONE master clip — so a walk that kept
+    descending returns the same wrong sentence 82 times, which is precisely the
+    shape of bug that looks like it works. `found` freezes the depth as soon as
+    anything is found and nothing deeper is read.
+    """
+    seen = {objid}
+    queue = [(objid, 0)]
+    texts: list = []
+    shapes = 0
+    found = None
+    while queue:
+        current, depth = queue.pop(0)
+        if found is not None and depth > found:
+            break
+        el = by_id.get(current)
+        if el is None or depth > PRPROJ_MAX_DEPTH:
+            continue
+        match = (el.findtext("MatchName") or "").strip()
+        if match == _PRPROJ_SHAPE_MATCH:
+            found = depth if found is None else found
+            shapes += 1
+            continue
+        if match == _PRPROJ_TEXT_MATCH:
+            caption = _prproj_text_component(by_id, el)
+            if caption:
+                found = depth if found is None else found
+                texts.append(caption)
+            continue
+        for child in el.iter():
+            ref = _prproj_ref(child)
+            if not ref or ref in seen:
+                continue
+            target = by_id.get(ref)
+            if target is None or _prproj_is_timeline(target.tag):
+                continue
+            seen.add(ref)
+            queue.append((ref, depth + 1))
+    if texts:
+        # ⚠ TEXT WINS OVER SHAPE when a graphic holds both — which is the usual
+        # lower third: a coloured bar with words on it. The words are the part
+        # this app can reproduce exactly; the bar is the part it approximates.
+        return {"kind": "text", "texts": texts, "shapes": shapes}
+    if shapes:
+        return {"kind": "shape", "texts": [], "shapes": shapes}
+    return {}
+
+
 def _prproj_detail(by_id: dict, objid: str) -> dict:
     """One track item, followed through the graph until its facts are found.
 
@@ -2002,11 +2369,14 @@ def _prproj_detail(by_id: dict, objid: str) -> dict:
                 got["enabled"] = False
 
         # The source window — how far into the file this clip starts — is on the
-        # `Clip`. `<OutPoint>` is deliberately not read: the timeline start and
-        # end already give the LENGTH, and a second opinion about it is a second
+        # `Clip`, NESTED one level inside it. See `_prproj_in_point`: reading it
+        # as a direct child answered None for every clip in a real project, and
+        # a soundtrack razored into 23 pieces played its first seconds 23 times.
+        # `<OutPoint>` is deliberately not read: the timeline start and end
+        # already give the LENGTH, and a second opinion about it is a second
         # chance to be wrong.
         if got["in"] is None and tag.endswith("Clip"):
-            got["in"] = _prproj_int(el, "InPoint")
+            got["in"] = _prproj_in_point(el)
 
         if not got["name"]:
             got["name"] = (el.findtext("Name") or "").strip()
@@ -2173,9 +2543,15 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
         "structure Adobe has never published. It is a BEST-EFFORT read: check "
         "every clip against Premiere before you trust it. The route that always "
         "works is File › Export › Final Cut Pro XML.",
-        "Only the CUT was read. Effects, titles, colour, speed changes, audio "
-        "levels and nested sequences were not — they cannot be read out of this "
-        "format with any confidence.",
+        # ⚠ "TITLES" USED TO BE IN THIS LIST AND IT WAS NOT TRUE. A Premiere
+        # title carries its words, its font, its size and its position in plain
+        # reach of this reader — see the LETTERING section. What is genuinely out
+        # of reach is everything Premiere keeps in a binary it does not put in
+        # the project XML, and the fill colour of a title is one of those.
+        "Only the CUT and the LETTERING were read. Effects, colour (including "
+        "the colour of a title), speed changes, audio levels and nested "
+        "sequences were not — they cannot be read out of this format with any "
+        "confidence.",
     ]
     if root.tag != "PremiereData":
         warnings.append(
@@ -2356,6 +2732,13 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
             continue
 
         name = got["name"] or _basename_of(got["path"]) or "Clip"
+        # ⚠ WHAT IS THIS CLIP, REALLY. Premiere calls a title, a caption, a lower
+        # third and a drawn rectangle all "Graphic", and gives none of them a
+        # file — so by NAME they are indistinguishable from each other and from
+        # genuinely missing footage. Only sound is exempt: an audio item has no
+        # component chain worth walking, and skipping it keeps this off the hot
+        # path for the razored-voiceover case (23 clips of one mp3).
+        graphic = {} if is_audio else _prproj_graphic(by_id, objid)
         # Keyed by PATH where there is one, so two clips cut from the same file
         # resolve to the same upload and two different files that happen to share
         # a clip name do not collide.
@@ -2364,7 +2747,7 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
             "name": _basename_of(got["path"]) or name,
             "pathurl": got["path"],
         })
-        lane["clips"].append({
+        clip = {
             "name": name,
             "file": key,
             "start": start,
@@ -2375,7 +2758,15 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
             # Not read — see the second warning. 1.0 is what an untouched clip
             # plays at, which is the honest guess when the real number is unknown.
             "level": 1.0,
-        })
+        }
+        if graphic:
+            # ⚠ `graphic` RIDES ALONG; it does not replace anything. A reader
+            # that swapped the clip out here would break every consumer that
+            # walks `clips` expecting a file — `to_project` is where a caption
+            # stops being a clip, because that is the layer that knows what a
+            # caption IS in this app.
+            clip["graphic"] = graphic
+        lane["clips"].append(clip)
 
     def ordered(bucket: dict) -> list:
         """The lanes in the order the sequence had them, empties dropped."""
@@ -2511,6 +2902,143 @@ def _fit_clip(start_ms: int, length_ms: int, tally: dict) -> tuple:
     return fitted_start, fitted_length
 
 
+# ---------------------------------------------------------------------------
+# WHAT A PREMIERE CLIP BECOMES HERE
+# ---------------------------------------------------------------------------
+# ⚠ **A PREMIERE ROW IS NOT A PICTURE ROW.** Four of the eight rows in the
+# project this was written against carry no film at all — two hold captions, two
+# hold a drawn bar, one holds an Adjustment Layer — and the first version of this
+# import turned every one of them into a picture row full of clips with no file,
+# which is where "audio, image and video show but text not show" came from.
+# A clip is sorted HERE, once, and each kind goes to the row of this app that
+# actually holds it:
+#
+#   text        → an `AnimaticTextClip` on a TEXT row     (never the caption row:
+#                 that one belongs to ✨ Auto captions, and an import writing
+#                 into it would silently overwrite work the user paid for)
+#   shape       → an `AnimaticShape` on a SHAPES row
+#   adjustment  → NOTHING, and counted so the report can say so
+#   picture     → a frame on a picture row, exactly as before
+_IMPORT_ADJUSTMENT_NAMES = ("adjustment layer", "adjustment")
+
+# ⚠ THE ONE LAYER ID AN IMPORT MAY NEVER WRITE TO. `CAPTION_LAYER_ID` in the
+# editor is the row ✨ Auto captions owns; captions there are the product of a
+# paid transcription and are replaced wholesale on every run. An imported
+# caption landing in it would be destroyed by the next auto-caption run without
+# anybody being told. Import rows are minted under their own prefixes below and
+# `tests/interchange_check.py` §8j asserts that none of them is this string.
+IMPORT_CAPTION_LAYER_ID = "captions"
+IMPORT_TEXT_LANE_PREFIX = "_import_text_"
+IMPORT_SHAPE_LANE_PREFIX = "_import_shape_"
+
+# What an imported caption is drawn with when the file does not say — which,
+# for the colour, is ALWAYS. See `_prproj_text_style` for the search that
+# established the colour is not in a .prproj at all.
+IMPORT_TEXT_COLOR = "#ffffff"
+IMPORT_TEXT_BACKDROP = "none"
+
+
+def _import_clip_role(clip: dict, found) -> str:
+    """One incoming clip → 'text' | 'shape' | 'adjustment' | 'picture'.
+
+    ⚠ A CLIP THAT RESOLVED TO A FILE IS ALWAYS A PICTURE, whatever else it looks
+    like. A real film called "Adjustment Layer.mp4" is somebody's footage, and
+    the name of a file is not permission to throw it away.
+    """
+    if found:
+        return "picture"
+    kind = (clip.get("graphic") or {}).get("kind") or ""
+    if kind in ("text", "shape"):
+        return kind
+    if str(clip.get("name") or "").strip().lower() in _IMPORT_ADJUSTMENT_NAMES:
+        # ⚠ DROPPED ON PURPOSE, and the decision is the user's to revisit. An
+        # Adjustment Layer is an empty holder for a colour effect; this app has
+        # no such row, and the effects it would have held cannot be read out of a
+        # .prproj anyway. Carrying it in as an invisible full-length clip — which
+        # is what happened before — put a card over the whole film that did
+        # nothing, could not be explained, and had to be found and deleted.
+        # If it is ever wanted, this is the line to change: give it a row of its
+        # own rather than making it a picture again.
+        return "adjustment"
+    return "picture"
+
+
+def _import_text_clips(
+    graphic: dict, *, start_ms: int, length_ms: int, layer_id: str, mint
+) -> list:
+    """One Premiere graphic → the `AnimaticTextClip`s it holds. Usually one.
+
+    ⚠ `place: "free"` AND NOT THE DEFAULT "flow". A flowed caption is dropped
+    into a zone and stacked with its neighbours, which is right for a caption
+    somebody types here and wrong for one that arrives with a position: two
+    titles that Premiere put in opposite corners would stack in the same corner.
+    x/y come across as fractions of the frame, which is what both sides already
+    speak — see `_prproj_text_component` for how the left edge Premiere stores
+    becomes the centre this app wants.
+
+    ⚠ NO COLOUR IS INVENTED. `IMPORT_TEXT_COLOR` is this app's own default, not
+    a reading of the file, and `backdrop: "none"` is chosen over the usual scrim
+    for the same reason: a scrim is a black bar this app would be ADDING to
+    somebody's film. "none" still draws its own outline, so white lettering on
+    pale art stays readable.
+    """
+    out: list = []
+    for item in graphic.get("texts") or []:
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        clip = {
+            "id": mint(),
+            "layer_id": layer_id,
+            "text": text,
+            "start_ms": start_ms,
+            "duration_ms": length_ms,
+            "font": item.get("font") or animatic_fonts.DEFAULT_FONT,
+            "size_px": float(item.get("size_px") or 0.0),
+            "color": IMPORT_TEXT_COLOR,
+            "backdrop": IMPORT_TEXT_BACKDROP,
+            "opacity": float(item.get("opacity", 1.0)),
+        }
+        if "x" in item and "y" in item:
+            clip["place"] = "free"
+            # Clamped to the field's own range rather than trusted: a title
+            # parked off-screen in Premiere is legal there and a 422 here.
+            clip["x"] = max(-1.0, min(2.0, float(item["x"])))
+            clip["y"] = max(-1.0, min(2.0, float(item["y"])))
+        out.append(clip)
+    return out
+
+
+def _import_shape_clip(
+    *, start_ms: int, length_ms: int, layer_id: str, mint
+) -> dict:
+    """A Premiere drawn shape → an `AnimaticShape` standing in its place.
+
+    ⚠ **A PLACEHOLDER. WHAT CAME ACROSS IS WHEN IT IS ON SCREEN, AND NOTHING
+    ELSE.** The shape's geometry and its fill live in an `Appearance` FlatBuffer
+    this reader does not decode — the same wall the text colour hits, and for the
+    same reason (see `_prproj_text_style`). `AnimaticShape` has no name field, so
+    what says where these came from is the ROW: the client names it from
+    `shape_lanes`.
+
+    ⚠ AND IT IS DRAWN AT ZERO OPACITY, which is the rule this file already
+    follows for a placeholder on a row above the bottom one. Two of the shapes in
+    the reference project run the full 68 seconds; a visible box in a colour
+    nobody chose, over the whole film, is not a placeholder but a defacement. The
+    clip is still ON the timeline, still on a row that says what it is, still
+    selectable, and one drag of Opacity in Properties brings it back — INVISIBLE
+    IS NOT OMITTED.
+    """
+    return {
+        "id": mint(),
+        "layer_id": layer_id,
+        "kind": "rect",
+        "start_ms": start_ms,
+        "duration_ms": length_ms,
+        "opacity": 0.0,
+    }
+
+
 def to_project(
     incoming: dict,
     resolve,
@@ -2541,7 +3069,12 @@ def to_project(
     }
     files = incoming.get("files") or {}
     seen: dict = {}
-    tally = {"moved": 0, "shortened": 0, "silent": 0, "overlaid": 0}
+    tally = {
+        "moved": 0, "shortened": 0, "silent": 0, "overlaid": 0,
+        # Captions read out of the file, shapes stood in for, and Adjustment
+        # Layers left behind — each one a sentence the report owes the user.
+        "lettered": 0, "drawn": 0, "adjustment": 0,
+    }
 
     def source_for(key: str):
         """One file, resolved once — several clips usually share it."""
@@ -2555,19 +3088,68 @@ def to_project(
         return found
 
     frames: list = []
+    texts: list = []
+    shapes: list = []
     transitions: list = []
     video_lanes = (incoming.get("video") or [])[:MAX_IMPORT_TRACKS]
-    # ⚠ THE LOWEST ROW THAT ACTUALLY HOLDS CLIPS — the BACKGROUND of this cut,
-    # and the only row on which a placeholder card may be opaque. See the
-    # `not found` branch below. Taken from the clips rather than from the lane
-    # count because a sequence whose V1 is empty still lists V1.
-    base_track = next(
-        (i for i, lane in enumerate(video_lanes) if lane.get("clips")), 0
-    )
+
+    # --- WHICH PREMIERE ROW BECOMES WHICH ROW HERE --------------------------
+    # ⚠ **A PREMIERE ROW OF CAPTIONS MUST NOT MINT A PICTURE ROW.** Picture rows
+    # are addressed by NUMBER (`AnimaticFrame.track`), so if row 5 of eight holds
+    # nothing but text, leaving the numbering alone hands the client "this import
+    # needs 8 picture rows" and it creates three empty ones above the film. The
+    # lanes are therefore sorted FIRST, once, and only the ones that still hold a
+    # picture are numbered — `row_of` is that renumbering and it is the only
+    # place a Premiere lane index becomes an app track number.
+    lane_roles: list = []
+    for lane in video_lanes:
+        roles = []
+        for clip in lane.get("clips") or []:
+            roles.append(_import_clip_role(clip, source_for(clip.get("file") or "")))
+        lane_roles.append(roles)
+    picture_lanes = [
+        i for i, roles in enumerate(lane_roles) if any(r == "picture" for r in roles)
+    ]
+    row_of = {lane: row for row, lane in enumerate(picture_lanes)}
+    # A picture row's KIND, so the client can call a row of stills "Images" and a
+    # row of footage "Video" instead of stamping the file's name onto all of them.
+    # A row holding both is a video row: that is what its bottom clip behaves like.
+    lane_kinds: list = []
+    # ⚠ THE LOWEST PICTURE ROW — the BACKGROUND of this cut, and the only row on
+    # which a placeholder card may be opaque. See the `not found` branch below.
+    # It is now the lowest row that holds a PICTURE rather than the lowest that
+    # holds anything: a caption row under the film would otherwise claim it and
+    # every missing file above would go invisible.
+    base_track = 0
+    text_lane_of: dict = {}
+    shape_lane_of: dict = {}
+    for lane_index, roles in enumerate(lane_roles):
+        if lane_index in row_of:
+            continue
+        if any(r == "text" for r in roles):
+            text_lane_of[lane_index] = (
+                f"{IMPORT_TEXT_LANE_PREFIX}{len(text_lane_of)}"
+            )
+        elif any(r == "shape" for r in roles):
+            shape_lane_of[lane_index] = (
+                f"{IMPORT_SHAPE_LANE_PREFIX}{len(shape_lane_of)}"
+            )
+    # ⚠ A ROW CAN HOLD BOTH — a lower third is a bar with words on it, and the
+    # bar is a picture-less shape sitting on the same Premiere row as the film.
+    # So text and shape lane ids are minted for MIXED rows too, after the pure
+    # ones, rather than dropping whatever shares a row with a picture.
+    for lane_index, roles in enumerate(lane_roles):
+        if any(r == "text" for r in roles) and lane_index not in text_lane_of:
+            text_lane_of[lane_index] = f"{IMPORT_TEXT_LANE_PREFIX}{len(text_lane_of)}"
+        if any(r == "shape" for r in roles) and lane_index not in shape_lane_of:
+            shape_lane_of[lane_index] = f"{IMPORT_SHAPE_LANE_PREFIX}{len(shape_lane_of)}"
+
     for track, lane in enumerate(video_lanes):
         # `by_end` is how a transition finds the clip it comes after: this app
         # anchors one to a FRAME ID, and the XML anchors it to a position.
         by_end: dict = {}
+        row = row_of.get(track)
+        kinds_here: set = set()
         for clip in sorted(lane.get("clips") or [], key=lambda c: c["start"]):
             start_ms = frames_to_ms(clip["start"], fps)
             # ⚠ THE LENGTH IS TAKEN FROM THE ORIGINAL START, BEFORE IT IS CLAMPED.
@@ -2576,10 +3158,47 @@ def to_project(
             length_ms = frames_to_ms(clip["end"], fps) - start_ms
             start_ms, length_ms = _fit_clip(start_ms, length_ms, tally)
             found = source_for(clip.get("file") or "")
+            role = _import_clip_role(clip, found)
+            if role == "text":
+                made = _import_text_clips(
+                    clip.get("graphic") or {},
+                    start_ms=start_ms,
+                    length_ms=length_ms,
+                    layer_id=text_lane_of.get(track, f"{IMPORT_TEXT_LANE_PREFIX}0"),
+                    mint=mint,
+                )
+                texts.extend(made)
+                tally["lettered"] += len(made)
+                continue
+            if role == "shape":
+                shapes.append(_import_shape_clip(
+                    start_ms=start_ms,
+                    length_ms=length_ms,
+                    layer_id=shape_lane_of.get(track, f"{IMPORT_SHAPE_LANE_PREFIX}0"),
+                    mint=mint,
+                ))
+                tally["drawn"] += 1
+                continue
+            if role == "adjustment":
+                tally["adjustment"] += 1
+                continue
+            if row is None:
+                # Cannot happen — a lane with a picture in it is in `row_of` by
+                # construction. Asserted rather than assumed, because the cost of
+                # being wrong is a clip silently dropped from somebody's cut.
+                raise RuntimeError(
+                    "picture clip on a lane that was not given a row — "
+                    "`row_of` and `_import_clip_role` disagree"
+                )
+            if found:
+                # ⚠ ONLY A CLIP THAT RESOLVED VOTES. An unmatched clip has no
+                # kind — calling it a still would turn a row of missing FOOTAGE
+                # into a row named "Images".
+                kinds_here.add(found.get("kind") or "image")
             frame = {
                 "id": mint(),
                 "label": clip.get("name") or "",
-                "track": track,
+                "track": row,
                 "start_ms": start_ms,
                 "duration_ms": length_ms,
                 "scale": 1.0, "x": 0.5, "y": 0.5, "opacity": 1.0,
@@ -2610,7 +3229,7 @@ def to_project(
                 # still selectable, and still counted in `placeholders` — and
                 # `opacity` is an ordinary field, so anyone who wants to see
                 # where the gap is drags it back up in Properties.
-                blank = track != base_track
+                blank = row != base_track
                 frame.update({
                     "kind": "color",
                     "color": background or "#000000",
@@ -2640,6 +3259,16 @@ def to_project(
                 })
             frames.append(frame)
             by_end[start_ms + length_ms] = frame["id"]
+
+        if row is not None:
+            # ⚠ A ROW WITH ONE VIDEO ON IT IS A VIDEO ROW, and a row nothing
+            # resolved on is a video row too — "Video" is this app's generic
+            # name for a picture row, so it is the safe answer when the clips
+            # cannot say. Only a row where every resolved clip is a still gets
+            # called "Images".
+            lane_kinds.append(
+                "image" if kinds_here == {"image"} else "video"
+            )
 
         for window in lane.get("transitions") or []:
             start_ms = frames_to_ms(window["start"], fps)
@@ -2743,19 +3372,53 @@ def to_project(
         report["warnings"].append(
             f"{tally['overlaid']} clip(s) on rows above the bottom one had no file "
             "to go with them, so they are on the timeline but draw nothing — a "
-            "solid card there would hide the whole film behind it. Titles, "
-            "Graphics and Adjustment Layers always land here: they are not files, "
-            "so no import can carry them. Any LETTERING they held has to be typed "
-            "again with the Text tool, or exported from the other app as PNGs "
-            "with transparency and dropped on those rows."
+            "solid card there would hide the whole film behind it. Attach the "
+            "files and import again to see them."
+        )
+    # ⚠ THE SENTENCES THAT REPLACED "TYPE IT AGAIN". Until this feature landed
+    # the warning above ended with "any LETTERING they held has to be typed again
+    # with the Text tool" — which was WRONG, and expensively so: the words were in
+    # the file the whole time and users were told to retype them. What is said
+    # here now is exactly what came across and exactly what did not.
+    if tally["lettered"]:
+        report["warnings"].append(
+            f"{tally['lettered']} title(s) were read out of the file with their "
+            "words, their font, their size and their place on screen, and are on "
+            "text rows of their own. Their COLOUR is not in a .prproj at all, so "
+            "they are white here whatever they were in Premiere — set the colour "
+            "once and use “Apply to all” on the row."
+        )
+    if tally["drawn"]:
+        report["warnings"].append(
+            f"{tally['drawn']} drawn shape(s) (the bar behind a lower third is the "
+            "usual one) are on a Shapes row at the right times, but at zero "
+            "opacity: their size and colour are not readable from a .prproj. Drag "
+            "Opacity up in Properties to see one and set it how you want it."
+        )
+    if tally["adjustment"]:
+        report["warnings"].append(
+            f"{tally['adjustment']} Adjustment Layer(s) were left out. An "
+            "Adjustment Layer is an empty holder for colour effects, and those "
+            "cannot be read out of a .prproj — bringing it in would have put a "
+            "clip over the whole film that does nothing."
         )
     report["clips"] = len(frames)
     report["audio_clips"] = len(audio_tracks)
-    report["video_tracks"] = len(video_lanes)
+    # ⚠ COUNTED FROM THE ROWS THAT WERE ACTUALLY MADE, not from the lanes the
+    # file had. This is the number the client turns into empty rows, so a
+    # caption-only Premiere row counted here is an empty picture row on screen.
+    report["video_tracks"] = len(picture_lanes)
+    report["video_lane_kinds"] = lane_kinds
     report["audio_lanes"] = len({a["layer_id"] for a in audio_tracks})
+    report["text_lanes"] = len({t["layer_id"] for t in texts})
+    report["shape_lanes"] = len({s["layer_id"] for s in shapes})
+    report["texts_read"] = len(texts)
+    report["shapes_read"] = len(shapes)
     report["transitions"] = len(transitions)
     return {
         "frames": frames,
+        "texts": texts,
+        "shapes": shapes,
         "audio_tracks": audio_tracks,
         "transitions": transitions,
         "report": report,

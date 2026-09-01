@@ -3540,7 +3540,94 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-08-31 (latest) — A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4)
+### 2026-09-01 (latest) — THE TITLES WERE IN THE FILE ALL ALONG (PHASE 5)
+
+**This app told users for months that Premiere lettering could not be imported.
+That was wrong, and a 40-caption voiceover script was retyped on that advice.**
+
+The reason it was believed is worth keeping: every title, caption and lower third
+in a Premiere project is a clip **named "Graphic"** with no media file attached.
+A reader that looks at `<Name>` — which is all this one did — sees forty
+identical empty clips. It dutifully made forty invisible placeholders and printed
+*"any LETTERING they held has to be typed again with the Text tool."* The words
+were one level further in the whole time.
+
+**Where they actually are.** On a `<VideoFilterComponent>` whose `<MatchName>` is
+`AE.ADBE Text`, reached from the track item through `ClipTrackItem →
+ComponentOwner → Components → VideoComponentChain`. And they are there twice:
+`<InstanceName>` (Premiere naming the layer after its own text — free to read,
+and stale the moment somebody renames the layer) and the `Source Text`
+parameter's base64 payload (the string itself). The blob is read first and
+`<InstanceName>` is only the fallback; §8g's fixture makes the two **disagree on
+purpose**, so a reader that takes the cheap one passes nothing.
+
+**The blob is read for its strings and nothing else.** It is a FlatBuffer — every
+field addressed through a vtable, so field N sits at a different offset in every
+record. 83 real records were measured and no two agreed. What never moves is
+`<uint32 length><bytes><NUL>`, and two appear in order: the font's PostScript
+name, then the text.
+
+**Two bugs were caught on the real file before this shipped.** A Graphic Group
+can hold several text layers (a title with a subtitle under it), and one real
+clip's group **began with an empty layer** — returning at the first text
+component found lost that caption entirely. And all 82 captions in the reference
+project **share one master clip**, which carries the text they were duplicated
+from: a walk that keeps descending returns the same wrong sentence 82 times, a
+timeline that is full, plausible and completely wrong. So: read every layer at
+the shallowest level, treat an empty one as "nothing here", and stop there.
+
+**What could NOT be read, and it was looked for properly.** The fill colour is
+not in a `.prproj` at all: no colour `<Param>` on the component, no float in
+0..1 / `00 00 80 3F` / `FF FF FF FF` in any of the 83 blobs, and the
+`<PremiereFilterPrivateData>` that would carry a serialised appearance is empty —
+a `BinaryHash` attribute and no body, 184 of 206 self-closing, because Premiere
+keeps that payload outside the project XML. So an imported title takes this app's
+own colour and the import **says so**. Same wall for a shape's `Appearance`.
+
+**Position and size DO come across.** Premiere stores a text layer's LEFT EDGE;
+this app wants the centre. Size comes from the plain-XML `Scale`
+(`PRPROJ_TEXT_SIZE_PER_SCALE = 0.9`, so 50% → 45px at 1080p) and the constant is
+**fitted, not guessed**: for a row of centred captions `left + half the width`
+has to return to 0.5, and solving that over 78 real captions of 10–46 characters
+gives 0.4956 ± 0.013 (0.85 and 0.95 give 0.4866 / 0.5046).
+
+**And a Premiere row is not a picture row.** In the reference project only three
+of eight lanes held film — two held captions, two a drawn bar, one an Adjustment
+Layer. Every clip is now sorted once and sent to the row of this app that holds
+it: text → an `AnimaticTextClip` on a text row, shape → an `AnimaticShape` on a
+shapes row, Adjustment Layer → nothing (counted and said), picture → a frame. Only
+lanes that still hold a picture get a track number, **compacted from zero**, or
+the client draws empty rows above the cut.
+
+**The caption row is off limits to an import.** `CAPTION_LAYER_ID` belongs to
+✨ Auto captions, which replaces everything on it every time it runs — an
+imported title parked there would be destroyed by a transcription the user paid
+for, silently. The server mints `_import_text_N`; the client filters again.
+
+**Rows are named by what is on them.** They used to be named after the sequence:
+eleven rows all reading "8_MCP_Model Context Prot…", with "…audio" appearing on
+rows of pictures. They are `Video`, `Images`, `Text`, `Text 2`, `Shapes`, `Audio`
+now — the same words and numbering a hand-added row gets, skipping names already
+on the timeline. The server says which picture rows are stills
+(`video_lane_kinds`).
+
+On the real 8-row project: **26 frames, 40 titles, 3 shapes, 24 sounds, on 3
+picture rows + 2 text rows + 2 shape rows + 2 audio rows.** Before this it was
+eight picture rows, 43 of the clips invisible and empty.
+
+Rules: **RULEBOOK E59** (reading the lettering) and **E60** (what a row becomes
+and what it is called). **E57's claim that no import carries lettering has been
+struck** and now points at E59. Pinned in `tests/interchange_check.py` §8g / §8h,
+with §8e rewritten to the new truth and §12 taught to slice to the end of
+`applyProjectImport` rather than a fixed 6000 characters. Three separate breaks
+(InstanceName read first / stop at the first text component / count rows from
+every lane) were each applied and each caught before the section was kept.
+
+**Still open:** the FCP7 XML reader carries no lettering yet — `.prproj` was done
+first at the user's direction and `xmeml` is next. Font, size, position and
+opacity come across; **colour does not, and cannot**.
+
+### 2026-08-31 — A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4)
 
 The last item on the interchange plan, and the only one with no specification
 behind it. `.prproj` is Premiere's own save file: Adobe has never published its
@@ -3759,6 +3846,10 @@ Premiere version might write.
 **And once the clips were finally on the timeline, the video would not PLAY** (new **RULEBOOK E56**). Every video clip showed one frozen frame for its whole length — *“video ka sirf ek thumbnail jaisa dikhta hai… pura clip mein ek image jaisa”* — while the images and the audio on the same timeline played perfectly. It was not the import, the codec, the blob, the Content-Type or the compositor: all four clips are ordinary H.264/`isom`, `in_ms` is 0, and a single clip on its own plays fine. The project (read back out of Atlas) had **six of its eight picture rows hidden** — and `useMonitorVideo` still resolved its cue with `frames[picture.index]`. That index counts the HIDDEN-LANE-FILTERED array `sceneAt` is given, `frames` is the whole project, so with rows off the cue named a clip six places away, `videoElsRef` had no element under that id, and the <video> that was actually on screen was **never told to play**. The same fault had already been fixed in `ProgramCanvas` and in `currentIndex` and was missed here because this site fails silently — right element, right texture, re-uploaded every frame, parked on frame 0. Fixed by resolving through a `framesById` map like everything else. Pinned by a new `tests/monitor_video_check.py`, which drives a **real** H.264 file in Chromium and runs the scene twice, plain and with a switched-off row ahead of the clip; the plain pass was green throughout the bug.
 
 **And with the video finally moving, the film was BLACK — which was reported as a TEXT bug** (new **RULEBOOK E57**). *“audio, image and video show but text not show”*: where the lettering had been there was now a black rectangle, so it read as the text being broken. It was not. Two separate things, and both need saying. **(1) No import has ever carried lettering** — not the `.prproj` reader and not the Final Cut Pro XML this app recommends instead (`xmeml` has no text box; the file has said *titles are not attempted* since Phase 1). A Premiere Title, Graphic or Adjustment Layer is not a file, so it arrives as an unmatched clip. **(2) And an unmatched clip became an OPAQUE colour card wherever it landed** — right on the bottom row, where E45 was written and the alternative is an invisible gap; a lid on every row above it. The user's project held **44** of them, three at full length over the cut, so 68 seconds previewed and would have exported as black. `to_project` now imports an unmatched clip on any row above the lowest one WITH CLIPS at `opacity: 0` — still on the timeline, still named, still in `placeholders`, still editable back up — and the report names titles and Graphics and points at the Text tool instead of telling anyone to go and attach files that do not exist. `tests/interchange_check.py` §8e holds both halves, so a fix that dropped the clips fails it. Nothing was written to the existing project: the rows are one click each to switch off in the editor, which is what the user chose.
+
+**Then the soundtrack played its first seconds over and over** (new **RULEBOOK E58**), and this one was found with the user's ACTUAL `.prproj` in hand — located on disk, unpacked, and read element by element, which is what E52 has been asking for since it was written. Premiere writes `<AudioClip><Clip Version="18"><InPoint>`; `_prproj_int` reads a DIRECT child, so the in point came back None for every clip, `to_project` read that as 0, and **every clip started its file at the beginning**. E52 had already caught exactly this nesting for `<Start>`/`<End>` and the fix was never carried across to the in point, one line away. ⚠ **It was invisible on the first import and the data actively said so**: four video clips, four separate files, `in_ms` 0 on all of them — correct, and read as proof the reader worked. It only shows when ONE FILE IS USED TWICE, and this project's voiceover was one mp3 razored into 23 pieces with the silences cut out. With `_prproj_in_point` the same file now yields rising offsets — 0, 8333, 10375 … 73250 ms, monotonic and inside the mp3's length. §8f pins it with three clips off one file at rising in points (a single clip proves nothing here), and §8c's flat shape is kept green beside it.
+
+**And the same real file settled the text question for good.** Its only graphic names are `Graphic` and `Adjustment Layer`; there is no lettering anywhere in the document. **No import carries text** — not this reader and not the Final Cut Pro XML this app recommends instead. Say so plainly and point at the Text tool (E57); never let a user re-import hoping.
 
 ⚠ **ONE REAL FILE PROVES ONE REAL FILE.** This is Premiere 2026, one project,
 one machine. E47 stays **PAKKA (policy) / OPEN (compatibility)**. `.aep` and
@@ -24510,7 +24601,50 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟡 NEWEST: IMPORT WORKS AGAINST OUR OWN FILES — NEVER AGAINST A REAL PREMIERE ONE (2026-08-31)
+### 🟡 NEWEST: A PREMIERE IMPORT BRINGS ITS TITLES NOW — AND THE ROWS ARE NAMED PROPERLY (2026-09-01)
+
+Phase 5. **The lettering in a `.prproj` comes across**: the words, the font, the
+size, where it sits on screen and when it is on screen. Everything this app said
+for months about titles having to be retyped was wrong — see the Work Log and
+RULEBOOK **E59** / **E60**. What to check, in order:
+
+1. ⚠ **RESTART THE SERVER FIRST.** `interchange.py`, `server/schemas.py` and
+   `server/animatics.py` all changed; a running server knows none of it.
+2. **Import the same Premiere project again.** ⚙ → 📥 Import project file →
+   choose the `.prproj` → **Read the file**. The summary should now include a
+   line reading **"N titles on M text rows"**. If that line is missing, nothing
+   below will work and that is the thing to report.
+3. **Add to the timeline, then look at the row names down the left.** They should
+   read **Video / Images / Text / Text 2 / Shapes / Audio** — never
+   "8_MCP_Model Context Prot…" eleven times. ⚠ Tell me if any row still carries
+   the file's name.
+4. ⚠ **COUNT THE PICTURE ROWS.** The reference project used to make **eight**;
+   it should now make **three**, with no empty rows above the film. The rows that
+   used to be full of invisible "Graphic" clips are gone — their contents are on
+   the Text and Shapes rows instead.
+5. **Click a title on a Text row.** Its words should be the real words, its font
+   and size roughly what Premiere had, and it should sit where Premiere put it.
+   ⚠ **Its COLOUR will be white whatever it was in Premiere** — that is not a
+   bug and it cannot be fixed: the colour is not stored in a `.prproj` at all
+   (looked for in all three places it could be; see E59). Set it once and use
+   the row's own controls.
+6. ⚠ **CHECK THE ✨ AUTO CAPTIONS ROW IS UNTOUCHED.** Imported titles must land on
+   their own Text rows and never in the caption row — that row is replaced
+   wholesale every time Auto captions runs, so anything of yours parked there
+   would be destroyed silently. If an imported title appears on the caption row,
+   stop and say so; that is the most serious thing that could go wrong here.
+7. **The Shapes row will look empty in the monitor.** The clips are there at the
+   right times but drawn at zero opacity — a Premiere shape's size and colour are
+   not readable either. Click one and drag **Opacity** up in Properties to see it.
+8. **Adjustment Layers are no longer imported**, and the report says how many were
+   left out. They were an empty holder for colour effects; they used to arrive as
+   a full-length invisible clip over the whole film.
+9. ⚠ **Press Ctrl+Z once.** The whole import — pictures, sound, titles, shapes and
+   every row — should vanish in ONE step. If it takes two, say so.
+10. **Still open, on purpose:** a Final Cut Pro XML brings no lettering yet.
+    `.prproj` was done first at your direction; `xmeml` is the next piece.
+
+### 🟢 DONE: IMPORT WORKS AGAINST OUR OWN FILES — NEVER AGAINST A REAL PREMIERE ONE (2026-08-31)
 
 Phase 3. The editor's **⚙ gear** now has **📥 Import project file** above Export.
 It reads a Final Cut Pro XML (Premiere / Resolve / Avid all export one), an EDL,

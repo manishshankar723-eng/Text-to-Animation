@@ -1226,9 +1226,15 @@ _UID_A = "de531674-9015-4a3a-ad0d-9226d691ca65"
 _UID_B = "46f7e0a6-89c0-4bd4-a37e-b218a406da14"
 
 
-def _real_clip(oid, name, path, end, start=None, media="Video"):
+def _real_clip(oid, name, path, end, start=None, media="Video", inpoint=0):
     """A clip the way Premiere really writes one: everything nested, and no
-    `<Start>` element at all when the clip begins at zero."""
+    `<Start>` element at all when the clip begins at zero.
+
+    ⚠ `<InPoint>` IS NESTED TOO, and this fixture used to get that wrong. Real
+    Premiere writes `<AudioClip><Clip Version="18"><InPoint>` — the source window
+    is a GRANDCHILD of the clip object, exactly as `<End>` is a grandchild of the
+    track item. The fixture wrote it as a direct child and hard-coded it to 0, so
+    it could not have caught a reader that never found it: see §8f."""
     start_el = f"<Start>{start}</Start>" if start is not None else ""
     return f"""
   <{media}ClipTrackItem ObjectID="{oid}" ClassID="aab0946b" Version="1">
@@ -1247,11 +1253,14 @@ def _real_clip(oid, name, path, end, start=None, media="Video"):
     <Clip ObjectRef="{oid + 2}"/>
     <Name>{name}</Name>
   </SubClip>
-  <VideoClip ObjectID="{oid + 2}" ClassID="1c31d4c6" Version="1">
-    <Source ObjectRef="{oid + 3}"/>
-    <InPoint>0</InPoint>
-    <OutPoint>{end}</OutPoint>
-  </VideoClip>
+  <{media}Clip ObjectID="{oid + 2}" ClassID="1c31d4c6" Version="1">
+    <Clip Version="18">
+      <Source ObjectRef="{oid + 3}"/>
+      <ClipID>clip-{oid}</ClipID>
+      <InPoint>{inpoint}</InPoint>
+      <OutPoint>{inpoint + end - (start or 0)}</OutPoint>
+    </Clip>
+  </{media}Clip>
   <VideoMediaSource ObjectID="{oid + 3}" Version="1">
     <Media ObjectURef="media-uid-{oid}"/>
   </VideoMediaSource>
@@ -1300,13 +1309,20 @@ REAL_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
     <ClipTrack Version="1">
       <ClipItems Version="1"><TrackItems Version="1">
         <TrackItem Index="0" ObjectRef="760"/>
+        <TrackItem Index="1" ObjectRef="780"/>
+        <TrackItem Index="2" ObjectRef="800"/>
       </TrackItems></ClipItems>
     </ClipTrack>
   </AudioClipTrack>
 {_real_clip(700, "Opening", r"C:\Footage\open.png", end=_NTSC_TICKS * 48)}
-{_real_clip(720, "Second", r"C:\Footage\two.mp4", end=_NTSC_TICKS * 120, start=_NTSC_TICKS * 48)}
+{_real_clip(720, "Second", r"C:\Footage\two.mp4", end=_NTSC_TICKS * 120,
+            start=_NTSC_TICKS * 48, inpoint=_NTSC_TICKS * 12)}
 {_real_clip(740, "Overlay", r"C:\Footage\logo.png", end=_NTSC_TICKS * 24)}
-{_real_clip(760, "Voice", r"C:\Footage\vo.wav", end=_NTSC_TICKS * 120, media="Audio")}
+{_real_clip(760, "Voice", r"C:\Footage\vo.wav", end=_NTSC_TICKS * 24, media="Audio")}
+{_real_clip(780, "Voice", r"C:\Footage\vo.wav", end=_NTSC_TICKS * 72,
+            start=_NTSC_TICKS * 24, media="Audio", inpoint=_NTSC_TICKS * 36)}
+{_real_clip(800, "Voice", r"C:\Footage\vo.wav", end=_NTSC_TICKS * 120,
+            start=_NTSC_TICKS * 72, media="Audio", inpoint=_NTSC_TICKS * 96)}
 </PremiereData>
 """
 
@@ -1325,7 +1341,7 @@ check("…its tracks reached through ObjectURef, not ObjectRef",
 check("…and its sound row too", len(real["audio"]) == 1, str(len(real["audio"])))
 check("…every clip placed, none skipped",
       sum(len(l["clips"]) for l in real["video"]) == 3
-      and sum(len(l["clips"]) for l in real["audio"]) == 1,
+      and sum(len(l["clips"]) for l in real["audio"]) == 3,
       str([[c["name"] for c in l["clips"]] for l in real["video"]]))
 # ⚠ THE CLIP WITH NO <Start> ELEMENT. Premiere omits it at zero; the first
 # version treated that as "no position" and threw the clip away.
@@ -1351,6 +1367,447 @@ check("media is found through ObjectURef, by basename",
       sorted(f["name"] for f in real["files"].values())
       == ["logo.png", "open.png", "two.mp4", "vo.wav"],
       str(sorted(f["name"] for f in real["files"].values())))
+
+
+# ---------------------------------------------------------------------------
+# 8f · ONE FILE, MANY CLIPS — the source in-point
+# ---------------------------------------------------------------------------
+# ⚠ THE FAULT THIS PINS IS INVISIBLE ON A TIMELINE OF WHOLE TAKES, which is
+# why it shipped. `_prproj_int` reads a DIRECT child, and Premiere writes
+# `<AudioClip><Clip Version="18"><InPoint>` — one level deeper, exactly as it
+# nests `<End>` inside `<TrackItem>`. So every clip answered None, `to_project`
+# read that as 0, and every clip played its file FROM THE BEGINNING.
+#
+# On the first real import that looked perfectly correct: four video clips, four
+# separate files, every in-point genuinely 0. The same project's voiceover was
+# ONE mp3 razored into 23 pieces with the silences cut out — and all 23
+# restarted the recording. Reported as "har clip audio ka starting hi play ho
+# raha hai... pura audio sunai nahi de raha".
+#
+# ⚠ SO THE ASSERTION IS ABOUT A FILE USED MORE THAN ONCE. One clip proves
+# nothing here — its in-point is 0 whether the reader read it or invented it.
+# The three voice clips below come off one file at RISING in-points with gaps
+# between them, which is what a razored track is, and there is no value a reader
+# that found nothing could return that would pass.
+print("\n8f · one file cut into several clips")
+
+_voice = real["audio"][0]["clips"]
+check("a razored sound row keeps all of its pieces",
+      len(_voice) == 3, str(len(_voice)))
+# The reader's own units are FRAMES; `to_project` turns them into ms below.
+check("…and each piece reads its own in point out of the NESTED <Clip>",
+      [c["in"] for c in _voice] == [0, 36, 96],
+      f'in points {[c["in"] for c in _voice]} — all zero means it found none')
+check("…which RISE, because each piece is further into the recording",
+      [c["in"] for c in _voice] == sorted(c["in"] for c in _voice), "")
+check("a picture clip trimmed off its own head keeps that in point too",
+      real["video"][0]["clips"][1]["in"] == 12,
+      str(real["video"][0]["clips"][1]["in"]))
+
+# …and through `to_project`, in the milliseconds the editor actually plays.
+_cut = interchange.to_project(
+    real,
+    lambda n: {"kind": "audio" if n.endswith(".wav") else
+               ("video" if n.endswith(".mp4") else "image"),
+               "upload_id": "u", "duration_ms": 0},
+    background="#000000", new_id=lambda: "x",
+)
+_tracks = _cut["audio_tracks"]
+check("through to_project the sound clips carry an OFFSET, not a zero",
+      [a["offset_ms"] for a in _tracks] == [0, 1500, 4000],
+      str([a["offset_ms"] for a in _tracks]))
+check("…each still placed where it was on the timeline",
+      [a["start_ms"] for a in _tracks] == [0, 1000, 3000],
+      str([a["start_ms"] for a in _tracks]))
+check("…and playing only its own window of the file",
+      [a["trim_ms"] for a in _tracks] == [1000, 2000, 2000],
+      str([a["trim_ms"] for a in _tracks]))
+# ⚠ A CLIP CANNOT PLAY PAST THE END OF WHAT IT SAYS IS THERE. `duration_ms`
+# falls back to `offset + what plays` because this server has no audio decoder,
+# and with the offset read as 0 that bound was short by the whole offset.
+check("…with a file length that at least covers the window it reads",
+      all(a["duration_ms"] >= a["offset_ms"] + a["trim_ms"] for a in _tracks),
+      str([(a["duration_ms"], a["offset_ms"], a["trim_ms"]) for a in _tracks]))
+check("the picture clip's in point survives as in_ms",
+      [f["in_ms"] for f in _cut["frames"] if f["kind"] == "video"] == [500],
+      str([f["in_ms"] for f in _cut["frames"] if f["kind"] == "video"]))
+
+# ⚠ BOTH SHAPES, the rule E52 was written for. Section 8c's fixture writes
+# `<Clip><InPoint>` as a DIRECT child — a shape another Premiere version could
+# write, and the one this reader was first built against. Fixing the nested case
+# by moving the search deeper must not lose the flat one.
+check("the flat `<Clip><InPoint>` shape still reads (8c's fixture)",
+      got["video"][0]["clips"][1]["in"] == 24,
+      str(got["video"][0]["clips"][1]["in"]))
+
+
+import base64 as _b64  # noqa: E402
+import uuid as _uuid  # noqa: E402
+
+import animatic_fonts  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# 8g · THE LETTERING — a Premiere title is not an empty clip
+# ---------------------------------------------------------------------------
+# ⚠ **THIS APP TOLD USERS THEIR TITLES COULD NOT BE IMPORTED, FOR MONTHS, AND
+# THE WORDS WERE IN THE FILE THE WHOLE TIME.** Every title, caption and lower
+# third in a Premiere project is a clip NAMED "Graphic" with no media file, so
+# reading only `<Name>` sees forty identical empty clips; the import duly made
+# forty invisible placeholders and printed "any LETTERING they held has to be
+# typed again with the Text tool". A real project of 43 graphics — 40 of them
+# captions carrying a full voiceover script — was retyped on that advice.
+#
+# The words live on a `<VideoFilterComponent>` whose `<MatchName>` is
+# `AE.ADBE Text`, in TWO places, and which one is trusted matters:
+#
+#   · `<InstanceName>` is Premiere naming the layer after its own text. Free to
+#     read and STALE the moment somebody renames the layer.
+#   · the `Source Text` parameter's base64 FlatBuffer is the text itself.
+#
+# So the fixtures below are built with the two DISAGREEING on purpose. A reader
+# that takes the easy one passes nothing here.
+print("\n8g · a Premiere title carries its words")
+
+
+def _text_blob(text, font="Tahoma"):
+    """A `Source Text` payload in the shape Premiere writes.
+
+    ⚠ THE STRINGS ARE WHAT IS READ, AND NOTHING ELSE — `<uint32 length><bytes>
+    <NUL>`, font first and text second. The floats and the vtable around them
+    move from record to record (83 real ones were measured; no two agreed), so
+    the padding here is deliberately NOT a valid FlatBuffer: if the reader ever
+    starts needing one, this fixture is what tells you.
+    """
+    def _s(word):
+        raw = word.encode("utf-8")
+        return len(raw).to_bytes(4, "little") + raw + b"\x00"
+    body = (b"\x58\x01\x00\x00\x00\x00\x00\x00" + b"\x44\x33\x22\x11"
+            + b"\x0c\x00\x00\x00" + b"\x00" * 24 + _s(font) + _s(text)
+            + b"\x34\x00\x0c\x00" + b"\x00" * 12)
+    return _b64.b64encode(body).decode("ascii")
+
+
+def _graphic_clip(oid, *, end, start=None, texts=(), shape=False,
+                  name="Graphic", scale="50.", position="0.2797:0.5219",
+                  instance=None, blob=True, master_text=None):
+    """One Premiere GRAPHIC track item, in the shape the real file writes.
+
+    `texts` is one entry per text layer in the graphic — `()` for a shape or an
+    Adjustment Layer, two entries for a Graphic Group.
+    """
+    start_el = f"<Start>{start}</Start>" if start is not None else ""
+    comps, extra, index = [], [], 0
+    if shape:
+        comps.append(f'<Component Index="{index}" ObjectRef="{oid + 30}"/>')
+        extra.append(f'''
+  <VideoFilterComponent ObjectID="{oid + 30}" Version="9">
+    <Component Version="7"><Params Version="1"/><DisplayName>Shape</DisplayName></Component>
+    <MatchName>AE.ADBE Shape</MatchName>
+  </VideoFilterComponent>''')
+        index += 1
+    for n, body in enumerate(texts):
+        cid = oid + 40 + n * 10
+        shown = instance if instance is not None else body
+        source = ""
+        if blob and body:
+            source = (f'<StartKeyframeValue Encoding="base64" '
+                      f'BinaryHash="h-{cid}">{_text_blob(body)}</StartKeyframeValue>')
+        comps.append(f'<Component Index="{index}" ObjectRef="{cid}"/>')
+        extra.append(f'''
+  <VideoFilterComponent ObjectID="{cid}" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="{cid + 1}"/>
+        <Param Index="1" ObjectRef="{cid + 2}"/>
+        <Param Index="2" ObjectRef="{cid + 3}"/>
+      </Params>
+      <DisplayName>Text</DisplayName>
+      <InstanceName>{shown}</InstanceName>
+    </Component>
+    <MatchName>AE.ADBE Text</MatchName>
+  </VideoFilterComponent>
+  <ArbVideoComponentParam ObjectID="{cid + 1}" Version="3">
+    <ParameterID>1</ParameterID><Name>Source Text</Name>{source}
+  </ArbVideoComponentParam>
+  <VideoComponentParam ObjectID="{cid + 2}" Version="10">
+    <ParameterID>4</ParameterID><Name>Scale</Name>
+    <StartKeyframe>-91445760000000000,{scale},0,0,0,0,0,0</StartKeyframe>
+  </VideoComponentParam>
+  <PointComponentParam ObjectID="{cid + 3}" Version="4">
+    <ParameterID>3</ParameterID><Name>Position</Name>
+    <StartKeyframe>-91445760000000000,{position},0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>
+  </PointComponentParam>''')
+        index += 1
+    # ⚠ THE MASTER CLIP GETS A CHAIN OF ITS OWN, carrying the text the graphic
+    # was FIRST made with. In the real project all 82 captions share one master
+    # clip, so a reader that keeps descending answers with THIS string 82 times.
+    master = ""
+    if master_text is not None:
+        master = f'''
+  <VideoComponentChain ObjectID="{oid + 70}" Version="3">
+    <ComponentChain Version="3"><Components Version="1">
+      <Component Index="0" ObjectRef="{oid + 71}"/>
+    </Components></ComponentChain>
+  </VideoComponentChain>
+  <VideoFilterComponent ObjectID="{oid + 71}" Version="9">
+    <Component Version="7"><Params Version="1"/>
+      <DisplayName>Text</DisplayName><InstanceName>{master_text}</InstanceName>
+    </Component>
+    <MatchName>AE.ADBE Text</MatchName>
+  </VideoFilterComponent>'''
+    master_ref = (f'<MasterClip ObjectRef="{oid + 70}"/>' if master_text is not None else "")
+    return f"""
+  <VideoClipTrackItem ObjectID="{oid}" ClassID="aab0946b" Version="1">
+    <ClipTrackItem Version="1">
+      <ComponentOwner Version="1"><Components ObjectRef="{oid + 9}"/></ComponentOwner>
+      <TrackItem Version="4">
+        <Node Version="1"><Properties Version="1"/></Node>
+        {start_el}<End>{end}</End>
+      </TrackItem>
+      <SubClip ObjectRef="{oid + 1}"/>
+    </ClipTrackItem>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoClipTrackItem>
+  <VideoComponentChain ObjectID="{oid + 9}" Version="3">
+    <ComponentChain Version="3"><Components Version="1">
+      {"".join(comps)}
+    </Components></ComponentChain>
+  </VideoComponentChain>{"".join(extra)}{master}
+  <SubClip ObjectID="{oid + 1}" ClassID="62f4ee9f" Version="1">
+    <Clip ObjectRef="{oid + 2}"/>{master_ref}
+    <Name>{name}</Name>
+  </SubClip>
+  <VideoClip ObjectID="{oid + 2}" ClassID="1c31d4c6" Version="1">
+    <Clip Version="18"><ClipID>clip-{oid}</ClipID><InPoint>0</InPoint></Clip>
+  </VideoClip>"""
+
+
+_T = _NTSC_TICKS
+# ⚠ THE POSITION IS THE REAL ONE, off the reference project's first caption:
+# left edge 0.2797, 39 characters, Scale 50. Everything about the geometry
+# below is checked against where Premiere ACTUALLY put those words.
+_CAPTION = "that needs to work with different tools"
+LETTER_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3">
+  <VideoTrackGroup ObjectID="260" ClassID="1d7fbd0a" Version="1">
+    <TrackGroup Version="1">
+      <Tracks Version="1">
+        <Track Index="0" ObjectURef="lt-pictures"/>
+        <Track Index="1" ObjectURef="lt-adjust"/>
+        <Track Index="2" ObjectURef="lt-shapes"/>
+        <Track Index="3" ObjectURef="lt-titles"/>
+      </Tracks>
+    </TrackGroup>
+    <FrameRate>{_T}</FrameRate>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoTrackGroup>
+  <VideoClipTrack ObjectUID="lt-pictures" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="700"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrack ObjectUID="lt-adjust" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="1100"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrack ObjectUID="lt-shapes" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="1200"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrack ObjectUID="lt-titles" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="1300"/>
+      <TrackItem Index="1" ObjectRef="1400"/>
+      <TrackItem Index="2" ObjectRef="1500"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+{_real_clip(700, "Opening", r"C:\\Footage\\open.png", end=_T * 240)}
+{_graphic_clip(1100, end=_T * 240, name="Adjustment Layer")}
+{_graphic_clip(1200, end=_T * 240, shape=True)}
+{_graphic_clip(1300, end=_T * 48, texts=[_CAPTION],
+               instance="renamed in Premiere", master_text="the ORIGINAL text")}
+{_graphic_clip(1400, end=_T * 96, start=_T * 48, texts=["", "In simple words"],
+               scale="72.", position="0.3408:0.5242")}
+{_graphic_clip(1500, end=_T * 144, start=_T * 96, texts=["No blob here"],
+               blob=False, instance="No blob here")}
+</PremiereData>
+"""
+
+letters = interchange.read_document(
+    _gzip.compress(LETTER_XML.encode("utf-8")), "Letters.prproj",
+    fps_hint=24, experimental=True,
+)
+check("a .prproj of titles still reads by the STRUCTURED route",
+      letters.get("route") == "structured", str(letters.get("route")))
+
+_rows = letters["video"]
+_titles = [c for row in _rows for c in row["clips"]
+           if (c.get("graphic") or {}).get("kind") == "text"]
+_words = [t["text"] for g in _titles for t in g["graphic"]["texts"]]
+check("every title on the timeline is found — not one of them is an empty clip",
+      len(_words) == 3, f"{len(_words)} titles: {_words}")
+
+# --- WHICH of the two copies of the text is believed -----------------------
+# ⚠ THE FIXTURE MAKES THEM DISAGREE. Clip 1300's `<InstanceName>` says "renamed
+# in Premiere" and its blob says the caption. A reader taking the cheap one
+# returns the layer NAME as somebody's subtitle.
+check("the words come out of the Source Text BLOB, not the layer's name",
+      _words[0] == _CAPTION, repr(_words[0]))
+check("…and `<InstanceName>` is still the fallback when there is no blob",
+      "No blob here" in _words, str(_words))
+
+# --- the master clip must not answer ---------------------------------------
+# ⚠ ALL 82 CAPTIONS IN THE REFERENCE PROJECT SHARE ONE MASTER CLIP. A walk that
+# keeps descending finds the text the graphic was DUPLICATED FROM and returns it
+# for every caption — the same sentence 82 times, which previews as a timeline
+# that is full, correct-looking and completely wrong.
+check("the MASTER clip's older text is never what comes back",
+      "the ORIGINAL text" not in _words, str(_words))
+
+# --- a Graphic Group whose first layer is empty ----------------------------
+# ⚠ THIS ONE SHIPPED IN THE FIRST DRAFT AND WAS CAUGHT ON THE REAL FILE. Clip
+# 1400 is a Graphic Group: an EMPTY text layer, then the words. Returning at the
+# first text component found loses the caption and reports the clip as media.
+check("a Graphic Group starting with an EMPTY text layer still gives its words",
+      "In simple words" in _words, str(_words))
+
+# --- where it lands --------------------------------------------------------
+# ⚠ PREMIERE STORES THE LEFT EDGE OF THE LINE; THIS APP WANTS THE CENTRE. The
+# numbers are the reference project's own: left 0.2797, 39 characters, Scale 50
+# → size 45px → a centre that has to come back to 0.5, because that caption was
+# centred in the frame. See `PRPROJ_TEXT_SIZE_PER_SCALE`.
+_first = _titles[0]["graphic"]["texts"][0]
+check("a title's SIZE comes from Premiere's Scale (50% → 45px at 1080p)",
+      _first["size_px"] == 45.0, str(_first["size_px"]))
+check("…and the left edge Premiere stores becomes the CENTRE this app draws at",
+      abs(_first["x"] - 0.5) < 0.02, f'x={_first["x"]} (0.5 ± 0.02)')
+check("…with the vertical place taken straight across",
+      _first["y"] == 0.5219, str(_first["y"]))
+_bigger = [t for g in _titles for t in g["graphic"]["texts"]
+           if t["text"] == "In simple words"][0]
+check("a title set larger in Premiere is larger here too (72% → 64.8px)",
+      _bigger["size_px"] == 64.8, str(_bigger["size_px"]))
+check("the font comes across, mapped onto a face this app actually ships",
+      _first["font"] == "inter", _first["font"])
+check("…and an unbundled face folds down instead of failing",
+      interchange.prproj_font_id("Wingdings-Regular")
+      == animatic_fonts.DEFAULT_FONT, interchange.prproj_font_id("Wingdings"))
+check("…while a face this app DOES ship is matched, weight suffix and all",
+      interchange.prproj_font_id("Montserrat-SemiBold") == "montserrat",
+      interchange.prproj_font_id("Montserrat-SemiBold"))
+
+
+# ---------------------------------------------------------------------------
+# 8h · Every kind of Premiere row goes to the row of THIS app that holds it
+# ---------------------------------------------------------------------------
+# ⚠ **A PREMIERE ROW IS NOT A PICTURE ROW.** Three of the four rows in the
+# fixture above carry no film — one Adjustment Layer, one shape, three titles —
+# and the import used to turn every one of them into a picture row of clips with
+# no file. On the real project that was four full-length invisible cards over the
+# cut, reported as "audio, image and video show but text not show".
+print("\n8h · each Premiere row lands on the row that holds it here")
+
+placed = interchange.to_project(
+    letters,
+    lambda n: ({"kind": "image", "upload_id": "u", "duration_ms": 0}
+               if n.lower().endswith(".png") else None),
+    background="#000000", new_id=lambda: _uuid.uuid4().hex[:12],
+)
+_report = placed["report"]
+check("the titles arrive as TEXT clips, not as frames",
+      len(placed["texts"]) == 3, str(len(placed["texts"])))
+check("…the shape as a shape",
+      len(placed["shapes"]) == 1, str(len(placed["shapes"])))
+check("…and only the row that holds a PICTURE becomes a picture row",
+      _report["video_tracks"] == 1, str(_report["video_tracks"]))
+# ⚠ THE NUMBERING IS THE POINT. Picture rows are addressed by NUMBER, so
+# leaving the caption row's index in place hands the client "4 picture rows" and
+# it draws three empty ones above the film.
+check("…numbered from zero with no gap where the other rows were",
+      sorted({f["track"] for f in placed["frames"]}) == [0],
+      str(sorted({f["track"] for f in placed["frames"]})))
+check("a row of stills is called a row of stills, so the client can name it",
+      _report["video_lane_kinds"] == ["image"],
+      str(_report["video_lane_kinds"]))
+
+# --- the caption row is not ours to write to -------------------------------
+# ⚠ `CAPTION_LAYER_ID` IS ✨ AUTO CAPTIONS' ROW AND IT IS REPLACED WHOLESALE ON
+# EVERY RUN. An imported title parked there is destroyed by a transcription the
+# user paid for, silently. The import mints its own lanes and this is what keeps
+# it that way.
+check("imported titles go to import lanes of their own",
+      all(t["layer_id"].startswith(interchange.IMPORT_TEXT_LANE_PREFIX)
+          for t in placed["texts"]),
+      str({t["layer_id"] for t in placed["texts"]}))
+check("…and NEVER to the row ✨ Auto captions owns",
+      all(t["layer_id"] != interchange.IMPORT_CAPTION_LAYER_ID
+          for t in placed["texts"]),
+      str({t["layer_id"] for t in placed["texts"]}))
+check("…nor to the default lane, which is the user's own row",
+      all(t["layer_id"] for t in placed["texts"]), "")
+
+# --- timing, which is the half that has to be exact ------------------------
+check("a title is on screen exactly when Premiere had it",
+      [(t["start_ms"], t["duration_ms"]) for t in placed["texts"]]
+      == [(0, 2000), (2000, 2000), (4000, 2000)],
+      str([(t["start_ms"], t["duration_ms"]) for t in placed["texts"]]))
+check("…positioned freely, not flowed into a stack",
+      all(t.get("place") == "free" for t in placed["texts"]),
+      str([t.get("place") for t in placed["texts"]]))
+
+# --- the two things that must NOT be invented ------------------------------
+# ⚠ THE FILL COLOUR IS NOT IN A .prproj. It was looked for in a real project and
+# is in none of the three places it could be — see `_prproj_text_style`. So the
+# import uses this app's own default and SAYS SO. A future reader that starts
+# guessing a colour has to change this line and read that docstring first.
+check("no colour is invented for an imported title",
+      {t["color"] for t in placed["texts"]} == {interchange.IMPORT_TEXT_COLOR},
+      str({t["color"] for t in placed["texts"]}))
+check("…and no black scrim bar is added to somebody's film either",
+      {t["backdrop"] for t in placed["texts"]} == {"none"},
+      str({t["backdrop"] for t in placed["texts"]}))
+check("a shape stands in at zero opacity — its size and fill are unreadable",
+      placed["shapes"][0]["opacity"] == 0.0, str(placed["shapes"][0]["opacity"]))
+
+# --- the Adjustment Layer -------------------------------------------------
+# Left out on purpose: it is an empty holder for colour effects this format does
+# not carry, and importing it put a full-length clip over the film that did
+# nothing. Counted and SAID, never silently dropped.
+check("an Adjustment Layer is left out rather than made an invisible card",
+      not any((f.get("label") or "") == "Adjustment Layer"
+              for f in placed["frames"]),
+      str([f.get("label") for f in placed["frames"]]))
+check("…and the report says so in words",
+      any("Adjustment Layer" in w for w in _report["warnings"]),
+      str(_report["warnings"][-3:]))
+check("the report no longer tells anyone to type their titles again",
+      not any("typed again" in w for w in _report["warnings"]),
+      str([w for w in _report["warnings"] if "typed" in w]))
+check("…it says what came across and what did not",
+      any("COLOUR is not in a .prproj" in w for w in _report["warnings"]),
+      str(_report["warnings"][-3:]))
+
+# --- and none of this disturbed the reader that already worked -------------
+# ⚠ THE REGRESSION GUARD FOR §8f. `_prproj_graphic` walks the same graph
+# `_prproj_detail` does, on every clip; a file with no graphics in it at all must
+# come out byte for byte as it did before.
+_again = interchange.to_project(
+    real,
+    lambda n: {"kind": "audio" if n.endswith(".wav") else
+               ("video" if n.endswith(".mp4") else "image"),
+               "upload_id": "u", "duration_ms": 0},
+    background="#000000", new_id=lambda: "x",
+)
+check("a .prproj with no graphics in it reads exactly as it did before",
+      [a["offset_ms"] for a in _again["audio_tracks"]] == [0, 1500, 4000]
+      and len(_again["frames"]) == 3 and not _again["texts"],
+      f'{len(_again["frames"])} frames, {len(_again["texts"])} texts')
+check("…and its two picture rows are still two picture rows",
+      _again["report"]["video_tracks"] == 2,
+      str(_again["report"]["video_tracks"]))
+
 
 
 # ---------------------------------------------------------------------------
@@ -1534,23 +1991,44 @@ _by_track = {f["track"]: f for f in _stack["frames"]}
 
 check("the matched clip on the bottom row is the picture it always was",
       _by_track[0]["kind"] == "image", str(_by_track.get(0)))
-check("a title on a row ABOVE it is still on the timeline",
-      set(_by_track) == {0, 1, 2}, f"tracks {sorted(_by_track)}")
+# ⚠ TWO ROWS, NOT THREE, AND THAT CHANGED ON PURPOSE — see §8h. The Adjustment
+# Layer is no longer carried in at all: it is an empty holder for colour effects
+# no interchange format carries, so the only thing it ever contributed was a
+# full-length clip over the cut that did nothing and had to be hunted down and
+# deleted. The GRAPHIC still arrives, because a graphic can hold something.
+check("a graphic on a row ABOVE the film is still on the timeline",
+      set(_by_track) == {0, 1}, f"tracks {sorted(_by_track)}")
 check("…still carrying its own name",
-      [_by_track[1]["label"], _by_track[2]["label"]] == ["Graphic", "Adjustment Layer"],
-      str([_by_track[1]["label"], _by_track[2]["label"]]))
+      _by_track[1]["label"] == "Graphic", str(_by_track[1]["label"]))
 check("…still counted as a placeholder, so the dialog names it",
-      len(_stack["report"]["placeholders"]) == 2,
+      _stack["report"]["placeholders"] == ["Graphic"],
       str(_stack["report"]["placeholders"]))
 # ⚠ THE ONE THE BLACK SCREEN WAS. Two of these at full length over a cut is a
 # film nobody can see, and nothing anywhere reported a fault.
 check("…and it draws NOTHING, so the film behind it is visible",
-      _by_track[1]["opacity"] == 0 and _by_track[2]["opacity"] == 0,
-      f"opacities {[_by_track[1]['opacity'], _by_track[2]['opacity']]}")
-check("the report says so, and says a title is not a file that can be attached",
-      any("draw nothing" in w and "Text tool" in w
-          for w in _stack["report"]["warnings"]),
+      _by_track[1]["opacity"] == 0, str(_by_track[1]["opacity"]))
+check("the report says a clip above the film drew nothing",
+      any("draw nothing" in w for w in _stack["report"]["warnings"]),
       str(_stack["report"]["warnings"]))
+# ⚠ AND IT NO LONGER TELLS ANYBODY TO RETYPE THEIR TITLES. That sentence was in
+# this warning for months and it was wrong — the words are in the file. §8g is
+# where they come out; this is the guard against the advice coming back.
+check("…and no longer tells the user to type their lettering again",
+      not any("Text tool" in w for w in _stack["report"]["warnings"]),
+      str([w for w in _stack["report"]["warnings"] if "Text tool" in w]))
+check("the Adjustment Layer is left out, and the report says which",
+      any("Adjustment Layer" in w for w in _stack["report"]["warnings"]),
+      str(_stack["report"]["warnings"]))
+# ⚠ AND THE NAME IS NOT ENOUGH ON ITS OWN. Somebody's footage really can be
+# called "Adjustment Layer.mov"; dropping a clip that RESOLVED to a file would
+# be this app deleting a shot out of a cut on the strength of its filename.
+_named = interchange.to_project(
+    _lanes([_c(0, 240, name="Adjustment Layer", file="f")]),
+    _as_image, background="#000000",
+)
+check("…but a clip that resolved to a real FILE is kept whatever it is called",
+      len(_named["frames"]) == 1 and _named["frames"][0]["kind"] == "image",
+      str(_named["frames"]))
 
 # ⚠ THE BOTTOM ROW KEEPS ITS CARD. Blanking that one would put the gap back to
 # being invisible, which is the whole of E45 undone in the name of fixing this.
@@ -1779,7 +2257,20 @@ check("…and cannot be closed mid-write", "!importBusy && setProjectImportOpen(
 # a copy-paste produces) is simply an unknown key: the import looks perfect on
 # screen and the sounds are gone on the next reload.
 apply_at = editor.index("async function applyProjectImport")
-apply_src = editor[apply_at: apply_at + 6000]
+# ⚠ TO THE END OF THE FUNCTION, NOT A FIXED NUMBER OF CHARACTERS. This used to
+# read `apply_at + 6000`, and the day the function grew past that every check
+# below went green-to-red at once for a reason that had nothing to do with what
+# they test — the `flush` call had simply fallen off the end of the window. The
+# next declaration at the component's own indentation is where this function
+# stops.
+_apply_end = min(
+    (at for at in (editor.find(mark, apply_at + 80)
+                   for mark in ("\n  /**", "\n  async function ", "\n  function ",
+                                "\n  const "))
+     if at > 0),
+    default=len(editor),
+)
+apply_src = editor[apply_at:_apply_end]
 check("the save patch uses the document's own spelling for audio",
       "audioTracks: nextAudio" in apply_src, "")
 check("…and audio_tracks is NOT used as a patch key",
@@ -1799,8 +2290,15 @@ check("…and it refuses rather than overflowing the row cap",
 # ⚠ AN AUDIO CLIP WITH layer_id "" GOES ON THE DEFAULT LANE, i.e. straight into
 # whatever is already there. Every imported lane gets a row of its own.
 check("audio lanes are created rather than defaulted", "laneFor.set(" in apply_src, "")
+# ⚠ EVERY LIST OF ROWS THIS MAKES HAS TO BE SEATED, and the check is written
+# against the LISTS rather than against a count. It used to assert "exactly 2",
+# which is a number that goes stale the moment a row kind is added — and it did:
+# text and shape rows arrived and the count said 4. Naming the lists means a new
+# row kind that is never seated fails here, which is the fault worth catching.
+_row_lists = re.findall(r"for \(const row of (\w+)\) seatNewLane", apply_src)
 check("…and every new row claims its place in the saved stack order",
-      apply_src.count("seatNewLane(layerTokenOf(row))") == 2, "")
+      set(_row_lists) == {"newRows", "audioRows", "textRows", "shapeRows"},
+      str(_row_lists))
 
 # ⚠ ONE WRITE = ONE UNDO STEP, which is the real safety net behind "adds, never
 # replaces". Two flushes would make Ctrl+Z take half the import back out.

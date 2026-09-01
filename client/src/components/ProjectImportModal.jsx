@@ -146,12 +146,25 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   // in the warnings list somebody may scroll past.
   const isGuess = read?.reader === "prproj";
 
+  // ⚠ THE TITLES GET A LINE OF THEIR OWN, and it is only drawn when there ARE
+  // some. Users were told for months that Premiere lettering could not come
+  // across — an import that now brings forty captions in and says nothing about
+  // them leaves that belief in place, and the row they landed on unlooked-for.
   const rows = read
     ? [
         `${read.clips} clips on ${read.video_tracks} row${read.video_tracks === 1 ? "" : "s"}`,
         `${read.audio_clips} sounds on ${read.audio_lanes} row${
           read.audio_lanes === 1 ? "" : "s"
         }`,
+        ...(read.texts_read
+          ? [
+              `${read.texts_read} title${read.texts_read === 1 ? "" : "s"} on ` +
+                `${read.text_lanes} text row${read.text_lanes === 1 ? "" : "s"}`,
+            ]
+          : []),
+        ...(read.shapes_read
+          ? [`${read.shapes_read} shape${read.shapes_read === 1 ? "" : "s"}`]
+          : []),
         `${read.transitions_read} dissolve${read.transitions_read === 1 ? "" : "s"}`,
         `read at ${read.fps} fps`,
       ]
@@ -390,7 +403,9 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
                     <span className="spinner-inline" /> Adding…
                   </>
                 ) : (
-                  `Add ${read.clips + read.audio_clips} clips to the timeline`
+                  // Titles are counted in — a Premiere sequence whose picture is
+                  // all offline but whose forty captions read is not "0 clips".
+                  `Add ${read.clips + read.audio_clips + (read.texts_read || 0)} clips to the timeline`
                 )}
               </button>
             ) : (

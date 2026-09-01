@@ -2445,6 +2445,18 @@ class AnimaticImportResponse(BaseModel):
     frames: list[AnimaticFrame] = Field(default_factory=list)
     audio_tracks: list[AnimaticAudio] = Field(default_factory=list)
     transitions: list[AnimaticTransition] = Field(default_factory=list)
+    # ⚠ THE LETTERING, AND IT IS NOT A FRAME. A Premiere title is a clip with no
+    # file, so until this existed every one of them arrived as an invisible
+    # placeholder on a picture row and the import told the user to type their
+    # titles again. They are `AnimaticTextClip`s on TEXT rows now, addressed by
+    # `layer_id` like every other timed clip — `"_import_text_0"`, re-based by
+    # the client. ⚠ NEVER `CAPTION_LAYER_ID`: that row belongs to ✨ Auto
+    # captions and is rewritten wholesale on every run of it.
+    texts: list[AnimaticTextClip] = Field(default_factory=list)
+    # Drawn shapes, at the right times and at zero opacity — their geometry and
+    # fill are in a binary Premiere keeps out of the project file. See
+    # `interchange._import_shape_clip`.
+    shapes: list[AnimaticShape] = Field(default_factory=list)
 
     # --- what to SAY about it ----------------------------------------------
     name: str = Field("", description="What the sequence was called in the file.")
@@ -2460,7 +2472,18 @@ class AnimaticImportResponse(BaseModel):
     clips: int = 0
     audio_clips: int = 0
     video_tracks: int = 0
+    # What to CALL each picture row: "video" | "image", one per row, in row
+    # order. ⚠ THE ROWS USED TO BE NAMED AFTER THE FILE — eight rows all reading
+    # "8_MCP_Model Context Prot…", which says nothing about any of them and is
+    # already on the project. The client turns these into its own row names
+    # ("Video", "Images", "Images 2") with the same helper it uses when a user
+    # adds a row by hand, so an imported timeline is named like a built one.
+    video_lane_kinds: list[str] = Field(default_factory=list)
     audio_lanes: int = 0
+    text_lanes: int = 0
+    shape_lanes: int = 0
+    texts_read: int = 0
+    shapes_read: int = 0
     transitions_read: int = 0
     matched: int = Field(0, description="Media files matched to a clip by name.")
     # ⚠ THE TWO HONEST LISTS. `placeholders` names every clip whose file did not

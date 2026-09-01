@@ -2933,7 +2933,12 @@ async def import_interchange(
                 f"{config.MAX_ANIMATIC_AUDIO_CLIPS}."
             ),
         )
-    if not built["frames"] and not built["audio_tracks"]:
+    # ⚠ TEXT AND SHAPES COUNT AS SOMETHING. A Premiere sequence whose picture and
+    # sound are all offline but whose titles read perfectly is a real import, and
+    # answering "there was nothing on that timeline" to it would be a lie the
+    # user cannot argue with.
+    if not any((built["frames"], built["audio_tracks"],
+                built.get("texts"), built.get("shapes"))):
         raise HTTPException(
             status_code=409, detail="There was nothing on that timeline to bring in."
         )
@@ -2947,6 +2952,8 @@ async def import_interchange(
     )
     return AnimaticImportResponse(
         frames=[AnimaticFrame(**f) for f in built["frames"]],
+        texts=[AnimaticTextClip(**t) for t in built.get("texts") or []],
+        shapes=[AnimaticShape(**s) for s in built.get("shapes") or []],
         audio_tracks=[AnimaticAudio(**a) for a in built["audio_tracks"]],
         transitions=[AnimaticTransition(**t) for t in built["transitions"]],
         name=report["name"],
@@ -2955,7 +2962,12 @@ async def import_interchange(
         clips=report["clips"],
         audio_clips=report["audio_clips"],
         video_tracks=report["video_tracks"],
+        video_lane_kinds=report.get("video_lane_kinds") or [],
         audio_lanes=report["audio_lanes"],
+        text_lanes=report.get("text_lanes", 0),
+        shape_lanes=report.get("shape_lanes", 0),
+        texts_read=report.get("texts_read", 0),
+        shapes_read=report.get("shapes_read", 0),
         transitions_read=report["transitions"],
         matched=report["matched"],
         placeholders=report["placeholders"],

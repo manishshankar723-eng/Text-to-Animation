@@ -6030,7 +6030,13 @@ export default function AnimaticEditor({
     if (importBusy) return;
     const added = res.frames || [];
     const sounds = res.audio_tracks || [];
-    if (!added.length && !sounds.length) {
+    // ⚠ THE LETTERING AND THE SHAPES COUNT AS SOMETHING TO BRING IN. A Premiere
+    // sequence whose media is all offline but whose forty titles read perfectly
+    // is a real import; refusing it here would be the client contradicting a
+    // server that just did the work.
+    const lettering = (res.texts || []).filter((c) => (c.text || "").trim());
+    const drawn = res.shapes || [];
+    if (!added.length && !sounds.length && !lettering.length && !drawn.length) {
       setNotice("There was nothing on that timeline to bring in.");
       return;
     }
@@ -6051,13 +6057,41 @@ export default function AnimaticEditor({
 
     setImportBusy(true);
     try {
-      const label = (res.name || "Imported").slice(0, 40);
+      /**
+       * A ROW'S NAME, BY WHAT IS ON IT.
+       *
+       * ⚠ **IMPORTED ROWS USED TO BE NAMED AFTER THE FILE** — every row read
+       * "8_MCP_Model Context Prot…", eleven of them down the gutter, which says
+       * nothing about any single row and repeats something the project title
+       * already says. Worse, the one row it mattered for was the sound: "…audio"
+       * on a row of pictures reads as a mistake.
+       *
+       * A row is called what this app calls that kind of row, numbered the way
+       * `addLayer` numbers one the user adds by hand — first is the bare word,
+       * then " 2". `taken` walks the names ALREADY on the timeline as well as
+       * the ones this import has just minted, so an import into a project that
+       * already has a "Text 2" produces "Text 3" rather than a duplicate.
+       */
+      const taken = new Set(layers.map((l) => (l.name || "").trim()).filter(Boolean));
+      const rowName = (word) => {
+        for (let n = 1; ; n += 1) {
+          const name = n === 1 ? word : `${word} ${n}`;
+          if (!taken.has(name)) {
+            taken.add(name);
+            return name;
+          }
+        }
+      };
+      // What each picture row holds, in row order — "video" | "image". A row of
+      // stills is called "Images", so an import reads like the timeline someone
+      // would have built by hand.
+      const lanePictures = res.video_lane_kinds || [];
       const newRows = [];
       for (let i = 0; i < needed; i += 1) {
         newRows.push({
           id: newId(),
           kind: "video",
-          name: needed === 1 ? label : `${label} ${i + 1}`,
+          name: rowName(lanePictures[i] === "image" ? LAYER_NAMES.image : "Video"),
           track: base + i,
         });
       }
@@ -6069,13 +6103,37 @@ export default function AnimaticEditor({
       for (const track of sounds) {
         const key = track.layer_id || "_import_0";
         if (laneFor.has(key)) continue;
-        const row = {
-          id: newId(),
-          kind: "audio",
-          name: audioRows.length ? `${label} audio ${audioRows.length + 1}` : `${label} audio`,
-        };
+        const row = { id: newId(), kind: "audio", name: rowName(LAYER_NAMES.audio) };
         laneFor.set(key, row.id);
         audioRows.push(row);
+      }
+      /**
+       * THE TEXT ROWS — and the one row they must never be.
+       *
+       * ⚠ `CAPTION_LAYER_ID` IS OFF LIMITS TO AN IMPORT. That row belongs to
+       * ✨ Auto captions, which REPLACES everything on it every time it runs: an
+       * imported title parked there would be destroyed by a transcription the
+       * user paid for, with nothing on screen to say it had happened. The server
+       * mints `_import_text_N` and never that id; this filter is the second lock,
+       * here because the cost of the first one ever slipping is somebody's work.
+       */
+      const textLaneFor = new Map();
+      const shapeLaneFor = new Map();
+      const textRows = [];
+      const shapeRows = [];
+      for (const clip of lettering) {
+        const key = clip.layer_id || "_import_text_0";
+        if (key === CAPTION_LAYER_ID || textLaneFor.has(key)) continue;
+        const row = { id: newId(), kind: "text", name: rowName(LAYER_NAMES.text) };
+        textLaneFor.set(key, row.id);
+        textRows.push(row);
+      }
+      for (const shape of drawn) {
+        const key = shape.layer_id || "_import_shape_0";
+        if (shapeLaneFor.has(key)) continue;
+        const row = { id: newId(), kind: "shape", name: rowName(LAYER_NAMES.shape) };
+        shapeLaneFor.set(key, row.id);
+        shapeRows.push(row);
       }
 
       const frames = added.map((f) => ({
@@ -6092,10 +6150,23 @@ export default function AnimaticEditor({
         url: `/animatics/${animaticId}/media/${a.upload_id}`,
       }));
 
+      // The lettering and the shapes, re-based onto the rows minted above. A
+      // clip whose lane was filtered out (only `CAPTION_LAYER_ID` can be) is
+      // dropped rather than falling back to `layer_id: ""` — the default row is
+      // somebody's own work and an import must not pile into it.
+      const captions = lettering
+        .map((c) => ({ ...c, layer_id: textLaneFor.get(c.layer_id || "_import_text_0") || "" }))
+        .filter((c) => c.layer_id);
+      const boxes = drawn
+        .map((s) => ({ ...s, layer_id: shapeLaneFor.get(s.layer_id || "_import_shape_0") || "" }))
+        .filter((s) => s.layer_id);
+
       const nextFrames = [...framesRef.current, ...frames];
       const nextAudio = [...audioTracks, ...tracks];
+      const nextTexts = [...texts, ...captions];
+      const nextShapes = [...shapes, ...boxes];
       const nextTransitions = [...transitions, ...(res.transitions || [])];
-      const nextLayers = [...layers, ...newRows, ...audioRows];
+      const nextLayers = [...layers, ...newRows, ...audioRows, ...textRows, ...shapeRows];
       // ⚠ THE LIBRARY GOES UP IN THE SAME WRITE, for the reason the board import
       // gives: a clip imported and deleted before the debounce fired would
       // otherwise be gone from both lists, and the file would have to be found
@@ -6108,6 +6179,8 @@ export default function AnimaticEditor({
       await flush({
         frames: nextFrames,
         audioTracks: nextAudio,
+        texts: nextTexts,
+        shapes: nextShapes,
         transitions: nextTransitions,
         layers: nextLayers,
         assets: cards,
@@ -6115,18 +6188,26 @@ export default function AnimaticEditor({
       framesRef.current = nextFrames;
       setFrames(nextFrames);
       setAudioTracks(nextAudio);
+      setTexts(nextTexts);
+      setShapes(nextShapes);
       setTransitions(nextTransitions);
       setLayers(nextLayers);
       setAssets(cards);
       for (const row of newRows) seatNewLane(layerTokenOf(row));
       for (const row of audioRows) seatNewLane(layerTokenOf(row));
+      for (const row of textRows) seatNewLane(layerTokenOf(row));
+      for (const row of shapeRows) seatNewLane(layerTokenOf(row));
 
       setProjectImportOpen(false);
       const gaps = (res.placeholders || []).length;
       setNotice(
         `Imported “${res.name || "sequence"}” — ${added.length} clip` +
           `${added.length === 1 ? "" : "s"}` +
-          `${sounds.length ? ` and ${sounds.length} sound${sounds.length === 1 ? "" : "s"}` : ""}.` +
+          `${sounds.length ? ` and ${sounds.length} sound${sounds.length === 1 ? "" : "s"}` : ""}` +
+          // ⚠ SAID IN THE SAME BREATH AS THE CLIPS. The titles are the part
+          // users had been told for months could never come across, so an
+          // import that quietly succeeds at it is an import nobody notices.
+          `${captions.length ? ` and ${captions.length} title${captions.length === 1 ? "" : "s"}` : ""}.` +
           (gaps
             ? ` ${gaps} file${gaps === 1 ? "" : "s"} didn't arrive — those are colour cards.`
             : "") +
