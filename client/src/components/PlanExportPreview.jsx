@@ -63,7 +63,7 @@ export default function PlanExportPreview({
   const assumptions = plan?.assumptions || [];
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="card export-modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose} title="Close" aria-label="Close">
           <Icon name="close" />

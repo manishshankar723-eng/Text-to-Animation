@@ -616,7 +616,7 @@ export default function JobDetail({ jobId, onChanged }) {
 
       {/* ----- 3D generation popup ----- */}
       {threeDPart && (
-        <div className="modal-overlay" onClick={() => !tdBusy && setThreeDPart(null)}>
+        <div className="modal-overlay">
           <div className="card td-modal" onClick={(e) => e.stopPropagation()}>
             <button
               className="modal-close"

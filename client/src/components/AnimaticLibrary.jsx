@@ -476,7 +476,7 @@ export default function AnimaticLibrary({ onOpen }) {
       </LibrarySection>
 
       {picking && (
-        <div className="modal-overlay" onClick={() => setPicking(false)}>
+        <div className="modal-overlay">
           <div className="card an-pick-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setPicking(false)}>
               ✕

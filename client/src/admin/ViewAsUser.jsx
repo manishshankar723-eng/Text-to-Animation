@@ -20,7 +20,7 @@ export default function ViewAsUser({ detail, onClose }) {
   const capabilities = meta.filter((f) => f.group === "capability");
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="card view-as"
         onClick={(e) => e.stopPropagation()}

@@ -351,13 +351,7 @@ export default function FinalVideoArtStep({
 
       {/* --- Character-run picker ----------------------------------------- */}
       {picking && (
-        <div
-          className="modal-overlay"
-          onClick={() => {
-            setPicking(false);
-            setAssets(null);
-          }}
-        >
+        <div className="modal-overlay">
           <div
             className="card an-pick-modal"
             onClick={(e) => e.stopPropagation()}

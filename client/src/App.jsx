@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api.js";
 import { applyTheme, getTheme } from "./theme.js";
+import { installDialogMove } from "./dialog_move.js";
 // The same answer this shell reads for the rail, handed to the controls buried
 // inside the workflows — ✨ Animate, 🎙 Voiceover, the 3D popup. See
 // `entitlements.js`; it is a module store, so nothing is threaded as a prop.
@@ -297,6 +298,14 @@ export default function App() {
   );
 
   useEffect(() => applyTheme(theme), [theme]);
+
+  // ⚠ EVERY DIALOG IN THE APP IS DRAGGABLE, AND THIS ONE LINE IS WHY. No
+  // dialog's own JSX mentions it — `dialog_move.js` listens on `document` and
+  // finds them by `.modal-overlay`. It is here because dialogs are opened from
+  // a dozen screens and none of them owns the others. ⚠ It is the other half of
+  // RULEBOOK **E65**: dialogs no longer close on a backdrop click (one stray
+  // click threw away a long import), so they have to be moveable instead.
+  useEffect(() => installDialogMove(), []);
 
   // ⚠ ONE DIRECTION ONLY: nav writes the URL, the URL is read once at boot.
   // Watching the address as well would make two owners of one piece of state,
@@ -911,7 +920,7 @@ export default function App() {
           password and report a bad one; a copy of it here would be a copy of
           all four. Only the frame is different, and that is CSS. */}
       {addAccountOpen && (
-        <div className="modal-overlay" onClick={() => setAddAccountOpen(false)}>
+        <div className="modal-overlay">
           <div className="add-account-modal" onClick={(e) => e.stopPropagation()}>
             <button
               className="modal-close"

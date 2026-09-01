@@ -110,7 +110,7 @@ export default function CreateAnimaticImage({ onOpenAnimatic }) {
       />
 
       {picking && (
-        <div className="modal-overlay" onClick={() => setPicking(null)}>
+        <div className="modal-overlay">
           <div
             className="card an-pick-modal"
             onClick={(e) => e.stopPropagation()}

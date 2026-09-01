@@ -401,7 +401,7 @@ export default function FinalVideoRenderStep({
 
       {/* --- The confirm dialog: the last thing before money moves --------- */}
       {confirm && (
-        <div className="modal-overlay" onClick={() => setConfirm(null)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"

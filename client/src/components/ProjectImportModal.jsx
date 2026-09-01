@@ -69,6 +69,21 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   const docRef = useRef(null);
   const mediaRef = useRef(null);
   const folderRef = useRef(null);
+  // ⚠ THIS DIALOG DOES NOT CLOSE BY ACCIDENT. Reported from a long `.prproj`
+  // import: a click that landed a few pixels outside the card took the dialog
+  // away — with the read, the missing-file folders and the warnings in it — and
+  // there is no way back to any of that but doing the whole thing again.
+  // *"galti se mera mouse pop up se bahar click hua … mera mehnat bekar ho
+  // gaya"*. So the backdrop closes nothing, Escape closes nothing, and ✕ /
+  // Cancel are the only doors out (RULEBOOK E65 — now true of EVERY dialog in
+  // the app, not just this one).
+  //
+  // ⚠ AND IT MOVES, BUT NOT FROM ANY CODE IN THIS FILE. `dialog_move.js`, wired
+  // in once from `App.jsx`, makes the heading of every dialog a drag handle —
+  // do not add a second implementation here. What IS local is the title bar
+  // below: this dialog scrolls inside itself, so the bar is `sticky` and takes
+  // the ✕ with it, or the only handle and the only exit both scroll out of
+  // reach the moment somebody reads the report.
 
   useEffect(() => {
     if (!open) return undefined;
@@ -78,13 +93,10 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     setError("");
     setGuessed(false);
     setStale(false);
-    const onKey = (e) => e.key === "Escape" && !reading && !busy && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // `reading`/`busy` are read inside the handler on purpose — re-binding the
-    // listener on every keystroke of a long upload would be the only effect of
-    // listing them, and the fields above must reset only when it OPENS.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return undefined;
+    // ⚠ NO Escape LISTENER HERE ANY MORE, ON PURPOSE (see the header). Escape
+    // is one keystroke away from the typing people do in this dialog, and it
+    // threw away the same minutes of work the stray backdrop click did.
   }, [open]);
 
   if (!open) return null;
@@ -236,18 +248,26 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   // whole change is about, pointing the other way.
   const missingFolders = missingByFolder.filter((g) => g.folder);
 
+  // ⚠ NO `onClick` ON THE BACKDROP — see the header, and RULEBOOK E65.
   return (
-    <div className="modal-overlay" onClick={() => !reading && !busy && onClose()}>
-      <div className="card an-xchg-modal" onClick={(e) => e.stopPropagation()}>
-        <button
-          className="modal-close"
-          onClick={() => !reading && !busy && onClose()}
-          title="Close"
-        >
-          ✕
-        </button>
-
-        <h2>Import project file</h2>
+    <div className="modal-overlay">
+      <div className="card an-xchg-modal">
+        {/* ⚠ THE TITLE BAR STICKS TO THE TOP OF THE CARD, AND THE ✕ RIDES IN IT.
+            This dialog scrolls — the report can run to a dozen folders — and a
+            ✕ positioned against the card scrolls away with the content, which
+            on a dialog that no longer closes on the backdrop would leave no
+            exit on screen at all. It is also the drag handle, for the same
+            reason: it has to be reachable from wherever the user has read to. */}
+        <div className="an-xchg-bar">
+          <h2 title="Drag to move this window">Import project file</h2>
+          <button
+            className="modal-close"
+            onClick={() => !reading && !busy && onClose()}
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         <p className="muted">
           A <strong>Final Cut Pro XML</strong> — what Premiere Pro, DaVinci
           Resolve and Avid all export — an <strong>EDL</strong>, or a{" "}

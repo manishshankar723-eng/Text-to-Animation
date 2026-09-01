@@ -129,7 +129,7 @@ export default function ProjectFileModal({ open, animaticId, title, onClose }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={() => !busy && onClose()}>
+    <div className="modal-overlay">
       <div className="card an-xchg-modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={() => !busy && onClose()} title="Close">
           ✕

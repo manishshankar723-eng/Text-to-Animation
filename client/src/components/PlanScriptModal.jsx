@@ -79,7 +79,7 @@ export default function PlanScriptModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="card export-modal script-modal"
         onClick={(e) => e.stopPropagation()}

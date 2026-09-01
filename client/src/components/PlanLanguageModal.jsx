@@ -78,7 +78,7 @@ export default function PlanLanguageModal({
   const label = (v) => LANGUAGES.find((l) => l.id === v)?.label || v || "…";
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="card lang-modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose} title="Close" aria-label="Close">
           <Icon name="close" />

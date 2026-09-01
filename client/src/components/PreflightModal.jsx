@@ -82,7 +82,7 @@ export default function PreflightModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={busy ? undefined : onCancel}>
+    <div className="modal-overlay">
       <div
         className="pf-modal"
         onClick={(e) => e.stopPropagation()}

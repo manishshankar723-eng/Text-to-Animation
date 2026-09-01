@@ -182,7 +182,7 @@ export default function PricingModal({ onClose, currentTier = "" }) {
   const savePct = savings.length ? Math.max(...savings) : 0;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="pricing-modal"
         onClick={(e) => e.stopPropagation()}

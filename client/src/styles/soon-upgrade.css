@@ -100,3 +100,34 @@
   color: var(--text);
 }
 
+/* ⚠ NO DIALOG IN THIS APP CLOSES ON A BACKDROP CLICK ANY MORE, AND NONE MAY BE
+   GIVEN AN `onClick` ON `.modal-overlay` AGAIN (RULEBOOK E65, pinned by
+   `tests/dialog_frame_check.py`). One click that landed a few pixels outside
+   the box threw away a Premiere import somebody was a dozen steps into —
+   *"galti se mera mouse pop up se bahar screen ke click hua mera popup cut
+   gaya"* — and a dialog's contents are saved nowhere. ✕ and Cancel are the way
+   out; every dialog here has a ✕.
+
+   ⚠ SO EVERY DIALOG IS DRAGGABLE INSTEAD, or it just sits on top of the thing
+   the user is trying to check it against. The behaviour is in
+   `client/src/dialog_move.js`, installed once from `App.jsx` and applied to
+   anything inside `.modal-overlay` — nothing in a dialog's own JSX says so,
+   which is why this warning is here, in the block anyone changing a dialog's
+   surface opens. The heading is the handle; these two rules are the only thing
+   that tells the user so before they try it. */
+.modal-overlay h1,
+.modal-overlay h2,
+.modal-overlay h3,
+.modal-overlay h4 {
+  cursor: grab;
+  user-select: none;
+  /* Or a phone scrolls the dialog instead of moving it. */
+  touch-action: none;
+}
+.modal-overlay h1:active,
+.modal-overlay h2:active,
+.modal-overlay h3:active,
+.modal-overlay h4:active {
+  cursor: grabbing;
+}
+

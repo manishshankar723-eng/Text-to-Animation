@@ -11875,7 +11875,7 @@ export default function AnimaticEditor({
 
       {/* Export settings, confirmed before anything is encoded. */}
       {exportOpen && (
-        <div className="modal-overlay" onClick={() => setExportOpen(false)}>
+        <div className="modal-overlay">
           <div className="card an-export-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setExportOpen(false)}>
               ✕
@@ -12097,7 +12097,7 @@ export default function AnimaticEditor({
           to work in and a 16:9 export, which is the point — you can cut a
           vertical version without converting the video first. */}
       {settingsOpen && (
-        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
+        <div className="modal-overlay">
           <div className="card an-ws-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setSettingsOpen(false)}>
               ✕
@@ -12172,7 +12172,7 @@ export default function AnimaticEditor({
           the buttons that spend, and adding it here would teach the user to click
           through a dialog that never has a price on it. */}
       {boardImport && (
-        <div className="modal-overlay" onClick={() => setBoardImport(null)}>
+        <div className="modal-overlay">
           <div className="card an-board-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setBoardImport(null)}>
               ✕
@@ -12252,7 +12252,7 @@ export default function AnimaticEditor({
           sentence IS the brief). Every one of those is a real difference, which
           is exactly why this is not the same component with five props. */}
       {imgGen && (
-        <div className="modal-overlay" onClick={() => setImgGen(null)}>
+        <div className="modal-overlay">
           {/* ⚠ ONE SIZE FOR BOTH TABS. The Video half is the taller of the two
               by four rows, so switching tabs resized the card under the pointer
               — reported as "both panel size chnage when i click AI Image and AI
@@ -12623,7 +12623,7 @@ export default function AnimaticEditor({
       {/* Same shape as ✨ Animate's, deliberately — this is the one screen in
           the app where a familiar layout is worth more than a novel one. */}
       {vidGenConfirm && (
-        <div className="modal-overlay" onClick={() => setVidGenConfirm(null)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
@@ -12687,7 +12687,7 @@ export default function AnimaticEditor({
           and this is not the screen to be inventive on. Same card, same
           name-over-box rhythm, same `.an-name-actions` footer. */}
       {shotGen && (
-        <div className="modal-overlay" onClick={() => setShotGen(null)}>
+        <div className="modal-overlay">
           <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setShotGen(null)}>
               ✕
@@ -12951,7 +12951,7 @@ export default function AnimaticEditor({
           server what that would cost and hands over to the confirm dialog
           below. No button in this editor renders anything directly. */}
       {animateFor !== null && !animateConfirm && (
-        <div className="modal-overlay" onClick={() => setAnimateFor(null)}>
+        <div className="modal-overlay">
           <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setAnimateFor(null)}>
               ✕
@@ -13110,7 +13110,7 @@ export default function AnimaticEditor({
           screen in the app where a familiar layout is worth more than a novel
           one. `.an-name-actions` for the footer, NOT `.lib-confirm-btns`. */}
       {animateConfirm && (
-        <div className="modal-overlay" onClick={() => setAnimateConfirm(null)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
@@ -13174,7 +13174,7 @@ export default function AnimaticEditor({
           twice. It is `.fv-confirm`, the card every priced step in this app
           wears. */}
       {posesOpen && (
-        <div className="modal-overlay" onClick={() => !posesBusy && setPosesOpen(false)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
@@ -13328,7 +13328,7 @@ export default function AnimaticEditor({
           picks the track or the voice. The button at the bottom asks the server
           what that would cost and hands over to the confirm dialog below. */}
       {speechFor !== null && !speechConfirm && (
-        <div className="modal-overlay" onClick={() => setSpeechFor(null)}>
+        <div className="modal-overlay">
           {/* ⚠ WIDER FOR THE VOICEOVER, because it now carries a script. The
               captions panel is two controls and stays the 28rem every other
               dialog here is. */}
@@ -13573,7 +13573,7 @@ export default function AnimaticEditor({
       )}
 
       {speechConfirm && (
-        <div className="modal-overlay" onClick={() => setSpeechConfirm(null)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
@@ -13649,7 +13649,7 @@ export default function AnimaticEditor({
           same reason: this one is cheap, and a cheap button is the one that
           gets pressed forty times. */}
       {reframeOpen && (
-        <div className="modal-overlay" onClick={() => setReframeOpen(false)}>
+        <div className="modal-overlay">
           <div className="card an-speech-card" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setReframeOpen(false)}>
               ✕
@@ -13736,7 +13736,7 @@ export default function AnimaticEditor({
       )}
 
       {reframeConfirm && (
-        <div className="modal-overlay" onClick={() => setReframeConfirm(null)}>
+        <div className="modal-overlay">
           <div className="card fv-confirm" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"
@@ -13796,7 +13796,7 @@ export default function AnimaticEditor({
 
       {/* Save on an unnamed animatic lands here first. */}
       {saveAsName !== null && (
-        <div className="modal-overlay" onClick={() => setSaveAsName(null)}>
+        <div className="modal-overlay">
           <div className="card an-name-modal" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setSaveAsName(null)}>
               ✕

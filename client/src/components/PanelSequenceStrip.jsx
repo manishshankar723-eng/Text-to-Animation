@@ -638,7 +638,7 @@ export default function PanelSequenceStrip({
           concept: you are ordering key DRAWINGS for a shot of this length, not
           a video and not all 96 frames. */}
       {asking && (
-        <div className="modal-overlay" onClick={() => setAsking(false)}>
+        <div className="modal-overlay">
           <div className="card seq-modal" onClick={(e) => e.stopPropagation()}>
             <button
               type="button"

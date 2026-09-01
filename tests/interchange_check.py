@@ -2728,6 +2728,32 @@ check("…the report is dropped when the file changes", "setRead(null)" in modal
 check("the upload is given a long timeout", "timeoutMs" in apijs
       and "interchange/import" in apijs)
 
+# ⚠ E65 — THE DIALOG CANNOT BE DISMISSED BY ACCIDENT, AND SO IT MUST MOVE.
+# A stray click on the backdrop threw away a read, its folder list and its
+# warnings, half an hour into a real `.prproj` import. Escape did the same. Both
+# are one line each to bring back, and neither would fail any other check here.
+check("the backdrop closes nothing",
+      'className="modal-overlay">' in modal, "")
+check("…and Escape closes nothing either",
+      '"Escape"' not in modal, "")
+check("…so ✕ and Cancel are the only ways out",
+      modal.count("onClose()") == 1 and "onClick={onClose}" in modal, "")
+# ⚠ AND THE DRAGGING ITSELF IS NOT IN THIS FILE — do not add it back here.
+# `client/src/dialog_move.js` carries one implementation for every dialog in the
+# app; `tests/dialog_frame_check.py` pins it, and the app-wide rule with it.
+check("the dragging is the shared one, not a second copy",
+      "onPointerDown" not in modal and "setPointerCapture" not in modal, "")
+# ⚠ THE TITLE BAR STICKS AND CARRIES THE ✕. This dialog scrolls further than any
+# other — a report can name a dozen folders — and a ✕ that scrolls away on a
+# dialog that no longer closes on the backdrop leaves no exit on screen at all.
+check("the title bar sticks to the top of the card",
+      '"an-xchg-bar"' in modal and ".an-xchg-bar {" in editorcss
+      and "position: sticky" in editorcss, "")
+check("…and the ✕ rides in it",
+      modal.index('"an-xchg-bar"') < modal.index('className="modal-close"'), "")
+check("…where it is a flex item, not a corner ornament",
+      ".an-xchg-bar .modal-close {" in editorcss, "")
+
 # --- the .prproj offer, which must stay the SECOND answer ------------------
 # ⚠ THE ORDER IS THE FEATURE. An experimental reader offered as a checkbox at
 # the top is one most people tick without ever seeing the reliable door beside
@@ -2909,6 +2935,24 @@ for _name, _good, _broken, _guard in (
         modal,
         modal.replace("if (onlyWanted.length) picked = onlyWanted;", ""),
         lambda b: "if (onlyWanted.length) picked = onlyWanted;" in b,
+    ),
+    # ⚠ E65. The backdrop handler is one line, it is on nearly every other
+    # dialog in this app, and putting it back here throws away a long read on a
+    # click that missed the card.
+    (
+        "the backdrop closing the dialog again",
+        modal,
+        modal.replace('className="modal-overlay">',
+                      'className="modal-overlay" onClick={onClose}>'),
+        lambda b: 'className="modal-overlay">' in b and "modal-overlay\" onClick" not in b,
+    ),
+    # ⚠ And the ✕ going back to the corner of a card that scrolls, where it
+    # leaves the screen the moment the report is read.
+    (
+        "the ✕ taken back out of the sticky title bar",
+        modal,
+        modal.replace('<div className="an-xchg-bar">', "<div>"),
+        lambda b: '<div className="an-xchg-bar">' in b,
     ),
 ):
     check(f"the guard against “{_name}” really can fail",

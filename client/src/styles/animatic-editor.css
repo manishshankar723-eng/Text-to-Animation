@@ -2136,6 +2136,40 @@
   position: relative;
 }
 
+/* ⚠ THE IMPORT DIALOG'S TITLE BAR STICKS, AND IT CARRIES THE ✕. This dialog is
+   the one that really scrolls — a report can name a dozen folders — and both
+   the ✕ (`position: absolute` against the card) and the heading scrolled away
+   with the content. On a dialog that no longer closes on a backdrop click
+   (RULEBOOK E65) that leaves a reader with no exit and no drag handle on
+   screen at all. The negative margins cancel `.card`'s padding so the bar
+   spans the full width; the background is the card's own, so the report passes
+   UNDER it rather than through it. The cursor / `user-select` rules that make
+   the heading LOOK draggable live in `soon-upgrade.css` beside
+   `.modal-overlay`, because they cover every dialog in the app. */
+.an-xchg-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: -1.35rem -1.35rem 0.35rem;
+  padding: 1.1rem 1.35rem 0.7rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+}
+.an-xchg-bar h2 {
+  margin: 0;
+}
+/* In the bar it is a flex item, not a corner ornament. */
+.an-xchg-bar .modal-close {
+  position: static;
+  flex: none;
+  align-self: flex-start;
+}
+
 /* The four facts about what is being exported, two per row. Not a table: the
    pairs are independent, and a grid keeps them aligned when one wraps. */
 .an-xchg-sum {

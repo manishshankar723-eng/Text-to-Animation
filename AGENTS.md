@@ -284,7 +284,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-01 — **THE IMPORT DIALOG SURVIVES BEING ACTED ON.** The folders from the entry below were on screen and the import was still abandoned: *“mai wapas aa gaya ye nhi ki wahi se chalu hua … fir kuch nhi hua to mai bas usko chhor kar import kiya”*. ⚠ **THREE FAULTS IN ONE GESTURE, and the dialog only fails as a SEQUENCE** — every piece of state was right when it was set. `addMedia` called `setRead(null)`, so fetching the folder the report had just named **wiped the only place that folder was written down**; the footer then flipped back to the STRICT read, which for a `.prproj` is the refusal, with “Try to read it anyway” already spent and hidden — a dead end whose only exit is closing the dialog; and the folder it sent the user to was another film's, so five files were picked where two were wanted. The report is now **kept and marked out of date** (dimmed, with a banner), the gold button becomes **“Read the file again”** and carries the flag the first read used, and the picker keeps only the files the report named (falling back to everything when nothing matches). New **RULEBOOK E64**. ⚠ **DRIVEN IN A BROWSER**, because a unit test of `addMedia` passes against all three: new `tests/editor_project_import_check.py` (Playwright, no backend), with each fault re-introduced one at a time to prove it is caught. Green with `interchange_check` and `npm run build`. ⚠ **Still not re-run against a live server with the real files attached.** See the Work Log.
+**Last updated:** 2026-09-01 — **NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES.** *“galti se mera mouse pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat bekar ho gaya”*, then *“sab jagh fix kar do har workflow mai popup wala”*. ⚠ **THE BACKDROP CLICK WAS THE APP'S OWN CONVENTION AND THAT IS WHY IT WAS DANGEROUS**: all 31 dialogs were written by copying the one beside them, and a dialog's contents are saved NOWHERE — a read that took minutes, a half-typed name, the folder list E63 prints. **Every overlay handler is gone** (including the five-line one a line-based grep would have missed), ✕ and Cancel are the way out, and the test asserts **every dialog still has a ✕** — removing the backdrop from one without it would be a trap, not a fix. Escape is untouched except on the import dialog. ⚠ **AND SO EVERY DIALOG IS DRAGGABLE**: new **`client/src/dialog_move.js`**, installed once from `App.jsx`, finding dialogs by `.modal-overlay` so one written next year gets it for free — heading as the handle, pointer capture, offset kept on the DOM node (which is what makes “it opens in the middle again” free), clamped so a strip always stays on screen. ⚠ **The import dialog's ✕ now STICKS** (`.an-xchg-bar`): it is the one dialog that really scrolls, and a ✕ positioned against the card left the screen the moment the report was read. Two new tests, because a grep cannot see a listener fire (G7): `tests/dialog_frame_check.py` (source, 31 dialogs, detector proved on both shapes) and `tests/dialog_move_browser_check.py` (Chromium, a real mouse — backdrop click, drag, clamp, ✕, re-centring). Green with `interchange_check`, `editor_project_import_check` and `npm run build`. ⚠ **Not clicked through by hand in the signed-in app.** See the Work Log.
+
+**Previously:** 2026-09-01 — **THE IMPORT DIALOG NO LONGER CLOSES BY ACCIDENT, AND IT MOVES.** *“galti se mera mouse pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat bekar ho gaya”* — several steps into a real `.prproj` import. ⚠ **THE BACKDROP CLICK IS THIS APP'S OWN CONVENTION AND ON THIS DIALOG IT IS A TRAP**: every other dialog can be dismissed because there is nothing inside it to lose, while this one holds a read that took minutes, the folder list E63 sends the user out to fetch, the warnings still being read, and the `guessed` flag that is the only route back for a `.prproj` — **none of it saved anywhere**. The backdrop now closes nothing, **Escape closes nothing** (one key away from the typing done here, same loss), and **✕ / Cancel are the only ways out**. ⚠ **AND A DIALOG THAT CANNOT BE DISMISSED MUST BE MOVEABLE** — the heading is a drag handle, the offset is cleared on every open, dragging uses **pointer capture** so a fast drag cannot leave the card stuck to the cursor, and it is clamped so a strip always stays on screen (dragged off an edge it would be unreachable, ✕ included). New **RULEBOOK E65**, pinned in `tests/interchange_check.py` §8k with a break-guard proving the one-line backdrop handler coming back is caught. `interchange_check` and `npm run build` green. ⚠ **Not clicked through in a browser** (G2), and **every other dialog in the app still closes on a backdrop click** — deliberately left alone, ask if you want the same treatment there. See the Work Log.
+
+**Previously:** 2026-09-01 — **THE IMPORT DIALOG SURVIVES BEING ACTED ON.** The folders from the entry below were on screen and the import was still abandoned: *“mai wapas aa gaya ye nhi ki wahi se chalu hua … fir kuch nhi hua to mai bas usko chhor kar import kiya”*. ⚠ **THREE FAULTS IN ONE GESTURE, and the dialog only fails as a SEQUENCE** — every piece of state was right when it was set. `addMedia` called `setRead(null)`, so fetching the folder the report had just named **wiped the only place that folder was written down**; the footer then flipped back to the STRICT read, which for a `.prproj` is the refusal, with “Try to read it anyway” already spent and hidden — a dead end whose only exit is closing the dialog; and the folder it sent the user to was another film's, so five files were picked where two were wanted. The report is now **kept and marked out of date** (dimmed, with a banner), the gold button becomes **“Read the file again”** and carries the flag the first read used, and the picker keeps only the files the report named (falling back to everything when nothing matches). New **RULEBOOK E64**. ⚠ **DRIVEN IN A BROWSER**, because a unit test of `addMedia` passes against all three: new `tests/editor_project_import_check.py` (Playwright, no backend), with each fault re-introduced one at a time to prove it is caught. Green with `interchange_check` and `npm run build`. ⚠ **Still not re-run against a live server with the real files attached.** See the Work Log.
 
 **Previously:** 2026-09-01 — **A MISSING FILE NOW SAYS WHICH FOLDER IT LIVED IN.** *“ye audio kyun nahi aa raha hai mere import mein”* — asked of a real `.prproj` import whose report ended with three file names and no way to act on them. ⚠ **THE READER WAS RIGHT AND THE REPORT WAS USELESS**: the project folder WAS attached and the voiceover resolved on all 23 of its clips, while the music bed and a logo lived inside a **different project's folder** — ordinary, because both are reused across a series — and nothing in the dialog could say so, leaving “this app cannot take music” as the only available conclusion. Both readers already knew: `files[key]["pathurl"]` is the full path the editor wrote. The report now carries **`missing`** — one row per FILE with `{name, folder, kind, clips}`, unquoted so an `xmeml`’s `Shared%20Art` is a folder somebody can find — while `placeholders` stays per CLIP, and the dialog groups the list **by folder** and names them. ⚠ Two smaller faults fell out: a file used on two clips printed **twice** (one row with a `×2` now), and the sound warning said *“no sound was brought in”* while 23 clips of voiceover sat on the timeline — it counts what landed now. New **RULEBOOK E63**; `tests/interchange_check.py` §8k plus a dialog break-guard, all green with `captions_check`, `audio_mix_check`, `audio_razor_check` and `npm run build`. ⚠ **Not yet re-run against a live server** — the three files are on the user’s disk and only they can attach them. See the Work Log.
 
@@ -3014,6 +3018,7 @@ Pipeline stages (see `pipeline.py`):
 | `client/src/animatic/fonts.js` | **The caption fonts, client side** — the same list, plus the generated `@font-face` rules. **⚠ TWIN of `animatic_fonts.py`.** The rules are GENERATED rather than written in a .css file: a third hand-maintained copy of the list is exactly the `_SHAPE_POINTS`/`POINTS` failure. Families are namespaced so a user's own copy of Inter can never win. |
 | `client/src/animatic/text_presets.js` | **In/out text animations, as KEYFRAME MACROS.** Fade / Rise / Drop / Slide write keys on `opacity`/`x`/`y` and get out of the way — nothing is stored on the clip and neither renderer has heard of a "preset", which is why the exporter needed no changes. A moving preset switches the clip to free placement, or it would animate nothing. |
 | `client/src/App.jsx` | Landing → Login → sidebar shell. Nav state, upgrade + account (logout) popups. |
+| `client/src/dialog_move.js` | **Every dialog in the app is draggable, and this is the only place that says so.** Installed once from `App.jsx`, it finds dialogs by `.modal-overlay` and makes their HEADING a handle — nothing in a dialog's own JSX mentions it. ⚠ It is the other half of **RULEBOOK E65**: no dialog closes on a backdrop click any more (one stray click threw away a long Premiere import), so they have to be moveable instead. `tests/dialog_frame_check.py` + `tests/dialog_move_browser_check.py`. |
 | `client/src/components/Landing.jsx` | Public marketing landing page (full-bleed). |
 | `client/src/components/Login.jsx` | Login / register + "Continue with Google" (UI only, not wired) + back-to-home. |
 | `client/src/components/Sidebar.jsx` | Nav rail: Home + Workflows (Text to Image live; others "Soon") + profile chip + gold Upgrade. |
@@ -3544,7 +3549,114 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-01 (latest) — THE IMPORT DIALOG SURVIVES BEING ACTED ON
+### 2026-09-01 (latest) — NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES
+
+Reported mid-import, several steps into a real `.prproj`:
+
+    "mai abhi premiere pro ka file import kar raha tha … galti se mera mouse
+     pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat
+     bekar ho gaya … aisa nhi hona chahiye"
+
+then, once the import dialog alone had been fixed: *"sab jagh fix kar do har
+workflow mai popup wala"*.
+
+**The backdrop click was the app's own convention, and that is exactly why it
+was dangerous.** Every one of the 31 dialogs here was written by copying the one
+beside it, so `onClick={() => setThingOpen(false)}` on `.modal-overlay` spread
+to all of them — and a dialog's contents are saved NOWHERE. A read that took
+minutes, a half-typed name, the folder list E63 prints, the `guessed` flag that
+is the only route back for a `.prproj`: one click that missed the card and it
+was gone, with no way back but doing the whole thing again.
+
+**All 31 overlay handlers are gone** — including the one in `FinalVideoArtStep`
+spread over five lines, which is the one a line-based grep would have missed.
+✕ and Cancel are the way out, and `dialog_frame_check.py` asserts that **every
+dialog still has a ✕**: taking the backdrop away from a dialog with no ✕ would
+not be a fix, it would be a trap.
+
+⚠ **Escape is left exactly as it was, except on the import dialog.** There it is
+one keystroke from the typing done in the dialog and cost the same minutes;
+elsewhere it is a deliberate press, and `Timeline`, `TitleInput` and the
+lightbox all need theirs.
+
+⚠ **AND A DIALOG THAT CANNOT BE DISMISSED MUST BE MOVEABLE**, or it just sits on
+top of the thing the user is trying to check it against. New
+**`client/src/dialog_move.js`** — ONE implementation for every dialog, installed
+once from `App.jsx`, finding them by `.modal-overlay`, so a dialog written next
+year gets it without being told. The handle is the **heading** (a card-wide grab
+would eat text selection) and never a button or a field; it drags by
+`transform` with **pointer capture**, or a fast drag off the card leaves the
+dialog stuck to the cursor; the offset lives **on the DOM node**, which is what
+makes "it opens in the middle again" free; and it is **clamped so a strip always
+stays on screen**, because a card dragged past an edge is unreachable, ✕ and
+all. The hover hint (RULEBOOK E4) is stamped by the module on first hover rather
+than written into thirty dialogs by hand.
+
+⚠ **AND THE IMPORT DIALOG'S ✕ NOW STICKS.** `.modal-close` is positioned against
+the card, so on the one dialog that really scrolls it left the screen the moment
+the report was read — no exit and no drag handle in view. `.an-xchg-bar` is a
+sticky title bar carrying the heading and the ✕ together, and that dialog's own
+drag code was deleted in favour of the shared module.
+
+⚠ **TWO NEW TESTS, BECAUSE A GREP CANNOT SEE A LISTENER FIRE (G7).**
+`tests/dialog_frame_check.py` reads every `.jsx` in `client/src`: no overlay
+carries an `onClick`, all 31 dialogs offer a ✕, the shared module says what it
+must — and its detector is proved on BOTH shapes the handler was really written
+in. `tests/dialog_move_browser_check.py` drives Chromium with a real mouse: the
+backdrop click leaves the dialog and its half-typed field alone, the heading
+drags it, it cannot be thrown off any edge, the ✕ and a text field still work,
+and the next one opens centred. Both green, with `interchange_check`,
+`editor_project_import_check` and `npm run build`.
+
+Files: `client/src/dialog_move.js` (new), `App.jsx`, `soon-upgrade.css`,
+`animatic-editor.css`, `ProjectImportModal.jsx`, and the 15 components that
+carried an overlay handler. Rule: **RULEBOOK E65**, rewritten app-wide.
+
+**Still open:** not clicked through in the real app by hand — the browser check
+drives a probe page, not the signed-in editor.
+
+### 2026-09-01 — THE IMPORT DIALOG NO LONGER CLOSES BY ACCIDENT, AND IT MOVES
+
+Reported mid-import, several steps into a real `.prproj`:
+
+    "mai abhi premiere pro ka file import kar raha tha … galti se mera mouse
+     pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat
+     bekar ho gaya … aisa nhi hona chahiye"
+
+**The backdrop click was the app's own convention, and on THIS dialog it is a
+trap.** Every other dialog closes on a click outside because there is nothing
+inside them to lose. This one holds a read that took minutes, the folder list
+E63 sends the user out to fetch, the warnings they are still reading, and the
+`guessed` flag that is the only route back for a `.prproj` — and **none of it is
+saved anywhere**. One stray click a dozen steps in ended the whole attempt, the
+same loss E64 was written about, arriving by a different door.
+
+So: the backdrop closes nothing, **Escape closes nothing** (one key away from
+the typing done in this dialog, and it threw away exactly the same minutes),
+and **✕ / Cancel are the only ways out** — both of which already refuse while a
+read or a write is running.
+
+⚠ **AND A DIALOG THAT CANNOT BE DISMISSED MUST BE MOVEABLE**, or it simply sits
+on top of the timeline the user is trying to check it against with no way to
+look behind it. The heading is now a drag handle (`cursor: grab`), the offset is
+a `translate` on the card, and it is **cleared every time the dialog opens** — a
+dialog that came back where it was last shoved reads as broken. Dragging uses
+**pointer capture** rather than window listeners, so a fast drag off the card
+cannot leave it stuck to the cursor, and the position is **clamped so a strip
+always stays on screen**: dragged past an edge the card would be unreachable,
+✕ included, and this dialog now has no other exit.
+
+Pinned in `tests/interchange_check.py` §8k — seven assertions plus two
+break-guards, and the backdrop guard was proved to fail with the one-line
+`onClick` put back. `npm run build` and the full `interchange_check` are green.
+
+Files: `ProjectImportModal.jsx`, `animatic-editor.css`,
+`tests/interchange_check.py`. Rule: **RULEBOOK E65**.
+
+**Still open:** not clicked through in a browser (G2 — the Playwright suite was
+not run), and the other dialogs in the app still close on a backdrop click.
+
+### 2026-09-01 — THE IMPORT DIALOG SURVIVES BEING ACTED ON
 
 The folders from the entry below were on screen, and the import was still
 abandoned:
@@ -24756,7 +24868,29 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟡 NEWEST: A PREMIERE IMPORT BRINGS ITS TITLES NOW — AND THE ROWS ARE NAMED PROPERLY (2026-09-01)
+### 🟡 NEWEST: NO POPUP ANYWHERE CLOSES BY A STRAY CLICK, AND EVERY POPUP MOVES (2026-09-01)
+
+This is now true of **all 31 dialogs in the app**, not just the import one.
+What to check, in order — do it on two or three different popups (⚙ → Import,
+⚙ → Export project file, Settings, Reframe, Make Video, the pricing box):
+
+1. Open a popup, type something in it, then **click the dark area outside**.
+   Nothing should happen — the popup stays and what you typed is still there.
+2. **Close it with ✕**, and check any Cancel button still closes it too. Those
+   are the only ways out now.
+3. **Drag the popup by its heading** — the whole box follows the mouse, so you
+   can move it aside and look at what is behind it. Let go, it stays.
+4. **Try to drag it off the screen**: it must stop with a strip still visible,
+   never far enough that the ✕ is out of reach.
+5. **Close and reopen** — it comes back in the middle, not where you left it.
+6. On the **import** popup, scroll the report down: the title and the ✕ should
+   stay pinned at the top of the box instead of scrolling away.
+
+⚠ **Escape is deliberately NOT changed**, except on the import popup. Pressing
+Escape is something you have to mean; a mouse slipping is not. Say the word if
+you want Escape off everywhere too.
+
+### 🟡 A PREMIERE IMPORT BRINGS ITS TITLES NOW — AND THE ROWS ARE NAMED PROPERLY (2026-09-01)
 
 Phase 5. **The lettering in a `.prproj` comes across**: the words, the font, the
 size, where it sits on screen and when it is on screen. Everything this app said
