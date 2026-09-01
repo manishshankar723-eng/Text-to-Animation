@@ -56,6 +56,16 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   // offer disappears once it has been taken — an unchanged button after a
   // failed second attempt reads as "nothing happened".
   const [guessed, setGuessed] = useState(false);
+  // ⚠ THE REPORT SURVIVES ADDING FOOTAGE — IT JUST STOPS BEING CURRENT. Clearing
+  // it was the obvious thing and it was wrong twice over. The report is the only
+  // place the missing files and their FOLDERS are written, so wiping it at the
+  // moment the user goes to fetch one of those folders takes away the very thing
+  // they are acting on; and the footer flipped back to "Read the file", which for
+  // a `.prproj` is the read the server REFUSES, with the experimental offer
+  // already spent (`guessed`) and therefore not shown — a dead end with no way
+  // back but closing the dialog. Reported exactly that way: *"mai wapas aa gaya …
+  // fir kuch nhi hua to mai bas usko chhor kar import kiya"*.
+  const [stale, setStale] = useState(false);
   const docRef = useRef(null);
   const mediaRef = useRef(null);
   const folderRef = useRef(null);
@@ -67,6 +77,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     setRead(null);
     setError("");
     setGuessed(false);
+    setStale(false);
     const onKey = (e) => e.key === "Escape" && !reading && !busy && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -91,6 +102,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     setRead(null);
     setError("");
     setGuessed(false);
+    setStale(false);
   };
 
   // ⚠ IT ADDS, IT DOES NOT REPLACE — and replacing is what it used to do. The
@@ -102,15 +114,35 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   // the same name are the same file whichever folder they were picked from, and
   // re-picking a folder should not double the upload.
   const addMedia = (files) => {
-    const picked = Array.from(files || []).filter((f) => MEDIA_RE.test(f.name || ""));
+    let picked = Array.from(files || []).filter((f) => MEDIA_RE.test(f.name || ""));
+    // ⚠ ONCE A REPORT NAMES WHAT IS MISSING, TAKE ONLY THAT. The second folder a
+    // user is sent to fetch is somebody else's project folder — the one holding
+    // the shared logo or the music bed — and it is full of OTHER films' media.
+    // Reported as *"us folder mai aur bhi music tha"*. Uploading all of it is
+    // minutes of waiting and a Media pane full of clips this cut never used.
+    // ⚠ AND IT FALLS BACK TO EVERYTHING IF NOTHING MATCHES, because a user
+    // adding a folder the report does not name is adding footage for a read that
+    // has not happened yet, and silently taking none of it would be the worse
+    // failure by far.
+    const wanted = new Set(
+      (read?.missing || []).map((m) => (m.name || "").toLowerCase())
+    );
+    if (wanted.size) {
+      const onlyWanted = picked.filter((f) =>
+        wanted.has((f.name || "").toLowerCase())
+      );
+      if (onlyWanted.length) picked = onlyWanted;
+    }
     if (!picked.length) return;
     setMedia((prev) => {
       const byName = new Map(prev.map((f) => [f.name.toLowerCase(), f]));
       for (const file of picked) byName.set(file.name.toLowerCase(), file);
       return Array.from(byName.values());
     });
-    // The report belongs to the files it was read with.
-    setRead(null);
+    // ⚠ THE REPORT IS KEPT AND MARKED OUT OF DATE, NOT THROWN AWAY — see `stale`.
+    // It belongs to the files it was read with, so it must not be ADDED now; but
+    // it is also the only place the folders still to fetch are written down.
+    setStale(true);
   };
 
   const readFile = async (experimental = false) => {
@@ -122,6 +154,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
       setRead(
         await api.importProjectFile(animaticId, { document: doc, media, experimental })
       );
+      setStale(false);
     } catch (e) {
       setRead(null);
       setError(e.message || "That file could not be read.");
@@ -169,6 +202,39 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
         `read at ${read.fps} fps`,
       ]
     : [];
+
+  // ⚠ THE NAME OF A MISSING FILE IS NOT ACTIONABLE ON ITS OWN — THE FOLDER IS.
+  // A real import lost three files out of twenty-eight: the voiceover was inside
+  // the project folder and arrived, while the music bed and the logo lived in
+  // ANOTHER project's folder, which is normal (a logo and a music bed are reused
+  // across a whole series). The user attached the only folder there was any
+  // reason to attach and read "that .mp3 did not arrive" — which says nothing
+  // about what to do, and reads as this app being unable to take music at all.
+  // The server sends `missing`, one row per FILE with the folder the editor
+  // itself recorded, so the dialog can name the folders to add.
+  // ⚠ FALLS BACK TO `placeholders`, which is per CLIP and has no paths — an
+  // older server, or a format that carried no path. Deduped, or a logo used
+  // twice prints twice and reads as two broken files.
+  const missing = read?.missing?.length
+    ? read.missing
+    : Array.from(new Set(read?.placeholders || [])).map((name) => ({
+        name,
+        folder: "",
+        kind: "picture",
+        clips: 1,
+      }));
+  // Grouped by folder, in the order the server sent them (sounds first).
+  const missingByFolder = [];
+  for (const item of missing) {
+    const group = missingByFolder.find((g) => g.folder === item.folder);
+    if (group) group.items.push(item);
+    else missingByFolder.push({ folder: item.folder, items: [item] });
+  }
+  // ⚠ "ADD THESE FOLDERS" IS ONLY HONEST WHEN THERE ARE SOME. A Premiere Graphic
+  // has no file and never will, and an EDL carries no paths at all — sending
+  // somebody to attach a folder that was never named is the same dead end this
+  // whole change is about, pointing the other way.
+  const missingFolders = missingByFolder.filter((g) => g.folder);
 
   return (
     <div className="modal-overlay" onClick={() => !reading && !busy && onClose()}>
@@ -250,7 +316,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
                 className="btn ghost"
                 onClick={() => {
                   setMedia([]);
-                  setRead(null);
+                  setStale(true);
                 }}
                 disabled={reading || busy}
                 title="Forget the footage chosen so far and start again"
@@ -285,7 +351,20 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
 
         {read && (
           <>
-            <div className="an-xchg-sum">
+            {/* ⚠ THE REPORT STAYS ON SCREEN WHILE IT IS BEING ACTED ON. The user
+                is here because it named a folder; taking it away the moment they
+                fetch that folder is taking away the instruction. It is dimmed and
+                labelled instead, and the footer will not ADD it until it has been
+                read again. */}
+            {stale && (
+              <div className="an-xchg-loss an-xchg-again">
+                <span className="tiny">
+                  Footage added. Everything below is from the <strong>last</strong>{" "}
+                  read — press <strong>Read the file again</strong> to use it.
+                </span>
+              </div>
+            )}
+            <div className={stale ? "an-xchg-sum an-xchg-old" : "an-xchg-sum"}>
               <span title="What the sequence was called in the file">
                 <strong>{read.name || "Untitled sequence"}</strong>
               </span>
@@ -319,23 +398,55 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
               </div>
             )}
 
-            {/* ⚠ NAMED, NOT COUNTED ONLY. "12 clips are missing" is a number;
-                the file names are what somebody can go and find. */}
-            {read.placeholders.length > 0 && (
+            {/* ⚠ NAMED AND LOCATED, NOT COUNTED ONLY. "12 clips are missing"
+                is a number; the file names are what somebody can go and find,
+                and the FOLDER is what tells them where to look. Both pickers add
+                to the same list, so the fix is one more click per folder. */}
+            {missing.length > 0 && (
               <div className="an-xchg-loss an-xchg-gone">
-                <span className="tiny">
-                  {read.placeholders.length} file
-                  {read.placeholders.length === 1 ? "" : "s"} did not arrive — those
-                  clips come in as labelled colour cards, in the right places:
+                <span
+                  className="tiny"
+                  title={
+                    "A project often points at files kept outside its own folder — a logo or a " +
+                    "music bed shared across a series. Press “…or a whole folder” once for each " +
+                    "folder listed here (it adds to what you already chose), then read the file " +
+                    "again. A picture that never arrives comes in as a labelled colour card; a " +
+                    "sound cannot, so it is left out altogether."
+                  }
+                >
+                  {missing.length} file{missing.length === 1 ? "" : "s"} did not
+                  arrive
+                  {missingFolders.length
+                    ? ` — add ${
+                        missingFolders.length === 1 ? "this folder" : "these folders"
+                      } too:`
+                    : ":"}
                 </span>
-                <ul>
-                  {read.placeholders.slice(0, 8).map((name, i) => (
-                    <li key={`${name}-${i}`}>{name}</li>
-                  ))}
-                  {read.placeholders.length > 8 && (
-                    <li>…and {read.placeholders.length - 8} more</li>
-                  )}
-                </ul>
+                {missingByFolder.slice(0, 4).map((group) => (
+                  <div className="an-xchg-where" key={group.folder || "_nowhere"}>
+                    <span className="tiny muted" title={group.folder || undefined}>
+                      {group.folder || "The file does not say where these lived"}
+                    </span>
+                    <ul>
+                      {group.items.slice(0, 8).map((item) => (
+                        <li key={item.name}>
+                          {item.kind === "sound" ? "🔊 " : ""}
+                          {item.name}
+                          {item.clips > 1 ? ` ×${item.clips}` : ""}
+                        </li>
+                      ))}
+                      {group.items.length > 8 && (
+                        <li>…and {group.items.length - 8} more</li>
+                      )}
+                    </ul>
+                  </div>
+                ))}
+                {missingByFolder.length > 4 && (
+                  <span className="tiny muted">
+                    …and {missingByFolder.length - 4} more folder
+                    {missingByFolder.length - 4 === 1 ? "" : "s"}
+                  </span>
+                )}
               </div>
             )}
 
@@ -388,7 +499,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
 
         <footer className="an-xchg-foot">
           <span className="tiny muted">
-            {read
+            {read && !stale
               ? "Nothing has been added yet."
               : "Reading the file changes nothing on your timeline."}
           </span>
@@ -396,7 +507,7 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
             <button className="btn ghost" onClick={onClose} disabled={reading || busy}>
               Cancel
             </button>
-            {read ? (
+            {read && !stale ? (
               <button className="btn primary" onClick={() => onApply(read)} disabled={busy}>
                 {busy ? (
                   <>
@@ -409,15 +520,24 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
                 )}
               </button>
             ) : (
+              // ⚠ IT RE-READS THE WAY IT READ LAST TIME. `readFile()` with no
+              // argument asks for the STRICT read, which for a `.prproj` is the
+              // one the server refuses — so a user who had already taken the
+              // experimental route and then attached a second folder was thrown
+              // back to a refusal, with the "Try to read it anyway" offer already
+              // spent and hidden. Carrying `guessed` is what makes the second
+              // read do what the first one did.
               <button
                 className="btn primary"
-                onClick={() => readFile()}
+                onClick={() => readFile(guessed)}
                 disabled={!doc || reading}
               >
                 {reading ? (
                   <>
                     <span className="spinner-inline" /> Reading…
                   </>
+                ) : stale ? (
+                  "Read the file again"
                 ) : (
                   "Read the file"
                 )}

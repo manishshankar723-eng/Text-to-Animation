@@ -1531,6 +1531,167 @@ def _basename_of(pathurl: str) -> str:
     return raw.rstrip("/").rsplit("/", 1)[-1]
 
 
+# ---------------------------------------------------------------------------
+# THE LETTERING IN AN `xmeml` — and this is the route that carries the COLOUR
+# ---------------------------------------------------------------------------
+# ⚠ **A TITLE IN FCP7 XML IS A GENERATOR, NOT A FILE**, which is why this reader
+# used to drop every one of them: `read_clip` returns None for an item with no
+# `<file>` to resolve, and a title has none. It has an `<effect>` instead, with
+# `<effecttype>generator</effecttype>` and its whole appearance spelled out in
+# `<parameter>` elements.
+#
+# ⚠ **AND UNLIKE A `.prproj`, THIS ONE GIVES UP THE FILL COLOUR.** `fontcolor`
+# is a plain `<alpha>/<red>/<green>/<blue>` block in the XML. E59 established
+# that a Premiere project file does not carry it anywhere — so for anybody who
+# needs their title colours, "export a Final Cut Pro XML instead" stops being
+# generic advice and becomes a concrete reason. Outline width and colour come
+# across for the same reason.
+#
+# The parameter ids are FCP7's own and every app that writes this format uses
+# them: `str` (the words), `fontname`, `fontsize`, `fontcolor`, `fontstyle`,
+# `alignment`, `origin`, `linewidth` / `linecolor` for an outlined title.
+_FCP7_TEXT_IDS = ("str", "text")
+_FCP7_GENERATOR_TYPES = ("generator",)
+
+# `<origin>` is the FCP convention: `horiz`/`vert` from -1 to 1 with 0 at the
+# centre, and ⚠ **VERT COUNTS UPWARDS** while this app's `y` counts downwards.
+FCP7_ORIGIN_SPAN = 2.0
+
+# The frame FCP7 sizes type against. `fontsize` is in pixels of the sequence, so
+# a 36pt title in a 720p sequence is not a 36px title at 1080p — `size_px` in
+# this app is always "pixels at 1080p" (see `AnimaticTextClip.size_px`).
+FCP7_REFERENCE_HEIGHT = 1080
+
+
+def _fcp7_params(effect) -> dict:
+    """`<parameter>` elements of one effect → `{parameterid: element}`.
+
+    Keyed by `parameterid` lower-cased, because FCP writes `str` and some
+    exporters write `Str`. An effect with a repeated id keeps the FIRST — a
+    later duplicate is an exporter bug, and picking the last would silently
+    prefer it.
+    """
+    out: dict = {}
+    for param in effect.findall("parameter"):
+        key = (param.findtext("parameterid") or "").strip().lower()
+        if key and key not in out:
+            out[key] = param
+    return out
+
+
+def _fcp7_colour(param) -> str:
+    """An FCP `<value><alpha><red><green><blue>` block → `#rrggbb`. '' if absent.
+
+    ⚠ ALPHA IS READ SEPARATELY BY THE CALLER, not folded in here: this app keeps
+    a caption's colour and its opacity in two different fields, and squashing a
+    50%-alpha red into a dark red would be a colour the user never chose and
+    cannot undo.
+
+    ⚠ AND THE CHANNELS MAY BE 0…255 OR 0…65535. FCP7 writes bytes; some
+    exporters write 16-bit. A value over 255 is scaled down rather than clamped,
+    because clamping turns every 16-bit colour into pure white.
+    """
+    if param is None:
+        return ""
+    value = param.find("value")
+    if value is None:
+        return ""
+    channels = []
+    for tag in ("red", "green", "blue"):
+        text = (value.findtext(tag) or "").strip()
+        if not text:
+            return ""
+        try:
+            channels.append(float(text))
+        except ValueError:
+            return ""
+    scale = 255.0 / 65535.0 if max(channels) > 255 else 1.0
+    return "#%02x%02x%02x" % tuple(
+        max(0, min(255, int(round(c * scale)))) for c in channels
+    )
+
+
+def _fcp7_number(params: dict, key: str, default=None):
+    """One numeric `<parameter><value>`, or `default`."""
+    param = params.get(key)
+    if param is None:
+        return default
+    text = (param.findtext("value") or "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        return default
+
+
+def _fcp7_text(item, height: int) -> dict:
+    """A `<clipitem>`/`<generatoritem>` → the lettering in it, or `{}`.
+
+    Returns the same shape `_prproj_graphic` does, so `to_project` cannot tell
+    the two readers apart — one place decides what a caption becomes, whichever
+    format it arrived in.
+    """
+    for effect in item.findall(".//effect"):
+        kind = (effect.findtext("effecttype") or "").strip().lower()
+        if kind and kind not in _FCP7_GENERATOR_TYPES:
+            continue
+        params = _fcp7_params(effect)
+        words = ""
+        for key in _FCP7_TEXT_IDS:
+            if key in params:
+                words = " ".join((params[key].findtext("value") or "").split())
+                if words:
+                    break
+        if not words:
+            continue
+        got = {"text": words[:PRPROJ_MAX_TEXT_CHARS]}
+        font = params.get("fontname")
+        if font is not None:
+            got["font"] = prproj_font_id(font.findtext("value") or "")
+        # ⚠ SCALED INTO A 1080p FRAME. `fontsize` is pixels of THIS sequence.
+        size = _fcp7_number(params, "fontsize")
+        if size and height > 0:
+            got["size_px"] = round(
+                max(8.0, min(400.0, size * FCP7_REFERENCE_HEIGHT / height)), 2)
+        elif size:
+            got["size_px"] = round(max(8.0, min(400.0, size)), 2)
+        # ⚠ THE ONE THING A `.prproj` COULD NOT GIVE (E59). Only set when the
+        # block is really there — an absent `fontcolor` must leave this app's
+        # own default in place rather than becoming black.
+        ink = _fcp7_colour(params.get("fontcolor"))
+        if ink:
+            got["color"] = ink
+        alpha = params.get("fontcolor")
+        if alpha is not None:
+            node = alpha.find("value")
+            raw = (node.findtext("alpha") or "").strip() if node is not None else ""
+            try:
+                value = float(raw)
+                span = 65535.0 if value > 255 else 255.0
+                got["opacity"] = max(0.0, min(1.0, value / span))
+            except ValueError:
+                pass
+        outline = _fcp7_number(params, "linewidth")
+        if outline and outline > 0:
+            got["stroke_px"] = max(0.0, min(24.0, outline))
+            edge = _fcp7_colour(params.get("linecolor"))
+            if edge:
+                got["stroke_color"] = edge
+        origin = params.get("origin")
+        if origin is not None:
+            node = origin.find("value")
+            if node is not None:
+                try:
+                    horiz = float((node.findtext("horiz") or "").strip())
+                    vert = float((node.findtext("vert") or "").strip())
+                except ValueError:
+                    return got
+                # ⚠ VERT IS UP, `y` IS DOWN. Getting this backwards puts every
+                # lower third at the top of the frame, which reads as the import
+                # having ignored position rather than having inverted it.
+                got["x"] = round(0.5 + horiz / FCP7_ORIGIN_SPAN, 4)
+                got["y"] = round(0.5 - vert / FCP7_ORIGIN_SPAN, 4)
+        return got
+    return {}
 def _read_fcp7(text: str) -> dict:
     """An `xmeml` document → the neutral incoming model."""
     warnings: list = []
@@ -1590,10 +1751,16 @@ def _read_fcp7(text: str) -> dict:
         # at frame zero, which is where a naive int() would put it.
         if start < 0 or end <= start:
             return None
+        # ⚠ A TITLE HAS NO `<file>` AND USED TO BE DROPPED HERE. It is a
+        # GENERATOR — see `_fcp7_text` — so the lettering is looked for BEFORE
+        # the file key refuses the item, and a clip that turns out to be a title
+        # is kept with no file at all. `to_project` knows what to do with that:
+        # the same thing it does for a Premiere graphic.
+        lettering = _fcp7_text(item, height)
         key = file_key(item)
-        if not key:
+        if not key and not lettering:
             return None
-        return {
+        clip = {
             "name": (item.findtext("name") or "").strip(),
             "file": key,
             "start": start,
@@ -1602,12 +1769,21 @@ def _read_fcp7(text: str) -> dict:
             "out": max(0, _int_text(item, "out", 0)),
             "enabled": (item.findtext("enabled") or "TRUE").strip().upper() != "FALSE",
         }
+        if lettering:
+            clip["graphic"] = {"kind": "text", "texts": [lettering], "shapes": 0}
+        return clip
 
     video: list = []
     skipped = 0
     for track_el in seq.findall("media/video/track"):
         lane = []
-        for item in track_el.findall("clipitem"):
+        # ⚠ `<generatoritem>` IS A SIBLING OF `<clipitem>`, NOT A KIND OF IT.
+        # FCP7 gives a title its own element name, so a reader that walks only
+        # `clipitem` never sees one — which is how every title in an `xmeml`
+        # went missing. Both are read, in document order, so a title keeps its
+        # place among the clips on its row.
+        for item in list(track_el.findall("clipitem")) + list(
+                track_el.findall("generatoritem")):
             clip = read_clip(item, fps)
             if clip is None:
                 skipped += 1
@@ -2272,6 +2448,99 @@ def _prproj_text_component(by_id: dict, el) -> dict:
     return got
 
 
+# --- THE DROP SHADOW, WHICH *IS* IN PLAIN XML -------------------------------
+# ⚠ **PREMIERE WRITES A COLOUR AS A 64-BIT INTEGER, AND THAT IS HOW THE ONE
+# COLOUR THIS FORMAT DOES GIVE UP WAS FOUND.** `<StartKeyframe>` on a colour
+# parameter reads `…,18374686479671623680,0,0,…`; big-endian that is
+# `ff 00 00 00 00 00 00 00`, i.e. FOUR 16-BIT CHANNELS in A,R,G,B order, each
+# holding its 8-bit value in the HIGH byte (white = 0xff00, not 0xffff).
+#
+# It is worth knowing exactly which colours this unlocks, because the fill is
+# NOT one of them (see `_prproj_text_style`): `Shadow Color`, `Key Color`,
+# `Tint`'s `Map Black To` / `Map White To`. In two real projects — 194 text
+# clips between them, two different Premiere versions — **every single text clip
+# carried a Drop Shadow in its own component chain**, so this is not a rare
+# extra; it is part of how people actually set type in Premiere.
+_PRPROJ_SHADOW_MATCH = "AE.ADBE Drop Shadow"
+
+# Premiere's `Opacity` on a drop shadow runs 0…255, not 0…100 like the opacity
+# on a clip. Measured: 249.99998 for "98%" and 127.5 for "50%".
+PRPROJ_SHADOW_OPACITY_FULL = 255.0
+
+# ⚠ THE TWO APPS MEASURE THE ANGLE FROM DIFFERENT PLACES. Premiere's `Direction`
+# is degrees clockwise from STRAIGHT UP; `AnimaticTextClip.shadow_angle` is
+# degrees clockwise from RIGHT, where its long-standing default 45 means
+# down-and-right. Down-and-right is 135 in Premiere's frame, so the offset is 90.
+PRPROJ_SHADOW_ANGLE_OFFSET = 90.0
+
+
+def prproj_colour(value: str) -> str:
+    """Premiere's packed 64-bit colour → `#rrggbb`. '' when it is not one.
+
+    ⚠ NEVER GUESSES. A value that is not a whole number in range comes back as
+    the empty string and the caller keeps this app's own colour — an invented
+    colour is worse than a default one, because nobody can tell it was invented.
+    """
+    text = str(value or "").strip().rstrip(".")
+    if not text.isdigit():
+        return ""
+    try:
+        packed = int(text)
+    except ValueError:
+        return ""
+    if not 0 <= packed < 1 << 64:
+        return ""
+    raw = packed.to_bytes(8, "big")
+    # a,r,g,b — each 16 bits, the 8-bit value in the high byte
+    return "#%02x%02x%02x" % (raw[2], raw[4], raw[6])
+
+
+def _prproj_shadow(by_id: dict, comp) -> dict:
+    """An `AE.ADBE Drop Shadow` component → what this app can draw of it.
+
+    Returns `{}` if nothing usable was read. ⚠ `Softness` IS DELIBERATELY
+    DROPPED: this app's shadow is hard-edged (Pillow draws it as an offset copy),
+    so carrying a blur radius across would be a number the renderer ignores and
+    the user cannot see — see `AnimaticTextClip.shadow`.
+    """
+    got: dict = {}
+    colour = _prproj_param(by_id, comp, "Shadow Color")
+    if colour is not None:
+        ink = prproj_colour(_prproj_keyframe_value(colour))
+        if ink:
+            got["shadow_color"] = ink
+    opacity = _prproj_param(by_id, comp, "Opacity")
+    if opacity is not None:
+        try:
+            got["shadow_opacity"] = max(0.0, min(1.0, float(
+                _prproj_keyframe_value(opacity).rstrip("."))
+                / PRPROJ_SHADOW_OPACITY_FULL))
+        except ValueError:
+            pass
+    direction = _prproj_param(by_id, comp, "Direction")
+    if direction is not None:
+        try:
+            got["shadow_angle"] = (
+                float(_prproj_keyframe_value(direction).rstrip("."))
+                - PRPROJ_SHADOW_ANGLE_OFFSET
+            ) % 360.0
+        except ValueError:
+            pass
+    distance = _prproj_param(by_id, comp, "Distance")
+    if distance is not None:
+        try:
+            got["shadow_px"] = max(0.0, float(
+                _prproj_keyframe_value(distance).rstrip(".")))
+        except ValueError:
+            pass
+    # ⚠ "SHADOW ONLY" MEANS THE LETTERS ARE NOT DRAWN AT ALL. This app has no
+    # such mode, and importing the shadow without its text would put a smear on
+    # the timeline where a title should be — so the whole shadow is dropped and
+    # the title comes in plain, which is the readable half of what was there.
+    only = _prproj_param(by_id, comp, "Shadow Only")
+    if only is not None and _prproj_keyframe_value(only).lower() == "true":
+        return {}
+    return got
 def _prproj_graphic(by_id: dict, objid: str) -> dict:
     """A track item → what its Premiere GRAPHIC actually is, if it is one.
 
@@ -2298,6 +2567,7 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
     queue = [(objid, 0)]
     texts: list = []
     shapes = 0
+    shadow: dict = {}
     found = None
     while queue:
         current, depth = queue.pop(0)
@@ -2310,6 +2580,15 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
         if match == _PRPROJ_SHAPE_MATCH:
             found = depth if found is None else found
             shapes += 1
+            continue
+        if match == _PRPROJ_SHADOW_MATCH:
+            # ⚠ THE SHADOW BELONGS TO THE CLIP, NOT TO ONE LAYER OF IT. It sits
+            # beside the text components in the same chain, so it is collected
+            # here and applied to every caption the clip holds. `found` is NOT
+            # set by a shadow on its own: a clip with a shadow and no lettering
+            # is not a title, and letting it freeze the depth would stop the
+            # walk before it reached the words.
+            shadow = shadow or _prproj_shadow(by_id, el)
             continue
         if match == _PRPROJ_TEXT_MATCH:
             caption = _prproj_text_component(by_id, el)
@@ -2327,6 +2606,21 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
             seen.add(ref)
             queue.append((ref, depth + 1))
     if texts:
+        if shadow:
+            # ⚠ THE DISTANCE BECOMES AN `em`, WHICH IS WHY IT IS APPLIED HERE
+            # AND NOT IN `_prproj_shadow`. Premiere writes the offset in PIXELS
+            # and `AnimaticTextClip.shadow` is a fraction of the FONT SIZE, so
+            # the conversion needs the caption's own size — and two captions on
+            # one clip can be set at different sizes.
+            for item in texts:
+                for key, value in shadow.items():
+                    if key == "shadow_px":
+                        continue
+                    item[key] = value
+                if "shadow_px" in shadow and item.get("size_px"):
+                    item["shadow"] = round(
+                        max(0.0, min(0.5, shadow["shadow_px"] / item["size_px"])), 4
+                    )
         # ⚠ TEXT WINS OVER SHAPE when a graphic holds both — which is the usual
         # lower third: a coloured bar with words on it. The words are the part
         # this app can reproduce exactly; the bar is the part it approximates.
@@ -2995,16 +3289,42 @@ def _import_text_clips(
             "duration_ms": length_ms,
             "font": item.get("font") or animatic_fonts.DEFAULT_FONT,
             "size_px": float(item.get("size_px") or 0.0),
-            "color": IMPORT_TEXT_COLOR,
+            # ⚠ THE FILE'S COLOUR IF IT HAS ONE, THIS APP'S IF IT HAS NOT — and
+            # WHICH of those happened depends entirely on the format. An `xmeml`
+            # writes `fontcolor` as plain `<red>/<green>/<blue>`, so a title
+            # imported from one arrives in the colour it was set in. A `.prproj`
+            # does not carry the fill anywhere (E59), so those keep the default
+            # and the report says so. Never invent one for the format that is
+            # silent: a white that might have been yellow is a lie the user
+            # cannot see.
+            "color": str(item.get("color") or IMPORT_TEXT_COLOR),
             "backdrop": IMPORT_TEXT_BACKDROP,
-            "opacity": float(item.get("opacity", 1.0)),
+            "opacity": max(0.0, min(1.0, float(item.get("opacity", 1.0)))),
         }
+        if item.get("stroke_px"):
+            clip["stroke_px"] = max(0.0, min(24.0, float(item["stroke_px"])))
+            if item.get("stroke_color"):
+                clip["stroke_color"] = str(item["stroke_color"])
         if "x" in item and "y" in item:
             clip["place"] = "free"
             # Clamped to the field's own range rather than trusted: a title
             # parked off-screen in Premiere is legal there and a 422 here.
             clip["x"] = max(-1.0, min(2.0, float(item["x"])))
             clip["y"] = max(-1.0, min(2.0, float(item["y"])))
+        # ⚠ THE DROP SHADOW, WHICH *IS* READABLE — see `_prproj_shadow`. Only
+        # keys the reader actually found are copied, so a title with no shadow
+        # keeps this app's defaults rather than being given a black one at 0
+        # distance (which is a shadow the renderer still has to think about).
+        # Every value is clamped to its field's range: these come from another
+        # program and a 422 at the route is a whole import lost.
+        if item.get("shadow"):
+            clip["shadow"] = max(0.0, min(0.5, float(item["shadow"])))
+        for key, lo, hi in (("shadow_opacity", 0.0, 1.0),
+                            ("shadow_angle", 0.0, 360.0)):
+            if key in item:
+                clip[key] = max(lo, min(hi, float(item[key])))
+        if item.get("shadow_color"):
+            clip["shadow_color"] = str(item["shadow_color"])
         out.append(clip)
     return out
 
@@ -3065,6 +3385,10 @@ def to_project(
         "fps": fps,
         "warnings": list(incoming.get("warnings") or []),
         "placeholders": [],
+        # ⚠ ONE ROW PER FILE THAT DID NOT ARRIVE, WITH THE FOLDER IT CAME FROM.
+        # See `note_missing` — `placeholders` stays per CLIP and is what the
+        # timeline's gaps are counted from; this is what the dialog can act on.
+        "missing": [],
         "matched": 0,
     }
     files = incoming.get("files") or {}
@@ -3086,6 +3410,49 @@ def to_project(
         if found:
             report["matched"] += 1
         return found
+
+    # ⚠ NAMING THE FILE IS NOT ENOUGH — SAY WHICH FOLDER IT CAME FROM. A real
+    # import lost exactly three files out of twenty-eight and the reason was
+    # invisible from the report: the voiceover sat inside the project folder and
+    # resolved, while the background music and the logo lived in ANOTHER
+    # project's folder entirely. The user attached the only folder there was any
+    # reason to attach, read "tech_oasis-….mp3 did not arrive", and had no way to
+    # learn that a second folder was needed — so it read as this app being unable
+    # to take music at all. **Both readers already know**: `files[key]["pathurl"]`
+    # is the full path the editor wrote, and the folder off it is the one piece
+    # of information that turns "missing" into an instruction.
+    # ⚠ ONE ROW PER FILE, NOT PER CLIP. `placeholders` is per clip on purpose —
+    # every gap on the timeline is counted there — but a logo used on two clips
+    # printed its own name twice in the dialog, which reads as two different
+    # broken files rather than one folder nobody attached.
+    # ⚠ AND IT SAYS WHICH ARE SOUNDS. A missing picture becomes a labelled card
+    # and a missing sound becomes nothing at all (see the audio branch below), so
+    # the two are not the same kind of loss and the list must not pretend they
+    # are.
+    missing: dict = {}
+
+    def note_missing(clip: dict, kind: str) -> None:
+        """One clip whose file never arrived — counted, and located if we can."""
+        entry = files.get(clip.get("file") or "") or {}
+        name = (
+            entry.get("name")
+            or clip.get("name")
+            or ("an audio clip" if kind == "sound" else "a clip")
+        )
+        report["placeholders"].append(name)
+        # `pathurl` is a Windows path from a `.prproj` and a `file://` URL from an
+        # `xmeml`; `_basename_of` already unquotes and normalises, so take the
+        # folder the same way rather than a second time by hand.
+        full = unquote((entry.get("pathurl") or "").strip())
+        full = full.split("?")[0].replace("\\", "/").rstrip("/")
+        folder = full.rsplit("/", 1)[0] if "/" in full else ""
+        row = missing.setdefault(name.lower(), {
+            "name": name, "folder": folder, "kind": kind, "clips": 0,
+        })
+        row["clips"] += 1
+        # A later clip can know the path when the first one did not.
+        if folder and not row["folder"]:
+            row["folder"] = folder
 
     frames: list = []
     texts: list = []
@@ -3238,11 +3605,7 @@ def to_project(
                 })
                 if blank:
                     tally["overlaid"] += 1
-                report["placeholders"].append(
-                    (files.get(clip.get("file") or "") or {}).get("name")
-                    or clip.get("name")
-                    or "a clip"
-                )
+                note_missing(clip, "picture")
             elif found["kind"] == "video":
                 frame.update({
                     "kind": "video",
@@ -3300,11 +3663,7 @@ def to_project(
             if not found or found["kind"] != "audio":
                 # ⚠ NO PLACEHOLDER FOR SOUND. A silent card in the picture keeps
                 # the cut readable; a silent audio clip is a lie you cannot see.
-                report["placeholders"].append(
-                    (files.get(clip.get("file") or "") or {}).get("name")
-                    or clip.get("name")
-                    or "an audio clip"
-                )
+                note_missing(clip, "sound")
                 tally["silent"] += 1
                 continue
             start_ms = frames_to_ms(clip["start"], fps)
@@ -3350,11 +3709,21 @@ def to_project(
     # placeholder (see above), so this sentence is the only thing that can say
     # the difference between "there was none" and "none of it arrived".
     if tally["silent"]:
+        # ⚠ "NONE OF IT ARRIVED" WAS A LIE WHENEVER SOME OF IT DID. This sentence
+        # used to read "none of their files were attached, so no sound was
+        # brought in" whatever the count was — and the case that exposed it is
+        # the ordinary one: a cut whose VOICEOVER sits in the project folder and
+        # arrives on all 23 of its clips, and whose music bed lives in another
+        # project's folder and does not. The user was told no sound came in while
+        # 23 clips of sound sat on the timeline, which makes the whole report
+        # untrustworthy. Count what actually landed and say that instead.
         report["warnings"].append(
-            f"{tally['silent']} sound clip(s) were found but none of their files "
-            "were attached, so no sound was brought in. Pictures become labelled "
-            "cards; sound cannot, because a silent clip is a gap you cannot see. "
-            "Attach the audio files and import again to get them."
+            f"{tally['silent']} sound clip(s) had no file attached and were left "
+            + ("out. " if audio_tracks else "out, so no sound was brought in. ")
+            + "Sound cannot stand in the way a picture can — a silent clip is a "
+            "gap you cannot see — so those clips are simply not there. The names "
+            "and the folders they came from are listed below; add those folders "
+            "and read the file again."
         )
     if tally["moved"]:
         report["warnings"].append(
@@ -3381,13 +3750,27 @@ def to_project(
     # the file the whole time and users were told to retype them. What is said
     # here now is exactly what came across and exactly what did not.
     if tally["lettered"]:
-        report["warnings"].append(
+        # ⚠ WHAT CAME ACROSS DEPENDS ON THE FORMAT, SO THE SENTENCE HAS TO TOO.
+        # An `xmeml` writes `fontcolor` and an outline as plain XML; a `.prproj`
+        # carries neither anywhere (E59). Saying "the colour could not be read"
+        # after an import that read it perfectly is the kind of wrong that makes
+        # a user distrust the parts that ARE right.
+        line = (
             f"{tally['lettered']} title(s) were read out of the file with their "
             "words, their font, their size and their place on screen, and are on "
-            "text rows of their own. Their COLOUR is not in a .prproj at all, so "
-            "they are white here whatever they were in Premiere — set the colour "
-            "once and use “Apply to all” on the row."
+            "text rows of their own."
         )
+        if (report.get("reader") or "") == "prproj":
+            line += (
+                " Their COLOUR is not stored in a .prproj anywhere, so they are "
+                "this app's white whatever they were in Premiere — set one and "
+                "use the row to apply it to the rest. Their DROP SHADOW did come "
+                "across. For the colours too, export a Final Cut Pro XML from "
+                "Premiere and import that instead."
+            )
+        else:
+            line += " Their colour and outline came across with them."
+        report["warnings"].append(line)
     if tally["drawn"]:
         report["warnings"].append(
             f"{tally['drawn']} drawn shape(s) (the bar behind a lower third is the "
@@ -3402,6 +3785,12 @@ def to_project(
             "cannot be read out of a .prproj — bringing it in would have put a "
             "clip over the whole film that does nothing."
         )
+    # ⚠ SOUNDS FIRST. A missing picture is a card on the timeline the user can
+    # see; a missing sound is silence they cannot, so it is the row that has to
+    # be read before the list is scrolled past.
+    report["missing"] = sorted(
+        missing.values(), key=lambda m: (m["kind"] != "sound", m["name"].lower())
+    )
     report["clips"] = len(frames)
     report["audio_clips"] = len(audio_tracks)
     # ⚠ COUNTED FROM THE ROWS THAT WERE ACTUALLY MADE, not from the lanes the

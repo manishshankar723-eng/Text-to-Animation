@@ -2424,6 +2424,31 @@ class InterchangeReport(BaseModel):
     )
 
 
+class ImportMissingFile(BaseModel):
+    """One file the project named that never arrived — and WHERE it lived.
+
+    ⚠ `placeholders` NAMES THE FILE; THIS SAYS WHICH FOLDER TO GO AND GET. The
+    media for one cut is routinely spread over several folders, and a project
+    can point at a file that lives inside a DIFFERENT project entirely — a
+    shared logo, a music bed reused across a series. A user who attached the
+    obvious folder and still saw "that .mp3 did not arrive" had nothing in the
+    dialog to act on, and read it as this app not taking music. The folder comes
+    off the path the editor itself wrote (`pathurl`), so it is the real one.
+    """
+
+    name: str = Field(description="The file's own name, as the project spells it.")
+    folder: str = Field(
+        "",
+        description=(
+            "The folder it sat in on the machine that made the project — '' when "
+            "the format did not carry a path. For the user to FIND it; nothing "
+            "here can read it."
+        ),
+    )
+    kind: str = Field("picture", description="'picture' | 'sound'.")
+    clips: int = Field(1, description="How many clips on the timeline wanted it.")
+
+
 class AnimaticImportResponse(BaseModel):
     """What POST /animatics/{id}/interchange/import hands back.
 
@@ -2492,6 +2517,10 @@ class AnimaticImportResponse(BaseModel):
     # assume (an EDL's frame rate, an NTSC rate read as a whole number, dissolves
     # read as cuts).
     placeholders: list[str] = Field(default_factory=list)
+    # ⚠ THE SAME LOSS, ONE ROW PER FILE AND WITH ITS FOLDER — what the dialog
+    # actually shows. `placeholders` stays per CLIP because that is what the
+    # gaps on the timeline are counted from.
+    missing: list[ImportMissingFile] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     rejected: list[str] = Field(
         default_factory=list, description="Media files that could not be stored."

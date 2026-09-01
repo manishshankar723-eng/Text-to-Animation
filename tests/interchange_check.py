@@ -1786,8 +1786,14 @@ check("the report no longer tells anyone to type their titles again",
       not any("typed again" in w for w in _report["warnings"]),
       str([w for w in _report["warnings"] if "typed" in w]))
 check("…it says what came across and what did not",
-      any("COLOUR is not in a .prproj" in w for w in _report["warnings"]),
+      any("COLOUR is not stored in a .prproj" in w for w in _report["warnings"]),
       str(_report["warnings"][-3:]))
+# ⚠ AND IT POINTS AT THE ROUTE THAT DOES CARRY THE COLOUR (§8j). Telling a user
+# their title colours are gone, when a Final Cut Pro XML out of the same
+# Premiere would have brought them, is a dead end this app put them in.
+check("…and names the export that WOULD have carried the colours",
+      any("Final Cut Pro XML" in w and "title" in w for w in _report["warnings"]),
+      str([w for w in _report["warnings"] if "Final Cut" in w]))
 
 # --- and none of this disturbed the reader that already worked -------------
 # ⚠ THE REGRESSION GUARD FOR §8f. `_prproj_graphic` walks the same graph
@@ -1807,6 +1813,272 @@ check("a .prproj with no graphics in it reads exactly as it did before",
 check("…and its two picture rows are still two picture rows",
       _again["report"]["video_tracks"] == 2,
       str(_again["report"]["video_tracks"]))
+
+
+# ---------------------------------------------------------------------------
+# 8i · The DROP SHADOW — the one part of a title's look a .prproj does give up
+# ---------------------------------------------------------------------------
+# ⚠ **THE FILL COLOUR IS NOT IN A `.prproj` AND THE SHADOW IS.** That asymmetry
+# is not obvious and it was found the hard way, so it is pinned here rather than
+# left in a comment: Premiere writes a colour as a 64-BIT INTEGER on a plain
+# `<StartKeyframe>` — `18374686479671623680` is big-endian
+# `ff 00 00 00 00 00 00 00`, four 16-bit channels A,R,G,B with the 8-bit value in
+# the HIGH byte. Every component that OWNS a colour writes it that way (Shadow
+# Color, Key Color, Tint's Map White To). The text FILL is owned by no component,
+# which is why it is missing and the shadow is not.
+#
+# ⚠ AND IT IS NOT A RARE EXTRA. Across two real projects and two Premiere
+# versions, **every one of 194 text clips carried a Drop Shadow in its own
+# component chain** — it is simply how people set type in Premiere.
+print("\n8i · a title's drop shadow comes across")
+
+check("Premiere's packed 64-bit colour decodes to hex",
+      interchange.prproj_colour("18374686479671623680") == "#000000",
+      interchange.prproj_colour("18374686479671623680"))
+check("…white too, which is 0xff00 per channel and NOT 0xffff",
+      interchange.prproj_colour("18374966859414961920") == "#ffffff",
+      interchange.prproj_colour("18374966859414961920"))
+# ⚠ NEVER GUESS. A colour this cannot read must leave the app's own in place;
+# returning black for junk would paint somebody's titles black and look
+# deliberate.
+check("…and anything that is not one of those comes back EMPTY, never black",
+      [interchange.prproj_colour(v) for v in ("", "abc", "12.5", "-1", None)]
+      == ["", "", "", "", ""],
+      str([interchange.prproj_colour(v) for v in ("", "abc", "12.5", "-1", None)]))
+
+
+def _shadow_xml(colour="18374686479671623680", opacity="249.999984741211",
+                direction="147.", distance="11.", only="false"):
+    """A text graphic with a Drop Shadow beside it, as Premiere writes one."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3">
+  <VideoTrackGroup ObjectID="260" ClassID="1d7fbd0a" Version="1">
+    <TrackGroup Version="1">
+      <Tracks Version="1"><Track Index="0" ObjectURef="sh-titles"/></Tracks>
+    </TrackGroup>
+    <FrameRate>{_NTSC_TICKS}</FrameRate>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoTrackGroup>
+  <VideoClipTrack ObjectUID="sh-titles" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="1300"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+  <VideoClipTrackItem ObjectID="1300" ClassID="aab0946b" Version="1">
+    <ClipTrackItem Version="1">
+      <ComponentOwner Version="1"><Components ObjectRef="1309"/></ComponentOwner>
+      <TrackItem Version="4"><Node Version="1"><Properties Version="1"/></Node>
+        <End>{_NTSC_TICKS * 48}</End></TrackItem>
+      <SubClip ObjectRef="1301"/>
+    </ClipTrackItem>
+  </VideoClipTrackItem>
+  <VideoComponentChain ObjectID="1309" Version="3">
+    <ComponentChain Version="3"><Components Version="1">
+      <Component Index="0" ObjectRef="1320"/>
+      <Component Index="1" ObjectRef="1340"/>
+    </Components></ComponentChain>
+  </VideoComponentChain>
+  <VideoFilterComponent ObjectID="1320" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="1321"/><Param Index="1" ObjectRef="1322"/>
+        <Param Index="2" ObjectRef="1323"/><Param Index="3" ObjectRef="1324"/>
+        <Param Index="4" ObjectRef="1325"/>
+      </Params>
+      <DisplayName>Drop Shadow</DisplayName>
+    </Component>
+    <MatchName>AE.ADBE Drop Shadow</MatchName>
+  </VideoFilterComponent>
+  <VideoComponentParam ObjectID="1321" Version="10"><Name>Shadow Color</Name>
+    <StartKeyframe>-91445760000000000,{colour},0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <VideoComponentParam ObjectID="1322" Version="10"><Name>Opacity</Name>
+    <StartKeyframe>-91445760000000000,{opacity},0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <VideoComponentParam ObjectID="1323" Version="10"><Name>Direction</Name>
+    <StartKeyframe>-91445760000000000,{direction},0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <VideoComponentParam ObjectID="1324" Version="10"><Name>Distance</Name>
+    <StartKeyframe>-91445760000000000,{distance},0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <VideoComponentParam ObjectID="1325" Version="10"><Name>Shadow Only</Name>
+    <StartKeyframe>-91445760000000000,{only},0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <VideoFilterComponent ObjectID="1340" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="1341"/><Param Index="1" ObjectRef="1342"/>
+      </Params>
+      <DisplayName>Text</DisplayName><InstanceName>SHADOWED</InstanceName>
+    </Component>
+    <MatchName>AE.ADBE Text</MatchName>
+  </VideoFilterComponent>
+  <ArbVideoComponentParam ObjectID="1341" Version="3"><Name>Source Text</Name>
+    <StartKeyframeValue Encoding="base64">{_text_blob("SHADOWED")}</StartKeyframeValue>
+  </ArbVideoComponentParam>
+  <VideoComponentParam ObjectID="1342" Version="10"><Name>Scale</Name>
+    <StartKeyframe>-91445760000000000,100.,0,0,0,0,0,0</StartKeyframe></VideoComponentParam>
+  <SubClip ObjectID="1301" ClassID="62f4ee9f" Version="1">
+    <Clip ObjectRef="1302"/><Name>Graphic</Name>
+  </SubClip>
+  <VideoClip ObjectID="1302" ClassID="1c31d4c6" Version="1">
+    <Clip Version="18"><InPoint>0</InPoint></Clip>
+  </VideoClip>
+</PremiereData>
+"""
+
+
+def _one_title(xml):
+    got = interchange.read_document(
+        _gzip.compress(xml.encode("utf-8")), "Shadow.prproj",
+        fps_hint=24, experimental=True)
+    return interchange.to_project(got, lambda n: None, new_id=lambda: "x")
+
+
+shadowed = _one_title(_shadow_xml())["texts"][0]
+check("a title's shadow COLOUR is read out of the packed integer",
+      shadowed["shadow_color"] == "#000000", str(shadowed.get("shadow_color")))
+# 249.99998 / 255 — ⚠ AND THE DIVISOR IS 255, NOT 100. A drop shadow's Opacity
+# runs 0…255 in Premiere while a clip's runs 0…100; using 100 gives 2.45 and the
+# model rejects it, losing the whole import to a 422.
+check("…its strength, on Premiere's own 0-255 scale",
+      abs(shadowed["shadow_opacity"] - 0.98) < 0.01,
+      str(shadowed["shadow_opacity"]))
+# ⚠ 147 IN PREMIERE IS 57 HERE. Premiere measures the angle from STRAIGHT UP,
+# this app from the RIGHT. Reading it straight across tilts every shadow 90°,
+# which looks like a rendering bug rather than an import one.
+check("…its direction, turned into this app's own frame (147 up → 57 right)",
+      shadowed["shadow_angle"] == 57.0, str(shadowed["shadow_angle"]))
+# Distance 11px against a 90px title → 0.1222em. ⚠ The conversion needs the
+# caption's SIZE, which is why it happens per caption and not once per clip.
+check("…and its distance as a fraction of the type size, not as pixels",
+      abs(shadowed["shadow"] - 11.0 / 90.0) < 0.001, str(shadowed["shadow"]))
+check("the words still come through with the shadow beside them",
+      shadowed["text"] == "SHADOWED", shadowed["text"])
+
+# ⚠ "SHADOW ONLY" DRAWS NO LETTERS AT ALL. This app has no such mode, so
+# importing the shadow alone would put a smear where a title should be.
+plain = _one_title(_shadow_xml(only="true"))["texts"][0]
+check("a “Shadow Only” shadow is dropped, and the title still arrives",
+      plain.get("shadow", 0) == 0 and plain["text"] == "SHADOWED",
+      str(plain.get("shadow")))
+# ⚠ AND A TITLE WITH NO SHADOW MUST NOT BE GIVEN ONE. The keys are only copied
+# when the reader actually found them.
+check("a title with no Drop Shadow beside it keeps this app's own defaults",
+      "shadow" not in [k for k in placed["texts"][0] if k == "shadow"]
+      or placed["texts"][0].get("shadow", 0) == 0,
+      str(placed["texts"][0].get("shadow")))
+
+
+# ---------------------------------------------------------------------------
+# 8j · An `xmeml` title — the route that DOES carry the colour
+# ---------------------------------------------------------------------------
+# ⚠ **A TITLE IN FCP7 XML IS A `<generatoritem>`, A SIBLING OF `<clipitem>` AND
+# NOT A KIND OF IT** — so a reader that walks only `clipitem` never sees one, and
+# this one did not. It has no `<file>` either, so even when it was reached
+# `read_clip` refused it for having nothing to resolve. Both had to change.
+#
+# ⚠ **AND THIS IS THE ROUTE THAT ANSWERS E59's ONE GAP.** A `.prproj` does not
+# carry a title's fill colour anywhere; an `xmeml` writes `fontcolor` as plain
+# `<red>/<green>/<blue>`. So "export a Final Cut Pro XML instead" stops being
+# generic advice and becomes the concrete answer to "why is my text white?".
+print("\n8j · an xmeml title, in the colour it was set in")
+
+TITLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<xmeml version="4"><sequence><name>Titles</name>
+<rate><timebase>25</timebase></rate>
+<media><video>
+ <format><samplecharacteristics><width>1920</width><height>1080</height></samplecharacteristics></format>
+ <track>
+  <clipitem id="c1"><name>shot</name><start>0</start><end>50</end><in>0</in><out>50</out>
+    <file id="f1"><name>shot.mp4</name><pathurl>file://localhost/C:/x/shot.mp4</pathurl></file>
+  </clipitem>
+ </track>
+ <track>
+  <generatoritem id="g1"><name>Title</name><start>25</start><end>75</end><in>0</in><out>50</out>
+   <effect><name>Outline Text</name><effectid>Outline Text</effectid>
+    <effecttype>generator</effecttype><mediatype>video</mediatype>
+    <parameter><parameterid>str</parameterid><name>Text</name><value>HELLO  WORLD</value></parameter>
+    <parameter><parameterid>fontname</parameterid><value>Montserrat-SemiBold</value></parameter>
+    <parameter><parameterid>fontsize</parameterid><value>72</value></parameter>
+    <parameter><parameterid>fontcolor</parameterid>
+      <value><alpha>255</alpha><red>48</red><green>124</green><blue>194</blue></value></parameter>
+    <parameter><parameterid>linewidth</parameterid><value>6</value></parameter>
+    <parameter><parameterid>linecolor</parameterid>
+      <value><alpha>255</alpha><red>255</red><green>255</green><blue>255</blue></value></parameter>
+    <parameter><parameterid>origin</parameterid><value><horiz>0</horiz><vert>-0.6</vert></value></parameter>
+   </effect>
+  </generatoritem>
+ </track>
+</video></media></sequence></xmeml>"""
+
+xtitle = interchange._read_fcp7(TITLE_XML)
+xplaced = interchange.to_project(
+    xtitle,
+    lambda n: {"kind": "video", "upload_id": "u", "duration_ms": 0}
+    if n.endswith(".mp4") else None,
+    new_id=lambda: _uuid.uuid4().hex[:12],
+)
+check("a <generatoritem> is read at all — it is not a <clipitem>",
+      len(xplaced["texts"]) == 1, str(len(xplaced["texts"])))
+xt = xplaced["texts"][0]
+check("…with its words, whitespace tidied",
+      xt["text"] == "HELLO WORLD", repr(xt["text"]))
+# ⚠ THE ONE THING A .prproj CANNOT GIVE (E59). #307cc2 is the blue measured off
+# a real render of this project's own colour-text version.
+check("…IN ITS OWN COLOUR, which is what a .prproj could never say",
+      xt["color"] == "#307cc2", xt["color"])
+check("…and its OUTLINE, width and colour both",
+      xt["stroke_px"] == 6.0 and xt["stroke_color"] == "#ffffff",
+      f'{xt.get("stroke_px")} / {xt.get("stroke_color")}')
+check("…its font, mapped onto a face this app ships",
+      xt["font"] == "montserrat", xt["font"])
+# ⚠ `<vert>` COUNTS UPWARDS AND `y` COUNTS DOWN. Read straight across, every
+# lower third lands at the top of the frame.
+check("…its place on screen, with vert flipped into this app's y",
+      (xt["x"], xt["y"]) == (0.5, 0.8), f'{xt["x"]}, {xt["y"]}')
+check("…and when it is on screen",
+      (xt["start_ms"], xt["duration_ms"]) == (1000, 2000),
+      f'{xt["start_ms"]}, {xt["duration_ms"]}')
+# ⚠ THE TITLE ROW IS NOT A PICTURE ROW (E60), in this format either.
+check("a row of titles does not become an empty picture row",
+      xplaced["report"]["video_tracks"] == 1,
+      str(xplaced["report"]["video_tracks"]))
+check("…and the footage row is untouched",
+      len(xplaced["frames"]) == 1 and xplaced["frames"][0]["kind"] == "video",
+      str(len(xplaced["frames"])))
+check("…on its own import lane, never the ✨ Auto captions row",
+      xt["layer_id"].startswith(interchange.IMPORT_TEXT_LANE_PREFIX)
+      and xt["layer_id"] != interchange.IMPORT_CAPTION_LAYER_ID,
+      xt["layer_id"])
+
+# ⚠ AN EFFECT THAT IS NOT A GENERATOR MUST NOT BE MINED FOR TEXT. A filter
+# carries `<parameter>` elements too, and one of them being called something
+# with a string in it does not make the clip a title.
+NOT_A_TITLE = TITLE_XML.replace("<effecttype>generator</effecttype>",
+                                "<effecttype>filter</effecttype>")
+check("an ordinary filter on a clip is not mistaken for lettering",
+      not interchange.to_project(
+          interchange._read_fcp7(NOT_A_TITLE),
+          lambda n: {"kind": "video", "upload_id": "u", "duration_ms": 0}
+          if n.endswith(".mp4") else None, new_id=lambda: "x")["texts"], "")
+# ⚠ AND A FILE-LESS ITEM WITH NO LETTERING IN IT IS STILL DROPPED. Keeping it
+# would put a nameless empty clip on the timeline for every generator this app
+# cannot read — a colour matte, a bars-and-tone.
+NO_WORDS = TITLE_XML.replace("<value>HELLO  WORLD</value>", "<value></value>")
+check("…and a generator with no words in it is left out, as before",
+      not interchange.to_project(
+          interchange._read_fcp7(NO_WORDS),
+          lambda n: {"kind": "video", "upload_id": "u", "duration_ms": 0}
+          if n.endswith(".mp4") else None, new_id=lambda: "x")["texts"], "")
+
+# 16-bit channels: some exporters write 0…65535 where FCP7 writes 0…255.
+# ⚠ CLAMPING INSTEAD OF SCALING TURNS EVERY 16-BIT COLOUR INTO PURE WHITE.
+WIDE = TITLE_XML.replace(
+    "<alpha>255</alpha><red>48</red><green>124</green><blue>194</blue>",
+    "<alpha>65535</alpha><red>12336</red><green>31868</green><blue>49858</blue>")
+wide = interchange.to_project(
+    interchange._read_fcp7(WIDE),
+    lambda n: {"kind": "video", "upload_id": "u", "duration_ms": 0}
+    if n.endswith(".mp4") else None, new_id=lambda: "x")["texts"][0]
+check("a 16-bit fontcolor is scaled down, not clamped to white",
+      wide["color"] == "#307cc2", wide["color"])
+
 
 
 
@@ -2063,6 +2335,148 @@ except Exception as exc:  # noqa: BLE001
     _why = str(exc)
 check("every frame still validates as an AnimaticFrame", _ok,
       "" if _ok else _why)
+
+
+# ---------------------------------------------------------------------------
+# 8k · A file that did not arrive must say WHERE it lived
+# ---------------------------------------------------------------------------
+# ⚠ THE NAME OF A MISSING FILE IS NOT SOMETHING A USER CAN ACT ON. The report
+# named the file and stopped there, and the live import that exposed it lost
+# exactly three files out of twenty-eight: the VOICEOVER sat inside the project
+# folder and arrived on all 23 of its clips, while the music bed and a logo lived
+# inside ANOTHER project's folder — which is ordinary, because a logo and a music
+# bed are reused across a whole series. The user attached the only folder there
+# was any reason to attach, read "tech_oasis-….mp3 did not arrive", and had
+# nothing to do next; it read as this app being unable to take music at all.
+#
+# Both readers already know the answer: `files[key]["pathurl"]` is the full path
+# the editor itself wrote. `report["missing"]` is that, one row per FILE, with
+# the folder, the kind and how many clips wanted it — while `placeholders` stays
+# per CLIP, because that is what the gaps on the timeline are counted from.
+print(chr(10) + "8k · a missing file names its folder")
+
+# A Windows path, built rather than written, so this source file never has to
+# carry a backslash escape that a later edit can quietly change.
+BS = chr(92)
+_WIN = BS.join(["C:", "Films", "Ep8", "Audio", "music.mp3"])
+_URL = "file://localhost/C:/Films/Shared%20Art/logo.png"
+
+
+def _spread():
+    """One cut whose media is spread over three folders — one of them attached.
+
+    ⚠ THE LOGO IS ON TWO CLIPS ON PURPOSE. One file used twice printed its own
+    name twice in the dialog, which reads as two different broken files rather
+    than one folder nobody attached.
+    """
+    return {
+        "reader": "test", "name": "Spread", "fps": _FPS, "width": 0, "height": 0,
+        "files": {
+            "here": {"name": "shot.png",
+                     "pathurl": BS.join(["C:", "Films", "Ep8", "shot.png"])},
+            "vo": {"name": "vo.mp3",
+                   "pathurl": BS.join(["C:", "Films", "Ep8", "Audio", "vo.mp3"])},
+            "logo": {"name": "logo.png", "pathurl": _URL},
+            "bed": {"name": "music.mp3", "pathurl": _WIN},
+        },
+        "video": [{"clips": [
+            _c(0, 240, name="shot", file="here"),
+            _c(240, 480, name="logo", file="logo"),
+            _c(480, 720, name="logo again", file="logo"),
+        ], "transitions": []}],
+        "audio": [{"clips": [
+            _c(0, 240, name="vo", file="vo"),
+            _c(0, 720, name="music", file="bed"),
+        ]}],
+        "warnings": [],
+    }
+
+
+def _only_project_folder(name):
+    """What the route's `resolve` does when ONE folder was attached — the
+    project's own. ⚠ The voiceover resolves and the music does not, which is
+    exactly the live case: both are .mp3, and only one of them lives here."""
+    return {
+        "shot.png": {"kind": "image", "upload_id": "u1", "duration_ms": 0},
+        "vo.mp3": {"kind": "audio", "upload_id": "u2", "duration_ms": 0},
+    }.get((name or "").lower())
+
+
+_spr = interchange.to_project(_spread(), _only_project_folder, background="#000000")
+_missing = _spr["report"]["missing"]
+_by_name = {m["name"]: m for m in _missing}
+
+check("a missing file is listed once, however many clips wanted it",
+      len(_missing) == 2, str([m["name"] for m in _missing]))
+check("…and says how many clips that was",
+      _by_name["logo.png"]["clips"] == 2, str(_by_name.get("logo.png")))
+# ⚠ THE WHOLE POINT OF THE SECTION. A path this app cannot read is still the one
+# thing that tells a person which folder to go and add.
+check("a Windows path gives up the folder it sat in",
+      _by_name["music.mp3"]["folder"] == "C:/Films/Ep8/Audio",
+      str(_by_name["music.mp3"]["folder"]))
+# ⚠ AND AN `xmeml` WRITES A `file://` URL WITH ITS SPACES PERCENT-ENCODED, so
+# reading it raw hands the user a folder called "Shared%20Art" that they will not
+# find on their own disk.
+check("…and so does a percent-encoded file:// URL",
+      _by_name["logo.png"]["folder"] == "file://localhost/C:/Films/Shared Art",
+      str(_by_name["logo.png"]["folder"]))
+# ⚠ A MISSING PICTURE BECOMES A CARD ON THE TIMELINE; A MISSING SOUND BECOMES
+# NOTHING AT ALL (E45 and the branch above it). They are not the same loss and
+# the list must not print them as though they were.
+check("the sound is marked as a sound, and the picture as a picture",
+      _by_name["music.mp3"]["kind"] == "sound"
+      and _by_name["logo.png"]["kind"] == "picture",
+      str([(m["name"], m["kind"]) for m in _missing]))
+check("…and the sound is listed FIRST, because it left no trace to find",
+      _missing[0]["name"] == "music.mp3", str([m["name"] for m in _missing]))
+# ⚠ `placeholders` IS PER CLIP AND STAYS THAT WAY. It is what the gaps on the
+# timeline are counted from — collapsing it here would under-count them.
+check("placeholders is still one entry per CLIP",
+      sorted(_spr["report"]["placeholders"])
+      == ["logo.png", "logo.png", "music.mp3"],
+      str(_spr["report"]["placeholders"]))
+
+# ⚠ "NO SOUND WAS BROUGHT IN" WAS A LIE WHENEVER SOME OF IT WAS. The live report
+# said it while 23 clips of voiceover sat on the timeline — which makes every
+# other sentence in the report suspect too.
+_sound_line = " ".join(w for w in _spr["report"]["warnings"] if "sound clip(s)" in w)
+check("the warning does not claim no sound arrived when some did",
+      "no sound was brought in" not in _sound_line, _sound_line)
+check("…and it points at the folders instead of just saying 'attach the files'",
+      "folder" in _sound_line, _sound_line)
+
+# ⚠ AND THE OTHER HALF: when NOTHING resolved, "0 sounds on 0 rows" is true and
+# still reads like a file with no audio in it, so that sentence must still be
+# there. Losing it is how the fix above turns into a different silent failure.
+_none = interchange.to_project(_spread(), lambda _n: None, background="#000000")
+check("…but when no sound arrived at all it still says so plainly",
+      any("no sound was brought in" in w for w in _none["report"]["warnings"]),
+      str([w for w in _none["report"]["warnings"] if "sound" in w]))
+
+# A format that carries no path at all (an EDL) must still list the file — with
+# an empty folder, which the dialog words rather than printing a blank line.
+_nopath = interchange.to_project(
+    _lanes([_c(0, 240, name="Graphic", file="")]), lambda _n: None, background="#000000"
+)
+check("a file with no recorded path is still listed, with no folder",
+      [(m["name"], m["folder"]) for m in _nopath["report"]["missing"]]
+      == [("Graphic", "")],
+      str(_nopath["report"]["missing"]))
+
+# ⚠ AND THE DIALOG HAS TO SHOW IT. The whole fix is invisible if the modal keeps
+# rendering `placeholders` — the server would be carrying folders nobody sees.
+_modal_8k = open(
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "client", "src", "components", "ProjectImportModal.jsx",
+    ),
+    encoding="utf-8",
+).read()
+check("the dialog reads the located list, not the bare names",
+      "read?.missing" in _modal_8k and "missingByFolder" in _modal_8k, "")
+check("…and prints the folder for each group",
+      "group.folder" in _modal_8k, "")
 
 
 # ---------------------------------------------------------------------------
@@ -2399,6 +2813,8 @@ check("…and the row centres them rather than letting one stretch taller",
 # ⚠ EACH ROW CARRIES THE SOURCE IT GUARDS. Every guard used to be re-run against
 # `apply_src` whatever it was written about, so the first guard over a different
 # file read False on the GOOD source and reported itself broken.
+_EOL = chr(10)
+
 for _name, _good, _broken, _guard in (
     (
         "the audio key misspelt as the API's own",
@@ -2429,11 +2845,16 @@ for _name, _good, _broken, _guard in (
     # bare `onClick={readFile}` — an event object is truthy, so the ordinary
     # "Read the file" button would ask the server to guess at every file, and
     # the only visible sign would be a .prproj that was never refused.
+    # ⚠ AND THE ARGUMENT IS `guessed`, NOT NOTHING. The footer re-reads after
+    # footage is attached, and `readFile()` there asks for the STRICT read — which
+    # for a `.prproj` is the refusal, with the experimental offer already spent
+    # and hidden. See `editor_project_import_check.py`.
     (
         "the click event passed in as the experimental flag",
         modal,
-        modal.replace("onClick={() => readFile()}", "onClick={readFile}"),
-        lambda b: "onClick={readFile}" not in b and "onClick={() => readFile()}" in b,
+        modal.replace("onClick={() => readFile(guessed)}", "onClick={readFile}"),
+        lambda b: ("onClick={readFile}" not in b
+                   and "onClick={() => readFile(guessed)}" in b),
     ),
     # ⚠ AND THE REFUSAL ITSELF, which is the safety rail the whole of section 8c
     # rests on: `experimental` defaulting to true would turn the one guess in
@@ -2460,6 +2881,34 @@ for _name, _good, _broken, _guard in (
         modal,
         modal.replace("setMedia((prev) => {", "setMedia(() => {"),
         lambda b: "setMedia((prev) => {" in b,
+    ),
+    # ⚠ The one §8k was written for. Going back to the bare `placeholders` list
+    # leaves the server carrying folders nobody ever sees, and the report returns
+    # to naming files a user has no way to go and find.
+    (
+        "the dialog printing bare names instead of the located list",
+        modal,
+        modal.replace("missingByFolder.slice(0, 4)", "[].slice(0, 4)"),
+        lambda b: "missingByFolder.slice(0, 4)" in b,
+    ),
+    # ⚠ THE ONE THAT COST AN IMPORT. Clearing the report when footage is attached
+    # takes away the folders the user went to fetch, and flips the footer back to
+    # the read a `.prproj` is refused for. Driven end to end in
+    # `editor_project_import_check.py`; this is the cheap guard beside it.
+    (
+        "the report thrown away when footage is added",
+        modal,
+        modal.replace("setStale(true);" + _EOL + "  };",
+                      "setRead(null);" + _EOL + "  };"),
+        lambda b: "setStale(true);" + _EOL + "  };" in b,
+    ),
+    # ⚠ And the folder the report sends somebody to is another film's, full of
+    # media this cut never asked for.
+    (
+        "the whole second folder uploaded instead of what was asked for",
+        modal,
+        modal.replace("if (onlyWanted.length) picked = onlyWanted;", ""),
+        lambda b: "if (onlyWanted.length) picked = onlyWanted;" in b,
     ),
 ):
     check(f"the guard against “{_name}” really can fail",

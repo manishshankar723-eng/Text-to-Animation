@@ -105,6 +105,7 @@ from .schemas import (
     AudioCostEstimate,
     CostEstimate,
     DialogueLine,
+    ImportMissingFile,
     InterchangeLoss,
     InterchangeReport,
     Job,
@@ -2971,6 +2972,7 @@ async def import_interchange(
         transitions_read=report["transitions"],
         matched=report["matched"],
         placeholders=report["placeholders"],
+        missing=[ImportMissingFile(**m) for m in report.get("missing") or []],
         warnings=report["warnings"],
         rejected=rejected,
     )

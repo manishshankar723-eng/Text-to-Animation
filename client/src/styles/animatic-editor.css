@@ -2202,6 +2202,29 @@
 .an-xchg-gone b {
   color: var(--fail);
 }
+/* ⚠ WHERE A MISSING FILE LIVED — a full path off the machine that made the
+   project, so it is long, has spaces in it and may not be ASCII. Left to itself
+   one 90-character path pushes the whole dialog wider than the screen, so it is
+   allowed to break anywhere rather than only at spaces. The gap starts at the
+   SECOND folder: the first sits directly under the sentence introducing it. */
+/* ⚠ THE REPORT IS OUT OF DATE, NOT GONE. Dimmed so it plainly is not the answer
+   to what was just attached, still readable because the folders it names are the
+   reason the user is standing here. `--warn` on the left edge, not `--fail`:
+   nothing is broken, one more press is owed. */
+.an-xchg-again {
+  border-left-color: var(--accent, var(--warn));
+}
+.an-xchg-old {
+  opacity: 0.55;
+}
+.an-xchg-where + .an-xchg-where {
+  margin-top: 0.5rem;
+}
+.an-xchg-where > .tiny {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 .an-xchg-opt {
   display: flex;

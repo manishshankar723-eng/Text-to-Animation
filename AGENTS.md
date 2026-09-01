@@ -284,7 +284,11 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-08-31 — **A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4).** The last format on the plan was Premiere's own save file. ⚠ **Adobe has never published its structure and it moved again in Premiere 2026, so this is a GUESS and the whole design is about saying so.** `POST /interchange/import` still answers a `.prproj` with the same refusal it always did — naming *File › Export › Final Cut Pro XML*, the route that always works — and only when the user reads that and presses **“Try to read it anyway”** does the dialog resend with `experimental=true` and `interchange._read_prproj` run (new **RULEBOOK E47**). ⚠ **An experimental reader offered as a checkbox up front is one most people tick without ever seeing the reliable door beside it** — hence a button under the error, not an option above the file picker. ⚠ **A `.prproj` is a flat pile of objects wired by `ObjectRef`, not a tree**, so a clip's POSITION is four hops from the clip and nothing here uses a fixed XPath the way `_read_fcp7` safely can; it indexes by `ObjectID` and follows references, with a stop list so a shared `Media` object cannot walk back up into the bin and read another sequence's numbers. ⚠ **Two layers, and the model records which one answered**: `structured` keeps every clip's real row, `flat` puts them on one row per media type and SAYS the rows are wrong rather than refusing. ⚠ **Ticks, not frames** — Premiere counts 254,016,000,000 per second — and the file's OWN rate is used, never the caller's. ⚠ **Every import it makes carries “best-effort, check it against Premiere” as `warnings[0]` and the dialog badges the report `best guess`** for as long as it is on screen. ⚠ **A gzip bomb is refused inside the reader** (new **RULEBOOK E48**): the upload cap counts COMPRESSED bytes and this XML packs at better than 1000:1, so the only place that can stop it is where it is unpacked. Effects, titles, colour, speed, volume and nested sequences are **not attempted** and are named in `warnings`. ⚠ **A REVIEW PASS AFTER IT WAS BUILT FOUND THREE FAULTS, AND TWO OF THEM WERE SERIOUS.** (1) `_read_prproj` picked the right sequence and then read the frame rate off the FIRST one in the file — a project holding a 30fps sequence above the 24fps one being imported read every clip **25% adrift**, silently (new **RULEBOOK E49**, fixed by `_prproj_rate_near`, which stays inside the chosen sequence's own subgraph). (2) ⚠ **`to_project` could hand the route a clip Pydantic rejects, which reaches the user as a 500 with the whole import lost** — `AnimaticFrame` caps a clip at TEN MINUTES and forbids a negative start, and a fifteen-minute take or a record-in before the sequence starts are ordinary things to find in somebody else's timeline. **This was never a `.prproj` bug**: the clamp is in `to_project`, so it had been true of the FCP7 XML and EDL readers since Phase 3 (new **RULEBOOK E50**). (3) Clips found but unplaceable fell through to the route's *“There was nothing on that timeline to bring in”*, which named the wrong reason; they are refused with the real one now. `tests/interchange_check.py` is now **309 checks, all green** — new §8c and §8d, plus a sixth guard proving the quietest fault here (`onClick={readFile}` hands React's click event in as `experimental`, and an event object is truthy, so every ordinary read would have asked the server to guess). ⚠ **Both new guards were re-run against the pre-fix code and proved to fail on it**, so neither is decoration. ⚠ **§12's guard loop was itself broken** and is fixed (new **RULEBOOK G14**): it re-ran every guard against `apply_src` whatever file the guard was about, so the first guard over another file reported *itself* broken. `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check` and `npm run build` pass. ✅ **AND THEN A REAL `.prproj` WAS OPENED, AND IT FAILED — AND IS NOW FIXED.** The user's own Premiere 2026 project: 167 clips found, **not one placed**. Three things were wrong and every one of them was invisible to a fixture built from the same guess as the code (new **RULEBOOK E52**): **(a)** Premiere uses TWO reference kinds, `ObjectRef` (numeric) and **`ObjectURef` (GUID)**, and the track-group→tracks link is the GUID kind, so the reader found no tracks and fell to the flat route; **(b)** the times are **nested** (`<VideoClipTrackItem><ClipTrackItem><TrackItem><End>`), not reached by reference; **(c)** a **`<Start>` of zero is not written at all** — 17 of the 167 had none, and demanding Start AND End threw away every clip at the head of a track. Also: **a real project has no `<Sequence>` object** — a sequence IS a `VideoTrackGroup` + `AudioTrackGroup` — and the rate lives on the track group, where the SAME `<FrameRate>` tag also carries 44100/48000 for audio. Fixed, and that file now reads by the **structured** route: **70 clips on 8 picture rows, 24 sounds on 2, 29 media files, 0–70.1s, 23.976fps detected and named as NTSC**, every clip accepted by the response model. `tests/interchange_check.py` is **324 checks, all green**, and §8c now pins BOTH shapes — the real one and the ref-shaped one another Premiere version might write. ⚠ Still true: this is one real file, from one version; E47 stays **PAKKA (policy) / OPEN (one file proves one file)**. See the Work Log.
+**Last updated:** 2026-09-01 — **THE IMPORT DIALOG SURVIVES BEING ACTED ON.** The folders from the entry below were on screen and the import was still abandoned: *“mai wapas aa gaya ye nhi ki wahi se chalu hua … fir kuch nhi hua to mai bas usko chhor kar import kiya”*. ⚠ **THREE FAULTS IN ONE GESTURE, and the dialog only fails as a SEQUENCE** — every piece of state was right when it was set. `addMedia` called `setRead(null)`, so fetching the folder the report had just named **wiped the only place that folder was written down**; the footer then flipped back to the STRICT read, which for a `.prproj` is the refusal, with “Try to read it anyway” already spent and hidden — a dead end whose only exit is closing the dialog; and the folder it sent the user to was another film's, so five files were picked where two were wanted. The report is now **kept and marked out of date** (dimmed, with a banner), the gold button becomes **“Read the file again”** and carries the flag the first read used, and the picker keeps only the files the report named (falling back to everything when nothing matches). New **RULEBOOK E64**. ⚠ **DRIVEN IN A BROWSER**, because a unit test of `addMedia` passes against all three: new `tests/editor_project_import_check.py` (Playwright, no backend), with each fault re-introduced one at a time to prove it is caught. Green with `interchange_check` and `npm run build`. ⚠ **Still not re-run against a live server with the real files attached.** See the Work Log.
+
+**Previously:** 2026-09-01 — **A MISSING FILE NOW SAYS WHICH FOLDER IT LIVED IN.** *“ye audio kyun nahi aa raha hai mere import mein”* — asked of a real `.prproj` import whose report ended with three file names and no way to act on them. ⚠ **THE READER WAS RIGHT AND THE REPORT WAS USELESS**: the project folder WAS attached and the voiceover resolved on all 23 of its clips, while the music bed and a logo lived inside a **different project's folder** — ordinary, because both are reused across a series — and nothing in the dialog could say so, leaving “this app cannot take music” as the only available conclusion. Both readers already knew: `files[key]["pathurl"]` is the full path the editor wrote. The report now carries **`missing`** — one row per FILE with `{name, folder, kind, clips}`, unquoted so an `xmeml`’s `Shared%20Art` is a folder somebody can find — while `placeholders` stays per CLIP, and the dialog groups the list **by folder** and names them. ⚠ Two smaller faults fell out: a file used on two clips printed **twice** (one row with a `×2` now), and the sound warning said *“no sound was brought in”* while 23 clips of voiceover sat on the timeline — it counts what landed now. New **RULEBOOK E63**; `tests/interchange_check.py` §8k plus a dialog break-guard, all green with `captions_check`, `audio_mix_check`, `audio_razor_check` and `npm run build`. ⚠ **Not yet re-run against a live server** — the three files are on the user’s disk and only they can attach them. See the Work Log.
+
+**Previously:** 2026-08-31 — **A `.prproj` CAN BE OPENED NOW, AND IT IS STILL REFUSED FIRST (PHASE 4).** The last format on the plan was Premiere's own save file. ⚠ **Adobe has never published its structure and it moved again in Premiere 2026, so this is a GUESS and the whole design is about saying so.** `POST /interchange/import` still answers a `.prproj` with the same refusal it always did — naming *File › Export › Final Cut Pro XML*, the route that always works — and only when the user reads that and presses **“Try to read it anyway”** does the dialog resend with `experimental=true` and `interchange._read_prproj` run (new **RULEBOOK E47**). ⚠ **An experimental reader offered as a checkbox up front is one most people tick without ever seeing the reliable door beside it** — hence a button under the error, not an option above the file picker. ⚠ **A `.prproj` is a flat pile of objects wired by `ObjectRef`, not a tree**, so a clip's POSITION is four hops from the clip and nothing here uses a fixed XPath the way `_read_fcp7` safely can; it indexes by `ObjectID` and follows references, with a stop list so a shared `Media` object cannot walk back up into the bin and read another sequence's numbers. ⚠ **Two layers, and the model records which one answered**: `structured` keeps every clip's real row, `flat` puts them on one row per media type and SAYS the rows are wrong rather than refusing. ⚠ **Ticks, not frames** — Premiere counts 254,016,000,000 per second — and the file's OWN rate is used, never the caller's. ⚠ **Every import it makes carries “best-effort, check it against Premiere” as `warnings[0]` and the dialog badges the report `best guess`** for as long as it is on screen. ⚠ **A gzip bomb is refused inside the reader** (new **RULEBOOK E48**): the upload cap counts COMPRESSED bytes and this XML packs at better than 1000:1, so the only place that can stop it is where it is unpacked. Effects, titles, colour, speed, volume and nested sequences are **not attempted** and are named in `warnings`. ⚠ **A REVIEW PASS AFTER IT WAS BUILT FOUND THREE FAULTS, AND TWO OF THEM WERE SERIOUS.** (1) `_read_prproj` picked the right sequence and then read the frame rate off the FIRST one in the file — a project holding a 30fps sequence above the 24fps one being imported read every clip **25% adrift**, silently (new **RULEBOOK E49**, fixed by `_prproj_rate_near`, which stays inside the chosen sequence's own subgraph). (2) ⚠ **`to_project` could hand the route a clip Pydantic rejects, which reaches the user as a 500 with the whole import lost** — `AnimaticFrame` caps a clip at TEN MINUTES and forbids a negative start, and a fifteen-minute take or a record-in before the sequence starts are ordinary things to find in somebody else's timeline. **This was never a `.prproj` bug**: the clamp is in `to_project`, so it had been true of the FCP7 XML and EDL readers since Phase 3 (new **RULEBOOK E50**). (3) Clips found but unplaceable fell through to the route's *“There was nothing on that timeline to bring in”*, which named the wrong reason; they are refused with the real one now. `tests/interchange_check.py` is now **309 checks, all green** — new §8c and §8d, plus a sixth guard proving the quietest fault here (`onClick={readFile}` hands React's click event in as `experimental`, and an event object is truthy, so every ordinary read would have asked the server to guess). ⚠ **Both new guards were re-run against the pre-fix code and proved to fail on it**, so neither is decoration. ⚠ **§12's guard loop was itself broken** and is fixed (new **RULEBOOK G14**): it re-ran every guard against `apply_src` whatever file the guard was about, so the first guard over another file reported *itself* broken. `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check` and `npm run build` pass. ✅ **AND THEN A REAL `.prproj` WAS OPENED, AND IT FAILED — AND IS NOW FIXED.** The user's own Premiere 2026 project: 167 clips found, **not one placed**. Three things were wrong and every one of them was invisible to a fixture built from the same guess as the code (new **RULEBOOK E52**): **(a)** Premiere uses TWO reference kinds, `ObjectRef` (numeric) and **`ObjectURef` (GUID)**, and the track-group→tracks link is the GUID kind, so the reader found no tracks and fell to the flat route; **(b)** the times are **nested** (`<VideoClipTrackItem><ClipTrackItem><TrackItem><End>`), not reached by reference; **(c)** a **`<Start>` of zero is not written at all** — 17 of the 167 had none, and demanding Start AND End threw away every clip at the head of a track. Also: **a real project has no `<Sequence>` object** — a sequence IS a `VideoTrackGroup` + `AudioTrackGroup` — and the rate lives on the track group, where the SAME `<FrameRate>` tag also carries 44100/48000 for audio. Fixed, and that file now reads by the **structured** route: **70 clips on 8 picture rows, 24 sounds on 2, 29 media files, 0–70.1s, 23.976fps detected and named as NTSC**, every clip accepted by the response model. `tests/interchange_check.py` is **324 checks, all green**, and §8c now pins BOTH shapes — the real one and the ref-shaped one another Premiere version might write. ⚠ Still true: this is one real file, from one version; E47 stays **PAKKA (policy) / OPEN (one file proves one file)**. See the Work Log.
 
 **Previously:** 2026-08-31 — **THE EDITOR CAN READ SOMEBODY ELSE'S CUT NOW (PHASE 3).** The gear gains **📥 Import project file**, above Export: a **Final Cut Pro XML** (what Premiere Pro, Resolve and Avid export), a **CMX3600 EDL**, or **a .zip exported from here** — which carries its own media, so nothing else need be attached. ⚠ **THE PARSER IS THE EASY HALF; THE MEDIA IS THE HARD ONE**: a project file names files by a path on the machine that wrote it, so the footage comes too and is matched by FILENAME, case-insensitively and by the stem as well (a transcode leaves `shot_03.mov` in the XML and `shot_03.mp4` on disk). ⚠ **A clip whose file did not arrive becomes a LABELLED COLOUR CARD** at its exact place and length (new **RULEBOOK E45**) — leaving it out hands back a timeline with invisible holes; a named card keeps the cut whole and is fixed by dropping the real file on that row. Sound gets no placeholder: a silent card is readable, a silent audio clip is a lie you cannot see. ⚠ **IT ADDS ONTO NEW ROWS AND NEVER REPLACES** (new **RULEBOOK E44**), the dialog is two steps (reading changes nothing), and **the whole import is ONE `flush`** — so Ctrl+Z takes all of it back out in one step. ⚠ **The server produces the material, the CLIENT decides the timeline** — row numbers come back RELATIVE and are re-based in the browser, counting EMPTY rows too. ⚠ **Refusals are a feature**: `.prproj` (gzip `1F 8B`) and `.aep` (RIFX) are recognised **by their bytes** and refused with a sentence naming what to export instead; `.fcpxml` likewise. ⚠ **A round trip is FRAME-exact, not millisecond-exact** (new **RULEBOOK E46**) — three assertions failed on correct code before that was understood: at 25 fps a clip at 500ms is frame 12.5, so it snaps to 520ms once and never drifts. Reading in converts through MILLISECONDS at the document's own rate, which is what lets a 25fps XML open correctly in a 24fps project. New `ProjectImportModal.jsx`, `applyProjectImport`, `_store_import_media` (every file through the same checks as the ordinary uploads), `AnimaticImportResponse`. `tests/interchange_check.py` is now **239 checks, all green** — §8b exports this app's own zip and imports it straight back, and §12 guards the client faults a browser would show only by ACTING NORMAL (the `audioTracks` patch key, un-rebased rows, two writes), **each proved to read False when broken**. `frame_save_fields_check`, `asset_fields_check`, `summary_projection_check`, `npm run build` and — run without being asked — the Chromium `editor_picture_tracks_check` all pass. ⚠ **NO FILE FROM A REAL PREMIERE PRO HAS EVER BEEN IMPORTED** (G2/G7); everything is proved against files this app wrote itself. **`.fcpxml` and `.prproj` reading are not built and are refused on purpose.** See the Work Log.
 
@@ -3540,7 +3544,158 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-01 (latest) — THE TITLES WERE IN THE FILE ALL ALONG (PHASE 5)
+### 2026-09-01 (latest) — THE IMPORT DIALOG SURVIVES BEING ACTED ON
+
+The folders from the entry below were on screen, and the import was still
+abandoned:
+
+    "magar ek baat jab mai dekha mujhe dikha do path … magar mai jab folder
+     select kiya to us folder mai aur bhi music tha … mai wapas aa gaya ye nhi ki
+     wahi se chalu hua … fir kuch nhi hua to mai bas usko chhor kar import kiya"
+
+**Three faults in one gesture, and the dialog only fails as a SEQUENCE.** Every
+piece of state was correct at the moment it was set; what was wrong was what the
+third press did to the second press's result.
+
+1. **The report was thrown away at the moment it was acted on.** `addMedia`
+   called `setRead(null)`, so pressing "…or a whole folder" to fetch the folder
+   the report had just named wiped the only place that folder was written down.
+2. **And the way back was a refusal.** With the report gone the footer flips to
+   "Read the file" — the STRICT read, which for a `.prproj` is the 415 this app
+   refuses with on purpose — and "Try to read it anyway" is hidden once taken
+   (`guessed`). No second offer, no exit but closing the dialog.
+3. **And the folder it sent them to was another film's**, full of other films'
+   media — five files picked where two were wanted.
+
+The report is now **kept and marked out of date** (`stale`): dimmed, with a
+banner saying it is from the last read, and the gold button becomes **"Read the
+file again"** — which carries the flag the first read used, and which also stops
+a report read WITHOUT the new footage from being added over it. Once a report
+names what is missing, the picker keeps only those files, falling back to
+everything when nothing matches (a first pick of ordinary footage must not
+silently upload none of it).
+
+⚠ **THIS ONE IS DRIVEN IN A BROWSER**, because a unit test of `addMedia` passes
+against all three faults: new `tests/editor_project_import_check.py` (Playwright,
+Vite started in-process, the import route answered by the router — no backend).
+All three faults were re-introduced one at a time and the test named each: 3
+failures, 3 failures, 2 failures, then green. Cheap source guards sit beside it
+in `tests/interchange_check.py`, and the existing "click event as the
+experimental flag" guard was updated to the new call shape rather than deleted.
+
+Files: `ProjectImportModal.jsx`, `animatic-editor.css`,
+`tests/editor_project_import_check.py`, `tests/interchange_check.py`. Rule:
+**RULEBOOK E64**.
+
+**Still open:** the import has not been re-run against a live server with the
+real files attached — only against the router.
+
+### 2026-09-01 — A MISSING FILE NOW SAYS WHICH FOLDER IT LIVED IN
+
+*"ye audio kyun nahi aa raha hai mere import mein"* — asked of a real import of
+`8_MCP_Model Context Protocol.prproj`, whose report ended with three names and no
+way to act on them: `ID_logo_RGB_XL.png` (twice) and
+`tech_oasis-study-music-quiet-serenity-20-211865.mp3`.
+
+**The reader was right and the report was useless.** The project folder was
+attached — all 25 files of it — and the voiceover `8_AA_A_v.mp3` resolved on all
+23 of its clips. The music bed and the logo were never in that folder: both live
+inside a **different project** (`Immersive Quest work/Machine Learning Full
+LinkedIn Series (Beginner → Pro)/…`), which is ordinary, because a logo and a
+music bed are reused across a whole series. Nothing in the dialog could say that,
+so the only conclusion available was "this app cannot take music".
+
+**Both readers already knew.** `files[key]["pathurl"]` is the full path the
+editor itself wrote. The report now carries `missing` — one row per FILE with
+`{name, folder, kind, clips}` — while `placeholders` stays one entry per CLIP,
+because that is what the timeline's gaps are counted from. The folder is
+unquoted, so an `xmeml`'s `file://…/Shared%20Art/` does not send anybody looking
+for a folder called `Shared%20Art`. The dialog groups the list **by folder** and
+names them; both footage pickers already ADD rather than replace, so the fix is
+one more click per folder.
+
+**Two smaller faults fell out of it.** A file used on two clips printed its own
+name twice, which reads as two broken files rather than one folder nobody
+attached — one row per file now, with a `×2`. And the sound warning fired off the
+count of FAILED clips, so it said *"none of their files were attached, so no
+sound was brought in"* while 23 clips of voiceover sat on the timeline; it counts
+what actually landed now, and still says "no sound was brought in" when that is
+genuinely true.
+
+Files: `interchange.py` (`note_missing`, `report["missing"]`, the sound
+warning), `server/schemas.py` (`ImportMissingFile`), `server/animatics.py`,
+`ProjectImportModal.jsx`, `animatic-editor.css`. Rule: **RULEBOOK E63**. Tests:
+`tests/interchange_check.py` §8k plus a break-guard on the dialog — all green,
+with `captions_check`, `audio_mix_check`, `audio_razor_check` and
+`npm run build`.
+
+**Still open:** nothing about this one. The three files themselves are on the
+user's disk and only they can attach them.
+
+### 2026-09-01 — THE COLOUR WAS NOT THERE, BUT THE SHADOW WAS — AND FCP7 XML CARRIES BOTH (PHASE 6)
+
+Yesterday's entry said a title's fill colour "cannot be read" from a `.prproj`.
+That was true and it was not the end of the answer, and it was worth being
+pushed on: *"tum kar sakte ho ye karna hi parega — colour nahi aayega to user ko
+fill, stroke, shadow, opacity fir se add karna hoga."* Right. So the search was
+done properly this time, and it changed two things.
+
+**What was actually searched, so nobody pays for it twice.** 5104 text records
+across **127 real Premiere projects** and two Premiere versions. The
+`AE.ADBE Text` component has the same 22 parameters in every one of them and not
+one is a colour. A generic FlatBuffer walker was written for the `Source Text`
+blob: the document table holds a fonts vector, a runs vector and a few sizes, and
+the run table has exactly **two** fields — the string and one number. And the
+`<PremiereFilterPrivateData>` that would carry a serialised appearance is empty,
+a `BinaryHash` attribute with no body, 184 of 206 self-closing, because Premiere
+keeps that payload outside the project XML altogether. **The fill really is not
+in a `.prproj`.** That is now RULEBOOK E61, written so the search is not repeated.
+
+**But the search turned up how Premiere writes a colour, and that was the prize.**
+`<StartKeyframe>` on a colour parameter reads `…,18374686479671623680,…` — big-
+endian `ff 00 00 00 00 00 00 00`, four **16-bit** channels A,R,G,B with the 8-bit
+value in the high byte (white is `0xff00`, not `0xffff`). Every component that
+OWNS a colour writes it that way. And **`AE.ADBE Drop Shadow` owns one** — in the
+two reference projects, **all 194 text clips carried a drop shadow in their own
+component chain**. So a title's shadow now comes across in full: colour,
+strength, direction and distance. Three conversions had to be right and each one
+fails as something that looks like a render bug: shadow `Opacity` is 0…255 (a
+clip's is 0…100 — reading it as 100 gives 2.45 and the model 422s the entire
+import), `Direction` is clockwise from STRAIGHT UP against this app's clockwise
+from the RIGHT, and `Distance` is pixels against this app's fraction of the font
+size. `Shadow Only` is dropped whole: this app cannot draw letters-as-shadow, and
+importing the smear without the words is worse than importing neither.
+
+**And the real answer to "why is my text white?" is a different export.**
+The FCP7 XML reader now reads lettering too, and `xmeml` **does** carry the fill:
+`fontcolor` is a plain `<alpha>/<red>/<green>/<blue>` block, and an outline is
+`linewidth` / `linecolor`. So the import's warning no longer ends at "the colour
+is gone" — it names the export that would have brought it. Two things had to
+change to get there: a title in FCP7 XML is a **`<generatoritem>`, a sibling of
+`<clipitem>` and not a kind of it**, so the track walk never saw one; and it has
+**no `<file>`**, so `read_clip` refused it a second time even once reached. Both
+readers now emit the same `{"kind": "text", "texts": [...]}` shape, so
+`to_project` cannot tell the formats apart and E60's routing is written once.
+
+Ground truth for all of it came from the user's own disk: `MOP_Video_Big5` holds
+the same film rendered twice, `_white_text.mp4` and `_colour_text.mp4`. A frame
+pulled out of the colour one measures the fill at **#307cc2** with a white
+outline — which is exactly what §8j now asserts an `xmeml` import produces.
+
+Guarded in `tests/interchange_check.py` §8i (the shadow, and the packed-colour
+decode) and §8j (an `xmeml` title, its colour, its outline, its flipped
+vertical origin, and the two things that must NOT be mined for text: a
+non-generator effect, and a generator with no words). Three breaks — the angle
+offset, the 0-255 scale, the un-flipped `vert`, and the clamped 16-bit colour —
+were each applied and each caught before the sections were kept.
+
+Rules: **RULEBOOK E61** (which format carries which part of a title's look, and
+how Premiere packs a colour) and **E62** (reading an `xmeml` title). E59 now
+points at both.
+
+**Still open:** a `.prproj` title's fill and outline. Not "not yet" — not there.
+
+### 2026-09-01 — THE TITLES WERE IN THE FILE ALL ALONG (PHASE 5)
 
 **This app told users for months that Premiere lettering could not be imported.
 That was wrong, and a 40-caption voiceover script was retyped on that advice.**
@@ -24623,11 +24778,17 @@ RULEBOOK **E59** / **E60**. What to check, in order:
    used to be full of invisible "Graphic" clips are gone — their contents are on
    the Text and Shapes rows instead.
 5. **Click a title on a Text row.** Its words should be the real words, its font
-   and size roughly what Premiere had, and it should sit where Premiere put it.
-   ⚠ **Its COLOUR will be white whatever it was in Premiere** — that is not a
-   bug and it cannot be fixed: the colour is not stored in a `.prproj` at all
-   (looked for in all three places it could be; see E59). Set it once and use
-   the row's own controls.
+   and size roughly what Premiere had, its DROP SHADOW as Premiere had it
+   (colour, strength, direction, distance), and it should sit where Premiere put
+   it. ⚠ **Its FILL COLOUR will be white whatever it was in Premiere** — that is
+   not a bug and it cannot be fixed: the fill is not stored in a `.prproj` at
+   all. 5104 titles across 127 of your own projects were searched for it; see
+   E59 and E61.
+5b. ⚠ **AND HERE IS THE ANSWER IF YOU WANT THE COLOURS.** In Premiere,
+   `File › Export › Final Cut Pro XML`, and import THAT `.xml` instead. An
+   `xmeml` carries `fontcolor` and the outline as plain XML, so titles arrive in
+   their own colour with their own outline. Worth testing both ways on the same
+   sequence and telling me which you prefer to use.
 6. ⚠ **CHECK THE ✨ AUTO CAPTIONS ROW IS UNTOUCHED.** Imported titles must land on
    their own Text rows and never in the caption row — that row is replaced
    wholesale every time Auto captions runs, so anything of yours parked there
