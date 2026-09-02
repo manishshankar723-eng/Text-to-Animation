@@ -33,20 +33,21 @@ What it actually guards, in rough order of how much it would hurt to get wrong:
 import os
 import shutil
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-_TMP = tempfile.mkdtemp(prefix="features_check_")
-os.environ["API_USER_STORE"] = "local"
-os.environ["API_JOB_STORE"] = "memory"
-os.environ["API_LOCAL_USERS_PATH"] = os.path.join(_TMP, "users.json")
-os.environ["API_LOCAL_DRAFTS_PATH"] = os.path.join(_TMP, "drafts.json")
-os.environ["API_LOCAL_EVENTS_PATH"] = os.path.join(_TMP, "events.json")
-os.environ["API_LOCAL_FEATURES_PATH"] = os.path.join(_TMP, "features.json")
-os.environ["API_LOCAL_JOBS_PATH"] = os.path.join(_TMP, "jobs.json")
-os.environ["API_REAP_ORPHANED_JOBS"] = "0"
+# ⚠ **EVERY STORE, NOT THE FIVE THIS SUITE THINKS IT TOUCHES.** It used to name
+# users / drafts / events / features / jobs and stop — and `API_LOCAL_USAGE_PATH`
+# then fell back to its default, which is the **git-tracked `.local_usage.json`
+# in the repo root**. Caught by running the whole `tests/` folder and then
+# reading `git status`: one row for `cust@example.com` written into the
+# developer's own counters, by a green suite, silently. That is G13's exact
+# wording — "getting a variable's NAME wrong is silent" — and the answer to it
+# is to stop naming them one at a time. See `tests/_sandbox.py`.
+from _sandbox import pin  # noqa: E402
+
+_TMP = pin("features_check_")
 os.environ["JWT_SECRET"] = "features-check-not-a-real-secret"
 # ⚠ NO CACHE IN THE TEST. The TTL is there for OTHER worker processes; in one
 # process a write bumps the cache immediately. Zero makes every read fresh so a

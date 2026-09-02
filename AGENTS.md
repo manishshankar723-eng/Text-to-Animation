@@ -3631,7 +3631,77 @@ New: `_prproj_rect`, `prproj_scale_base`, `frame`/`source` on `_prproj_detail`,
 Pinned in `tests/interchange_check.py` §8p — 14 checks, three guards proved to
 fail. RULEBOOK **E73**; **E72**'s relative-push clause amended to point at it.
 
-**4 · `cleanup_media.py` — the sweep for what the closed leak already spilled.**
+**4 · Thirteen test suites were running against the production database.** Found
+by finishing the open list: `hidden_lane_check.py` had never been green, and the
+reason was not the test — it was **billing refusing it**, with *"You've used 2 of
+your 2 projects this month"* on its third project. Nothing in it was pinned, so
+`server/config.py` read the developer's own `.env` and the suite booted the real
+app against the real Mongo cluster with the real account.
+
+⚠ **IT WAS NOT ONE SUITE. IT WAS THIRTEEN**, and the damage was measurable:
+
+    users in production : 331   of which 329 are test accounts
+      _infill  76   _vo  49   _imggen  48   _hide  42
+      _vidgen  34   _chunk  33   _resume  27   _pscript  8 …
+    jobs in production  : 611
+
+One prefix per unpinned suite. G13 already said to pin every store before the
+first `server` import; it was written when `interchange_check.py` paid for it and
+never applied backwards to the suites that already existed.
+
+New `tests/_sandbox.py` — one `pin("name_")` call above the `server` imports,
+which points every `API_LOCAL_*_PATH`, `API_OUTPUT_DIR` and `API_UPLOAD_DIR` at a
+fresh temp directory and registers its own `atexit` sweep (so a run that ends in
+`sys.exit(1)` cleans up too — the failing run is the one most likely to be
+repeated).
+
+⚠ **THE QUOTA IS LIFTED BY OVERRIDING THE TIER, NOT BY MAKING THE USER AN
+ADMIN.** An admin skips every quota AND every feature gate, so `ADMIN_EMAILS`
+would have silently switched off the `require_feature` guards several of these
+suites exist to exercise — and two of them register a second, deliberately
+ordinary account to check what it cannot reach. The sandbox writes a tier file
+instead; an empty `limits` is unlimited (`usage.limit_of`). Pinning to the free
+plan's real allowance was rejected for the same reason: that number is a business
+decision and it will move.
+
+Two suites then failed for the right reason, both bugs the pollution had been
+hiding:
+
+  * `voiceover_fit_check.py` built the path it checked from a literal `"output"`
+    instead of `config.OUTPUT_DIR` — it only ever passed because the suite was
+    writing into the repo.
+  * `profile_check.py` ended with a `delete_many` **against the production Mongo
+    cluster**, sweeping up its own throwaway accounts and then asserting the real
+    store was back to one document (it read 331). A suite that deletes from
+    production is one typo from deleting production. Replaced with the assertion
+    that matters now: that this suite CANNOT have written to the real store.
+
+All thirteen green. `hidden_lane_check.py` keeps its block inline — it sets
+`ADMIN_EMAILS` for its own reasons — and so do the four suites that were already
+correct. RULEBOOK **G13** amended.
+
+⚠ **THE 329 ACCOUNTS AND 611 JOBS ALREADY IN THE CLUSTER ARE STILL THERE.**
+Nothing here removes them; deleting from a live database is the user's call.
+
+**A fourteenth, found by the sweep afterwards.** Running the whole `tests/`
+folder and then reading `git status` — which is what G13 tells you to do and what
+nobody had done — turned up `.local_usage.json`, a **git-tracked** file, carrying
+a new row for `cust@example.com`. `features_check.py` pinned five store paths by
+name and stopped, so `API_LOCAL_USAGE_PATH` fell back to its default in the repo
+root. Green suite, silent write, the developer's own counters. It is on
+`_sandbox` now, and the sweep afterwards leaves `git status` clean.
+
+⚠ **THAT IS THE ARGUMENT FOR THE HELPER IN ONE PARAGRAPH.** Every one of these
+suites was written by somebody who knew the rule and then listed the paths they
+believed the suite touched. The list is not the failure — HAVING a list is.
+
+Full sweep: **106 suites pass**. Five fail and all five are older than this work,
+proved by re-running them against the committed tree: `effects_parity_check`
+needs headless-gl, `editor_director_check` and `explore_mount_check` are
+Playwright suites that need the app running, and `shot_density_check` /
+`offer_visibility_check` fail identically on `HEAD`.
+
+**5 · `cleanup_media.py` — the sweep for what the closed leak already spilled.**
 E71 stopped fresh copies being written and could not remove the ones on disk.
 DRY RUN by default; `--apply` deletes. Four guards, each pinned in
 `tests/media_cleanup_check.py`: a folder whose job cannot be read is skipped
@@ -25326,11 +25396,19 @@ What to check:
 5. ⚠ **Easing is still not read** — every curve is a straight line between its
    keys. Unchanged, and still said in the report.
 
-**2 · The old duplicate copies.** `python cleanup_media.py` — a DRY RUN that
-lists byte-identical media nothing points at, per project. Nothing is deleted
-without `--apply`. Swept over this machine it found **5 files / 7 MB** across
-515 project folders; the "52 files for 27 names" project is already gone, and
-the current import holds a clean 28. See RULEBOOK **E74**.
+**2 · Aur ek badi cheez jo peeche se nikli.** **14** test har baar aapke ASLI
+database mein nakli account bana rahe the (aur ek to `.local_usage.json` — aapki apni
+ginti wali file — mein bhi likh raha tha) aur aapka asli monthly quota kharch kar
+rahe the. Abhi 331 account mein se **329 nakli** hain, aur 611 job. Ab wo band hai
+— har test apni khud ki throwaway jagah use karta hai. ⚠ **Purane 329 account aur
+611 job abhi bhi wahin pade hain**; live database se delete karna aapka faisla
+hai, maine kuch nahi hataya.
+
+**3 · Purani duplicate files — ho gayi.** `python cleanup_media.py` sirf list
+dikhata hai; `--apply` ke bina kuch delete nahi hota. Aapki haan ke baad chalaya:
+**5 file / 7 MB hat gayi** 517 project folder mein se, aur dobara chalane par ab
+kuch nahi milta. "52 files, 27 naam" wala project pehle hi ja chuka tha aur naya
+import 28 par saaf khada hai. See RULEBOOK **E74**.
 
 ### 🟡 NEWEST: NO POPUP ANYWHERE CLOSES BY A STRAY CLICK, AND EVERY POPUP MOVES (2026-09-01)
 

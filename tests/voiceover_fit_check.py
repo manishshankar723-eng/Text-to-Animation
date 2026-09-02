@@ -64,10 +64,20 @@ import wave
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+# ⚠ **EVERY STORE PINNED INTO A THROWAWAY DIRECTORY, BEFORE ANY `server.*`
+# IMPORT.** `server/config.py` reads the environment once, at import time, so
+# without this line the suite boots against the developer's real `.env` — it
+# registers its test accounts in the production database and spends real monthly
+# quota, and then fails when billing refuses it. G13; see `tests/_sandbox.py`.
+from _sandbox import pin  # noqa: E402
+
+_TMP = pin("voiceover_fit_check_")
+
 from fastapi.testclient import TestClient
 
 import captions
 import tts
+from server import config
 from server.animatics import run_voiceover
 from server.jobs import get_store
 from server.main import app
@@ -353,7 +363,12 @@ def wav_ms(path):
         return int(round(fh.getnframes() * 1000 / fh.getframerate()))
 
 
-media = os.path.join("output", "_animatics", job_id, "media", f"audio_{track['upload_id']}.wav")
+# ⚠ `config.OUTPUT_DIR`, NOT THE LITERAL "output". Hard-coding it worked only
+# while this suite ran against the developer's own `.env` and wrote into the
+# repo — which is the thing `_sandbox.pin` above stops. The server has always
+# asked config for this path; so must anything checking what the server wrote.
+media = os.path.join(config.OUTPUT_DIR, "_animatics", job_id, "media",
+                     f"audio_{track['upload_id']}.wav")
 check("the file really holds the audio the track claims",
       abs(wav_ms(media) - track["duration_ms"]) <= 1,
       True)

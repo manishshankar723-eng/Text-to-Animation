@@ -15,11 +15,19 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+# ⚠ **EVERY STORE PINNED INTO A THROWAWAY DIRECTORY, BEFORE ANY `server.*`
+# IMPORT.** `server/config.py` reads the environment once, at import time, so
+# without this line the suite boots against the developer's real `.env` — it
+# registers its test accounts in the production database and spends real monthly
+# quota, and then fails when billing refuses it. G13; see `tests/_sandbox.py`.
+from _sandbox import pin  # noqa: E402
+
+_TMP = pin("profile_check_")
+
 from fastapi.testclient import TestClient
 
 from server import config, users
 from server.main import app
-from server.mongo import get_db
 
 failures: list[str] = []
 emails: list[str] = []
@@ -145,11 +153,23 @@ print("\n[10] delete account still works (it lives in the profile now)")
 check("DELETE -> 204", client.delete("/auth/me", headers=auth).status_code, 204)
 check("account is gone", users.get_user_by_email(email), None)
 
-print("\n[11] cleanup")
-db = get_db()
-removed = db[config.USERS_COLLECTION].delete_many({"email": {"$in": emails}}).deleted_count
-print(f"  removed {removed} throwaway account(s)")
-check("only the real account remains", db[config.USERS_COLLECTION].count_documents({}), 1)
+print("\n[11] nothing to clean up, and that is the assertion now")
+# ⚠ **THIS USED TO BE A `delete_many` AGAINST THE PRODUCTION MONGO CLUSTER.** It
+# had to be: with nothing pinned, the suite registered its throwaway accounts in
+# the real user database, so it swept up after itself and then asserted the real
+# store was back to one document. Two things were wrong with that. It only ever
+# held on the developer's own machine — anywhere else "only the real account
+# remains" is a count of somebody else's userbase (it read **331** here) — and a
+# suite that deletes from production is one typo away from deleting production.
+#
+# Every store is a temp directory now (`_sandbox.pin`), so there is nothing to
+# remove. What is worth checking is that this suite CANNOT have written to the
+# real one, and that is what these two assert.
+check("the accounts this suite made went into the sandbox, not the real store",
+      os.path.abspath(config.LOCAL_USERS_PATH).startswith(os.path.abspath(_TMP)),
+      True)
+check("…and every throwaway address is in there",
+      all(users.get_user_by_email(e) or e == email for e in emails), True)
 
 print()
 if failures:

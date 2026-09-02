@@ -30,17 +30,62 @@ empty, the payload is exactly what it was before any of this.
 """
 
 import os
+import shutil
 import sys
+import tempfile
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from fastapi.testclient import TestClient
+# ---------------------------------------------------------------------------
+# G13 — EVERY STORE PINNED INTO A TEMP DIRECTORY, BEFORE `server.config` LOADS
+# ---------------------------------------------------------------------------
+# ⚠ **THIS SUITE USED TO RUN AGAINST THE REAL DATABASE AND THE REAL ACCOUNT.**
+# It boots the actual FastAPI app, registers a user and creates FOUR projects —
+# and with nothing pinned, `server/config.py` read the developer's `.env`, so
+# every run wrote test accounts and test jobs into the production Mongo cluster
+# and spent real project quota. It then failed on its own third project with
+# *"You've used 2 of your 2 projects this month"*, which reads as a broken test
+# and was in fact the suite being refused by billing.
+#
+# ⚠ **CONFIG READS THE ENVIRONMENT ONCE, AT IMPORT.** These have to be set before
+# ANY `server.*` import, which is why they are up here rather than beside the
+# client. Same block as `tests/admin_check.py` and `tests/import_dedupe_check.py`.
+_TMP = tempfile.mkdtemp(prefix="hidden_lane_")
+# ⚠ MINTED BEFORE THE ENV BLOCK because `ADMIN_EMAILS` has to name it. See below.
+EMAIL = f"_hide_{uuid.uuid4().hex[:10]}@example.com"
+os.environ["API_USER_STORE"] = "local"
+os.environ["API_JOB_STORE"] = "memory"
+os.environ["API_LOCAL_USERS_PATH"] = os.path.join(_TMP, "users.json")
+os.environ["API_LOCAL_JOBS_PATH"] = os.path.join(_TMP, "jobs.json")
+os.environ["API_LOCAL_DRAFTS_PATH"] = os.path.join(_TMP, "drafts.json")
+os.environ["API_LOCAL_EVENTS_PATH"] = os.path.join(_TMP, "events.json")
+os.environ["API_LOCAL_FEATURES_PATH"] = os.path.join(_TMP, "features.json")
+os.environ["API_LOCAL_TIERS_PATH"] = os.path.join(_TMP, "tiers.json")
+os.environ["API_LOCAL_OFFERS_PATH"] = os.path.join(_TMP, "offers.json")
+os.environ["API_LOCAL_SUBSCRIPTIONS_PATH"] = os.path.join(_TMP, "subs.json")
+os.environ["API_LOCAL_BRANDING_PATH"] = os.path.join(_TMP, "branding.json")
+os.environ["API_LOCAL_BANNERS_PATH"] = os.path.join(_TMP, "banners.json")
+os.environ["API_LOCAL_SHOWCASE_PATH"] = os.path.join(_TMP, "showcase.json")
+os.environ["API_LOCAL_LANDING_PATH"] = os.path.join(_TMP, "landing.json")
+os.environ["API_LOCAL_USAGE_PATH"] = os.path.join(_TMP, "usage.json")
+os.environ["API_REAP_ORPHANED_JOBS"] = "0"
+os.environ["API_OUTPUT_DIR"] = os.path.join(_TMP, "output")
+os.environ["API_UPLOAD_DIR"] = os.path.join(_TMP, "uploads")
+os.environ["JWT_SECRET"] = "hidden-lane-check-not-a-real-secret"
+# ⚠ **AND THE QUOTA IS LIFTED BY BEING AN ADMIN, NOT BY EDITING A PLAN.**
+# `require_quota` never refuses an admin, and `ADMIN_EMAILS` is the bootstrap
+# floor a fresh store needs anyway (see `server/config.py`). Writing a tier file
+# instead would pin this suite to whatever the free plan's project allowance
+# happens to be today — a number that is a business decision and will move.
+os.environ["ADMIN_EMAILS"] = EMAIL
 
-from server import worker
-from server.main import app
-from server.schemas import AnimaticFrame
+from fastapi.testclient import TestClient  # noqa: E402
+
+from server import worker  # noqa: E402
+from server.main import app  # noqa: E402
+from server.schemas import AnimaticFrame  # noqa: E402
 
 failures: list[str] = []
 
@@ -61,8 +106,7 @@ import server.animatics as animatics  # noqa: E402
 animatics.worker.submit_animatic_export = worker.submit_animatic_export
 
 client = TestClient(app)
-email = f"_hide_{uuid.uuid4().hex[:10]}@example.com"
-r = client.post("/auth/register", json={"email": email, "password": "hide-pass-12345"})
+r = client.post("/auth/register", json={"email": EMAIL, "password": "hide-pass-12345"})
 assert r.status_code == 201, r.text
 auth = {"Authorization": f"Bearer {r.json()['access_token']}"}
 
@@ -293,6 +337,8 @@ check("a token naming nothing changes nothing about the pictures",
 check("…or the clips", (len(p["texts"]), len(p["shapes"])), (2, 2))
 
 # ---------------------------------------------------------------------------
+shutil.rmtree(_TMP, ignore_errors=True)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: " + "; ".join(failures))
