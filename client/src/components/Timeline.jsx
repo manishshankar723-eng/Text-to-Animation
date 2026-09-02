@@ -3812,8 +3812,10 @@ export default function Timeline({
                   {/* ⚠ ITS OWN `title`, ON TOP OF THE ROW'S. The column is a fixed
                       width and a long name still ends in an ellipsis there, so the
                       one place that has to be able to say the whole name is the
-                      name itself — an audio row is called by its filename. The rest
-                      of the row goes on showing the lane's hint. */}
+                      name itself — a file-grouped audio row is still called by its
+                      filename (a row with a LAYER is called "Audio", "Audio 2", …
+                      like every other row; see `lanes` in `AnimaticEditor.jsx`).
+                      The rest of the row goes on showing the lane's hint. */}
                   <span className="tl-layer-name" title={lane.name}>
                     {lane.name}
                   </span>

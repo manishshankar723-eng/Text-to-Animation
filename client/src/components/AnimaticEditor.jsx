@@ -119,6 +119,7 @@ import {
   laneTokenFor,
   restack,
   seatLane,
+  sortByRank,
   unseatLane,
 } from "../animatic/lane_order.js";
 import {
@@ -610,17 +611,36 @@ function captionStyle(c, inZone = false) {
   // zone: a bottom caption keeps its bottom margin and gets taller upwards, a top
   // one keeps its top margin, a middle or free one stays centred. These four
   // origins are that arithmetic, said in CSS.
+  //
+  // ⚠ **AND ON A FREE-PLACED CAPTION IT MUST CARRY THE CENTRING TRANSLATE WITH
+  // IT.** `.an-text-free` positions the block by putting its top-left at x/y and
+  // then pulling it back half its own size with `transform: translate(-50%,
+  // -50%)` — that translate is what makes x/y the CENTRE, which is the point
+  // `draw_texts` centres on. An INLINE `transform` beats a stylesheet one, so
+  // writing a bare `scale()` here deleted the translate and dropped the caption's
+  // top-left corner onto x/y instead: every imported caption jumped right and
+  // down, off the bottom of the frame. Reported on a real Premiere import —
+  // *"text perfect placement nhi hai, Premiere mein niche center mein tha par
+  // yaha pe side dikha raha hai"* — where all 36 captions carry a 1.0 → 1.1 pop,
+  // so `scale !== 1` at essentially every frame and the fault was permanent.
+  //
+  // ⚠ THE EXPORT WAS RIGHT THE WHOLE TIME (`draw_texts` places a free block by
+  // its centre and knows nothing about CSS), so this is the monitor disagreeing
+  // with the film — the same shape of fault as the forced-opaque frame in
+  // ProgramCanvas.jsx. THE PREVIEW AND THE EXPORT ARE ONE PICTURE.
   const scale = Number(c.scale);
+  const free = (c.place || "flow") === "free";
   if (Number.isFinite(scale) && Math.abs(scale - 1) > 1e-6) {
-    style.transform = `scale(${scale})`;
-    style.transformOrigin =
-      (c.place || "flow") === "free"
-        ? "center center"
-        : (c.position || "bottom") === "top"
-          ? "center top"
-          : (c.position || "bottom") === "bottom"
-            ? "center bottom"
-            : "center center";
+    style.transform = free
+      ? `translate(-50%, -50%) scale(${scale})`
+      : `scale(${scale})`;
+    style.transformOrigin = free
+      ? "center center"
+      : (c.position || "bottom") === "top"
+        ? "center top"
+        : (c.position || "bottom") === "bottom"
+          ? "center bottom"
+          : "center center";
   }
   if (c.shadow) {
     // ⚠ THE SAME √2 THE EXPORTER USES. `shadow` is the offset it always was —
@@ -2660,16 +2680,30 @@ export default function AnimaticEditor({
     }
     for (const l of of("audio")) {
       const clips = laneClips(audioTracks, l.id);
-      // ⚠ NAMED FOR THE FILE ONLY WHILE IT HOLDS ONE. A row can hold clips from
-      // several files now (a clip dragged down from another row — see
-      // `moveClipToLane`), and calling that row by whichever file happens to
-      // start earliest would rename it under you as you dragged. The LAYER's own
-      // name is the honest label for a row with a mix on it.
-      const files = new Set(clips.map((c) => c.upload_id));
+      /**
+       * ⚠ A ROW WITH A LAYER RECORD IS CALLED BY ITS LAYER NAME — "Audio",
+       * "Audio 2", … — exactly as Video, Images, Text and Shapes are.
+       *
+       * It used to be called by the FILE on it while it held only one, which
+       * made the gutter say two different kinds of thing in one column: every
+       * picture and caption row named for what it IS, and the sound rows named
+       * for what happens to be lying on them. Reported straight after an import,
+       * which is where it shows worst — a `.prproj` mints one row per Premiere
+       * audio track and every one of them came up reading `6_AA_AI_v.mp3`.
+       *
+       * ⚠ THE FILENAME IS NOT LOST, IT MOVED TO WHERE A FILENAME BELONGS: every
+       * audio clip already carries `title={filename — length}` in `Timeline.jsx`,
+       * so it is one hover away on the clip that actually holds it — and a row
+       * holding two files can no longer claim the name of one of them.
+       *
+       * ⚠ THE FILE-GROUPED ROWS ABOVE KEEP THEIR FILENAME, and that is not an
+       * inconsistency: those have no layer record and therefore no name of their
+       * own, so the file is the only true thing to call them.
+       */
       out.push({
         key: l.id,
         kind: "audio",
-        name: files.size === 1 ? clips[0].filename : l.name,
+        name: l.name,
         layerId: l.id,
         tracks: clips,
         removable: true,
@@ -6193,10 +6227,64 @@ export default function AnimaticEditor({
       setTransitions(nextTransitions);
       setLayers(nextLayers);
       setAssets(cards);
-      for (const row of newRows) seatNewLane(layerTokenOf(row));
+      /**
+       * WHICH IMPORTED ROW IS OVER WHICH — the sequence's own stack, kept.
+       *
+       * ⚠ **`seatNewLane` CANNOT DO THIS AND MUST NOT BE ASKED TO.** It seats a
+       * row with its own KIND, which is right for a row somebody just added by
+       * hand and wrong for an import: it would put every imported shape above
+       * every imported picture, because that is what this app's derived order
+       * says. A Premiere background card sits on the BOTTOM track, so with its
+       * real fill read (see `_prproj_shape_component`) that rule turns a white
+       * card into a lid over the whole film. The server sends the sequence's own
+       * order in `lane_order` and this re-bases it, exactly as `track` and
+       * `layer_id` are re-based above.
+       *
+       * ⚠ **THE IMPORTED BLOCK GOES ON TOP OF WHAT IS ALREADY HERE**, which is
+       * the same promise `base` makes for the picture rows: an import ADDS above
+       * your film, it does not interleave with it.
+       *
+       * ⚠ **AND THE ROWS ALREADY HERE KEEP THE ORDER THEY ARE IN.** Writing only
+       * the imported tokens would leave every existing row unlisted, and
+       * `laneRank` ranks an unlisted row ABOVE a listed one — so the import
+       * would slide underneath the film it was supposed to land on. Their
+       * current stack is read out with `sortByRank` (which answers the derived
+       * order when nothing is saved) and appended underneath.
+       */
+      const relOrder = res.lane_order || [];
+      if (relOrder.length) {
+        const rebase = (token) => {
+          const cut = token.indexOf(":");
+          const kind = cut < 0 ? "" : token.slice(0, cut);
+          const rest = cut < 0 ? "" : token.slice(cut + 1);
+          if (kind === "frames") {
+            const n = Number(rest);
+            return Number.isFinite(n) ? `frames:${base + n}` : "";
+          }
+          const id =
+            kind === "text" ? textLaneFor.get(rest)
+              : kind === "shape" ? shapeLaneFor.get(rest)
+                : "";
+          return id ? `${kind}:${id}` : "";
+        };
+        const imported = relOrder.map(rebase).filter(Boolean);
+        // Everything that was already here, in the order it is drawn in now.
+        // `sortByRank` gives bottom-first, so reversing makes it top-first like
+        // `lane_order` itself.
+        const here = sortByRank(
+          layers.filter((l) => l.kind !== "audio").map(layerTokenOf).filter(Boolean),
+          settings.lane_order,
+          (t) => t
+        ).reverse();
+        const next = [...imported, ...here.filter((t) => !imported.includes(t))];
+        setSettings((sett) => ({ ...sett, lane_order: next }));
+      } else {
+        for (const row of newRows) seatNewLane(layerTokenOf(row));
+        for (const row of textRows) seatNewLane(layerTokenOf(row));
+        for (const row of shapeRows) seatNewLane(layerTokenOf(row));
+      }
+      // Audio is never in `lane_order` — a sound has no place in the stack.
       for (const row of audioRows) seatNewLane(layerTokenOf(row));
-      for (const row of textRows) seatNewLane(layerTokenOf(row));
-      for (const row of shapeRows) seatNewLane(layerTokenOf(row));
 
       setProjectImportOpen(false);
       const gaps = (res.placeholders || []).length;

@@ -585,6 +585,72 @@ check("…while a colour card is still drawn opaque",
       len(_drawn_calls) == 2 and "useAlpha: false," in _drawn_calls[0],
       "the card branch changed too")
 
+# ---------------------------------------------------------------------------
+# A FREE-PLACED CAPTION IS CENTRED ON ITS x/y — IN THE MONITOR TOO
+# ---------------------------------------------------------------------------
+#     "text perfect placment nhi hai primeir mai niche center mai tha par yaha
+#      pe side dikha raha hai"
+#
+# ⚠ **AN INLINE `transform` BEATS A STYLESHEET ONE, AND THAT IS THE WHOLE BUG.**
+# `.an-text-free` centres the block on its x/y with `transform: translate(-50%,
+# -50%)`; `captionStyle` writes an inline `transform: scale(…)` for a zoomed
+# caption, which DELETED that translate and dropped the caption's top-left corner
+# onto x/y instead. Every imported caption jumped right and down, and it was
+# permanent rather than intermittent because a Premiere caption carries a 1.0 →
+# 1.1 pop, so `scale !== 1` at essentially every frame.
+#
+# ⚠ `draw_texts` WAS RIGHT THE WHOLE TIME — the free branch places a block by
+# `cx - box_w / 2`, which is the centre. So this was the monitor disagreeing with
+# the film, exactly like the forced-opaque frame above, and it is asserted on the
+# source for the same reason: the test that would catch it in pixels needs a
+# browser this machine does not run in `effects_check`.
+_editor = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "client", "src", "components", "AnimaticEditor.jsx"),
+    encoding="utf-8",
+).read()
+_free_css = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "client", "src", "styles", "animatic-text.css"),
+    encoding="utf-8",
+).read()
+check("the stylesheet still centres a free caption on its x/y",
+      "translate(-50%, -50%)" in _free_css.split(".an-text-free")[-1][:200],
+      "an-text-free lost its centring translate")
+check("…and a zoom on one carries that translate with it",
+      "translate(-50%, -50%) scale(${scale})" in _editor,
+      "captionStyle overwrites the centring transform with a bare scale()")
+# The zone captions are laid out by flex, not by a translate, so theirs must
+# stay a bare scale — adding a translate there would shift every ordinary caption.
+check("…while a zone caption's zoom stays a bare scale",
+      "`scale(${scale})`" in _editor, "the zone branch changed too")
+
+# ---------------------------------------------------------------------------
+# An audio ROW is called by its layer, exactly as every other row is
+# ---------------------------------------------------------------------------
+#     "audio layer pe name aa raha hai audio clip ka magar aana chahiye audio
+#      layer only jaise baki sab aa rahe hai image, video etc"
+#
+# ⚠ **THE GUTTER WAS SAYING TWO DIFFERENT KINDS OF THING IN ONE COLUMN.** Video,
+# Images, Text and Shapes rows are named for what they ARE; an audio row with a
+# layer record was named for whichever FILE happened to be lying on it, so a
+# `.prproj` import — which mints one row per Premiere audio track — came up with
+# three rows all reading `6_AA_AI_v.mp3`. The filename did not go anywhere: every
+# audio clip carries `title={filename — length}` in `Timeline.jsx`.
+#
+# ⚠ **AND THE FILE-GROUPED ROWS ABOVE IT MUST KEEP THEIRS.** Those have no layer
+# record and therefore no name of their own, so the file is the only true thing
+# to call them — asserted here so a later tidy-up cannot make them nameless.
+# Source-level for the same reason the caption test above is: the pixel test for
+# this needs a browser `effects_check` does not run.
+_lanes = _editor.split("const loose = audioTracks.filter")[-1][:3000]
+check("a file-grouped audio row is still called by its file",
+      "name: ordered[0].filename," in _lanes,
+      "the row with no layer record lost the only name it has")
+check("…but a row WITH a layer is called by the layer, like every other row",
+      "name: l.name," in _lanes and "clips[0].filename" not in _lanes,
+      "an audio layer row is still named after whichever file is on it")
+
 print()
 if failures:
     print(f"{len(failures)} check(s) FAILED:")

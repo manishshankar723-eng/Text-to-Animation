@@ -98,6 +98,7 @@ import os
 import posixpath
 import re
 import shutil
+import struct
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
@@ -2519,11 +2520,289 @@ def _prproj_keyframe_rows(el) -> list:
     return out
 
 
+# --- THE CAPTION'S PAINT, WHICH IS IN THE FILE AFTER ALL --------------------
+# ⚠ **A `Source Text` BLOB IS A FLATBUFFER, AND THE FILL LIVES IN IT.** This was
+# twice declared unreadable (E59, and again after E76) and both times the search
+# was for the wrong THING: a hunt for `ff bc 0f` in every payload of the project
+# finds nothing, because **FlatBuffers does not write a field whose value equals
+# its default, and each colour channel defaults to 255.** The caption the user
+# photographed reads `#FFBC0F` in Premiere's own Properties panel and is stored
+# as the two bytes `bc 0f` — the `ff` is an ABSENT FIELD. No byte search could
+# ever have found it; only walking the vtable can.
+#
+# The layout, walked out by hand on a caption whose Fill, Stroke and Stroke
+# Width were all known from that screenshot, and then checked across the corpus:
+#
+#   [12-byte header: uint32 payload length, 4 spare, magic 44 33 22 11]
+#   root table  -> field 0 -> document table
+#   document    -> field 0 -> vector of RUNS
+#   run         -> field 0: the text, field 1: its STYLE table
+#   style       -> field 2: fill colour table    (absent = every channel default)
+#                  field 4: stroke colour table
+#                  field 6: float, stroke width in px
+#   colour table-> fields 0,1,2 = r,g,b as bytes, EACH DEFAULTING TO 255
+#
+# Measured over 6,287 style records in 120 real projects: the fills come out as
+# a designer's palette — `#ffbc0f`, `#e14e21`, `#3b92d9`, `#4700a8`, `#99d6a6`,
+# `#28324e` … — strokes are overwhelmingly `#000000` (1,233 of them), and the
+# widths cluster on the round numbers a person types (10, 5, 4, 9, 17).
+_PRPROJ_ARB_HEADER = 12
+_PRPROJ_ARB_MAGIC = bytes.fromhex("44332211")
+# Where the magic sits inside that header.
+_PRPROJ_ARB_MAGIC_AT = 8
+# ⚠ SANITY BOUNDS, BECAUSE THIS PARSES AN UPLOADED FILE. Every one of these is a
+# refusal rather than a clamp: a `Source Text` that does not walk cleanly gives
+# up the paint and keeps this app's default, which is exactly what the format
+# did for the whole of its life before this.
+_PRPROJ_FB_MAX_VTABLE = 512
+_PRPROJ_FB_MAX_RUNS = 64
+_PRPROJ_COLOUR_DEFAULT = 255
+
+# --- and the BACKGROUND BAR, which is on the DOCUMENT, not on a run ---------
+# ⚠ **THE BAR BELONGS TO THE WHOLE CAPTION, WHICH IS WHY IT IS NOT WHERE THE
+# FILL IS.** The fill and the stroke are per RUN — Premiere lets you paint one
+# word — but a background is drawn once around the block, so it sits on the
+# document table beside the runs vector. Field ids, read off two captions whose
+# Properties panel was photographed (Background ✓, opacity 75, size 20.0,
+# corner radius 10):
+#   f18  bool, written only when the background is ON
+#   f19  float, its opacity as a PERCENTAGE — absent on both photographed
+#        captions, which is how the default below is known to be 75
+#   f20  float, the "size", which is the padding in px
+#   f34  float, the corner radius in px
+# Across 6,513 documents in 120 projects, f18 travels with f20 and f34 (3,301 of
+# them), and f19 shows up 666 times reading 50.0, 74.815, 100.0, 33.333 — a
+# slider, not a flag. **f19 = 100.0 being WRITTEN 71 times is what rules out 100
+# as the default.**
+_PRPROJ_BG_ON = 18
+_PRPROJ_BG_OPACITY = 19
+_PRPROJ_BG_PAD = 20
+_PRPROJ_BG_RADIUS = 34
+PRPROJ_BACKDROP_OPACITY = 0.75
+
+# ⚠ **THE ONE VALUE HERE THAT IS MEASURED RATHER THAN READ — AND IT IS MEASURED
+# AT FULL OPACITY, WHICH IS WHY IT IS A NUMBER AND NOT A GUESS.** The bar's
+# colour has not been found in the file: every caption in the corpus that HAS a
+# background has the same bar, so there is nothing to difference against, and
+# the one document field that does hold an explicit colour (`#ff3c08`, 765
+# records) belongs to captions whose background is OFF — so it is something else.
+#
+# What this is instead: one of the two photographed captions carries `f19 = 100`,
+# so its bar is drawn at FULL opacity and the export shows the stored colour with
+# no compositing in the way. It is a flat **#3e3e3e over 116,915 pixels**.
+#
+# ⚠ AND THE OTHER CAPTION CHECKS IT. That one is at the 0.75 default over a
+# (207, 206, 209) frame and measures (124, 124, 124); #3e3e3e at 75% composited
+# in LINEAR light predicts 121.3 — three levels, which is h.264. (In sRGB it
+# would predict 98, so this is also the second time Premiere has been caught
+# compositing in linear light; the first was a 10% black card reading 244 where
+# sRGB says 229. This app composites in sRGB, so an imported bar over a bright
+# shot comes out slightly darker than Premiere's — a whole-app difference, not
+# this one's, and it is one control away from being changed either way.)
+PRPROJ_BACKDROP_COLOR = "#3e3e3e"
+
+# ⚠ **THE TWO APPS DO NOT PAD THE SAME BOX, AND COPYING THE NUMBER ACROSS MAKES
+# THE BAR HALF AGAIN TOO TALL.** Premiere pads the INK; `draw_texts` pads the
+# LINE BOX, which already carries the leading. Both sides measured on the same
+# caption — 45 px type, Premiere background size 20:
+#   · Premiere's bar in the export is 144 px in a 2160 frame = 72 px at 1080,
+#     so its ink box is 72 - 2×20 = 32 px, i.e. 0.711 × the font size;
+#   · this app's bar with `backdrop_pad: 0` is 71 px, so its line box is
+#     1.587 × the font size, and each 1.0 of `backdrop_pad` adds 0.444 × the
+#     font size on EACH side (it is spent as `line_h * 0.28 * pad`).
+# Equating the two heights gives the conversion below. On that caption it comes
+# out at ≈0, which is the honest answer: **this app's leading is already worth
+# Premiere's 20 px**, and importing 20 px as "more padding" is what made the bar
+# fat. A caption with a genuinely wide background still gets one.
+PRPROJ_BACKDROP_INK = 0.711        # Premiere's ink box ÷ font size
+PRPROJ_BACKDROP_LINE_BOX = 1.587   # this app's line box ÷ font size
+PRPROJ_BACKDROP_PAD_PER_EM = 0.444  # what `backdrop_pad: 1.0` buys, per side
+
+
+class _Fb:
+    """One FlatBuffers table inside a `Source Text` blob. Bounds-checked.
+
+    Deliberately tiny and deliberately read-only: it knows how to find a field
+    by id and nothing else. `None` and `ValueError` are the only two ways out —
+    see `prproj_text_paint`, which turns both into "no paint was read".
+    """
+
+    __slots__ = ("data", "pos", "_vt", "_n")
+
+    def __init__(self, data: bytes, pos: int):
+        if not 0 <= pos <= len(data) - 4:
+            raise ValueError("table out of range")
+        self.data = data
+        self.pos = pos
+        self._vt = pos - struct.unpack_from("<i", data, pos)[0]
+        if not 0 <= self._vt <= len(data) - 4:
+            raise ValueError("vtable out of range")
+        vlen = struct.unpack_from("<H", data, self._vt)[0]
+        if vlen < 4 or vlen > _PRPROJ_FB_MAX_VTABLE or self._vt + vlen > len(data):
+            raise ValueError("vtable length")
+        self._n = (vlen - 4) // 2
+
+    def _off(self, field: int) -> int:
+        """The table-relative offset of `field`, or 0 when it is not written."""
+        if field < 0 or field >= self._n:
+            return 0
+        return struct.unpack_from("<H", self.data, self._vt + 4 + field * 2)[0]
+
+    def has(self, field: int) -> bool:
+        return self._off(field) != 0
+
+    def byte(self, field: int, default: int) -> int:
+        off = self._off(field)
+        at = self.pos + off
+        if not off or at >= len(self.data):
+            return default
+        return self.data[at]
+
+    def f32(self, field: int, default: float = 0.0) -> float:
+        off = self._off(field)
+        at = self.pos + off
+        if not off or at + 4 > len(self.data):
+            return default
+        value = struct.unpack_from("<f", self.data, at)[0]
+        return value if value == value else default   # NaN → default
+
+    def table(self, field: int):
+        """The table `field` points at, or None. Offsets are signed here.
+
+        ⚠ **SIGNED, NOT UNSIGNED.** A FlatBuffers table can be written before or
+        after the field that names it, so the four bytes are an `int32`; reading
+        them as unsigned turns a backward reference into a two-gigabyte forward
+        one, which is how this walk first fell off the end of a real blob.
+        """
+        off = self._off(field)
+        at = self.pos + off
+        if not off or at + 4 > len(self.data):
+            return None
+        return _Fb(self.data, at + struct.unpack_from("<i", self.data, at)[0])
+
+    def vector(self, field: int) -> list:
+        """The offsets of each element of the vector `field` points at."""
+        off = self._off(field)
+        at = self.pos + off
+        if not off or at + 4 > len(self.data):
+            return []
+        head = at + struct.unpack_from("<I", self.data, at)[0]
+        if not 0 <= head <= len(self.data) - 4:
+            raise ValueError("vector out of range")
+        count = struct.unpack_from("<I", self.data, head)[0]
+        if count > _PRPROJ_FB_MAX_RUNS:
+            raise ValueError("vector length")
+        return [head + 4 + i * 4 for i in range(count)]
+
+
+def _prproj_fb_colour(style: "_Fb", field: int) -> str:
+    """A style's colour table → `#rrggbb`, or '' when it was never written.
+
+    ⚠ **AN ABSENT CHANNEL IS 255, AND THAT IS THE ENTIRE FINDING.** `#FFBC0F` is
+    stored as `bc 0f`: red equals the default and is therefore not in the file at
+    all. Defaulting it to 0 — the FlatBuffers default for a plain byte, and the
+    obvious guess — turns that caption's amber into `#00bc0f`, a green nobody
+    chose. `''` back means the WHOLE table is absent, which is a caption nobody
+    painted; that keeps `IMPORT_TEXT_COLOR` rather than asserting white.
+    """
+    table = style.table(field)
+    if table is None:
+        return ""
+    red, green, blue = (table.byte(i, _PRPROJ_COLOUR_DEFAULT) for i in range(3))
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def prproj_text_paint(blob: bytes) -> dict:
+    """A `Source Text` blob → `{color, stroke_px, stroke_color}`, or `{}`.
+
+    `{}` for anything that does not walk cleanly — a blob from a Premiere that
+    writes this differently, a truncated payload, a caption with no style — and
+    `{}` means the caption keeps this app's own colour, which is what every
+    import did before this existed.
+
+    ⚠ **ALL THE RUNS OR NONE OF THEM.** One Premiere text layer can be painted a
+    word at a time (29 captions in the corpus are), and `AnimaticTextClip` holds
+    ONE colour. Taking the first run would silently repaint the other words, so a
+    caption whose runs disagree gives up its paint entirely and says so by
+    arriving in the default — visible, and honest, where a confident wrong colour
+    is neither.
+
+    ⚠ **A STROKE NEEDS BOTH ITS COLOUR AND A WIDTH.** 517 records in the corpus
+    carry a width with no colour table, which by the default rule is a WHITE
+    outline — plausible, unproven, and invisible on white lettering anyway, so it
+    is not drawn. 17 carry a colour with no width. Only the 1,156 that carry both
+    become an outline here.
+    """
+    data = bytes(blob or b"")
+    if len(data) < _PRPROJ_ARB_HEADER + 8:
+        return {}
+    at = _PRPROJ_ARB_MAGIC_AT
+    if data[at:at + len(_PRPROJ_ARB_MAGIC)] != _PRPROJ_ARB_MAGIC:
+        return {}
+    try:
+        base = _PRPROJ_ARB_HEADER
+        root = _Fb(data, base + struct.unpack_from("<I", data, base)[0])
+        document = root.table(0)
+        if document is None:
+            return {}
+        found: set = set()
+        for at in document.vector(0):
+            run = _Fb(data, at + struct.unpack_from("<I", data, at)[0])
+            style = run.table(1)
+            if style is None:
+                continue
+            found.add((
+                _prproj_fb_colour(style, 2),
+                _prproj_fb_colour(style, 4),
+                round(max(0.0, style.f32(6, 0.0)), 2),
+            ))
+        # ⚠ THE BAR IS READ EVEN WHEN THE RUNS DISAGREE about their colour. It
+        # is one bar around the whole block, so nothing about it depends on the
+        # words being painted alike.
+        bar: dict = {}
+        if document.has(_PRPROJ_BG_ON):
+            pad = document.f32(_PRPROJ_BG_PAD, 0.0)
+            radius = document.f32(_PRPROJ_BG_RADIUS, 0.0)
+            opacity = document.f32(
+                _PRPROJ_BG_OPACITY, PRPROJ_BACKDROP_OPACITY * 100.0) / 100.0
+            bar = {
+                "backdrop": "box",
+                "backdrop_color": PRPROJ_BACKDROP_COLOR,
+                "backdrop_opacity": round(max(0.0, min(1.0, opacity)), 4),
+                # ⚠ PIXELS, and they stay pixels until the caller — which is the
+                # only place that knows the FONT SIZE they have to be measured
+                # against. See `_prproj_text_component`.
+                "backdrop_pad_px": round(max(0.0, pad), 2),
+                "backdrop_radius_px": round(max(0.0, radius), 2),
+            }
+    except (ValueError, struct.error, IndexError):
+        return {}
+    out: dict = dict(bar)
+    if len(found) != 1:
+        return out
+    fill, edge, width = found.pop()
+    if fill:
+        out["color"] = fill
+    if edge and width > 0:
+        out["stroke_px"] = min(24.0, width)
+        out["stroke_color"] = edge
+    return out
+
+
 def _prproj_text_style(by_id: dict, comp) -> dict:
     """The reachable half of a text component's look. See the section header.
 
-    ⚠ **THE FILL COLOUR IS NOT IN HERE, AND THAT IS A FINDING RATHER THAN A GAP.**
-    It was looked for in a real project, in every place it could be:
+    ⚠ **THE FILL COLOUR IS NOT IN HERE — BUT IT *IS* IN THE FILE. SEE
+    `prproj_text_paint`.** Everything below this line is still true of the
+    COMPONENT and its `<Param>`s, and it is kept because it is the map of where
+    the colour is not. What it got wrong was the conclusion: the paint is inside
+    the `Source Text` blob, which the searches below looked at with the wrong
+    question — they hunted for the colour's BYTES, and the blob is a FlatBuffer
+    that does not write a channel equal to its default of 255. `#FFBC0F` is
+    stored as `bc 0f`. Read the header above `prproj_text_paint` before adding a
+    fourth "it is not in the file" note here.
+
+    ⚠ The original finding, unchanged, because the places it rules out are real:
       · there is no colour `<Param>` on the component — its eighteen named
         parameters are Source Text, Transform, Position, Scale, Horizontal Scale,
         Rotation, Opacity, Anchor Point, start, end and Parent W/H/Rotation;
@@ -2536,6 +2815,29 @@ def _prproj_text_style(by_id: dict, comp) -> dict:
         184 of the 206 in the reference file are self-closing.
     So an imported caption takes THIS APP'S colour, and `to_project` says so in
     the import report rather than inventing a white that might have been yellow.
+
+    ⚠ **AND HERE IS HOW THE SECOND SEARCH ALSO WENT WRONG, BECAUSE IT IS THE
+    MORE INSTRUCTIVE ONE.** After E76 the question was re-opened against a
+    caption whose colour was known, and the hunt was: decode every binary in the
+    project (345 payloads, 73 kB) and look for that colour as BYTES and as a
+    float triple. It found nothing, so the answer was written down as "not in the
+    file". It was in the file the whole time, four bytes from the end of a blob
+    that search had already decoded — as `bc 0f`, with the red channel omitted
+    for being equal to its default.
+
+    **THE LESSON, WHICH IS WORTH MORE THAN THE COLOUR: A BYTE SEARCH CANNOT
+    DISPROVE THE PRESENCE OF A VALUE IN A SCHEMA'D BINARY.** Absence of a byte
+    pattern is not absence of the field. What settled it was walking the format —
+    and what forced the walk was the user photographing Premiere's own Properties
+    panel, which is the ground truth this had been guessing around for two days.
+
+    ⚠ The BACKGROUND BAR was the next thing that walk was told to look for, and
+    it was NOT in the run's style table for a good reason: the bar belongs to the
+    whole caption, so it sits on the DOCUMENT table beside the runs vector. It is
+    read now — see `prproj_text_paint`. The only part of it still missing is the
+    bar's COLOUR, which is measured rather than read; `PRPROJ_BACKDROP_COLOR`
+    says exactly how, and why there is nothing in this corpus to difference it
+    against.
     """
     style = {"font": animatic_fonts.DEFAULT_FONT, "scale": 100.0, "opacity": 1.0}
     scale = _prproj_param(by_id, comp, "Scale")
@@ -2562,13 +2864,20 @@ def _prproj_text_style(by_id: dict, comp) -> dict:
     return style
 
 
-def _prproj_text_component(by_id: dict, el) -> dict:
+def _prproj_text_component(by_id: dict, el, blobs: dict | None = None) -> dict:
     """One `AE.ADBE Text` component → a caption, or `{}` if it holds no words.
 
     An EMPTY text layer is a real thing and not an error: Premiere leaves one
     behind whenever a graphic is built from a template and a field is not filled
     in. `{}` means "nothing to import", never "stop looking" — see
     `_prproj_graphic`, which was returning the first answer and losing the second.
+
+    @param blobs  the document's binaries, for `prproj_text_paint`. ⚠ **THE PAINT
+        IS READ THROUGH `_prproj_blob` AND THE WORDS ARE NOT**, and that is not an
+        oversight: `_prproj_arb_strings` scans the base64 in front of it, so a
+        caption whose blob is carried by `BinaryHash` alone has always fallen
+        through to `InstanceName` for its words. The paint has no such fallback,
+        so it takes the referenced bytes.
     """
     source = _prproj_param(by_id, el, "Source Text")
     words: list = []
@@ -2595,6 +2904,33 @@ def _prproj_text_component(by_id: dict, el) -> dict:
         "size_px": round(size_px, 2),
         "opacity": style["opacity"],
     }
+    # ⚠ THE FILL, THE OUTLINE AND THE BAR, WHICH ARE IN THE BLOB AFTER ALL — see
+    # `prproj_text_paint` for the layout and for why two earlier searches missed
+    # them. `{}` back leaves `IMPORT_TEXT_COLOR` in place, which is what every
+    # import did before this, so a blob this cannot walk loses nothing.
+    paint = prproj_text_paint(_prproj_blob(blobs or {}, source))
+    # ⚠ **PIXELS BECOME `em` HERE, AND ONLY HERE, BECAUSE THIS IS WHERE THE FONT
+    # SIZE IS.** Premiere measures the bar's padding and corner in PIXELS of its
+    # own 1080 frame; `AnimaticTextClip` measures both against the caption's own
+    # type, so they survive being exported at 720p or 4K. A caption with no size
+    # cannot do the sum and keeps the app's own bar shape rather than a wrong one.
+    pad_px = paint.pop("backdrop_pad_px", None)
+    radius_px = paint.pop("backdrop_radius_px", None)
+    if size_px > 0:
+        if pad_px is not None:
+            # Premiere's bar height is `ink + 2 × pad`; this app's is
+            # `line box + 2 × pad × PER_EM`. Solve for the multiplier that makes
+            # the two the same height — see the constants for both measurements.
+            wanted = PRPROJ_BACKDROP_INK * size_px + 2.0 * pad_px
+            spare = wanted - PRPROJ_BACKDROP_LINE_BOX * size_px
+            got["backdrop_pad"] = round(max(0.0, min(
+                4.0, spare / (2.0 * PRPROJ_BACKDROP_PAD_PER_EM * size_px))), 4)
+        if radius_px is not None:
+            # ⚠ THE RADIUS NEEDS NO SUCH CORRECTION. `draw_texts` spends it as
+            # `backdrop_radius × font size` in pixels, which is exactly what
+            # Premiere stores it as — 10 px on 45 px type is 0.222 either way.
+            got["backdrop_radius"] = round(max(0.0, min(2.0, radius_px / size_px)), 4)
+    got.update(paint)
     if "left" in style:
         # LEFT EDGE → CENTRE. See `PRPROJ_TEXT_SIZE_PER_SCALE`.
         half = (len(got["text"]) * size_px * PRPROJ_TEXT_ASPECT) / 2.0
@@ -2703,7 +3039,200 @@ def _prproj_shadow(by_id: dict, comp) -> dict:
     if only is not None and _prproj_keyframe_value(only).lower() == "true":
         return {}
     return got
-def _prproj_graphic(by_id: dict, objid: str) -> dict:
+# ---------------------------------------------------------------------------
+# A DRAWN SHAPE — and the two binaries that were called unreadable
+# ---------------------------------------------------------------------------
+# ⚠ **THE SHAPE'S SIZE AND ITS FILL ARE IN THE PROJECT FILE AFTER ALL.** This
+# reader used to stand a Premiere shape in as an invisible rectangle, because
+# `Path` and `Appearance` are `<StartKeyframeValue Encoding="base64">` FlatBuffers
+# and the note above says a vtable-addressed field is not to be guessed at. Both
+# halves of that were wrong in one specific, checkable way:
+#
+#   · **The payload IS in the file.** Premiere writes each blob ONCE, inline,
+#     and every later param with the same content carries only its `BinaryHash`.
+#     The first version looked at a repeat, found `<StartKeyframeValue …/>` with
+#     no text, and concluded the bytes were somewhere else. `_prproj_binaries`
+#     collects the inline ones and the hash resolves the rest.
+#   · **`Path` needs no vtable.** It is a flat array: `<int32 kind><int32
+#     points>` then 28 bytes per point — a leading float and the three (x, y)
+#     pairs of a bezier knot, all three equal at a sharp corner. Checked across
+#     **242 paths in 129 real projects**: every one parses at that stride and
+#     **230 are axis-aligned rectangles**.
+#   · **`Appearance` needs one, and the layout does not move.** All **217** shape
+#     Appearance blobs in those projects are **exactly 404 bytes**, and 216 carry
+#     the identical 14 bytes before the fill and the identical 4 after it. The
+#     one that does not is a text blob this survey's coarse filter picked up —
+#     i.e. the signature check below rejecting a stranger, on real data.
+#
+# The fill was pinned by DIFFERENCE, not by reading a schema: two shapes in one
+# sequence — the user's white background and a black card — produce blobs that
+# differ in seventeen bytes, of which exactly three are a colour, and they read
+# `ff ff ff` and `00 00 00`. Across the corpus those three bytes give white,
+# black, `f25d5d`, `c69e5e`, `005db1`, `f9850f` and a spread of greys: hand-picked
+# fills, not noise.
+#
+# ⚠ **AND IF ANY OF THAT DOES NOT MATCH, NOTHING IS READ.** A shape drawn from a
+# misread blob is a full-frame rectangle in a colour nobody chose, laid over
+# somebody's film — the E45 fault with a new coat of paint. Every guard below
+# fails to `{}`, and `{}` is still the invisible placeholder this always made.
+_PRPROJ_APPEARANCE_BYTES = 404
+# The constant run each side of the fill. Both were confirmed on 216 of the 217
+# blobs; they are the whole of what says "this is the layout I was measured on".
+_PRPROJ_FILL_BEFORE = (0x170, bytes.fromhex("0a000700080009000a0000000000"))
+_PRPROJ_FILL_AFTER = (0x182, bytes.fromhex("0a000800"))
+_PRPROJ_FILL_AT = 0x17E  # `00 rr gg bb`
+_PRPROJ_PATH_STRIDE = 28
+_PRPROJ_PATH_ANCHOR = 12  # the middle (x, y) pair of the knot, from the point's start
+
+
+def _prproj_binaries(root) -> dict:
+    """`{BinaryHash: bytes}` for every payload written out in full in this file.
+
+    ⚠ **ONE COPY PER DISTINCT VALUE, AND THE REST ARE REFERENCES.** Premiere
+    writes the bytes inline the first time and thereafter emits the element
+    empty with the same `BinaryHash` — in the reference project one Appearance
+    blob is named twelve times and carried once. A reader that only looked at
+    the element in front of it would find nothing on eleven of them.
+    """
+    out: dict = {}
+    for el in root.iter():
+        digest = el.get("BinaryHash")
+        if not digest or digest in out:
+            continue
+        payload = (el.text or "").strip()
+        if not payload:
+            continue
+        try:
+            out[digest] = base64.b64decode(payload)
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def _prproj_blob(blobs: dict, param) -> bytes:
+    """One `Arb…Param`'s binary value — inline if it has one, else by hash."""
+    if param is None:
+        return b""
+    value = param.find("StartKeyframeValue")
+    if value is None:
+        return b""
+    payload = (value.text or "").strip()
+    if payload:
+        try:
+            return base64.b64decode(payload)
+        except (ValueError, TypeError):
+            return b""
+    return (blobs or {}).get(value.get("BinaryHash") or "") or b""
+
+
+def prproj_shape_fill(blob: bytes) -> str:
+    """A shape's `Appearance` blob → its fill as `#rrggbb`, or '' if unsure.
+
+    See the section header for what "sure" means here and what it was measured
+    on. The length AND both constant runs have to match, or this is not the
+    record it was measured on and nothing is returned.
+    """
+    if len(blob or b"") != _PRPROJ_APPEARANCE_BYTES:
+        return ""
+    for at, want in (_PRPROJ_FILL_BEFORE, _PRPROJ_FILL_AFTER):
+        if blob[at:at + len(want)] != want:
+            return ""
+    if blob[_PRPROJ_FILL_AT] != 0:
+        return ""
+    red, green, blue = blob[_PRPROJ_FILL_AT + 1:_PRPROJ_FILL_AT + 4]
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def prproj_shape_rect(blob: bytes) -> tuple | None:
+    """A shape's `Path` blob → `(left, top, right, bottom)` in frame pixels.
+
+    None unless it is a four-point AXIS-ALIGNED rectangle, which is what a
+    Premiere "Rectangle" graphic is and the only shape this app can stand in for
+    — `AnimaticShape` has `w`/`h` and no path. A rounded or rotated one, an
+    ellipse, a pen path: all None, all fall back to the placeholder.
+    """
+    data = blob or b""
+    if len(data) < 8:
+        return None
+    try:
+        count = int.from_bytes(data[4:8], "little", signed=True)
+    except ValueError:
+        return None
+    # ⚠ THE LENGTH IS THE CHECK THAT THE STRIDE IS RIGHT. A blob that does not
+    # come out to exactly this is a record shaped some other way, and reading it
+    # at 28 bytes a point would produce four plausible-looking floats out of the
+    # middle of something else.
+    if count != 4 or len(data) != 8 + count * _PRPROJ_PATH_STRIDE + 1:
+        return None
+    points = []
+    for n in range(count):
+        at = 8 + n * _PRPROJ_PATH_STRIDE + _PRPROJ_PATH_ANCHOR
+        x, y = struct.unpack_from("<ff", data, at)
+        if x != x or y != y:  # NaN
+            return None
+        points.append((x, y))
+    xs = {round(x, 1) for x, _ in points}
+    ys = {round(y, 1) for _, y in points}
+    if len(xs) != 2 or len(ys) != 2:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _prproj_shape_component(by_id: dict, comp, blobs: dict, frame) -> dict:
+    """One `AE.ADBE Shape` → `{x, y, w, h, color, opacity}`, or `{}`.
+
+    `w`/`h` are fractions of the FRAME, `x`/`y` its centre — the shapes of
+    `AnimaticShape`. `{}` means something could not be read and the caller keeps
+    the invisible placeholder.
+    """
+    if not frame or min(frame) <= 0:
+        return {}
+    rect = prproj_shape_rect(_prproj_blob(blobs, _prproj_param(by_id, comp, "Path")))
+    fill = prproj_shape_fill(_prproj_blob(blobs, _prproj_param(by_id, comp, "Appearance")))
+    if rect is None or not fill:
+        return {}
+    frame_w, frame_h = frame
+    left, top, right, bottom = rect
+    # ⚠ THE PATH IS IN THE LAYER'S OWN PIXELS AND `Position`/`Anchor Point` MOVE
+    # IT — the same pair, read the same way, as every other component here. See
+    # `_prproj_placement`: what they contribute is the DIFFERENCE, zero for a
+    # shape nobody dragged.
+    shift_x, shift_y = _prproj_placement(by_id, comp)
+    width = (right - left) / frame_w
+    height = (bottom - top) / frame_h
+    # ⚠ `Horizontal Scale` IS DELIBERATELY NOT READ. It is 100 on every shape in
+    # every project measured, so which axis it belongs to cannot be told apart
+    # from `Scale` — and a wrong guess squashes a full-frame background.
+    scale = _prproj_param(by_id, comp, "Scale")
+    if scale is not None:
+        try:
+            factor = float((_prproj_keyframe_value(scale) or "100").rstrip(".")) / 100.0
+        except ValueError:
+            factor = 1.0
+        if factor > 0:
+            width *= factor
+            height *= factor
+    opacity = 1.0
+    alpha = _prproj_param(by_id, comp, "Opacity")
+    if alpha is not None:
+        try:
+            opacity = float((_prproj_keyframe_value(alpha) or "100").rstrip(".")) / 100.0
+        except ValueError:
+            opacity = 1.0
+    lo_w, hi_w = 0.01, 4.0        # mirrors `AnimaticShape.w` / `.h`
+    return {
+        "kind": "rect",
+        "x": round(max(-1.0, min(2.0, (left + right) / 2 / frame_w + shift_x)), 4),
+        "y": round(max(-1.0, min(2.0, (top + bottom) / 2 / frame_h + shift_y)), 4),
+        "w": round(max(lo_w, min(hi_w, width)), 4),
+        "h": round(max(lo_w, min(hi_w, height)), 4),
+        "color": fill,
+        "opacity": round(max(0.0, min(1.0, opacity)), 4),
+    }
+
+
+def _prproj_graphic(by_id: dict, objid: str, blobs: dict | None = None,
+                    frame=None) -> dict:
     """A track item → what its Premiere GRAPHIC actually is, if it is one.
 
     `{}` for an ordinary clip; otherwise `{"kind": "text"|"shape", "texts": […]}`
@@ -2729,6 +3258,7 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
     queue = [(objid, 0)]
     texts: list = []
     shapes = 0
+    drawn: list = []
     shadow: dict = {}
     # Where the CLIP has been moved to, summed over Motion and the Transform
     # effect — see `_prproj_placement`. Collected during the walk and applied at
@@ -2747,6 +3277,12 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
         if match == _PRPROJ_SHAPE_MATCH:
             found = depth if found is None else found
             shapes += 1
+            # ⚠ THE GEOMETRY AND THE FILL, when they can be read AT ALL —
+            # see the section header. `{}` back means the placeholder, which
+            # is what every import made before this.
+            box = _prproj_shape_component(by_id, el, blobs or {}, frame)
+            if box:
+                drawn.append(box)
             continue
         if match in (_PRPROJ_MOTION_MATCH, _PRPROJ_GEOMETRY_MATCH):
             # ⚠ NOT `found`. A Motion component is on EVERY clip in the project,
@@ -2766,7 +3302,7 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
             shadow = shadow or _prproj_shadow(by_id, el)
             continue
         if match == _PRPROJ_TEXT_MATCH:
-            caption = _prproj_text_component(by_id, el)
+            caption = _prproj_text_component(by_id, el, blobs)
             if caption:
                 found = depth if found is None else found
                 texts.append(caption)
@@ -2813,7 +3349,11 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
         # this app can reproduce exactly; the bar is the part it approximates.
         return {"kind": "text", "texts": texts, "shapes": shapes}
     if shapes:
-        return {"kind": "shape", "texts": [], "shapes": shapes}
+        # ⚠ `drawn` RIDES ALONGSIDE `shapes`, which stays a COUNT. Several
+        # callers only ask whether there is one; changing what that field
+        # means would break them silently. It is short by however many
+        # shapes could not be read, and that is the caller's signal.
+        return {"kind": "shape", "texts": [], "shapes": shapes, "drawn": drawn}
     return {}
 
 
@@ -3367,6 +3907,10 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
         )
 
     by_id = _prproj_index(root)
+    # ⚠ ONCE PER DOCUMENT, NOT PER CLIP. See `_prproj_binaries`: one blob is
+    # written inline and named by hash a dozen times over, so this has to be
+    # the whole file's worth before any clip asks for one.
+    blobs = _prproj_binaries(root)
     if not by_id:
         raise ImportRefused(
             "Nothing inside that .prproj looked like a Premiere project. In "
@@ -3552,7 +4096,8 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
         # genuinely missing footage. Only sound is exempt: an audio item has no
         # component chain worth walking, and skipping it keeps this off the hot
         # path for the razored-voiceover case (23 clips of one mp3).
-        graphic = {} if is_audio else _prproj_graphic(by_id, objid)
+        graphic = ({} if is_audio
+                   else _prproj_graphic(by_id, objid, blobs, got["frame"]))
         # Keyed by PATH where there is one, so two clips cut from the same file
         # resolve to the same upload and two different files that happen to share
         # a clip name do not collide.
@@ -3878,11 +4423,14 @@ def _import_text_clips(
     speak — see `_prproj_text_component` for how the left edge Premiere stores
     becomes the centre this app wants.
 
-    ⚠ NO COLOUR IS INVENTED. `IMPORT_TEXT_COLOR` is this app's own default, not
-    a reading of the file, and `backdrop: "none"` is chosen over the usual scrim
-    for the same reason: a scrim is a black bar this app would be ADDING to
-    somebody's film. "none" still draws its own outline, so white lettering on
-    pale art stays readable.
+    ⚠ NO COLOUR IS INVENTED. `IMPORT_TEXT_COLOR` is the FALLBACK, not a reading
+    of the file — it stands only for a caption that carries no colour of its own,
+    which in Premiere is a caption nobody repainted and which Premiere draws
+    white too. `IMPORT_TEXT_BACKDROP` is the same kind of fallback: the bar IS
+    read now (`prproj_text_paint`), so "none" is what a caption gets when
+    Premiere had its background switched OFF — never a scrim this app decided to
+    add to somebody's film. "none" still draws its own outline, so white
+    lettering on pale art stays readable.
 
     @param keyframes  the CLIP's animation, from `_prproj_transform`. ⚠ **ONLY
         `opacity` AND `scale` ARE TAKEN, AND LEAVING `x`/`y` OUT IS THE POINT.**
@@ -3909,21 +4457,33 @@ def _import_text_clips(
             "font": item.get("font") or animatic_fonts.DEFAULT_FONT,
             "size_px": float(item.get("size_px") or 0.0),
             # ⚠ THE FILE'S COLOUR IF IT HAS ONE, THIS APP'S IF IT HAS NOT — and
-            # WHICH of those happened depends entirely on the format. An `xmeml`
-            # writes `fontcolor` as plain `<red>/<green>/<blue>`, so a title
-            # imported from one arrives in the colour it was set in. A `.prproj`
-            # does not carry the fill anywhere (E59), so those keep the default
-            # and the report says so. Never invent one for the format that is
-            # silent: a white that might have been yellow is a lie the user
-            # cannot see.
+            # BOTH formats can now have one. An `xmeml` writes `fontcolor` as
+            # plain `<red>/<green>/<blue>`; a `.prproj` writes it inside the
+            # caption's `Source Text` blob (`prproj_text_paint`, E80 — twice
+            # declared unreadable before that, see E78). A caption that carries
+            # no colour of its own still keeps this default, because that is what
+            # Premiere draws for one nobody repainted. Never invent one: a white
+            # that might have been yellow is a lie the user cannot see.
             "color": str(item.get("color") or IMPORT_TEXT_COLOR),
-            "backdrop": IMPORT_TEXT_BACKDROP,
+            "backdrop": str(item.get("backdrop") or IMPORT_TEXT_BACKDROP),
             "opacity": max(0.0, min(1.0, float(item.get("opacity", 1.0)))),
         }
         if item.get("stroke_px"):
             clip["stroke_px"] = max(0.0, min(24.0, float(item["stroke_px"])))
             if item.get("stroke_color"):
                 clip["stroke_color"] = str(item["stroke_color"])
+        # ⚠ **THE BAR'S SHAPE ONLY WHEN THERE IS A BAR.** These are written on a
+        # caption whose backdrop is "none" too — the field exists either way —
+        # and a padding of 1.3 on a caption with nothing to pad is a number
+        # somebody has to explain later. `backdrop` above is the switch.
+        if clip["backdrop"] != "none":
+            for key, lo, hi in (("backdrop_opacity", 0.0, 1.0),
+                                ("backdrop_pad", 0.0, 4.0),
+                                ("backdrop_radius", 0.0, 2.0)):
+                if item.get(key) is not None:
+                    clip[key] = max(lo, min(hi, float(item[key])))
+            if item.get("backdrop_color"):
+                clip["backdrop_color"] = str(item["backdrop_color"])
         if "x" in item and "y" in item:
             clip["place"] = "free"
             # Clamped to the field's own range rather than trusted: a title
@@ -3959,27 +4519,102 @@ def _import_text_clips(
     return out
 
 
+def _track_at(track, t_ms: float, fallback: float = 1.0) -> float:
+    """One `[{t, v}, …]` track sampled at `t_ms`, HOLDING outside its own ends.
+
+    The same rule `value_at` in `animatic_render.py` and `valueAt` in `scene.js`
+    run on, written here because `to_project` needs the value at a clip's FIRST
+    FRAME before either renderer ever sees the clip — see `_import_shape_clip`,
+    which uses it so the number in Properties is the number on screen.
+    """
+    keys = sorted(
+        (k for k in (track or []) if isinstance(k, dict)),
+        key=lambda k: float(k.get("t") or 0.0),
+    )
+    if not keys:
+        return fallback
+    if t_ms <= float(keys[0].get("t") or 0.0):
+        return float(keys[0].get("v", fallback))
+    if t_ms >= float(keys[-1].get("t") or 0.0):
+        return float(keys[-1].get("v", fallback))
+    for a, b in zip(keys, keys[1:]):
+        at, bt = float(a.get("t") or 0.0), float(b.get("t") or 0.0)
+        if t_ms < at or t_ms >= bt or bt <= at:
+            continue
+        av, bv = float(a.get("v", fallback)), float(b.get("v", fallback))
+        return av + (bv - av) * ((t_ms - at) / (bt - at))
+    return float(keys[-1].get("v", fallback))
+
+
+def _shape_ever_visible(clip: dict) -> bool:
+    """Is this imported shape drawn at ANY point in its own clip?
+
+    ⚠ **THE TRACK OUTRANKS THE FIELD, AND THAT IS THE WHOLE POINT.** `opacity`
+    is only the resting value; a clip carrying an `opacity` track is drawn by
+    that track and by nothing else, so a shape at `opacity: 1.0` whose track
+    holds at zero is invisible — in Premiere and here. Answering off the field
+    alone is what let an invisible end card be reported as one that "came
+    across with its real colour".
+
+    ⚠ **AND ONLY INSIDE THE CLIP'S OWN WINDOW.** Asking whether ANY key is above
+    zero is the same mistake one step along: the end card's track is `1.0 → 0.0`
+    with BOTH keys before the clip starts, so it holds at 0 for every frame that
+    is ever drawn while still carrying a 1.0. The window is `0 … duration_ms`,
+    sampled at both ends plus every key that actually falls inside it.
+    """
+    track = (clip.get("keyframes") or {}).get("opacity")
+    if not track:
+        return float(clip.get("opacity") or 0.0) > 0.0
+    length = float(clip.get("duration_ms") or 0)
+    times = [0.0, length]
+    times += [float(k.get("t") or 0.0) for k in track
+              if 0.0 <= float(k.get("t") or 0.0) <= length]
+    return any(_track_at(track, t, 0.0) > 0.0 for t in times)
+
+
 def _import_shape_clip(
-    *, start_ms: int, length_ms: int, layer_id: str, mint
+    *, start_ms: int, length_ms: int, layer_id: str, mint, box: dict | None = None,
+    opacity: float = 1.0, keyframes: dict | None = None,
 ) -> dict:
-    """A Premiere drawn shape → an `AnimaticShape` standing in its place.
+    """A Premiere drawn shape → an `AnimaticShape` in its place.
 
-    ⚠ **A PLACEHOLDER. WHAT CAME ACROSS IS WHEN IT IS ON SCREEN, AND NOTHING
-    ELSE.** The shape's geometry and its fill live in an `Appearance` FlatBuffer
-    this reader does not decode — the same wall the text colour hits, and for the
-    same reason (see `_prproj_text_style`). `AnimaticShape` has no name field, so
-    what says where these came from is the ROW: the client names it from
-    `shape_lanes`.
+    ⚠ **`box` IS THE DIFFERENCE BETWEEN A SHAPE AND A PLACEHOLDER, AND IT IS
+    ALLOWED TO BE ABSENT.** With one — `_prproj_shape_component` read the
+    rectangle out of `Path` and the fill out of `Appearance` — the shape arrives
+    as itself: right size, right place, right colour, visible. Without one
+    (an ellipse, a rounded corner, a blob whose layout this was not measured on,
+    or an `xmeml` where there is nothing to read at all) it is the placeholder
+    this always made.
 
-    ⚠ AND IT IS DRAWN AT ZERO OPACITY, which is the rule this file already
-    follows for a placeholder on a row above the bottom one. Two of the shapes in
-    the reference project run the full 68 seconds; a visible box in a colour
-    nobody chose, over the whole film, is not a placeholder but a defacement. The
-    clip is still ON the timeline, still on a row that says what it is, still
+    ⚠ **AND THE PLACEHOLDER IS DRAWN AT ZERO OPACITY.** Two of the shapes in the
+    reference project run the full 68 seconds; a visible box in a colour nobody
+    chose, over the whole film, is not a placeholder but a defacement. The clip
+    is still ON the timeline, still on a row that says what it is, still
     selectable, and one drag of Opacity in Properties brings it back — INVISIBLE
     IS NOT OMITTED.
+
+    ⚠ **A SHAPE'S OWN FADE IS PART OF ITS COLOUR, AND LEAVING IT OUT PAINTED OVER
+    THE END OF A FILM.** A card that Premiere holds at zero for the whole of its
+    clip is a card nobody sees THERE; drawn opaque HERE it is a lid. Measured on
+    the reference project: the last shape on the bottom row is a white rectangle
+    whose Opacity keys (1.0 → 0.0) both finish BEFORE the clip's first frame, so
+    Premiere holds it at 0 and renders black — which is exactly what its own
+    export does at 56.3s — while this import drew a full-frame white end card
+    over the logo. `opacity` alone could never have caught it: the RESTING value
+    on that component is 100, and the whole of the fade is in the track.
+
+    @param opacity  the CLIP's own opacity, from its Motion/Opacity component.
+                    It multiplies the shape's, because Premiere composes them —
+                    a shape at 100% on a clip faded to 50% is drawn at 50%.
+    @param keyframes  the CLIP's animation, from `prproj_transform_keys`. ⚠ Only
+                    `opacity` and `scale` are taken, and `x`/`y` are left out for
+                    the reason `_import_text_clips` gives: the move is ALREADY in
+                    the box (`_prproj_shape_component` adds `_prproj_placement`),
+                    so carrying it again would jump the shape on its first frame.
+                    The opacity track is scaled by the shape's OWN opacity, the
+                    same composition the static value gets.
     """
-    return {
+    clip = {
         "id": mint(),
         "layer_id": layer_id,
         "kind": "rect",
@@ -3987,6 +4622,33 @@ def _import_shape_clip(
         "duration_ms": length_ms,
         "opacity": 0.0,
     }
+    if not box:
+        return clip
+    clip.update({k: v for k, v in box.items() if k != "opacity"})
+    own = max(0.0, min(1.0, float(box.get("opacity", 1.0))))
+    wanted = {
+        prop: track for prop, track in (keyframes or {}).items()
+        if prop in ("opacity", "scale") and track
+    }
+    fade = wanted.get("opacity")
+    if fade:
+        # ⚠ THE SHAPE'S OWN OPACITY MULTIPLIES THE TRACK, not just the resting
+        # value — a 50% card that fades out runs 0.5 → 0, never 1 → 0.
+        wanted["opacity"] = [
+            {**key, "v": round(max(0.0, min(1.0, own * float(key.get("v", 1.0)))), 4)}
+            for key in fade
+        ]
+        # ⚠ AND THE STORED VALUE IS WHAT THE TRACK SAYS AT THE FIRST FRAME. Both
+        # renderers ignore it while a track exists, but Properties shows it, and
+        # a panel reading 100% over an invisible card is the bug reported twice.
+        clip["opacity"] = round(
+            max(0.0, min(1.0, _track_at(wanted["opacity"], 0.0, own))), 4
+        )
+    else:
+        clip["opacity"] = round(max(0.0, min(1.0, own * float(opacity or 0.0))), 4)
+    if wanted:
+        clip["keyframes"] = wanted
+    return clip
 
 
 def media_library(assets) -> dict:
@@ -4130,7 +4792,8 @@ def to_project(
         "moved": 0, "shortened": 0, "silent": 0, "overlaid": 0,
         # Captions read out of the file, shapes stood in for, and Adjustment
         # Layers left behind — each one a sentence the report owes the user.
-        "lettered": 0, "drawn": 0, "adjustment": 0,
+        "lettered": 0, "drawn": 0, "adjustment": 0, "shaped": 0, "faded": 0,
+        "painted": 0,
     }
 
     def source_for(key: str):
@@ -4270,15 +4933,45 @@ def to_project(
                 )
                 texts.extend(made)
                 tally["lettered"] += len(made)
+                # ⚠ COUNTED SEPARATELY BECAUSE IT IS NOT ALL OF THEM. A caption
+                # Premiere never repainted carries no style record at all, and
+                # that one keeps this app's white — which is the same white
+                # Premiere would have drawn. The report has to be able to say
+                # which of the two happened, or "the colour came across" reads
+                # as a promise about every caption in the film.
+                tally["painted"] += sum(
+                    1 for clip in made
+                    if clip.get("color") != IMPORT_TEXT_COLOR or clip.get("stroke_px")
+                )
                 continue
             if role == "shape":
-                shapes.append(_import_shape_clip(
+                # ⚠ ONE CLIP CAN HOLD SEVERAL DRAWN SHAPES and this app's
+                # `AnimaticShape` is one box, so the FIRST readable one is taken.
+                # A group of them is beyond what a single row can say, and half a
+                # group drawn is worse than a placeholder that admits it.
+                boxes = (clip.get("graphic") or {}).get("drawn") or []
+                box = boxes[0] if len(boxes) == 1 else None
+                made = _import_shape_clip(
                     start_ms=start_ms,
                     length_ms=length_ms,
                     layer_id=shape_lane_of.get(track, f"{IMPORT_SHAPE_LANE_PREFIX}0"),
                     mint=mint,
-                ))
+                    box=box,
+                    opacity=clip.get("opacity", 1.0),
+                    keyframes=clip.get("keyframes"),
+                )
+                shapes.append(made)
                 tally["drawn"] += 1
+                if box:
+                    # ⚠ READ IS NOT THE SAME QUESTION AS VISIBLE, and counting
+                    # them as one is how "the shape did not come" got told about
+                    # a shape that came across perfectly. `shaped` is what the
+                    # reader managed; `faded` is the subset Premiere itself never
+                    # shows, because the clip's own Opacity holds at zero for the
+                    # whole of it. Both are sentences the report owes the user.
+                    tally["shaped"] += 1
+                    if not _shape_ever_visible(made):
+                        tally["faded"] += 1
                 continue
             if role == "adjustment":
                 tally["adjustment"] += 1
@@ -4520,22 +5213,60 @@ def to_project(
             "text rows of their own."
         )
         if (report.get("reader") or "") == "prproj":
+            if tally["painted"]:
+                line += (
+                    f" {tally['painted']} of them also kept the COLOUR and the "
+                    "OUTLINE they were set in — the fill, the stroke colour and "
+                    "the stroke width, read out of the caption's own record. Any "
+                    "caption you never repainted in Premiere keeps this app's "
+                    "white, which is the white Premiere was drawing too."
+                )
+            else:
+                line += (
+                    " None of them carried a colour of its own, so they are this "
+                    "app's white — which is what Premiere draws for a caption "
+                    "nobody repainted. If one of these WAS painted in Premiere, "
+                    "say so: it means its record is written in a shape this has "
+                    "not been measured on."
+                )
             line += (
-                " Their COLOUR is not stored in a .prproj anywhere, so they are "
-                "this app's white whatever they were in Premiere — set one and "
-                "use the row to apply it to the rest. Their DROP SHADOW did come "
-                "across. For the colours too, export a Final Cut Pro XML from "
-                "Premiere and import that instead."
+                " Their DROP SHADOW came across too, and so did the BACKGROUND "
+                "BAR behind the words — whether it is on, how far it is padded, "
+                "how round its corners are and how see-through it is. ⚠ The one "
+                "thing about the bar that is NOT in the file is its COLOUR: the "
+                "dark grey it arrives in was measured off a real export rather "
+                "than read, so change it on one caption if yours was different."
             )
         else:
             line += " Their colour and outline came across with them."
         report["warnings"].append(line)
-    if tally["drawn"]:
+    if tally["shaped"]:
         report["warnings"].append(
-            f"{tally['drawn']} drawn shape(s) (the bar behind a lower third is the "
-            "usual one) are on a Shapes row at the right times, but at zero "
-            "opacity: their size and colour are not readable from a .prproj. Drag "
-            "Opacity up in Properties to see one and set it how you want it."
+            f"{tally['shaped']} drawn shape(s) came across with their real size, "
+            "place, fill colour and fade — a plain rectangle is the one shape "
+            "this can read out of a .prproj, which covers the white or black "
+            "card people put behind a picture."
+        )
+    # ⚠ SAID SEPARATELY, BECAUSE IT IS THE ONE THAT LOOKS LIKE A BUG. A card
+    # sitting on the Premiere timeline that this app draws at zero opacity reads
+    # as "the import lost my shape" — when what actually happened is that
+    # Premiere does not draw it either. The reference project ends on exactly
+    # one of these: a white rectangle whose fade finishes before its own first
+    # frame, which is why that film ends on black rather than on a white card.
+    if tally["faded"]:
+        report["warnings"].append(
+            f"{tally['faded']} of those shape(s) are invisible, and they are "
+            "invisible in Premiere too — their own Opacity keyframes hold them "
+            "at zero for the whole of the clip. They are on the timeline at the "
+            "right times; clear their keyframes in Properties to bring one back."
+        )
+    if tally["drawn"] - tally["shaped"]:
+        report["warnings"].append(
+            f"{tally['drawn'] - tally['shaped']} other drawn shape(s) are on a "
+            "Shapes row at the right times but at zero opacity: anything that is "
+            "not a plain rectangle — a rounded corner, an ellipse, a drawn path — "
+            "is not readable from a .prproj. Drag Opacity up in Properties to see "
+            "one and set it how you want it."
         )
     if tally["adjustment"]:
         report["warnings"].append(
@@ -4569,5 +5300,45 @@ def to_project(
         "shapes": shapes,
         "audio_tracks": audio_tracks,
         "transitions": transitions,
+        # ⚠ **WHICH ROW IS OVER WHICH — AND WITHOUT IT A BACKGROUND BECOMES A
+        # LID.** Every row this import makes lands in the app's DERIVED order
+        # otherwise, and that order is pictures → shapes → overlays → text: every
+        # imported shape above every imported picture, whatever the sequence
+        # said. That was survivable while a shape arrived invisible; the moment
+        # one arrives with its real fill it is a full-frame white card over the
+        # whole film — E45 again, in a new colour. The white card in the
+        # reference project sits on Premiere's BOTTOM track, under everything.
+        #
+        # Relative tokens, TOP FIRST, in `lane_order`'s own spelling
+        # (`laneTokenFor`): the client re-bases them exactly as it re-bases
+        # `track` and `layer_id`, because only the browser knows which rows this
+        # project already has.
+        "lane_order": _import_lane_order(video_lanes, row_of, text_lane_of, shape_lane_of),
         "report": report,
     }
+
+
+def _import_lane_order(video_lanes, row_of, text_lane_of, shape_lane_of) -> list:
+    """The imported rows, top of the stack first, as relative lane tokens.
+
+    ⚠ **THE SEQUENCE IS READ BOTTOM-UP, SO THE LIST IS BUILT IN REVERSE.**
+    `video_lanes[0]` is the bottom track of the Premiere sequence — the one a
+    background card sits on — and `lane_order` is top-first (`lane_rank` is
+    `len - 1 - index`). Getting this the wrong way round inverts the whole film,
+    which looks like a bug in something else entirely.
+
+    ⚠ **ONE PREMIERE ROW CAN BECOME THREE.** A lower third is a bar with words on
+    it and both share a track with the film, so a lane yields up to a text row, a
+    shape row and a picture row. Within that lane they keep this app's own
+    convention — text over shapes over pictures — because Premiere says nothing
+    about an order it never had to have.
+    """
+    order: list = []
+    for lane in range(len(video_lanes) - 1, -1, -1):
+        if lane in text_lane_of:
+            order.append(f"text:{text_lane_of[lane]}")
+        if lane in shape_lane_of:
+            order.append(f"shape:{shape_lane_of[lane]}")
+        if lane in row_of:
+            order.append(f"frames:{row_of[lane]}")
+    return order

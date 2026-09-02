@@ -2479,9 +2479,20 @@ class AnimaticImportResponse(BaseModel):
     # captions and is rewritten wholesale on every run of it.
     texts: list[AnimaticTextClip] = Field(default_factory=list)
     # Drawn shapes, at the right times and at zero opacity — their geometry and
-    # fill are in a binary Premiere keeps out of the project file. See
+    # fill are read out of its `Path` and `Appearance` blobs where they can be
+    # — a plain rectangle, which is the white or black card people put behind a
+    # picture — and stood in for at zero opacity where they cannot. See
     # `interchange._import_shape_clip`.
     shapes: list[AnimaticShape] = Field(default_factory=list)
+    # ⚠ **WHICH ROW IS OVER WHICH, TOP FIRST — AND IT IS NOT COSMETIC.** Without
+    # it every imported row falls into this app's DERIVED order (pictures →
+    # shapes → overlays → text), which puts every imported shape ABOVE every
+    # imported picture whatever the sequence said: a background card becomes a
+    # lid over the whole film. Relative tokens (`frames:0`, `shape:_import_shape_0`)
+    # in `lane_order`'s own spelling, re-based by the client exactly as `track`
+    # and `layer_id` are. Empty from a reader that cannot say — an EDL — which
+    # means "the derived order", the same as an empty `settings.lane_order`.
+    lane_order: list[str] = Field(default_factory=list)
 
     # --- what to SAY about it ----------------------------------------------
     name: str = Field("", description="What the sequence was called in the file.")

@@ -284,7 +284,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-02 — **AN IMPORTED CUT NOW MOVES, AND THE SAME FILE IS STORED ONCE.** Two long-open items, both asked for by name. ⚠ **(1) THE `.prproj` READER OPENED `<StartKeyframe>` AND STOPPED.** One value per parameter, so a shot that pushed in over four seconds imported FROZEN, and `Scale` was not read anywhere at all — in the reference project that is **21 keyframed shots and 78 fading captions**, most of what a viewer would call the film's motion. The real keys are in `<Keyframes>`; `<StartKeyframe>` is the RESTING value, stamped a hundred hours before the film, and emitting it as a key puts a 100→80 snap on the head of every clip. ⚠ **THE TICKS ARE IN THE CLIP'S SOURCE CLOCK AND `<InPoint>` IS THE ZERO** — proved off the real file: four clips at 0.0s / 3.6s / 7.7s / 9.5s carry identical keyframe ticks and share an in-point, so rebasing against the TIMELINE would have put every key an hour past the end of its own clip. A wrong base does not fail, it silently parks the keys where the value holds, so a track landing nowhere near its clip is **refused and named**. ⚠ **SCALE TRAVELS AS A RELATIVE PUSH, NOT AS PREMIERE'S NUMBER**: Premiere measures Scale against the file's own pixels while this app FITS each picture to the frame, so a 4K still at `Scale 24` is full-frame there and a postage stamp here (statics run 24–150 in that project). The track is divided by its value at the clip's start; a resting Scale is not carried and is named in `warnings`. ⚠ Also learned off the file: with Uniform Scale on, Premiere writes `Scale Height` and parks `Scale Width` at 100 (reading Width squashes every clip), and the clip's **Opacity is its own `AE.ADBE Opacity` component**, invisible to a reader that opens only Motion and Geometry2. ⚠ **AND IT MUST NEVER LIGHT UP A PLACEHOLDER CARD** — those are parked at `opacity: 0` on purpose and a fade writing 1.0 over one is 68 seconds of black. On the real project: **21 of 28 pictures and all 40 captions now animate**, every clip still validating against `AnimaticFrame` / `AnimaticTextClip`. ⚠ **(2) THE SAME BYTES WERE STORED ON EVERY IMPORT.** Re-reading a cut stored a second copy of all 27 files, and within ONE import a file picked from two folders was written twice with only one copy ever referenced — the 52-files-for-27-names pile that three fixes in a row have had to work around. `_store_import_media` is content-addressed now (`sha256` of the incoming bytes against a per-project ledger, written temp-file-then-`os.replace`). ⚠ **HASHED ON THE WAY IN, NOT OFF THE DISK** — a picture is re-encoded to PNG, so stored bytes are not the bytes that arrived; ⚠ **name is not identity**, or a clip gets the wrong picture; ⚠ **the file's existence is checked every time**, because the ledger outlives what it names. New **RULEBOOK E71, E72**; `tests/interchange_check.py` §8o (21 checks, 6 guards proved to fail) and new **`tests/import_dedupe_check.py`** (19 checks, 4 guards proved to fail). Green with `interchange_check`, `effects_check`, `captions_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `render_parity` and `editor_project_import_check`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+**Last updated:** 2026-09-02 — **THE BACKGROUND BAR COMES ACROSS TOO, AND IT WAS ONE TABLE UP FROM WHERE THE COLOUR WAS.** *“fix karo isko v please tum kar sakte ho”* — and this time the walk started from a photographed Properties panel rather than from a guess. ⚠ **THE BAR IS ON THE DOCUMENT TABLE, NOT ON A RUN**, which is exactly why the first look missed it: a fill and a stroke are per RUN (Premiere lets you paint one word), but a bar is drawn once around the whole block. Fields: **f18** bool = background ON, **f19** float = opacity as a percentage, **f20** = padding in px, **f34** = corner radius in px; f18 travels with f20 and f34 in 3,301 of 6,513 documents. ⚠ **THE DEFAULT OPACITY IS 75, PROVED BY WHAT IS *WRITTEN*** — both photographed captions read 75 with f19 absent, and `f19 = 100.0` is written 71 times in the corpus, which is impossible if 100 were the default. ⚠ **NO FLAG MEANS NO BAR** (51 documents carry a size with the background switched OFF). ⚠ **AND THE TWO APPS DO NOT PAD THE SAME BOX** — Premiere pads the INK, `draw_texts` pads the LINE BOX, so copying the number across made the bar half again too tall. Measured on one caption (45 px type, size 20): Premiere's bar is 72 px at 1080 and this app's bar at `backdrop_pad: 0` is already 71, so the honest conversion comes out at ≈0 and the rendered bar lands at **76 px against Premiere's 72** — while a background four times as wide still gets four times the padding. The radius needs no correction. ⚠ **THE BAR'S COLOUR IS THE ONE PART MEASURED RATHER THAN READ** — every background in the corpus is the same bar, so nothing can be differenced against it. It is taken off the caption whose `f19 = 100`, where the export shows the stored colour with no compositing in the way: a flat **#3e3e3e over 116,915 pixels**, cross-checked against the 75% one (predicts 121.3, measures 124). ⚠ **SECOND SIGHTING OF PREMIERE COMPOSITING IN LINEAR LIGHT** (the first was a 10% black card reading 244 where sRGB says 229), so an imported bar over a bright shot comes out slightly darker here — named rather than fudged. Rendered from the user's own file both captions now match their frames: white on a grey bar, and amber with a black outline on a dark grey one. New **RULEBOOK E81**; `tests/interchange_check.py` §8s grows to 33 checks with TEN guards proved to fail in total. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `editor_project_import_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+
+**Previously:** 2026-09-02 — **THE COLOUR OF A CAPTION *IS* IN THE `.prproj`, AND THIS FILE HAD TWICE SAID IT WAS NOT.** The user photographed Premiere's own Properties panel — *“kaise nhi mil raha hai tumko, sab hai yaha pe”* — Fill `#FFBC0F`, Stroke black, Width 5.0. ⚠ **THE BUG WAS THE METHOD, NOT THE FILE.** The fill was written off in E59 and RE-CONFIRMED as unreadable after E76 by decoding every payload in a real project (345 of them, 73 kB) and searching each for the known colour as bytes AND as floats. It was four bytes from the end of a blob that search had already decoded: **`#FFBC0F` is stored as `bc 0f`**, because a `Source Text` blob is a FLATBUFFER and a FlatBuffer does not write a field equal to its default — and each colour channel defaults to **255**. `ff bc 0f` appears nowhere and never could. The corpus “proof” was wrong the same way: “90 records all read `00 00 00 00`” was measured at a guessed offset inside a variable-length structure. New **RULEBOOK E78** is that lesson — *a byte search cannot disprove the presence of a value in a schema'd binary* — and **E80** is the layout, walked field by field: root → document → vector of RUNS → run field 1 is the STYLE table → fields 2 / 4 / 6 are fill colour, stroke colour and stroke width. ⚠ Channel default **255 not 0** (zero turns the amber into `#00bc0f`); ⚠ table offsets are **signed** (Premiere writes backward references); ⚠ **all the runs or none**, because one layer can be painted a word at a time and `AnimaticTextClip` holds one colour; ⚠ a stroke needs BOTH its colour and a width; ⚠ and a blob that does not walk gives up the paint rather than throwing, since it comes from an uploaded file. Over **6,287 style records in 120 real projects** the fills come out as a designer's palette (`#ffbc0f`, `#e14e21`, `#3b92d9`, `#4700a8`, `#99d6a6`…) and the strokes are overwhelmingly `#000000`. Rendered from the user's own file, `“Imagine you have a goal”` now draws amber with a black outline, as Premiere draws it. ⚠ **STILL MISSING: the background bar**, not located in the style table — named in the report as a gap rather than written up as unreadable. `tests/interchange_check.py` §8s — 22 checks, FIVE guards proved to fail, with the blob built by hand so the fixture cannot follow the code. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+
+**Previously:** 2026-09-02 — **A CARD ARRIVES WITH ITS FADE, AN AUDIO ROW IS CALLED “Audio”, AND THE COLOUR OF A TITLE IS SETTLED FOR GOOD.** Three things off one live import, and the first two were not what they looked like. ⚠ **(1) “DONO KA COLOUR ALAG THA… YAHA EK HI COLOUR AAYA” WAS NOT A FILL BUG.** Both shapes on Premiere's bottom track resolve to ONE `Appearance` blob (`BinaryHash` 478a7a16…), so the white was read correctly twice. What differs is that the END CARD carries Opacity keys `1.0 → 0.0` whose LAST key lands **984 ms before its own first frame** — Premiere holds it at 0 and its own export is (0, 0, 0) at 56.3 s, while this import painted a **full-frame white card over the logo**. ⚠ **THE RESTING VALUE COULD NEVER HAVE CAUGHT IT**: `Opacity` on that component rests at **100**; the whole fade is in `<Keyframes>`. `_import_shape_clip` takes the clip's opacity TRACK now, multiplied by the shape's OWN opacity (a 50% card that fades runs 0.5 → 0), with `x`/`y` still left out because the move is already inside the box. ⚠ **AND “READ” IS NOT “VISIBLE”** — the track carries a 1.0 that is never drawn, so `_shape_ever_visible` samples only INSIDE the clip's window and the report says both numbers. Rendered from the user's own file, the app now ends on **black at 56.3 s**, byte-for-byte the outcome Premiere's MP4 has. ⚠ **(2) THE TEXT COLOUR IS NOT IN THE FILE, AND THAT IS NOW MEASURED RATHER THAN ASSUMED.** E76 found a shape's fill in a blob, so the question was re-opened against a caption whose real colour was KNOWN (#f4c200 on a black bar, sampled off the project's own export). Findings: the appearance record is **end-anchored** (`len-36 … len-18`), not at E76's absolute offsets — those worked only because every shape blob is 404 bytes; a `Source Text` blob CAN carry that record, but **90 of 6,517 text layers across 120 real projects** do and **all 90 read `00 00 00 00`**, so it is padding; and the colour is in **no binary in the file at all** (345 payloads, 73 kB, searched as bytes and as float triples — the only hits were the floats -122.0 / -107.0 inside a `Path`). The stroke and the background bar go the same way. Nothing is invented; the report now names all three and points at Final Cut Pro XML, which `_fcp7_text` does read them out of. ⚠ **(3) AN AUDIO ROW IS NAMED FOR WHAT IT IS.** Video/Images/Text/Shapes rows are named by their layer and audio rows were named by whichever file lay on them — an import mints one row per Premiere audio track, so three rows all read `6_AA_AI_v.mp3`. The filename moved to the clip's own hover title, where a filename belongs; file-grouped rows (no layer record) keep theirs. New **RULEBOOK E77, E78, E79**; `tests/interchange_check.py` §8r (18 checks, four guards proved to fail) plus two that close a gap found while break-testing — **deleting `keyframes=` from the TEXT branch broke no test at all**, so E72's 78-captions-fade could have been undone green. Green with `interchange_check`, `effects_check`, `render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check` and `npm run build`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+
+**Previously:** 2026-09-02 — **A CAPTION KEEPS ITS CENTRE, AND A DRAWN SHAPE ARRIVES AS ITSELF.** An inline `transform: scale(…)` in `captionStyle` was deleting `.an-text-free`'s `translate(-50%, -50%)`, so every imported caption sat by its top-left corner rather than its centre — permanent, because a Premiere caption carries a 1.0 → 1.1 pop. The export was right the whole time. And a Premiere shape's size, fill and ROW ORDER all turned out to be readable: `Path` parses at a 28-byte stride (242 paths across 129 projects), `Appearance` is 404 bytes with the fill pinned by difference, and `lane_order` carries Premiere's own stack so a background card lands UNDER the film rather than over it. RULEBOOK **E75**, **E76**. See the Work Log.
+
+**Previously:** 2026-09-02 — **AN IMPORTED CUT NOW MOVES, AND THE SAME FILE IS STORED ONCE.** Two long-open items, both asked for by name. ⚠ **(1) THE `.prproj` READER OPENED `<StartKeyframe>` AND STOPPED.** One value per parameter, so a shot that pushed in over four seconds imported FROZEN, and `Scale` was not read anywhere at all — in the reference project that is **21 keyframed shots and 78 fading captions**, most of what a viewer would call the film's motion. The real keys are in `<Keyframes>`; `<StartKeyframe>` is the RESTING value, stamped a hundred hours before the film, and emitting it as a key puts a 100→80 snap on the head of every clip. ⚠ **THE TICKS ARE IN THE CLIP'S SOURCE CLOCK AND `<InPoint>` IS THE ZERO** — proved off the real file: four clips at 0.0s / 3.6s / 7.7s / 9.5s carry identical keyframe ticks and share an in-point, so rebasing against the TIMELINE would have put every key an hour past the end of its own clip. A wrong base does not fail, it silently parks the keys where the value holds, so a track landing nowhere near its clip is **refused and named**. ⚠ **SCALE TRAVELS AS A RELATIVE PUSH, NOT AS PREMIERE'S NUMBER**: Premiere measures Scale against the file's own pixels while this app FITS each picture to the frame, so a 4K still at `Scale 24` is full-frame there and a postage stamp here (statics run 24–150 in that project). The track is divided by its value at the clip's start; a resting Scale is not carried and is named in `warnings`. ⚠ Also learned off the file: with Uniform Scale on, Premiere writes `Scale Height` and parks `Scale Width` at 100 (reading Width squashes every clip), and the clip's **Opacity is its own `AE.ADBE Opacity` component**, invisible to a reader that opens only Motion and Geometry2. ⚠ **AND IT MUST NEVER LIGHT UP A PLACEHOLDER CARD** — those are parked at `opacity: 0` on purpose and a fade writing 1.0 over one is 68 seconds of black. On the real project: **21 of 28 pictures and all 40 captions now animate**, every clip still validating against `AnimaticFrame` / `AnimaticTextClip`. ⚠ **(2) THE SAME BYTES WERE STORED ON EVERY IMPORT.** Re-reading a cut stored a second copy of all 27 files, and within ONE import a file picked from two folders was written twice with only one copy ever referenced — the 52-files-for-27-names pile that three fixes in a row have had to work around. `_store_import_media` is content-addressed now (`sha256` of the incoming bytes against a per-project ledger, written temp-file-then-`os.replace`). ⚠ **HASHED ON THE WAY IN, NOT OFF THE DISK** — a picture is re-encoded to PNG, so stored bytes are not the bytes that arrived; ⚠ **name is not identity**, or a clip gets the wrong picture; ⚠ **the file's existence is checked every time**, because the ledger outlives what it names. New **RULEBOOK E71, E72**; `tests/interchange_check.py` §8o (21 checks, 6 guards proved to fail) and new **`tests/import_dedupe_check.py`** (19 checks, 4 guards proved to fail). Green with `interchange_check`, `effects_check`, `captions_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `render_parity` and `editor_project_import_check`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
 
 **Previously:** 2026-09-02 — **THE IMPORT FETCHES ITS OWN FOOTAGE, AND A `.prproj` NO LONGER MAKES ANYBODY PRESS THROUGH A REFUSAL.** *“tum jo missing hai project mai uska local path bata rahe ho magar tum khud usko pickup kyun nhi kar rahe ho jab tumne location mil raha hai”*, and *“ye red text dikhne ka zaroori nahi hai user ko”*. ⚠ **TWO PRESSES REMOVED FROM THE SAME DIALOG, FOR THE SAME REASON — THE APP WAS ASKING THE USER TO DO WORK IT COULD ALREADY DO.** (1) The report has named the FOLDER of every missing file since E63, and then sent the user to walk to it by hand in a file dialog. When this server runs on the **same computer** as the editor that wrote the project — which is the whole local-install case — that path is real, so the import now opens it itself. New pure `interchange.local_media_paths(incoming, exists=…)` (unquotes `%20`, strips `file://localhost/` / `file:///` / `file://`, **puts the leading slash back** on a Mac path, refuses a RELATIVE one rather than resolving it against the server's own directory) plus `_fetch_local_media` / `_may_read_local_media` on the route. ⚠ **MEDIA EXTENSIONS ONLY, AND THAT IS THE SECURITY BOUNDARY**: a `<pathurl>` is text inside an UPLOADED document, so a hand-written project file can name any path on the disk — `media_kind` is the whitelist and is the only reason this is safe to run at all. ⚠ **LOOPBACK ONLY** (`API_IMPORT_LOCAL_MEDIA=auto|on|off`): on a hosted server the path belongs to somebody else's machine, and reading it would answer one user's import with another user's files. ⚠ **LAST IN THE QUEUE** — attached, then the project's own Media (E68), then the disk — because disk-first stores a fresh copy on every import, which is the duplicate storage E68 exists to stop. Anything still not found stays in the report **with its path**, for the user to attach by hand. (2) A `.prproj` cost a red refusal, a second button, and a **second upload of the same 27 files** before anything appeared — advice the user could not take, since they are here because they cannot open Premiere. The dialog knows the extension, so the flag goes on the FIRST request: one upload, straight to the report. ⚠ **The ROUTE's refusal is untouched** and the honesty moved rather than vanished — **BEST GUESS** badge, and `warnings[0]` still names File › Export › Final Cut Pro XML. New **RULEBOOK E69 and E70**; `tests/interchange_check.py` §8n (18 checks) with the whitelist, the relative-path rule, the unquote and the leading slash each **proved to fail** when removed, and `editor_project_import_check.py` (Playwright) rewritten to assert one request, no `.error` on screen and the badge still drawn — its stub still refuses an unflagged read, so a regression to the two-step fails loudly. Green with `effects_check` and `captions_check`. ⚠ **Not yet re-run against a live server** — needs a restart, and only the user has the files. See the Work Log.
 
@@ -3557,7 +3565,315 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-02 (latest) — A CLIP ARRIVES AT THE SIZE PREMIERE HAD IT, AND OLD DUPLICATES CAN BE SWEPT
+### 2026-09-02 (latest) — AND THE BACKGROUND BAR, ONE TABLE UP FROM THE COLOUR
+
+    "fix karo isko v please tum kar sakte ho aur agar mere wale mai bacgound
+     text mai nhi hai to o v bana dena mai chat hun log baad mai munnuly change
+     v kar skate okay"
+
+**Where it was.** On the DOCUMENT table, beside the runs vector — not in the run
+style where the fill and the stroke live. That is not an oddity: a fill is per
+RUN because Premiere lets you paint one word, and a bar is drawn once around the
+whole block, so it cannot be. Fields, walked against a photographed Properties
+panel (Background ✓, opacity 75, size 20.0, corner radius 10):
+
+    f18  bool  — written only when the background is ON
+    f19  float — its opacity, as a PERCENTAGE
+    f20  float — the padding, in px
+    f34  float — the corner radius, in px
+
+Across 6,513 documents in 120 projects f18 travels with f20 and f34 (3,301 of
+them). ⚠ **The default opacity is 75, and what proves it is what is WRITTEN**:
+both photographed captions read 75 with f19 absent, and `f19 = 100.0` appears 71
+times — impossible if 100 were the default, because a field is only written when
+it differs from one. ⚠ **No flag means no bar**: 51 documents carry a size and a
+radius with the background switched OFF, and a bar behind each of those captions
+would be a change to somebody's film that they did not make.
+
+**⚠ The two apps do not pad the same box, and copying the number across makes
+the bar half again too tall.** Premiere pads the INK; `draw_texts` pads the LINE
+BOX, which already carries the leading. Both sides measured on one caption —
+45 px type, background size 20:
+
+  * Premiere's bar in the export is 144 px in a 2160 frame = **72 px at 1080**,
+    so its ink box is 72 − 2×20 = 32 px, i.e. 0.711 × the font size;
+  * this app's bar at `backdrop_pad: 0` is already **71 px**, so its line box is
+    1.587 × the font size, and each 1.0 of `backdrop_pad` adds 0.444 × the font
+    size per side.
+
+Equating the two heights is the conversion. On that caption it comes out at ≈0 —
+this app's leading is already worth Premiere's 20 px — and the rendered bar lands
+at **76 px against Premiere's 72**. A background four times as wide still gets
+four times the padding, which is the guard that stops "return 0" passing. The
+RADIUS needs no correction: both spend it as `radius × font size`.
+
+**⚠ The bar's COLOUR is the one part measured rather than read.** Every caption
+in this corpus that has a background has the same bar, so there is nothing to
+difference against, and the one document field holding an explicit colour
+(`#ff3c08`, 765 records) belongs to captions whose background is OFF. What made
+it a number instead of a guess: one of the photographed captions carries
+`f19 = 100`, so its bar is drawn at FULL opacity and the export shows the stored
+colour with no compositing in the way — a flat **#3e3e3e over 116,915 pixels**.
+Cross-checked on the other one: #3e3e3e at 75% over its (207, 206, 209) frame
+predicts 121.3 and measures 124.
+
+⚠ **That cross-check is also the second sighting of Premiere compositing in
+LINEAR light** — the first was the 10% black card that reads 244 where sRGB says
+229. In sRGB the same sum predicts 98, not 124. This app composites in sRGB, so
+an imported bar over a bright shot comes out slightly darker than Premiere's.
+Named here rather than fudged into the colour, because it is a whole-app
+difference and fixing it in one importer would hide it.
+
+**Files:** `interchange.py` — the background block in `prproj_text_paint`, the
+px→em conversion in `_prproj_text_component` (the only place that knows the font
+size), the backdrop pass-through in `_import_text_clips`, `PRPROJ_BACKDROP_*`,
+and the caption report line.
+
+**Tests:** `tests/interchange_check.py` §8s grows to 33 checks, with five more
+guards broken on purpose and each proved to fail (default opacity 100 instead of
+75; a bar conjured from the size with no flag; Premiere's padding copied
+straight across; the pixel fields left on the clip; the bar dropped when the runs
+disagree about their colour). The fixture now writes the document-level
+background too — and had a bug of its own worth keeping in mind: it declared
+style fields it did not write, making a table that points at itself, which is not
+a shape Premiere ever emits.
+
+⚠ **Not yet seen in the running app** — needs a server restart and a re-import.
+
+### 2026-09-02 — THE COLOUR WAS IN THE FILE, AND THE METHOD WAS THE BUG
+
+    "dekho kaise color pp mai dalte hai humlog uska properties appearence mai ja
+     kar color picker se uska color code v dekho popup mai dikhta hai kaise nhi
+     mil raha hi tumko sab hai yaha pe shadow and etc"
+
+The user photographed Premiere's own Properties panel: **Fill `#FFBC0F`, Stroke
+black, Stroke Width 5.0 px.** Two hours earlier this file had recorded, with
+corpus numbers attached, that none of those were in a `.prproj`. They all were.
+
+**What actually went wrong, because it is worth more than the colour.** The
+fill was written off in E59 and then RE-CONFIRMED as unreadable after E76 by
+decoding **every** payload in a real project (345 of them, 73 kB) and searching
+each one for the known colour as bytes AND as a float triple in 0..1. That
+search was thorough and its conclusion was false. The colour sat four bytes from
+the end of a blob it had already decoded: a `Source Text` blob is a
+**FlatBuffer**, and **a FlatBuffer does not write a field whose value equals its
+default**. Each colour channel defaults to **255**, so `#FFBC0F` is stored as the
+two bytes `bc 0f` — the red is an ABSENT FIELD. `ff bc 0f` appears nowhere in the
+project and never could. The corpus "proof" failed the same way: *"90 records
+across 120 projects all read `00 00 00 00`, and a field that never varies is not
+a colour"* was measured at a **guessed offset inside a variable-length
+structure** — it was reading padding, confidently, ninety times.
+
+⚠ **RULEBOOK E78 is now that lesson rather than the wrong finding it briefly
+held: a byte search cannot disprove the presence of a value in a schema'd
+binary.** Absence of a byte pattern is not absence of the field. Get one value
+you KNOW — here, the user's screenshot — and walk the structure.
+
+**The layout (RULEBOOK E80).** Walked field by field against that known caption:
+
+    [12-byte header: uint32 payload length, 4 spare, magic 44 33 22 11]
+    root table   -> field 0 -> document table
+    document     -> field 0 -> VECTOR OF RUNS
+    run          -> field 0 the text, field 1 the STYLE table
+    style        -> field 2 fill colour, field 4 stroke colour,
+                    field 6 float stroke width in px
+    colour table -> fields 0,1,2 = r,g,b as bytes, EACH DEFAULTING TO 255
+
+⚠ **Channel default 255, not 0** — zero is the FlatBuffers default for a plain
+byte and the obvious guess, and it turns that caption's amber into `#00bc0f`, a
+green nobody chose. ⚠ **A table offset is SIGNED**: Premiere writes objects both
+before and after the field naming them, and reading one unsigned turns a small
+backward reference into a two-gigabyte jump — which is how the first version of
+this walk fell off the end of a real blob. ⚠ **All the runs or none**: one text
+layer can be painted a word at a time (29 in the corpus are) and
+`AnimaticTextClip` holds ONE colour, so runs that disagree give up the paint
+rather than repaint the other words. ⚠ **A stroke needs both its colour and a
+width** — 517 records carry a width alone, which by the default rule is a white
+outline: plausible, unproven, and invisible on white lettering. ⚠ **And a blob
+that does not walk gives up the paint rather than throwing**, because it comes
+from an uploaded file: every offset is bounds-checked and the fallback is
+`IMPORT_TEXT_COLOR`, which is what every import did before this existed.
+
+**Measured**: 6,287 style records across 120 real projects. The fills come out
+as a designer's palette — `#ffbc0f`, `#e14e21`, `#3b92d9`, `#4700a8`, `#99d6a6`,
+`#28324e` … — strokes are overwhelmingly `#000000` (1,233 of them), and the
+widths land on the round numbers a person types (10, 5, 4, 9, 17). Rendered from
+the user's own file, "Imagine you have a goal" now draws amber with a black
+outline, which is what Premiere draws.
+
+⚠ **Still missing: the BACKGROUND BAR** behind the words. It has not been located
+in the run's style table, so a caption still arrives with `IMPORT_TEXT_BACKDROP`.
+That is named in the report and in the docstring **as a gap, not as a finding** —
+the next agent is told to walk the document table before writing it off.
+
+**Files:** `interchange.py` (`_Fb`, `_prproj_fb_colour`, `prproj_text_paint`,
+`_prproj_text_component` now takes `blobs`, the caption report line and the
+`painted` tally, and the two docstrings that had said the opposite).
+
+**Tests:** `tests/interchange_check.py` §8s — 22 checks with FIVE guards broken
+on purpose and each proved to fail (channel default 0; first run instead of
+agreement; a stroke from its colour alone; the paint never asked for, and asked
+for off the inline base64 instead of through the hash; table offsets unsigned).
+The blob is assembled by hand in the test — vtables, offsets and all — so the
+fixture cannot follow the code, and a channel equal to 255 is deliberately NOT
+written or the default-255 guard would pass either way. Green with
+`interchange_check`, `effects_check`, `render_parity`, `captions_check`,
+`import_dedupe_check`, `media_cleanup_check`, `hidden_lane_check`,
+`animatic_motion_check`, `monitor_video_check`, `dialog_frame_check`,
+`audio_mix_check`, `frame_save_fields_check` and `npm run build`.
+
+⚠ **Not yet seen in the running app** — needs a server restart and a re-import.
+
+### 2026-09-02 — A CARD ARRIVES WITH ITS FADE, AND A ROW IS CALLED WHAT IT IS
+
+    "mera text 2 wale text mai colour and stroke tha o nhi aay hai. dusra audio
+     layer pe name aa rh ahi audio clip ka magr aana chahiye audio layer only
+     jaise baki sab aa rhe hai image, video etc. and ek chiz shapes layer mai do
+     shapes clip the aur dono ka colour alag alag tha primeir mai but yah pe ek
+     hi colour aay only white but jo logo ke niche tha uska colour black tha …
+     aisa bano jo production level ka ho"
+
+Three reports off one live import of `6_Planning and Reasoning.prproj`, and the
+first two were not what they looked like.
+
+**1 · The two shapes really do hold the same white — the difference is a FADE.**
+Read off the file: both clips on Premiere's bottom track resolve to ONE
+`Appearance` blob (`BinaryHash` `478a7a16…`), so the fill was read correctly
+twice and no colour was lost. What the second one carries that the first does
+not is an `AE.ADBE Opacity` component with keys `1.0 → 0.0` whose LAST key lands
+**984 ms before the clip's own first frame** — so Premiere holds it at 0 and
+renders black. Its own MP4 is `(0, 0, 0)` at 56.3 s; this import was painting a
+**full-frame white end card over the logo**. ⚠ **The resting value could never
+have caught it**: `Opacity` on that component rests at `100.` and the whole of
+the fade is in `<Keyframes>` — E72 one layer further in. `_import_shape_clip`
+now takes the clip's opacity TRACK, multiplied by the shape's OWN opacity (a 50%
+card that fades runs 0.5 → 0), leaving `x`/`y` out because the move is already
+inside the box via `_prproj_placement`. ⚠ **And "read" is not "visible"**: that
+track carries a 1.0 that is never drawn, so `_shape_ever_visible` samples only
+inside the clip's window, and the report says both numbers — how many shapes came
+across, and how many of those are invisible *because they are invisible in
+Premiere too*. Rendered from the user's own file through the real reader, the app
+now ends on **black at 56.3 s and 56.8 s**, which is what Premiere's export does.
+RULEBOOK **E77**.
+
+**2 · The caption colour is not in the file, and that is now measured.** E76
+found a shape's fill inside a blob, so the question was put to text again — with
+a caption whose real colour was KNOWN (`#f4c200` lettering on a black bar,
+sampled off the project's own export at 0.5 s). What the hunt settled: the
+appearance record is **end-anchored** (`len-36 … len-18`), not at E76's absolute
+offsets — those worked only because every shape blob is 404 bytes; a `Source
+Text` blob CAN carry that record, but **90 of 6,517 text layers across 120 real
+projects** do and **every one of the 90 reads `00 00 00 00`** in the fill slot,
+so it is padding rather than a colour; and the colour is in **no binary in the
+file at all** — all 345 payloads (73 kB) decoded and searched for that value as
+bytes AND as a float triple in 0..1, the only hits being the floats `-122.0` /
+`-107.0` inside a rectangle's `Path`. The 46 `<PremiereFilterPrivateData>`
+bodies that do have content come to **261 bytes in total**. The stroke and the
+background bar go the same way. Nothing is invented; the report now names all
+three by name and points at File › Export › Final Cut Pro XML, which
+`_fcp7_text` does read them out of. RULEBOOK **E78**.
+
+**3 · An audio row is named for what it is.** Video, Images, Text and Shapes
+rows are named by their layer; an audio row with a layer record was named by
+whichever file lay on it, so one column said two different kinds of thing — and
+an import mints one row per Premiere audio track, so three rows came up all
+reading `6_AA_AI_v.mp3`. The row takes its layer's name now ("Audio", "Audio 2",
+…); the filename is on the clip's own hover title, where a filename belongs, and
+the file-GROUPED rows (which have no layer record and therefore no name of their
+own) keep theirs. RULEBOOK **E79**.
+
+**Files:** `interchange.py` (`_track_at`, `_shape_ever_visible`,
+`_import_shape_clip`, the shape branch of `to_project`, the caption and shape
+report lines, `_prproj_text_style`'s docstring),
+`client/src/components/AnimaticEditor.jsx` (the audio lane's name),
+`client/src/components/Timeline.jsx` (the gutter's comment).
+
+**Tests:** `tests/interchange_check.py` §8r — 18 checks, with FOUR guards broken
+on purpose and each proved to fail (the track not passed; the track not scaled by
+the shape's own opacity; visibility asked as "any key above zero"; Properties
+kept at the resting value). ⚠ **Plus two checks that close a gap this work
+found**: deleting `keyframes=` from the TEXT branch of `to_project` broke **no
+test at all**, so E72's 78-captions-fade could have been undone and gone out
+green. `tests/effects_check.py` gains two source-level guards for the row name,
+one of them proved to fail. Green with `interchange_check`, `effects_check`,
+`render_parity`, `captions_check`, `import_dedupe_check`, `media_cleanup_check`,
+`hidden_lane_check`, `animatic_motion_check`, `monitor_video_check`,
+`dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check` and
+`npm run build`.
+
+⚠ **Not yet seen in the running app** — needs a server restart and a re-import.
+
+### 2026-09-02 — A CAPTION KEEPS ITS CENTRE, AND A DRAWN SHAPE ARRIVES AS ITSELF
+
+    "see text perfect placment nhi hai primeir mai niche center mai tha par yaha
+     pe side dikha raha hai aur ek white shapes clip just image layer ke niche
+     tha mai uska bg use kar raha tha o kyun nhi aaya ismai? … white merge ho
+     jaye to full image hi lagta hai … check please and fix it both"
+
+**1 · The caption was centred in the DATA and off-centre on the SCREEN.** The
+saved clips read `place: "free"`, `x: 0.4976`, `y: 0.928` — dead centre, at the
+bottom, exactly where Premiere had them. So the fault was in the drawing, and it
+was one word of CSS: `.an-text-free` makes x/y the centre with `transform:
+translate(-50%, -50%)`, and `captionStyle` writes an INLINE `transform:
+scale(…)` for a zoomed caption. An inline transform beats a stylesheet one, so
+the translate was deleted and the caption's TOP-LEFT corner landed on x/y —
+right and down by half its own size. Permanent rather than intermittent because
+every imported caption carries a 1.0 → 1.1 pop, so `scale !== 1` at essentially
+every frame. Now `translate(-50%, -50%) scale(s)`, which also lands the SCALED
+block's centre on x/y (a percentage translate resolves against the un-scaled
+border box). ⚠ `draw_texts` was right the whole time — **the third
+monitor-disagrees-with-the-film fault in two days**. RULEBOOK **E75**.
+
+**2 · The white background was in the file, in two binaries and a row order.**
+The user puts a white card *behind* the pictures so a letterboxed slide reads as
+full-screen; it was arriving as an invisible placeholder because `Path` and
+`Appearance` are FlatBuffers. Three things were wrong with "unreadable":
+
+  * **The payload IS in the file.** Premiere writes each blob ONCE inline and
+    every later param carries only its `BinaryHash` — the first look landed on a
+    repeat, saw an empty element, and concluded the bytes lived elsewhere.
+  * **`Path` needs no vtable at all.** `<int32 kind><int32 points>` then 28 bytes
+    a point. Checked across **242 paths in 129 real projects**: all parse at that
+    stride, **230 are axis-aligned rectangles**.
+  * **`Appearance` needs one, and its layout does not move.** All **217** shape
+    blobs are **exactly 404 bytes**; 216 carry identical constant runs each side
+    of the fill. The fill was pinned by DIFFERENCE — two shapes in one sequence
+    differ in seventeen bytes, of which three read `ff ff ff` and `00 00 00` —
+    and across the corpus those bytes give white, black, `f25d5d`, `c69e5e`,
+    `005db1`, `f9850f` and a spread of greys. Hand-picked fills, not noise.
+
+⚠ **AND READING IT WAS ONLY HALF. THE OTHER HALF WOULD HAVE BEEN WORSE THAN THE
+BUG.** Imported rows fall into this app's derived order — pictures → shapes →
+overlays → text — so every imported shape sits ABOVE every imported picture
+whatever the sequence said. That was survivable while a shape arrived invisible;
+the moment one arrives with its real fill, a background card becomes a **lid over
+the whole film**. `to_project` now emits `lane_order` (relative tokens, TOP
+first; the sequence is read bottom-up so the walk runs backwards) and the client
+re-bases them like `track` and `layer_id`. ⚠ The rows already in the project are
+APPENDED to that list, because `laneRank` ranks an unlisted row ABOVE a listed
+one — writing only the imported tokens would slide the whole import underneath
+the film it was meant to land on.
+
+Measured end to end through the real route on the user's own `.prproj`: the white
+card reads `#ffffff`, 1.06 × 1.12 of the frame, opacity 1.0, and lands LAST in
+the order; the black card reads `#000000` at opacity 0.1 (its clip's own fade,
+composed); the rendered frame shows the slide merged into white with the caption
+centred under it and the letterhead small in the corner. Same result on three
+other projects in the series. RULEBOOK **E76**.
+
+New: `_prproj_binaries`, `_prproj_blob`, `prproj_shape_fill`, `prproj_shape_rect`,
+`_prproj_shape_component`, `_import_lane_order`; `drawn` on `_prproj_graphic`,
+`box`/`opacity` on `_import_shape_clip`, `lane_order` on the response and on
+`AnimaticImportResponse`. Pinned in `tests/interchange_check.py` §8q — 16 checks
+with the byte offsets written as LITERALS so the test cannot follow the code —
+plus three mutation guards, and two more in `tests/effects_check.py`.
+
+Green: interchange_check, effects_check, media_cleanup_check, import_dedupe_check,
+editor_project_import_check, render_parity, captions_check, animatic_motion_check,
+hidden_lane_check, audio_mix_check, frame_save_fields_check, aspect_refit_check,
+animatic_images_check, monitor_video_check, dialog_frame_check, `npm run build`.
+
+### 2026-09-02 — A CLIP ARRIVES AT THE SIZE PREMIERE HAD IT, AND OLD DUPLICATES CAN BE SWEPT
 
     "test kiya dekho logo sahi se nhi set hua aur transparent v nhi ho kar aay
      abhi v black dikh raha hai … Purani 52 duplicate file disk par — safai ka
@@ -25358,6 +25674,125 @@ still occasionally be safety-filtered.
 ---
 
 ## 🎯 Current State / Next Steps
+
+### 🟡 NEWEST: CAPTIONS ARRIVE FULLY PAINTED — BAR AND ALL (2026-09-02)
+
+    "background bar bhi fix karo… aur agar mere wale mein nahi hai to bana dena,
+     main baad mein manually change kar sakta hun"
+
+⚠ **RESTART THE SERVER, THEN IMPORT THE `.prproj` AGAIN.**
+
+Ab caption ka poora look aata hai: **colour, outline (rang aur motai), aur peeche
+wali patti** — patti on/off hai ya nahi, kitni chaudi hai, uske kone kitne gol
+hain, aur kitni see-through hai. Sab file se padha jaata hai.
+
+**Ek cheez maapi gayi hai, padhi nahi:** patti ka RANG. Wo file mein nahi milta —
+aapke saare projects mein patti ek hi rang ki hai, to compare karne ko kuch hai
+hi nahi. To maine wo rang aapke apne export se naapa: **#3e3e3e**. Report mein
+saaf likha hai ki ye naapa gaya hai. Alag chahiye to ek caption par badal kar
+poori row par laga dijiye.
+
+⚠ Ek chhoti si baat: Premiere patti ko thoda alag tarike se milata hai (linear
+light), to bright shot ke upar yahan patti zara zyada gehri lagegi. Ye poore app
+ka farak hai, sirf is feature ka nahi.
+
+What to check: **caption ka rang, outline aur patti** — teeno Premiere jaise hain
+ya nahi.
+
+
+### 🟡 NEWEST: THE CAPTION COLOUR AND OUTLINE NOW COME ACROSS (2026-09-02)
+
+    "kaise nhi mil raha hi tumko sab hai yaha pe shadow and etc"
+
+⚠ **RESTART THE SERVER, THEN IMPORT THE `.prproj` AGAIN.**
+
+Aap sahi the — colour file mein hai hi. Maine do baar galat jagah dhoonda tha.
+
+Premiere us colour ko file mein PURA nahi likhta. Jo hissa uske "normal" ke
+barabar hota hai, use wo likhta hi nahi. `#FFBC0F` mein `FF` normal hai, to file
+mein sirf `BC 0F` pada hai. Isliye jab bhi maine `FFBC0F` dhoondha, kabhi mila
+hi nahi — wo tha hi nahi. Ab main file ko dhoondh kar nahi, uske apne naqshe se
+padh raha hoon.
+
+**Ab jo aata hai:** caption ka apna colour, uska outline ka colour, aur outline
+ki motai (5 px, 9 px — jo bhi aapne set kiya). Aapki hi file se test kiya:
+"Imagine you have a goal" ab peela, kaale outline ke saath — bilkul Premiere
+jaisa.
+
+**Jo abhi bhi nahi aata:** words ke peeche wali **patti (background bar)**. Wo
+abhi file mein nahi mili. Report ismein saaf batati hai. Baaki sab — colour,
+outline, shadow, size, jagah, fade — aa jaata hai.
+
+What to check: **koi bhi caption apne asli rang mein hai ya nahi**, aur jo
+caption Premiere mein safed tha wo yahan bhi safed rahe.
+
+
+### 🟡 NEWEST: THE END CARD IS BLACK AGAIN, AND THE AUDIO ROWS ARE CALLED "Audio" (2026-09-02)
+
+    "shapes layer mai do shapes clip the aur dono ka colour alag alag tha … audio
+     layer pe name aa rha hai audio clip ka … text 2 wale text mai colour and
+     stroke tha o nhi aay hai"
+
+⚠ **RESTART THE SERVER, THEN IMPORT THE `.prproj` AGAIN.** `interchange.py`
+changed; a running server knows none of it.
+
+**1 · The two white shapes.** Both really are white in the file — they share one
+`Appearance` record, so nothing was lost there. The end one is BLACK on screen in
+Premiere because it is FADED OUT: its opacity keyframes finish just before the
+clip starts, so Premiere holds it at zero and the film ends on black. This app
+was drawing it fully opaque, which is the white card you saw over the logo. It
+now carries that fade, so the last second is black again. What to check: **the
+film should end on black with the logo fading up**, exactly as your MP4 does.
+
+**2 · The audio rows** now read "Audio", "Audio 2", "Audio 3" like every other
+row. The filename is on the CLIP — hover it and you get the name and the length.
+
+**3 · The caption colour and stroke — this one could NOT be fixed, and it is
+worth reading why once.** It is not in a `.prproj`. That was checked properly
+this time, against a caption whose real colour was known by sampling your own
+export: 6,517 text layers across 120 of your projects, every binary in the file
+(345 of them), and every private-data block. The colour is nowhere in the file.
+The route that DOES carry it is **File › Export › Final Cut Pro XML** in
+Premiere — import that and the fill, the outline and the shadow all come across.
+Otherwise set the colour on one caption and apply it down the row.
+
+
+### 🟡 NEWEST: CAPTIONS SIT WHERE PREMIERE PUT THEM, AND THE WHITE CARD COMES BACK (2026-09-02)
+
+    "text perfect placment nhi hai … aur ek white shapes clip just image layer
+     ke niche tha mai uska bg use kar raha tha o kyun nhi aaya ismai?"
+
+⚠ **RESTART THE SERVER, THEN IMPORT THE `.prproj` AGAIN.** Both fixes need it,
+and the second one changes what the import writes.
+
+**1 · The captions.** The data was always right — every one of them saved at
+x ≈ 0.50, y = 0.928, dead centre at the bottom. What was wrong was the MONITOR:
+a zoomed caption's inline `transform: scale(…)` was wiping the CSS translate
+that makes x/y the centre, so the caption's top-left corner landed on that point
+instead. The exported MP4 was correct all along. What to check: a caption should
+sit **centred at the bottom**, and it should stay there while it does its little
+pop.
+
+**2 · The white background.** Your white card is on Premiere's bottom track,
+under everything, and it now comes across with its real colour, its real size
+and its real place. Rendered from your own file it reads `#ffffff` at 1.06 ×
+1.12 of the frame — so a slide letterboxed against black now merges into white
+and reads as full-screen, which is what you built it for.
+
+⚠ **AND THE ROW ORDER CAME WITH IT, WHICH IS THE PART THAT MATTERS.** Before
+this, every imported shape row landed ABOVE every imported picture row no matter
+what the sequence said. A full-frame white card up there is a lid over the whole
+film. The import now carries Premiere's own stack. What to check, and please
+check it FIRST:
+
+1. **The film is still visible.** If any shot is covered by a flat white or
+   black rectangle, stop and tell me — that is the one way this fix can be
+   wrong, and it is the reason the shapes used to arrive invisible.
+2. **Row order down the gutter** should read the way your Premiere sequence
+   does, with the Shapes row holding the white card at the BOTTOM.
+3. Anything that is not a plain rectangle — a rounded corner, an ellipse, a
+   drawn path — still arrives invisible on a Shapes row, and the report says how
+   many. That is unchanged and deliberate.
 
 ### 🟡 NEWEST: THE LOGO IS THE SIZE PREMIERE HAD IT, AND OLD DUPLICATES CAN BE SWEPT (2026-09-02)
 

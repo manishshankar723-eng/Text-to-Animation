@@ -3230,6 +3230,7 @@ async def import_interchange(
         frames=[AnimaticFrame(**f) for f in built["frames"]],
         texts=[AnimaticTextClip(**t) for t in built.get("texts") or []],
         shapes=[AnimaticShape(**s) for s in built.get("shapes") or []],
+        lane_order=list(built.get("lane_order") or []),
         audio_tracks=[AnimaticAudio(**a) for a in built["audio_tracks"]],
         transitions=[AnimaticTransition(**t) for t in built["transitions"]],
         name=report["name"],
