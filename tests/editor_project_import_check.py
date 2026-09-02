@@ -20,6 +20,14 @@ the import:
      taken (`guessed`), so the second refusal had no second offer: a dead end
      whose only exit is closing the dialog. *"fir kuch nhi hua."*
 
+     ⚠ SINCE THEN THE REFUSAL HAS BEEN TAKEN OUT OF THE USER'S PATH ALTOGETHER
+     — *"ye red text dikhne ka zaroori nahi hai user ko"*. The dialog knows the
+     extension, so it asks for the best-effort read on the FIRST press: one
+     upload instead of two, and the report (badged **BEST GUESS**) is what
+     appears. The fix for fault 2 is still what makes the re-read work, and the
+     stub below still refuses an unflagged read so a regression to the old
+     two-step is a failure rather than a silent extra upload of 27 files.
+
   3. **AND THE FOLDER IT SENT THEM TO WAS SOMEBODY ELSE'S PROJECT.** The shared
      logo and the music bed live in another film's folder, which is full of other
      films' media — *"us folder mai aur bhi music tha"*. Attaching all of it is
@@ -134,9 +142,12 @@ def route_api(route, request):
         route.fulfill(status=status, headers=CORS, content_type="application/json",
                       body=json.dumps(payload))
 
-    # ⚠ THE REFUSAL IS THE POINT OF THE FIRST READ. A `.prproj` without the
-    # experimental flag is refused by design, and that refusal is what offers the
-    # experimental route — see `interchange.ImportRefused`.
+    # ⚠ THE REFUSAL IS KEPT HERE AS A TRIPWIRE, NOT AS A STEP OF THE FLOW. The
+    # ROUTE still refuses an unflagged `.prproj` by design — see
+    # `interchange.ImportRefused` — but the dialog no longer walks a user through
+    # that refusal: it knows the extension and sends the flag on the first
+    # request. So this branch should now never be reached, and if it is, the
+    # dialog has gone back to costing two uploads of the same folder.
     if not experimental:
         send({"detail": "A .prproj is Premiere's private save file. Export a "
                         "Final Cut Pro XML from Premiere instead."}, status=415)
@@ -293,35 +304,50 @@ def main():
             inputs = page.locator("input[type=file]")
 
             # -----------------------------------------------------------------
-            print("\nChoosing the .prproj — refused first, on purpose")
+            print("\nChoosing the .prproj — read on the first press, no refusal in between")
             # -----------------------------------------------------------------
             inputs.nth(0).set_input_files(files["ep8.prproj"])
             page.wait_for_selector(".an-xchg-pick >> nth=1", timeout=5000)
             check("the footage pickers appear once a document is chosen",
                   inputs.count() == 3, f"{inputs.count()} file inputs")
             page.click(".an-xchg-foot .btn.primary")
-            page.wait_for_selector("text=Try to read it anyway", timeout=15000)
-            check("a .prproj is refused, and the refusal offers the guess",
-                  page.is_visible("text=Try to read it anyway"), "")
+            # ⚠ THE REPORT, NOT A RED PANEL. This used to be a refusal, a second
+            # button, and a second upload of the same folder of footage —
+            # *"ye red text dikhne ka zaroori nahi hai user ko"*. The stub still
+            # refuses an unflagged read (see `route_api`), so a client that goes
+            # back to reading strictly first fails HERE rather than quietly
+            # costing an extra upload.
+            page.wait_for_selector(".an-xchg-gone", timeout=15000)
+            check("one press, one request — the flag was on the FIRST one",
+                  len(CALLS) == 1 and CALLS[0][0] is True, str(CALLS))
+            check("...so no refusal was ever put on screen",
+                  page.locator(".error").count() == 0,
+                  page.locator(".error").all_inner_texts()[:1])
+            check("...and the offer to press again is gone with it",
+                  not page.is_visible("text=Try to read it anyway"), "")
+            # ⚠ AND THE HONESTY THAT PANEL CARRIED HAS TO STILL BE ON SCREEN.
+            # Losing the refusal is only acceptable because the result says what
+            # it is; a badge that quietly stopped rendering would turn this whole
+            # change into a guess presented as a read.
+            check("...but the result is still badged a guess",
+                  page.is_visible(".an-xchg-guess"), "")
 
             # -----------------------------------------------------------------
-            print("\nReading it anyway — the report names the folders")
+            print("\nThe report names the folders it could not find")
             # -----------------------------------------------------------------
-            page.click("text=Try to read it anyway")
-            page.wait_for_selector(".an-xchg-gone", timeout=15000)
             gone = page.evaluate("() => window.__probe.gone()")
             check("the missing sound is named", "music.mp3" in gone, gone[:160])
             # ⚠ THE WHOLE REASON THIS PANEL WAS REWRITTEN. Without the folder the
             # user has a filename and nowhere to go.
-            check("…and so is the FOLDER it lived in",
+            check("...and so is the FOLDER it lived in",
                   "1_What is Machine Learning" in gone, gone[:240])
-            check("…and the logo's folder too, listed separately",
+            check("...and the logo's folder too, listed separately",
                   gone.count("Machine Learning Full LinkedIn Series") >= 2, gone[:400])
             check("a file wanted by two clips is listed ONCE, with a count",
                   gone.count("ID_logo_RGB_XL.png") == 1 and "\u00d72" in gone, gone[:240])
             check("the report is current, so there is no 'read again' banner",
                   page.evaluate("() => window.__probe.again()") == "", "")
-            check("…and the gold button offers to ADD it",
+            check("...and the gold button offers to ADD it",
                   "Add" in page.evaluate("() => window.__probe.primary()"),
                   page.evaluate("() => window.__probe.primary()"))
 
@@ -349,13 +375,13 @@ def main():
             still = page.evaluate("() => window.__probe.gone()")
             check("the report is still on screen after footage is added",
                   "1_What is Machine Learning" in still, still[:200])
-            check("…and it says plainly that it is out of date",
+            check("...and it says plainly that it is out of date",
                   "last" in page.evaluate("() => window.__probe.again()").lower(),
                   page.evaluate("() => window.__probe.again()"))
             # ⚠ AND IT MUST NOT BE ADDABLE. The clips on screen were read WITHOUT
             # the footage just attached; adding them now would put the placeholder
             # cards on the timeline anyway.
-            check("…so the gold button no longer offers to add it",
+            check("...so the gold button no longer offers to add it",
                   page.evaluate("() => window.__probe.primary()") == "Read the file again",
                   page.evaluate("() => window.__probe.primary()"))
 
@@ -380,13 +406,13 @@ def main():
             # part's filename ("Shared/music.mp3"), and the route basenames it
             # before matching — `_store_import_media` in `server/animatics.py`.
             sent = sorted(n.rsplit("/", 1)[-1] for n in CALLS[before][1])
-            check("…and it sends the footage that was just attached",
+            check("...and it sends the footage that was just attached",
                   sent == ["ID_logo_RGB_XL.png", "music.mp3"], str(CALLS[before][1]))
             check("nothing is missing any more",
                   page.evaluate("() => window.__probe.gone()") == "", "")
-            check("…the out-of-date banner is gone",
+            check("...the out-of-date banner is gone",
                   page.evaluate("() => window.__probe.again()") == "", "")
-            check("…and the import can finally be added",
+            check("...and the import can finally be added",
                   page.evaluate("() => window.__probe.primary()").startswith("Add"),
                   page.evaluate("() => window.__probe.primary()"))
             if page.evaluate("() => window.__probe.primary()").startswith("Add"):
@@ -395,6 +421,41 @@ def main():
                   (page.evaluate("() => window.__probe.applied") or {}).get("matched") == 27,
                   str(page.evaluate("() => window.__probe.applied"))[:160])
 
+            # -----------------------------------------------------------------
+            print("\nThe title bar - pinned to the top, close button in the corner")
+            # -----------------------------------------------------------------
+            # ⚠ NO SOURCE CHECK CAN SEE THIS ONE. The CSS said `top: 0.35rem`
+            # and the ✕ still sat a whole card-padding lower — *"kaha hua niche
+            # hi to dikh raha hai"* — because a STICKY box is pinned by its
+            # MARGIN box, so `top: 0` on the bar quietly cancelled the negative
+            # top margin that pulls it to the top of the card. Every grep about
+            # it was green. So this measures pixels.
+            geom = page.evaluate(
+                "() => { const c = document.querySelector('.an-xchg-modal');"
+                " const x = c.querySelector('.modal-close');"
+                " const cr = c.getBoundingClientRect(), xr = x.getBoundingClientRect();"
+                " return { top: xr.top - cr.top, right: cr.right - xr.right,"
+                " w: xr.width, h: xr.height }; }"
+            )
+            check("the close button sits in the corner, not beside the heading",
+                  geom["top"] <= 12 and geom["right"] <= 14, json.dumps(geom))
+            # ⚠ AND IT IS STILL A TARGET. The glyph is one character; shrinking
+            # the padding to move it would make the one way out of this dialog
+            # (RULEBOOK E65) a 12px speck in the corner of the screen.
+            check("...and is still big enough to hit",
+                  geom["w"] >= 20 and geom["h"] >= 20, json.dumps(geom))
+            # ⚠ THE WHOLE POINT OF THE STICKY BAR: the report is long, and a ✕
+            # that scrolls away leaves a dialog that cannot be closed at all.
+            page.eval_on_selector(".an-xchg-modal", "el => el.scrollTop = 400")
+            page.wait_for_timeout(200)
+            scrolled = page.evaluate(
+                "() => { const c = document.querySelector('.an-xchg-modal');"
+                " const x = c.querySelector('.modal-close');"
+                " return x.getBoundingClientRect().top - c.getBoundingClientRect().top; }"
+            )
+            check("...and it stays there when the report is scrolled",
+                  scrolled <= 12, f"{scrolled} px below the top of the card")
+            page.eval_on_selector(".an-xchg-modal", "el => el.scrollTop = 0")
             print("\nAfterwards")
             errors = page.evaluate("() => window.__probe.errors")
             check("nothing reached window.onerror or console.error",

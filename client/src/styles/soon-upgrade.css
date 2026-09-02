@@ -86,14 +86,24 @@
    account button opened a dimmed dialog asking "are you sure you want to log
    out?"; it opens the shared dropdown now (`.sb-account-menu`, AccountMenu.jsx).
    `.modal-overlay` and `.modal-close` below are still used by other dialogs. */
+/* ⚠ IT SITS IN THE CORNER, THE WAY A WINDOW'S CLOSE BUTTON DOES — and this rule
+   is EVERY dialog in the app at once. Asked for with a picture of a browser
+   title bar: *"mai chahta hun upar upar kona mai rahe … aur sare popup mai kar
+   dena"*. Lower down it lines up with the heading and reads as a control
+   belonging to the TITLE rather than to the window. ⚠ The offsets are small but
+   the `padding` is not: the glyph is one character, and a 12px tap target in
+   the corner of the screen is the one control in a dialog that MUST be easy to
+   hit — since RULEBOOK E65 it is the way out. */
 .modal-close {
   position: absolute;
-  top: 0.8rem;
-  right: 0.9rem;
+  top: 0.35rem;
+  right: 0.45rem;
   background: transparent;
   border: none;
   color: var(--muted);
   font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.3rem 0.4rem;
   cursor: pointer;
 }
 .modal-close:hover {

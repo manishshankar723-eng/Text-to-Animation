@@ -22,7 +22,9 @@ between two others.
 """
 
 import glob
+import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -30,7 +32,7 @@ import shutil
 import uuid
 import zipfile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 import animatic_render
@@ -1386,12 +1388,14 @@ async def upload_images(
         upload_id = uuid.uuid4().hex[:12]
         path = _image_path(job_id, upload_id)
         try:
-            # Normalise whatever came in (jpg/webp/…) to a clean RGB PNG, exactly
-            # as the character-reference upload does.
+            # Normalise whatever came in (jpg/webp/…) to a clean PNG, exactly as
+            # the character-reference upload does — and KEEP the transparency
+            # when the source has any, or a cut-out logo is stored as a black
+            # card. See `_keeps_alpha`.
             with PILImage.open(io.BytesIO(contents)) as im:
-                rgb = im.convert("RGB")
-                rgb.save(path, "PNG")
-                width, height = rgb.size
+                flat = im.convert("RGBA" if _keeps_alpha(im) else "RGB")
+                flat.save(path, "PNG")
+                width, height = flat.size
         except Exception:  # noqa: BLE001 — bad/corrupt upload
             rejected.append(f"{name} (not a readable image)")
             continue
@@ -2722,11 +2726,109 @@ def export_interchange(
 # the ordinary uploads, so an import can never be a way to get a file into a
 # project that `POST /images` or `/videos` would have refused. Whether the clips
 # are then taken or not, the files list in the Media pane.
+def _keeps_alpha(im) -> bool:
+    """Does this source actually carry transparency worth keeping?
+
+    ⚠ **`convert("RGB")` PAINTS EVERY TRANSPARENT PIXEL BLACK**, and for months
+    that is what both upload paths did to every PNG. It was invisible for a
+    photograph and ruinous for the one thing people upload a PNG *for*: a
+    cut-out logo arrived as a black card with a logo printed on it, and on a row
+    above the film that black card is a lid over the whole picture — the same
+    fault E57 is about, wearing a different hat. Reported straight after a
+    Premiere import: *"mera logo ka background transparent tha but yaha pe black
+    aaya"*.
+
+    ⚠ **AND IT IS ASKED OF THE SOURCE, NOT ASSUMED.** A JPEG has no alpha and an
+    RGBA file whose alpha is solid is a photograph in a bigger box; storing four
+    channels for either buys nothing and costs a third more disk on every frame
+    of every project. `P` mode is checked separately because a palette PNG hides
+    its transparency in `info`, not in its mode.
+    """
+    if im.mode in ("RGBA", "LA"):
+        return True
+    return im.mode == "P" and "transparency" in im.info
+
+
+# One line per file this project has ever stored from an import, keyed by the
+# digest of the bytes that ARRIVED. See `_import_ledger` / `_store_import_media`.
+_IMPORT_LEDGER = ".imported.json"
+
+
+def _import_ledger(job_id: str) -> dict:
+    """`{sha256 of the incoming bytes: {"kind", "upload_id", "duration_ms"}}`.
+
+    ⚠ **KEYED ON WHAT ARRIVED, NOT ON WHAT LANDED ON DISK.** An imported picture
+    is re-encoded to PNG on the way in, so the stored bytes are not the bytes the
+    user sent and hashing the disk would never match a second import of the same
+    file. This is also why the ledger is a file rather than a walk of the media
+    directory: the only moment the original bytes exist is the moment they are
+    stored.
+
+    Missing, empty or corrupt reads as `{}` — a lost ledger costs a duplicate,
+    never an import.
+    """
+    try:
+        with open(os.path.join(_media_dir(job_id), _IMPORT_LEDGER), encoding="utf-8") as fh:
+            found = json.load(fh)
+        return found if isinstance(found, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _remember_import(job_id: str, digest: str, entry: dict) -> None:
+    """One row added to the ledger, written whole and swapped into place.
+
+    ⚠ TEMP FILE THEN `os.replace`, NEVER AN OPEN-FOR-WRITE ON THE REAL PATH. A
+    crash midway through rewriting this in place leaves a truncated JSON file,
+    which reads as an empty ledger — every dedupe this project had learned, gone.
+    """
+    path = os.path.join(_media_dir(job_id), _IMPORT_LEDGER)
+    ledger = _import_ledger(job_id)
+    ledger[digest] = {k: entry[k] for k in ("kind", "upload_id", "duration_ms") if k in entry}
+    tmp = f"{path}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(ledger, fh)
+        os.replace(tmp, path)
+    except OSError:
+        logger.info("[animatic %s] could not update the import ledger", job_id)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _stored_media_exists(job_id: str, kind: str, upload_id: str) -> bool:
+    """Is the file behind a remembered upload_id still on disk?
+
+    ⚠ ASKED EVERY TIME, because the ledger outlives the files it names: a user
+    who deletes a clip from the Media pane can take the file with it, and reusing
+    that id would resolve a clip to nothing at all — a worse outcome than the
+    duplicate this is avoiding.
+    """
+    if not upload_id or not _ID_RE.match(upload_id):
+        return False
+    prefix = {"image": "img_", "video": "vid_", "audio": "audio_"}.get(kind)
+    if not prefix:
+        return False
+    return bool(glob.glob(os.path.join(_media_dir(job_id), f"{prefix}{upload_id}.*")))
+
+
 def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
     """One file out of an import, stored the way its own upload route stores it.
 
     Returns `{"kind", "upload_id", "duration_ms", "filename"}`, or None if it is
-    not a kind we take (the caller names it in `rejected`).
+    not a kind we take (the caller names it in `rejected`). The returned dict
+    carries `"reused": True` when the bytes were already here and nothing new was
+    written.
+
+    ⚠ **THE SAME BYTES ARE STORED ONCE PER PROJECT, NOT ONCE PER IMPORT.** Every
+    file used to get a fresh `upload_id` and a fresh copy on disk, so importing
+    the same cut twice doubled the project's media — a real job on this machine
+    ended up holding **52 files for 27 names**. It also leaked WITHIN one import:
+    the media pickers add by name across several folders, so the same file
+    picked from two of them was written twice and only one copy was ever
+    referenced. Content-addressed by the incoming bytes, both go away.
     """
     import interchange
 
@@ -2735,7 +2837,25 @@ def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
         return None
     media = _media_dir(job_id)
     os.makedirs(media, exist_ok=True)
+
+    # ⚠ BEFORE ANY WORK. For a picture this skips a decode and a PNG re-encode,
+    # and for a video it skips writing hundreds of megabytes and probing them.
+    digest = hashlib.sha256(data).hexdigest()
+    known = _import_ledger(job_id).get(digest) or {}
+    if known.get("kind") == kind and _stored_media_exists(job_id, kind, known.get("upload_id", "")):
+        return {
+            "kind": kind,
+            "upload_id": known["upload_id"],
+            "duration_ms": int(known.get("duration_ms") or 0),
+            "filename": name,
+            "reused": True,
+        }
+
     upload_id = uuid.uuid4().hex[:12]
+
+    def keep(entry: dict) -> dict:
+        _remember_import(job_id, digest, entry)
+        return entry
 
     if kind == "image":
         from PIL import Image as PILImage
@@ -2744,13 +2864,15 @@ def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
             return None
         path = _image_path(job_id, upload_id)
         try:
-            # Normalised to a clean RGB PNG, exactly as `upload_images` does —
-            # one shape of picture on disk, whatever came in.
+            # Normalised to a clean PNG, exactly as `upload_images` does — one
+            # shape of picture on disk, whatever came in — and KEEPING the alpha
+            # when there is any. See `_keeps_alpha`.
             with PILImage.open(io.BytesIO(data)) as im:
-                im.convert("RGB").save(path, "PNG")
+                im.convert("RGBA" if _keeps_alpha(im) else "RGB").save(path, "PNG")
         except Exception:  # noqa: BLE001 — bad/corrupt upload
             return None
-        return {"kind": "image", "upload_id": upload_id, "duration_ms": 0, "filename": name}
+        return keep({"kind": "image", "upload_id": upload_id, "duration_ms": 0,
+                     "filename": name})
 
     if kind == "video":
         import video_frames
@@ -2769,12 +2891,12 @@ def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
             return None
         # ⚠ MEASURED HERE, exactly as `upload_videos` measures — the exporter has
         # to work from the same number, and there is no ffprobe on this install.
-        return {
+        return keep({
             "kind": "video",
             "upload_id": upload_id,
             "duration_ms": video_frames.probe_duration(path),
             "filename": name,
-        }
+        })
 
     ext = os.path.splitext(name)[1].lower()
     if ext not in config.ALLOWED_AUDIO_EXTS:
@@ -2790,12 +2912,86 @@ def _store_import_media(job_id: str, name: str, data: bytes) -> dict | None:
     # ⚠ 0, NOT A GUESS. This server has no audio decoder; the browser measures a
     # track with `decodeAudioData` and `interchange.to_project` falls back to
     # "offset + what plays", which is an honest lower bound.
-    return {"kind": "audio", "upload_id": upload_id, "duration_ms": 0, "filename": name}
+    return keep({"kind": "audio", "upload_id": upload_id, "duration_ms": 0, "filename": name})
+
+
+# Loopback, both families, plus the hostname form a proxy-less dev server sees.
+_LOOPBACK = {"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"}
+
+
+def _may_read_local_media(request: Request | None) -> bool:
+    """Is this server allowed to open the paths the project file recorded?
+
+    ⚠ **ONLY WHEN THE BROWSER IS ON THIS MACHINE.** The paths in a project file
+    (`C:/Users/…/Clips/music.mp3`) are real for a user running this app on their
+    own computer and meaningless for anybody else — on a hosted server that same
+    string points at the SERVER's disk, and reading it would be answering one
+    user's import with another user's files. Loopback is the check because it is
+    the one condition a remote request cannot arrange for itself.
+
+    ⚠ AND THE EXTENSION WHITELIST IN `interchange.local_media_paths` IS THE OTHER
+    HALF, not a nicety. A `<pathurl>` is text inside an uploaded document, so a
+    hand-written project file can name any path it likes; the whitelist is why
+    the worst it can name is a media file.
+
+    `API_IMPORT_LOCAL_MEDIA=on` forces this on for a packaged desktop build whose
+    requests arrive through a local proxy and therefore never look like loopback;
+    `off` disables the whole feature.
+    """
+    mode = config.IMPORT_LOCAL_MEDIA
+    if mode in ("off", "0", "false", "no"):
+        return False
+    if mode in ("on", "1", "true", "yes"):
+        return True
+    host = (getattr(getattr(request, "client", None), "host", "") or "").strip().lower()
+    return host in _LOOPBACK
+
+
+def _fetch_local_media(job_id: str, incoming: dict, stored: dict, library: dict) -> set:
+    """Open the files the project file named, for the ones nobody attached.
+
+    ⚠ **LAST IN THE QUEUE, ON PURPOSE.** What the user attached wins, then the
+    project's own Media pane, and only then the disk. Putting the disk first
+    would store a fresh copy of every file on every import — the duplicate
+    storage that already put 52 files behind 27 names in a real project here.
+
+    Returns the names it fetched, so the report can say so — a file that arrived
+    without being asked for is a good outcome and a surprising one.
+    """
+    # Imported here rather than at the top of the module, exactly as the route
+    # itself does — see G13 on what importing this module costs.
+    import interchange
+
+    fetched: set = set()
+    for base, path in interchange.local_media_paths(incoming).items():
+        stem = os.path.splitext(base)[0]
+        if stored.get(base) or stored.get(stem) or library.get(base) or library.get(stem):
+            continue
+        try:
+            # ⚠ SIZED BEFORE IT IS READ. These paths point at the user's own
+            # footage and a feature film's master is a legal thing to find at the
+            # end of one — reading it into memory to then refuse it is how a
+            # server falls over on an import it was always going to reject.
+            if os.path.getsize(path) > config.MAX_VIDEO_BYTES:
+                continue
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            logger.info("[animatic %s] could not open %s from disk", job_id, path)
+            continue
+        entry = _store_import_media(job_id, os.path.basename(path), data)
+        if entry is None:
+            continue
+        stored.setdefault(base, entry)
+        stored.setdefault(stem, entry)
+        fetched.add(os.path.basename(path))
+    return fetched
 
 
 @router.post("/{job_id}/interchange/import", response_model=AnimaticImportResponse)
 async def import_interchange(
     job_id: str,
+    request: Request,
     document: UploadFile = File(..., description="A Final Cut Pro XML, an EDL, or a .zip from here."),
     media: list[UploadFile] = File(default=[], description="The footage the document names."),
     experimental: bool = Form(
@@ -2811,8 +3007,12 @@ async def import_interchange(
     case the media inside it is used and nothing else need be attached.
 
     ⚠ THE MEDIA IS THE HARD HALF. A project file names files by a path on the
-    machine that wrote it, and neither a browser nor this server can read that
-    path — so the footage has to come too, and is matched BY FILENAME.
+    machine that wrote it, and a browser cannot read that path — so the footage
+    has to come too, and is matched BY FILENAME.
+    ⚠ **UNLESS THIS SERVER IS ON THAT SAME MACHINE**, in which case it opens the
+    recorded paths itself for anything that was not attached, and the user never
+    goes looking for the folder at all. Last in the queue, media extensions only,
+    loopback only — `_may_read_local_media` and `interchange.local_media_paths`.
     ⚠ **A clip whose file did not arrive becomes a labelled colour card** rather
     than being left out: the cut stays whole, every gap is visible and named in
     `placeholders`, and dropping the real file on that row fixes it.
@@ -2890,11 +3090,19 @@ async def import_interchange(
 
     stored: dict = {}
     rejected: list[str] = []
+    # ⚠ WHAT WAS ALREADY HERE, BYTE FOR BYTE. `_store_import_media` is
+    # content-addressed now, so re-importing the same cut reuses the copy this
+    # project already holds instead of doubling its media. Counted so the report
+    # can say it — a user watching a 27-file upload deserves to know that most of
+    # it did not need storing.
+    deduped: list[str] = []
     for name, data in attached:
         entry = _store_import_media(job_id, name, data)
         if entry is None:
             rejected.append(name)
             continue
+        if entry.get("reused"):
+            deduped.append(os.path.basename(name))
         # ⚠ KEYED CASE-INSENSITIVELY, AND ALSO WITHOUT THE EXTENSION. Windows and
         # macOS disagree about case, and an app that transcoded a clip on the way
         # out leaves `shot_03.mov` in the XML and `shot_03.mp4` on disk — matching
@@ -2903,14 +3111,81 @@ async def import_interchange(
         stored.setdefault(base.lower(), entry)
         stored.setdefault(os.path.splitext(base)[0].lower(), entry)
 
+    # ⚠ **THE FILES ALREADY IN THIS PROJECT COUNT TOO.** Until this, an import
+    # looked ONLY at what was attached to its own request — so a project whose
+    # Media pane already held all 27 files still turned every clip into a
+    # placeholder unless every one of them was picked again, and a user who
+    # dragged the one missing file into Media and re-imported was told it had
+    # not arrived while its card sat on screen beside the message.
+    # ⚠ FRESH WINS. `stored` is tried first, so re-attaching a file that has been
+    # re-exported still replaces the old one — the library is a fallback, not an
+    # override.
+    # ⚠ COLOUR CARDS ARE NOT MEDIA. An asset with no `upload_id` (a colour card)
+    # has no file behind it and must not answer for a filename.
+    library = interchange.media_library((job.params or {}).get("assets") or [])
+
+    # ⚠ **AND IF THE FILE IS SITTING RIGHT THERE ON THIS DISK, FETCH IT.** The
+    # report already printed the folder every missing file came from, because
+    # both readers record the full path — and then sent the user off to find that
+    # folder in a file dialog. When this server is on the same computer as the
+    # editor that wrote the project, that is asking a person to do a walk we were
+    # already holding the map for: *"tum khud usko pickup kyun nhi kar rahe ho
+    # jab tumne location mil raha hai"*. Anything still not found stays in the
+    # report, named with its path, for the user to attach by hand.
+    # ⚠ GATED, AND THE GATE IS THE SECURITY BOUNDARY — see `_may_read_local_media`.
+    from_disk: set = set()
+    if _may_read_local_media(request):
+        from_disk = _fetch_local_media(job_id, incoming, stored, library)
+
+    reused: set = set()
+
     def resolve(wanted: str):
         base = os.path.basename((wanted or "").replace("\\", "/"))
-        return stored.get(base.lower()) or stored.get(os.path.splitext(base)[0].lower())
+        stem = os.path.splitext(base)[0].lower()
+        found = stored.get(base.lower()) or stored.get(stem)
+        if found:
+            return found
+        found = library.get(base.lower()) or library.get(stem)
+        if found:
+            reused.add(base)
+        return found
 
     built = interchange.to_project(
         incoming, resolve, background=settings.background, new_id=lambda: uuid.uuid4().hex[:12]
     )
     report = built["report"]
+    # ⚠ SAID OUT LOUD. A clip that resolved to a file the user never attached this
+    # time is a good outcome and a surprising one — silence there is how somebody
+    # ends up wondering which copy of a file their cut is actually using.
+    if reused:
+        report["warnings"].append(
+            f"{len(reused)} file(s) were already in this project's Media and were "
+            "used from there rather than being asked for again: "
+            + ", ".join(sorted(reused)[:6])
+            + ("…" if len(reused) > 6 else "")
+        )
+    # ⚠ AND SO IS THIS ONE, FOR A STRONGER REASON. A file nobody attached, that
+    # nonetheless came in, is the app having opened something on the user's own
+    # disk — they are entitled to be told which files and that it happened, in
+    # the same report they read everything else in.
+    if from_disk:
+        report["warnings"].append(
+            f"{len(from_disk)} file(s) were not attached but were found on this "
+            "computer, at the path the project file recorded, and were used from "
+            "there: "
+            + ", ".join(sorted(from_disk)[:6])
+            + ("…" if len(from_disk) > 6 else "")
+        )
+    # ⚠ SAID PLAINLY, because the alternative reads as the upload having failed.
+    # A user who attaches 27 files and is told nothing was stored would reasonably
+    # conclude the import ignored them; what actually happened is that this
+    # project already had every one of those bytes.
+    if deduped:
+        seen_once = sorted(set(deduped))
+        report["warnings"].append(
+            f"{len(seen_once)} file(s) were already stored in this project and "
+            "were not stored a second time — the copy already here is used."
+        )
 
     # ⚠ COUNTED AGAINST WHAT IS ALREADY ON THE TIMELINE, the way the board import
     # counts. Refused BEFORE the clips are handed over, because the editor would

@@ -147,9 +147,16 @@
   --tool-blue-edge: #6f9fd8;
   --tool-blue-tint: rgba(140, 180, 235, 0.14);
   --disabled-opacity: 0.45;
-  /* Plain-button surface — see the .btn comment. */
+  /* Plain-button surface — see the .btn comment.
+     ⚠ `--btn-border` IS ITS OWN VALUE, NOT `--border`, AND IT IS BRIGHTER THAN
+     ONE. `--border` is the edge of a PANEL — a line whose job is to be barely
+     there — and a button wearing it on a dark page has no edge at all: reported
+     of the import dialog, *"buttun merge ho ja raha hai bg mai"*. A control the
+     user is meant to find must read as a control before the pointer is anywhere
+     near it. The hover (`--primary`) is untouched: *"jab mai jata hun tab
+     highlight ho hota hai ye badhiya hai isko rakhne do"*. */
   --btn-bg: var(--panel-2);
-  --btn-border: var(--border);
+  --btn-border: #3c4360;
   --btn-shadow: none;
   --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.25);

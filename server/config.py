@@ -82,6 +82,23 @@ ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
 # would hit. The real guard on cost is MAX_EXTRACTED_FRAMES in video_frames.py —
 # what matters is how much gets DECODED, not how much gets stored.
 MAX_VIDEO_BYTES = int(os.environ.get("API_MAX_VIDEO_BYTES", str(300 * 1024 * 1024)))
+
+# --- MAY AN IMPORT FETCH ITS OWN FOOTAGE OFF THIS MACHINE'S DISK? ------------
+# A project file records the full path of every clip it uses. When this server
+# is running on the SAME computer as the editor that wrote it, those paths are
+# real and the import can simply open them instead of sending the user off to
+# find the folder in a file dialog. When it is hosted, they are somebody else's
+# paths and reading them is neither possible nor wanted.
+#
+# ⚠ `auto` — THE DEFAULT — MEANS "ONLY FOR A BROWSER ON THIS MACHINE". The
+# request has to come from the loopback address, which is the one thing a remote
+# user cannot forge their way into. `on` forces it (for a packaged desktop build
+# behind a proxy, where every request looks remote) and `off` disables it
+# outright. Whatever this says, `interchange.local_media_paths` will still only
+# ever open a file with a MEDIA extension — see the note there, it is what keeps
+# an attacker-written project file from naming a private file.
+IMPORT_LOCAL_MEDIA = os.environ.get("API_IMPORT_LOCAL_MEDIA", "auto").strip().lower()
+
 # Guard rail on the sequence length — an animatic is a rough cut, not a feature.
 MAX_ANIMATIC_FRAMES = int(os.environ.get("API_MAX_ANIMATIC_FRAMES", "500"))
 # Text clips per animatic. Each boundary splits the timeline into another

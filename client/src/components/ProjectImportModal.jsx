@@ -18,13 +18,21 @@
 // still lands — as a labelled colour card, so the cut is whole and the gap is
 // visible.
 //
-// ⚠ A `.prproj` IS REFUSED FIRST AND GUESSED AT SECOND. Premiere's own save file
-// has no published structure, so the server says no and names the route that
-// always works (export a Final Cut Pro XML from Premiere). Only after reading
-// that does this offer "Try to read it anyway" — and what comes back is badged a
-// GUESS for as long as it is on screen. The order is the whole point: an
-// experimental reader offered as a checkbox up front is one most people would
-// tick without ever seeing the reliable door beside it.
+// ⚠ A `.prproj` GOES STRAIGHT TO THE BEST-EFFORT READER, AND THAT CHANGED.
+// Premiere's own save file has no published structure, so the ROUTE still
+// refuses an unflagged one — that is the API's answer and it stays. What this
+// dialog no longer does is walk the user through the refusal: for months a
+// `.prproj` meant a red panel, then a second button ("Try to read it anyway"),
+// then a SECOND upload of the same folder of footage, before anything was on
+// screen. Reported as exactly that — *"ye red text dikhne ka zaroori nahi hai
+// user ko"*. So the flag goes on the FIRST request, because the extension is
+// already known here.
+// ⚠ NOTHING IS HIDDEN BY DOING THAT, and the difference matters: what came back
+// is still badged **BEST GUESS** for as long as it is on screen, and the first
+// line of `warnings` still says it was read out of a private format and names
+// the route that always works (File › Export › Final Cut Pro XML). The warning
+// moved to where the user actually is — reading the report — instead of
+// standing between them and it.
 //
 // The surface is the editor's own `.modal-overlay` / `.card`, like Workspace and
 // Export beside it.
@@ -104,6 +112,13 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
   // A .zip carries its own media, so asking for more would be a control that
   // does nothing — the same reason the export dialog hides its path box.
   const isZip = Boolean(doc && /\.zip$/i.test(doc.name || ""));
+  // ⚠ OFF THE EXTENSION, NOT OFF THE WORDING OF THE SERVER'S REFUSAL. The
+  // sentence the server sends is written for a person to read and will be
+  // reworded; matching on it would break this silently, and the failure would
+  // look exactly like a file that genuinely cannot be read.
+  // ⚠ AND IT IS READ BEFORE THE FIRST REQUEST NOW, not after a refusal — see the
+  // note at the top. One upload, no red panel, no second button.
+  const isPrproj = Boolean(doc && /\.prproj$/i.test(doc.name || ""));
 
   const pickDoc = (files) => {
     const file = (files || [])[0];
@@ -161,34 +176,40 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
     if (!doc || reading) return;
     setReading(true);
     setError("");
-    setGuessed(experimental);
+    // ⚠ THE FLAG GOES ON THE FIRST TRY FOR A `.prproj`. Reading it strictly first
+    // and retrying on the refusal is the same two round trips the user used to
+    // make by hand — and each one re-uploads the whole folder of footage, which
+    // for the project this was reported from is 27 files. One upload.
+    const wantGuess = experimental || isPrproj;
+    setGuessed(wantGuess);
     try {
       setRead(
-        await api.importProjectFile(animaticId, { document: doc, media, experimental })
+        await api.importProjectFile(animaticId, {
+          document: doc,
+          media,
+          experimental: wantGuess,
+        })
       );
       setStale(false);
     } catch (e) {
       setRead(null);
       setError(e.message || "That file could not be read.");
       // ⚠ A BACKEND THAT NEVER ANSWERED IS NOT A REFUSAL, so the guess was not
-      // actually spent. Hiding the offer here left the user looking at a
-      // network error with no way back to the button they had just pressed —
-      // seen live, when uvicorn's --reload happened to be restarting.
+      // actually spent — seen live, when uvicorn's `--reload` happened to be
+      // restarting. The offer this used to un-hide is gone, but `guessed` still
+      // decides what the footer re-reads with, and a `.prproj` that never
+      // reached the server must not leave it stuck on a state no read produced.
       if (e?.offline) setGuessed(false);
     } finally {
       setReading(false);
     }
   };
 
-  // ⚠ OFFERED OFF THE EXTENSION, not off the wording of the server's refusal.
-  // The sentence the server sends is written for a person to read and will be
-  // reworded; matching on it would break the button silently and nobody would
-  // notice, because the failure looks exactly like a file that genuinely cannot
-  // be read.
-  const isPrproj = Boolean(doc && /\.prproj$/i.test(doc.name || ""));
-  const offerGuess = Boolean(error && isPrproj && !guessed && !reading);
   // What came back IS a guess — badged for as long as it is on screen, not just
-  // in the warnings list somebody may scroll past.
+  // in the warnings list somebody may scroll past. ⚠ THIS BADGE IS NOW THE ONLY
+  // PLACE THE WORD "GUESS" APPEARS BEFORE THE REPORT IS READ, since the refusal
+  // panel that used to precede it is gone (see the header). It does not get to
+  // be subtle.
   const isGuess = read?.reader === "prproj";
 
   // ⚠ THE TITLES GET A LINE OF THEIR OWN, and it is only drawn when there ARE
@@ -485,37 +506,12 @@ export default function ProjectImportModal({ open, animaticId, busy, onClose, on
 
         {error && <p className="error">{error}</p>}
 
-        {/* ⚠ ONLY AFTER THE REFUSAL HAS BEEN READ. The sentence above already
-            names the route that always works; this is the answer for somebody
-            who no longer has Premiere to export from, and it says what it is
-            before it is pressed rather than after. */}
-        {offerGuess && (
-          <div className="an-xchg-loss">
-            <span className="tiny">
-              This can <strong>try</strong> to read the .prproj anyway. It is
-              experimental: the clips, their lengths and their rows are a guess,
-              and effects, titles, colour, speed and volume are not read at all.
-            </span>
-            <div className="an-xchg-actions" style={{ marginTop: "0.55rem" }}>
-              {/* ⚠ A BORDERED `.btn`, NOT A `ghost`, AND NOT `primary` EITHER.
-                  A ghost draws no border and no background, so on screen this
-                  read as a line of text rather than the control it is — and it
-                  is the only thing on the panel there is to press. Gold would
-                  be the other mistake: that would put the experimental route
-                  level with "Read the file" and undo the whole point of making
-                  the refusal come first. Visible, clearly a button, plainly the
-                  second choice. */}
-              <button
-                className="btn"
-                onClick={() => readFile(true)}
-                disabled={reading || busy}
-                title="Open Premiere's own save file with the experimental reader. Check every clip afterwards."
-              >
-                Try to read it anyway
-              </button>
-            </div>
-          </div>
-        )}
+        {/* ⚠ THE "Try to read it anyway" PANEL USED TO LIVE HERE AND IS GONE ON
+            PURPOSE — see the header. A `.prproj` is now read with the best-effort
+            reader on the first press, so there is no refusal to answer and no
+            second button to find. What replaced its job is the BEST GUESS badge
+            on the report and the first line of `warnings`, both of which say
+            more than this panel did and say it where the user is looking. */}
 
         <footer className="an-xchg-foot">
           <span className="tiny muted">

@@ -1151,6 +1151,15 @@ def draw_shapes(canvas: Image.Image, shapes: list[dict]) -> None:
         canvas.paste(layer, at, layer)
 
 
+def _has_alpha(im: Image.Image) -> bool:
+    """Does this file actually carry transparency? Mirrors `_keeps_alpha` in
+    `server/animatics.py`, which decides whether any is STORED in the first
+    place. A palette PNG hides its transparency in `info`, not in its mode."""
+    if im.mode in ("RGBA", "LA"):
+        return True
+    return im.mode == "P" and "transparency" in im.info
+
+
 def draw_overlays(canvas: Image.Image, overlays: list[dict]) -> Image.Image:
     """Composite the overlay PICTURES that are on screen for this moment.
 
@@ -1382,11 +1391,19 @@ def _picture_layer(
         return empty
 
     with Image.open(src_path) as im:
-        # ⚠ STILL `convert("RGB")`, not RGBA. A source PNG's own transparency has
-        # never shown the backdrop through a frame — it came out black — and
-        # honouring it now would silently change every animatic that has ever
-        # used a cut-out still. Alpha on a frame is what the chroma key is for.
-        im = im.convert("RGB")
+        # ⚠ **A CUT-OUT PNG KEEPS ITS TRANSPARENCY NOW, AND THAT REVERSES THE
+        # NOTE THAT USED TO BE HERE.** It read: *still `convert("RGB")`, not
+        # RGBA … honouring it now would silently change every animatic that has
+        # ever used a cut-out still.* The caution was right and the premise is
+        # gone: BOTH upload paths flattened to RGB before writing the file
+        # (`_keeps_alpha` in `server/animatics.py`), so no picture stored before
+        # that fix has any alpha left to honour — nothing existing can change.
+        # What the old behaviour cost was the ordinary case: a logo with a
+        # transparent background arrived as a black card, and on a row above the
+        # film that card is a lid over the whole picture (E57 again, wearing a
+        # different hat). A frame with no alpha is still opened as RGB, so the
+        # cheap path stays cheap.
+        im = im.convert("RGBA" if _has_alpha(im) else "RGB")
         sw, sh = im.size
         if sw <= 0 or sh <= 0:
             raise AnimaticError(f"'{os.path.basename(src_path)}' has no pixels.")

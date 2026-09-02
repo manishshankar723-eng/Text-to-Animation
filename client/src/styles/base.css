@@ -50,9 +50,16 @@
   box-shadow: 0 6px 24px rgba(229, 193, 88, 0.35);
   transform: translateY(-1px);
 }
+/* ⚠ A GHOST BUTTON KEEPS ITS EDGE. `border-color: transparent` is what made
+   "Add the footage", "…or a whole folder" and every Cancel in the app read as
+   plain text sitting on the panel — *"buttun merge ho ja raha hai bg mai … thoda
+   aur stroke karo"*. What makes it a GHOST is the missing FILL, not the missing
+   outline: it stays transparent, so it is still visibly the quieter of two
+   buttons standing side by side, and `.btn:hover` still lifts the edge to gold
+   and drops the panel in behind it. */
 .btn.ghost {
   background: transparent;
-  border-color: transparent;
+  border-color: var(--btn-border);
   box-shadow: none;
 }
 .btn.ghost:hover {

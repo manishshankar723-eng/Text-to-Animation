@@ -2148,14 +2148,22 @@
    `.modal-overlay`, because they cover every dialog in the app. */
 .an-xchg-bar {
   position: sticky;
-  top: 0;
+  /* ⚠ `-1.35rem`, NOT `0`, AND IT IS NOT A NUDGE. A sticky box is pinned by its
+     MARGIN box, so `top: 0` cancelled the negative top margin below and parked
+     the bar a whole card-padding lower — which is what kept the ✕ down beside
+     the heading after it had supposedly been moved to the corner
+     (*"kaha hua niche hi to dikh raha hai"*). Matching the margin puts the
+     BORDER box back at the top of the card, scrolled or not. */
+  top: -1.35rem;
   z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   margin: -1.35rem -1.35rem 0.35rem;
-  padding: 1.1rem 1.35rem 0.7rem;
+  /* ⚠ ROOM ON THE RIGHT FOR THE ✕, which is pinned to the corner below rather
+     than sitting in the flow — a long title must not run under it. */
+  padding: 1.05rem 2.6rem 0.7rem 1.35rem;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   border-radius: 14px 14px 0 0;
@@ -2163,11 +2171,17 @@
 .an-xchg-bar h2 {
   margin: 0;
 }
-/* In the bar it is a flex item, not a corner ornament. */
+/* ⚠ IT GOES IN THE CORNER, LIKE EVERY OTHER DIALOG'S ✕ AND LIKE A WINDOW'S —
+   *"x close buttun ko aur upar kar sakte hai kya … dekho chrome mai kaise hai
+   corner mai"*. Sitting in the flow of the bar it lined up with the middle of
+   the heading, which reads as a control belonging to the title rather than to
+   the window. `.an-xchg-bar` is `sticky`, and sticky is positioned, so this
+   resolves against the BAR — which is what keeps the ✕ in the corner while the
+   report scrolls underneath it. */
 .an-xchg-bar .modal-close {
-  position: static;
-  flex: none;
-  align-self: flex-start;
+  position: absolute;
+  top: 0.35rem;
+  right: 0.45rem;
 }
 
 /* The four facts about what is being exported, two per row. Not a table: the

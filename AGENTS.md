@@ -284,7 +284,15 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-01 — **NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES.** *“galti se mera mouse pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat bekar ho gaya”*, then *“sab jagh fix kar do har workflow mai popup wala”*. ⚠ **THE BACKDROP CLICK WAS THE APP'S OWN CONVENTION AND THAT IS WHY IT WAS DANGEROUS**: all 31 dialogs were written by copying the one beside them, and a dialog's contents are saved NOWHERE — a read that took minutes, a half-typed name, the folder list E63 prints. **Every overlay handler is gone** (including the five-line one a line-based grep would have missed), ✕ and Cancel are the way out, and the test asserts **every dialog still has a ✕** — removing the backdrop from one without it would be a trap, not a fix. Escape is untouched except on the import dialog. ⚠ **AND SO EVERY DIALOG IS DRAGGABLE**: new **`client/src/dialog_move.js`**, installed once from `App.jsx`, finding dialogs by `.modal-overlay` so one written next year gets it for free — heading as the handle, pointer capture, offset kept on the DOM node (which is what makes “it opens in the middle again” free), clamped so a strip always stays on screen. ⚠ **The import dialog's ✕ now STICKS** (`.an-xchg-bar`): it is the one dialog that really scrolls, and a ✕ positioned against the card left the screen the moment the report was read. Two new tests, because a grep cannot see a listener fire (G7): `tests/dialog_frame_check.py` (source, 31 dialogs, detector proved on both shapes) and `tests/dialog_move_browser_check.py` (Chromium, a real mouse — backdrop click, drag, clamp, ✕, re-centring). Green with `interchange_check`, `editor_project_import_check` and `npm run build`. ⚠ **Not clicked through by hand in the signed-in app.** See the Work Log.
+**Last updated:** 2026-09-02 — **AN IMPORTED CUT NOW MOVES, AND THE SAME FILE IS STORED ONCE.** Two long-open items, both asked for by name. ⚠ **(1) THE `.prproj` READER OPENED `<StartKeyframe>` AND STOPPED.** One value per parameter, so a shot that pushed in over four seconds imported FROZEN, and `Scale` was not read anywhere at all — in the reference project that is **21 keyframed shots and 78 fading captions**, most of what a viewer would call the film's motion. The real keys are in `<Keyframes>`; `<StartKeyframe>` is the RESTING value, stamped a hundred hours before the film, and emitting it as a key puts a 100→80 snap on the head of every clip. ⚠ **THE TICKS ARE IN THE CLIP'S SOURCE CLOCK AND `<InPoint>` IS THE ZERO** — proved off the real file: four clips at 0.0s / 3.6s / 7.7s / 9.5s carry identical keyframe ticks and share an in-point, so rebasing against the TIMELINE would have put every key an hour past the end of its own clip. A wrong base does not fail, it silently parks the keys where the value holds, so a track landing nowhere near its clip is **refused and named**. ⚠ **SCALE TRAVELS AS A RELATIVE PUSH, NOT AS PREMIERE'S NUMBER**: Premiere measures Scale against the file's own pixels while this app FITS each picture to the frame, so a 4K still at `Scale 24` is full-frame there and a postage stamp here (statics run 24–150 in that project). The track is divided by its value at the clip's start; a resting Scale is not carried and is named in `warnings`. ⚠ Also learned off the file: with Uniform Scale on, Premiere writes `Scale Height` and parks `Scale Width` at 100 (reading Width squashes every clip), and the clip's **Opacity is its own `AE.ADBE Opacity` component**, invisible to a reader that opens only Motion and Geometry2. ⚠ **AND IT MUST NEVER LIGHT UP A PLACEHOLDER CARD** — those are parked at `opacity: 0` on purpose and a fade writing 1.0 over one is 68 seconds of black. On the real project: **21 of 28 pictures and all 40 captions now animate**, every clip still validating against `AnimaticFrame` / `AnimaticTextClip`. ⚠ **(2) THE SAME BYTES WERE STORED ON EVERY IMPORT.** Re-reading a cut stored a second copy of all 27 files, and within ONE import a file picked from two folders was written twice with only one copy ever referenced — the 52-files-for-27-names pile that three fixes in a row have had to work around. `_store_import_media` is content-addressed now (`sha256` of the incoming bytes against a per-project ledger, written temp-file-then-`os.replace`). ⚠ **HASHED ON THE WAY IN, NOT OFF THE DISK** — a picture is re-encoded to PNG, so stored bytes are not the bytes that arrived; ⚠ **name is not identity**, or a clip gets the wrong picture; ⚠ **the file's existence is checked every time**, because the ledger outlives what it names. New **RULEBOOK E71, E72**; `tests/interchange_check.py` §8o (21 checks, 6 guards proved to fail) and new **`tests/import_dedupe_check.py`** (19 checks, 4 guards proved to fail). Green with `interchange_check`, `effects_check`, `captions_check`, `dialog_frame_check`, `audio_mix_check`, `frame_save_fields_check`, `render_parity` and `editor_project_import_check`. ⚠ **Not yet seen in the running app** — needs a restart and a re-import. See the Work Log.
+
+**Previously:** 2026-09-02 — **THE IMPORT FETCHES ITS OWN FOOTAGE, AND A `.prproj` NO LONGER MAKES ANYBODY PRESS THROUGH A REFUSAL.** *“tum jo missing hai project mai uska local path bata rahe ho magar tum khud usko pickup kyun nhi kar rahe ho jab tumne location mil raha hai”*, and *“ye red text dikhne ka zaroori nahi hai user ko”*. ⚠ **TWO PRESSES REMOVED FROM THE SAME DIALOG, FOR THE SAME REASON — THE APP WAS ASKING THE USER TO DO WORK IT COULD ALREADY DO.** (1) The report has named the FOLDER of every missing file since E63, and then sent the user to walk to it by hand in a file dialog. When this server runs on the **same computer** as the editor that wrote the project — which is the whole local-install case — that path is real, so the import now opens it itself. New pure `interchange.local_media_paths(incoming, exists=…)` (unquotes `%20`, strips `file://localhost/` / `file:///` / `file://`, **puts the leading slash back** on a Mac path, refuses a RELATIVE one rather than resolving it against the server's own directory) plus `_fetch_local_media` / `_may_read_local_media` on the route. ⚠ **MEDIA EXTENSIONS ONLY, AND THAT IS THE SECURITY BOUNDARY**: a `<pathurl>` is text inside an UPLOADED document, so a hand-written project file can name any path on the disk — `media_kind` is the whitelist and is the only reason this is safe to run at all. ⚠ **LOOPBACK ONLY** (`API_IMPORT_LOCAL_MEDIA=auto|on|off`): on a hosted server the path belongs to somebody else's machine, and reading it would answer one user's import with another user's files. ⚠ **LAST IN THE QUEUE** — attached, then the project's own Media (E68), then the disk — because disk-first stores a fresh copy on every import, which is the duplicate storage E68 exists to stop. Anything still not found stays in the report **with its path**, for the user to attach by hand. (2) A `.prproj` cost a red refusal, a second button, and a **second upload of the same 27 files** before anything appeared — advice the user could not take, since they are here because they cannot open Premiere. The dialog knows the extension, so the flag goes on the FIRST request: one upload, straight to the report. ⚠ **The ROUTE's refusal is untouched** and the honesty moved rather than vanished — **BEST GUESS** badge, and `warnings[0]` still names File › Export › Final Cut Pro XML. New **RULEBOOK E69 and E70**; `tests/interchange_check.py` §8n (18 checks) with the whitelist, the relative-path rule, the unquote and the leading slash each **proved to fail** when removed, and `editor_project_import_check.py` (Playwright) rewritten to assert one request, no `.error` on screen and the badge still drawn — its stub still refuses an unflagged read, so a regression to the two-step fails loudly. Green with `effects_check` and `captions_check`. ⚠ **Not yet re-run against a live server** — needs a restart, and only the user has the files. See the Work Log.
+
+**Previously:** 2026-09-01 — **THE FILES ALREADY IN THE PROJECT COUNT AS ARRIVED.** *“is text sahi se aaya but maine location diya tha bg music and logo ka fir v nhi aaya”* — and the disk settled it: job `996b3ba8…` holds the 3.8 MB music and the logo, job `161cdbbd…` (the one on screen) holds **two copies of the voiceover and neither of them**. A NEW project, imported with only the project folder attached — the bytes never reached the server. ⚠ **BUT IT EXPOSED THE GAP THAT MAKES IT RECUR**: an import looked only at what was attached to its OWN request and never at the project's Media pane, so a project already holding all 27 of its files still made every clip a placeholder, and the obvious repair — **drag the missing file into Media and import again** — could not work. It is also why that job stores 52 files for 27 names. `interchange.media_library(assets)` is now a FALLBACK the route tries after the attached files (fresh must win, or a re-rendered shot is silently stale); colour cards and half-finished uploads are excluded, and the report names what it reused. New **RULEBOOK E68**; `tests/interchange_check.py` §8m, break-tested. ⚠ **Still open:** the duplicate STORAGE — resolution reuses the project's copy, the upload still sends and stores another. See the Work Log.
+
+**Previously:** 2026-09-01 — **A CAPTION IS WHERE `MOTION` PUTS IT, AND A CUT-OUT PNG KEEPS ITS HOLE.** The import landed and showed two more faults. ⚠ **THE CAPTIONS WERE READING THE WRONG `Position`**: `AE.ADBE Text`'s own is where the words sit INSIDE the graphic (~0.52, the middle), while what places the clip is **`AE.ADBE Motion`** — 78 of 82 captions at `0.5:0.9211` — which this reader had never opened, so every caption landed mid-screen. **Two** transforms apply and stack: `AE.ADBE Geometry2` is the Transform EFFECT the user had keyframed onto every clip. ⚠ **AND THE VERTICAL IS AN EDGE** like the horizontal in E59 — Premiere stores the BASELINE, this app draws from the CENTRE — **measured against a real export** (episode 7 has both a `.prproj` and its `.mp4`): stored composes to 0.9430, the render's lettering centres at 0.928 ± 0.003, so the gap is **0.36 em**, half a cap height. ⚠ **AND A TRANSPARENT PNG WAS STORED ON BLACK** — `convert("RGB")` ran on the way IN *and* on the way OUT, so a cut-out logo became a black card and, on a row above the film, a lid over the whole picture (E57 again). Both halves fixed; nothing already stored can change, because it was all flattened before it was written. New **RULEBOOK E66** and **E67**; `interchange_check` §8l, `effects_check`, and each fault re-introduced to prove the tests catch it. ⚠ **Not read yet:** Motion's `Scale`, and anything past the FIRST keyframe. ⚠ `effects_parity_check.py` skips here — headless-gl is not installed, a pre-existing gap. See the Work Log.
+
+**Previously:** 2026-09-01 — **NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES.** *“galti se mera mouse pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat bekar ho gaya”*, then *“sab jagh fix kar do har workflow mai popup wala”*. ⚠ **THE BACKDROP CLICK WAS THE APP'S OWN CONVENTION AND THAT IS WHY IT WAS DANGEROUS**: all 31 dialogs were written by copying the one beside them, and a dialog's contents are saved NOWHERE — a read that took minutes, a half-typed name, the folder list E63 prints. **Every overlay handler is gone** (including the five-line one a line-based grep would have missed), ✕ and Cancel are the way out, and the test asserts **every dialog still has a ✕** — removing the backdrop from one without it would be a trap, not a fix. Escape is untouched except on the import dialog. ⚠ **AND SO EVERY DIALOG IS DRAGGABLE**: new **`client/src/dialog_move.js`**, installed once from `App.jsx`, finding dialogs by `.modal-overlay` so one written next year gets it for free — heading as the handle, pointer capture, offset kept on the DOM node (which is what makes “it opens in the middle again” free), clamped so a strip always stays on screen. ⚠ **The import dialog's ✕ now STICKS** (`.an-xchg-bar`): it is the one dialog that really scrolls, and a ✕ positioned against the card left the screen the moment the report was read. ⚠ **And every dialog's ✕ moved into the CORNER**, the way a window's close button sits — *“mai chahta hun upar upar kona mai rahe … aur sare popup mai kar dena”*, with a picture of a browser title bar: at `top: 0.8rem` it lined up with the heading and read as part of the TITLE. One rule, `.modal-close`, so all 31 moved together. Two new tests, because a grep cannot see a listener fire (G7): `tests/dialog_frame_check.py` (source, 31 dialogs, detector proved on both shapes) and `tests/dialog_move_browser_check.py` (Chromium, a real mouse — backdrop click, drag, clamp, ✕, re-centring). Green with `interchange_check`, `editor_project_import_check` and `npm run build`. ⚠ **AND THE BUTTONS NOW LOOK LIKE BUTTONS** — *“buttun merge ho ja raha hai bg mai”*: `.btn.ghost` had `border-color: transparent`, so every Cancel in the app was words on a panel, which since this change is a HIDDEN EXIT. The ghost takes `--btn-border` (its own value now, brighter than a panel's `--border`) and keeps its transparent fill; the hover is untouched, as asked. New **RULEBOOK E66**. ⚠ **Not clicked through by hand in the signed-in app.** See the Work Log.
 
 **Previously:** 2026-09-01 — **THE IMPORT DIALOG NO LONGER CLOSES BY ACCIDENT, AND IT MOVES.** *“galti se mera mouse pop up se bahar screen ke click hua mera popup cut gaya … mera mehnat bekar ho gaya”* — several steps into a real `.prproj` import. ⚠ **THE BACKDROP CLICK IS THIS APP'S OWN CONVENTION AND ON THIS DIALOG IT IS A TRAP**: every other dialog can be dismissed because there is nothing inside it to lose, while this one holds a read that took minutes, the folder list E63 sends the user out to fetch, the warnings still being read, and the `guessed` flag that is the only route back for a `.prproj` — **none of it saved anywhere**. The backdrop now closes nothing, **Escape closes nothing** (one key away from the typing done here, same loss), and **✕ / Cancel are the only ways out**. ⚠ **AND A DIALOG THAT CANNOT BE DISMISSED MUST BE MOVEABLE** — the heading is a drag handle, the offset is cleared on every open, dragging uses **pointer capture** so a fast drag cannot leave the card stuck to the cursor, and it is clamped so a strip always stays on screen (dragged off an edge it would be unreachable, ✕ included). New **RULEBOOK E65**, pinned in `tests/interchange_check.py` §8k with a break-guard proving the one-line backdrop handler coming back is caught. `interchange_check` and `npm run build` green. ⚠ **Not clicked through in a browser** (G2), and **every other dialog in the app still closes on a backdrop click** — deliberately left alone, ask if you want the same treatment there. See the Work Log.
 
@@ -3549,7 +3557,386 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-01 (latest) — NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES
+### 2026-09-02 (latest) — A CLIP ARRIVES AT THE SIZE PREMIERE HAD IT, AND OLD DUPLICATES CAN BE SWEPT
+
+    "test kiya dekho logo sahi se nhi set hua aur transparent v nhi ho kar aay
+     abhi v black dikh raha hai … Purani 52 duplicate file disk par — safai ka
+     rasta banana … Fixed Scale … teeno fix karo"
+
+**1 · The logo was never a transparency fault, and the evidence said so.** The
+project's own media folder was opened before anything was written: the stored
+`ID_logo_RGB_XL.png` is RGBA, 1920×309, with 487,876 of its 593,280 pixels fully
+transparent and its ink a solid blue. E57/E71 had already fixed the alpha. The
+frame was then rendered through `animatic._picture_layer` at the playhead in the
+screenshot, and the picture came back with the logo TRANSPARENT and **1920px
+wide** with its centre at `x=0.152` — the left half off the canvas, the lettering
+4× oversized across the top. Three of the four things the report said were
+wrong; the fourth, the size, was the whole bug.
+
+**2 · And the transparency WAS still broken — in the third place nobody had
+looked.** The user was right and the evidence had to be chased one layer
+further. `ProgramCanvas.jsx` — the WebGL monitor — draws every picture with
+`useAlpha: false`, and its comment gave the reason: *matching `_picture_layer`'s
+deliberate `convert("RGB")`*. `_picture_layer` stopped doing that when E67 was
+fixed. The comment did not.
+
+⚠ **FORCING A FRAME OPAQUE SHOWS THE RGB HIDING UNDER A TRANSPARENT PIXEL, AND
+IN A CUT-OUT PNG THAT IS `0,0,0`.** Measured on the imported letterhead: 487,876
+of its 593,280 pixels are fully transparent and every one of them is pure black.
+So the exported MP4 was correct and the MONITOR drew a solid black band across
+the film — which is the only picture the user ever sees while editing.
+
+⚠ **A STALE COMMENT IS HOW A FIX SHIPS HALF-DONE.** Two of the three places were
+changed, both changes were real, and the fault looked untouched from the chair
+the user was sitting in. RULEBOOK **E67** amended from "TWICE" to "THREE
+PLACES". The colour-card branch stays opaque on purpose — a colour has no alpha,
+and a placeholder card is hidden with `opacity`, never by being see-through.
+
+⚠ **PINNED ON THE SOURCE, NOT ON PIXELS.** `effects_parity_check.py` is the test
+that would catch this and it cannot run on this machine (no headless-gl), so
+`tests/effects_check.py` asserts the call itself — each `compositor.layer` cut at
+its own `});`, because the first draft read to the end of the file, found the
+OVERLAY branch's `useAlpha: true` and passed with the picture branch broken. It
+was mutated and proved to fail.
+
+**3 · Premiere's `Scale` can be converted, and the missing term was in the file.**
+`<FrameRect>` appears 299 times in that project: on every `VideoClipTrackItem`
+as the SEQUENCE frame (1920×1080) and on every `VideoStream` as the FILE's own
+pixels (1672×941 slides, 1280×720 footage, 1920×309 logo). With both, the sum is
+one line — `prproj_scale_base`. Measured on the reference project:
+
+  * the logo at `Scale 24` → **0.24**, the fault that was reported;
+  * a 1672-wide slide at `Scale 114.77` → **1.0**;
+  * 720p footage at `Scale 150` → **1.0**.
+
+⚠ **THE SECOND AND THIRD ARE THE POINT.** "Set to Frame Size" IS this app's fit,
+so every ordinary clip has to come out unchanged or the fix resizes a film
+nobody asked to have resized.
+
+⚠ **AN UNTOUCHED `Scale` OF EXACTLY 100 IS DELIBERATELY NOT CONVERTED.** Premiere
+has two ways to fill a frame and only one writes a number: *Set to Frame Size*
+writes 114.77, *Scale to Frame Size* resamples the media and leaves Scale at 100.
+Nothing in the file tells that clip apart from one nobody touched, so 100 keeps
+this app's fit — which is what both of those clips look like.
+
+⚠ **THE KEYFRAMES REPLACE ONE COMPONENT'S RESTING VALUE, NOT THE PRODUCT.** The
+slides carry Motion at 114.77 AND a Transform running 80 → 100; the track
+overwrites the Transform's resting 100 only, so `scale_rest` is recorded and
+divided back out. Without it the slides would zoom FROM full frame instead of TO
+it. They now arrive as **0.80 → 1.00**, which is what Premiere plays.
+
+New: `_prproj_rect`, `prproj_scale_base`, `frame`/`source` on `_prproj_detail`,
+`scale_rest` on `_prproj_transform`, `scale_base` on `prproj_transform_keys`.
+`to_project` carries `clip["scale"]` onto the frame. Two warnings replace one.
+Pinned in `tests/interchange_check.py` §8p — 14 checks, three guards proved to
+fail. RULEBOOK **E73**; **E72**'s relative-push clause amended to point at it.
+
+**4 · `cleanup_media.py` — the sweep for what the closed leak already spilled.**
+E71 stopped fresh copies being written and could not remove the ones on disk.
+DRY RUN by default; `--apply` deletes. Four guards, each pinned in
+`tests/media_cleanup_check.py`: a folder whose job cannot be read is skipped
+WHOLE (an empty reference set is legitimate, so a missing job would make every
+file an orphan), duplicates are matched on BYTES not names, a referenced file is
+never deleted, and the last copy of anything is never deleted. The id sweep is
+recursive on the `upload_id` KEY, because ids sit on frames, assets, audio
+tracks, Veo clips and overlays and that set grows with the app. The import
+ledger is pruned to match, temp-file-then-`os.replace`. RULEBOOK **E74**.
+
+Run over this machine: **5 duplicate files, 7.0 MB, across 515 project folders**
+— the 52-for-27 project is already gone and the live import holds a clean 28,
+so the pile the rule was written about had mostly cleared itself.
+
+Green: `interchange_check`, `media_cleanup_check`, `import_dedupe_check`,
+`effects_check`, `captions_check`, `dialog_frame_check`, `audio_mix_check`,
+`frame_save_fields_check`, `render_parity`, `animatic_motion_check`,
+`aspect_refit_check`, `animatic_images_check`, `editor_project_import_check`.
+
+### 2026-09-02 — AN IMPORTED CUT MOVES NOW, AND THE SAME FILE IS STORED ONCE
+
+    "Duplicate storage abhi bhi khula hai (upload doosri copy store kar deta hai)
+     Motion ka Scale, aur pehle keyframe ke baad kuch bhi, abhi nahi padha jaata
+     ye dono fix kro"
+
+**1 · The reader opened `<StartKeyframe>` and stopped.**
+One value per parameter. A shot that pushed in over four seconds imported frozen
+at its first frame, and `Scale` was not looked at anywhere at all.
+
+⚠ **EVERY FACT BELOW CAME OUT OF THE USER'S OWN `.prproj`, NOT OUT OF A FIXTURE.**
+E52 is the entry about what a fixture built from the same guess as the code is
+worth. The file was unpacked and measured before a line was written:
+
+  * `<Keyframes>` holds the real keys as `ticks,value,…;ticks,value,…;`.
+    `<StartKeyframe>` is the RESTING value, stamped at tick
+    `-91445760000000000` — a hundred hours before the film. Emitting it as a key
+    puts a snap on the head of every clip: in this file it is `100.` while the
+    first real key, 13ms later, is `80.`.
+  * ⚠ **THE TICKS ARE IN THE CLIP'S SOURCE CLOCK; `<InPoint>` IS THE ZERO.** Four
+    clips at 0.0s, 3.6s, 7.7s and 9.5s on the timeline carry *identical* keyframe
+    ticks (≈3599.98s) and share an `<InPoint>` of ≈3599.97s — so the keys are
+    13ms and 11.0s into each clip. Rebasing against the timeline would have put
+    every key an hour past the end of its own clip.
+  * ⚠ **A WRONG BASE DOES NOT FAIL.** It parks every key an hour away, where the
+    value simply HOLDS: the clip looks un-animated while carrying a hundred
+    meaningless keys. A track that lands nowhere near its own clip is refused and
+    counted, which is the difference between a gap and a lie.
+  * ⚠ **WITH UNIFORM SCALE ON, PREMIERE WRITES `Scale Height` AND PARKS `Scale
+    Width` AT 100.** 99 of 101 Transform effects in this project have no `Scale`
+    param at all; reading Width as a second axis reports every one of them as
+    squashed.
+  * ⚠ **THE CLIP'S OPACITY IS ITS OWN COMPONENT** — `AE.ADBE Opacity`, beside
+    Motion rather than inside it. A reader that opens only Motion and Geometry2
+    cannot see a single fade, and 78 captions here fade.
+
+⚠ **AND SCALE TRAVELS AS A RELATIVE PUSH, NOT AS PREMIERE'S NUMBER.** Premiere
+measures Scale against the FILE's own pixel size while this app fits every
+picture to the frame — a 4K still at `Scale 24` in a 1080 sequence is full-frame
+there and would be a postage stamp here. The statics in this project run from 24
+to 150 with a median of 100, exactly the spread a direct mapping wrecks. So the
+track is divided by its own value at the clip's start (80→100 arrives as
+1.0→1.25), a RESTING scale is not carried across at all, and the report says so
+in a sentence rather than leaving the user to notice.
+
+⚠ **IT MUST NEVER LIGHT UP A PLACEHOLDER CARD.** A card on a row above the bottom
+one is parked at `opacity: 0` on purpose; an imported fade writing 1.0 over it
+puts an opaque rectangle back across the whole film — the sixty-eight-seconds-of-
+black fault that branch exists to prevent. Guarded, and the guard was proved.
+
+⚠ Captions take only `opacity` and `scale`. A caption's resting position is the
+sum of where the graphic sits and where the lettering sits INSIDE it; a position
+track measured on the graphic alone throws the second half away and jumps every
+caption on its first frame. In this project no caption moves anyway — 78 fade,
+78 scale.
+
+**Measured on the real file afterwards:** 21 of 28 pictures and **all 40**
+captions now animate, 62 clips in total, every one still validating against
+`AnimaticFrame` / `AnimaticTextClip` / `AnimaticShape`. Every curve is read as a
+straight line between its keys, and the report says that too.
+
+**2 · The same bytes were stored on every import.**
+Re-reading a cut — the ordinary thing to do after fetching a missing folder —
+stored a second copy of all 27 files. And within ONE import, a file picked from
+two folders (E64 adds by name) was written twice with only one copy ever
+referenced. This is the 52-files-for-27-names pile that E68, E69 and now this
+have all had to work around.
+
+`_store_import_media` is content-addressed: `sha256` of the incoming bytes against
+a per-project ledger.
+
+  * ⚠ **HASHED ON THE WAY IN, NEVER OFF THE DISK.** An imported picture is
+    re-encoded to a clean PNG, so the stored bytes are not the bytes that
+    arrived — a walk of the media folder could never match a second import of the
+    same JPEG. The only moment the original bytes exist is the moment they are
+    stored, which is why the ledger is written there.
+  * ⚠ **NAME IS NOT IDENTITY.** Deduping by filename would hand a clip the WRONG
+    picture — the one failure mode worse than a duplicate.
+  * ⚠ **THE LEDGER IS NOT A PROMISE ABOUT THE DISK.** It outlives the files it
+    names, so existence is checked every time; returning an id whose file was
+    deleted resolves a clip to nothing at all.
+  * ⚠ **PER PROJECT**, because an `upload_id` only resolves inside the animatic
+    that owns the folder it lives in.
+  * ⚠ Written temp-file-then-`os.replace`. A truncated ledger reads as empty and
+    every dedupe the project had learned is gone. A lost or corrupt one costs a
+    duplicate, never an import.
+  * And it is **said out loud** in the report: a user who attaches 27 files and is
+    told nothing was stored would reasonably conclude the upload failed.
+
+**Tests.** `tests/interchange_check.py` §8o — 21 checks, and six were re-run
+against deliberately broken code first: `<StartKeyframe>` emitted as a key,
+`Scale Width` read as the uniform scale, times rebased against nothing, the
+implausible-base guard removed, scale carried as Premiere's own number, and the
+animation applied to placeholder cards. All six failed as they should. New
+**`tests/import_dedupe_check.py`** — 19 checks, four guards proved to fail
+(ledger lookup skipped, keyed on the filename, the file's existence taken on
+trust, one ledger for every project). Green with `interchange_check`,
+`effects_check`, `captions_check`, `dialog_frame_check`, `audio_mix_check`,
+`frame_save_fields_check`, `render_parity` and `editor_project_import_check`.
+
+**Files.** `interchange.py` (`_prproj_keyframe_rows`, `_prproj_scale_param`,
+`_prproj_transform`, `prproj_transform_keys`, `_IMPORT_RANGES`, the reader's
+transform pass and its four new warnings, `to_project` applying it,
+`_import_text_clips` taking the clip's fade),
+`server/animatics.py` (`_import_ledger`, `_remember_import`,
+`_stored_media_exists`, a content-addressed `_store_import_media`, the report's
+dedupe line). New **RULEBOOK E71, E72**.
+
+⚠ **NOT YET SEEN IN THE RUNNING APP.** Everything here is measured against the
+real project file on disk and against the schemas, but the server has not been
+restarted and no import has been watched in the editor.
+
+### 2026-09-02 — THE IMPORT FETCHES ITS OWN FOOTAGE, AND A `.prproj` GOES STRAIGHT TO THE REPORT
+
+    "tum jo missing hai project mai uska local path bata rahe ho magar tum khud
+     usko pickup kyun nhi kar rahe ho jab tumne location mil raha hai to user se
+     kyun karwa rahe ho"
+
+    "ye red text dikhne ka zaroori nahi hai user ko ... jab tum aho jaye to
+     direct import project file pe le kar aao user ko ... so user only timeline
+     wala ek buttun fir dawayega"
+
+Two presses removed from the same dialog, for the same reason: **the app was
+asking the user to do work it was already holding the answer to.**
+
+**1 · The path was being printed at the user instead of used.**
+E63 made a missing file actionable by naming the FOLDER it came from — and then
+that folder sat on screen while the user reproduced it by hand in a file dialog.
+When this server runs on the same computer as the editor that wrote the project,
+which is the entire local-install case, the recorded path is simply *real*.
+
+  * New pure `interchange.local_media_paths(incoming, exists=…)`. It unquotes
+    (`Shared%20Art` is a folder somebody has), strips `file://localhost/`,
+    `file:///` and `file://`, and **puts the leading slash back** for a Mac path —
+    without that, stripping the prefix leaves a RELATIVE path that would resolve
+    against whatever directory uvicorn was started in.
+  * ⚠ **MEDIA EXTENSIONS ONLY, AND THAT IS A SECURITY BOUNDARY.** A `<pathurl>`
+    is text inside an UPLOADED document, so a hand-written project file can name
+    any path on the disk. `media_kind` is the whitelist and is the only reason
+    this is safe to run; `.ssh/id_rsa`, `.env` and `.txt` are pinned as refused.
+  * ⚠ **A RELATIVE PATH IS REFUSED, NEVER RESOLVED** — same reasoning.
+  * ⚠ **LOOPBACK ONLY** — `_may_read_local_media`, `API_IMPORT_LOCAL_MEDIA` =
+    `auto` (default, loopback), `on` (a packaged desktop build behind a local
+    proxy), `off`. On a hosted server that path belongs to somebody else's
+    machine and reading it would answer one user's import with another's files.
+  * ⚠ **LAST IN THE QUEUE**: attached files, then the project's own Media (E68),
+    then the disk. Disk-first would store a fresh copy on every import — the
+    duplicate storage E68 exists to stop (52 files behind 27 names, on this
+    machine, in a real job).
+  * ⚠ **AND IT SAYS SO.** A file that arrived without being asked for means the
+    app opened something on the user's own disk; they get told which. Anything
+    still not found stays in the report **with its path**, to attach by hand.
+
+**2 · A refusal nobody could act on was standing in the way.**
+A `.prproj` meant a red panel ("export a Final Cut Pro XML instead"), then a
+second button ("Try to read it anyway"), then a **second upload of the same 27
+files** before anything appeared. The advice was sound and unusable — a user is
+on that screen *because* they cannot open Premiere. The dialog knows the
+extension, so the flag now goes on the FIRST request.
+
+  * ⚠ **THE ROUTE'S REFUSAL IS UNTOUCHED.** An unflagged `.prproj` is still a
+    415; that is the API's answer to a caller that has not said it wants a guess.
+    What changed is the CLIENT knowing its own file.
+  * ⚠ **THE HONESTY MOVED, IT DID NOT GO.** The result is badged **BEST GUESS**
+    for as long as it is on screen, and `warnings[0]` still names
+    File › Export › Final Cut Pro XML — where the user is actually reading,
+    instead of standing between them and it.
+
+**Tests.** `tests/interchange_check.py` §8n, 18 checks — and four of them were
+re-run against deliberately broken code first: dropping the extension whitelist
+(the private key came back), dropping the absolute-path rule (a relative path
+resolved), dropping the leading-slash restore, and dropping the unquote. All four
+failed as they should, then went green. `tests/editor_project_import_check.py`
+(Playwright) rewritten for the new flow: one request with the flag on it, no
+`.error` on screen, the badge still drawn — and its stub **still refuses an
+unflagged read**, so a regression to the two-step fails loudly rather than
+quietly costing an extra upload of 27 files. Green with `effects_check` and
+`captions_check`.
+
+**Files.** `interchange.py` (`local_media_paths`), `server/animatics.py`
+(`_may_read_local_media`, `_fetch_local_media`, the route's pre-pass and its
+warning), `server/config.py` (`IMPORT_LOCAL_MEDIA`),
+`client/src/components/ProjectImportModal.jsx` (first-press flag, refusal panel
+removed). New **RULEBOOK E69, E70**.
+
+⚠ **NOT RE-RUN AGAINST A LIVE SERVER.** It needs a restart, and only the user has
+the two files this was reported from.
+
+### 2026-09-01 — THE FILES ALREADY IN THE PROJECT COUNT AS ARRIVED
+
+    "is text sahi se aaya but maine location diya tha bg music and logo ka fir v
+     nhi aaya check karo please"
+
+**The text fix worked; the music and logo were a different answer, and the disk
+settled it.** Two animatic jobs on this machine, both of this cut:
+
+  · `996b3ba8…` (22:24) — holds the 3,840,768-byte `tech_oasis` mp3 and a
+    14,770-byte PNG. Both files DID arrive in that import. (14,770 rather than
+    the source's 29,680: that is the old `convert("RGB")` throwing the alpha
+    away, which is E67 and exactly why the logo looked black.)
+  · `161cdbbd…` (23:38, the one in the screenshot) — two copies of the
+    1,240,850-byte voiceover and **no 3.8 MB mp3, no small PNG at all**.
+
+So this was a NEW project, imported with only the project folder attached. The
+bytes never reached the server: not a matching fault, not a rejection.
+
+**But it exposed the gap that makes it keep happening.** An import looked ONLY at
+what was attached to its own request — nothing consulted the project's own Media
+pane. That job already holds all 27 of its files, and re-importing would still
+have made every clip a placeholder unless all 27 were picked again; worse, the
+obvious repair (drag the one missing file into Media, import again) **could not
+work** — the card sat on screen while the report said the file had not arrived.
+It is also why that job holds 52 files for 27 names.
+
+`interchange.media_library(assets)` now builds a fallback the route tries AFTER
+the freshly attached files, so re-attaching a re-rendered shot still wins. A
+colour card, and an asset whose upload never finished, are excluded — neither has
+a file behind it. The report names what it reused rather than resolving silently.
+
+⚠ **THE PURE HALF IS IN `interchange.py` ON PURPOSE**: `server/animatics.py`
+cannot be imported by a test without dragging in config (G13), so logic that
+needs a test does not belong in the route.
+
+Files: `interchange.py` (`media_library`), `server/animatics.py` (the route's
+`resolve` and the sentence it adds). Rule: **RULEBOOK E68**. Tests:
+`tests/interchange_check.py` §8m (eleven checks), break-tested.
+
+**Still open:** an import still uploads and stores a second copy of a file the
+project already has — resolution reuses it, storage does not. And the two files
+in question are on the user's disk; only they can attach them.
+
+### 2026-09-01 — A CAPTION IS WHERE MOTION PUTS IT, AND A CUT-OUT PNG KEEPS ITS HOLE
+
+The import finally landed, and it landed two more faults:
+
+    "mera logo ka background transparent tha but yaha pe black aaya. aur dusri
+     baar mera text sab middle screen mai aaya hai kyun … Premiere pro mai
+     transform pe key laga kar har text clip par daala hua hai so wo transform ka
+     value nhi aa raha hai"
+
+**1 · The captions were reading the wrong Position.** `AE.ADBE Text`'s own
+`Position` is where the words sit INSIDE the graphic — for Premiere's own caption
+template that is ~0.52, the middle — and this reader trusted it. What actually
+places the clip is **`AE.ADBE Motion`**, the Position/Anchor Point every Premiere
+clip carries, which the reader had never opened: **78 of the 82 captions in that
+project sit at `0.5:0.9211`** and the remaining four are title cards at
+`0.5:0.5`. And there are TWO transforms — `AE.ADBE Geometry2` is the Transform
+EFFECT the user had keyframed onto every clip, and it stacks on Motion rather
+than replacing it. Each contributes `Position - Anchor Point`, so an untouched
+clip contributes nothing and it is safe to add to every caption.
+
+⚠ **AND THE VERTICAL TURNED OUT TO BE AN EDGE, exactly like the horizontal in
+E59.** Premiere stores the BASELINE; this app draws from the block's CENTRE. That
+was not guessed — it was **measured against a real export**: episode 7 of the same
+series has both a `.prproj` and a rendered `.mp4`, its stored numbers compose to
+y = 0.9430, and the render's lettering has its band bottom at 0.944 and its
+visual centre at 0.928 ± 0.003 over five frames. At `size_px` 45 in a 1080-high
+frame that gap is **0.36 em** — half a cap height, so typography agrees with the
+fit. The reader now answers 0.9280 for that caption.
+
+**2 · A transparent PNG was stored on black.** `convert("RGB")` paints every
+transparent pixel black, and this app did it twice: both upload paths flattened
+on the way IN, and `_picture_layer` flattened again on the way OUT. Either half
+alone fixes nothing. ⚠ The comment that used to sit in the renderer said
+honouring alpha *"would silently change every animatic that has ever used a
+cut-out still"* — the caution was right and the premise is gone: every picture
+stored before this was flattened, so it has no alpha left to honour. Alpha is
+kept only when the source actually has some (a palette PNG hides its transparency
+in `info`, not in its mode).
+
+Files: `interchange.py` (`_prproj_placement`, `_prproj_point`,
+`PRPROJ_TEXT_BASELINE_TO_CENTRE`), `animatic.py` (`_has_alpha`),
+`server/animatics.py` (`_keeps_alpha`, both upload paths). Rules: **RULEBOOK
+E66** and **E67**. Tests: `tests/interchange_check.py` §8l (nine checks) with
+§8g's old "taken straight across" assertion corrected, `tests/effects_check.py`
+for the render half, and a source guard for the upload half — which cannot be
+imported without dragging in config (**G13**). All three fixes were re-introduced
+one at a time and the tests named each.
+
+**Still open:** Motion's own `Scale` is not read (a caption's size still comes
+from the text component), and only the FIRST keyframe of anything is read — a
+caption that MOVES imports at its first frame. `effects_parity_check.py` skips in
+this environment because headless-gl is not installed; that is a pre-existing gap,
+not caused by this work.
+
+### 2026-09-01 — NO DIALOG IN THE APP CLOSES ON A STRAY CLICK ANY MORE, AND EVERY ONE OF THEM MOVES
 
 Reported mid-import, several steps into a real `.prproj`:
 
@@ -3592,6 +3979,24 @@ stays on screen**, because a card dragged past an edge is unreachable, ✕ and
 all. The hover hint (RULEBOOK E4) is stamped by the module on first hover rather
 than written into thirty dialogs by hand.
 
+⚠ **AND THE ✕ MOVED INTO THE CORNER, IN ALL 31 DIALOGS — TWICE, BECAUSE THE FIRST
+TIME IT DID NOT LAND.** Asked for with a picture of a
+browser title bar — *“mai chahta hun upar upar kona mai rahe … aur sare popup mai
+kar dena”*. At `top: 0.8rem` it lined up with the heading and read as a
+control belonging to the title rather than to the window; `.modal-close` is one
+rule, so all of them moved together, and it kept its padding because since this
+change the ✕ is the way out.
+
+⚠ **AND ON THE IMPORT DIALOG IT STILL SAT LOW AFTERWARDS** — *“kaha hua niche hi to
+dikh raha hai”*. **A sticky box is pinned by its MARGIN box**, so the `top: 0`
+that held the title bar to the top of the card was quietly cancelling the
+negative top margin that pulls it there, and bar and ✕ sat a whole card-padding
+lower with every grep about them green. `top: -1.35rem` — matching the margin —
+puts the border box back at the top. ⚠ **No source check could see this**, so
+`editor_project_import_check.py` now MEASURES it: the ✕ within 12px of the
+card's top corner, still 20px+ across (it is the way out), and still there after
+the report is scrolled — proved to fail on `top: 0` first.
+
 ⚠ **AND THE IMPORT DIALOG'S ✕ NOW STICKS.** `.modal-close` is positioned against
 the card, so on the one dialog that really scrolls it left the screen the moment
 the report was read — no exit and no drag handle in view. `.an-xchg-bar` is a
@@ -3608,9 +4013,25 @@ drags it, it cannot be thrown off any edge, the ✕ and a text field still work,
 and the next one opens centred. Both green, with `interchange_check`,
 `editor_project_import_check` and `npm run build`.
 
+⚠ **AND THE BUTTONS IN THESE DIALOGS DID NOT LOOK LIKE BUTTONS.** Reported off
+the same screen: *"buttun merge ho ja raha hai bg mai … thoda aur
+stroke/highlight karo … agar aur kahi hai to usko v kar do"*. `.btn.ghost`
+carried `border-color: transparent`, so "Add the footage", "…or a whole folder"
+and **every Cancel in the app** were words on a panel — and since the change
+above, a button is the only way OUT of a dialog, so an invisible Cancel is a
+hidden exit. The ghost takes `--btn-border` now and keeps its transparent FILL,
+which is what still makes it the quieter of two buttons side by side. ⚠ And
+`--btn-border` stopped being `var(--border)`: that is a PANEL's edge, a line
+whose job is to be barely there, so a button wearing it on the dark page had no
+edge at all (`#3c4360` now; light was already firm). ⚠ The hover is untouched —
+*"jab mai jata hun tab highlight ho hota hai ye badhiya hai isko rakhne do"*.
+New **RULEBOOK E66**, pinned in `dialog_frame_check.py` §5; checked in both
+themes in Chromium.
+
 Files: `client/src/dialog_move.js` (new), `App.jsx`, `soon-upgrade.css`,
-`animatic-editor.css`, `ProjectImportModal.jsx`, and the 15 components that
-carried an overlay handler. Rule: **RULEBOOK E65**, rewritten app-wide.
+`animatic-editor.css`, `base.css`, `theme.css`, `ProjectImportModal.jsx`, and
+the 15 components that carried an overlay handler. Rules: **RULEBOOK E65**
+(rewritten app-wide) and **E66**.
 
 **Still open:** not clicked through in the real app by hand — the browser check
 drives a probe page, not the signed-in editor.
@@ -24868,6 +25289,49 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
+### 🟡 NEWEST: THE LOGO IS THE SIZE PREMIERE HAD IT, AND OLD DUPLICATES CAN BE SWEPT (2026-09-02)
+
+    "test kiya dekho logo sahi se nhi set hua aur transparent v nhi ho kar aay
+     abhi v black dikh raha hai"
+
+⚠ **RESTART THE SERVER FIRST, THEN IMPORT THE `.prproj` AGAIN.** `interchange.py`
+changed; a running server knows none of it.
+
+**1 · The logo, and it was TWO faults on top of each other.**
+
+  * **Transparency, in the monitor only.** The stored PNG was already correct
+    RGBA (82% of it fully transparent), and the exported MP4 was correct too —
+    but the WebGL monitor forced every picture opaque, which paints the RGB
+    under a transparent pixel, and in this file that is pure black. So the
+    preview drew a solid black band and the MP4 did not. Fixed — RULEBOOK
+    **E67**, now amended to name all three places.
+  * **Size.** The file is 1920×309 and Premiere had it at `Scale 24` — a small
+    mark in the top-left. This app drew it at **full frame width**, four times
+    too wide with its left half off the screen. Fixed — RULEBOOK **E73**.
+
+⚠ **CHECK THE PREVIEW, NOT ONLY THE EXPORT** — those two disagreed until now.
+What to check:
+
+1. The letterhead should sit **small, in the top-left corner**, exactly where
+   Premiere has it, for the whole film.
+2. ⚠ **AND EVERY OTHER CLIP SHOULD LOOK THE SAME AS BEFORE.** The slides and the
+   footage were already the right size and the conversion lands both on 1.0 —
+   if anything else changed size, that is the thing to report.
+3. **The slides now open slightly smaller and zoom to full frame**, which is what
+   Premiere plays: their Transform runs 80 → 100 under a Motion parked at the
+   fit-to-frame number. Before this they opened full-frame and zoomed PAST the
+   edges. Tell me if you would rather have the old look.
+4. The report's wording changed: it now says **"N clip(s) kept the size they were
+   given in Premiere"** instead of the old "shown here at full frame instead".
+5. ⚠ **Easing is still not read** — every curve is a straight line between its
+   keys. Unchanged, and still said in the report.
+
+**2 · The old duplicate copies.** `python cleanup_media.py` — a DRY RUN that
+lists byte-identical media nothing points at, per project. Nothing is deleted
+without `--apply`. Swept over this machine it found **5 files / 7 MB** across
+515 project folders; the "52 files for 27 names" project is already gone, and
+the current import holds a clean 28. See RULEBOOK **E74**.
+
 ### 🟡 NEWEST: NO POPUP ANYWHERE CLOSES BY A STRAY CLICK, AND EVERY POPUP MOVES (2026-09-01)
 
 This is now true of **all 31 dialogs in the app**, not just the import one.
@@ -24883,8 +25347,14 @@ What to check, in order — do it on two or three different popups (⚙ → Impo
 4. **Try to drag it off the screen**: it must stop with a strip still visible,
    never far enough that the ✕ is out of reach.
 5. **Close and reopen** — it comes back in the middle, not where you left it.
-6. On the **import** popup, scroll the report down: the title and the ✕ should
+6. **The ✕ is now up in the top-right corner** of every popup, like a
+   window's close button. Tell me if you want it a hair higher or lower.
+7. On the **import** popup, scroll the report down: the title and the ✕ should
    stay pinned at the top of the box instead of scrolling away.
+
+8. **Every button should now have a faint outline** — "Add the footage", "…or a
+   whole folder", Cancel, and the same buttons on every other screen. They used
+   to blend into the background. Hovering still lights them gold, as before.
 
 ⚠ **Escape is deliberately NOT changed**, except on the import popup. Pressing
 Escape is something you have to mean; a mouse slipping is not. Say the word if

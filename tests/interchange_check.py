@@ -1489,14 +1489,46 @@ def _text_blob(text, font="Tahoma"):
 
 def _graphic_clip(oid, *, end, start=None, texts=(), shape=False,
                   name="Graphic", scale="50.", position="0.2797:0.5219",
-                  instance=None, blob=True, master_text=None):
+                  instance=None, blob=True, master_text=None,
+                  motion=None, transform=None):
     """One Premiere GRAPHIC track item, in the shape the real file writes.
 
     `texts` is one entry per text layer in the graphic — `()` for a shape or an
     Adjustment Layer, two entries for a Graphic Group.
+
+    ⚠ `motion` AND `transform` ARE WHERE THE CLIP IS ON SCREEN, and `position`
+    is only where the words sit INSIDE it. Each takes `(position, anchor)` as
+    "x:y" strings — `AE.ADBE Motion` is the one every Premiere clip has, and
+    `AE.ADBE Geometry2` is the Transform EFFECT somebody adds by hand. See §8l.
     """
     start_el = f"<Start>{start}</Start>" if start is not None else ""
     comps, extra, index = [], [], 0
+    for match, pair in (("AE.ADBE Motion", motion), ("AE.ADBE Geometry2", transform)):
+        if pair is None:
+            continue
+        where, anchor = pair
+        tid = oid + (80 if match.endswith("Motion") else 90)
+        comps.append(f'<Component Index="{index}" ObjectRef="{tid}"/>')
+        extra.append(f"""
+  <VideoFilterComponent ObjectID="{tid}" Version="9">
+    <Component Version="7">
+      <Params Version="1">
+        <Param Index="0" ObjectRef="{tid + 1}"/>
+        <Param Index="1" ObjectRef="{tid + 2}"/>
+      </Params>
+      <DisplayName>Motion</DisplayName>
+    </Component>
+    <MatchName>{match}</MatchName>
+  </VideoFilterComponent>
+  <PointComponentParam ObjectID="{tid + 1}" Version="4">
+    <ParameterID>1</ParameterID><Name>Position</Name>
+    <StartKeyframe>-91445760000000000,{where},0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>
+  </PointComponentParam>
+  <PointComponentParam ObjectID="{tid + 2}" Version="4">
+    <ParameterID>2</ParameterID><Name>Anchor Point</Name>
+    <StartKeyframe>-91445760000000000,{anchor},0,0,0,0,0,0,5,4,0,0,0,0</StartKeyframe>
+  </PointComponentParam>""")
+        index += 1
     if shape:
         comps.append(f'<Component Index="{index}" ObjectRef="{oid + 30}"/>')
         extra.append(f'''
@@ -1683,8 +1715,12 @@ check("a title's SIZE comes from Premiere's Scale (50% → 45px at 1080p)",
       _first["size_px"] == 45.0, str(_first["size_px"]))
 check("…and the left edge Premiere stores becomes the CENTRE this app draws at",
       abs(_first["x"] - 0.5) < 0.02, f'x={_first["x"]} (0.5 ± 0.02)')
-check("…with the vertical place taken straight across",
-      _first["y"] == 0.5219, str(_first["y"]))
+# ⚠ AND THE VERTICAL IS AN EDGE TOO — see §8l. Premiere stores the BASELINE and
+# this app draws from the block's CENTRE, so a caption at 0.5219 set in 45px type
+# sits at 0.5219 - 0.36 × 45/1080. This assertion used to read "taken straight
+# across", which was the same mistake as reading the left edge as a centre.
+check("…and the BASELINE Premiere stores becomes the centre this app draws at",
+      abs(_first["y"] - (0.5219 - 0.36 * 45 / 1080)) < 0.0002, str(_first["y"]))
 _bigger = [t for g in _titles for t in g["graphic"]["texts"]
            if t["text"] == "In simple words"][0]
 check("a title set larger in Premiere is larger here too (72% → 64.8px)",
@@ -2102,7 +2138,7 @@ check("a 16-bit fontcolor is scaled down, not clamped to white",
 # broken code.
 print("\n8d · the ceiling every reader shares")
 
-from server.schemas import AnimaticAudio, AnimaticFrame  # noqa: E402
+from server.schemas import AnimaticAudio, AnimaticFrame, AnimaticTextClip  # noqa: E402
 
 _FPS = 24
 
@@ -2335,6 +2371,682 @@ except Exception as exc:  # noqa: BLE001
     _why = str(exc)
 check("every frame still validates as an AnimaticFrame", _ok,
       "" if _ok else _why)
+
+
+# ---------------------------------------------------------------------------
+# 8l · WHERE a Premiere caption actually sits — Motion, not the text component
+# ---------------------------------------------------------------------------
+#     "dusri baar mera text sab middle screen mai aaya hai kyun … Premiere pro
+#      mai transform pe key laga kar har text clip par daala hua hai so wo
+#      transform ka value nhi aa raha hai"
+#
+# ⚠ **`AE.ADBE Text`'s OWN `Position` IS WHERE THE WORDS SIT INSIDE THE GRAPHIC,
+# NOT ON THE SCREEN.** For a caption built from Premiere's own template that is
+# ~0.52 — the middle — and reading only it put all 40 of a real import's captions
+# within 0.03 of the frame centre when every one of them belonged at the bottom.
+# What puts the graphic at the bottom is the clip's `AE.ADBE Motion`, the
+# Position/Anchor Point every Premiere clip has, which this reader never opened.
+# In the reference project **78 of 82 captions carry `Motion.Position
+# 0.5:0.9211`** and the remaining four are title cards at `0.5:0.5`.
+#
+# ⚠ **AND THERE ARE TWO OF THEM.** `AE.ADBE Geometry2` is the Transform EFFECT
+# added by hand — the user who reported this had keyframed one onto every caption
+# — and it STACKS on Motion rather than replacing it. In that project it happens
+# to be identity, so a reader that took only Motion would have looked correct on
+# this film and been wrong on the next.
+#
+# ⚠ **THE VERTICAL IS AN EDGE, EXACTLY LIKE THE HORIZONTAL IN §8g.** What
+# Premiere stores is the BASELINE and what this app draws from is the block's
+# CENTRE. Measured against a REAL RENDER of episode 7 of the same series: the
+# stored numbers compose to y = 0.9430 and the exported .mp4's lettering has its
+# band bottom at 0.944 and its visual centre at 0.928 ± 0.003 over five frames —
+# which at `size_px` 45 in a 1080-high frame is 0.36 em, half a cap height.
+print(chr(10) + "8l \u00b7 a caption is where MOTION puts it")
+
+_PLACED_XML = f"""<?xml version="1.0" encoding="UTF-8"?>
+<PremiereData Version="3">
+  <VideoTrackGroup ObjectID="260" ClassID="1d7fbd0a" Version="1">
+    <TrackGroup Version="1">
+      <Tracks Version="1"><Track Index="0" ObjectURef="pl-titles"/></Tracks>
+    </TrackGroup>
+    <FrameRate>{_T}</FrameRate>
+    <FrameRect>0,0,1920,1080</FrameRect>
+  </VideoTrackGroup>
+  <VideoClipTrack ObjectUID="pl-titles" ClassID="aaa1" Version="1">
+    <ClipTrack Version="1"><ClipItems Version="1"><TrackItems Version="1">
+      <TrackItem Index="0" ObjectRef="2100"/>
+      <TrackItem Index="1" ObjectRef="2200"/>
+      <TrackItem Index="2" ObjectRef="2300"/>
+      <TrackItem Index="3" ObjectRef="2400"/>
+    </TrackItems></ClipItems></ClipTrack>
+  </VideoClipTrack>
+{_graphic_clip(2100, end=_T * 48, texts=["the lower third"],
+               motion=("0.5:0.9211387038230896", "0.5:0.5"),
+               transform=("0.5:0.5", "0.5:0.5"))}
+{_graphic_clip(2200, end=_T * 96, start=_T * 48, texts=["the title card"],
+               position="0.2797:0.4298", motion=("0.5:0.5", "0.5:0.5"))}
+{_graphic_clip(2300, end=_T * 144, start=_T * 96, texts=["moved by BOTH"],
+               motion=("0.5:0.75", "0.5:0.5"),
+               transform=("0.6:0.6", "0.5:0.5"))}
+{_graphic_clip(2400, end=_T * 192, start=_T * 144, texts=["parked off screen"],
+               motion=("0.5:9.0", "0.5:0.5"))}
+</PremiereData>
+"""
+
+_placed = interchange.read_document(
+    _gzip.compress(_PLACED_XML.encode("utf-8")), "Placed.prproj",
+    fps_hint=24, experimental=True,
+)
+_where = {}
+for _row in _placed["video"]:
+    for _clip in _row["clips"]:
+        for _t in ((_clip.get("graphic") or {}).get("texts") or []):
+            _where[_t["text"]] = _t
+
+check("every placed caption still comes through",
+      len(_where) == 4, str(sorted(_where)))
+
+# 0.5219 (inside the graphic) + (0.9211 - 0.5) (where the clip is) - 0.36×45/1080
+_LOWER = 0.5219 + (0.9211387038230896 - 0.5) - 0.36 * 45 / 1080
+check("a caption lands where MOTION puts it, not where the text layer sits",
+      abs(_where["the lower third"]["y"] - _LOWER) < 0.0002,
+      f'y={_where["the lower third"]["y"]} (wanted {_LOWER:.4f})')
+# ⚠ THE NUMBER THE RENDER WAS MEASURED AT. This is the assertion that would have
+# caught the whole fault: 0.928 is the bottom of the frame, 0.52 is the middle,
+# and the old reader answered 0.52 for all 82.
+check("…which is the 0.928 measured off the real export, not the 0.52 stored",
+      abs(_where["the lower third"]["y"] - 0.928) < 0.002,
+      str(_where["the lower third"]["y"]))
+
+# A clip Premiere has NOT moved contributes nothing, so the text layer's own
+# height is the answer — which is what keeps a two-line title card two lines.
+_CARD = 0.4298 - 0.36 * 45 / 1080
+check("a clip at the frame centre leaves the words where they were set",
+      abs(_where["the title card"]["y"] - _CARD) < 0.0002,
+      f'y={_where["the title card"]["y"]} (wanted {_CARD:.4f})')
+
+# ⚠ BOTH TRANSFORMS, SUMMED. Reading only Motion gives 0.7719 here and looks
+# perfectly plausible; the Transform effect is worth another 0.1.
+_BOTH_Y = 0.5219 + (0.75 - 0.5) + (0.6 - 0.5) - 0.36 * 45 / 1080
+_BOTH_X = _where["moved by BOTH"]["x"]
+check("the Transform EFFECT stacks on Motion rather than being ignored",
+      abs(_where["moved by BOTH"]["y"] - _BOTH_Y) < 0.0002,
+      f'y={_where["moved by BOTH"]["y"]} (wanted {_BOTH_Y:.4f})')
+# ⚠ AGAINST THE SAME CAPTION WITHOUT THE SIDEWAYS MOVE, not against a number
+# typed here: the base x is the left edge PLUS half the line's own width (§8g),
+# so a literal would be re-deriving that fit and would drift the moment the
+# fixture's wording changed.
+_BASE_X = 0.2797 + (len("moved by BOTH") * 45 * 0.5 / 2) / 1920
+check("…and it moves the caption sideways too, not only down",
+      abs(_BOTH_X - (_BASE_X + 0.1)) < 0.0002, f"x={_BOTH_X} (wanted {_BASE_X + 0.1:.4f})")
+
+# ⚠ AND A CAPTION PREMIERE PARKED OFF-SCREEN MUST NOT FAIL THE IMPORT.
+# `AnimaticTextClip` takes -1..2; anything outside that is a 422 on the whole
+# timeline, which is the 8d failure over again.
+check("a caption parked far outside the frame is clamped, not left to 422",
+      _where["parked off screen"]["y"] == 2.0,
+      str(_where["parked off screen"]["y"]))
+try:
+    for _t in _where.values():
+        AnimaticTextClip(**{
+            "id": "t", "layer_id": "l", "text": _t["text"],
+            "start_ms": 0, "duration_ms": 1000, "place": "free",
+            "x": _t["x"], "y": _t["y"], "size_px": _t["size_px"],
+        })
+    _ok_text = True
+except Exception as exc:  # noqa: BLE001
+    _ok_text, _why_text = False, str(exc)
+check("every placed caption still validates as an AnimaticTextClip", _ok_text,
+      "" if _ok_text else _why_text)
+
+
+# ---------------------------------------------------------------------------
+# 8m · The files already IN the project count as arrived
+# ---------------------------------------------------------------------------
+#     "maine location diya tha bg music and logo ka fir v nhi aaya"
+#
+# ⚠ **AN IMPORT USED TO SEE ONLY WHAT WAS ATTACHED TO ITS OWN REQUEST.** Nothing
+# looked at the project's Media pane, so a project already holding all 27 of its
+# files still turned every clip into a placeholder unless every one of them was
+# picked again — and the obvious repair, dragging the ONE missing file into Media
+# and importing again, could not work: the card sat on screen while the report
+# said the file had not arrived. It also meant a second import stored a second
+# copy of everything (a real job on this machine holds 52 files for 27 names).
+#
+# ⚠ **FRESH STILL WINS.** The library is a FALLBACK. Re-attaching a file that has
+# been re-exported must still replace the older copy, or an import silently uses
+# a stale cut of a shot the user deliberately re-rendered.
+print(chr(10) + "8m · the project's own Media counts as arrived")
+
+_LIB = interchange.media_library([
+    {"kind": "audio", "label": "music.mp3", "upload_id": "old-music", "duration_ms": 90},
+    {"kind": "image", "label": "logo.png", "upload_id": "old-logo"},
+    {"kind": "video", "label": "shot_03.mp4", "upload_id": "old-shot"},
+    # ⚠ A COLOUR CARD. No file behind it, so it must not answer for a name.
+    {"kind": "color", "label": "Black", "upload_id": "", "color": "#000000"},
+    # An asset the client made before an upload finished — no id, no answer.
+    {"kind": "image", "label": "half.png", "upload_id": ""},
+])
+check("a stored file is found by its full name",
+      _LIB.get("music.mp3", {}).get("upload_id") == "old-music", str(_LIB.get("music.mp3")))
+# ⚠ THE STEM TOO, for the same reason the attached files are keyed both ways: an
+# app that transcodes on the way out leaves `shot_03.mov` in the project file.
+check("…and by its stem, so a re-encoded clip still matches",
+      _LIB.get("shot_03", {}).get("upload_id") == "old-shot", str(_LIB.get("shot_03")))
+check("its kind and length come across, so audio stays audio",
+      _LIB["music.mp3"]["kind"] == "audio" and _LIB["music.mp3"]["duration_ms"] == 90,
+      str(_LIB["music.mp3"]))
+check("a colour card is NOT offered as a file",
+      "black" not in _LIB, str(sorted(_LIB)))
+check("…nor is an asset whose upload never finished",
+      "half.png" not in _LIB, str(sorted(_LIB)))
+
+# And the whole point, end to end: a timeline naming two files, with NOTHING
+# attached and both of them already in the project.
+_HAVE = {"shot.png": {"kind": "image", "upload_id": "u-pic", "duration_ms": 0},
+         "vo.mp3": {"kind": "audio", "upload_id": "u-vo", "duration_ms": 0}}
+
+
+def _library_only(name):
+    """`resolve` with an EMPTY upload — the library is all there is."""
+    return _HAVE.get((name or "").lower())
+
+
+_reused = interchange.to_project(
+    {
+        "reader": "test", "name": "Reused", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"p": {"name": "shot.png", "pathurl": ""},
+                  "a": {"name": "vo.mp3", "pathurl": ""}},
+        "video": [{"clips": [_c(0, 240, name="pic", file="p")], "transitions": []}],
+        "audio": [{"clips": [_c(0, 240, name="vo", file="a")]}],
+        "warnings": [],
+    },
+    _library_only, background="#000000",
+)
+check("a picture already in the project is NOT a placeholder",
+      _reused["frames"][0]["kind"] == "image", str(_reused["frames"][0]["kind"]))
+check("…and the sound already in the project actually plays",
+      len(_reused["audio_tracks"]) == 1, str(_reused["audio_tracks"]))
+check("…so nothing is reported missing at all",
+      _reused["report"]["missing"] == [] and _reused["report"]["placeholders"] == [],
+      str(_reused["report"]["missing"]))
+
+# ⚠ AND THE ROUTE HAS TO SAY IT HAPPENED. A clip that resolved to a file the user
+# never attached this time is a good outcome and a surprising one; silence is how
+# somebody ends up unsure which copy of a file their cut is using.
+# ⚠ READ AS TEXT. Importing `server/animatics.py` drags in config, and G13 is
+# the entry about what that cost the last time a test did it.
+_route_src = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "server", "animatics.py"),
+    encoding="utf-8",
+).read()
+check("the route tells the user when it used the project's own copy",
+      "already in this project's Media" in _route_src, "")
+check("…and the library is a FALLBACK — what was attached is tried first",
+      _route_src.index("found = stored.get(base.lower())")
+      < _route_src.index("found = library.get(base.lower())"), "")
+
+
+# ---------------------------------------------------------------------------
+# 8n · The path was always there — stop printing it at the user
+# ---------------------------------------------------------------------------
+#     "tum jo missing hai project mai uska local path bata rahe ho magar tum
+#      khud usko pickup kyun nhi kar rahe ho jab tumne location mil raha hai to
+#      user se kyun karwa rahe ho"
+#
+# ⚠ **THE REPORT KNEW WHERE EVERY MISSING FILE LIVED AND SENT A PERSON TO GO AND
+# GET IT.** §8k made "missing" actionable by naming the folder; this is the next
+# step, and it is the obvious one once the folder is on screen — when this server
+# is running on the same computer as the editor that wrote the project, that
+# folder is right there. Asking the user to reproduce a path we are holding, by
+# hand, in a file dialog, is the work the machine should have done.
+#
+# ⚠ **AND THE EXTENSION WHITELIST IS THE SECURITY BOUNDARY, NOT A TIDINESS
+# RULE.** A `<pathurl>` is text inside an UPLOADED document, so a hand-written
+# project file can name any path on the disk it likes. `media_kind` is what stops
+# `.../id_rsa` or `.../.env` from being opened, stored, and served back — the
+# checks below are the ones that must never be allowed to go green by accident.
+print(chr(10) + "8n · a missing file whose path is on this disk is fetched, not asked for")
+
+_DISK = {os.path.normpath(p) for p in (
+    "C:/Users/Admin/Clips/music.mp3",
+    "C:/Users/Admin/Series/ID logo.png",
+    "/Users/me/Movies/shot.mov",
+    "C:/Users/Admin/.ssh/id_rsa",
+    "C:/Users/Admin/secrets.env",
+    "C:/Users/Admin/Clips/notes.txt",
+    # ⚠ THESE TWO ARE THE POINT OF THE RELATIVE-PATH CHECKS BELOW, and without
+    # them those checks pass for the wrong reason. A relative path is resolved
+    # against whatever directory the server was started in, so the only way to
+    # prove it is being REFUSED rather than merely not found is to put a file
+    # exactly where the refusal is stopping it from looking.
+    "Clips/music.mp3",
+    "music.mp3",
+)}
+
+
+def _on_disk(path):
+    """A disk described rather than written — see `local_media_paths(exists=…)`."""
+    return os.path.normpath(path) in _DISK
+
+
+def _paths(*pathurls):
+    return interchange.local_media_paths(
+        {"files": {str(i): {"name": "", "pathurl": p}
+                   for i, p in enumerate(pathurls)}},
+        exists=_on_disk,
+    )
+
+
+# A `.prproj` writes a bare Windows path; an `xmeml` writes a `file://` URL.
+_found = _paths(
+    "C:\\Users\\Admin\\Clips\\music.mp3",
+    "file://localhost/C:/Users/Admin/Series/ID%20logo.png",
+    "file:///Users/me/Movies/shot.mov",
+)
+check("a Windows path out of a .prproj is found on this disk",
+      os.path.normpath(_found.get("music.mp3", "")) ==
+      os.path.normpath("C:/Users/Admin/Clips/music.mp3"), str(_found))
+# ⚠ UNQUOTED. Every real path in the project this was reported from has spaces in
+# it, and an XML writes them as `%20` — matching without unquoting finds nothing
+# and looks exactly like the feature not working.
+check("…and a file:// URL with %20 in it, unquoted first",
+      "id logo.png" in _found, str(sorted(_found)))
+# ⚠ THE LEADING SLASH GOES BACK ON. Stripping `file:///` off a Mac path leaves a
+# RELATIVE one, which would then resolve against the server's own directory.
+check("…and a Mac path keeps the / that the prefix took with it",
+      os.path.normpath(_found.get("shot.mov", "")) ==
+      os.path.normpath("/Users/me/Movies/shot.mov"), str(_found))
+check("keys are lowercased, the way `resolve` looks a name up",
+      sorted(_found) == ["id logo.png", "music.mp3", "shot.mov"], str(sorted(_found)))
+
+# --- and now the ones that must stay shut -----------------------------------
+check("a PRIVATE KEY on the same disk is not a media file and is not opened",
+      _paths("C:/Users/Admin/.ssh/id_rsa") == {}, str(_paths("C:/Users/Admin/.ssh/id_rsa")))
+check("…nor is a .env sitting beside the footage",
+      _paths("C:/Users/Admin/secrets.env") == {}, "")
+check("…nor a .txt, even one in the project's own Clips folder",
+      _paths("C:/Users/Admin/Clips/notes.txt") == {}, "")
+# ⚠ A RELATIVE PATH IS RELATIVE TO A MACHINE WE DO NOT HAVE. Resolving it here
+# reads a same-named file out of whatever directory uvicorn was started in.
+check("a relative path is refused rather than resolved against the server's cwd",
+      _paths("Clips/music.mp3") == {}, str(_paths("Clips/music.mp3")))
+check("…and so is a bare filename",
+      _paths("music.mp3") == {}, "")
+check("a media path that is NOT on this disk simply does not come back",
+      _paths("C:/Users/Admin/Clips/gone.mp3") == {}, "")
+check("an empty pathurl — an EDL carries none — is skipped, not crashed on",
+      _paths("", "   ") == {}, "")
+
+# --- the route's half: gated, last in the queue, and said out loud ----------
+check("the route asks permission before it opens anything on this disk",
+      "_may_read_local_media(request)" in _route_src, "")
+check("…and loopback is what that permission means by default",
+      "_LOOPBACK" in _route_src and "127.0.0.1" in _route_src, "")
+# ⚠ LAST. Disk BEFORE the project's own Media would store a fresh copy of every
+# file on every import — the duplicate storage that already put 52 files behind
+# 27 names in a real project on this machine.
+check("the disk is tried only for what neither the upload nor the library had",
+      "stored.get(base) or stored.get(stem) or library.get(base) or library.get(stem)"
+      in _route_src, "")
+check("…and the report says which files were taken off this computer",
+      "found on this " in _route_src and "from_disk" in _route_src, "")
+
+# --- and the dialog stops making the user press twice for a .prproj ---------
+# ⚠ THE RED PANEL AND THE SECOND BUTTON ARE GONE, and the flag moved onto the
+# FIRST request — a strict read followed by a retry is two uploads of the same
+# 27 files, which is the wait the user was complaining about.
+_modal_src = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "client", "src", "components", "ProjectImportModal.jsx"),
+    encoding="utf-8",
+).read()
+check("a .prproj is read with the best-effort reader on the FIRST press",
+      "const wantGuess = experimental || isPrproj;" in _modal_src, "")
+check("…so the refusal panel is no longer in the dialog at all",
+      "offerGuess" not in _modal_src, "")
+# ⚠ AND THE HONESTY IT CARRIED HAS TO STILL BE SOMEWHERE. The badge is now the
+# only thing on screen that says "guess" before the report is read.
+check("…but the BEST GUESS badge that replaced it is still drawn",
+      "isGuess" in _modal_src and 'read?.reader === "prproj"' in _modal_src, "")
+
+
+# ---------------------------------------------------------------------------
+# 8o · The move, the zoom and the fade — everything after the first keyframe
+# ---------------------------------------------------------------------------
+#     "Motion ka Scale, aur pehle keyframe ke baad kuch bhi, abhi nahi padha
+#      jaata — ye fix kro"
+#
+# ⚠ **THE READER OPENED `<StartKeyframe>` AND STOPPED.** One value per parameter,
+# so a shot that pushed in over four seconds arrived frozen at its first frame,
+# and `Scale` was not looked at anywhere at all. In the reference project that is
+# 21 shots with a keyframed zoom and 78 captions that fade in and out — most of
+# what a viewer would call the film's motion.
+#
+# The shape, read off a real `.prproj` rather than guessed at:
+#   · `<StartKeyframe>time,value,…>` is the RESTING value, stamped a hundred
+#     hours before the film. It is NOT a keyframe and emitting it as one puts a
+#     snap on the head of every clip (100 → 80 in thirteen milliseconds, in the
+#     file this was read from).
+#   · `<Keyframes>` is `ticks,value,…;ticks,value,…;` — the real ones.
+#   · The ticks are in the clip's own SOURCE clock, so `<InPoint>` is the zero.
+#     Four clips at 0.0s, 3.6s, 7.7s and 9.5s on the timeline all carry the same
+#     keyframe ticks and all share an `<InPoint>` — rebasing against the TIMELINE
+#     would have put every key an hour past the end of its own clip.
+#   · With Uniform Scale on, Premiere writes the value into `Scale Height` and
+#     parks `Scale Width` at 100 — reading Width as a second axis reports every
+#     one of those clips as squashed.
+print(chr(10) + "8o · Motion, Transform and Opacity — the whole curve, not the first key")
+
+_TPS = interchange.PRPROJ_TICKS_PER_SECOND
+
+
+def _param(name, start, keys=""):
+    """One `<VideoComponentParam>`, the way a real .prproj writes one."""
+    rows = "".join(f"{int(t)},{v},0,0,0,0,0,0;" for t, v in keys) if keys else ""
+    return (f'<VideoComponentParam ObjectID="{_param.n}">'
+            f"<Name>{name}</Name>"
+            f"<StartKeyframe>-91445760000000000,{start},0,0,0,0,0,0</StartKeyframe>"
+            + (f"<Keyframes>{rows}</Keyframes>" if rows else "")
+            + "</VideoComponentParam>")
+
+
+def _prproj_fragment(components) -> tuple:
+    """`(by_id, root object id)` for a track item carrying these components."""
+    _param.n = 900
+    body = []
+    refs = []
+    for match, params in components:
+        cid = _param.n = _param.n + 1
+        holders = []
+        for name, start, keys in params:
+            _param.n += 1
+            holders.append((_param.n, _param(name, start, keys)))
+        body.append(
+            f'<VideoFilterComponent ObjectID="{cid}"><Component><Params>'
+            + "".join(f'<Param ObjectRef="{pid}"/>' for pid, _ in holders)
+            + f"</Params></Component><MatchName>{match}</MatchName>"
+              "</VideoFilterComponent>"
+            + "".join(xml for _, xml in holders)
+        )
+        refs.append(cid)
+    doc = ('<PremiereData><VideoClipTrackItem ObjectID="1">'
+           + "".join(f'<Component ObjectRef="{r}"/>' for r in refs)
+           + "</VideoClipTrackItem>" + "".join(body) + "</PremiereData>")
+    root = ET.fromstring(doc)
+    return interchange._prproj_index(root), "1"
+
+
+_param.n = 900
+
+# --- the rows themselves ----------------------------------------------------
+_rows_el = ET.fromstring(_param("Opacity", "100.", [(10, "100."), (20, "0.")]))
+_rows = interchange._prproj_keyframe_rows(_rows_el)
+check("every keyframe is read, not just the first",
+      [v for _, v in _rows] == ["100.", "0."], str(_rows))
+# ⚠ THE ONE THAT WOULD PUT A SNAP ON EVERY CLIP. `<StartKeyframe>` sits a hundred
+# hours before the film; emitting it as a key makes the value jump from the
+# resting one to the first real one in whatever gap is left.
+check("…and the resting <StartKeyframe> is NOT one of them",
+      all(t >= 0 for t, _ in _rows), str(_rows))
+check("a parameter with no <Keyframes> reads as no animation",
+      interchange._prproj_keyframe_rows(ET.fromstring(_param("Scale", "50."))) == [], "")
+check("…while its resting value still reads as before",
+      interchange._prproj_keyframe_value(ET.fromstring(_param("Scale", "50."))) == "50.", "")
+
+# --- one clip's whole transform ---------------------------------------------
+# A Motion parked at 150% (a punch-in Premiere measures its own way), a Transform
+# zooming 80 → 100 with Uniform Scale ON, and a separate Opacity component fading
+# out. Exactly the three components a real clip carries.
+_by_id, _root = _prproj_fragment([
+    ("AE.ADBE Motion", [("Scale", "150.", ()), ("Position", "0.6:0.5", ()),
+                        ("Anchor Point", "0.5:0.5", ())]),
+    ("AE.ADBE Geometry2", [("Scale Height", "100.", ((0, "80."), (2 * _TPS, "100."))),
+                           ("Scale Width", "100.", ())]),
+    ("AE.ADBE Opacity", [("Opacity", "100.", ((0, "100."), (_TPS, "0.")))]),
+])
+_tr = interchange._prproj_transform(_by_id, _root)
+check("the Position offset is summed off Anchor Point as before",
+      abs(_tr["x"] - 0.1) < 1e-9 and abs(_tr["y"]) < 1e-9, str((_tr["x"], _tr["y"])))
+# ⚠ `Scale Width` IS NOT A SECOND AXIS. With Uniform Scale on it is parked at 100
+# and `Scale Height` carries the value; reading Width would squash the clip.
+check("Scale Height is taken as the uniform scale when there is no Scale",
+      "scale" in _tr["tracks"] and len(_tr["tracks"]["scale"]) == 2, str(_tr["tracks"].keys()))
+check("the fade is found on its own AE.ADBE Opacity component",
+      "opacity" in _tr["tracks"], str(sorted(_tr["tracks"])))
+check("…and Motion's resting Scale is collected as a static, not as a track",
+      abs(_tr["scale"] - 1.5) < 1e-9, str(_tr["scale"]))
+
+# --- rebasing, normalising, clamping ----------------------------------------
+_keys = interchange.prproj_transform_keys(_tr, in_ticks=0, length_ms=3000)
+# ⚠ NORMALISED. Premiere measures Scale against the FILE's pixels and this app
+# fits every picture to the frame, so 80 → 100 travels as "×1.25 by the end",
+# never as 0.8 → 1.0. The reference project's statics run 24 to 150; mapping
+# those directly turns a full-frame 4K still into a postage stamp.
+check("a scale animation arrives RELATIVE to where the clip starts",
+      [k["v"] for k in _keys["keyframes"]["scale"]] == [1.0, 1.25],
+      str(_keys["keyframes"]["scale"]))
+check("…and the fade arrives as 0..1, not 0..100",
+      [k["v"] for k in _keys["keyframes"]["opacity"]] == [1.0, 0.0],
+      str(_keys["keyframes"]["opacity"]))
+check("…in milliseconds from the clip's own start",
+      [k["t"] for k in _keys["keyframes"]["opacity"]] == [0, 1000],
+      str(_keys["keyframes"]["opacity"]))
+# ⚠ THE IN-POINT IS THE ZERO, and this is the assertion that pins it. The same
+# component read against a clip whose source starts one second in must produce
+# keys one second earlier.
+_shifted = interchange.prproj_transform_keys(_tr, in_ticks=_TPS, length_ms=3000)
+check("the clip's <InPoint> is what the times are measured from",
+      [k["t"] for k in _shifted["keyframes"]["opacity"]] == [-1000, 0],
+      str(_shifted["keyframes"]["opacity"]))
+# ⚠ A WRONG BASE DOES NOT FAIL — IT SILENTLY PARKS EVERY KEY AN HOUR AWAY, where
+# the value HOLDS and the clip looks un-animated while carrying a hundred
+# meaningless keys. Refused and named instead.
+_lost = interchange.prproj_transform_keys(_tr, in_ticks=3600 * _TPS, length_ms=3000)
+check("a track whose times land nowhere near the clip is refused, not used",
+      _lost["keyframes"] == {} and sorted(_lost["dropped"]) == ["opacity", "scale"],
+      str(_lost))
+# Faithful, but worth saying: Premiere holds it at one value too.
+_held = interchange.prproj_transform_keys(_tr, in_ticks=-4 * _TPS, length_ms=1000)
+check("an animation trimmed entirely off its own clip is flagged, not dropped",
+      _held["keyframes"] and sorted(_held["outside"]) == ["opacity", "scale"], str(_held))
+
+# A parameter that is keyframed but never actually changes — the reference
+# project keyframes Position on 21 clips and moves it nowhere.
+_flat, _flat_root = _prproj_fragment([
+    ("AE.ADBE Geometry2", [("Position", "0.5:0.5", ((0, "0.5:0.5"), (_TPS, "0.5:0.5"))),
+                           ("Anchor Point", "0.5:0.5", ())]),
+])
+_flat_keys = interchange.prproj_transform_keys(
+    interchange._prproj_transform(_flat, _flat_root), in_ticks=0, length_ms=2000
+)
+check("a keyframed property that never moves writes no track at all",
+      _flat_keys["keyframes"] == {}, str(_flat_keys["keyframes"]))
+
+# ⚠ EVERY VALUE IS CLAMPED TO WHAT `AnimaticFrame` ACCEPTS. A clip Premiere
+# scaled to 4000% is legal there; here it is a 500 with no message and the whole
+# import lost, which is the rule `IMPORT_MAX_CLIP_MS` exists for.
+_wild, _wild_root = _prproj_fragment([
+    ("AE.ADBE Motion", [("Scale", "100.", ((0, "100."), (_TPS, "400000."))),
+                        ("Position", "0.5:0.5", ((0, "0.5:0.5"), (_TPS, "-40.:80."))),
+                        ("Anchor Point", "0.5:0.5", ())]),
+])
+_wild_keys = interchange.prproj_transform_keys(
+    interchange._prproj_transform(_wild, _wild_root), in_ticks=0, length_ms=2000
+)["keyframes"]
+check("a runaway scale is clamped to what the schema takes",
+      max(k["v"] for k in _wild_keys["scale"]) == 10.0, str(_wild_keys["scale"]))
+check("…and a position parked off the world with it",
+      min(k["v"] for k in _wild_keys["x"]) == -2.0
+      and max(k["v"] for k in _wild_keys["y"]) == 3.0, str(_wild_keys))
+
+# ---------------------------------------------------------------------------
+# 8p · A FIXED Scale, carried across through the file's own pixel size
+# ---------------------------------------------------------------------------
+# What this section is about, and it is one sum:
+#
+#   Premiere  width fraction = source_w × scale / frame_w
+#   here      width fraction = our_scale × min(1, source_aspect / frame_aspect)
+#
+# Both `<FrameRect>`s are in the project file — the clip item's is the SEQUENCE
+# frame, a `VideoStream`'s is the FILE — so the sum can be done, which is what
+# the reader used to say it could not. The numbers below are the reference
+# project's: a 1672×941 slide at Scale 114.77 (Premiere's "Set to Frame Size"),
+# 1280×720 footage at 150, and the 1920×309 logo at 24 that arrived four times
+# too wide with its left half off the screen.
+print(chr(10) + "8p · A fixed Scale, through the file's own pixel size")
+
+_rects = interchange._prproj_index(ET.fromstring(
+    '<PremiereData><VideoClipTrackItem ObjectID="1">'
+    "<FrameRect>0,0,1920,1080</FrameRect><SubClip ObjectRef=\"2\"/>"
+    '</VideoClipTrackItem>'
+    '<VideoStream ObjectID="2"><FrameRect>0,0,1920,309</FrameRect></VideoStream>'
+    "</PremiereData>"
+))
+_sized = interchange._prproj_detail(_rects, "1")
+# ⚠ TOLD APART BY TAG, NOT BY DEPTH. Both are `<FrameRect>`; "the shallowest
+# wins" — the rule the rest of `_prproj_detail` runs on — answers the SEQUENCE
+# size for both, and the sum then divides a number by itself and reports every
+# clip as untouched.
+check("the clip item's own <FrameRect> is read as the sequence frame",
+      _sized["frame"] == (1920, 1080), str(_sized["frame"]))
+check("…and the VideoStream's as the file's own pixels",
+      _sized["source"] == (1920, 309), str(_sized["source"]))
+check("a <FrameRect> with no size in it reads as nothing at all",
+      interchange._prproj_rect(ET.fromstring("<X><FrameRect>0,0,0,10</FrameRect></X>")) is None
+      and interchange._prproj_rect(ET.fromstring("<X/>")) is None, "")
+
+_base = interchange.prproj_scale_base
+check("a letterhead at Scale 24 arrives at 0.24, not at full frame",
+      abs(_base({"scale": 0.24, "scale_rest": 1.0}, (1920, 309), (1920, 1080)) - 0.24) < 1e-9)
+# ⚠ THE CHECK THAT SAYS THIS IS SAFE. "Set to Frame Size" IS this app's fit, so
+# every ordinary clip in a real project has to come out at 1.0 — anything else
+# would resize a film nobody asked to have resized.
+check("…while a slide at Premiere's own fit-to-frame number stays 1.0",
+      abs(_base({"scale": 1.1477152, "scale_rest": 1.0}, (1672, 941), (1920, 1080)) - 1.0) < 1e-4)
+check("…and 720p footage at Scale 150 in a 1080 sequence stays 1.0 too",
+      abs(_base({"scale": 1.5, "scale_rest": 1.0}, (1280, 720), (1920, 1080)) - 1.0) < 1e-9)
+# A source SHORTER than the frame is fitted by height, so its width fraction is
+# already below 1 before Premiere's number is applied.
+check("…and a tall source is measured against the height it was fitted by",
+      abs(_base({"scale": 0.5, "scale_rest": 1.0}, (1080, 1920), (1920, 1080)) - 0.8889) < 1e-4)
+# ⚠ THE GUARD. Premiere has two ways to make a small file fill a frame and only
+# one of them writes a number: *Set to Frame Size* writes 114.77, *Scale to
+# Frame Size* resamples the media and leaves Scale at 100. Nothing tells that
+# clip apart from one nobody ever touched, so 100 keeps this app's fit — which
+# is what BOTH of those Premiere clips look like.
+check("an untouched Scale of exactly 100 is left fitted to the frame",
+      _base({"scale": 1.0, "scale_rest": 1.0}, (1280, 720), (1920, 1080)) is None)
+check("…and so is a clip whose file has no pixel size recorded",
+      _base({"scale": 0.24, "scale_rest": 1.0}, None, (1920, 1080)) is None
+      and _base({"scale": 0.24, "scale_rest": 1.0}, (1920, 309), None) is None)
+
+# --- the same thing, once it is animated ------------------------------------
+# The reference project's slides exactly: Motion parked at the fit-to-frame
+# number, and a hand-added Transform zooming 80 → 100 on top of it.
+_zoom, _zoom_root = _prproj_fragment([
+    ("AE.ADBE Motion", [("Scale", "114.771522521973", ())]),
+    ("AE.ADBE Geometry2", [("Scale Height", "100.", ((0, "80."), (2 * _TPS, "100."))),
+                           ("Scale Width", "100.", ())]),
+])
+_zoom_tr = interchange._prproj_transform(_zoom, _zoom_root)
+# ⚠ WHICH FACTOR THE KEYS REPLACE. `scale` is the PRODUCT of both components'
+# resting values; the track overwrites the Transform's 100 and leaves Motion's
+# 114.77 standing. Get this wrong and the slide zooms from full frame instead of
+# to it.
+check("the resting value the keyframes replace is recorded on its own",
+      abs(_zoom_tr["scale_rest"] - 1.0) < 1e-9, str(_zoom_tr["scale_rest"]))
+_zoom_keys = interchange.prproj_transform_keys(
+    _zoom_tr, in_ticks=0, length_ms=3000,
+    scale_base=_base(_zoom_tr, (1672, 941), (1920, 1080)),
+)["keyframes"]
+check("a zoom under a fitted Motion arrives as 0.80 → 1.00, the size Premiere shows",
+      [k["v"] for k in _zoom_keys["scale"]] == [0.8, 1.0], str(_zoom_keys["scale"]))
+# ⚠ AND THE OLD BEHAVIOUR IS STILL THERE FOR EVERYTHING THE SUM CANNOT REACH.
+_relative = interchange.prproj_transform_keys(_zoom_tr, in_ticks=0, length_ms=3000)
+check("…and with no pixel size to convert by, it is still the relative push",
+      [k["v"] for k in _relative["keyframes"]["scale"]] == [1.0, 1.25],
+      str(_relative["keyframes"]["scale"]))
+
+# --- and what `to_project` does with it -------------------------------------
+_kept = interchange.to_project(
+    {
+        "reader": "prproj", "name": "Sized", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"p": {"name": "logo.png", "pathurl": ""}},
+        "video": [{"clips": [dict(_c(0, 240, name="logo", file="p"), scale=0.24)],
+                    "transitions": []}],
+        "audio": [], "warnings": [],
+    },
+    lambda name: {"kind": "image", "upload_id": "u-logo", "duration_ms": 0},
+    background="#000000",
+)
+check("a clip's imported size reaches the frame it becomes",
+      _kept["frames"][0]["scale"] == 0.24, str(_kept["frames"][0]["scale"]))
+# ⚠ ABSENT MEANS FITTED, and it has to stay that way: `scale` is on every clip
+# every reader has ever produced, so a missing one writing 0 (or anything but
+# 1.0) would resize every import that predates this.
+_unsized = interchange.to_project(
+    {
+        "reader": "fcp7", "name": "Plain", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"p": {"name": "shot.png", "pathurl": ""}},
+        "video": [{"clips": [_c(0, 240, name="pic", file="p")], "transitions": []}],
+        "audio": [], "warnings": [],
+    },
+    lambda name: {"kind": "image", "upload_id": "u-pic", "duration_ms": 0},
+    background="#000000",
+)
+check("…and a clip that carries no size is still fitted to the frame",
+      _unsized["frames"][0]["scale"] == 1.0, str(_unsized["frames"][0]["scale"]))
+
+# --- and what `to_project` does with it -------------------------------------
+_moved = interchange.to_project(
+    {
+        "reader": "prproj", "name": "Moved", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"p": {"name": "shot.png", "pathurl": ""}},
+        "video": [{"clips": [dict(_c(0, 240, name="pic", file="p"),
+                                  offset=[0.1, -0.1], opacity=0.5,
+                                  keyframes={"scale": [{"t": 0, "v": 1.0, "ease": "linear"},
+                                                       {"t": 500, "v": 1.2, "ease": "linear"}]})],
+                    "transitions": []}],
+        "audio": [], "warnings": [],
+    },
+    lambda name: {"kind": "image", "upload_id": "u-pic", "duration_ms": 0},
+    background="#000000",
+)
+_frame = _moved["frames"][0]
+check("a moved clip lands where Premiere put it",
+      (_frame["x"], _frame["y"]) == (0.6, 0.4), str((_frame["x"], _frame["y"])))
+check("…keeps its opacity",
+      _frame["opacity"] == 0.5, str(_frame["opacity"]))
+check("…and carries its animation onto the timeline",
+      len(_frame["keyframes"].get("scale") or []) == 2, str(_frame["keyframes"]))
+
+# ⚠ **AND IT MUST NOT TOUCH A PLACEHOLDER CARD.** A card on a row above the
+# bottom one is parked at `opacity: 0` on purpose; an imported fade writing 1.0
+# over it puts an opaque rectangle back across the whole film, which is the
+# sixty-eight-seconds-of-black fault that branch exists to prevent.
+_gap = interchange.to_project(
+    {
+        "reader": "prproj", "name": "Gap", "fps": _FPS, "width": 0, "height": 0,
+        "files": {"a": {"name": "there.png", "pathurl": ""},
+                  "b": {"name": "gone.png", "pathurl": ""}},
+        "video": [
+            {"clips": [_c(0, 240, name="base", file="a")], "transitions": []},
+            {"clips": [dict(_c(0, 240, name="over", file="b"), opacity=1.0,
+                            keyframes={"opacity": [{"t": 0, "v": 1.0, "ease": "linear"},
+                                                   {"t": 100, "v": 1.0, "ease": "linear"}]})],
+             "transitions": []},
+        ],
+        "audio": [], "warnings": [],
+    },
+    lambda name: ({"kind": "image", "upload_id": "u-a", "duration_ms": 0}
+                  if (name or "").lower() == "there.png" else None),
+    background="#000000",
+)
+_card = [f for f in _gap["frames"] if f["kind"] == "color"][0]
+check("an imported fade never lights up a placeholder card over the film",
+      _card["opacity"] == 0.0 and not _card["keyframes"], str(_card["opacity"]))
 
 
 # ---------------------------------------------------------------------------
@@ -2649,6 +3361,11 @@ modal = open(
 ).read()
 apijs = open(os.path.join(root, "client", "src", "api.js"), encoding="utf-8").read()
 prproj_src = open(os.path.join(root, "interchange.py"), encoding="utf-8").read()
+# ⚠ READ AS TEXT, NOT IMPORTED. Importing `server/animatics.py` drags in the
+# config module, and G13 is the entry about what that cost the last time a test
+# did it — real project folders written, real quota spent. A guard on the source
+# is the whole assertion here anyway.
+animsrv = open(os.path.join(root, "server", "animatics.py"), encoding="utf-8").read()
 editorcss = open(
     os.path.join(root, "client", "src", "styles", "animatic-editor.css"), encoding="utf-8"
 ).read()
@@ -2751,19 +3468,31 @@ check("the title bar sticks to the top of the card",
       and "position: sticky" in editorcss, "")
 check("…and the ✕ rides in it",
       modal.index('"an-xchg-bar"') < modal.index('className="modal-close"'), "")
-check("…where it is a flex item, not a corner ornament",
-      ".an-xchg-bar .modal-close {" in editorcss, "")
+# ⚠ IN THE CORNER, like every other dialog's ✕ and like a window's. In the
+# flow of the bar it lined up with the middle of the heading and read as a
+# control belonging to the title rather than to the window.
+check("…pinned to the corner of it, not sitting in the flow",
+      ".an-xchg-bar .modal-close {" in editorcss
+      and "position: absolute" in editorcss[editorcss.index(".an-xchg-bar .modal-close {"):]
+      [:200], "")
 
-# --- the .prproj offer, which must stay the SECOND answer ------------------
-# ⚠ THE ORDER IS THE FEATURE. An experimental reader offered as a checkbox at
-# the top is one most people tick without ever seeing the reliable door beside
-# it, so the flag may only be reachable AFTER a refusal has been printed.
+# --- the .prproj route, which is now the FIRST answer and used to be the second
+# ⚠ THIS INVERTED, AND §8n IS WHY. The rule here was "the flag may only be
+# reachable AFTER a refusal has been printed", so that nobody took an
+# experimental reader without seeing the reliable door beside it. In practice the
+# reliable door is not one most users have — they came here BECAUSE they cannot
+# open Premiere — and what the rule actually bought was a red panel, a second
+# button, and a SECOND upload of the same 27 files before anything appeared.
+# The honesty it was protecting now travels with the result instead: the BEST
+# GUESS badge, and the first line of `warnings`, which still names File › Export
+# › Final Cut Pro XML. ⚠ The ROUTE's refusal is untouched — see the guard on
+# `experimental: bool = False` below; this is the dialog knowing its own file.
 check("the picker will show a .prproj", ".prproj" in modal)
-check("the flag is only offered once a read has failed",
-      "error && isPrproj" in modal, "")
-check("…and only once, not again after it has been taken",
-      "!guessed" in modal, "")
-check("…and it is offered off the EXTENSION, not the refusal's wording",
+check("a .prproj asks for the best-effort read on the first press",
+      "const wantGuess = experimental || isPrproj;" in modal, "")
+check("…so there is no refusal panel left to press through",
+      "offerGuess" not in modal, "")
+check("…and it is decided off the EXTENSION, not the refusal's wording",
       "/\.prproj$/i" in modal, "")
 check("what comes back is badged a guess on screen",
       'read?.reader === "prproj"' in modal and "an-xchg-guess" in modal, "")
@@ -2840,6 +3569,7 @@ check("…and the row centres them rather than letting one stretch taller",
 # `apply_src` whatever it was written about, so the first guard over a different
 # file read False on the GOOD source and reported itself broken.
 _EOL = chr(10)
+_ALPHA_PICK = '"RGBA" if _keeps_alpha(im) else "RGB"'
 
 for _name, _good, _broken, _guard in (
     (
@@ -2953,6 +3683,48 @@ for _name, _good, _broken, _guard in (
         modal,
         modal.replace('<div className="an-xchg-bar">', "<div>"),
         lambda b: '<div className="an-xchg-bar">' in b,
+    ),
+    # ⚠ THE UPLOAD HALF OF THE CUT-OUT FIX, and it has no test of its own because
+    # importing this module is what G13 is about. `convert("RGB")` on the way IN
+    # destroys the alpha permanently — the renderer honouring it afterwards then
+    # fixes nothing, which is exactly the shape of half-fix that looks done.
+    # `tests/effects_check.py` holds the other half.
+    (
+        "a transparent upload flattened onto black before it is even stored",
+        animsrv,
+        animsrv.replace(_ALPHA_PICK, '"RGB"'),
+        lambda b: b.count(_ALPHA_PICK) == 2,
+    ),
+    # ⚠ THE THREE LINES THE FIXED-SCALE FIX HANGS ON, none of which fails loudly.
+    # Each one produces a film that renders, exports and is simply the wrong
+    # size — which is exactly how the logo shipped four times too wide.
+    #
+    # Both `<FrameRect>`s are the SEQUENCE's if the tag is not asked for, so the
+    # sum divides a number by itself and reports every clip as untouched.
+    (
+        "the sequence's frame size taken as the source file's own",
+        prproj_src,
+        prproj_src.replace('if got["source"] is None and tag == "VideoStream":',
+                           'if got["source"] is None:'),
+        lambda b: 'if got["source"] is None and tag == "VideoStream":' in b,
+    ),
+    # Without the guard, a clip nobody ever touched is resized on the strength of
+    # a Scale of 100 that means "leave me alone" — see `prproj_scale_base`.
+    (
+        "an untouched Scale of 100 carried across as if somebody had set it",
+        prproj_src,
+        prproj_src.replace("    if abs(resting - 1.0) <= 1e-6:\n        return None\n", ""),
+        lambda b: "    if abs(resting - 1.0) <= 1e-6:\n        return None\n" in b,
+    ),
+    # And without this one the keyframes are multiplied by a base that still has
+    # their own component's resting value in it: the reference project's slides
+    # would zoom from full frame instead of to it.
+    (
+        "the resting value the keyframes replace left inside the base",
+        prproj_src,
+        prproj_src.replace("return (source_w / frame_w) / fitted * resting / owner",
+                           "return (source_w / frame_w) / fitted * resting"),
+        lambda b: "return (source_w / frame_w) / fitted * resting / owner" in b,
     ),
 ):
     check(f"the guard against “{_name}” really can fail",

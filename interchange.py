@@ -2248,6 +2248,24 @@ PRPROJ_TEXT_ASPECT = 0.5
 # everywhere else in this app, so the width has to be worked in the same frame or
 # the centre lands somewhere else the moment the project is 720p.
 PRPROJ_TEXT_FRAME_W = 1920
+PRPROJ_TEXT_FRAME_H = 1080
+
+# ⚠ **AND THE VERTICAL IS AN EDGE TOO — THE BASELINE.** The same lesson as the
+# left edge above, on the other axis, and it was found the same way: by
+# measuring a RENDER. In episode 7 of the reference series every caption sits at
+# `Motion.Position 0.5:0.9211` with the text layer at `0.5219`, which composes to
+# a y of **0.9430** — and in the exported .mp4 the white lettering's band bottom
+# is at **0.944**. So what Premiere stores is where the letters SIT, and this
+# app's `y` is the block's CENTRE (`draw_texts`: `top = cy - height / 2`).
+#
+# The gap between the two is a fraction of the FONT SIZE, so it is written that
+# way rather than as a flat number: measured over five frames of that render the
+# lettering's visual centre is 0.928 ± 0.003 against a stored 0.9430, which at
+# `size_px` 45 in a 1080-high frame is **0.36 em**. ⚠ THAT NUMBER AGREES WITH
+# TYPOGRAPHY RATHER THAN JUST FITTING ONE FILM — half a cap height is ~0.35 em
+# for a proportional sans — which is the only reason one measured size is enough
+# to write it down. Pinned in `tests/interchange_check.py` §8l.
+PRPROJ_TEXT_BASELINE_TO_CENTRE = 0.36
 
 # Premiere writes a font's POSTSCRIPT name ("Tahoma-Bold", "ArialMT"); this app
 # ships fourteen faces and can only draw one of those. The mapping is by FAMILY,
@@ -2352,16 +2370,153 @@ def _prproj_param(by_id: dict, comp, wanted: str):
     return None
 
 
+def _prproj_point(el):
+    """A `<Param>` holding an "x:y" keyframe → `(x, y)`, or None."""
+    if el is None:
+        return None
+    value = _prproj_keyframe_value(el)
+    if ":" not in value:
+        return None
+    try:
+        left, top = (float(v) for v in value.split(":", 1))
+    except ValueError:
+        return None
+    return (left, top)
+
+
+def _prproj_rect(el) -> tuple | None:
+    """A `<FrameRect>` (`"0,0,1920,1080"`) as `(width, height)`, or None.
+
+    ⚠ **THIS IS THE NUMBER THAT MAKES A FIXED `Scale` MEAN SOMETHING HERE**, and
+    it was sitting in the file the whole time the reader was telling users their
+    logo could not be sized. Premiere measures Scale against the SOURCE's own
+    pixels, so 24% is a postage stamp or a full frame depending entirely on how
+    big the file is — and both halves of that sum are `<FrameRect>`:
+
+        `VideoClipTrackItem` › `<FrameRect>`   the SEQUENCE frame (1920×1080)
+        `VideoStream`        › `<FrameRect>`   the SOURCE's own pixels
+
+    Verified on the reference project: 253 clip items all read 1920×1080 while
+    the streams behind them read 1672×941 (the slides), 1280×720 (the footage)
+    and 1920×309 (the logo). `_prproj_detail` collects both, one per clip.
+    """
+    parts = (el.findtext("FrameRect") or "").split(",") if el is not None else []
+    if len(parts) != 4:
+        return None
+    try:
+        width, height = int(float(parts[2])), int(float(parts[3]))
+    except ValueError:
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+# ⚠ **A PREMIERE CLIP'S POSITION IS NOT ON THE TEXT COMPONENT AT ALL, AND THAT
+# IS WHY EVERY IMPORTED CAPTION LANDED IN THE MIDDLE OF THE SCREEN.**
+# `AE.ADBE Text`'s own `Position` is where the lettering sits INSIDE the graphic
+# — for a caption built from Premiere's own template that is 0.52, i.e. the
+# middle — while what puts the graphic at the BOTTOM of the frame is the clip's
+# `AE.ADBE Motion`, the Position/Anchor Point every Premiere clip has and which
+# this reader never opened. In the reference project **78 of 82 captions carry
+# `Motion.Position 0.5:0.9211`** and the other four are title cards at
+# `0.5:0.5`; reading only the text component put all 82 within 0.03 of the frame
+# centre. It read as "the position was ignored", and it nearly was.
+#
+# ⚠ **THERE ARE TWO OF THESE AND BOTH APPLY.** `AE.ADBE Geometry2` is the
+# **Transform effect** somebody adds by hand — the user who reported this had
+# keyframed one on every caption — and it stacks on top of Motion rather than
+# replacing it. In that project it happens to be identity (`0.5:0.5`), so
+# reading only Motion would have looked right on this film and been wrong on the
+# next one. Sum the offsets.
+#
+# ⚠ **AN OFFSET, NOT A POSITION.** Both components move the layer so the point at
+# `Anchor Point` lands on `Position`, so what they contribute is
+# `Position - Anchor Point` — zero for an untouched clip, which is what makes it
+# safe to add to every caption.
+_PRPROJ_MOTION_MATCH = "AE.ADBE Motion"
+_PRPROJ_GEOMETRY_MATCH = "AE.ADBE Geometry2"
+# ⚠ THE CLIP'S OPACITY IS ITS OWN COMPONENT, not a parameter of Motion. Premiere
+# keeps `Opacity` (and the blend mode with it) in a separate intrinsic filter, so
+# a reader that only opened Motion and Geometry2 could not see a single fade.
+_PRPROJ_OPACITY_MATCH = "AE.ADBE Opacity"
+_PRPROJ_TRANSFORM_MATCHES = (
+    _PRPROJ_MOTION_MATCH,
+    _PRPROJ_GEOMETRY_MATCH,
+    _PRPROJ_OPACITY_MATCH,
+)
+
+
+def _prproj_placement(by_id: dict, comp) -> tuple:
+    """One transform component → how far it MOVES the layer, in frame fractions."""
+    point = _prproj_point(_prproj_param(by_id, comp, "Position"))
+    if point is None:
+        return (0.0, 0.0)
+    anchor = _prproj_point(_prproj_param(by_id, comp, "Anchor Point")) or (0.5, 0.5)
+    return (point[0] - anchor[0], point[1] - anchor[1])
+
+
+def _prproj_scale_param(by_id: dict, comp):
+    """The one parameter carrying a component's UNIFORM scale, or None.
+
+    ⚠ **WITH "UNIFORM SCALE" TICKED, PREMIERE WRITES THE VALUE INTO `Scale
+    Height` AND PARKS `Scale Width` AT 100.** Verified in a real project: of 101
+    Transform effects, 99 have `Scale Height`/`Scale Width` and no `Scale` at
+    all, `Scale Width` is a static `100.` on every one of them, and `Scale
+    Height` is what the zoom preset animates. Reading `Scale Width` as a second
+    axis would therefore report every one of those clips as squashed.
+
+    So: `Scale` when the component has one (that is Motion's own, and a Transform
+    with uniform scale off), otherwise `Scale Height`.
+    """
+    return (_prproj_param(by_id, comp, "Scale")
+            or _prproj_param(by_id, comp, "Scale Height"))
+
+
 def _prproj_keyframe_value(el) -> str:
-    """The FIRST value of a `<StartKeyframe>`, as text. '' when there is none.
+    """The RESTING value of a parameter, as text. '' when there is none.
 
     A keyframe reads `<time>,<value>,0,0,…`; the value is one field and may be a
-    number ("50."), a boolean ("true") or a point ("0.279:0.521"). ⚠ ONLY THE
-    START IS READ. This app imports the CUT — a title that moves is a title whose
-    first frame is the honest answer, and half an animation is worse than none.
+    number ("50."), a boolean ("true") or a point ("0.279:0.521"). This reads
+    `<StartKeyframe>`, which is the value the parameter holds before its first
+    real key — for an un-animated parameter that is simply its value.
+
+    ⚠ **THE ANIMATION IS NO LONGER THROWN AWAY HERE — `_prproj_keyframe_rows`
+    READS IT.** This function keeps its old job (one number, for the parameters
+    that are read as a single number: a colour, a shadow angle, a boolean), and
+    callers that want the movement ask for the rows instead.
     """
     row = (el.findtext("StartKeyframe") or "").split(",")
     return row[1].strip() if len(row) > 1 else ""
+
+
+def _prproj_keyframe_rows(el) -> list:
+    """Every real keyframe on one `<Param>` as `(ticks, value string)`, in order.
+
+    ⚠ **`<StartKeyframe>` IS NOT ONE OF THEM, AND ADDING IT WOULD BE A BUG.** It
+    is stamped at tick `-91445760000000000` — a hundred hours before the film —
+    so Premiere interpolates from it across that whole span and its value has no
+    measurable effect at the clip. In the reference project it is `100.` while
+    the first real key, thirteen milliseconds later, is `80.`: emitting both
+    would put a 100→80 snap at the head of every clip that was never there. It is
+    the value the parameter RESTS at, which is what `_prproj_keyframe_value`
+    returns and is only meaningful when there are no real keys at all.
+
+    ⚠ THE TIMES ARE IN THE CLIP'S OWN SOURCE CLOCK, not the timeline's. They are
+    rebased against the clip's `<InPoint>` — see `prproj_transform_keys`, which
+    also refuses a track whose times land nowhere near the clip rather than
+    trusting a base it cannot verify.
+    """
+    out: list = []
+    for row in (el.findtext("Keyframes") or "").split(";"):
+        fields = row.split(",")
+        if len(fields) < 2:
+            continue
+        try:
+            ticks = int(float(fields[0].strip()))
+        except ValueError:
+            continue
+        out.append((ticks, fields[1].strip()))
+    out.sort(key=lambda pair: pair[0])
+    return out
 
 
 def _prproj_text_style(by_id: dict, comp) -> dict:
@@ -2444,7 +2599,14 @@ def _prproj_text_component(by_id: dict, el) -> dict:
         # LEFT EDGE → CENTRE. See `PRPROJ_TEXT_SIZE_PER_SCALE`.
         half = (len(got["text"]) * size_px * PRPROJ_TEXT_ASPECT) / 2.0
         got["x"] = round(style["left"] + half / PRPROJ_TEXT_FRAME_W, 4)
-        got["y"] = round(style["y"], 4)
+        # ⚠ AND BASELINE → CENTRE ON THE OTHER AXIS, for the same reason: what is
+        # stored is an EDGE of the lettering and what this app draws from is the
+        # middle of the block. See `PRPROJ_TEXT_BASELINE_TO_CENTRE`.
+        got["y"] = round(
+            style["y"]
+            - PRPROJ_TEXT_BASELINE_TO_CENTRE * size_px / PRPROJ_TEXT_FRAME_H,
+            4,
+        )
     return got
 
 
@@ -2568,6 +2730,11 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
     texts: list = []
     shapes = 0
     shadow: dict = {}
+    # Where the CLIP has been moved to, summed over Motion and the Transform
+    # effect — see `_prproj_placement`. Collected during the walk and applied at
+    # the end, because a component chain lists its components in whatever order
+    # it likes and the text may well be reached first.
+    offset = [0.0, 0.0]
     found = None
     while queue:
         current, depth = queue.pop(0)
@@ -2580,6 +2747,14 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
         if match == _PRPROJ_SHAPE_MATCH:
             found = depth if found is None else found
             shapes += 1
+            continue
+        if match in (_PRPROJ_MOTION_MATCH, _PRPROJ_GEOMETRY_MATCH):
+            # ⚠ NOT `found`. A Motion component is on EVERY clip in the project,
+            # so letting one freeze the walk's depth would stop it before it ever
+            # reached the lettering — the same trap the shadow below avoids.
+            dx, dy = _prproj_placement(by_id, el)
+            offset[0] += dx
+            offset[1] += dy
             continue
         if match == _PRPROJ_SHADOW_MATCH:
             # ⚠ THE SHADOW BELONGS TO THE CLIP, NOT TO ONE LAYER OF IT. It sits
@@ -2621,6 +2796,18 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
                     item["shadow"] = round(
                         max(0.0, min(0.5, shadow["shadow_px"] / item["size_px"])), 4
                     )
+        # ⚠ WHERE THE CLIP WAS PUT, ADDED TO WHERE THE WORDS SIT INSIDE IT.
+        # Applied per caption rather than once, because one graphic can hold a
+        # title and a subtitle at different heights and the clip's own move
+        # applies equally to both. Clamped to the range `AnimaticTextClip`
+        # accepts — a caption Premiere parked off-screen must not fail the whole
+        # import, and -1..2 still leaves it draggable back into frame.
+        if offset[0] or offset[1]:
+            for item in texts:
+                if "x" not in item:
+                    continue
+                item["x"] = round(max(-1.0, min(2.0, item["x"] + offset[0])), 4)
+                item["y"] = round(max(-1.0, min(2.0, item["y"] + offset[1])), 4)
         # ⚠ TEXT WINS OVER SHAPE when a graphic holds both — which is the usual
         # lower third: a coloured bar with words on it. The words are the part
         # this app can reproduce exactly; the bar is the part it approximates.
@@ -2628,6 +2815,320 @@ def _prproj_graphic(by_id: dict, objid: str) -> dict:
     if shapes:
         return {"kind": "shape", "texts": [], "shapes": shapes}
     return {}
+
+
+def _prproj_transform(by_id: dict, objid: str) -> dict:
+    """One clip's move, zoom and fade — the STATIC values and the ANIMATION.
+
+    ⚠ **THIS IS THE HALF THE READER USED TO THROW AWAY.** `_prproj_keyframe_value`
+    read `<StartKeyframe>` and stopped, so a clip that pushed in over four seconds
+    imported frozen at its first frame, and `Scale` was not looked at anywhere at
+    all. In the reference project that is 21 shots with a keyframed
+    position-and-zoom and 78 captions that fade — reported as *"Motion ka Scale,
+    aur pehle keyframe ke baad kuch bhi, abhi nahi padha jaata"*.
+
+    Returns `{"x", "y", "opacity", "scale", "tracks", "shared"}` — offsets and
+    factors, with `tracks` holding raw `(ticks, value)` rows in the clip's own
+    SOURCE clock. `prproj_transform_keys` is what turns those into this app's
+    keyframes; the split is deliberate, because rebasing needs the clip's
+    in-point and its length and this function has neither.
+
+    ⚠ **THE SHALLOWEST DEPTH WINS AND THEN THE WALK STOPS.** A clip's own
+    components hang off the track item, while the MASTER clip behind it carries a
+    chain of its own — the same trap `_prproj_graphic` documents, where 82
+    captions all came back with one master's text. A Motion component exists on
+    every clip in the project, so a walk that kept descending would sum this
+    clip's transform with the bin's.
+
+    ⚠ **ONE COMPONENT OWNS EACH ANIMATED PROPERTY; THE REST CONTRIBUTE THEIR
+    RESTING VALUE.** Motion and a Transform effect can both animate Scale, and
+    merging two curves on different time bases is a second interpolator to get
+    wrong. In the reference project no clip animates the same property twice, so
+    the first one found is taken and `shared` counts the rest for a warning.
+    """
+    got = {"x": 0.0, "y": 0.0, "opacity": 1.0, "scale": 1.0, "scale_rest": 1.0,
+           "tracks": {}, "shared": 0}
+    seen = {objid}
+    queue = [(objid, 0)]
+    found = None
+    comps: list = []
+    while queue:
+        current, depth = queue.pop(0)
+        if found is not None and depth > found:
+            break
+        el = by_id.get(current)
+        if el is None or depth > PRPROJ_MAX_DEPTH:
+            continue
+        if (el.findtext("MatchName") or "").strip() in _PRPROJ_TRANSFORM_MATCHES:
+            found = depth if found is None else found
+            comps.append(el)
+            continue
+        for child in el.iter():
+            ref = _prproj_ref(child)
+            if not ref or ref in seen:
+                continue
+            target = by_id.get(ref)
+            if target is None or _prproj_is_timeline(target.tag):
+                continue
+            seen.add(ref)
+            queue.append((ref, depth + 1))
+
+    def number(text: str, fallback: float) -> float:
+        try:
+            return float((text or "").rstrip("."))
+        except ValueError:
+            return fallback
+
+    for comp in comps:
+        # --- where it sits ---------------------------------------------------
+        dx, dy = _prproj_placement(by_id, comp)
+        got["x"] += dx
+        got["y"] += dy
+        position = _prproj_param(by_id, comp, "Position")
+        rows = _prproj_keyframe_rows(position) if position is not None else []
+        if rows:
+            # ⚠ THE ANCHOR IS TAKEN AT REST EVEN WHEN IT MOVES. An animated
+            # Anchor Point is a second curve on the same property and Premiere
+            # composes them; taking the resting one keeps the shape of the move
+            # and is wrong only by however far the anchor itself travelled — a
+            # far smaller error than dropping the move altogether.
+            anchor = _prproj_point(_prproj_param(by_id, comp, "Anchor Point")) or (0.5, 0.5)
+            for axis, index in (("x", 0), ("y", 1)):
+                if axis in got["tracks"]:
+                    got["shared"] += 1
+                    continue
+                track = []
+                for ticks, value in rows:
+                    if ":" not in value:
+                        continue
+                    try:
+                        point = [float(v) for v in value.split(":", 1)]
+                    except ValueError:
+                        continue
+                    track.append((ticks, point[index] - anchor[index]))
+                if track:
+                    got["tracks"][axis] = track
+
+        # --- how big it is ---------------------------------------------------
+        scale = _prproj_scale_param(by_id, comp)
+        if scale is not None:
+            resting = number(_prproj_keyframe_value(scale), 100.0) / 100.0
+            got["scale"] *= resting
+            rows = _prproj_keyframe_rows(scale)
+            if rows and "scale" in got["tracks"]:
+                got["shared"] += 1
+            elif rows:
+                got["tracks"]["scale"] = [
+                    (ticks, number(value, 100.0) / 100.0) for ticks, value in rows
+                ]
+                # ⚠ **WHICH COMPONENT'S RESTING VALUE THE TRACK REPLACES.**
+                # `scale` above is the PRODUCT of every component's resting value
+                # — Motion's 114.77 ("Set to Frame Size") times a hand-added
+                # Transform's 100 — and exactly one of those factors is the one
+                # the keyframes overwrite. Without this the animated clip's real
+                # size cannot be rebuilt: `prproj_scale_base` divides it back out
+                # so the track can be multiplied in, which for the reference
+                # project is the difference between a slide that zooms 80 → 100
+                # (what Premiere shows) and one that zooms 100 → 125.
+                got["scale_rest"] = resting
+
+        # --- and whether you can see it --------------------------------------
+        opacity = _prproj_param(by_id, comp, "Opacity")
+        if opacity is not None:
+            got["opacity"] *= number(_prproj_keyframe_value(opacity), 100.0) / 100.0
+            rows = _prproj_keyframe_rows(opacity)
+            if rows and "opacity" in got["tracks"]:
+                got["shared"] += 1
+            elif rows:
+                got["tracks"]["opacity"] = [
+                    (ticks, number(value, 100.0) / 100.0) for ticks, value in rows
+                ]
+    return got
+
+
+def prproj_scale_base(transform: dict, source, frame) -> float | None:
+    """Premiere's `Scale` → this app's `scale`, or None when it cannot be had.
+
+    ⚠ **THIS IS THE SUM THAT USED TO BE CALLED IMPOSSIBLE, AND THE MISSING TERM
+    WAS THE FILE'S OWN PIXEL SIZE.** Premiere measures Scale against the source;
+    this app fits every picture to the frame first and then multiplies. So the
+    two numbers only meet through how much of the FRAME the picture covers:
+
+        Premiere  width fraction = source_w × scale / frame_w
+        here      width fraction = our_scale × min(1, source_aspect/frame_aspect)
+
+    Setting those equal is the whole function. It is not a guess — on the
+    reference project it lands a 1672×941 slide at `Scale 114.77` on exactly
+    1.0 (Premiere's "Set to Frame Size" and this app's fit ARE the same thing,
+    which is why nobody noticed), 1280×720 footage at `Scale 150` on 1.0, and
+    the 1920×309 logo at `Scale 24` on 0.24 — which is the bug that was
+    reported: *"logo sahi se set nahi hua"*, a letterhead 4× too wide with its
+    left half off the screen.
+
+    ⚠ **THE FIT IS ASSUMED TO BE "CONTAIN" AND THE FRAME TO BE PREMIERE'S OWN.**
+    Both are this app's defaults and a user is importing their own cut into a
+    project shaped like it. A project set to "cover", or to a different shape
+    from the sequence, is already reframing every clip — the arithmetic below is
+    then approximate in the same way the rest of that import is.
+
+    ⚠ **AN UNTOUCHED `Scale` (exactly 100) IS LEFT ALONE — AND THAT IS A GUARD,
+    NOT AN OVERSIGHT.** Premiere has two ways to make a small file fill a frame:
+    *Set to Frame Size* writes the fitting number into Scale (114.77 above), and
+    *Scale to Frame Size* resamples the media and leaves Scale at 100. Nothing
+    in the project file tells the two apart from a clip nobody ever touched. So
+    a Scale of exactly 100 keeps this app's fit-to-frame — which is what it has
+    always done, and what BOTH of those Premiere clips look like — and only a
+    Scale somebody moved is carried across.
+
+    @param transform  from `_prproj_transform`; `scale` is the product of every
+                      component's resting value and `scale_rest` is the one
+                      factor a keyframe track replaces, so the return multiplies
+                      cleanly by that track — see `prproj_transform_keys`.
+    @param source     the file's own `(width, height)`, from `_prproj_detail`.
+    @param frame      the sequence's `(width, height)`, from the same place.
+    """
+    if not source or not frame:
+        return None
+    resting = float(transform.get("scale") or 1.0)
+    if abs(resting - 1.0) <= 1e-6:
+        return None
+    owner = float(transform.get("scale_rest") or 1.0)
+    if owner <= 0:
+        return None
+    source_w, source_h = source
+    frame_w, frame_h = frame
+    if min(source_w, source_h, frame_w, frame_h) <= 0:
+        return None
+    # What "contain" alone gives this picture, as a fraction of the frame's
+    # width. Mirrors `place_picture` in animatic_render.py.
+    fitted = min(1.0, (source_w / source_h) / (frame_w / frame_h))
+    if fitted <= 0:
+        return None
+    return (source_w / frame_w) / fitted * resting / owner
+
+
+# ⚠ MIRRORS `AnimaticFrame` IN `server/schemas.py`, for the same reason
+# `IMPORT_MAX_CLIP_MS` does further down: a keyframe value outside these reaches
+# the user as a 500 with no message and the whole import lost. `scale` is `gt=0`
+# there, so the floor here is a small positive number rather than zero — a clip
+# scaled to nothing is a clip Pydantic refuses.
+# ⚠ These are the values a KEY may hold. The clip's own resting `x`/`y` accept a
+# wider range (-2..3); the narrower one is used for both because a keyframe that
+# has to be clamped has already lost the shape of the move.
+_IMPORT_RANGES = {
+    "scale": (0.01, 10.0),
+    "x": (-2.0, 3.0),
+    "y": (-2.0, 3.0),
+    "opacity": (0.0, 1.0),
+}
+
+
+def _at_ticks(track: list, ticks: int) -> float:
+    """One raw track sampled at a tick, holding outside its ends."""
+    if ticks <= track[0][0]:
+        return track[0][1]
+    if ticks >= track[-1][0]:
+        return track[-1][1]
+    for (at, av), (bt, bv) in zip(track, track[1:]):
+        if at <= ticks <= bt:
+            span = bt - at
+            return av if span <= 0 else av + (bv - av) * (ticks - at) / span
+    return track[-1][1]
+
+
+def prproj_transform_keys(
+    transform: dict, in_ticks, length_ms: int, scale_base: float | None = None
+) -> dict:
+    """A clip's raw transform → this app's `keyframes`, in ms from its start.
+
+    Returns `{"keyframes": {...}, "dropped": [...], "outside": [...]}` —
+    `dropped` is what could not be placed at all, `outside` what landed entirely
+    before or after its own clip and therefore holds at one value for the whole
+    of it. Both are counted in `warnings`: the second is FAITHFUL (Premiere shows
+    the same held value) and is still the kind of thing somebody should be told,
+    because a caption whose fade-out finished before its own first frame is
+    invisible here exactly as it is there, and that looks like a lost caption.
+
+    ⚠ **THE TIMES ARE IN THE CLIP'S SOURCE CLOCK AND THE IN-POINT IS THE ZERO.**
+    Verified against a real project: four clips at 0.0s, 3.6s, 7.7s and 9.5s on
+    the timeline all carry keys at exactly the same ticks (≈3599.98s), and all
+    four share an `<InPoint>` of ≈3599.97s — so the keys are 13ms and 11.0s into
+    each clip, which is what a preset dropped on four clips means. Rebasing
+    against the TIMELINE position instead would have put every one of them an
+    hour past the end of its own clip.
+
+    ⚠ **AND IF THE ANSWER IS ABSURD, THE TRACK IS DROPPED RATHER THAN USED.** The
+    in-point is the one number here that can be missing, and a wrong zero does
+    not fail — it silently parks every key an hour away, where the value simply
+    HOLDS and the clip looks un-animated while the project carries a hundred
+    meaningless keys. A track none of whose keys land anywhere near the clip is
+    refused, and named, which is the difference between a gap and a lie.
+
+    ⚠ **SCALE HAS TWO MODES AND `scale_base` PICKS BETWEEN THEM.**
+
+      GIVEN ONE (the ordinary case now): the track is Premiere's real size,
+        converted — see `prproj_scale_base`, which needs the file's own pixel
+        count and the sequence's, both of which `_prproj_detail` reads.
+      GIVEN NONE: the old behaviour, and still the right answer when the pixel
+        sizes are not in the file or the clip's Scale was never touched. Premiere
+        measures Scale against the source's own pixels while this app FITS every
+        picture to the frame, so without the source size the NUMBER cannot be
+        carried across at all — but how much it CHANGES over the clip can, so the
+        track is divided by its own value at the clip's start and a push from 80
+        to 100 arrives as 1.0 → 1.25.
+    """
+    out: dict = {}
+    dropped: list = []
+    outside: list = []
+    base = int(in_ticks or 0)
+    # How far outside its own clip a key may land before the base is not believed.
+    # Generous on purpose: a preset's keys routinely run past a clip that was
+    # trimmed short (in the reference project, an 11s zoom on a 3.6s clip).
+    window = max(int(length_ms), 0) + 60_000
+
+    for prop, track in (transform.get("tracks") or {}).items():
+        if not track:
+            continue
+        keys = [
+            (int(round((ticks - base) * 1000.0 / PRPROJ_TICKS_PER_SECOND)), value)
+            for ticks, value in track
+        ]
+        if not any(-window <= t <= window for t, _ in keys):
+            dropped.append(prop)
+            continue
+        if prop == "scale" and scale_base is not None:
+            # ⚠ THE REAL SIZE, because `prproj_scale_base` found the file's own
+            # pixel count and could therefore convert Premiere's number into
+            # this app's. `scale_base` already carries the resting value the
+            # track replaces divided back out, so multiplying is all that is
+            # left: a slide whose Transform runs 80 → 100 under a Motion of
+            # 114.77 arrives as 0.80 → 1.00, which is what Premiere shows.
+            keys = [(t, scale_base * value) for t, value in keys]
+        elif prop == "scale":
+            # The value at the clip's own start, which is what 1.0 must mean.
+            reference = _at_ticks(track, base)
+            if reference <= 0:
+                dropped.append(prop)
+                continue
+            keys = [(t, value / reference) for t, value in keys]
+        elif prop in ("x", "y"):
+            # An OFFSET becomes a position: 0.5 is the middle of the frame.
+            keys = [(t, 0.5 + value) for t, value in keys]
+
+        lo, hi = _IMPORT_RANGES[prop]
+        rounded = [
+            {"t": t, "v": round(max(lo, min(hi, value)), 4), "ease": "linear"}
+            for t, value in keys
+        ]
+        # A track that never actually changes is not an animation — it is a
+        # static value wearing keyframes, and writing it would put a diamond row
+        # on the timeline for every clip in the film.
+        if len({key["v"] for key in rounded}) < 2:
+            continue
+        if not any(0 <= key["t"] <= max(int(length_ms), 0) for key in rounded):
+            outside.append(prop)
+        out[prop] = rounded
+    return {"keyframes": out, "dropped": dropped, "outside": outside}
 
 
 def _prproj_detail(by_id: dict, objid: str) -> dict:
@@ -2639,7 +3140,8 @@ def _prproj_detail(by_id: dict, objid: str) -> dict:
     depth-first walk would come back with the name of the file rather than the
     name of the clip roughly at random.
     """
-    got = {"start": None, "end": None, "in": None, "name": "", "path": "", "enabled": True}
+    got = {"start": None, "end": None, "in": None, "name": "", "path": "",
+           "enabled": True, "frame": None, "source": None}
     seen = {objid}
     queue = [(objid, 0)]
     while queue:
@@ -2648,6 +3150,17 @@ def _prproj_detail(by_id: dict, objid: str) -> dict:
         if el is None or depth > PRPROJ_MAX_DEPTH:
             continue
         tag = el.tag
+
+        # ⚠ THE TWO FRAME SIZES, AND THEY ARE TOLD APART BY TAG RATHER THAN BY
+        # DEPTH. Both are `<FrameRect>` and the walk meets several of each, so
+        # "the shallowest wins" — the rule the rest of this function runs on —
+        # would answer the sequence's size for both. The clip item's own rect IS
+        # the sequence frame; a `VideoStream`'s is the file's own pixels. See
+        # `_prproj_rect`, and `prproj_scale_base` for what they are for.
+        if got["frame"] is None and tag.endswith("ClipTrackItem"):
+            got["frame"] = _prproj_rect(el)
+        if got["source"] is None and tag == "VideoStream":
+            got["source"] = _prproj_rect(el)
 
         # The place on the timeline — see `_prproj_times`, which reads it out of
         # the clip's own nested `<TrackItem>`. It is tried on every object the
@@ -2998,6 +3511,13 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
     audio_lanes: dict = {}
     skipped = 0
     transitions_seen = 0
+    # What the transform pass found, each one a sentence the report owes the user.
+    animated = 0      # clips whose move / zoom / fade came across
+    unbased = 0       # tracks whose times landed nowhere near their own clip
+    stacked = 0       # a property animated by two components at once
+    sized = 0         # a Scale carried across through the file's own pixel size
+    fixed_scale = 0   # a Scale with no pixel size to convert it by
+    held = 0          # an animation that begins and ends outside its own clip
     for tag, track, objid in items:
         got = _prproj_detail(by_id, objid)
         if got["start"] is None or got["end"] is None or got["end"] <= got["start"]:
@@ -3060,6 +3580,53 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
             # stops being a clip, because that is the layer that knows what a
             # caption IS in this app.
             clip["graphic"] = graphic
+        # ⚠ THE MOVE, THE ZOOM AND THE FADE — see `_prproj_transform`. Audio is
+        # exempt for the same reason it skips `_prproj_graphic`: a sound has no
+        # transform worth walking, and 23 clips of one razored voiceover is the
+        # hot path this reader was slowest on.
+        if not is_audio:
+            motion = _prproj_transform(by_id, objid)
+            length_ms = max(0, int(round((end - start) * 1000.0 / max(1, fps))))
+            # ⚠ THE SIZE IT SITS AT, worked out from the file's own pixel count —
+            # see `prproj_scale_base`. None means the sum could not be done (the
+            # pixel sizes are not in the file) or must not be (an untouched
+            # Scale), and the keys then fall back to the relative push.
+            scale_base = prproj_scale_base(motion, got["source"], got["frame"])
+            keys = prproj_transform_keys(motion, got["in"], length_ms, scale_base)
+            if keys["keyframes"]:
+                clip["keyframes"] = keys["keyframes"]
+                animated += 1
+            if keys["dropped"]:
+                unbased += len(keys["dropped"])
+            if keys["outside"]:
+                held += len(keys["outside"])
+            if motion["shared"]:
+                stacked += motion["shared"]
+            if motion["x"] or motion["y"]:
+                clip["offset"] = [round(motion["x"], 4), round(motion["y"], 4)]
+            if abs(motion["opacity"] - 1.0) > 1e-6:
+                clip["opacity"] = max(0.0, min(1.0, motion["opacity"]))
+            # ⚠ **THE SIZE THE CLIP SITS AT — AND IT IS TAKEN FROM THE TRACK'S
+            # OWN VALUE AT THE CLIP'S START, NOT FROM THE RESTING ONE.** A clip
+            # whose Scale is keyframed rests at a value a hundred hours before
+            # the film (`_prproj_keyframe_rows` says why), so the resting number
+            # is the size it NEVER plays at: on the reference project's slides it
+            # is 114.77 while the clip actually opens at 80% of that. The keys
+            # carry the movement and this carries what the Properties panel shows
+            # — they must agree, or deleting the keyframes jumps the picture.
+            if scale_base is not None:
+                at_start = 1.0
+                track = (motion.get("tracks") or {}).get("scale")
+                if track and "scale" not in keys["dropped"]:
+                    at_start = _at_ticks(track, int(got["in"] or 0))
+                lo, hi = _IMPORT_RANGES["scale"]
+                clip["scale"] = round(max(lo, min(hi, scale_base * at_start)), 4)
+                sized += 1
+            elif abs(motion["scale"] - 1.0) > 1e-6:
+                # The sum could not be done — the file's pixel size is not in the
+                # project — so the picture stays fitted to the frame. Counted,
+                # and named in the warnings.
+                fixed_scale += 1
         lane["clips"].append(clip)
 
     def ordered(bucket: dict) -> list:
@@ -3093,6 +3660,46 @@ def _read_prproj(data: bytes, fps_hint: int) -> dict:
         warnings.append(
             f"{transitions_seen} transition(s) were read as cross dissolves — the "
             "shape of a Premiere transition does not survive the trip."
+        )
+    # ⚠ EVERY ONE OF THESE IS ABOUT THE TRANSFORM PASS, and they are worth the
+    # room: an animation that arrives is a surprise, and one that does not is a
+    # question the user will otherwise ask this app's author.
+    if animated:
+        warnings.append(
+            f"{animated} clip(s) brought their Motion / Transform animation across "
+            "— position, zoom and opacity keyframes. Every curve is read as a "
+            "straight line between its keys, so an eased move arrives evenly paced."
+        )
+    if sized:
+        warnings.append(
+            f"{sized} clip(s) kept the size they were given in Premiere. Premiere "
+            "measures Scale against the file's own pixel size, so that size was "
+            "worked out from the pixel count the project file records for each "
+            "one — a clip whose file has no size recorded stays fitted to the "
+            "frame instead."
+        )
+    if fixed_scale:
+        warnings.append(
+            f"{fixed_scale} clip(s) sit at a fixed Scale in Premiere with no pixel "
+            "size recorded for their file, so that size could not be converted "
+            "and they are shown here fitted to the frame instead."
+        )
+    if held:
+        warnings.append(
+            f"{held} animation(s) begin and end outside the clip they are on — "
+            "the clip was trimmed away from them — so they hold at one value for "
+            "its whole length, which is what Premiere shows too. Worth a look if "
+            "something arrives invisible."
+        )
+    if unbased:
+        warnings.append(
+            f"{unbased} animation(s) had keyframe times this could not place "
+            "against their own clip and were left out rather than guessed at."
+        )
+    if stacked:
+        warnings.append(
+            f"{stacked} property(ies) were animated by two effects at once; the "
+            "first was read and the second left out."
         )
 
     return {
@@ -3258,7 +3865,8 @@ def _import_clip_role(clip: dict, found) -> str:
 
 
 def _import_text_clips(
-    graphic: dict, *, start_ms: int, length_ms: int, layer_id: str, mint
+    graphic: dict, *, start_ms: int, length_ms: int, layer_id: str, mint,
+    keyframes: dict | None = None,
 ) -> list:
     """One Premiere graphic → the `AnimaticTextClip`s it holds. Usually one.
 
@@ -3275,6 +3883,17 @@ def _import_text_clips(
     for the same reason: a scrim is a black bar this app would be ADDING to
     somebody's film. "none" still draws its own outline, so white lettering on
     pale art stays readable.
+
+    @param keyframes  the CLIP's animation, from `_prproj_transform`. ⚠ **ONLY
+        `opacity` AND `scale` ARE TAKEN, AND LEAVING `x`/`y` OUT IS THE POINT.**
+        A caption's resting position is already the sum of two things — where the
+        graphic sits (`_prproj_graphic`'s offset) and where the lettering sits
+        INSIDE it (`AE.ADBE Text`'s own Position, which is what E5x's
+        middle-of-the-screen fault was about). A position track measured on the
+        graphic alone would throw the second half away and jump every caption on
+        its first frame. The fade and the pop are the two that belong to the
+        whole clip, and in the reference project they are the only two any
+        caption animates: 78 of them fade, 78 of them scale, none of them move.
     """
     out: list = []
     for item in graphic.get("texts") or []:
@@ -3325,6 +3944,17 @@ def _import_text_clips(
                 clip[key] = max(lo, min(hi, float(item[key])))
         if item.get("shadow_color"):
             clip["shadow_color"] = str(item["shadow_color"])
+        # ⚠ THE CLIP'S OWN FADE AND POP, given to EVERY caption it holds —
+        # because that is what they are. Premiere's Opacity and Scale sit on the
+        # graphic, not on one layer inside it, so a title and the subtitle under
+        # it fade together. See the note in this function's docstring for why
+        # `x`/`y` are deliberately not among them.
+        wanted = {
+            prop: track for prop, track in (keyframes or {}).items()
+            if prop in ("opacity", "scale") and track
+        }
+        if wanted:
+            clip["keyframes"] = wanted
         out.append(clip)
     return out
 
@@ -3357,6 +3987,109 @@ def _import_shape_clip(
         "duration_ms": length_ms,
         "opacity": 0.0,
     }
+
+
+def media_library(assets) -> dict:
+    """The project's OWN Media pane, keyed the way `resolve` looks things up.
+
+    ⚠ **THE FILES ALREADY IN THE PROJECT COUNT AS ARRIVED.** An import used to
+    look only at what was attached to its own request, so a project whose Media
+    pane already held every file still turned each clip into a placeholder unless
+    all of them were picked again — and somebody who dragged the ONE missing file
+    into Media and re-imported was told it had not arrived while its card sat on
+    screen beside the message.
+
+    ⚠ **A COLOUR CARD IS NOT MEDIA.** An asset with no `upload_id` has no file
+    behind it and must never answer for a filename, or a clip resolves to a
+    rectangle of colour that the timeline then treats as footage.
+
+    ⚠ Keyed by name AND by stem, exactly as the freshly-attached files are — an
+    app that transcoded a clip on the way out leaves `shot_03.mov` in the project
+    file and `shot_03.mp4` in the library.
+    """
+    out: dict = {}
+    for asset in assets or []:
+        kind = str(asset.get("kind") or "image").strip().lower()
+        label = _basename_of(str(asset.get("label") or ""))
+        upload_id = str(asset.get("upload_id") or "")
+        if kind not in ("image", "video", "audio") or not label or not upload_id:
+            continue
+        entry = {
+            "kind": kind,
+            "upload_id": upload_id,
+            "duration_ms": int(asset.get("duration_ms") or 0),
+        }
+        out.setdefault(label.lower(), entry)
+        out.setdefault(os.path.splitext(label)[0].lower(), entry)
+    return out
+
+
+# A `<pathurl>` is a URL in an `xmeml` and a bare Windows path in a `.prproj`.
+# Only these three shapes are ever seen, and the trailing slash is part of the
+# prefix so what is left is the path itself.
+_FILE_URL_PREFIXES = ("file://localhost/", "file:///", "file://")
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:/")
+
+
+def local_media_paths(incoming: dict, *, exists=os.path.isfile) -> dict:
+    """`{filename: the file's own path}` for what this MACHINE can actually see.
+
+    ⚠ **THE PATH WAS ALWAYS THERE — IT WAS JUST BEING PRINTED AT THE USER.** The
+    report names the folder a missing file came from (see `note_missing`) so
+    somebody can go and attach it. But when this server runs on the same computer
+    that wrote the project file, that folder is *right there*: asking a person to
+    walk to a path we are already holding, and pick it out of a file dialog, is
+    work the machine was in a position to do. Reported as exactly that —
+    *"tum khud usko pickup kyun nhi kar rahe ho jab tumne location mil raha
+    hai"*.
+
+    ⚠ **AND IT IS ONLY EVER AN OFFER, NEVER AN ASSUMPTION.** A path that is not
+    on this disk is not an error here; it comes back absent and the file stays in
+    the report for the user to attach by hand. The route decides whether it is
+    ALLOWED to look at all — see `_may_read_local_media` in `server/animatics.py`
+    — because on a hosted server this path belongs to somebody else's computer
+    and reading it is neither possible nor wanted.
+
+    ⚠ **MEDIA EXTENSIONS ONLY, AND THAT IS A SECURITY RULE, NOT A TIDINESS ONE.**
+    A `<pathurl>` is a string inside an uploaded document, so it is
+    attacker-controlled: without this filter a hand-written project file naming
+    `.../id_rsa` or `.../.env` would have this function hand the route a private
+    file to store and serve back. `media_kind` is the whitelist, and it is the
+    only reason this is safe to run at all.
+
+    @param exists  injected so a test can describe a disk without writing one.
+    """
+    out: dict = {}
+    for entry in (incoming.get("files") or {}).values():
+        raw = unquote(str((entry or {}).get("pathurl") or "").strip())
+        if not raw:
+            continue
+        raw = raw.split("?")[0].replace("\\", "/")
+        low = raw.lower()
+        for prefix in _FILE_URL_PREFIXES:
+            if low.startswith(prefix):
+                raw = raw[len(prefix):]
+                # ⚠ THE LEADING SLASH GOES BACK ON FOR EVERYONE BUT WINDOWS.
+                # `file://localhost/Users/me/a.mov` is what a Mac editor writes,
+                # and stripping the prefix off it leaves a RELATIVE path that
+                # would then be resolved against whatever directory this server
+                # happens to be running in.
+                if not _WINDOWS_DRIVE.match(raw):
+                    raw = "/" + raw.lstrip("/")
+                break
+        # ⚠ ABSOLUTE ONLY. A relative path in a project file is relative to a
+        # folder on the machine that wrote it, which we do not have — resolving
+        # it here would read a same-named file out of the server's own directory.
+        if not (_WINDOWS_DRIVE.match(raw) or raw.startswith("/")):
+            continue
+        name = raw.rstrip("/").rsplit("/", 1)[-1]
+        if not name or not media_kind(name):
+            continue
+        path = os.path.normpath(raw)
+        if not exists(path):
+            continue
+        out.setdefault(name.lower(), path)
+    return out
 
 
 def to_project(
@@ -3533,6 +4266,7 @@ def to_project(
                     length_ms=length_ms,
                     layer_id=text_lane_of.get(track, f"{IMPORT_TEXT_LANE_PREFIX}0"),
                     mint=mint,
+                    keyframes=clip.get("keyframes"),
                 )
                 texts.extend(made)
                 tally["lettered"] += len(made)
@@ -3620,6 +4354,31 @@ def to_project(
                     "kind": "image",
                     "src": {"kind": "upload", "upload_id": found["upload_id"]},
                 })
+            # ⚠ **THE MOVE, THE ZOOM AND THE FADE — AND ONLY ON A CLIP THAT
+            # RESOLVED.** A placeholder card above the bottom row is parked at
+            # `opacity: 0` on purpose (see the branch above): an imported fade
+            # writing 1.0 over that would put an opaque colour card back across
+            # the whole film, which is the 68-seconds-of-black fault that branch
+            # exists to prevent. A gap has nothing to animate anyway.
+            if found:
+                offset = clip.get("offset")
+                if offset:
+                    frame["x"] = round(max(-2.0, min(3.0, 0.5 + offset[0])), 4)
+                    frame["y"] = round(max(-2.0, min(3.0, 0.5 + offset[1])), 4)
+                # ⚠ THE SIZE, when the reader could work one out — see
+                # `prproj_scale_base`. Absent on every clip that was fitted to
+                # the frame, which is what leaves the schema default of 1.0 in
+                # place and every import written before this unchanged.
+                if clip.get("scale") is not None:
+                    frame["scale"] = round(
+                        max(0.01, min(10.0, float(clip["scale"]))), 4
+                    )
+                if clip.get("opacity") is not None:
+                    frame["opacity"] = round(
+                        max(0.0, min(1.0, float(clip["opacity"]))), 4
+                    )
+                if clip.get("keyframes"):
+                    frame["keyframes"] = clip["keyframes"]
             frames.append(frame)
             by_end[start_ms + length_ms] = frame["id"]
 

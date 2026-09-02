@@ -513,6 +513,78 @@ check("the exported clip carries everything the scene model reads",
       {"id", "keyframes", "scale", "x", "y", "opacity", "effects", "mask", "blend"}
       <= set(dumped), f"(missing {{'id','keyframes',…}} - {set(dumped)})")
 
+# ---------------------------------------------------------------------------
+# A CUT-OUT PNG KEEPS ITS HOLE — the black card a transparent logo used to be
+# ---------------------------------------------------------------------------
+#     "mera logo ka background transparent tha but yaha pe black aaya"
+#
+# ⚠ TWO PLACES HAD TO CHANGE AND EITHER ONE ALONE FIXES NOTHING. `convert("RGB")`
+# paints every transparent pixel BLACK, and both the upload (`_keeps_alpha` in
+# `server/animatics.py`) and the renderer did it — so the alpha was destroyed on
+# the way in AND ignored on the way out. It was invisible for a photograph and
+# ruinous for the one thing people upload a PNG for: a logo arrived as a black
+# card with a logo printed on it, and on a row above the film that card is a lid
+# over the whole picture (the E57 fault wearing a different hat).
+print()
+cutout = os.path.join(tmp_dir, "logo.png")
+_logo = Image.new("RGBA", (400, 300), (0, 0, 0, 0))
+_logo.paste((10, 200, 255, 255), (150, 100, 250, 200))
+_logo.save(cutout)
+
+# ⚠ `_picture_layer`, NOT `render_frame`. A finished frame is flattened onto the
+# bar colour on purpose — asking it about alpha can only ever answer "opaque".
+# The layer is where "does the backdrop show through?" is decided, and it is the
+# layer the compositor pastes with its own alpha as the mask.
+_drawn = animatic._picture_layer({"path": cutout}, SIZE_PX, "contain", None)
+check("a cut-out PNG renders with its transparency intact, not on black",
+      _drawn.getpixel((SIZE_PX[0] // 2, 4))[3] == 0,
+      str(_drawn.getpixel((SIZE_PX[0] // 2, 4))))
+check("…and the logo itself is still fully opaque",
+      _drawn.getpixel((SIZE_PX[0] // 2, SIZE_PX[1] // 2)) == (10, 200, 255, 255),
+      str(_drawn.getpixel((SIZE_PX[0] // 2, SIZE_PX[1] // 2))))
+# ⚠ AND THE OPAQUE PATH IS UNCHANGED. Every still already on disk was flattened
+# to RGB by the old upload, so honouring alpha can only affect NEW files — this
+# is the assertion that says so.
+check("an ordinary opaque still is untouched by the change",
+      animatic.render_frame({"path": art}, SIZE_PX).tobytes() == baseline.tobytes())
+
+# ⚠ **AND THERE WAS A THIRD PLACE, WHICH IS WHY THE FAULT CAME BACK.** The
+# comment above this section said TWO — the upload and the Python renderer — and
+# the MONITOR is the one it missed. `ProgramCanvas.jsx` drew every picture with
+# `useAlpha: false`, quoting `_picture_layer`'s `convert("RGB")` as the reason
+# long after `_picture_layer` had stopped doing it. Forcing a frame opaque shows
+# the RGB hiding under a transparent pixel, and in a cut-out PNG that is `0,0,0`:
+# measured on the imported letterhead that reported this, 487,876 of 593,280
+# pixels are fully transparent and every one of them is pure black. So the MP4
+# came out right and the monitor drew a black band over the film —
+# *"transparent v nhi ho kar aay abhi v black dikh raha hai"*.
+#
+# ⚠ THE PREVIEW AND THE EXPORT ARE ONE PICTURE OR THEY ARE A BUG REPORT.
+# `effects_parity_check.py` cannot catch this on a machine with no headless-gl,
+# so the source is asserted here instead — it is one word, and being wrong about
+# it costs a black rectangle.
+_canvas = open(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "client", "src", "components", "ProgramCanvas.jsx"),
+    encoding="utf-8",
+).read()
+# ⚠ EACH CALL CUT AT ITS OWN `});`. Reading to the end of the file instead finds
+# the OVERLAY branch's `useAlpha: true` further down and passes whatever the
+# picture branch says — which is what this assertion did on its first draft, and
+# it is the exact shape of a test that cannot fail.
+_drawn_calls = [
+    part.split("});", 1)[0]
+    for part in _canvas.split("const drawPicture", 1)[-1].split("compositor.layer({")[1:3]
+]
+check("the monitor draws a picture with its own alpha, like the exporter does",
+      len(_drawn_calls) == 2 and "useAlpha: true," in _drawn_calls[1],
+      "ProgramCanvas.jsx forces frames opaque again")
+# The card branch stays opaque on purpose: a colour has no alpha to honour, and a
+# placeholder card is hidden with `opacity`, never by being see-through.
+check("…while a colour card is still drawn opaque",
+      len(_drawn_calls) == 2 and "useAlpha: false," in _drawn_calls[0],
+      "the card branch changed too")
+
 print()
 if failures:
     print(f"{len(failures)} check(s) FAILED:")

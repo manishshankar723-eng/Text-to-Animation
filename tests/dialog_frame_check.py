@@ -185,7 +185,42 @@ check("…and Escape does not close it either", '"Escape"' not in modal)
 
 
 # ===========================================================================
-print("\n5 · the scan is proved to catch the handler coming back")
+print("\n5 · a button in a dialog has to look like a button")
+
+# ⚠ REPORTED OF THIS SAME DIALOG, AND IT IS AN APP-WIDE RULE — the two ghost
+# buttons under the file picker read as plain text sitting on the panel:
+# *"buttun merge ho ja raha hai bg mai … thoda aur stroke/highlight karo …
+# agar aur kahi hai to usko v kar do"*. It matters most HERE, because since
+# E65 the way out of a dialog is a button; a Cancel nobody can see is a dialog
+# with a hidden exit.
+base = read("client", "src", "styles", "base.css")
+theme = read("client", "src", "styles", "theme.css")
+
+ghost = base[base.index(".btn.ghost {"):]
+ghost = ghost[:ghost.index("}")]
+check("a ghost button keeps a visible edge",
+      "border-color: transparent" not in ghost and "--btn-border" in ghost,
+      extra=" ".join(ghost.split()))
+# ⚠ WHAT MAKES IT A GHOST IS THE MISSING FILL, NOT THE MISSING OUTLINE. Give it
+# a background as well and the quieter of two buttons standing side by side
+# stops being the quieter one.
+check("…and is still the quiet one, with no fill",
+      "background: transparent" in ghost, extra=" ".join(ghost.split()))
+# ⚠ `--border` IS A PANEL'S EDGE — a line whose whole job is to be barely there.
+# A button wearing it on the dark page has no edge at all, which is how these
+# buttons came to be invisible in the first place.
+dark = theme[:theme.index("--btn-border: #c7cedd")]
+check("a button's edge is its own value, brighter than a panel's",
+      "--btn-border: var(--border)" not in dark,
+      extra="--btn-border is --border again")
+# The hover was never the problem and must survive:
+# *"jab mai jata hun tab highlight ho hota hai ye badhiya hai isko rakhne do"*.
+check("…and the hover still lifts the edge to gold",
+      "border-color: var(--primary)" in base[base.index(".btn:hover"):][:220])
+
+
+# ===========================================================================
+print("\n6 · the scan is proved to catch the handler coming back")
 
 # ⚠ EVERY DIALOG WAS WRITTEN BY COPYING THE ONE BESIDE IT — which is how the
 # handler reached all thirty in the first place. It will be offered again.

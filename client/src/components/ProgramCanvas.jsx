@@ -418,12 +418,23 @@ export default function ProgramCanvas({
         mode: compositor.gl.TRIANGLES,
         source: entry,
         opacity: alpha,
-        // ⚠ FRAMES ARE FORCED OPAQUE, matching `_picture_layer`'s deliberate
-        // `convert("RGB")`. A source PNG's own transparency has never shown the
-        // backdrop through a frame, and honouring it now would silently change
-        // every animatic that ever used a cut-out still. Alpha on a frame is
-        // what the chroma key is for.
-        useAlpha: false,
+        // ⚠ **A FRAME KEEPS ITS OWN TRANSPARENCY, AND THIS REVERSES THE NOTE
+        // THAT USED TO BE HERE.** It read: *frames are forced opaque, matching
+        // `_picture_layer`'s deliberate `convert("RGB")` … honouring it now
+        // would silently change every animatic that ever used a cut-out still.*
+        // `_picture_layer` STOPPED doing that (it is
+        // `convert("RGBA" if _has_alpha(im) else "RGB")` now), so this line was
+        // the last place a cut-out was flattened — and it flattened onto BLACK,
+        // because the RGB hiding under a transparent pixel is `0,0,0`. Measured
+        // on the imported letterhead that reported it: 487,876 of its 593,280
+        // pixels are fully transparent and every one of them is pure black, so
+        // the monitor drew a solid black band across the film while the MP4 came
+        // out correct. *"transparent v nhi ho kar aay abhi v black dikh raha
+        // hai"* — the preview and the export must be the same picture.
+        // ⚠ AND NOTHING THAT PREDATES IT CAN CHANGE: both upload paths
+        // flattened to RGB before writing the file until `_keeps_alpha`, so no
+        // still stored before that has any alpha left to honour.
+        useAlpha: true,
         look,
         luts: lutTextures,
         matte,
