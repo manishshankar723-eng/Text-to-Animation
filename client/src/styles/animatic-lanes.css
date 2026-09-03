@@ -546,7 +546,7 @@
   pointer-events: none;
   border: 1px solid var(--primary);
   border-radius: 3px;
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 /* How many clips it has caught, so the count is where you are looking rather
    than in a panel at the other end of the window. */

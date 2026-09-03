@@ -54,6 +54,10 @@ import time
 
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -461,7 +465,7 @@ def main():
             check("nothing reached window.onerror or console.error",
                   not errors, json.dumps(errors)[:400])
             if failures:
-                page.screenshot(path=os.path.join(ROOT, "pimport_probe_failed.png"))
+                page.screenshot(path=shot("pimport_probe_failed.png"))
             browser.close()
     finally:
         if vite is not None:

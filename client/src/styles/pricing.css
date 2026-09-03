@@ -270,7 +270,7 @@
   margin: -0.35rem 0 0.5rem;
   padding: 0.1rem 0.5rem;
   border-radius: 999px;
-  background: rgba(229, 193, 88, 0.16);
+  background: rgba(var(--accent-rgb), 0.16);
   color: var(--primary);
   font-size: 0.72rem;
   font-weight: 700;
@@ -334,7 +334,7 @@
      to separate an offer from the plan cards below without becoming a second
      gold slab competing with the featured plan. */
   background:
-    linear-gradient(100deg, rgba(229, 193, 88, 0.13) 0%, rgba(229, 193, 88, 0) 58%),
+    linear-gradient(100deg, rgba(var(--accent-rgb), 0.13) 0%, rgba(var(--accent-rgb), 0) 58%),
     var(--panel-2);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
@@ -421,14 +421,14 @@
   line-height: 1;
   border: 1px dashed var(--border-gold);
   border-radius: 8px;
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   color: var(--text);
   font: inherit;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
 }
 .pricing-offer-code:hover {
-  background: rgba(229, 193, 88, 0.2);
+  background: rgba(var(--accent-rgb), 0.2);
   border-color: var(--primary);
 }
 .pricing-offer-code-text {

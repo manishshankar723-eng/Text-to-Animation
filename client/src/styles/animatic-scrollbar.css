@@ -60,7 +60,7 @@
 }
 .tl-sbar-thumb:hover,
 .tl-sbar.dragging .tl-sbar-thumb {
-  background: rgba(229, 193, 88, 0.22);
+  background: rgba(var(--accent-rgb), 0.22);
   border-color: var(--primary);
 }
 .tl-sbar.dragging .tl-sbar-thumb {

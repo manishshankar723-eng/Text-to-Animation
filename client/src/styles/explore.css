@@ -12,8 +12,8 @@
   /* The gold wash both billboards are lit with. Kept as tokens because the
      light theme's gold is a DEEPER one — see theme.css — and a hard-coded
      #e5c158 glow reads as a smear on a white page. */
-  --xp-glow: rgba(229, 193, 88, 0.3);
-  --xp-glow-soft: rgba(229, 193, 88, 0.14);
+  --xp-glow: rgba(var(--accent-rgb), 0.3);
+  --xp-glow-soft: rgba(var(--accent-rgb), 0.14);
   /* ⚠ THE SCRIM UNDER A CARD'S CAPTION IS DARK IN BOTH THEMES, and that is not
      an oversight. It sits over the customer's own artwork, not over the page,
      so it has to be readable against a photograph — which a light-theme scrim
@@ -27,8 +27,8 @@
   padding-bottom: 1.5rem;
 }
 :root[data-theme="light"] .explore {
-  --xp-glow: rgba(189, 141, 30, 0.26);
-  --xp-glow-soft: rgba(189, 141, 30, 0.11);
+  --xp-glow: rgba(var(--accent-deep-rgb), 0.26);
+  --xp-glow-soft: rgba(var(--accent-deep-rgb), 0.11);
 }
 
 /* The page's heading. The reference has no title above its banners and neither
@@ -981,7 +981,7 @@
   min-height: 100vh;
   min-height: 100dvh;
   background:
-    radial-gradient(900px 500px at 85% -10%, rgba(229, 193, 88, 0.14), transparent 60%),
+    radial-gradient(900px 500px at 85% -10%, rgba(var(--accent-rgb), 0.14), transparent 60%),
     radial-gradient(700px 500px at 5% 10%, rgba(120, 120, 220, 0.08), transparent 55%),
     var(--bg);
   padding-bottom: 3rem;

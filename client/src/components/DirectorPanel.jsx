@@ -1390,7 +1390,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
         )}
 
         {/* ----------------------------------------------------------- buttons */}
-        <div className="an-name-actions dir-actions">
+        <div className="an-name-actions dir-actions btn-row">
           {phase === "brief" && (
             <>
               {/* ⚠ THE FREE DOOR IS A REAL BUTTON, NOT A FALLBACK YOU DISCOVER.
@@ -1399,9 +1399,11 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
                   holds it is genuinely good. Someone who does not want to send
                   their film anywhere should not have to find that out by having
                   the AI call fail. */}
+              {/* ⚠ NOT `small`: it stands beside the AI button, and two
+                  buttons side by side are one size (RULEBOOK E102). */}
               <button
                 type="button"
-                className="btn small"
+                className="btn"
                 onClick={() => run.buildPlan()}
                 title="No AI — reads the rhythm off the shot lengths"
               >
@@ -1434,7 +1436,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
             <>
               <button
                 type="button"
-                className="btn small"
+                className="btn"
                 onClick={() => run.buildPlan({ ai: source === "ai" })}
               >
                 Read it again
@@ -1568,7 +1570,7 @@ export default function DirectorPanel({ run, frames, languages = [], onClose }) 
             <>
               <button
                 type="button"
-                className="btn small"
+                className="btn"
                 disabled={!run.canRevert}
                 onClick={run.revert}
                 title="Put the timeline back exactly as it was before the Director ran"

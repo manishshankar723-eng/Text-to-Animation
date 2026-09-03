@@ -690,6 +690,40 @@
 .admin-feature.hidden .admin-feature-ico {
   opacity: 0.5;
 }
+
+/* ⚠ A FEATURE THAT IS "LIVE" AND REACHES NOBODY MUST LOOK WRONG FROM ACROSS
+   THE ROOM. A workflow was set Live with the rollout on "Named people" and
+   nobody named: it disappeared from every customer's sidebar and off the
+   landing page, while this row showed a green Live pill — *"mai jab text to
+   turnaround image workflow live kiya hun na hi wo user workflow mai na landing
+   page mai dikh raha hai kyun?"*. The dimming above makes a HIDDEN row readable
+   at a glance; this is the same idea for the state that is worse, because that
+   one at least says what it is. */
+.admin-feature.unreachable {
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+  border-left: 3px solid var(--warn);
+  padding-left: 0.7rem;
+  margin-left: -0.7rem;
+}
+.admin-feature-nobody {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 0.45rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.admin-feature-nobody strong {
+  color: var(--warn);
+}
+/* ⚠ `.btn.small` here needs `margin-top: 0` for the reason RULEBOOK E102 spells
+   out — the shared form margin — and this button stands beside a sentence
+   rather than beside another button, so it is not a `btn-row`. */
+.admin-feature-nobody .btn {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
 .admin-feature-head {
   display: flex;
   align-items: center;
@@ -1242,7 +1276,7 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid var(--border-gold);
 }
 .admin-topbar-actions {
@@ -1558,6 +1592,196 @@ label.cap-off {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+/* ---- The colour theme --------------------------------------------------
+   ⚠ THE ONE SCREEN IN THE APP WHOSE COLOURS MUST NOT ALL COME FROM THE THEME.
+   The swatches, the chips and the two `<input type="color">` wells are showing
+   a palette that is NOT necessarily the one the page is painted in — the whole
+   job of this control is to let somebody look at eight alternatives — so their
+   fills are inline styles carrying the candidate's own hexes, and everything
+   around them (the card, the labels, the selected outline) stays on the tokens
+   like every other panel. Anything here that reads `var(--primary)` is
+   describing THE CURRENT CHOICE, deliberately: the ring around the selected
+   card follows the preview, which is what makes "this is the one you are
+   looking at" true while you are looking at it. */
+.admin-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.6rem;
+  margin: 0.2rem 0 1rem;
+}
+.admin-theme-card {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--btn-border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.admin-theme-card:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+.admin-theme-card:disabled {
+  opacity: var(--disabled-opacity);
+  cursor: not-allowed;
+}
+/* ⚠ A RING, NOT A FILL. The card's own background has to stay neutral or it
+   would compete with the chip inside it, which is the thing being judged. */
+.admin-theme-card.on {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+.admin-theme-card-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The theme in miniature: the ground, the accent as a title bar, and the accent
+   again as a button. Three shapes is enough to tell two palettes apart at this
+   size; a full mock of the app would be unreadable at 3rem. */
+.admin-theme-chip {
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  width: 2.6rem;
+  height: 1.9rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.admin-theme-chip.big {
+  width: 5.5rem;
+  height: 4rem;
+  border-radius: 9px;
+}
+.admin-theme-chip-bar {
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 22%;
+  height: 12%;
+  border-radius: 2px;
+  opacity: 0.85;
+}
+.admin-theme-chip-dot {
+  position: absolute;
+  left: 14%;
+  bottom: 20%;
+  width: 42%;
+  height: 22%;
+  border-radius: 3px;
+}
+
+/* ---- Your own two colours ---- */
+.admin-theme-own {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.admin-theme-fields {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.admin-theme-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 12rem;
+  flex: 1;
+}
+.admin-theme-field-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.admin-theme-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+/* ⚠ THE COLOUR WELL IS A BROWSER WIDGET AND HAS TO BE UNDRESSED BY HAND, and
+   the two `::-webkit-color-swatch*` rules are not optional decoration: without
+   them Chromium draws its own 2px inset border and the well shows a rounded
+   rectangle of the colour inside a grey box, which reads as disabled. */
+.admin-theme-swatch {
+  flex: 0 0 auto;
+  width: 2.4rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+.admin-theme-swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.admin-theme-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 6px;
+}
+.admin-theme-swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 6px;
+}
+.admin-theme-hex {
+  flex: 1;
+  min-width: 6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: lowercase;
+}
+
+/* ---- The measured contrast ---- */
+/* ⚠ NUMBERS, NOT A TICK. "Looks fine" is exactly the judgement that ships pale
+   text, and the person choosing is not a designer — a ratio they can compare
+   between two candidates is worth more than a badge that is green until it
+   suddenly is not. */
+.admin-theme-checks {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin: 0.8rem 0 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 0.78rem;
+}
+.admin-theme-checks.warn {
+  border-color: var(--warn);
+}
+.admin-theme-checks-head {
+  font-weight: 600;
+}
+.admin-theme-check {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  color: var(--muted);
+}
+.admin-theme-check b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.admin-theme-check b.bad {
+  color: var(--warn);
+}
+.admin-theme-warn {
+  margin: 0.45rem 0 0;
 }
 
 /* ---- One card per theme ------------------------------------------------

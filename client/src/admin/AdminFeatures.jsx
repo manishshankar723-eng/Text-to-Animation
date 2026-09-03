@@ -31,6 +31,39 @@ const ROLLOUT = {
   percent: "A percentage",
 };
 
+/**
+ * Who, if anyone, this rollout actually reaches — `""` when it reaches people.
+ *
+ * ⚠ THIS EXISTS BECAUSE A **LIVE** WORKFLOW WAS INVISIBLE TO EVERY CUSTOMER AND
+ * THIS SCREEN SAID IT WAS FINE. "Text to Turnaround Image" was set Live with the
+ * rollout on **Named people and nobody named**, so it vanished from the sidebar
+ * and off the landing page while the row here showed a green `Live` pill and the
+ * words *"Everyone in the rollout can use it."* — *"mai jab text to turnaround
+ * image workflow live kiya hun na hi wo user workflow mai na landing page mai
+ * dikh raha hai kyun?"*
+ *
+ * ⚠ AND THE REASON IT WAS SO HARD TO SEE IS THAT IT LOOKS RIGHT TO THE ONLY
+ * PERSON WHO EVER LOOKS. Admins pass every rollout gate on purpose (you cannot
+ * stage a feature you are locked out of), so the administrator checking their
+ * work sees the workflow in their own rail and concludes it launched. Nobody
+ * else can see it at all.
+ *
+ * ⚠ IT IS A WARNING, NOT A CORRECTION. An empty allowlist is a legitimate state
+ * — you make the list before you fill it — so nothing here rewrites the setting.
+ * It says what is true and puts the one-click fix next to it.
+ */
+export function reachesNobody(status, rollout) {
+  if (status === "hidden") return "";          // already says it is gone
+  const mode = rollout?.mode || "all";
+  if (mode === "allowlist" && !(rollout.emails || []).length) {
+    return "nobody is on the list yet";
+  }
+  if (mode === "percent" && !Number(rollout.percent)) {
+    return "the rollout is set to 0%";
+  }
+  return "";
+}
+
 export default function AdminFeatures() {
   const [rows, setRows] = useState([]);
   const [tiers, setTiers] = useState([]);
@@ -163,10 +196,16 @@ export default function AdminFeatures() {
   );
 }
 
-function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, prev, next }) {
+// ⚠ EXPORTED FOR THE TEST. `tests/workflow_reach_check.py` renders this row in
+// each of its states — RULEBOOK E90: a green `npm run build` is not evidence a
+// screen renders, and the state that matters here (a Live feature nobody can
+// see) is one no existing suite ever put on screen. Nothing else imports it.
+export function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, prev, next }) {
   const [open, setOpen] = useState(false);
   const rollout = feature.rollout || { mode: "all", emails: [], percent: 100 };
   const status = STATUS[feature.status] || STATUS.live;
+  // "" when the rollout reaches real people; otherwise why it reaches nobody.
+  const nobody = reachesNobody(feature.status, rollout);
 
   // ⚠ SWAP, DON'T RENUMBER. Writing 0..n across the whole group on every move
   // would be one PATCH per row and would fight anybody else editing the list;
@@ -179,7 +218,7 @@ function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, 
   }
 
   return (
-    <div className={`admin-feature ${feature.status}`}>
+    <div className={`admin-feature ${feature.status}${nobody ? " unreachable" : ""}`}>
       <div className="admin-feature-head">
         <span className="admin-feature-ico">{feature.icon}</span>
         <span className="admin-feature-name">
@@ -236,9 +275,42 @@ function FeatureRow({ feature, tiers, onSaveMinTier, busy, first, last, onSave, 
         </button>
       </div>
 
+      {/* ⚠ WHEN THE ROLLOUT REACHES NOBODY, THAT SENTENCE REPLACES THE STATUS
+          LINE RATHER THAN SITTING BESIDE IT. Printing "Everyone in the rollout
+          can use it." above a warning that nobody can is how this was missed in
+          the first place — the reassuring half is the half that gets read. */}
+      {nobody ? (
+        <p className="admin-feature-nobody">
+          <span>
+            ⚠ <strong>{status.label}, but no customer can see it</strong> —{" "}
+            {nobody}. It is missing from the sidebar and from the landing page.
+            You can still see it yourself because admins pass every rollout.
+          </span>
+          <button
+            type="button"
+            className="btn small"
+            disabled={busy}
+            title="Set this feature's rollout to Everyone"
+            onClick={() =>
+              onSave(feature.key, {
+                rollout: { ...rollout, mode: "all" },
+              })
+            }
+          >
+            Show it to everyone
+          </button>
+        </p>
+      ) : null}
+
       <p className="muted tiny admin-feature-says">
-        {status.says}
-        {rollout.mode !== "all" && ` · ${ROLLOUT[rollout.mode]}`}
+        {/* ⚠ THE STATUS SENTENCE IS DROPPED WHEN THE WARNING IS UP, NOT PRINTED
+            ABOVE IT. "Everyone in the rollout can use it." is true of the STATUS
+            and false of the situation, and a reader given both believes the
+            calm one — which is exactly how a Live workflow stayed invisible for
+            days. The facts underneath (which rollout, when it changed, who
+            changed it) stay either way; they are the ones you need to fix it. */}
+        {nobody ? null : status.says}
+        {rollout.mode !== "all" && `${nobody ? "" : " · "}${ROLLOUT[rollout.mode]}`}
         {rollout.mode === "percent" && ` (${rollout.percent}%)`}
         {rollout.mode === "allowlist" && ` (${rollout.emails.length})`}
         {feature.min_tier && ` · needs ${feature.min_tier}`}

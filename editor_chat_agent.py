@@ -49,6 +49,12 @@ from typing import Any
 
 import yaml
 
+# Which set of provider/model/key settings this agent's calls run on:
+# `CHAT_PROVIDER`, `CHAT_MODEL`, `GEMINI_KEY_CHAT`. ⚠ A KEY OF `llm_json.CAPABILITIES`
+# — the name is the whole wiring, so it lives in one place and both this module
+# and the router that reports the provider back to the browser read it from here.
+CAPABILITY = "chat"
+
 logger = logging.getLogger(__name__)
 
 PROMPTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts.yaml")
@@ -451,7 +457,7 @@ def chat(
     Raises:
         EditorChatError: with a reason written for a person.
     """
-    from llm_json import JsonRequest, LLMJsonError, complete_json, model_id, resolve_provider
+    from llm_json import JsonRequest, LLMJsonError, complete_json
 
     settings = settings or {}
     convo = [m for m in (messages or []) if str(m.get("text", "") or "").strip()]
@@ -491,6 +497,12 @@ def chat(
         prompt=prompt,
         schema=reply_schema(vocabulary or {}),
         purpose="editor chat",
+        # ⚠ THIS IS WHAT PUTS THE CHAT ON ITS OWN KEY. Everything else about the
+        # call is shared with the Director; the one word here is what decides
+        # whose credentials and whose bill answer it. See `CAPABILITIES` in
+        # `llm_json` — the string must be a key of that table or it silently
+        # falls back to the shared text settings.
+        capability=CAPABILITY,
     )
 
     try:

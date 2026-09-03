@@ -68,6 +68,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -711,7 +715,7 @@ def main():
             )
             check("⚠ …and not one of them is clipped at the rail's width",
                   not clipped, str(clipped))
-            page.screenshot(path=os.path.join(ROOT, "output", "sidebar_collapsed.png"))
+            page.screenshot(path=shot("sidebar_collapsed.png"))
 
             page.evaluate("window.__collapse(false)")
             page.wait_for_timeout(400)
@@ -767,7 +771,7 @@ def main():
             check("⚠ …and it is NOT a modal — the page behind it still works",
                   page.locator(".xp-tile").count() > 0)
 
-            page.screenshot(path=os.path.join(ROOT, "output", "explore_promo.png"))
+            page.screenshot(path=shot("explore_promo.png"))
 
             page.keyboard.press("Escape")
             page.wait_for_timeout(600)
@@ -933,7 +937,7 @@ def main():
             check("…the caption says what it is",
                   "Ganesh Utsav spot" in page.inner_text(".xp-view-bar"),
                   page.inner_text(".xp-view-bar"))
-            page.screenshot(path=os.path.join(ROOT, "output", "explore_player.png"))
+            page.screenshot(path=shot("explore_player.png"))
 
             page.evaluate("window.__signin = []")
             page.locator(".xp-view-cta").click()
@@ -1047,7 +1051,7 @@ def main():
             check("nothing threw during any of it", not errors, "; ".join(errors[:2]))
             page.evaluate("window.__screen('explore')")
             page.wait_for_timeout(1600)
-            page.screenshot(path=os.path.join(ROOT, "output", "explore_mount.png"),
+            page.screenshot(path=shot("explore_mount.png"),
                             full_page=True)
 
             print("")
@@ -1075,7 +1079,7 @@ def main():
                       ".getPropertyValue('--panel').trim()"))
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
             page.screenshot(
-                path=os.path.join(ROOT, "output", "explore_mount_dark.png"),
+                path=shot("explore_mount_dark.png"),
                 full_page=True)
 
             print("")
@@ -1255,7 +1259,7 @@ def main():
                   "carousel is their list, not a fixed four",
                   page.locator(".xp-hero-dot").count() == 0,
                   str(page.locator(".xp-hero-dot").count()))
-            page.screenshot(path=os.path.join(ROOT, "output", "explore_banners.png"))
+            page.screenshot(path=shot("explore_banners.png"))
 
             # ⚠ HIDING ONE IS THE SAME THING AS HAVING NONE, from out here: the
             # server drops an inactive row from the public payload. So this is
@@ -1309,7 +1313,7 @@ def main():
             check("⚠ …and the body box GROWS to its text (E1)",
                   page.locator("textarea.admin-banner-body").count() == 1)
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
-            page.screenshot(path=os.path.join(ROOT, "output", "admin_banners.png"),
+            page.screenshot(path=shot("admin_banners.png"),
                             full_page=True)
 
             print("")
@@ -1354,7 +1358,7 @@ def main():
             check("⚠ …and the caption box GROWS to its text (E1)",
                   page.locator("textarea.admin-banner-body").count() == 1)
             check("nothing threw on the way", not errors, "; ".join(errors[:2]))
-            page.screenshot(path=os.path.join(ROOT, "output", "admin_showcase.png"),
+            page.screenshot(path=shot("admin_showcase.png"),
                             full_page=True)
 
             browser.close()

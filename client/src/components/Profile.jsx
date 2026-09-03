@@ -595,7 +595,7 @@ export default function Profile({
                 placeholder="DELETE"
                 onChange={(e) => setDeleteText(e.target.value)}
               />
-              <div className="danger-actions">
+              <div className="danger-actions btn-row">
                 <button
                   className="btn danger-btn"
                   disabled={deleting || deleteText.trim().toUpperCase() !== "DELETE"}
@@ -603,8 +603,10 @@ export default function Profile({
                 >
                   {deleting ? "Deleting…" : "Yes, delete permanently"}
                 </button>
+                {/* ⚠ NOT `small`: it stands beside the delete button, and
+                    two buttons side by side are one size (RULEBOOK E102). */}
                 <button
-                  className="btn ghost small"
+                  className="btn ghost"
                   disabled={deleting}
                   onClick={() => {
                     setConfirmingDelete(false);

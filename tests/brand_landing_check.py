@@ -28,6 +28,22 @@ It also pins the four things the rename touched, each of which was a real fault:
      because "Character Studio" ellipsised at 264; "Aniwala AI Studio" is wider
      again, and `.sb-brand-name` trims with an ellipsis, so a name that no
      longer fits would be trimmed SILENTLY. Measured, not eyeballed.
+  5. **A HIDDEN WORKFLOW MUST NOT FLASH UP WHILE THE PAGE WAITS.** The card
+     count alone cannot see this — it is taken after the answer lands, and the
+     page was drawing its built-in list of all six until then, advertising a
+     switched-off workflow to every visitor for as long as the request took
+     (*"jab refresh kiye to one sec ke liye dikha fir nhi"*). Section 4b slows
+     `/public/workflows` down on purpose and checks both halves: a first visit
+     claims nothing, and every visit after it is correct in the first paint from
+     the remembered answer.
+  6. **The COLOUR PALETTE**, which is the same round trip as the workflow list:
+     repaint through `PATCH /admin/branding`, reload, and read the computed
+     `--panel` and `--gold-fill` off `:root`. ⚠ This is the ONLY place that is
+     proved — `tests/palette_check.py` measures the derivation and renders the
+     panel, but whether the injected `<style>` actually WINS over `theme.css` is
+     a cascade question, and a cascade only exists in a browser. Both themes,
+     because a plain `:root` block loses to `:root[data-theme="light"]` and the
+     failure looks like "dark mode works, light mode ignored me".
 
     pip install -r requirements-dev.txt
     python -m playwright install chromium
@@ -58,9 +74,13 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import SHOTS_DIR  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
-SHOTS = os.path.join(ROOT, "output", "brand_check")
+SHOTS = os.path.join(SHOTS_DIR, "brand_check")
 
 ADMIN = "boss@example.com"
 PASSWORD = "password123"
@@ -274,6 +294,55 @@ def run(page, app, base, token):
     api(base, f"/admin/features/{HIDE_KEY}", {"status": "live"}, token=token,
         method="PATCH")
 
+    # --------------------------------- 4b. the HIDDEN one must never flash up
+    # ⚠ THIS IS THE BUG THIS SECTION EXISTS FOR, AND IT IS THE ONE A COUNT
+    # CANNOT SEE. The card count above is taken after `networkidle`, by which
+    # time the answer has landed — and the page was drawing its BUILT-IN list of
+    # all six workflows until it did. So a workflow an administrator had hidden
+    # was advertised to every visitor for as long as the request took:
+    # *"jab refresh kiye to one sec ke liye dikha fir nhi"*. Both halves of the
+    # fix are checked here, by making the answer arrive slowly on purpose.
+
+    def slow_answer(route):
+        time.sleep(1.6)
+        route.continue_()
+
+    # (i) A FIRST-EVER VISIT: nothing remembered, so nothing is claimed.
+    page.evaluate("() => localStorage.removeItem('cas_public_workflows')")
+    api(base, f"/admin/features/{HIDE_KEY}", {"status": "hidden"}, token=token,
+        method="PATCH")
+    page.route("**/public/workflows", slow_answer)
+    page.goto(app)
+    page.wait_for_selector(".landing-nav", timeout=20000)
+    early = page.locator(".lp-wf-card").count()
+    check("a first visit draws NO workflow cards until the answer arrives",
+          early == 0, f"{early} cards were on screen before the server answered")
+    hero = page.inner_text(".hero-copy")
+    check("…and claims no number either", "Six workflows" not in hero, hero[:80])
+
+    page.wait_for_selector(".lp-wf-card", timeout=20000)
+    page.wait_for_timeout(300)
+    after_answer = landing_cards(page)
+    check("…then draws exactly what the server sent",
+          HIDE_TITLE not in after_answer, "; ".join(after_answer))
+
+    # (ii) EVERY VISIT AFTER THAT: the answer is remembered, so the very first
+    # paint is already right — no gap, no flash, nothing to correct.
+    page.reload()
+    page.wait_for_selector(".lp-wf-card", timeout=20000)
+    remembered = landing_cards(page)
+    check("a return visit is correct in the FIRST paint, before any answer",
+          HIDE_TITLE not in remembered and len(remembered) == len(after_answer),
+          "; ".join(remembered))
+
+    page.unroute("**/public/workflows")
+    api(base, f"/admin/features/{HIDE_KEY}", {"status": "live"}, token=token,
+        method="PATCH")
+    page.goto(app, wait_until="networkidle")
+    page.wait_for_selector(".lp-wf-card", timeout=20000)
+    check("and un-hiding it puts the card back",
+          HIDE_TITLE in landing_cards(page), "; ".join(landing_cards(page)))
+
     # ------------------------------------------------ 5. the rail's own name
     page.goto(app, wait_until="networkidle")
     page.evaluate("t => localStorage.setItem('cas_token', t)", token)
@@ -291,6 +360,89 @@ def run(page, app, base, token):
     icons = page.locator(".sb-item .sb-ico svg").count()
     check("every rail row wears a drawn glyph, not an emoji", icons >= 4, str(icons))
     page.screenshot(path=os.path.join(SHOTS, "app-sidebar.png"), full_page=False)
+
+    # ------------------------------------------------ 6. the COLOURS land too
+    # ⚠ THIS IS THE ONLY PLACE THE PALETTE IS PROVED TO REACH A REAL SCREEN.
+    # `tests/palette_check.py` measures the derivation and renders the panel,
+    # but neither of those is a browser: the injected `<style>` has to actually
+    # WIN over `styles/theme.css`, and that is a cascade question no source
+    # check can answer. The whole feature was asked for as *"jab kare color
+    # change to sab jagah achhe se ho jaye"* — this is the "sab jagah".
+    def tokens():
+        return page.evaluate(
+            "() => { const s = getComputedStyle(document.documentElement);"
+            " return { panel: s.getPropertyValue('--panel').trim(),"
+            "          fill: s.getPropertyValue('--gold-fill').trim(),"
+            "          primary: s.getPropertyValue('--primary').trim(),"
+            "          injected: !!document.getElementById('cas-palette'),"
+            "          theme: document.documentElement.dataset.theme }; }")
+
+    # ⚠ THE THEME IS PINNED FIRST, AND FORGETTING TO WAS THE FIRST RESULT THIS
+    # SECTION PRODUCED. Section 3 leaves the browser in whichever mode its last
+    # click landed on, so the "built-in midnight ground" assertion below read
+    # `#ffffff` and reported the palette broken when it was working perfectly.
+    # A browser test that inherits state from the section above it is a test
+    # that fails for a reason that has nothing to do with what it checks.
+    page.evaluate("() => { document.documentElement.dataset.theme = 'dark';"
+                  " localStorage.setItem('cas_theme', 'dark'); }")
+    page.wait_for_timeout(200)
+
+    shipped = tokens()
+    check("the app ships with no palette override at all",
+          shipped["injected"] is False, str(shipped))
+    check("…and is wearing the built-in midnight ground",
+          shipped["panel"].lower() == "#13161f", shipped["panel"])
+
+    status, _ = api(base, "/admin/branding",
+                    {"theme_id": "emerald", "accent": "#34d399", "ground": "#101815"},
+                    token=token, method="PATCH")
+    check("admin can repaint the app", status == 200, str(status))
+
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".sb-brand-name", timeout=25000)
+    page.wait_for_timeout(400)
+    painted = tokens()
+    check("a reload paints the app in the chosen ground",
+          painted["panel"].lower() == "#101815", str(painted))
+    # ⚠ THE FILL IS THE CHOSEN COLOUR, EXACTLY. Text-like tokens are corrected
+    # for contrast and may move; a button's fill must be the brand colour that
+    # was picked or the whole screen is "nearly" the brand.
+    check("…and its buttons in the chosen accent",
+          painted["fill"].lower() == "#34d399", painted["fill"])
+    check("…through one injected stylesheet, not thirty inline styles",
+          painted["injected"] is True)
+    page.screenshot(path=os.path.join(SHOTS, "app-emerald-dark.png"), full_page=False)
+
+    # ⚠ LIGHT MODE IS THE HALF THAT GETS FORGOTTEN, and it is the half that
+    # breaks: a plain `:root` block cannot beat `:root[data-theme="light"]`, so
+    # a wrong implementation repaints dark mode and leaves light mode gold. That
+    # is exactly what this pair of assertions catches.
+    page.evaluate("() => { document.documentElement.dataset.theme = 'light';"
+                  " localStorage.setItem('cas_theme', 'light'); }")
+    page.wait_for_timeout(250)
+    light = tokens()
+    check("light mode follows the same choice", light["theme"] == "light")
+    check("…and is NOT still wearing the built-in gold",
+          light["fill"].lower() not in ("#b0841a", "#e5c158"), light["fill"])
+    check("…with a light ground, not the dark one inverted",
+          light["panel"].lower() not in ("#101815", "#13161f"), light["panel"])
+    page.screenshot(path=os.path.join(SHOTS, "app-emerald-light.png"), full_page=False)
+
+    # Put it back — and prove that putting it back REMOVES the override rather
+    # than deriving something that merely resembles the shipped stylesheet.
+    api(base, "/admin/branding",
+        {"theme_id": "gold", "accent": "#e5c158", "ground": "#13161f"},
+        token=token, method="PATCH")
+    page.evaluate("() => { document.documentElement.dataset.theme = 'dark';"
+                  " localStorage.setItem('cas_theme', 'dark'); }")
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".sb-brand-name", timeout=25000)
+    page.wait_for_timeout(400)
+    back = tokens()
+    check("choosing the built-in again removes the override entirely",
+          back["injected"] is False, str(back))
+    check("…and the app is byte-for-byte the stylesheet it shipped with",
+          back["panel"].lower() == "#13161f", back["panel"])
 
     print(f"\n  screenshots → {SHOTS}")
 

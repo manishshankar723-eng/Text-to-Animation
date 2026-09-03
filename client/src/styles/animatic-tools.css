@@ -146,7 +146,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  background: rgba(229, 193, 88, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   border-left: 2px solid var(--primary);
   border-right: 2px solid var(--primary);
   pointer-events: none;

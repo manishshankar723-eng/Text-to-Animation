@@ -30,7 +30,17 @@
 // ⚠ **AND IT FAILS BACK TO THE BUILT-IN, NEVER TO NOTHING.** A failed call keeps
 // whatever is already on screen. An app that draws no title at all is a worse
 // outage than one showing yesterday's name.
+//
+// ⚠ **AND THE COLOURS RIDE ALONG WITH THE NAME, IN ONE CALL.** The palette an
+// administrator chose on the Brand screen is part of what the app is CALLED as
+// far as a browser is concerned — both are public, both are needed before the
+// sign-in card is drawn, and both must be remembered or the first paint is the
+// wrong one. A second `/public/theme` call would be a second thing to fail, a
+// second thing to remember, and a second chance for the two to disagree about
+// which brand is live. The maths that turns two hex strings into every token
+// the app paints with is in `palette.js`; this file only carries them.
 import * as api from "./api.js";
+import { applyPalette, DEFAULT_PALETTE, normalisePalette } from "./palette.js";
 
 const STORE_KEY = "cas_brand";
 
@@ -44,6 +54,10 @@ export const DEFAULT_BRAND = Object.freeze({
   logoUrlLight: "",
   stamp: "",
   stampLight: "",
+  // The app as it ships. ⚠ This palette injects NO CSS at all — see
+  // `palette.js`. It is the absence of an override, not a copy of the
+  // stylesheet.
+  palette: DEFAULT_PALETTE,
 });
 
 // The favicon the app ships with, restored when the uploaded logos are removed.
@@ -68,6 +82,15 @@ function shape(raw) {
     logoUrlLight: light,
     stamp: raw?.stamp || "",
     stampLight: raw?.stamp_light || raw?.stamp || "",
+    // ⚠ `normalisePalette` NEVER THROWS AND NEVER RETURNS A PARTIAL ANSWER, and
+    // that is load-bearing here: this same function shapes the REMEMBERED
+    // answer, which on the release that adds colours has no `accent` in it at
+    // all, and can also be whatever somebody typed into localStorage.
+    palette: normalisePalette({
+      id: raw?.theme_id,
+      accent: raw?.accent,
+      ground: raw?.ground,
+    }),
   });
 }
 
@@ -124,7 +147,10 @@ export function setBrand(raw) {
   if (
     next.name === _current.name &&
     next.logoUrl === _current.logoUrl &&
-    next.logoUrlLight === _current.logoUrlLight
+    next.logoUrlLight === _current.logoUrlLight &&
+    next.palette.id === _current.palette.id &&
+    next.palette.accent === _current.palette.accent &&
+    next.palette.ground === _current.palette.ground
   ) {
     return _current;
   }
@@ -135,6 +161,12 @@ export function setBrand(raw) {
     logo_url_light: raw?.logo_url_light || "",
     stamp: next.stamp,
     stamp_light: next.stampLight,
+    // ⚠ REMEMBERED IN THE WIRE'S OWN FIELD NAMES, not the shaped ones, because
+    // `remembered()` feeds this straight back through `shape`. A `palette`
+    // object saved here would come back as a brand with no colours.
+    theme_id: next.palette.id,
+    accent: next.palette.accent,
+    ground: next.palette.ground,
   });
   applyToDocument(next);
   for (const fn of _subscribers) fn();
@@ -166,6 +198,16 @@ function markFor(brand, theme) {
 export function applyToDocument(brand = _current) {
   if (typeof document === "undefined") return;
   document.title = brand.name;
+
+  // ⚠ THE PALETTE IS STAMPED HERE, BESIDE THE TITLE AND THE FAVICON, AND NOT IN
+  // A REACT EFFECT. Three of the screens that must be painted in the chosen
+  // colours — the landing page, the sign-in card and the public storyboard
+  // viewer — are outside the app shell, and one of them (`main.jsx`) runs this
+  // BEFORE React mounts at all. An effect somewhere in the tree would repaint
+  // the app a beat after it was drawn, which is the flash this file exists to
+  // remove. Idempotent: `applyPalette` replaces one `<style>` and does nothing
+  // when the CSS has not changed.
+  applyPalette(brand.palette);
 
   const head = document.head;
   if (!head) return;

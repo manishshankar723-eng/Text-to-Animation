@@ -49,6 +49,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot, shots_dir
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -432,10 +436,10 @@ def main():
     port = free_port()
     vite = None
     # ⚠ THE SCREENSHOTS ARE WORKING FILES, NOT ARTEFACTS. The pixel stages have to
-    # capture the monitor to sample it, and dropping two PNGs in the repo root on
-    # every green run is noise in `git status`. They go to a temp dir and are kept
-    # — copied out, named for what failed — only when a check actually fails,
-    # which is the rule the other browser tests' `*_probe_failed.png` follow.
+    # capture the monitor to sample it, and keeping two PNGs from every green run
+    # is noise. They go to a temp dir and are copied out into `test_shots/` —
+    # git-ignored, see `tests/_shots.py` — only when a check actually fails,
+    # which is the rule every other browser test follows.
     shots = tempfile.mkdtemp(prefix="restack_")
     try:
         vite = start_vite(port)
@@ -469,7 +473,7 @@ def main():
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts with its rows drawn", False, str(exc)[:160])
                 print(json.dumps(page.evaluate("() => window.__probe.errors"), indent=2)[:2000])
-                page.screenshot(path=os.path.join(ROOT, "restack_probe_failed.png"))
+                page.screenshot(path=shot("restack_probe_failed.png"))
                 browser.close()
                 return 1
 
@@ -739,10 +743,10 @@ def main():
             browser.close()
     finally:
         if failures:
+            kept = shots_dir("restack")
             for name in os.listdir(shots):
-                shutil.copy(os.path.join(shots, name),
-                            os.path.join(ROOT, f"restack_probe_{name}"))
-            print(f"  screenshots kept as restack_probe_*.png in {ROOT}")
+                shutil.copy(os.path.join(shots, name), os.path.join(kept, name))
+            print(f"  screenshots kept in {kept}")
         shutil.rmtree(shots, ignore_errors=True)
         if vite:
             vite.terminate()

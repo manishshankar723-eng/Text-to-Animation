@@ -79,6 +79,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -88,6 +92,16 @@ PROBE_JSX = os.path.join(CLIENT, "__probe_director.jsx")
 NL = chr(10)
 
 failures: list[str] = []
+
+# ⚠ THE FREE DOOR IS "THE ONE THAT IS NOT PRIMARY", NOT "THE SMALL ONE". It used
+# to be `.btn.small` and this file selected it that way; the class went when the
+# two brief-screen buttons were levelled, because two buttons side by side are one
+# size (RULEBOOK E102) — and a suite pinned to a decorative class then failed on a
+# change that was deliberate and correct. `.dir-actions` holds exactly two buttons
+# on the brief screen, so "the non-primary one" is what the door actually IS, and
+# the label is asserted beside it so this cannot silently start clicking something
+# else.
+FREE_DOOR = ".dir-actions button:not(.primary)"
 
 
 def check(label, good, detail=""):
@@ -773,7 +787,7 @@ def open_director(page, ai=False, press=True):
     if ai:
         page.click(".dir-actions button.primary")
     else:
-        page.click(".dir-actions button.small")
+        page.click(FREE_DOOR)
     # ⚠ WAIT FOR THE BRIEF TO GO, not for the table to arrive. A flat timeline
     # produces a plan with no table in it at all (correctly — there is no rhythm
     # to read), and waiting on `.dir-table` there would time out on the one case
@@ -849,7 +863,7 @@ def main():
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts", False, str(exc)[:160])
                 print(json.dumps(page.evaluate("() => window.__probe.errors"), indent=2)[:2000])
-                page.screenshot(path=os.path.join(ROOT, "director_probe_failed.png"))
+                page.screenshot(path=shot("director_probe_failed.png"))
                 browser.close()
                 return 1
 
@@ -876,10 +890,12 @@ def main():
                   page.evaluate("() => window.__probe.onBrief()") is True)
             check("...with nothing on the timeline touched",
                   page.evaluate("() => window.__probe.timeline()") == before)
+            free = page.query_selector(FREE_DOOR)
             check("⚠ THE FREE DOOR IS A REAL BUTTON — the rules planner needs no "
                   "backend, no key and no quota, and must not be something you "
                   "discover by having the AI call fail",
-                  page.query_selector(".dir-actions button.small") is not None)
+                  free is not None and "Just the rhythm" in (free.text_content() or ""),
+                  "" if free else "no non-primary button in .dir-actions")
             check("...and the AI door is the primary one",
                   "Read my film" in (page.query_selector(".dir-actions button.primary")
                                      .text_content() or ""))
@@ -887,7 +903,7 @@ def main():
             # Take the free door: from here on the plan is the deterministic
             # Phase 0 one, which is what lets every assertion below name the
             # exact cuts it expects.
-            page.click(".dir-actions button.small")
+            page.click(FREE_DOOR)
             page.wait_for_selector(".dir-table", timeout=15000)
             page.wait_for_timeout(200)
 

@@ -22,6 +22,29 @@
   --text: #f4f6fa;
   --muted: #9aa2b4;
   --primary: #e5c158; /* Pastel Warm Champagne Gold */
+  /* --- THE ACCENT, IN THE THREE SHAPES THE REST OF THE APP NEEDS IT ---------
+     ⚠ THESE EXIST SO THAT CHANGING THE ACCENT CHANGES IT EVERYWHERE. Before
+     them, 69 rules in 20 stylesheets wrote `rgba(229, 193, 88, 0.1)` by hand —
+     a tinted row here, a glow there, a selected clip on the timeline — and every
+     one of those would have stayed gold on a deployment that chose green. The
+     admin panel's colour picker (`client/src/palette.js`) overrides these along
+     with `--primary`, so a wash follows the brand the same way a button does.
+
+     ⚠ `--accent-rgb` IS CHANNELS, NOT A COLOUR, and it has to be: `rgba()`
+     cannot take a hex from a variable, so `rgba(var(--accent-rgb), 0.1)` is the
+     only way to spend one accent at twenty different alphas. Write it exactly
+     like that — a bare `var(--accent-rgb)` where a colour is wanted is three
+     numbers and a syntax error.
+
+     ⚠ AND THEY ARE DEFINED ONCE, NOT PER THEME, WHICH IS DELIBERATE. The tints
+     these feed were the DARK gold in both themes before this change, so keeping
+     one definition makes the rewrite byte-for-byte invisible on the shipped
+     look. `--accent-deep` is the separate, darker gold that a few surfaces need
+     because they sit on WHITE whatever the theme is — a landing-page tile, the
+     Explore billboards — and it was `#bd8d1e` hard-coded in two files. */
+  --accent-rgb: 229, 193, 88;
+  --accent-deep-rgb: 189, 141, 30;
+  --accent-on-white: #bd8d1e;
   --primary-hover: #f3d67b;
   --primary-ink: #141005;
   --ok: #4ade80;

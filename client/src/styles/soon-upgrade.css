@@ -27,7 +27,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid var(--border-gold);
   margin-bottom: 0.9rem;
 }
@@ -64,7 +64,7 @@
   font-size: 0.78rem;
   font-weight: 700;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   border: 1px solid var(--border-gold);
 }
 .soon-foot {

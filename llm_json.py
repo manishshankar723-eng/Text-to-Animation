@@ -43,6 +43,24 @@ when it is unset, so an existing `.env` keeps working untouched.
     DIRECTOR_MODEL    = a model id                 (default: the text model)
     DIRECTOR_TEMPERATURE / DIRECTOR_TOP_P / DIRECTOR_SEED
 
+---------------------------------------------------------------------------
+⚠ AND SO IS EVERY OTHER CAPABILITY THAT ASKS FOR A NAME — see `CAPABILITIES`.
+---------------------------------------------------------------------------
+A `JsonRequest` may carry a `capability`, and a capability listed there gets its
+own three settings under its own prefix, each falling back to the shared text
+ones. The editor's chat is the first:
+
+    CHAT_PROVIDER   = vertex | gemini | stub  (default: its key, then TEXT_PROVIDER)
+    CHAT_MODEL      = a model id              (default: the text model)
+    GEMINI_KEY_CHAT = a Developer API key     (default: GEMINI_API_KEY)
+
+⚠ WHY THE CHAT NEEDED ITS OWN: a chat turn is a per-MESSAGE cost carried by
+somebody's subscription and a breakdown is a per-RENDER cost, and billed to one
+key the two cannot be told apart. It is also insulation. A GCP project with its
+billing switched off answers 403 CONSUMER_INVALID to every Vertex call, and on
+one shared switch that takes the whole app quiet at once — rather than the one
+workflow whose project actually lapsed.
+
 ⚠ `stub` IS A REAL, SUPPORTED VALUE and not a test artefact. It answers every
 call from a JSON file named by `DIRECTOR_STUB_PATH`, which is how you drive the
 whole workflow — popup, preview, run, revert — on a laptop with no credentials
@@ -199,6 +217,14 @@ PROVIDER_ALIASES = {
     "local": "openai_compatible",
 }
 
+# ⚠ ONE CAPABILITY, ONE ENV PREFIX, AND THE PREFIX IS THE WHOLE MAPPING. A name
+# in here buys `<PREFIX>_PROVIDER`, `<PREFIX>_MODEL` and `GEMINI_KEY_<PREFIX>`
+# with no further code; a name NOT in here resolves exactly as it did before any
+# of this existed, which is what keeps the Director and the breakdown untouched.
+CAPABILITIES = {
+    "chat": "CHAT",
+}
+
 # ⚠ WHO ENFORCES A JSON SCHEMA SERVER-SIDE. Everything not on this list is given
 # the schema in words instead — see the header. `stub` is here because it answers
 # from a file: it is already exactly the shape it was going to be, and padding
@@ -313,6 +339,12 @@ class JsonRequest:
     # Per-call overrides. Left empty the module-level sampling applies, which is
     # what both Director calls use — see the header on why they must agree.
     sampling: dict = field(default_factory=dict)
+    # Which capability is asking — a key of `CAPABILITIES`, or "" for the shared
+    # text settings. ⚠ NOT `purpose`, THOUGH IT IS TEMPTING: `purpose` is prose
+    # written for a log line and an error message ("editor chat"), and keying env
+    # vars off a sentence means rewording one breaks the credentials. And ⚠ NOT
+    # IN `fingerprint()`: the same brief answered on two keys is the same brief.
+    capability: str = ""
 
     def fingerprint(self) -> str:
         """A stable digest of exactly what will be sent."""
@@ -336,26 +368,69 @@ def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
 
 
-def resolve_provider(provider: str | None = None) -> str:
-    """Effective provider: explicit arg > DIRECTOR_PROVIDER > TEXT_PROVIDER > vertex."""
-    p = (provider or _env("DIRECTOR_PROVIDER") or _env("TEXT_PROVIDER") or "vertex").lower()
+def capability_prefix(capability: str = "") -> str:
+    """The env prefix this capability owns, or "" when it owns none."""
+    return CAPABILITIES.get((capability or "").strip().lower(), "")
+
+
+def capability_key_env(capability: str = "") -> str:
+    """The env var holding this capability's own Gemini key, or "" for none."""
+    prefix = capability_prefix(capability)
+    return f"GEMINI_KEY_{prefix}" if prefix else ""
+
+
+def _capability_provider(capability: str) -> str:
+    """What this capability's OWN settings say the provider is, or "".
+
+    ⚠ THE KEY IS ALSO A SWITCH, AND IT HAS TO BE. The alternative is a `.env`
+    where pasting a Developer API key next to a capability's name changes nothing
+    until you also remember a second line — which is exactly the shape of the
+    bug that reads as "I set the key and it STILL says 403". A capability holding
+    its own Gemini key is a capability somebody deliberately pointed at the
+    Developer API, so that is where it goes.
+
+    ⚠ `<PREFIX>_PROVIDER` STILL WINS OVER THE KEY, so `CHAT_PROVIDER=vertex`
+    moves the chat back without anybody having to delete a key they want again.
+    """
+    prefix = capability_prefix(capability)
+    if not prefix:
+        return ""
+    named = _env(f"{prefix}_PROVIDER")
+    if named:
+        return named
+    return "gemini" if _env(capability_key_env(capability)) else ""
+
+
+def resolve_provider(provider: str | None = None, *, capability: str = "") -> str:
+    """Effective provider, best source first:
+
+    explicit arg > `<CAP>_PROVIDER` > the capability's own key > DIRECTOR_PROVIDER
+    > TEXT_PROVIDER > vertex.
+    """
+    picked = provider or _capability_provider(capability)
+    p = (picked or _env("DIRECTOR_PROVIDER") or _env("TEXT_PROVIDER") or "vertex").lower()
     p = PROVIDER_ALIASES.get(p, p)
     if p not in SUPPORTED_PROVIDERS:
+        prefix = capability_prefix(capability)
+        named = f"{prefix}_PROVIDER" if prefix else "DIRECTOR_PROVIDER"
         raise LLMJsonError(
-            f"Unknown DIRECTOR_PROVIDER '{p}'. Use one of {SUPPORTED_PROVIDERS}."
+            f"Unknown {named} '{p}'. Use one of {SUPPORTED_PROVIDERS}."
         )
     return p
 
 
-def model_id(provider: str | None = None) -> str:
+def model_id(provider: str | None = None, *, capability: str = "") -> str:
     """The model this provider will be asked for.
 
     ⚠ THE TEXT MODEL IS THE FALLBACK, NOT A SECOND DEFAULT. `script_breakdown`
     owns what "the text model" is for this build; naming a different string here
     would give the Director a model nobody chose the day that one is pinned.
     """
-    resolved = resolve_provider(provider)
-    override = _env("DIRECTOR_MODEL")
+    resolved = resolve_provider(provider, capability=capability)
+    prefix = capability_prefix(capability)
+    # ⚠ THE CAPABILITY'S OWN MODEL OUTRANKS `DIRECTOR_MODEL`, and the Director's
+    # still applies when it has none — the same fallback shape as the provider.
+    override = (_env(f"{prefix}_MODEL") if prefix else "") or _env("DIRECTOR_MODEL")
     if override:
         return override
     if resolved == "stub":
@@ -421,7 +496,7 @@ def is_greedy(settings: dict | None = None) -> bool:
 # ---------------------------------------------------------------------------
 # THE SCHEMA, IN WORDS — for every model that cannot be handed one
 # ---------------------------------------------------------------------------
-def schema_mode(provider: str | None = None) -> str:
+def schema_mode(provider: str | None = None, *, capability: str = "") -> str:
     """`native` or `prompt` — where the schema travels on this provider.
 
     ⚠ IT IS A MODE, NOT A CAPABILITY PROBE. Nothing here asks an endpoint what it
@@ -439,12 +514,13 @@ def schema_mode(provider: str | None = None) -> str:
             "[llm_json] DIRECTOR_STRUCTURED_OUTPUT=%r is not auto/native/prompt "
             "— treating it as auto.", raw,
         )
-    return "native" if resolve_provider(provider) in NATIVE_SCHEMA_PROVIDERS else "prompt"
+    resolved = resolve_provider(provider, capability=capability)
+    return "native" if resolved in NATIVE_SCHEMA_PROVIDERS else "prompt"
 
 
-def schema_in_prompt(provider: str | None = None) -> bool:
+def schema_in_prompt(provider: str | None = None, *, capability: str = "") -> bool:
     """Does the schema have to be described in the message itself?"""
-    return schema_mode(provider) == "prompt"
+    return schema_mode(provider, capability=capability) == "prompt"
 
 
 def _scalar_sketch(node: dict) -> str:
@@ -745,8 +821,12 @@ def _google_adapter(request: JsonRequest) -> str:
 
     from script_breakdown import get_client
 
-    provider = resolve_provider()
-    client = get_client(provider)
+    # ⚠ THE CAPABILITY IS READ OFF THE REQUEST, NOT OFF THE ENVIRONMENT. This is
+    # the one place that knows WHICH call is being made, and resolving it here
+    # rather than at import time is what lets the chat sit on the Developer API
+    # in the same process that plans a board on Vertex.
+    provider = resolve_provider(capability=request.capability)
+    client = get_client(provider, key_env=capability_key_env(request.capability))
     settings = {**sampling(), **request.sampling}
 
     # ⚠ THE ONE SETTING THAT IS NOT A CONFIG FIELD. It travels in `sampling()`
@@ -779,7 +859,7 @@ def _google_adapter(request: JsonRequest) -> str:
         "response_mime_type": "application/json",
         **settings,
     }
-    if not schema_in_prompt(provider):
+    if not schema_in_prompt(provider, capability=request.capability):
         config["response_schema"] = _to_genai_schema(request.schema)
 
     # ⚠ THE CALL THAT COULD HANG FOR EVER NOW CANNOT. `google-genai` has no
@@ -810,7 +890,7 @@ def _google_adapter(request: JsonRequest) -> str:
         )
 
     response = client.models.generate_content(
-        model=model_id(provider),
+        model=model_id(provider, capability=request.capability),
         contents=[request.prompt],
         config=types.GenerateContentConfig(**config),
     )
@@ -852,7 +932,7 @@ def _openai_adapter(request: JsonRequest) -> str:
     settings = {**sampling(), **request.sampling}
 
     body: dict = {
-        "model": model_id(),
+        "model": model_id(capability=request.capability),
         "messages": [
             {"role": "system", "content": request.system},
             {"role": "user", "content": request.prompt},
@@ -898,10 +978,18 @@ def _openai_adapter(request: JsonRequest) -> str:
         ) from None
 
 
-def _adapter():
+def _adapter(capability: str = ""):
+    """Which adapter answers this capability's calls.
+
+    ⚠ IT TAKES THE CAPABILITY BECAUSE THE ADAPTER IS A CHOICE OF WIRE FORMAT,
+    not of vendor. `vertex` and `gemini` share `_google_adapter`, so reading the
+    global switch here was harmless right up until a capability could name
+    `openai_compatible` on its own — at which point it would have been sent down
+    the Google path with somebody else's model id on it.
+    """
     if _override is not None:
         return _override
-    provider = resolve_provider()
+    provider = resolve_provider(capability=capability)
     if provider == "stub":
         return _stub_adapter
     if provider == "openai_compatible":
@@ -923,12 +1011,12 @@ def complete_json(request: JsonRequest) -> dict:
     Raises:
         LLMJsonError: with a reason written for a human.
     """
-    adapter = _adapter()
+    adapter = _adapter(request.capability)
     # ⚠ THE REQUEST THAT GOES OUT MAY NOT BE THE ONE THAT CAME IN. On a provider
     # that cannot be handed a schema, `sent` carries the schema in its prompt —
     # and everything after this line, the fingerprint in the log included, is
     # about what was ACTUALLY sent.
-    sent = as_prompt_schema(request) if schema_in_prompt() else request
+    sent = as_prompt_schema(request) if schema_in_prompt(capability=request.capability) else request
     last_reason = f"The {request.purpose} call failed for an unknown reason."
     # ⚠ ONE REPAIR PER CALL, NOT ONE PER ATTEMPT. Three transport retries each
     # asking for a mend would be six paid calls to learn one thing.
@@ -951,7 +1039,10 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget) -> dict:
         try:
             logger.info(
                 "[llm_json] %s (provider=%s, model=%s, schema=%s, attempt %d/%d, fp=%s)…",
-                request.purpose, resolve_provider(), model_id(), schema_mode(),
+                request.purpose,
+                resolve_provider(capability=request.capability),
+                model_id(capability=request.capability),
+                schema_mode(capability=request.capability),
                 attempt, MAX_RETRIES, sent.fingerprint()[:8],
             )
             payload = adapter(sent)

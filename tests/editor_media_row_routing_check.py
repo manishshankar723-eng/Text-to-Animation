@@ -81,6 +81,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -530,7 +534,7 @@ def main():
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts with the library drawn", False, str(exc)[:200])
                 print(json.dumps(page.evaluate("() => window.__probe.errors"), indent=2)[:2000])
-                page.screenshot(path=os.path.join(ROOT, "row_routing_failed.png"))
+                page.screenshot(path=shot("row_routing_failed.png"))
                 browser.close()
                 return 1
             page.wait_for_timeout(1500)
@@ -681,7 +685,7 @@ def main():
             check("nothing reached window.onerror or console.error",
                   not errors, json.dumps(errors)[:500])
             if failures:
-                page.screenshot(path=os.path.join(ROOT, "row_routing_failed.png"))
+                page.screenshot(path=shot("row_routing_failed.png"))
             browser.close()
     finally:
         if vite is not None:

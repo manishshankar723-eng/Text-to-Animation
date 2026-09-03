@@ -44,6 +44,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 LUT_DIR = os.path.join(ROOT, "luts")
@@ -318,7 +322,7 @@ def main():
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts and the monitor is on screen", False, str(exc)[:160])
                 print(json.dumps(page.evaluate("() => window.__probe.errors"), indent=2)[:3000])
-                page.screenshot(path=os.path.join(ROOT, "editor_probe_failed.png"))
+                page.screenshot(path=shot("editor_probe_failed.png"))
                 browser.close()
                 return 1
             page.wait_for_function("window.__probe.read() !== null", timeout=30000)
@@ -344,7 +348,7 @@ def main():
             if target is None:
                 check("there is a clip on the timeline to drop onto", False,
                       f"nothing matched {TARGET}")
-                page.screenshot(path=os.path.join(ROOT, "editor_probe_failed.png"))
+                page.screenshot(path=shot("editor_probe_failed.png"))
                 browser.close()
                 return 1
             check("there is a clip on the timeline to drop onto", True)
@@ -418,7 +422,7 @@ def main():
             # the repo; a failing one leaves the picture of what went wrong,
             # which for a black editor is the entire diagnosis.
             if failures:
-                page.screenshot(path=os.path.join(ROOT, "editor_after_drop.png"))
+                page.screenshot(path=shot("editor_after_drop.png"))
             browser.close()
     finally:
         if vite is not None:

@@ -104,6 +104,17 @@ throughout: `google-genai`.
 | Speech (voiceover) | — | `gemini-2.5-flash-preview-tts` | `tts.py` |
 | Transcription (captions) | — | Gemini text model | `captions.py` |
 | **Edit plans (🎬 Make Video)** | `DIRECTOR_PROVIDER` | falls back to the text model | `director.py`, `llm_json.py` |
+| **The ✨ AI Editor chat** | `CHAT_PROVIDER` | `gemini-3.5-flash` on the Developer API | `editor_chat_agent.py`, `llm_json.py` |
+
+⚠ **AND THE CHAT CARRIES ITS OWN KEY, NOT JUST ITS OWN SWITCH, SINCE 2026-09-03.**
+`GEMINI_KEY_CHAT` is read before the shared `GEMINI_API_KEY`, and **setting it is
+what moves the chat** — `CHAT_PROVIDER` is only needed to override that. It was
+paid for by an outage: the GCP project's billing lapsed, Vertex answered
+`403 PERMISSION_DENIED / CONSUMER_INVALID` to everything, and one shared switch
+took the cheapest call in the product down with the render pipeline. See
+**RULEBOOK D5**. ⚠ **`GEMINI_KEY_MEDIA` EXISTS IN `.env` AND IS READ BY NOTHING** —
+images (`gemini_client.py`) and video (`video_client.py`) still resolve their own
+provider, so filling it in changes nothing today.
 
 ⚠ **THE DIRECTOR IS THE ONE CAPABILITY THAT CAN RUN OFF GOOGLE, SINCE 2026-08-23
 (Phase 5), AND NO SDK WAS ADDED FOR IT.** `DIRECTOR_PROVIDER=openai_compatible`
@@ -284,7 +295,19 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-03 — **THE AI EDITOR'S HEADER BECOMES A TITLE BAR.** *“chat bot panel mai x overlap ho raha hai ye right left icon se”*, then — after the first fix — *“icon aur x close buttun upper niche dikh raha hia ek jaisa rakho”*. The shared `.modal-close` is absolutely positioned and, in a `fixed` panel, resolves against the PANEL rather than the header row, so it sat on top of the two dock buttons. Reserving the corner only turned the overlap into a step; `.ec-head .modal-close` is `position: static` now and both controls take one height from `--ec-ctl`. **E65 is untouched — it is about the 31 dialogs, which all have an empty corner; this panel's title bar does not.** New **RULEBOOK E101**. `dialog_frame_check.py` and `editor_chat_render_check.py` green; ⚠ **not opened in a browser** — neither suite measures a pixel, so a screenshot in BOTH docks is still owed.
+**Last updated:** 2026-09-03 — **EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER.** *"bahut ss hai aur voh commit ho raha hai … jab bhi tum testing karo ss ek folder mai rakho aur usko git ignore kar ke rakho."* ⚠ **THE SUITES EACH PICKED THEIR OWN FILENAME IN THE REPO ROOT** — `bin_probe_failed.png`, `restack_probe_bands.png`, `row_routing_failed.png` and nine more were sitting next to `server/` and `client/`, `git status` read **53 pending changes**, and `row_routing_failed.png` had already been committed as if it were source. ⚠ **`.gitignore` KNEW ONE SPELLING ONLY** (`*_probe_failed.png`), so a reference shot from a *passing* run, or any `_bands`/`_blend` variant, walked straight past it — a pattern that must be extended per filename is the bug, a folder dropped whole is the fix. New **`test_shots/`** (ignored except its README) and new **`tests/_shots.py`**, one `shot("name.png")` call that makes the folder for you, in the shape of `tests/_sandbox.py`. **20 suites moved onto it**, including the five that were writing into `output/` — where the app puts real renders, so a test shot buried there is indistinguishable from the user's own work — and `e2e_animatic.py`, which was writing into the OS temp dir where nobody thinks to look. `git rm --cached` untracked the committed PNG and the twelve strays were moved into the folder. New **RULEBOOK G17**. All 121 test files compile; `.gitignore` verified with `git check-ignore`. ⚠ **NO BROWSER SUITE WAS RUN** (G2) — the paths are proven by reading, not by a run that writes a screenshot. See the Work Log.
+
+**Previously:** 2026-09-03 — **THE CHAT GETS ITS OWN KEY, BECAUSE ONE LAPSED PROJECT SILENCED EVERYTHING.** *"dekho mai chat bot ko ek kaam bola to ye error aaya"* — the ✨ AI Editor was printing raw Google JSON at the user: **403 PERMISSION_DENIED, `CONSUMER_INVALID`**, which means the paying project is no longer valid. The user named the cause themselves: GCP billing switched off. ⚠ **NO CODE WAS WRONG** — `.env`, both clients and the ADC file all named the project correctly. ⚠ **THE FAULT WAS THAT ONE SWITCH OWNED EVERYTHING**: `TEXT_PROVIDER` pointed every text capability at one dead project, so the cheapest conversational call in the product died beside the render pipeline that actually needed it. So capabilities can now carry their own credentials — `llm_json.CAPABILITIES = {"chat": "CHAT"}` buys `CHAT_PROVIDER` / `CHAT_MODEL` / `GEMINI_KEY_CHAT`, each falling back to the shared text setting, and a capability not in that table resolves exactly as before (the Director and the breakdown are untouched, and that is asserted). ⚠ **THE KEY IS ALSO THE SWITCH** — pasting `GEMINI_KEY_CHAT` moves the chat on its own, because a key that does nothing until you remember a second line is the *"I set the key and it STILL says 403"* bug. ⚠ **AND THE CLIENT CACHE IS KEYED ON THE KEY NOW**: one client per provider meant two capabilities on `gemini` shared whichever was built first, so one would silently bill the other's key — invisible, because both keys work. ⚠ **`gemini-2.5-flash` IS CLOSED TO NEW DEVELOPER KEYS** ("no longer available to new users", as a 404); the Developer API default is `gemini-3.5-flash`, verified by a real turn that answered the exact message from the screenshot. New **RULEBOOK D5**, new `tests/chat_provider_check.py` (38 checks). ⚠ **ONLY THE CHAT MOVED** — the breakdown, the Director, images, Veo and TTS are all still on the lapsed project, and the panel still shows the raw JSON. See the Work Log.
+
+**Previously:** 2026-09-03 — **THE BROWSER SUITE FOUND WHAT THE UNIT TESTS COULD NOT.** *“playwirte chala kar test karo please”* — and it was worth asking for. ⚠ **(1) A RENDER-PHASE `setState` BROKE THE LANE-RESTACK DRAG.** Per-project row heights (E83) adjusted state during render — React's own documented pattern — so the first paint after a project switch would already be right. `editor_lane_restack_check.py` went red on two checks: a render-phase `setState` makes React **throw the in-progress render away and start again**, and every drag on this bar is measured against boxes `readView` reads out of the DOM on a layout effect keyed on that same state. The drop landed on the wrong row. Rewritten as a `useEffect`, declared **after** the debounced write so a pending save still goes under the id it belongs to. ⚠ **BISECTED, NOT ARGUED** — commented out: green; restored: red; as an effect: green. ⚠ **AND NOTHING ELSE SAW IT**: the build, every unit suite and `editor_row_height_check.py` were green through the broken version. ⚠ **(2) THE DIRECTOR SUITE WAS PINNED TO A DECORATIVE CLASS** — it clicked the free door as `.dir-actions button.small` and timed out, but the panel had not regressed: the `small` came off when the two brief-screen buttons were levelled (**E102**). Now `button:not(.primary)`, with the label asserted beside it. ⚠ **(3) WITH BOTH FIXED, 16 BROWSER SUITES ARE GREEN**, including the two row-height checks added last entry and the Director suite's *“the transitions are still alternate, not clustered”*. New **RULEBOOK G15, G16**. ⚠ **The sound half is still unproven in a browser** — laying the files down needs a Freesound key on the server, which no suite has. ⚠ **And one thing to flag that is not a code change:** the previous two entries' working-tree changes now read as part of commit `a205aad`; nothing here ran `git commit` and the reflog shows no amend. Left as found. See the Work Log.
+
+**Previously:** 2026-09-03 — **A "LIVE" WORKFLOW NOBODY COULD SEE, AND THE ONE SECOND IT FLASHED FOR.** Two separate bugs behind one report. **(1)** `workflow.text-to-image` was `live` with `rollout {mode: allowlist, emails: []}` — confirmed by reading the real store — so every account was refused while the panel printed a green Live pill and *“Everyone in the rollout can use it.”* ⚠ **Admins pass every rollout gate on purpose, so the one person who checks always sees it.** `reachesNobody()` now turns the row amber, says no customer can see it and why, drops the reassuring sentence and offers **Show it to everyone**. The live setting was moved to `all` through `features.save_feature` after asking. **(2)** *“jab refresh kiye to one sec ke liye dikha fir nhi”* — the landing page drew its BUILT-IN six until `/public/workflows` answered, advertising hidden workflows to every visitor. The answer is remembered now (`cas_public_workflows`) so a return visit is right in the first paint, and a first-ever visit claims nothing until it lands. ⚠ **Proved by delaying the request on purpose** (`brand_landing_check.py` §4b) — a test that waits for `networkidle` can never see it. New **RULEBOOK E104 and E105**, new `tests/workflow_reach_check.py` (6 workflows × 4 rollout modes × 3 viewers, plus “does it lead anywhere”). All suites green + `npm run build`.
+
+**Previously:** 2026-09-03 — **A "LIVE" WORKFLOW THAT NO CUSTOMER COULD SEE.** *“mai jab text to turnaround image workflow live kiya hun na hi wo user workflow mai na landing page mai dikh raha hai kyun?”* The code was right: the feature was `live` with `rollout.mode: allowlist` and **nobody on the list**, so every account was refused — while the panel printed a green Live pill and *“Everyone in the rollout can use it.”* ⚠ **And admins pass every rollout gate on purpose, so the one person who checks always sees it.** Fixed as a WARNING, not a correction (an empty list is a legitimate state): `reachesNobody()` turns the row amber, says no customer can see it and why, drops the reassuring sentence, and offers **Show it to everyone**. New `tests/workflow_reach_check.py` asks all six workflows three questions — do they reach a customer and the landing page in every rollout mode, do they LEAD anywhere (page, rail fallback, short name, glyph, both directions), and does the panel say so — and `admin_fields_check` now photographs the warning. New **RULEBOOK E104**. ⚠ **The live deployment's own setting is still wrong** — press Features → Text to Turnaround Image → Show it to everyone.
+
+**Previously:** 2026-09-03 — **THE APP'S COLOURS ARE AN ADMIN FIELD, AND A ROW OF BUTTONS IS ONE ROW.** Two jobs. **(1)** *“save name and reset name buttun uper niche v hai aur chhota bara … mai bahut baar bola hun”* — the cause was never the screen: `.btn.primary` carries a FORM's `margin-top` on a COLOUR variant, so every primary is born 1.1rem below the button beside it, and **39 rules in 21 stylesheets already existed to undo it**. New `.btn-row` opts a row out, and new `tests/button_row_check.py` reads the JSX and fails on mismatched sizes or an unreset primary (4 rows were really wrong). **(2)** Brand → **Colours**: eight presets or two colours of your own, live-previewed across the whole app, deriving BOTH themes from one accent and one ground (`client/src/palette.js`). The built-in look injects **nothing**, so shipping this restyles nobody; **69 hard-coded golds** across 20 stylesheets became `rgba(var(--accent-rgb), …)` so the change really does land everywhere. New `tests/palette_check.py` runs the real module under node and measures WCAG contrast for every preset in both themes — it caught three real bugs — and `brand_landing_check.py` §6 proves the repaint **in Chromium**. New **RULEBOOK E102 and E103**. 16 suites green + `npm run build`. ⚠ **Not looked at by hand on the timeline editor or the storyboard board.**
+
+**Previously:** 2026-09-03 — **THE AI EDITOR'S HEADER BECOMES A TITLE BAR.** *“chat bot panel mai x overlap ho raha hai ye right left icon se”*, then — after the first fix — *“icon aur x close buttun upper niche dikh raha hia ek jaisa rakho”*. The shared `.modal-close` is absolutely positioned and, in a `fixed` panel, resolves against the PANEL rather than the header row, so it sat on top of the two dock buttons. Reserving the corner only turned the overlap into a step; `.ec-head .modal-close` is `position: static` now and both controls take one height from `--ec-ctl`. **E65 is untouched — it is about the 31 dialogs, which all have an empty corner; this panel's title bar does not.** New **RULEBOOK E101**. `dialog_frame_check.py` and `editor_chat_render_check.py` green; ⚠ **not opened in a browser** — neither suite measures a pixel, so a screenshot in BOTH docks is still owed.
 
 **Previously:** 2026-09-03 — **THE FREE DOOR SCORES THE FILM, AND ELEVEN CUTS ARE NOT ONE DISSOLVE.** Three reports off one 🎬 run; two fixed, one written up as OPEN with the measurements. ⚠ **(1) BOTH SOUND BOXES WERE SWITCHES THAT COULD NOT DO ANYTHING.** The analyse call answered **403 PERMISSION_DENIED**, the run fell back to “Just the rhythm”, and phases D and E read their cues off that reading and nothing else — *“Sound and bg music nhi aaya timeline pe”*. The line `sound_pass.js` draws between STORY and RHYTHM is right and was drawn too wide: which moment is a door closing is still refused, but **how fast the film cuts** is a bed (`houseMusicCue` — three bands off the median hold, instrumental every time so it does not fight a voiceover) and **which cuts this plan just treated** is a whoosh under each transition (`houseSfxCues` — ONE recording, landing half the transition early because a transition is boundary-local). A whoosh on an ordinary cut is still refused. Both are fallbacks — a reading that cued its own wins — and both fire on the AI door too, which is where it was reported. ⚠ **(2) ELEVEN TREATED CUTS CAME OUT AS ONE DISSOLVE** — *“transition alag alag use hona chahiye video editor ke hisab se soch kar”*. The fix is the shape the MOVES already had: dissolve carries most of the film, a **slide every 4th** treated cut, a **wipe every 6th** with the second an angled edge the other way, and the **dip still outranks the pattern** on a scene-ending hold. The counter indexes the TREATED cuts in film order, a moving edge is 0.6× a dissolve's length, and every kind is checked against `caps` first so the preview cannot list a film that will not be made. ⚠ **(3) THE LOGO IN THE PROGRAM MONITOR IS OPEN, AND IT IS NOT THE RUN'S DOING** — measured off the screenshots the shot is ≈1.15× (the Ken Burns move, correct) and the logo overlay ≈2.5×; the Director has **no overlay verb at all**, `sceneAt` resolves an overlay from its own keyframes and `overlayRect` from its own box, and the largest transform any step can write is **±17%**. Left in RULEBOOK's Still open list with the two questions a reproduction needs. New **RULEBOOK E84, E85**. Green with 15 suites and `npm run build`; ⚠ **not seen in the running app**, and the sound half needs a Freesound key and a live run. See the Work Log.
 
@@ -2976,7 +2999,7 @@ Pipeline stages (see `pipeline.py`):
 | `run_character.py` | CLI entry point (argparse → `run_pipeline`). |
 | `pipeline.py` | Orchestrates all stages. `run_pipeline(...)`. |
 | `gemini_client.py` | Image generation. **Switchable backend: Vertex AI or Gemini API.** Also owns the storyboard panel prompt and its **three continuity channels** — `build_cast_context` / `build_set_context` (the written bible), the scene look-anchor, and `build_flow_context` (what runs either side of this shot). `resolve_name()` is the shared alias-tolerant name matcher; a tie deliberately returns None. |
-| `script_breakdown.py` | Script→Storyboard Stage A: script → shot list (LLM). **Switchable text backend (`TEXT_PROVIDER`): Vertex AI or Gemini API.** |
+| `script_breakdown.py` | Script→Storyboard Stage A: script → shot list (LLM). **Switchable text backend (`TEXT_PROVIDER`): Vertex AI or Gemini API.** ⚠ Also owns the shared genai text client, and since 2026-09-03 `get_client(key_env=…)` — **a client per provider AND per key**, so a capability with its own key cannot be handed somebody else's (RULEBOOK D5). |
 | `plan_agent.py` | **Plan & Script — the whole brain, in three deliberately separate capabilities.** `chat()` asks the questions a strategist would (and returns them as CLICKABLE options on the same turn — one call, so the reply and the buttons can't drift apart); `generate_plan()` returns a STRUCTURED calendar via `response_schema`, never free text pretending to be a schedule; `write_script()` turns one calendar row — or a free-text ask — into a shootable script. ⚠ **`write_script`'s OUTPUT FORMAT IS A CONTRACT WITH `script_breakdown.py`.** Every rule in `_SCRIPT_INSTRUCTION` is the writing side of a rule the breakdown enforces on the reading side: one beat per line, every visible person NAMED (the breakdown sees one sentence at a time and cannot resolve a pronoun), one spelling per character, slug lines on scene changes, `NAME: line` for speech. Prose breaks all of it QUIETLY — the board generates, it is just anchored to the wrong words. ⚠ **`script_to_text()` IS THE SINGLE FLATTENER** every route out of the workflow goes through (preview, .txt, clipboard, storyboard draft), so those are the same bytes; a second implementation in the browser is how the export and the board become different documents. ⚠ **`_SCRIPT_STANCE` IS THE EDITORIAL LINE, IN ONE NAMED CONSTANT** so a human can read it and argue with it — dark material is ordinary dramatic material, no unsolicited warnings, no silently softening a brief; the limits that remain are the ones that do harm off the page. `_safety_settings()` sets the provider's own per-category threshold (`AI_SAFETY_THRESHOLD`, default `BLOCK_ONLY_HIGH`) and **validates it itself, because the SDK does not** — `SafetySetting` coerces any string into a new enum member. `_block_reason()` turns "empty response" into the provider's actual reason. Reuses `script_breakdown`'s provider switch, retry policy and greedy sampling rather than growing a second copy. **TEXT quota only, never image.** |
 | `ai_usage.py` | **What a text call cost, in tokens — the only answer to that question in this repo.** `Usage` is ADDITIVE, which is what makes a session total the sum of its parts instead of a counter that drifts from them. Breaks `thinking` out on its own line (2.5-class models bill it as output but report it separately, and it is usually where the money went — the same discovery `DIRECTOR_THINKING_TOKENS` records from the latency side), counts `calls` because one user action is often several, and **counts FAILED RETRIES, which are billed too**. ⚠ **`cost_usd` RETURNS `None`, NOT `0.0`, WHEN IT CANNOT BE STATED HONESTLY** — an unpriced model, or a total spanning two models — because a zero renders as "free", the one wrong answer. The dollar figure is ADVISORY and every surface showing it must say so: only Google bills, list prices drift, and `gemini-2.5-flash` is a rolling alias whose price can move under a fixed id. Override the table with `AI_PRICE_<MODEL>` rather than editing it. |
 | `plan_export.py` | **Taking a plan or a script out of the app.** Calendar: xlsx (frozen header, auto-filter, set widths, a second Strategy sheet so the thinking travels with the schedule), docx (per upload, not one unreadable 40-row table), csv (UTF-8 BOM). `COLUMNS` is shared by all three so they agree, and `tests/plan_export_columns_check.py` asserts the browser's preview list matches it exactly. Script: `SCRIPT_EXPORTERS` — **.txt is the MACHINE format**, byte for byte what `plan_agent.script_to_text` produced and what the breakdown reads, so ⚠ **DO NOT PRETTY-PRINT IT** (every heading and `NAME:` prefix in there is parsed); .docx is the HUMAN one, set as a screenplay. |
@@ -3281,6 +3304,10 @@ previews require a cloud run (not `local_only`).
 | `DIRECTOR_THINKING_TOKENS` | **The biggest latency knob in the Director** (1024). 2.5-class models think with an automatic budget unless told; that cost a 24-shot board 133s (28s at 1024) and 504'd an 8-shot one. ⚠ Below ~1024 the polish call returns an EMPTY plan; at 0 it runs away. `-1` = provider default. |
 | `DIRECTOR_MAX_OUTPUT_TOKENS` | One answer's ceiling (12288). Unset it is the model's own 65,536 — a run-away then costs four minutes instead of a truncated answer the repair path can retry. |
 | `DIRECTOR_BUDGET_SECONDS` | One CALL's wall clock, retries and backoff included (135s). The plan route makes two, and the browser waits 300s (`PLAN_TIMEOUT_MS`, `client/src/api.js`) — raise one and you raise the other. |
+| `CHAT_PROVIDER` | `vertex` \| `gemini` \| `stub` \| `openai_compatible`. The ✨ AI Editor chat only. Unset follows `GEMINI_KEY_CHAT`, then `TEXT_PROVIDER`. |
+| `CHAT_MODEL` | The chat's model id. Unset = the text model for its provider. Outranks `DIRECTOR_MODEL`. |
+| `GEMINI_KEY_CHAT` | The chat's own Developer API key. ⚠ **Setting it moves the chat to the Developer API by itself** — the key IS the switch (RULEBOOK D5). Falls back to `GEMINI_API_KEY`. |
+| `GEMINI_KEY_MEDIA` | Reserved for the image/video half of the same idea. ⚠ **Read by nothing yet.** |
 | `DIRECTOR_STRUCTURED_OUTPUT` | `auto` (default) \| `native` \| `prompt`. Where the JSON Schema travels. `auto` = native on vertex/gemini/stub, prompt elsewhere. Set `prompt` on Google to rehearse the no-schema path. |
 | `DIRECTOR_JSON_MODE` | `on` (default) \| `off`. Sends `response_format: json_object` on OpenAI-shaped calls. Not a schema — turn it off for endpoints that reject the field. |
 | `DIRECTOR_TEMPERATURE` / `DIRECTOR_TOP_P` / `DIRECTOR_SEED` | Greedy and seeded by default (0.0 / 1.0 / 42), so "Read it again" is a comparison and not a re-roll. `none`/`off` on the seed turns it off. |
@@ -3322,6 +3349,16 @@ in `.env` — no code change needed.
 
 ## 🧪 Browser tests (Playwright)
 
+⚠ **EVERY SCREENSHOT GOES TO `test_shots/`, AND NOTHING IN IT IS COMMITTED.**
+Ask `tests/_shots.py` for the path — `shot("bin_probe_failed.png")`, or
+`shot("bands.png", "restack")` for a set that belongs together — and it makes the
+folder for you, so a suite needs no `os.makedirs` of its own. **Never name a file
+in the repo root**: that is how twelve PNGs came to sit beside `server/` and
+`client/` with `git status` reading 53 pending changes, and how
+`row_routing_failed.png` got committed. **And not `output/` either**, ignored
+though it is — that is where the app writes real renders, so a test shot buried
+in it is indistinguishable from the user's own work. RULEBOOK **G17**.
+
 ⚠ **THE STANDING PREFERENCE IS NOT TO RUN THESE unless asked** — but two of them
 answer questions nothing else can, and `editor_lane_restack_check.py` is the
 newest of those: **the monitor is more than one canvas once a caption row is
@@ -3336,8 +3373,8 @@ existed on one side of the app and not the other, so a test that looked at the
 panel would have passed throughout. It opens the pricing modal from
 `.sb-upgrade`, reads the offer card, presses **Apply**, and compares the number on
 every plan card before and after; then toggles the billing period and watches
-them move again. It leaves `output/offer_card.png` and
-`output/offer_card_light.png` behind on purpose — `theme.css` defines every
+them move again. It leaves `test_shots/offer_card.png` and
+`test_shots/offer_card_light.png` behind on purpose — `theme.css` defines every
 colour twice, and a gold wash that reads as a highlight on `#13161f` can read as
 a stain on white. Its no-browser half is `tests/offer_visibility_check.py`, which
 needs neither Chromium nor Mongo and runs in a second.
@@ -3573,7 +3610,478 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-03 (latest) — ✕ THE AI EDITOR'S HEADER BECOMES A TITLE BAR: THE ✕ AND THE DOCK SWITCH ARE ONE ROW, ONE SIZE
+### 2026-09-03 (latest) — EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER
+
+    "jo tum screen shot lete ho uska ek folder banao aur git ignore karo
+     mai dekh raha hun bahut ss hai aur voh commit ho raha hai — isliye jab
+     bhi tum testing karo ss ek folder mai rakho aur usko git ignore kar ke
+     rakho please"                                    (with two screenshots
+                                                       of the Source Control
+                                                       panel: 53 pending)
+
+**What the user was looking at.** The VS Code Changes list, with four
+`restack_probe_*.png` sitting in it between `RULEBOOK.md` and `branding.js`, and
+a **53 pending** badge. The second screenshot showed more of them greyed out in
+the file tree — `bimport_probe_failed.png`, `bin_probe_failed.png`,
+`lanemove_probe_failed.png` — in the repo root, beside `board_agent.py` and
+`captions.py`.
+
+**⚠ THE CAUSE WAS THAT EVERY SUITE PICKED ITS OWN FILENAME.** Twenty Playwright
+suites each wrote `os.path.join(ROOT, "<something>_failed.png")` when a check
+went red. Nothing coordinated the names, so `.gitignore` had been taught the one
+spelling somebody happened to look at — `*_probe_failed.png` — and everything
+else walked past it: `row_routing_failed.png` (no `probe`),
+`editor_after_drop.png` (a reference shot from a **passing** run), and the four
+`restack_probe_bands/blend/hidden*.png` variants. `row_routing_failed.png` had
+already been committed. ⚠ **A PATTERN THAT MUST BE EXTENDED FOR EACH NEW
+FILENAME IS THE BUG.** The next suite to add a screenshot would have re-created
+this whether or not the pattern was widened today, because the decision was
+being made twenty times instead of once.
+
+**⚠ AND `output/` WAS NOT THE ANSWER, THOUGH FIVE SUITES HAD ALREADY REACHED FOR
+IT.** It is git-ignored, so it solves the commit — but it is where the app writes
+real project renders, so a test shot sitting in it is indistinguishable from the
+user's own work and gets swept out with it. `e2e_animatic.py` had reached the
+other way and written into the OS temp dir, which never pollutes anything and
+which nobody thinks to look in when a test fails.
+
+**The fix — one folder, one helper.**
+
+- **`test_shots/`** at the repo root, dropped whole by `.gitignore`
+  (`test_shots/*` with `!test_shots/README.md`, so a fresh clone still finds the
+  folder and an explanation of what it is for).
+- **`tests/_shots.py`**, in the shape of `tests/_sandbox.py` (G13's lesson: a
+  convention nobody can forget beats one everybody must remember). One call —
+  `shot("bin_probe_failed.png")`, or `shot("bands.png", "restack")` for a set
+  that belongs together — and it creates the directory, so the `os.makedirs`
+  lines came out of the suites that had them.
+- **Twenty suites moved onto it**: the thirteen writing to the repo root, the
+  five writing into `output/` (`explore_mount`, `workflow_mount`,
+  `admin_fields`, `brand_landing`, `offer_card`), plus `e2e_animatic` off the
+  temp dir and `editor_lane_restack`, whose failure path copies its temp-dir
+  frames out into `test_shots/restack/`.
+- `git rm --cached row_routing_failed.png` untracked the one that had been
+  committed, and the twelve strays were moved into the folder rather than
+  deleted — they are the trail from a real failing run.
+
+**Verified:** all 121 files under `tests/` compile; `git check-ignore -v` says
+`test_shots/anything_new.png` is caught by the folder rule and `README.md` by the
+negation; `git status` no longer lists a single PNG. New **RULEBOOK G17**.
+
+⚠ **NO BROWSER SUITE WAS RUN** (G2) — this is a path change, proven by reading
+the code and the ignore rules, not by a run that actually writes a screenshot.
+The first real failing run is what will confirm a file lands in `test_shots/`.
+
+---
+
+### 2026-09-03 — THE CHAT GETS ITS OWN KEY, BECAUSE ONE LAPSED PROJECT SILENCED EVERYTHING
+
+    "dekho mai chat bot ko ek kaam bola to ye error aaya"   (with a screenshot)
+    "okay mera biiling band hai samjh mai GCP usse hi hua kay?"
+    "Chat ke liye ye wal use karo abhi set up kiya hun Gemini_key_chat"
+
+The screenshot showed the ✨ AI Editor panel printing a wall of raw Google JSON
+at the user for typing *"add transition image layer 10 every each clip"*:
+
+    Text API error during editor chat: 403 PERMISSION_DENIED …
+    'reason': 'CONSUMER_INVALID' … project project-cf56be07-4f9e-45d4-9f4
+
+**THE DIAGNOSIS, AND IT WAS THE USER'S OWN.** `CONSUMER_INVALID` means one thing:
+the project that was going to pay is no longer valid. Billing had been switched
+off. Confirmed rather than assumed — `.env`, `gemini_client.py`,
+`script_breakdown.py` and the ADC file (`quota_project_id`) all name the same
+project correctly, so no code was wrong. Two things surfaced while checking:
+`gcloud` also wants a re-auth, and its active project (`prachi-poc-478711`) is
+**not** the one `.env` names, so "turn billing back on" is not necessarily enough
+on its own.
+
+**WHAT WAS ACTUALLY BUILT — a per-capability seam, not a global flip.** The easy
+fix was `TEXT_PROVIDER=gemini` + one key, and it was the wrong one: that moves the
+shot breakdown and the Director too, and the user asked for this key *for chat*.
+
+⚠ **ONE CAPABILITY, ONE ENV PREFIX, AND THE PREFIX IS THE WHOLE MAPPING.**
+`llm_json.CAPABILITIES = {"chat": "CHAT"}` buys `CHAT_PROVIDER`, `CHAT_MODEL` and
+`GEMINI_KEY_CHAT` with no further code. A `JsonRequest` carries a `capability`
+and `editor_chat_agent` sets it; a name **not** in that table resolves exactly as
+it did before any of this existed, which is what leaves the Director untouched.
+
+⚠ **THE KEY IS ALSO THE SWITCH.** Setting `GEMINI_KEY_CHAT` moves the chat by
+itself. The alternative is a `.env` where pasting a key changes nothing until you
+also remember a second line — which is precisely the shape of the bug that reads
+as *"I set the key and it STILL says 403"*. `CHAT_PROVIDER` still outranks it, so
+going back to Vertex does not mean deleting a key you will want again.
+
+⚠ **`capability` IS NOT `purpose`, AND IS NOT IN `fingerprint()`.** `purpose` is
+prose written for a log line ("editor chat"); keying credentials off a sentence
+means rewording it breaks them. And whose key carried a brief is not one of the
+bytes of the brief — folding it into the fingerprint would have failed
+`director_determinism_check.py` for a reason about billing.
+
+⚠ **THE CLIENT CACHE HAD TO BE KEYED ON THE KEY.** `script_breakdown.get_client`
+cached one client per provider, so two capabilities on `gemini` with two keys
+would share whichever was built first — one silently billing the other's key.
+**A billing bug that looks like nothing at all, because both keys work.**
+
+⚠ **AND `gemini-2.5-flash` IS CLOSED TO NEW DEVELOPER API KEYS.** The first live
+call came back **404**: *"no longer available to new users … please update your
+code to use models/gemini-3.6-flash"* — an error that reads like a typo in a
+model name rather than a default that has aged out. `gemini-3.6-flash` and
+`gemini-flash-latest` were both **503 UNAVAILABLE** ("high demand") when tried, so
+the Developer API default is now `DEFAULT_GEMINI_TEXT_MODEL = "gemini-3.5-flash"`,
+verified live with the real schema and thinking config. Vertex keeps 2.5-flash.
+
+⚠ **THE ROUTER WAS REPORTING THE WRONG BACKEND.** `server/editor_chat.py` built
+its response with a bare `resolve_provider()` / `model_id()`, which after this
+change would have named `vertex` for a turn that ran on the Developer API — a
+debugging trail pointing at the one backend not involved. Both take the
+capability now, read from `editor_chat_agent.CAPABILITY` rather than a second
+copy of the string.
+
+**Files:** `llm_json.py` (the capability table, `resolve_provider`, `model_id`,
+`schema_mode`/`schema_in_prompt`, `_adapter`, both adapters, the retry log),
+`script_breakdown.py` (`_gemini_key`, `get_client(key_env=…)`, the split default),
+`editor_chat_agent.py` (`CAPABILITY`, and it carries it on the request),
+`server/editor_chat.py`, `.env`, `.env.example`.
+
+**Verified.** `tests/chat_provider_check.py` — **new, 38 checks, all pass**, no
+network and no key spent: the key alone moves the chat, the Director and the
+breakdown provably do **not** move with it, `CHAT_PROVIDER` outranks the key, a
+typo names `CHAT_PROVIDER` rather than `DIRECTOR_PROVIDER`, two keys build two
+clients, and a capability naming another wire format gets the other adapter.
+**And one real turn end to end** on the user's key — `provider=gemini,
+model=gemini-3.5-flash, key=GEMINI_KEY_CHAT`, HTTP 200, and the message from the
+screenshot came back as a 2-step dissolve plan. Re-run green:
+`editor_chat_check`, `director_contract_check`, `director_determinism_check`,
+`director_plan_check`, `director_guardrails_check`, `director_actions_check`,
+`director_timeout_check`, `editor_director_check`, `script_chat_check`,
+`key_pose_scope_check`.
+
+⚠ **TWO SUITES NEEDED FIXING, AND THEY WERE REAL BREAKS, NOT NOISE.**
+`director_timeout_check.py` sliced `llm_json.py` on the literal `"def _adapter()"`
+and its fake `get_client` was `lambda provider=None:` — so a signature that grew
+an argument failed that file with a `ValueError` from `str.index` and a
+`TypeError` about a keyword, in a file about timeouts. Both now match on
+`def _adapter(` and accept `key_env`.
+
+⚠ **STILL OPEN, AND NOT TOUCHED.** (1) **Everything except the chat is still on
+the dead project** — the shot breakdown, the Director, images, Veo and TTS will
+all keep answering 403 until billing is restored or they are moved. (2) **The
+panel still prints raw Google JSON at the user**; the 502's `detail` goes
+straight to the bubble, and that screenshot is the argument for a friendly line.
+(3) `GEMINI_KEY_MEDIA` is in `.env` and read by nothing.
+
+---
+
+### 2026-09-03 — THE BROWSER SUITE FOUND WHAT THE UNIT TESTS COULD NOT
+
+    "playwirte chala kar test karo please"
+
+Asked for after the two previous entries shipped green on unit tests and
+`npm run build`. **It found a real regression in the row-height work, and a stale
+selector in the Director suite.** Both are the reason G2 says "run the browser
+suite when asked" and the reason the suite exists at all.
+
+**1 · A RENDER-PHASE `setState` BROKE THE LANE-RESTACK DRAG.** Per-project row
+heights (E83) needed "another project → its own rows", and it was written the
+documented React way — a bare `if (laneH.id !== projectId) setLaneH(…)` in the
+render body, so the first paint after a switch is already right rather than one
+frame stale. `tests/editor_lane_restack_check.py` went red on two checks: *"the
+overlay row is above the captions now"* and the blend-mode pixel sample under it.
+The drop landed on the wrong row.
+
+⚠ **A RENDER-PHASE `setState` MAKES REACT THROW THE IN-PROGRESS RENDER AWAY AND
+START AGAIN**, and every pointer drag on this bar is measured against boxes
+`readView` reads back out of the DOM on a layout effect keyed on `laneH` — the
+same state being set. The pattern is real and documented; it is wrong in a
+component the user drags in.
+
+⚠ **BISECTED, NOT ARGUED.** Commenting the three lines out → suite green;
+restoring them → red again; rewriting them as a `useEffect` → green. Three runs,
+no theory needed, and the theory only written down afterwards.
+
+⚠ **AND THE EFFECT IS DECLARED AFTER THE WRITE IT HANDS OVER FROM.** On the render
+where `projectId` changes, the debounced write still holds the OLD
+`{ id, rows }` — so anything pending is saved under the id it belongs to — and
+only then does the new effect swap the state. The frame of latency this costs is
+invisible; a drop landing on the wrong row is not.
+
+⚠ **NOTHING ELSE CAUGHT IT.** `npm run build`, every unit suite and
+`tests/editor_row_height_check.py` were all green through the broken version —
+row heights themselves worked perfectly. Only the drag suite could see it.
+
+**2 · The Director suite was pinned to a decorative class.**
+`editor_director_check.py` clicked the free door as `.dir-actions button.small`
+and timed out. The panel had NOT regressed: the `small` came off when the two
+brief-screen buttons were levelled, because two buttons side by side are one size
+(**E102**) — a change that was deliberate and correct. The suite is
+`.dir-actions button:not(.primary)` now, in one named constant, **with the label
+asserted beside it** so it cannot silently start clicking something else.
+
+**3 · What the run actually proved about the last two entries.** With both fixed:
+
+* `editor_row_height_check.py` — **26 checks green**, including the two added last
+  entry: the record is written under **this project's id and nowhere else**, and
+  the flat project-less record is gone.
+* `editor_director_check.py` — **green end to end**, including the check that
+  matters most for the transition change: *"⚠ THE PATTERN SURVIVES THE PASS — the
+  sound re-times the film and the transitions are still alternate, not
+  clustered"*, and *"⚠ A FLAT BOARD IS GIVEN A RHYTHM"*.
+* Fourteen more editor/monitor suites re-run against the fixed build.
+
+⚠ **THE SOUND HALF IS STILL UNPROVEN IN A BROWSER.** `houseMusicCue` /
+`houseSfxCues` are covered by `director_sound_check.py` under node; laying the
+files down needs a Freesound key on the server, which no suite here has.
+
+**Files:** `client/src/components/Timeline.jsx` (the project switch moved from the
+render body into a `useEffect`, declared after the write),
+`tests/editor_director_check.py` (`FREE_DOOR` constant, label asserted).
+
+**Verified:** `editor_row_height_check`, `editor_director_check`,
+`editor_lane_restack_check`, `editor_lane_move_check`, `editor_razor_check`,
+`editor_scrub_check`, `editor_picture_tracks_check`,
+`editor_media_row_routing_check`, `editor_media_bin_check`,
+`editor_effects_drop_check`, `monitor_video_check`, `monitor_effects_check`,
+`editor_veo_attach_check`, `editor_board_import_check`,
+`editor_project_import_check`, `dialog_move_browser_check` — plus `npm run build`.
+
+New **RULEBOOK G15, G16**.
+
+⚠ **ONE THING TO FLAG THAT IS NOT A CODE CHANGE:** partway through this session
+the working-tree changes from the two previous entries stopped showing in
+`git status` and now read as part of commit `a205aad` — `git hash-object` on the
+working file equals `git rev-parse HEAD:<file>`. Nothing here ran `git commit`,
+and the reflog shows no amend. Left exactly as found; the user should confirm it
+is what they intended before the next commit.
+
+### 2026-09-03 — 🚦 A "LIVE" WORKFLOW NOBODY COULD SEE, AND THE ONE SECOND IT FLASHED FOR
+
+    "mai jab text to turnaround image workflow live kiya hun na hi wo user
+     workflow mai na landing page mai dikh raha hai kyun? fix karo aur sab
+     workflow check karna kaam kar raha hai ki nhi"
+
+**WHAT WAS ON SCREEN.** The Features tab showed `Text to Turnaround Image` with
+a green **Live** pill and the words *"Everyone in the rollout can use it."*. The
+customer's sidebar did not carry it, and the landing page still said "Three
+workflows".
+
+**WHY — AND THE CODE WAS NOT WRONG.** The feature was stored `status: live` with
+`rollout.mode: "allowlist"` and an **empty email list**, so `_rollout_passes`
+refused every account. Reproduced exactly before anything was changed: a
+customer `visible=False`, the landing page `visible=False`, an admin
+`visible=True`.
+
+⚠ **THAT LAST ONE IS THE ACTUAL BUG.** Admins pass every rollout gate
+deliberately — you cannot stage a feature you are locked out of — so the
+administrator who threw the switch sees the workflow in their own rail and
+concludes it launched. Nobody else can see it, and nothing anywhere says so.
+
+**THE FIX IS A WARNING, NOT A CORRECTION.** An empty allowlist is a legitimate
+state (you make the list before you fill it), so nothing rewrites the setting.
+New `reachesNobody()` in `AdminFeatures.jsx`: the row turns amber, prints
+**"⚠ Live, but no customer can see it — nobody is on the list yet. It is missing
+from the sidebar and from the landing page. You can still see it yourself
+because admins pass every rollout."**, and offers a one-click **Show it to
+everyone**. Same for a 0% rollout. ⚠ The reassuring sentence is **removed, not
+moved** — printed above a warning it is the half that gets read, which is how
+this survived. "Admins only" and "Hidden" are deliberately NOT flagged: they
+already describe themselves, and a warning on an accurate setting is noise.
+
+**AND THE OTHER HALF OF THE ASK — "sab workflow check karna".** New
+`tests/workflow_reach_check.py`, three questions of all six workflows:
+
+  1. **Reach** — live and open, does it reach a signed-in customer AND the
+     logged-out landing page? Then each rollout mode in turn: an empty
+     allowlist and 0% reach nobody but an admin; a named address reaches exactly
+     that person; "admins only" excludes a customer; "hidden" excludes the admin
+     too, as it promises.
+  2. **Does it lead anywhere** — a page in `App.jsx`, an entry in the sidebar's
+     offline fallback whose label matches the server's byte for byte, a short
+     name for the collapsed rail, and a drawn glyph. Plus the other direction:
+     no glyph or short name for a workflow the catalogue no longer has, which is
+     dead code that reads like a feature.
+  3. **Does the panel say so** — the real `FeatureRow` rendered in each state
+     (E90), asserting the alarm is there and the reassurance is gone.
+
+⚠ **One trap in writing it:** the `Live` button's own `title` is that same
+"Everyone in the rollout can use it." string — correctly, since its job is to
+describe the statuses — so "is the sentence gone?" had to be scoped to the
+summary paragraph or it could never pass however right the fix was.
+
+**THEN IT WAS REPORTED AGAIN — AND THERE WAS A SECOND, SEPARATE BUG.**
+*"nhi dikh raha hai landing page, jab refresh kiye to one sec ke liye dikha fir
+nhi"*. That one second is its own fault: `useLiveWorkflows` started at `null`,
+drew `FALLBACK` — the built-in list of ALL SIX workflows — and swapped to the
+server's answer when it arrived, so a HIDDEN workflow was advertised to every
+visitor for the length of the request. Exactly what `/public/workflows` was
+added to prevent, arriving through the front door. ⚠ **The sidebar had already
+learned this** (`workflowsKnown`, skeleton rows); the landing page had not.
+
+Fixed by REMEMBERING the answer (`cas_public_workflows`, the same shape and
+reasoning as the remembered brand in `branding.js`) so a returning visitor is
+correct in the first paint with no request having answered — not by skeletoning,
+because a hero that empties itself every visit is worse than the flash was. A
+`known` flag covers the one visit memory cannot, the first ever: no cards, no
+tiles and no count until the answer lands. It flips true on a FAILED call too,
+or a visitor with no network would never see a list at all.
+
+⚠ **PROVED BY MAKING THE ANSWER SLOW ON PURPOSE.** `brand_landing_check.py` §4b
+delays `/public/workflows` by 1.6s with `page.route`, then checks zero cards and
+no number during a first visit, the right cards once it lands, and the right
+cards IN THE FIRST PAINT on the next reload. The existing count-the-cards checks
+could never have caught this — they run after `networkidle`, by which point the
+page has already corrected itself.
+
+**AND THE LIVE SETTING WAS FIXED, WITH THE OWNER'S SAY-SO.** Reading the real
+store confirmed the diagnosis exactly — `workflow.text-to-image`: `status: live`,
+`rollout {mode: allowlist, emails: []}`, last touched 09:37 by
+`studio.admin@example.com` — so the rollout was moved to `all` **through
+`features.save_feature`**, the same call the panel's PATCH makes, after asking.
+One field; status, label, order and `min_tier` untouched. The landing page's
+list went from three workflows to four.
+
+**Files:** `client/src/admin/AdminFeatures.jsx` (`reachesNobody`, the warning
+row, `FeatureRow` exported for the test), `client/src/components/Landing.jsx`
+(`useLiveWorkflowsState`, the remembered answer, `known`),
+`client/src/styles/admin.css` (`.admin-feature.unreachable`,
+`.admin-feature-nobody`), new `tests/workflow_reach_check.py`,
+`tests/brand_landing_check.py` (§4b, the flash), `tests/admin_fields_check.py`
+(sweeps and photographs the warning).
+
+**Verified:** `workflow_reach_check` (6 workflows, all modes, both directions),
+`admin_fields_check` in Chromium — which measures the new warning row and saves
+`output/admin_check/admin-features-unreachable.png` — plus `button_row_check`,
+`palette_check`, `branding_check`, `admin_check`, `features_check`,
+`capability_check`, `dialog_frame_check` and `npm run build`.
+
+⚠ **NOT DONE:** the six workflow PAGES were not opened one by one in a browser.
+All of this proves each is reachable, routed, drawn and served — not that each
+one still RUNS end to end. The two that are `hidden` (`plan-and-script`,
+`animatics-to-video`) are hidden by choice and were not turned on to check.
+
+### 2026-09-03 — 🎨 THE APP'S COLOURS ARE AN ADMIN FIELD, AND A ROW OF BUTTONS IS ONE ROW
+
+    "save name and reset name buttun uper niche v hai aur chhota bara … mai bahut
+     baar bola hun aisa nhi hona chaiye magar aisa mil hi jata hai"
+    "theme colour style banao brand ke under hi user user mai change kar saku …
+     jab kare color change to sab jagah achhe se ho jaye aur test v dekhe achhe
+     se isliye prodction level mai kaam jaise hota hai waise karna"
+
+## 1 · THE BUTTONS — one bug found thirty-nine times
+
+**THE CAUSE WAS NEVER THE SCREEN.** `.btn.primary` carries `margin-top: 1.1rem`
+in `base.css` — a FORM's spacing living on a COLOUR variant — so every primary
+in the app is born 1.1rem below the button beside it. Grepping for the
+workaround found **39 rules across 21 stylesheets** that exist only to undo it,
+each with its own comment rediscovering the same thing. That is why it kept
+coming back, and why fixing the Brand screen alone would have been the fortieth.
+
+**THE MARGIN STAYS; THE ROW OPTS OUT.** 68 buttons in 34 files wear
+`btn primary`, and the ones outside those 39 rules are form submits relying on
+it — deleting the margin is one line and 68 gaps to re-check IN A BROWSER, which
+nothing in this repo can see. New **`.btn-row`** in `base.css` zeroes it for a
+row. ⚠ It wins on ORDER, not specificity (`.btn-row > .btn` and `.btn.primary`
+are both 0-2-0), so it must stay BELOW the variants in that file.
+
+**SIZE IS ENFORCED, NOT STYLED.** No CSS can make `btn primary` and `btn small`
+one size without overriding a size somebody chose on purpose. New
+**`tests/button_row_check.py`** reads the JSX, finds buttons standing next to
+each other, and fails on mismatched sizes or a primary in a row that resets
+nothing. It ignores square icon buttons (a shape, not a slab) and buttons in
+different conditional branches (never on screen together), and it is proved on
+the reported markup before it is trusted. Four rows were really wrong:
+`.admin-brand-acts` (the one reported), `.pf-foot`, `.danger-actions`,
+`.dir-actions`.
+
+⚠ **WRITING THE DETECTOR COST ONE REAL BUG, AND IT IS THE INSTRUCTIVE PART**:
+measuring the gap between two buttons from the previous button's START swallowed
+its attributes, and nearly every button here carries `onClick={() => f()}` whose
+`)}` reads exactly like a conditional branch closing. 70 real rows became 27 and
+every other check in the file stayed green. Section 2 now asserts the count.
+
+## 2 · THE COLOURS — two hexes in, the whole app out
+
+**Brand → Colours**, the LAST card on the tab — asked for there outright
+(*"colours wala panel niche rakho, Logo — one per theme panel ke niche move
+karo"*), and it reads better: the name and the mark are what the app IS and are
+what somebody opens this tab to set; the palette is what they come back to
+fiddle with. Pinned in `palette_check.py` §7, because "which card is third" is
+exactly what a later edit reshuffles without noticing. Eight presets (Champagne
+Gold, Electric Azure, Amethyst, Emerald, Coral, Deep Sea, Amber, Graphite) or
+two colours of your own, each with an OS colour well and a hex box. Clicking one **repaints the whole app live** —
+that is the request, *"mujhe change kar ke dekhna hai kismai thik lagega"* — and
+nothing is saved until Save colours. Leaving the tab puts back what the server
+holds, so an unsaved preview never outlives the screen.
+
+**New `client/src/palette.js` is the only place the maths lives.** An accent and
+a ground become `--bg`, `--panel`, `--panel-2`, `--border`, `--text`, `--muted`,
+the nav strokes, all six gold gradients, the glow, the button ink and the
+timeline's selection tints — **for both themes**, from the same two colours. The
+server (`branding.py`) stores two hex strings and a slug and knows nothing about
+colour; the RESOLVED hexes are stored, not just the preset's name, so retuning a
+preset in a later release cannot repaint somebody's live app overnight.
+
+⚠ **THE BUILT-IN LOOK INJECTS NOTHING.** `cssFor(default)` returns `""`, so a
+deployment that never opens this screen renders through the hand-tuned
+`theme.css` exactly as it always did. That is the difference between adding a
+feature and silently restyling everybody's app.
+
+⚠ **BOTH BLOCKS, AND THE LIGHT ONE CARRIES THE ATTRIBUTE SELECTOR.** A plain
+`:root` cannot beat `:root[data-theme="light"]` — a specificity loss, not an
+ordering one — and the failure mode looks like "dark mode works, light mode
+ignored me".
+
+⚠ **69 HARD-CODED GOLDS WERE THE REAL OBSTACLE TO "SAB JAGAH".** Twenty
+stylesheets wrote `rgba(229, 193, 88, 0.1)` by hand — a tinted row, a glow, a
+selected clip — and every one of them would have stayed gold under a green
+palette while nothing went red. They are `rgba(var(--accent-rgb), …)` now, from
+three tokens defined ONCE in `theme.css` (`--accent-rgb`, `--accent-deep-rgb`,
+`--accent-on-white`; not per theme, which is what made the rewrite byte-for-byte
+invisible on the shipped look). `palette_check.py` fails on the 70th. The
+timeline's CONTENT colours are deliberately untouched — they say what a clip
+holds, which is a learned signal, not decoration.
+
+**Tests.** New **`tests/palette_check.py`** bundles the real module with esbuild,
+runs it under node and measures WCAG contrast on the output: every preset, both
+themes, plus junk input and a sweep of all 256 greys. It renders the real
+`ThemePicker` too (E90 — a green build is not evidence a screen renders).
+`branding_check.py` gains the server round trip and the coercion rules;
+`brand_landing_check.py` §6 proves it **in Chromium** — repaint through the admin
+route, reload, read `--panel` and `--gold-fill` off `:root` in both themes, then
+choose the built-in again and assert the override is GONE. A cascade only exists
+in a browser. `admin_fields_check.py` now photographs the Brand tab.
+
+**Three real bugs the tests caught before anybody could have seen them:** a
+near-white ground made body text 1.1:1 (`readable()` now corrects text against
+the ground it actually lands on); `readable()` chose its direction from a
+luminance threshold and walked a `#a0a0a0` accent INTO the panel it was meant to
+stand out from, returning 2.6:1 (it tries both directions and takes the one that
+gets there); and `normalisePalette` went on saying "emerald" over an edited
+accent, which is how a panel ends up ringing the wrong card.
+
+**Files:** new `client/src/palette.js`, `tests/palette_check.py`,
+`tests/button_row_check.py`; changed `server/branding.py`, `server/admin.py`,
+`client/src/branding.js`, `client/src/main.jsx`,
+`client/src/admin/AdminBrand.jsx`, `client/src/styles/base.css`, `theme.css`,
+`admin.css` + 19 stylesheets (the token rewrite),
+`client/src/components/PreflightModal.jsx`, `Profile.jsx`, `DirectorPanel.jsx`,
+`tests/branding_check.py`, `tests/brand_landing_check.py`,
+`tests/admin_fields_check.py`.
+
+**Verified:** `palette_check`, `button_row_check`, `branding_check`,
+`brand_landing_check` (Chromium), `admin_fields_check` (Chromium),
+`dialog_frame_check`, `admin_check`, `features_check`, `capability_check`,
+`editor_chat_check`, `editor_chat_render_check`, `editor_row_height_check`,
+`interchange_check`, `director_guardrails_check`, `director_sound_check`,
+`billing_check` — all green, plus `npm run build`. Screenshots in
+`output/brand_check/` (emerald, both themes) and `output/admin_check/`.
+
+⚠ **NOT DONE:** the palette has not been looked at by hand on the TIMELINE
+EDITOR or the storyboard board — the browser proof covers the shell, the landing
+page and the admin panel. The eight presets are checked for contrast, not for
+taste. And E101's ✕ alignment from earlier the same day still has no screenshot
+in either dock.
+
+### 2026-09-03 — ✕ THE AI EDITOR'S HEADER BECOMES A TITLE BAR: THE ✕ AND THE DOCK SWITCH ARE ONE ROW, ONE SIZE
 
     "chat bot panel mai x overlap ho raha hai ye right left icon se"
     "icon aur x close buttun upper niche dikh raha hia ek jaisa rakho please align"
@@ -26168,7 +26676,47 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🟡 NEWEST: ✨ AI EDITOR PHASE 3–4 — AB CUT, MUSIC AUR KHAALI JAGAH BHI (2026-09-03)
+### 🔴 NEWEST: CHAT KI APNI KEY LAG GAYI — BAAKI SAB ABHI BAND PADA HAI (2026-09-03)
+
+    "dekho mai chat bot ko ek kaam bola to ye error aaya"
+    "okay mera biiling band hai samjh mai GCP usse hi hua kay?"
+    "Chat ke liye ye wal use karo abhi set up kiya hun Gemini_key_chat"
+
+**Kya hua tha.** GCP ka billing band ho gaya, to Google ne har call par
+`403 CONSUMER_INVALID` bhej diya — matlab *"jo project paisa dene wala tha, wo ab
+valid nahi hai"*. Code mein kuch galat nahi tha.
+
+**Asli dikkat ye thi ki ek hi switch sab kuch chala raha tha.** `TEXT_PROVIDER`
+se chat, shot breakdown aur Director — teeno ek hi project par the. Ek project
+mara, teeno mar gaye. Sabse sasti cheez (chat) mahangi pipeline ke saath hi
+band ho gayi.
+
+**Ab har capability apni key rakh sakti hai.** Chat ke liye `CHAT_PROVIDER`,
+`CHAT_MODEL` aur `GEMINI_KEY_CHAT`. ⚠ **Key daalna hi switch hai** — key `.env`
+mein daali, chat khud Developer API par chali gayi; `TEXT_PROVIDER` ko chhua bhi
+nahi. Wapas Vertex par le jaana ho to `CHAT_PROVIDER=vertex`.
+
+**Chat chal rahi hai — asli call se test kiya.** `gemini-3.5-flash` par, aur
+screenshot wala wahi message *("add transition image layer 10 every each clip")*
+ab 2-step dissolve plan bana kar wapas aaya. ⚠ **`gemini-2.5-flash` nayi keys ko
+404 deta hai** ("no longer available to new users"), isliye Developer API ka
+default badalna pada.
+
+⚠ **BAAKI SAB ABHI BHI BAND HAI, aur ye chhoti baat nahi hai.** Shot breakdown,
+Director (🎬 Make Video), images, Veo video aur voiceover — sab abhi bhi usi
+mare hue project par hain aur 403 hi denge. Do raaste hain: (a) billing wapas on
+karo — poora app chalega, ya (b) inko bhi keys par shift karein — par Veo aur
+image generation **free key par nahi chalte**, wo paid hi hain.
+
+⚠ **Aur chat panel abhi bhi Google ka poora raw JSON user ko dikhata hai** —
+screenshot mein wahi dikha tha. Uski jagah ek simple line honi chahiye. Ye
+theek nahi kiya, kyunki poochna tha pehle.
+
+Naya **RULEBOOK D5**, naya `tests/chat_provider_check.py` (38 checks, no network).
+
+---
+
+### 🟡 ✨ AI EDITOR PHASE 3–4 — AB CUT, MUSIC AUR KHAALI JAGAH BHI (2026-09-03)
 
     "Start Phase 3–4"
 

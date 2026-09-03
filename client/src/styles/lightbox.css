@@ -122,8 +122,8 @@
    does need an end-stop. Dimmed via COLOUR, not `opacity`, which would fade the
    dark fill too and put the button back into the white picture it sits on. */
 .lightbox-nav:disabled {
-  border-color: rgba(229, 193, 88, 0.28);
-  color: rgba(229, 193, 88, 0.3);
+  border-color: rgba(var(--accent-rgb), 0.28);
+  color: rgba(var(--accent-rgb), 0.3);
   cursor: not-allowed;
 }
 /* "Shot 1 · pose 5 / 16" — which drawing you are looking at, since they are

@@ -54,6 +54,10 @@ except ImportError as exc:  # noqa: BLE001
     print(f"  This check needs playwright and pillow ({exc}).")
     raise SystemExit(2) from None
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 PROBE_HTML = os.path.join(CLIENT, "__probe_rowheight.html")
@@ -413,7 +417,7 @@ def main():
                 page.wait_for_selector('[data-sel^="frame:"]', timeout=45000)
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts", False, str(exc)[:160])
-                page.screenshot(path=os.path.join(ROOT, "rowheight_probe_failed.png"))
+                page.screenshot(path=shot("rowheight_probe_failed.png"))
                 browser.close()
                 return 1
             page.wait_for_timeout(500)

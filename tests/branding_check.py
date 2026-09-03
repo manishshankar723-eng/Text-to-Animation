@@ -124,10 +124,20 @@ body = r.json() if r.status_code == 200 else {}
 check("it answers with the built-in name", body.get("name"), BUILT_IN)
 check("and no logo, so the app draws its own mark", body.get("logo_url"), "")
 check("no light-mode logo either", body.get("logo_url_light"), "")
+check("it ships in the built-in colours", body.get("theme_id"), "gold")
+# ⚠ THE COLOURS ARE PUBLIC FOR THE SAME REASON THE NAME IS. The landing page,
+# the sign-in card and a shared storyboard link are all painted before anybody
+# has an account; a visitor who sees the built-in gold for a beat and then the
+# customer's green has watched the app change colour under them.
+#
+# ⚠ AND THIS LIST IS A FENCE, NOT A FORMALITY. The read is unauthenticated, so
+# every field added here is a field shown to the whole internet. A new one is
+# meant to fail this line and be argued for, not slip in.
 check(
-    "the payload is a name and two marks, nothing else",
+    "the payload is a name, two marks and a palette — nothing else",
     sorted(body),
-    ["logo_url", "logo_url_light", "name", "stamp", "stamp_light"],
+    ["accent", "ground", "logo_url", "logo_url_light", "name", "stamp",
+     "stamp_light", "theme_id"],
 )
 
 
@@ -186,6 +196,69 @@ check(
 )
 
 client.patch("/admin/branding", json={"name": "Acme Story Studio"}, headers=bearer(ADMIN))
+
+
+# ===========================================================================
+print("\n3b. Repainting the app")
+# ===========================================================================
+# ⚠ THE SERVER STORES TWO HEX STRINGS AND A LABEL, AND KNOWS NOTHING ELSE ABOUT
+# COLOUR. Every token the app actually paints with is derived in
+# `client/src/palette.js`, and `tests/palette_check.py` runs THAT module under
+# node and measures the contrast of what comes out. Splitting it this way is the
+# point: two copies of a colour derivation would be a rule written twice, and the
+# Python one would be the copy nobody updated.
+r = client.patch(
+    "/admin/branding",
+    json={"theme_id": "emerald", "accent": "#34D399", "ground": "#101815"},
+    headers=bearer(ADMIN),
+)
+check("PATCH with colours is accepted", r.status_code, 200)
+check("the panel is told the new accent", r.json().get("accent"), "#34d399")
+pub = client.get("/public/branding").json()
+check("and the PUBLIC read is repainted too", pub.get("accent"), "#34d399")
+check("the ground travels with it", pub.get("ground"), "#101815")
+check("and so does which card to ring", pub.get("theme_id"), "emerald")
+
+# ⚠ SAVING A COLOUR MUST NOT BLANK A NAME. Both live on the one document, and
+# `exclude_unset` is the whole reason a PATCH carrying only colours leaves the
+# name alone. Without it this screen would rename the app to the built-in every
+# time somebody tried a palette.
+check("repainting left the name alone", pub.get("name"), "Acme Story Studio")
+
+# The panel is a colour picker and a text box beside it, so the box holds half a
+# colour for a keypress or two. `clean_hex` coerces rather than refusing — a 422
+# here would mean an administrator unable to save their LOGO because of a colour
+# field they never touched.
+r = client.patch("/admin/branding", json={"accent": "#FFF"}, headers=bearer(ADMIN))
+check("shorthand hex is expanded, not rejected", r.json().get("accent"), "#ffffff")
+r = client.patch("/admin/branding", json={"accent": "red"}, headers=bearer(ADMIN))
+check("a colour that is not a colour falls back to the built-in accent",
+      r.json().get("accent"), branding_mod.DEFAULT_ACCENT)
+r = client.patch("/admin/branding", json={"theme_id": "../../etc/passwd"}, headers=bearer(ADMIN))
+check("a theme id that is not a slug falls back too",
+      r.json().get("theme_id"), branding_mod.DEFAULT_THEME_ID)
+
+# ⚠ THE PANEL NEEDS TO KNOW WHAT "PUT IT BACK" MEANS, the same way it does for
+# the name — otherwise "Back to built-in" is an administrator guessing hexes.
+admin_row = client.get("/admin/branding", headers=bearer(ADMIN)).json()
+check("the panel is told the shipped palette",
+      admin_row.get("default_theme", {}).get("accent"), branding_mod.DEFAULT_ACCENT)
+
+# ⚠ A DOCUMENT WRITTEN BEFORE COLOURS EXISTED HAS NONE, and every reader of the
+# row must still get values it can paint with. This is the upgrade path, and it
+# is the one thing here that cannot be checked through the API — the API would
+# have written the defaults in on the way past.
+check("a row with no colours in it still reads as the built-in",
+      branding_mod.clean_hex(None, branding_mod.DEFAULT_ACCENT),
+      branding_mod.DEFAULT_ACCENT)
+
+client.patch(
+    "/admin/branding",
+    json={"theme_id": branding_mod.DEFAULT_THEME_ID,
+          "accent": branding_mod.DEFAULT_ACCENT,
+          "ground": branding_mod.DEFAULT_GROUND},
+    headers=bearer(ADMIN),
+)
 
 
 # ===========================================================================

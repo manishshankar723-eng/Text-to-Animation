@@ -67,6 +67,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -553,7 +557,7 @@ def main():
             except Exception as exc:  # noqa: BLE001
                 check("the editor mounts with every row drawn", False, str(exc)[:160])
                 print(json.dumps(page.evaluate("() => window.__probe.errors"), indent=2)[:2000])
-                page.screenshot(path=os.path.join(ROOT, "lanemove_probe_failed.png"))
+                page.screenshot(path=shot("lanemove_probe_failed.png"))
                 browser.close()
                 return 1
 
@@ -567,7 +571,7 @@ def main():
             check("every row this test drags between is on the timeline",
                   not missing, f"missing {missing} - have {keys}")
             if missing:
-                page.screenshot(path=os.path.join(ROOT, "lanemove_probe_failed.png"))
+                page.screenshot(path=shot("lanemove_probe_failed.png"))
                 browser.close()
                 return 1
 
@@ -712,7 +716,7 @@ def main():
             check("nothing reached window.onerror or console.error",
                   not errors, json.dumps(errors)[:400])
             if failures:
-                page.screenshot(path=os.path.join(ROOT, "lanemove_probe_failed.png"))
+                page.screenshot(path=shot("lanemove_probe_failed.png"))
             browser.close()
     finally:
         if vite is not None:

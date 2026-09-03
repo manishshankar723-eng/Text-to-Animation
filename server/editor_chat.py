@@ -129,7 +129,7 @@ def turn(
     degraded conversation, it is silence, and pretending otherwise would put
     words in the assistant's mouth that no model said.
     """
-    from editor_chat_agent import EditorChatError, chat
+    from editor_chat_agent import CAPABILITY, EditorChatError, chat
     from llm_json import model_id, resolve_provider
 
     _owned_animatic(job_id, current)
@@ -169,8 +169,13 @@ def turn(
     usage_counters.increment(current.email, TURNS_FIELD)
     used, limit = _quota(current.email)
 
+    # ⚠ ASKED WITH THE CAPABILITY, or this line reports the wrong two strings.
+    # The chat resolves its provider from `CHAT_PROVIDER` / `GEMINI_KEY_CHAT`, so
+    # the bare call answered "vertex" for a turn that ran on the Developer API —
+    # a debugging trail pointing at the one backend that was not involved.
     try:
-        provider, model = resolve_provider(), model_id()
+        provider = resolve_provider(capability=CAPABILITY)
+        model = model_id(capability=CAPABILITY)
     except Exception:  # noqa: BLE001 — reporting, not the request
         provider, model = "", ""
 

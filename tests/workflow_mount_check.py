@@ -66,6 +66,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -615,7 +619,7 @@ def main():
                   not errors, "; ".join(errors[:2]))
 
             check("nothing threw during any of it", not errors, "; ".join(errors[:2]))
-            page.screenshot(path=os.path.join(ROOT, "output", "workflow_mount.png"))
+            page.screenshot(path=shot("workflow_mount.png"))
             browser.close()
     finally:
         if vite:

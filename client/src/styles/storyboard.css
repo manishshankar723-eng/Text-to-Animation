@@ -57,11 +57,11 @@
 }
 .opt-chip:hover {
   border-color: var(--border-gold);
-  background: rgba(229, 193, 88, 0.06);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 .opt-chip.active {
   border-color: var(--primary);
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--primary);
   box-shadow: inset 0 0 0 1px var(--primary);
 }
@@ -293,7 +293,7 @@
 .more-close:hover {
   border-color: var(--border-gold);
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.06);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 .sts-generate {
@@ -524,7 +524,7 @@
    thing the user is judging. */
 .board-tile.is-selected {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(229, 193, 88, 0.35), var(--shadow);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.35), var(--shadow);
 }
 .board-frame {
   position: relative; /* anchors the version arrows below */
@@ -573,7 +573,7 @@
   color: var(--gold-ink);
 }
 .panel-versions-nav:disabled {
-  color: rgba(229, 193, 88, 0.3);
+  color: rgba(var(--accent-rgb), 0.3);
   cursor: not-allowed;
 }
 .panel-versions-count {
@@ -603,7 +603,7 @@
   background: linear-gradient(
     100deg,
     var(--panel-2) 30%,
-    rgba(229, 193, 88, 0.12) 50%,
+    rgba(var(--accent-rgb), 0.12) 50%,
     var(--panel-2) 70%
   );
   background-size: 200% 100%;
@@ -725,7 +725,7 @@
 /* What the assistant thinks "this one" means, and the way to unsay it. */
 .ba-selection {
   border: 1px solid var(--border-gold);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   color: var(--primary);
   border-radius: 999px;
   padding: 0.18rem 0.6rem;
@@ -760,7 +760,7 @@
   padding: 0.55rem 0.65rem 0.65rem;
   border: 1px solid var(--border-gold);
   border-radius: 10px;
-  background: rgba(229, 193, 88, 0.07);
+  background: rgba(var(--accent-rgb), 0.07);
 }
 .ba-plan-list {
   list-style: none;
@@ -936,7 +936,7 @@
 }
 .board-variant-switch .opt-chip.active:disabled:hover {
   border-color: var(--primary);
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 .board-styles-label {
   font-size: 0.8rem;
@@ -1037,7 +1037,7 @@
 }
 .cast-portrait.clickable:hover {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(229, 193, 88, 0.25);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25);
 }
 .cast-portrait img {
   width: 100%;
@@ -1193,7 +1193,7 @@
 }
 /* On dark (non-gold) buttons, use a gold ring on a faint track. */
 .btn:not(.primary) .btn-ring {
-  border-color: rgba(229, 193, 88, 0.25);
+  border-color: rgba(var(--accent-rgb), 0.25);
   border-top-color: var(--primary);
 }
 
@@ -1487,7 +1487,7 @@
   padding: 0.85rem 1rem 0.95rem;
   border: 1px solid var(--border-gold);
   border-radius: 11px;
-  background: rgba(229, 193, 88, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 .sts-intake-title {
   margin: 0;
@@ -1721,7 +1721,7 @@
 }
 .bp-dot2.on {
   background: var(--gold-fill);
-  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.18);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
 }
 /* Respect users who ask for less motion: drop the label's slide-in. The ring
    still fills (that IS the progress feedback), just without the extra easing. */
@@ -1845,7 +1845,7 @@
 }
 .sc-composer:focus-within {
   border-color: var(--border-gold);
-  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.12);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 .sc-composer.is-busy {
   opacity: 0.85;
@@ -1939,13 +1939,13 @@
 }
 .sts-script-panel:focus-within {
   border-color: var(--border-gold);
-  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.12);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 /* Dropping a file works on the WHOLE box, not a separate target — this is the
    feedback the deleted dropzone used to give. */
 .sts-script-panel.over {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.2);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
 }
 /* The upload row lives inside the box, under a hairline, so pasting and
    uploading read as one act rather than two tabs to choose between. */

@@ -48,7 +48,7 @@ uvicorn is started on a free port and Vite on another, and both are killed in a
 through the store, because the API runs in its own process.
 
 It leaves one screenshot behind on failure (and on success, so the design can be
-looked at): `output/offer_card.png`.
+looked at): `test_shots/offer_card.png`.
 """
 
 import json
@@ -69,14 +69,18 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shot  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 # ⚠ BOTH THEMES ARE SHOT, because `theme.css` defines every colour twice and a
 # gold wash that reads as a highlight on #13161f can read as a stain on white.
-SHOT = os.path.join(ROOT, "output", "offer_card.png")
-SHOT_LIGHT = os.path.join(ROOT, "output", "offer_card_light.png")
-SHOT_LANDING = os.path.join(ROOT, "output", "offer_card_landing.png")
-SHOT_HOME = os.path.join(ROOT, "output", "offer_card_home.png")
+SHOT = shot("offer_card.png")
+SHOT_LIGHT = shot("offer_card_light.png")
+SHOT_LANDING = shot("offer_card_landing.png")
+SHOT_HOME = shot("offer_card_home.png")
 
 ADMIN = "boss@example.com"
 CUSTOMER = "cust@example.com"

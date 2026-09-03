@@ -713,12 +713,6 @@ export default function Timeline({
     id: projectId,
     rows: getRowHeights(projectId),
   }));
-  // Another project: its own rows, read here rather than in an effect so the
-  // first paint after the switch is already right. (React's own "adjusting state
-  // when a prop changes" — it re-renders before anything is drawn.)
-  if (laneH.id !== projectId) {
-    setLaneH({ id: projectId, rows: getRowHeights(projectId) });
-  }
   /**
    * ⚠ REMEMBERED, BECAUSE THE PANES ARE. Written a beat after the drag stops
    * rather than on every pointer move: a resize is thirty `setLaneH` calls and
@@ -730,6 +724,29 @@ export default function Timeline({
     const timer = setTimeout(() => saveRowHeights(laneH.id, laneH.rows), 250);
     return () => clearTimeout(timer);
   }, [laneH]);
+  /**
+   * ANOTHER PROJECT: ITS OWN ROWS.
+   *
+   * ⚠ AN EFFECT, AND THE FIRST VERSION OF THIS WAS NOT — IT ADJUSTED THE STATE
+   * DURING RENDER, which is a documented React pattern and is WRONG HERE. It
+   * broke the lane-restack drag: `tests/editor_lane_restack_check.py` went from
+   * green to two failures ("the overlay row is above the captions now"), because
+   * a render-phase `setState` makes React throw the in-progress render away and
+   * start again — and a pointer drag on this bar is measured against boxes read
+   * out of the DOM by `readView`, which is keyed on `laneH`. Bisected by
+   * commenting out those three lines and re-running the suite: green, restored,
+   * red again. The frame of latency an effect costs is invisible; a drop that
+   * lands on the wrong row is not.
+   *
+   * ⚠ AND IT IS DECLARED AFTER THE WRITE ABOVE, WHICH IS THE ORDER THAT MAKES
+   * THE HANDOVER SAFE. On the render where `projectId` changes, the write effect
+   * runs first and still holds the OLD project's `{ id, rows }` — so anything
+   * pending is written under the id it belongs to — and only then does this one
+   * swap the state for the new project's rows.
+   */
+  useEffect(() => {
+    setLaneH((was) => (was.id === projectId ? was : { id: projectId, rows: getRowHeights(projectId) }));
+  }, [projectId]);
   /** The row's height in rem: its own if it has one, else the vertical zoom's. */
   const heightOf = (lane) => {
     const own = lane && laneH.rows[lane.key];

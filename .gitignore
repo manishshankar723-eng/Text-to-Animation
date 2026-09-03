@@ -42,4 +42,19 @@ uploads/
 # OS
 Thumbs.db
 .DS_Store
+
+# Test screenshots — a debugging trail, not a deliverable.
+# ⚠ EVERY BROWSER SUITE WRITES HERE AND ONLY HERE (`tests/_shots.py`). This
+# used to be a per-suite guess at a filename in the repo root, so one failing
+# test run left a dozen PNGs sitting next to `server/` and `client/` and the
+# next commit swept them in. The folder is dropped whole; its README stays so a
+# fresh clone still explains what the folder is for.
+test_shots/*
+!test_shots/README.md
+
+# The old spellings, kept so a checkout with leftovers from before the move
+# does not suddenly show them as pending.
 *_probe_failed.png
+row_routing_failed.png
+editor_after_drop.png
+restack_probe_*.png

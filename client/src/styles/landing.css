@@ -18,8 +18,11 @@
   --lp-sheet-line: rgba(27, 30, 43, 0.22);
   /* Gold that reads on WHITE. ⚠ Not `--primary`: the dark theme's #e5c158 is
      1.7:1 on white and disappears on these tiles, and the light theme's is a
-     different value again — a fixed tile needs a fixed gold. */
-  --lp-sheet-gold: #bd8d1e;
+     different value again — a fixed tile needs a fixed gold. ⚠ IT IS A TOKEN
+     NOW, NOT A LITERAL: `--accent-on-white` is the same value, defined once in
+     theme.css, and it follows the accent an administrator chooses. "Fixed"
+     meant fixed against the THEME, never fixed against the brand. */
+  --lp-sheet-gold: var(--accent-on-white);
   /* An empty timeline lane, and a sprocket hole. Both are "a hole in the
      paper" — barely there on purpose, because the moment either one competes
      with the clip sitting in it the tile stops reading as a timeline. */
@@ -28,7 +31,7 @@
   min-height: 100vh;
   min-height: 100dvh;
   background:
-    radial-gradient(900px 500px at 85% -10%, rgba(229, 193, 88, 0.14), transparent 60%),
+    radial-gradient(900px 500px at 85% -10%, rgba(var(--accent-rgb), 0.14), transparent 60%),
     radial-gradient(700px 500px at 5% 10%, rgba(120, 120, 220, 0.08), transparent 55%),
     var(--bg);
 }
@@ -87,7 +90,7 @@
 .lp-theme:focus-visible {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(229, 193, 88, 0.18);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
 }
 @media (max-width: 640px) {
   .landing-nav-links a:not(.nav-cta) {
@@ -124,7 +127,7 @@
   padding: 0.35rem 0.85rem;
   border-radius: 999px;
   border: 1px solid var(--border-gold);
-  background: rgba(229, 193, 88, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
   color: var(--primary);
   font-size: 0.8rem;
   font-weight: 600;
@@ -648,7 +651,7 @@
   width: 2.6rem;
   height: 2.6rem;
   border-radius: 12px;
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid var(--border-gold);
   font-size: 1.35rem;
 }
@@ -718,7 +721,7 @@
    sandwich it without needing a hard rule. */
 .lp-section-alt {
   background:
-    radial-gradient(700px 340px at 50% 0%, rgba(229, 193, 88, 0.07), transparent 70%),
+    radial-gradient(700px 340px at 50% 0%, rgba(var(--accent-rgb), 0.07), transparent 70%),
     var(--panel-2);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -825,7 +828,7 @@
   padding: clamp(2.5rem, 6vw, 4rem) 2rem;
   text-align: center;
   background:
-    radial-gradient(600px 300px at 50% 0%, rgba(229, 193, 88, 0.12), transparent 70%);
+    radial-gradient(600px 300px at 50% 0%, rgba(var(--accent-rgb), 0.12), transparent 70%);
 }
 .cta-band h2 {
   font-size: clamp(1.6rem, 4vw, 2.4rem);

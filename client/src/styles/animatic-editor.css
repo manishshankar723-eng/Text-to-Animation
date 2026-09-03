@@ -366,7 +366,7 @@
 .an-dropping {
   outline: 2px dashed var(--primary);
   outline-offset: -4px;
-  background: rgba(229, 193, 88, 0.06);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 /* --- The Media pane is a stack of SECTIONS ------------------------------- */

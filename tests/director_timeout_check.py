@@ -195,7 +195,11 @@ def main():
           "http_options" in google and "call_timeout()" in google)
     check("...in MILLISECONDS, which is what `HttpOptions.timeout` is documented in",
           "call_timeout() * 1000" in google, google[google.find("http_options"):][:120])
-    openai = src[src.index("def _openai_adapter"):src.index("def _adapter()")]
+    # ⚠ `def _adapter(` WITHOUT THE CLOSING PAREN. `_adapter` grew a `capability`
+    # argument when the ✨ chat was given its own provider, and pinning the empty
+    # signature here failed this file with a ValueError from `str.index` — a
+    # crash about a substring, in a file about timeouts.
+    openai = src[src.index("def _openai_adapter"):src.index("def _adapter(")]
     check("...and the OpenAI adapter reads the same clock rather than the raw env",
           "timeout=call_timeout()" in openai)
 
@@ -241,7 +245,11 @@ def main():
     import script_breakdown
 
     real = script_breakdown.get_client
-    script_breakdown.get_client = lambda provider=None: _FakeClient()
+    # ⚠ THE FAKE HAS TO ACCEPT `key_env` TOO. The real `get_client` takes a
+    # capability's own key env var since the ✨ chat was given its own; a stand-in
+    # that refuses the keyword fails this file with a TypeError about an argument
+    # rather than anything to do with a timeout.
+    script_breakdown.get_client = lambda provider=None, *, key_env="": _FakeClient()
     os.environ["DIRECTOR_PROVIDER"] = "vertex"
     try:
         llm_json._google_adapter(REQUEST)

@@ -85,7 +85,62 @@ NAME_MAX_CHARS = 40
 
 # What the panel may write. Anything else in a PATCH body is ignored rather than
 # rejected, the same way `features.save_feature` treats its own EDITABLE set.
-EDITABLE = frozenset({"name"})
+EDITABLE = frozenset({"name", "theme_id", "accent", "ground"})
+
+# ---------------------------------------------------------------------------
+# The colour theme
+# ---------------------------------------------------------------------------
+# TWO HEX STRINGS AND A LABEL. That is the whole of what a theme is on this
+# side, and it is deliberate: every token the app actually paints with is
+# DERIVED from these two in `client/src/palette.js`, which is the only place
+# that maths exists. A server that also knew how to build a `--panel-2` would be
+# the same rule written twice, and the two copies would disagree the first time
+# one of them was tuned.
+#
+# ⚠ THE RESOLVED HEXES ARE STORED, NOT JUST THE PRESET'S NAME. A deployment
+# that picked "Emerald" keeps the emerald it was shown; retuning that preset in
+# a later release must not repaint somebody's live app overnight. `theme_id` is
+# kept beside them only so the panel can show which card is the one that is on.
+#
+# ⚠ AND THE DEFAULTS ARE THE APP AS IT SHIPS. When these are what is stored,
+# `palette.js` injects NOTHING and every screen renders through the hand-tuned
+# CSS in `styles/theme.css` exactly as it always did. Read the note at the top
+# of `palette.js` before changing either value here.
+DEFAULT_THEME_ID = "gold"
+DEFAULT_ACCENT = "#e5c158"
+DEFAULT_GROUND = "#13161f"
+
+# `#rrggbb`, lower case. Shorthand is accepted and expanded, because an
+# `<input type="color">` sends the long form but a person typing into the box
+# beside it writes `#fff`.
+_HEX_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+# A slug, because it is only ever compared. The list of real ids lives in
+# `palette.js`; an unknown one here is harmless (the panel highlights no card)
+# and rejecting it would mean editing this file every time a preset is added.
+_THEME_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def clean_hex(value, fallback: str) -> str:
+    """A typed or picked colour -> `#rrggbb`. Junk falls back, never raises.
+
+    ⚠ IT FALLS BACK RATHER THAN REFUSING, which is the same call `clean_name`
+    makes. The worst outcome of a bad colour is one screen looking wrong for a
+    moment; the worst outcome of a 400 here is an administrator who cannot save
+    their logo because of a colour field they never touched.
+    """
+    m = _HEX_RE.match(str(value or "").strip())
+    if not m:
+        return fallback
+    body = m.group(1).lower()
+    if len(body) == 3:
+        body = "".join(c * 2 for c in body)
+    return "#" + body
+
+
+def clean_theme_id(value) -> str:
+    slug = str(value or "").strip().lower()
+    return slug if _THEME_ID_RE.match(slug) else DEFAULT_THEME_ID
 
 # The logo, once normalised. Kept small because EVERY visitor downloads it on
 # EVERY cold page load, including the marketing page — a 4000px master would be
@@ -145,6 +200,11 @@ def _defaults() -> dict:
         # on `SLOT_DARK` before renaming it.
         "logo_id": "",
         "logo_light_id": "",
+        # The colour theme. These three are the app exactly as it ships - see
+        # the note on DEFAULT_THEME_ID for why that matters.
+        "theme_id": DEFAULT_THEME_ID,
+        "accent": DEFAULT_ACCENT,
+        "ground": DEFAULT_GROUND,
         "updated_at": None,
         "updated_by": None,
     }
@@ -253,6 +313,13 @@ def get_branding(fresh: bool = False) -> dict:
         merged.update({k: v for k, v in stored.items() if v is not None and k != "_id"})
         merged["id"] = _DOC_ID
         merged["name"] = clean_name(merged.get("name"))
+        # ⚠ CLEANED ON THE WAY OUT, NOT ONLY ON THE WAY IN. A document written
+        # by an older release has no colours in it at all, and one edited by
+        # hand can have anything; every reader of this row must get values it
+        # can paint with.
+        merged["theme_id"] = clean_theme_id(merged.get("theme_id"))
+        merged["accent"] = clean_hex(merged.get("accent"), DEFAULT_ACCENT)
+        merged["ground"] = clean_hex(merged.get("ground"), DEFAULT_GROUND)
     except Exception as e:  # noqa: BLE001 — fail back to the built-in; see the docstring
         with _cache_lock:
             if _cache is not None:
@@ -291,6 +358,12 @@ def save_branding(fields: dict, actor: str = "") -> dict:
     clean = {k: v for k, v in (fields or {}).items() if k in EDITABLE}
     if "name" in clean:
         clean["name"] = clean_name(clean["name"])
+    if "theme_id" in clean:
+        clean["theme_id"] = clean_theme_id(clean["theme_id"])
+    if "accent" in clean:
+        clean["accent"] = clean_hex(clean["accent"], DEFAULT_ACCENT)
+    if "ground" in clean:
+        clean["ground"] = clean_hex(clean["ground"], DEFAULT_GROUND)
     _write(clean, actor)
     return get_branding(fresh=True)
 
@@ -431,6 +504,14 @@ def public_payload(row: dict | None = None) -> dict:
     light = resolve_slot(row, SLOT_LIGHT)
     return {
         "name": row.get("name") or DEFAULT_NAME,
+        # ⚠ THE COLOURS ARE PUBLIC FOR THE SAME REASON THE NAME IS. The landing
+        # page, the sign-in card and a shared storyboard link are all painted
+        # before anybody has an account, and a visitor who sees the built-in gold
+        # for a beat and then the customer's green has watched the app change
+        # colour under them. Three short strings; nothing else is exposed.
+        "theme_id": clean_theme_id(row.get("theme_id")),
+        "accent": clean_hex(row.get("accent"), DEFAULT_ACCENT),
+        "ground": clean_hex(row.get("ground"), DEFAULT_GROUND),
         # Relative, not absolute: the API's own address is the client's
         # `VITE_API_BASE`, and it is the client that knows it.
         "logo_url": f"/public/branding/logo/{dark}" if dark else "",

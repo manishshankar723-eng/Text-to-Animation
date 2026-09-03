@@ -508,7 +508,7 @@
    from "just hovered". */
 .sb-item.active,
 .sb-item.active:hover {
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--primary);
   border-color: var(--border-gold);
   box-shadow: inset 2px 0 0 var(--primary);
@@ -658,7 +658,7 @@
   transition: left 0.2s ease, background 0.2s ease;
 }
 .sb-theme-switch.on {
-  background: rgba(229, 193, 88, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   border-color: var(--border-gold);
 }
 .sb-theme-switch.on::after {
@@ -685,7 +685,7 @@
 .sb-upgrade:hover {
   transform: translateY(-1px);
   background: var(--gold-grad-rich-hover);
-  box-shadow: 0 8px 26px rgba(229, 193, 88, 0.45);
+  box-shadow: 0 8px 26px rgba(var(--accent-rgb), 0.45);
 }
 .sb-upgrade-ico {
   font-size: 1rem;

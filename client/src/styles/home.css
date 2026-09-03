@@ -331,7 +331,7 @@
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid var(--border-gold);
 }
 .credit-row {
@@ -365,7 +365,7 @@
   color: var(--gold-ink);
   transform: translateY(-1px);
   background: var(--gold-grad-rich-hover);
-  box-shadow: 0 6px 20px rgba(229, 193, 88, 0.45);
+  box-shadow: 0 6px 20px rgba(var(--accent-rgb), 0.45);
 }
 .plan-note {
   margin: 0.75rem 0 0;
@@ -573,7 +573,7 @@
 }
 .lang-opt.on {
   border-color: var(--primary);
-  background: rgba(229, 193, 88, 0.07);
+  background: rgba(var(--accent-rgb), 0.07);
 }
 .lang-opt-text {
   display: flex;
@@ -686,7 +686,7 @@
 .pq-tab.on {
   color: var(--primary);
   border-color: var(--border-gold);
-  background: rgba(229, 193, 88, 0.08);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 .pq-tick {
   color: var(--ok);
@@ -736,7 +736,7 @@
 }
 .pq-opt.on {
   border-color: var(--primary);
-  background: rgba(229, 193, 88, 0.07);
+  background: rgba(var(--accent-rgb), 0.07);
 }
 .pq-radio {
   flex-shrink: 0;

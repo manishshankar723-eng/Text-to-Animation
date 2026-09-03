@@ -13,7 +13,9 @@ TWO BACKENDS — switch freely (mirrors gemini_client.py's image backend):
         GOOGLE_CLOUD_LOCATION (usually "global").
 
     TEXT_PROVIDER=gemini
-        Gemini Developer API. Auth via GEMINI_API_KEY (or GOOGLE_API_KEY).
+        Gemini Developer API. Auth via GEMINI_API_KEY (or GOOGLE_API_KEY), or a
+        CAPABILITY'S OWN KEY passed as `get_client(key_env="GEMINI_KEY_CHAT")`
+        — see `_gemini_key`.
 
 Set it globally in .env, or pass provider="gemini"/"vertex" per call. Model ids
 are overridable via VERTEX_TEXT_MODEL / GEMINI_TEXT_MODEL.
@@ -45,6 +47,14 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 DEFAULT_TEXT_MODEL = "gemini-2.5-flash"
+# ⚠ THE DEVELOPER API HAS ITS OWN DEFAULT, AND IT IS NEWER ON PURPOSE. A key
+# minted today is refused by `gemini-2.5-flash` in so many words — "no longer
+# available to new users … please update your code to use models/gemini-3.6-flash"
+# — which arrives as an HTTP 404 and reads like a typo in a model name rather
+# than a default that has aged out. Vertex still serves 2.5-flash to this
+# project, so the two backends keep two defaults; both stay overridable
+# (VERTEX_TEXT_MODEL / GEMINI_TEXT_MODEL).
+DEFAULT_GEMINI_TEXT_MODEL = "gemini-3.5-flash"
 DEFAULT_PROJECT = "project-cf56be07-4f9e-45d4-9f4"
 SUPPORTED_PROVIDERS = ("vertex", "gemini")
 MAX_RETRIES = 3
@@ -102,7 +112,7 @@ def _resolve_provider(provider: str | None = None) -> str:
 def _model_id(provider: str) -> str:
     """Text model id for the given provider (env-overridable, shared default)."""
     if provider == "gemini":
-        return os.environ.get("GEMINI_TEXT_MODEL", DEFAULT_TEXT_MODEL)
+        return os.environ.get("GEMINI_TEXT_MODEL", DEFAULT_GEMINI_TEXT_MODEL)
     return os.environ.get("VERTEX_TEXT_MODEL", DEFAULT_TEXT_MODEL)
 
 
@@ -162,17 +172,47 @@ def _sampling_kwargs() -> dict:
     return {k: v for k, v in kwargs.items() if k in supported}
 
 
-def _create_client(provider: str):
+def _key_names(key_env: str = "") -> list[str]:
+    """The env vars a Developer API key is looked for in, best first."""
+    names = [key_env] if key_env else []
+    return names + ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+
+
+def _gemini_key(key_env: str = "") -> tuple[str, str]:
+    """The Developer API key, and the name of the env var it came from.
+
+    ⚠ A CAPABILITY'S OWN KEY WINS; THE SHARED ONE IS THE FALLBACK. The editor's
+    chat and the picture/video calls are metered and billed apart upstream, so an
+    operator hands each one its own key (`GEMINI_KEY_CHAT`, `GEMINI_KEY_MEDIA`)
+    and can read the two bills separately — one key for everything makes "what
+    did the chat cost" a number nobody can produce. A build that sets only
+    `GEMINI_API_KEY` behaves exactly as it always did; that is the fallback.
+
+    ⚠ THE NAME COMES BACK TOO, AND IT IS THE NAME THAT GETS LOGGED. Which of
+    three env vars actually answered is the first thing anyone debugging a 403
+    wants to know, and it is the one thing the key itself must never be printed
+    to show.
+    """
+    for name in _key_names(key_env):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value, name
+    return "", ""
+
+
+def _create_client(provider: str, key_env: str = ""):
     """Create a genai Client for the given provider (text generation)."""
     if provider == "gemini":
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        api_key, source = _gemini_key(key_env)
         if not api_key:
             raise RuntimeError(
-                "TEXT_PROVIDER=gemini requires GEMINI_API_KEY (or GOOGLE_API_KEY) "
-                "to be set in your .env."
+                "The Gemini Developer API needs a key: set one of %s in your .env."
+                % " / ".join(_key_names(key_env))
             )
         client = genai.Client(api_key=api_key)
-        logger.info("genai text client created (provider=gemini Developer API)")
+        logger.info(
+            "genai text client created (provider=gemini Developer API, key=%s)", source
+        )
         return client
 
     # provider == "vertex"
@@ -187,15 +227,26 @@ def _create_client(provider: str):
 
 
 # One cached client per provider so both backends can coexist in one process.
+# ⚠ AND ONE PER KEY on the Developer API — see `get_client`.
 _clients: dict[str, "genai.Client"] = {}
 
 
-def get_client(provider: str | None = None):
-    """Return the cached genai client for the resolved provider."""
+def get_client(provider: str | None = None, *, key_env: str = ""):
+    """Return the cached genai client for the resolved provider.
+
+    `key_env` names a capability's own Gemini key to prefer (`GEMINI_KEY_CHAT`),
+    falling back to the shared key — see `_gemini_key`.
+
+    ⚠ `key_env` IS PART OF THE CACHE KEY. Two capabilities on the same provider
+    holding two different keys are two different clients, and caching by provider
+    alone would hand whichever asked second the FIRST one's key — a billing bug
+    that looks like nothing at all, because both keys work.
+    """
     provider = _resolve_provider(provider)
-    if provider not in _clients:
-        _clients[provider] = _create_client(provider)
-    return _clients[provider]
+    cache_key = "%s|%s" % (provider, key_env) if provider == "gemini" else provider
+    if cache_key not in _clients:
+        _clients[cache_key] = _create_client(provider, key_env)
+    return _clients[cache_key]
 
 
 # ---------------------------------------------------------------------------

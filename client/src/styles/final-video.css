@@ -59,7 +59,7 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   border: 1px solid var(--border-gold);
   border-radius: 999px;
   padding: 0.2rem 0.6rem;
@@ -439,7 +439,7 @@
 .fv-ref-chip.on {
   border-color: var(--primary);
   color: var(--text);
-  background: rgba(229, 193, 88, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 .fv-ref-chip img {
   width: 1.6rem;
@@ -618,7 +618,7 @@
   padding: 0.7rem 0.9rem;
   border: 1px solid var(--border-gold);
   border-radius: 10px;
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 .fv-confirm-usd {
   font-size: 1.85rem;

@@ -290,7 +290,7 @@ export default function PreflightModal({
 
         {error && <div className="error pf-error">{error}</div>}
 
-        <div className="pf-foot">
+        <div className="pf-foot btn-row">
           <button type="button" className="btn" onClick={onCancel} disabled={busy}>
             ← Back to shots
           </button>

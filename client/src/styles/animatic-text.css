@@ -262,7 +262,7 @@
   padding: 0 0.4rem;
   /* Yellow for text, green on the captions row — both set as `--clip-tint` in
      animatic-lanes.css, for the reason spelled out on `.tl-bar`. */
-  background: var(--clip-tint, rgba(229, 193, 88, 0.22));
+  background: var(--clip-tint, rgba(var(--accent-rgb), 0.22));
   border: 1px solid var(--clip-edge, var(--border-gold));
   border-radius: 5px;
   cursor: grab;
@@ -416,7 +416,7 @@
 }
 .tl-track-add:hover {
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 /* Same rule as above: the horizontal breathing room is this row's own, the
    vertical centring is shared. `0.9rem` of top padding here was what clipped

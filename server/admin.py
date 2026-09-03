@@ -1026,11 +1026,20 @@ def update_offer(
 # them. Everything below is behind `require_admin` like every other route in
 # this file.
 class BrandingBody(BaseModel):
-    """The one editable text field. ⚠ `name` is OPTIONAL so a PATCH that only
-    changes something added later does not have to resend it — `exclude_unset`
-    below is what makes that true."""
+    """What the Brand screen may change. ⚠ EVERY FIELD IS OPTIONAL so a PATCH
+    that changes one of them does not have to resend the others —
+    `exclude_unset` below is what makes that true, and it is why saving a colour
+    cannot blank a name.
+
+    ⚠ THE COLOURS ARE NOT PATTERN-VALIDATED HERE, ON PURPOSE.
+    `branding.clean_hex` coerces rather than refusing (read its docstring); a
+    `pattern=` on this model would turn a half-typed `#ab` into a 422 in the
+    middle of somebody dragging a colour picker."""
 
     name: str | None = Field(None, max_length=200)
+    theme_id: str | None = Field(None, max_length=32)
+    accent: str | None = Field(None, max_length=9)
+    ground: str | None = Field(None, max_length=9)
 
 
 def _branding_row() -> dict:
@@ -1057,6 +1066,14 @@ def _branding_row() -> dict:
         "slots": list(branding.SLOTS),
         "has_logo": any(row.get(branding.slot_field(s)) for s in branding.SLOTS),
         "default_name": branding.DEFAULT_NAME,
+        # What "put it back" means for the colours - same shape as
+        # `default_name`, and the same reason: a reset the panel can offer
+        # honestly beats an administrator guessing the shipped hexes.
+        "default_theme": {
+            "theme_id": branding.DEFAULT_THEME_ID,
+            "accent": branding.DEFAULT_ACCENT,
+            "ground": branding.DEFAULT_GROUND,
+        },
         "name_max": branding.NAME_MAX_CHARS,
         "logo_max_px": branding.LOGO_MAX_PX,
         "allowed_types": list(branding.ALLOWED_LOGO_TYPES),
@@ -1075,21 +1092,40 @@ def get_branding(admin: CurrentUser = Depends(require_admin)) -> dict:
 def update_branding(
     body: BrandingBody, request: Request, admin: CurrentUser = Depends(require_admin)
 ) -> dict:
-    """Rename the app. Lands on every screen at once — see `branding.py`."""
+    """Rename the app, or repaint it. Lands on every screen at once — see
+    `branding.py` for the name and `client/src/palette.js` for the colours."""
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="Nothing to change.")
     was = branding.get_branding(fresh=True).get("name") or ""
     row = branding.save_branding(fields, actor=admin.email)
+
+    # ⚠ THE ENTRY SAYS WHICH OF THE TWO HAPPENED. A repaint and a rename come
+    # through the same route, and an activity feed reading "renamed" beside an
+    # unchanged name is the kind of line that costs somebody an afternoon.
+    renamed = "name" in fields and row.get("name") != was
+    repainted = any(k in fields for k in ("theme_id", "accent", "ground"))
+    action = ("renamed" if renamed and not repainted
+              else "repainted" if repainted and not renamed
+              else "changed")
     events.record(
         events.TYPE_ADMIN_BRANDING_CHANGED,
         actor=admin.email,
-        action="renamed",
+        action=action,
         was=was,
         now=row.get("name"),
+        theme=row.get("theme_id"),
+        accent=row.get("accent"),
+        ground=row.get("ground"),
         **events.request_context(request),
     )
-    logger.info("%s renamed the app: %r -> %r", admin.email, was, row.get("name"))
+    if renamed:
+        logger.info("%s renamed the app: %r -> %r", admin.email, was, row.get("name"))
+    if repainted:
+        logger.info(
+            "%s repainted the app: theme=%s accent=%s ground=%s",
+            admin.email, row.get("theme_id"), row.get("accent"), row.get("ground"),
+        )
     return _branding_row()
 
 

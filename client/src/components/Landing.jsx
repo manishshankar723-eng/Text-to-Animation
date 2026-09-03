@@ -183,24 +183,90 @@ const countWord = (n) => COUNT_WORD[n] || String(n);
 // studio offers is how one of them ends up advertising a workflow the other
 // says is not there. Same rule as `COPY` above, one level up: that shares the
 // WORDS, this shares the LIST.
-export function useLiveWorkflows() {
-  const [live, setLive] = useState(null);
+// Where the last public answer is kept.
+//
+// ⚠ **THIS IS WHY A HIDDEN WORKFLOW USED TO FLASH UP ON EVERY RELOAD.** The
+// hook started at `null`, drew `FALLBACK` — all six built-in workflows — and
+// then swapped to the server's list a moment later, so every visitor saw the
+// workflows an administrator had HIDDEN for exactly as long as the request
+// took: *"jab refresh kiye to one sec ke liye dikha fir nhi"*. That is the
+// precise fault `/public/workflows` was added to fix, arriving through the
+// front door instead of the back one.
+//
+// ⚠ REMEMBERED, NOT SKELETONED, AND FOR A MARKETING PAGE THAT IS THE RIGHT
+// TRADE. The sidebar solved the same problem with skeleton rows because a rail
+// is chrome; a hero that empties itself for half a second on every visit is a
+// worse first impression than the flash was. Same fix, same key shape and the
+// same reasoning as the remembered brand in `branding.js`: a returning visitor
+// is correct in the first paint, with no request having answered yet.
+//
+// ⚠ AND `known` COVERS THE ONE VISIT MEMORY CANNOT — the first ever. There is
+// nothing to remember, so the page draws no workflow list AT ALL until the
+// answer lands, rather than advertising six and settling on three.
+const REMEMBER_KEY = "cas_public_workflows";
+
+function rememberedWorkflows() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REMEMBER_KEY) || "null");
+    return Array.isArray(raw) && raw.length ? raw : null;
+  } catch {
+    // Private mode, or somebody edited it by hand. No memory is not an error.
+    return null;
+  }
+}
+
+function rememberWorkflows(list) {
+  try {
+    localStorage.setItem(REMEMBER_KEY, JSON.stringify(list));
+  } catch {
+    // Storage full or disabled — the page just falls back next load.
+  }
+}
+
+/**
+ * `{workflows, known}` — the list, and whether it is an ANSWER or a guess.
+ *
+ * `known === false` means nobody has told this browser what is live: not the
+ * server just now, and not a remembered answer from last time. A page that
+ * makes a CLAIM about the list ("Three workflows", a grid of cards, the hero
+ * tiles) must wait for it; anything else may use `workflows` straight away.
+ */
+export function useLiveWorkflowsState() {
+  const [live, setLive] = useState(rememberedWorkflows);
+  const [known, setKnown] = useState(() => rememberedWorkflows() !== null);
 
   useEffect(() => {
     let alive = true;
     api
       .publicWorkflows()
       .then((r) => {
-        if (alive && Array.isArray(r?.workflows)) setLive(r.workflows);
+        if (!alive) return;
+        if (Array.isArray(r?.workflows)) {
+          setLive(r.workflows);
+          rememberWorkflows(r.workflows);
+        }
+        setKnown(true);
       })
-      // Deliberately silent. There is nothing a visitor could do about it, and
-      // the fallback below is already the right thing to draw.
-      .catch(() => {});
+      // Deliberately silent — there is nothing a visitor could do about it. But
+      // `known` still flips: a failed call is an answered question as far as
+      // this page is concerned, and the fallback below is what to draw.
+      .catch(() => {
+        if (alive) setKnown(true);
+      });
     return () => {
       alive = false;
     };
   }, []);
 
+  return { workflows: joinCopy(live), known };
+}
+
+/** Just the list, for callers with nothing to hide. */
+export function useLiveWorkflows() {
+  return useLiveWorkflowsState().workflows;
+}
+
+function joinCopy(live) {
   if (!live?.length) return FALLBACK;
   // ⚠ `icon` IS CARRIED THROUGH, and it is not decoration. It is the emoji an
   // administrator typed in the admin panel, and it is the LAST fallback in the
@@ -302,7 +368,10 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
   // reason `/public/branding` needs no token. The name appears TWICE on this
   // page (nav and footer) and both read the one store, so they cannot disagree.
   const brand = useBranding();
-  const shown = useLiveWorkflows();
+  // ⚠ `known` IS WHY A HIDDEN WORKFLOW NO LONGER FLASHES UP HERE. See the hook.
+  // It is false only on a browser that has never had an answer; every reload
+  // after the first starts out correct.
+  const { workflows: shown, known } = useLiveWorkflowsState();
   // The hero tiles' pictures, uploaded from the admin panel's Landing tab. An
   // empty map is normal and means "draw them" — see `useLandingArt`.
   const art = useLandingArt();
@@ -365,10 +434,16 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
       {/* ---------- Hero ---------- */}
       <header className="hero">
         <div className="hero-copy">
+          {/* ⚠ NO COUNT UNTIL THE COUNT IS KNOWN. "Three workflows" that turns
+              into "Six workflows" and back is the flash at its most readable —
+              and on a first visit the number would be the BUILT-IN one, which
+              includes whatever the administrator has hidden. */}
           <span className="pill">
-            ✨ {shown.length === 1
-              ? "One workflow"
-              : `${countWord(shown.length).replace(/^./, (c) => c.toUpperCase())} workflows`}{" "}
+            ✨ {known
+              ? shown.length === 1
+                ? "One workflow"
+                : `${countWord(shown.length).replace(/^./, (c) => c.toUpperCase())} workflows`
+              : "Every workflow"}{" "}
             · one AI studio
           </span>
           <h1 className="hero-title">
@@ -439,12 +514,12 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
               one as "soon" it becomes a false one. */}
           <p className="tiny muted hero-note">
             Sign in with Google or email
-            {allLive && ` · All ${countWord(shown.length)} workflows are live today`}
+            {known && allLive && ` · All ${countWord(shown.length)} workflows are live today`}
           </p>
         </div>
 
         <div className="hero-art" aria-hidden="true">
-          <PipelineArt workflows={shown} art={art} />
+          <PipelineArt workflows={known ? shown : []} art={art} />
         </div>
       </header>
 
@@ -456,8 +531,14 @@ export default function Landing({ onGetStarted, onExplore, theme, onToggleTheme 
           next.
         </p>
 
+        {/* ⚠ EMPTY UNTIL THE ANSWER LANDS, ON A FIRST VISIT ONLY. Drawing the
+            built-in six here and removing three of them a moment later is
+            advertising a workflow that has been switched off — the exact thing
+            `/public/workflows` was added to stop. A returning visitor never
+            sees this branch: the remembered answer makes `known` true before
+            the first paint. */}
         <div className="lp-wf-grid">
-          {shown.map((w) => (
+          {(known ? shown : []).map((w) => (
             <article className="lp-wf-card" key={w.id}>
               <div className="lp-wf-top">
                 <span className="lp-wf-ico">

@@ -47,7 +47,7 @@
 }
 .btn.primary:hover:not(:disabled) {
   background: var(--gold-grad-hover);
-  box-shadow: 0 6px 24px rgba(229, 193, 88, 0.35);
+  box-shadow: 0 6px 24px rgba(var(--accent-rgb), 0.35);
   transform: translateY(-1px);
 }
 /* ⚠ A GHOST BUTTON KEEPS ITS EDGE. `border-color: transparent` is what made
@@ -68,6 +68,51 @@
 .btn.small {
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
+}
+
+/* =========================================================================
+   ⚠ A ROW OF BUTTONS IS ONE ROW — SAME SIZE, SAME TOP EDGE. PUT `btn-row`
+   ON ANY CONTAINER HOLDING TWO BUTTONS SIDE BY SIDE.
+   ========================================================================= */
+/* This is the answer to a fault that has been reported over and over — *"save
+   name and reset name buttun uper niche v hai aur chhota bara … mai bahut baar
+   bola hun aisa nhi hona chaiye magar aisa mil hi jata hai"* — and it kept
+   coming back because the CAUSE is two lines above this one: `.btn.primary`
+   carries `margin-top: 1.1rem`, a FORM's spacing living on a COLOUR variant.
+   Every primary in the app is born 1.1rem lower than the button beside it, and
+   whoever notices patches their own container. **39 rules across 21
+   stylesheets already exist to undo it** (`.an-topbar .btn`, `.pf-foot`,
+   `.admin-pager .btn`, …), each with its own comment rediscovering the same
+   thing. That is not 39 bugs, it is one bug found 39 times.
+
+   ⚠ **WHY THE MARGIN IS STILL THERE AND WAS NOT SIMPLY DELETED.** 68 buttons
+   in 34 files wear `btn primary`, and the ones NOT in those 39 rules are
+   sitting at the bottom of a form relying on it for their spacing. Deleting it
+   is a one-line change with 68 places to re-check IN A BROWSER, and no test in
+   this repo can see a gap close up. So the margin stays and the ROW opts out —
+   one class instead of a fortieth private patch.
+
+   ⚠ **AND SIZE IS THE OTHER HALF, WHICH THE MARGIN RESET CANNOT FIX.**
+   `btn primary` beside `btn small` is a big button next to a little one no
+   matter where its top edge is. `btn-row` cannot correct that from CSS without
+   overriding a size somebody chose on purpose, so it is enforced instead:
+   `tests/button_row_check.py` reads the JSX, finds buttons standing next to
+   each other, and fails when their sizes disagree or when a `primary` sits in a
+   row that resets nothing. **A new mismatch is a red test now, not a
+   screenshot.** See RULEBOOK E102.
+
+   ⚠ No `gap` and no `justify-content` here on purpose: rows that already state
+   theirs (`.pf-foot` spreads its two apart) must keep it, and every stylesheet
+   is imported AFTER this one, so a row's own rule wins. */
+.btn-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* ⚠ Specificity is a TIE with `.btn.primary` (both 0-2-0) — this wins only
+   because it comes LATER in the file. Do not move it above the variants. */
+.btn-row > .btn {
+  margin-top: 0;
 }
 /* A BACK BUTTON IS AN ARROW, NOT A SENTENCE.
    Every workflow's back control used to spell out where it went ("← Your
@@ -266,7 +311,7 @@
 }
 .password-toggle:hover {
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 
 /* Google button + divider + info message */
@@ -309,7 +354,7 @@
   padding: 0 0.7rem;
 }
 .info-msg {
-  background: rgba(229, 193, 88, 0.1);
+  background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid var(--border-gold);
   color: var(--primary);
   padding: 0.6rem 0.8rem;

@@ -95,7 +95,7 @@
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   color: var(--primary);
-  background: rgba(229, 193, 88, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
   border-radius: 99px;
   padding: 0.02rem 0.34rem;
 }

@@ -30,10 +30,13 @@ import requests
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo root, and
+# never the OS temp dir, where nobody thinks to look. See `tests/_shots.py`.
+from _shots import shots_dir
+
 APP = os.environ.get("PW_APP", "http://localhost:5199")
 API = os.environ.get("PW_API", "http://127.0.0.1:8124")
-SHOTS = os.path.join(os.environ.get("TEMP", "/tmp"), "pw_test", "shots")
-os.makedirs(SHOTS, exist_ok=True)
+SHOTS = shots_dir("e2e_animatic")
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 

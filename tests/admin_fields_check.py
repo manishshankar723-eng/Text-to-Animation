@@ -70,6 +70,10 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+# Screenshots go to `test_shots/`, which git ignores — never the repo
+# root. See `tests/_shots.py`.
+from _shots import shots_dir  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLIENT = os.path.join(ROOT, "client")
 
@@ -400,6 +404,19 @@ def main():
                         page.locator(".admin-rollout .admin-select").first.select_option(mode)
                         page.wait_for_timeout(600)
                         sweep(page, f"Features — rollout by {what}")
+                        # ⚠ SWITCHING TO EITHER OF THESE WITH NOTHING FILLED IN IS
+                        # THE TRAP ITSELF — a Live feature reaching nobody — so the
+                        # warning row is on screen right here, and it is a row of
+                        # prose beside a button, which is exactly the shape this
+                        # file measures. See `tests/workflow_reach_check.py` for
+                        # what it says; this is whether it FITS.
+                        if page.locator(".admin-feature.unreachable").count():
+                            sweep(page, f"Features — the 'nobody can see it' warning ({what})")
+                            if mode == "allowlist":
+                                shots = shots_dir("admin_check")
+                                page.screenshot(
+                                    path=os.path.join(shots, "admin-features-unreachable.png"),
+                                    full_page=False)
                     except Exception as e:
                         print(f"  (could not set rollout {mode}: {e})")
 
@@ -430,6 +447,15 @@ def main():
             tab(page, "Brand")
             page.wait_for_selector(".admin-card", timeout=15000)
             sweep(page, "Brand")
+            # ⚠ THE ONE TAB THIS FILE PHOTOGRAPHS, and it earns it: the colour
+            # picker is the only control in the panel whose whole job is to be
+            # LOOKED at. Its swatches carry a palette that is not the one the
+            # page is painted in, so a measurement that only asks "does the text
+            # fit its box" cannot tell whether it is showing the right thing.
+            page.wait_for_selector(".admin-theme-grid", timeout=15000)
+            shots = shots_dir("admin_check")
+            page.screenshot(path=os.path.join(shots, "admin-brand.png"), full_page=True)
+            print(f"  screenshot -> {os.path.join(shots, 'admin-brand.png')}")
 
             # ⚠ ONE TAB, TWO SECTIONS. Banners and Showcase were two tabs and
             # are one Explore tab now, so each half is reached through the
