@@ -353,6 +353,48 @@
 }
 
 /* =========================================================================
+   PAID WORK THE CHAT IS OFFERING — a door, never a spend
+   ========================================================================= */
+/* ⚠ WARN-COLOURED, NOT ACCENT-COLOURED. The accent is what this app paints the
+   thing it wants you to press; these cost money, so they read as a caution and
+   the free Apply button keeps the accent to itself. */
+.ec-offers {
+  margin-top: 0.4rem;
+  /* ⚠ ONE EXISTING TOKEN, NOT A NEW HEX. The gold accent is what this app paints
+     the thing it wants pressed, and these cost money — so the caution colour
+     goes on the edge and the free Apply button keeps the accent to itself. */
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.ec-offer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.ec-offer-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 9rem;
+}
+.ec-offer-text strong {
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.ec-offer-foot {
+  margin: 0;
+}
+
+/* =========================================================================
    WHAT COULD NOT BE USED — on screen, never in a console
    ========================================================================= */
 .ec-drops {
@@ -453,4 +495,21 @@
 .ec-plan-sound {
   color: var(--primary);
   opacity: 0.85;
+}
+
+
+/* THE WAIT, SAID OUT LOUD. ⚠ TABULAR FIGURES so the bubble does not twitch
+   sideways once a second — a counter that jiggles the whole line reads as the
+   panel being unstable, which is the opposite of the reassurance it is for. */
+.ec-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* ⚠ INSIDE THE THINKING BUBBLE, NOT BESIDE THE SEND BUTTON. Two buttons on the
+   composer row would be two buttons the RULEBOOK then has to keep the same
+   height (`.btn.primary`'s form margin), and this one is not a peer of Send —
+   it belongs to the message that is waiting. */
+.ec-stop {
+  margin-top: 0.4rem;
 }

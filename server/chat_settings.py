@@ -43,11 +43,19 @@ internal deployment may genuinely want a faster loop — but the failure they
 prevent is a typed sentence spending real money, so the defaults are on and the
 admin screen says what turning one off means.
 
-⚠ **AND `allow_paid_passes` IS NOT ONE OF THOSE RAILS — IT IS A WALL.** Even
-switched on, the chat may only OPEN the priced confirm that ✨ Animate and the
-Director already use; it can never start a render itself. See the note on it
-below and the module docstring of `server/director.py`, which states the same
+⚠ **AND `allow_paid_passes` IS NOT ONE OF THOSE RAILS — IT IS A WALL.** The chat
+can never start a render itself: nothing in this feature spends anything but text
+quota. See the module docstring of `server/director.py`, which states the same
 rule for the same reason.
+
+⚠ **WHAT IT ACTUALLY CONTROLS TODAY IS ONE SENTENCE IN THE PROMPT**, and the
+sentence it used to produce was a refusal: switched off, `rails_text` told the
+model *"this deployment does NOT let the chat start paid work at all — do not
+offer to start one"*, and the model duly changed the subject when asked for a
+voiceover. It ships ON now, which makes the chat OFFER the paid work and name the
+button that starts it. ⚠ **A PRICED CONFIRM INSIDE THE CHAT IS NOT BUILT** —
+nothing on the client reads this flag (only `AdminChat.jsx`, which sets it), so
+do not read the old wording here as a description of a feature that exists.
 
 ⚠ **IT FAILS BACK TO THE DEFAULTS, NEVER TO NOTHING.** An unreachable store
 answers with the shipped configuration, which is a working chat. Same rule as
@@ -164,12 +172,18 @@ def defaults() -> dict:
         "shot_detail_limit": LIMITS["shot_detail_limit"]["default"],
         "ask_on_spend": True,
         "ask_on_destructive": True,
-        # ⚠ OFF, AND OFF IS NOT "the chat cannot mention Veo". It can propose a
-        # paid pass in words at any time. This flag decides whether it may open
-        # the PRICED CONFIRM for one. It never decides whether it may spend —
-        # nothing in this feature may, ever. The spend goes through the same
-        # door ✨ Animate uses, with the same estimate on the same button.
-        "allow_paid_passes": False,
+        # ⚠ ON SINCE 2026-09-03, AND WHAT IT TURNS ON IS THE OFFER. Off, the
+        # rails told the model not to offer paid work at all, so the chat went
+        # quiet about the three most valuable things this app does — ask it for a
+        # voiceover and it changed the subject. Asked for outright: *"jo free hai
+        # wo free mai hoga aur jismai paisa lagta hai usmai paisa lagega — uske
+        # liye subscription/plan lega agar nahi liya hua hai to"*.
+        #
+        # ⚠ IT NEVER DECIDES WHETHER THE CHAT MAY SPEND — nothing in this feature
+        # may, ever. The spend goes through the door ✨ Animate uses, with the
+        # estimate on the button, and the chat's job is to name that door.
+        # `ask_on_spend` (also on) is what makes it ask before it offers.
+        "allow_paid_passes": True,
         # The first line in an empty chat. "" → the client's own wording, which
         # is written to match the rest of the editor's voice.
         "greeting": "",

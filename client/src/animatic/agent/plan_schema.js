@@ -240,6 +240,12 @@ export function validatePlan(raw, caps, ctx) {
     if (typeof source.include?.[key] === "boolean") include[key] = source.include[key];
   }
 
+  // ⚠ DID THE PERSON ASK FOR ALL OF THEM, IN SO MANY WORDS? Set by the planner
+  // and read by `applyGuardrails`, which lifts every house SHARE when it is on.
+  // It is deliberately not part of `include`: those flags are what the user
+  // ticks in the preview, and this is a fact about what they typed.
+  const askedForAll = source.asked_for_all === true || source.askedForAll === true;
+
   const steps = [];
   // ⚠ REFS ARE TRACKED AS THE PLAN IS READ, not as it runs, so a step that
   // addresses a clip no earlier step created is dropped in the PREVIEW rather
@@ -291,6 +297,7 @@ export function validatePlan(raw, caps, ctx) {
       mood: text(source.mood),
       language: text(source.language),
       include,
+      askedForAll,
       steps,
     },
     dropped,

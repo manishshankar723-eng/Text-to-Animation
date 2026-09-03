@@ -128,6 +128,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { frameTrack } from "../scene.js";
 import { capabilities } from "./capabilities.js";
 import { describeStep, ACTIONS, ACTION_API } from "./actions.js";
 import {
@@ -2156,17 +2157,48 @@ export default function useDirectorRun({
  */
 export function boardFrom(ctx) {
   const frames = ctx.frames || [];
+  // ⚠ WHICH ROW EACH SHOT IS ON, AND IT IS NOT OPTIONAL INFORMATION. Without it
+  // the planner is handed one numbered list and has to assume the film runs
+  // 1 → 2 → 3 end to end. On a two-row project it does not: the Images row plays
+  // UNDER the Video row, so "the cut after shot 21" can be a boundary between
+  // two clips that were never next to each other. Every unexplainable message
+  // in that bug report — a 28-second gap, an overlap — is this.
+  //
+  // ⚠ ABSENT `laneRows` MEANS "ONE ROW", not "unknown". Every maths-only test
+  // and every older caller hands a bare `{ frames, starts }`, and one row laid
+  // end to end is exactly what those mean — so they keep working unchanged and
+  // the row fields simply do not appear.
+  const rows = ctx.laneRows || [];
+  const pictureRows = rows.filter((r) => r && r.kind === "frames");
+  const rowOf = (frame) => pictureRows.find((r) => r.track === frameTrack(frame)) || null;
   return {
     title: ctx.title || "",
     aspect_ratio: ctx.aspectRatio || "",
     fps: ctx.fps || 24,
     total_ms: ctx.totalMs || 0,
-    shots: frames.map((frame, i) => ({
-      label: frame.label || "",
-      ms: frame.duration_ms || 0,
-      description: frame.description || frame.prompt || "",
-      dialogue: dialogueOf(frame),
-    })),
+    shots: frames.map((frame, i) => {
+      const row = rowOf(frame);
+      return {
+        label: frame.label || "",
+        ms: frame.duration_ms || 0,
+        description: frame.description || frame.prompt || "",
+        dialogue: dialogueOf(frame),
+        // The gutter's own number and name for the row this clip sits on. Left
+        // out entirely when there is no row stack to read — see above.
+        ...(row ? { layer: row.layer, lane: row.name } : {}),
+      };
+    }),
+    // The picture rows themselves, so a person can say "layer 10" and be
+    // understood, and so the planner can see that a film is stacked at all.
+    ...(pictureRows.length
+      ? {
+          layers: pictureRows.map((row) => ({
+            layer: row.layer,
+            name: row.name,
+            shots: frames.filter((f) => frameTrack(f) === row.track).length,
+          })),
+        }
+      : {}),
     existing: {
       // Which CUTS carry a transition, in the plan's own 1-based numbering: a
       // record sits after a frame, and cut `n` is the gap after shot `n`.

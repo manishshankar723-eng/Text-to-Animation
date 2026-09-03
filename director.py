@@ -584,6 +584,19 @@ def plan_schema(vocabulary: dict) -> dict:
         "properties": {
             "summary": {"type": "string", "description": "One sentence: what this edit does."},
             "mood": {"type": "string"},
+            # ⚠ THE ONE FIELD THAT TURNS THE HOUSE LIMITS OFF, and it exists
+            # because a person who types "on EVERY clip" twice and is answered
+            # with "our system only allows 35%" has been refused by a default.
+            # Only ever true when they said so — see the prompt, and
+            # `applyGuardrails` on what is lifted (taste) and what is not
+            # (anything that would make a step render as nothing).
+            "asked_for_all": {
+                "type": "boolean",
+                "description": "TRUE only when the person explicitly asked for this on "
+                               "EVERY cut / clip / shot (\"all\", \"every\", \"each one\", "
+                               "\"sab par\"). It lifts the house limits for THIS plan. "
+                               "Never set it on your own initiative.",
+            },
             "steps": {
                 "type": "array",
                 "items": {

@@ -303,6 +303,15 @@ CHAT_SETTINGS_CACHE_TTL_S = float(os.environ.get("API_CHAT_SETTINGS_CACHE_TTL_S"
 # FIVE MINUTES ON PURPOSE: a plan is two calls over a whole board and people
 # expect to wait for it, while a chat message that has not answered in a minute
 # reads as broken however healthy the call is. See `PLAN_TIMEOUT_MS` in api.js.
+#
+# ⚠ THIS IS THE TAB'S PATIENCE, NOT THE SERVER'S WORK. The number that stops the
+# model call is `CAPABILITY_BUDGET_SECONDS["chat"]` in `llm_json.py` (70s), and
+# it MUST STAY THE SMALLER OF THE TWO. It did not used to: the chat shared the
+# Director's 135s budget, so any turn slower than 90s was aborted by the browser
+# while the server was still correctly serving it — billed, counted, and reported
+# to the user as "the server may be stuck (a database it needs can do this)".
+# THREE NUMBERS, ONE ORDER, and `tests/director_timeout_check.py` asserts it:
+#     llm_json 70s  <  this 90s  ==  CHAT_TURN_TIMEOUT_MS in client/src/api.js
 CHAT_TURN_TIMEOUT_S = float(os.environ.get("API_CHAT_TURN_TIMEOUT_S", "90"))
 
 

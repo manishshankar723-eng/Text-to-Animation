@@ -256,6 +256,28 @@ DEFAULT_TIMEOUT_SECONDS = 180
 # too, or the tab will abort a request the server is still (correctly) serving.
 DEFAULT_BUDGET_SECONDS = 135
 
+# ⚠ AND THE CHAT'S OWN, BECAUSE 135 IS LONGER THAN THE BROWSER WILL WAIT FOR ONE.
+# The rule above — "2 × the budget has to stay inside the browser's patience" —
+# was written for the Director, whose tab waits 300s (`PLAN_TIMEOUT_MS`). The ✨
+# AI Editor's tab waits NINETY (`CHAT_TURN_TIMEOUT_MS`, mirroring
+# `API_CHAT_TURN_TIMEOUT_S`), because a chat message that has not answered in a
+# minute and a half reads as broken. Sharing the Director's 135 meant every chat
+# turn slower than 90s died the same way: the browser aborted a call the server
+# was still correctly serving, the turn was billed and counted, and what the user
+# saw was "The server didn't respond within 90s. It may be stuck (a database it
+# needs can do this)" — a true sentence about the wrong component, and reported
+# with a screenshot of exactly that over three identical unanswered messages.
+#
+# ⚠ IT MUST STAY COMFORTABLY UNDER THE BROWSER'S. The twenty seconds of headroom
+# is not slack — it is the prompt build, a look's pictures coming up the wire,
+# and the response going back down. Raise this and you must raise BOTH
+# `CHAT_TURN_TIMEOUT_MS` and `API_CHAT_TURN_TIMEOUT_S`, in that order, or the tab
+# goes back to aborting turns the server is about to answer.
+#
+# ⚠ ONE CALL, NOT TWO. A chat turn is a single `complete_json`; the Director's
+# route makes two, which is the other half of why its budget is the bigger one.
+CAPABILITY_BUDGET_SECONDS = {"chat": 70.0}
+
 # No attempt is worth starting with less than this left on the clock: the answer
 # could not arrive in time, and asking for it costs money on a paid endpoint.
 MIN_ATTEMPT_SECONDS = 15
@@ -345,6 +367,20 @@ class JsonRequest:
     # vars off a sentence means rewording one breaks the credentials. And ⚠ NOT
     # IN `fingerprint()`: the same brief answered on two keys is the same brief.
     capability: str = ""
+    # Pictures to look at, `({mime, data: bytes},)`, oldest-shot first. Empty on
+    # every call in this app except a LOOK — see `editor_chat_agent.chat`.
+    #
+    # ⚠ **A TUPLE OF BYTES, NOT PATHS AND NOT URLS.** This module makes one
+    # outbound call and it is to a model; giving it a path would make it a file
+    # reader, and giving it a url would make it a fetcher — either one is a
+    # second way for this seam to fail and neither is testable without a disk or
+    # a network. The caller that has the pictures hands them over.
+    #
+    # ⚠ **AND THEY ARE IN THE FINGERPRINT, BY DIGEST.** A picture changes the
+    # answer as surely as a sentence does, so "the same brief twice" has to mean
+    # the same pictures too — but the bytes themselves must not go into the
+    # digest input, because that would hash a megabyte to compare two calls.
+    images: tuple = ()
 
     def fingerprint(self) -> str:
         """A stable digest of exactly what will be sent."""
@@ -354,6 +390,12 @@ class JsonRequest:
                 "prompt": self.prompt,
                 "schema": self.schema,
                 "sampling": {**sampling(), **self.sampling},
+                # One short digest per picture, in order — see `images`.
+                "images": [
+                    hashlib.sha256(bytes(row.get("data") or b"")).hexdigest()[:16]
+                    for row in self.images
+                    if isinstance(row, dict)
+                ],
             },
             sort_keys=True,
             ensure_ascii=False,
@@ -457,6 +499,35 @@ def _env_float(name: str, default: float) -> float:
     except ValueError:
         logger.warning("[llm_json] %s=%r is not a number — using %s.", name, raw, default)
         return default
+
+
+def budget_seconds(capability: str = "") -> tuple[float, str]:
+    """`(seconds, the env var that set them)` for one `complete_json` call.
+
+    Best source first: `<CAP>_BUDGET_SECONDS` > `DIRECTOR_BUDGET_SECONDS` >
+    the capability's own default > `DEFAULT_BUDGET_SECONDS`.
+
+    ⚠ THE CAPABILITY'S DEFAULT IS A CEILING, NOT A FALLBACK. `DIRECTOR_BUDGET_
+    SECONDS` is the knob an operator reaches for when the Director is timing out,
+    and on a shared deployment it is usually raised — but raising it must never
+    push the chat past the browser that is waiting for it. So a capability with a
+    ceiling gets the SMALLER of the two, and `<CAP>_BUDGET_SECONDS` is the one
+    way to say "no, really, let this one run longer" (raise the tab's patience
+    to match; see `CAPABILITY_BUDGET_SECONDS`).
+
+    ⚠ THE NAME COMES BACK WITH THE NUMBER because the sentence the user reads
+    when the clock runs out names the var they have to change, and naming the
+    Director's on a chat turn sends them to the wrong line of the `.env`.
+    """
+    prefix = capability_prefix(capability)
+    own = f"{prefix}_BUDGET_SECONDS" if prefix else ""
+    if own and _env(own):
+        return _env_float(own, DEFAULT_BUDGET_SECONDS), own
+    ceiling = CAPABILITY_BUDGET_SECONDS.get((capability or "").strip().lower())
+    shared = _env_float("DIRECTOR_BUDGET_SECONDS", DEFAULT_BUDGET_SECONDS)
+    if ceiling is None:
+        return shared, "DIRECTOR_BUDGET_SECONDS"
+    return (shared, "DIRECTOR_BUDGET_SECONDS") if shared < ceiling else (ceiling, own)
 
 
 def sampling() -> dict:
@@ -889,9 +960,35 @@ def _google_adapter(request: JsonRequest) -> str:
             "connection will hang this request. Upgrade the SDK."
         )
 
+    # ⚠ THE PICTURES GO BEFORE THE PROMPT, and the order is not cosmetic. The
+    # prompt ends by asking for one turn of JSON; parts that arrive AFTER that
+    # instruction read as an afterthought, and a model handed "answer now" and
+    # then eight stills answers about the last one. Shown the film first, the
+    # question is about the film.
+    #
+    # ⚠ AND A PICTURE THIS SDK CANNOT TAKE IS DROPPED, NOT FATAL. `from_bytes`
+    # is the one part of this call that depends on the SDK version, and a look
+    # that arrives as a text-only answer is a worse answer — not a broken one.
+    parts = []
+    for row in request.images or ():
+        try:
+            parts.append(types.Part.from_bytes(
+                data=bytes(row["data"]), mime_type=str(row.get("mime") or "image/png"),
+            ))
+        except Exception as e:  # noqa: BLE001 — a look without pictures still answers
+            logger.warning(
+                "[llm_json] a picture could not be attached to the %s call (%s) — "
+                "asking without it.", request.purpose, e,
+            )
+    parts.append(request.prompt)
+    if len(parts) > 1:
+        logger.info(
+            "[llm_json] %s is LOOKING at %d picture(s).", request.purpose, len(parts) - 1
+        )
+
     response = client.models.generate_content(
         model=model_id(provider, capability=request.capability),
-        contents=[request.prompt],
+        contents=parts,
         config=types.GenerateContentConfig(**config),
     )
     # ⚠ AN ANSWER CUT OFF BY THE CAP IS WORTH SAYING OUT LOUD. The text comes
@@ -929,6 +1026,17 @@ def _openai_adapter(request: JsonRequest) -> str:
 
     base = (_env("DIRECTOR_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
     key = _env("DIRECTOR_API_KEY")
+    # ⚠ SAID OUT LOUD RATHER THAN SENT BADLY. Every endpoint this reaches spells
+    # an image part differently (or cannot take one), and a picture posted in the
+    # wrong shape is a 400 that reads like a broken model name. A look that comes
+    # back as a text answer is honest; the log says why it was thinner.
+    if request.images:
+        logger.warning(
+            "[llm_json] %s carried %d picture(s) and this provider is reached over "
+            "plain /chat/completions — they were NOT sent. Point the capability at "
+            "vertex or gemini for a call that can see.",
+            request.purpose, len(request.images),
+        )
     settings = {**sampling(), **request.sampling}
 
     body: dict = {
@@ -1024,16 +1132,19 @@ def complete_json(request: JsonRequest) -> dict:
     # ⚠ THE CLOCK STARTS HERE AND IT IS THE WHOLE CALL'S, retries and backoff
     # included. Without it three attempts could run for nine minutes against a
     # browser that stops listening after two — see `DEFAULT_BUDGET_SECONDS`.
-    budget = _env_float("DIRECTOR_BUDGET_SECONDS", DEFAULT_BUDGET_SECONDS)
+    # ⚠ AND IT IS THE CAPABILITY'S CLOCK, NOT ALWAYS THE DIRECTOR'S. A chat turn
+    # gets less than a plan does, because the tab waiting for it waits less. See
+    # `CAPABILITY_BUDGET_SECONDS`.
+    budget, budget_env = budget_seconds(request.capability)
     clock = _deadline.set(time.monotonic() + budget)
 
     try:
-        return _attempts(adapter, request, sent, last_reason, repaired, budget)
+        return _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env)
     finally:
         _deadline.reset(clock)
 
 
-def _attempts(adapter, request, sent, last_reason, repaired, budget) -> dict:
+def _attempts(adapter, request, sent, last_reason, repaired, budget, budget_env) -> dict:
     """The retry loop. Split out only so the clock above is set and reset once."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -1083,7 +1194,7 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget) -> dict:
             if attempt < MAX_RETRIES and _worth_retrying(attempt, request, budget):
                 time.sleep(INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)))
                 continue
-            raise LLMJsonError(_with_clock(last_reason, budget))
+            raise LLMJsonError(_with_clock(last_reason, budget, budget_env))
         except LLMJsonError:
             raise
         except Exception as e:  # noqa: BLE001 — surface a clear reason
@@ -1098,7 +1209,7 @@ def _attempts(adapter, request, sent, last_reason, repaired, budget) -> dict:
                 continue
             break
 
-    raise LLMJsonError(_with_clock(last_reason, budget))
+    raise LLMJsonError(_with_clock(last_reason, budget, budget_env))
 
 
 def _worth_retrying(attempt: int, request: JsonRequest, budget: float) -> bool:
@@ -1121,7 +1232,7 @@ def _worth_retrying(attempt: int, request: JsonRequest, budget: float) -> bool:
     return False
 
 
-def _with_clock(reason: str, budget: float) -> str:
+def _with_clock(reason: str, budget: float, budget_env: str = "DIRECTOR_BUDGET_SECONDS") -> str:
     """The reason, plus the clock when the clock is why we stopped.
 
     The panel prints this verbatim under "The AI pass didn't run", so it has to
@@ -1131,6 +1242,6 @@ def _with_clock(reason: str, budget: float) -> str:
         return reason
     return (
         f"{reason} It ran out of time — {budget:.0f}s is all one call gets "
-        "(DIRECTOR_BUDGET_SECONDS). A model this slow needs a bigger budget, or a "
-        "smaller board."
+        f"({budget_env or 'DIRECTOR_BUDGET_SECONDS'}). A model this slow needs a "
+        "bigger budget, or a smaller board."
     )

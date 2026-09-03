@@ -765,6 +765,18 @@ const TOOLS = [
   { id: "zoom", key: "Z", label: "Zoom", hint: "Click to zoom in · Alt-click to zoom out" },
 ];
 
+// What the STATUS STRIP calls a selected clip, in the words the rest of the
+// screen already uses. ⚠ `overlay` is a picture on the Images row — "overlay"
+// is a word only this file says, and the gutter, the pane and the media list all
+// call the same thing an image, so the strip does too.
+const SEL_WORD = {
+  frame: "Frame",
+  overlay: "Image",
+  text: "Text",
+  shape: "Shape",
+  audio: "Audio",
+};
+
 // What a dropped file is, by MIME with an extension fallback (a drag from some
 // file managers arrives with an empty type).
 function kindOf(file) {
@@ -6996,6 +7008,28 @@ export default function AnimaticEditor({
     // field — one read-model, two callers, and a field neither has to know the
     // other uses.
     audioAnalyses,
+    // ⚠ THE ROW STACK, BECAUSE A FLAT LIST OF SHOTS IS NOT WHAT THE TIMELINE IS.
+    // `frames` holds every picture clip on every picture row, and `boardFrom`
+    // was flattening the lot into one numbered list of "shots" — so a project
+    // with a Video row of 3 clips and an Images row of 24 running UNDERNEATH it
+    // was described as a 27-shot film laid end to end. The chat then reported
+    // things nobody could make sense of: "there is a 28.0s gap after shot 24",
+    // "shot 21 overlaps the shot after it". There is no gap and no overlap —
+    // those two shots are on different rows at the same moment.
+    //
+    // ⚠ AND `laneIndex + 1` IS THE NUMBER THE PERSON CAN SEE. It is the gutter's
+    // own count (see `tl-layer-num` in Timeline.jsx) which is why it is derived
+    // here from the same `lanes` the gutter draws rather than computed again:
+    // "lagao layer 10 ke clips par" is a sentence about that number, and a
+    // second numbering would answer about a different row. It is a LABEL, never
+    // an id — `track` is the identity, exactly as it is everywhere else.
+    laneRows: lanes.map((lane, laneIndex) => ({
+      key: lane.key,
+      kind: lane.kind,
+      track: lane.track,
+      name: lane.name || "",
+      layer: laneIndex + 1,
+    })),
   };
   // ⚠ A TAKE IS NOT A SHOT, AND THIS IS THE ONE PLACE THAT IS DECIDED.
   //
@@ -7274,6 +7308,10 @@ export default function AnimaticEditor({
     // ducking under speech, same single undo.
     buildSoundtrack: directorSoundtrack,
     placeSoundtrack: directorPlaceSound,
+    // ⚠ THE CHAT NAMES A DOOR; THIS OPENS IT, AND NEITHER OF THEM PRICES IT.
+    // See `openPaidDoor` — a hoisted function declaration, so passing it here
+    // ahead of where it is written is fine and it needs no dependency array.
+    openPaidDoor,
   });
 
   // Which languages have a description written for them, and which backend is
@@ -7291,6 +7329,66 @@ export default function AnimaticEditor({
         .then((cfg) => setDirectorLanguages(cfg?.languages || []))
         .catch(() => {});
     }
+  }
+
+  /**
+   * OPEN THE PRICED DOOR THE ✨ CHAT NAMED. `door` is one of `PAID_DOORS`.
+   *
+   * ⚠ **IT SPENDS NOTHING AND PRICES NOTHING.** Every branch here opens a dialog
+   * that already existed and was already reachable by hand, and each of those
+   * asks the server what the work costs and refuses an account whose plan does
+   * not cover it. That is why the chat was given a door NAME rather than a
+   * number: pricing and entitlement live in one place in this app, and this
+   * function's whole job is to not become a second one.
+   *
+   * ⚠ **A SHOT NUMBER IS AN INDEX INTO THE SHOT ROW, NOT INTO `frames`.**
+   * `readDirectorCtx()` is what the chat itself counted, Veo takes already
+   * filtered out — reading `frames[shot - 1]` here instead would open ✨ Animate
+   * on a take nobody sees on any project that has been animated. Same bug the
+   * Director panel's header had, and the same one function is the fix.
+   *
+   * ⚠ **AND IT IS READ FRESH, NOT CLOSED OVER.** The offer may be several
+   * messages old — a door button deliberately survives a refresh, unlike an
+   * Apply — so the shot it names is resolved against the film as it is NOW.
+   */
+  function openPaidDoor(door, shot) {
+    // ⚠ `openVoiceover()`, NOT `setSpeechFor("voiceover")`. Setting the state
+    // alone opens the panel with none of its setup done: no flush, no dialogue
+    // sheet fetched, and last time's confirm, error and lines still sitting
+    // there. The user would have seen an empty script and a stale price — which
+    // is exactly the class of bug this app keeps writing down, so the door has
+    // to be the SAME function the hand-driven button calls.
+    if (door === "voiceover") {
+      openVoiceover();
+      return;
+    }
+    if (door === "captions") {
+      // ⚠ AND IT NEEDS A TRACK TO LISTEN TO. `openCaptions` falls back to the
+      // first audio track; with none at all the panel would open with its
+      // confirm disabled and no explanation, so say why instead.
+      if (!audioTracks.length) {
+        setNotice("Add an audio track first — captions are written from a recording.");
+        return;
+      }
+      openCaptions();
+      return;
+    }
+    if (door === "images") {
+      openPoses();
+      return;
+    }
+    if (door !== "veo") return;
+    // No shot named: the whole film, which is the 🎬 door.
+    if (!shot) {
+      openDirector();
+      return;
+    }
+    const row = (readDirectorCtx().frames || [])[shot - 1];
+    // ⚠ A SHOT THAT IS NO LONGER THERE FALLS BACK TO THE WHOLE-FILM DOOR rather
+    // than doing nothing. A button that visibly does nothing reads as broken;
+    // the panel it opens still shows the film and still asks before it spends.
+    if (row?.id) setAnimateFor(row.id);
+    else openDirector();
   }
 
   // ------------------------------------------------------------- exporting
@@ -10239,6 +10337,78 @@ export default function AnimaticEditor({
     className: `an-pane an-pane-${name}${maximized === name ? " an-maxed" : ""}`,
   });
 
+  // ------------------------------------------ what the strip says at rest
+  // ⚠ THE STATUS STRIP IS ALWAYS ON SCREEN NOW, and this is the line it holds
+  // when there is nothing to report. Reported outright: the strip only ever
+  // appeared AFTER a click, so a project opened cold — new or recent — had
+  // nothing at the foot of the editor, and the one row that could teach the
+  // shortcuts was invisible to anyone who had not already found them by
+  // accident. A guide that only shows up once you no longer need it is not a
+  // guide.
+  //
+  // ⚠ IT IS A HINT, NOT A NOTICE, AND IT ALWAYS LOSES. An error wins, a real
+  // notice wins, and every progress row renders beside it regardless — so a tip
+  // can never push a message off the one line they all share. That ordering is
+  // the whole reason this is safe to leave on permanently.
+  //
+  // ⚠ THE VISIBLE HALF STAYS SHORT AND THE SENTENCE RIDES IN THE `title`,
+  // which is where helper prose lives everywhere else in this app. The strip is
+  // `nowrap` and elides, so a paragraph here would simply be cut off mid-word.
+  const restingHint = (() => {
+    // A tool other than Selection is a MODE, and a mode that is not showing is
+    // the oldest trap in an editor — the razor is picked up, the next click
+    // splits a clip nobody meant to split. So it outranks everything below it.
+    if (tool !== "select") {
+      const picked = TOOLS.find((t) => t.id === tool);
+      if (picked) {
+        return {
+          text: `${picked.label} tool is on`,
+          title: `${picked.hint} · Press V to go back to Selection.`,
+        };
+      }
+    }
+    if (
+      !frames.length &&
+      !texts.length &&
+      !shapes.length &&
+      !overlays.length &&
+      !audioTracks.length
+    ) {
+      return {
+        text: "Add media to begin",
+        title:
+          "Drop images, video or an MP3 onto the Media pane on the left — or press Make Video to build the whole thing from a script.",
+      };
+    }
+    if (selection.length > 1) {
+      return {
+        text: `${selection.length} clips selected`,
+        title:
+          "Drag them together · Delete removes them all · Ctrl+G groups them so they move as one, Shift+Ctrl+G unties.",
+      };
+    }
+    if (selection.length === 1) {
+      const word = SEL_WORD[selection[0].kind] || "Clip";
+      return {
+        text: `${word} selected — edit it on the right`,
+        title:
+          "Properties on the right has its timing, scale, position and opacity · drag the clip's ends on the timeline to trim it · Ctrl+K cuts it at the playhead · Delete removes it.",
+      };
+    }
+    if (playing) {
+      return {
+        text: "Playing — Space stops",
+        title:
+          "Space plays and stops · J K L shuttle back, stop and forward · ← → step one frame · ↑ ↓ jump to the next cut.",
+      };
+    }
+    return {
+      text: "Click a clip to edit it",
+      title:
+        "Space plays and stops · ← → step one frame · ↑ ↓ jump to the next cut · C is the razor, V is back to Selection · Ctrl+Z undoes · Ctrl+S saves.",
+    };
+  })();
+
   return (
     <div
       className={`an-nle an-ws-${workspace} ${
@@ -11901,129 +12071,141 @@ export default function AnimaticEditor({
           bar. It is a running commentary — a notice, an export percentage — and
           up there it sat between the title and the workspace, pushing the
           monitor and every pane down the moment it had anything to say. Down
-          here it is the status bar every editor in the world has, it appears
-          and disappears without moving the picture, and it is still ONE line
-          for all of them so two events can never stack.
+          here it is the status bar every editor in the world has, and it is
+          still ONE line for all of them so two events can never stack.
+          ⚠ AND IT NO LONGER COMES AND GOES. It used to render only when one of
+          the flags below was set, so a project opened cold had no strip at all
+          and the first thing anybody saw of it was it APPEARING under their
+          first click — the layout twitching at the exact moment they were
+          reading something else. It is mounted permanently now and holds
+          `restingHint` when it has nothing to report, so the foot of the editor
+          is one fixed height for the whole session.
           ⚠ It is also LAST IN THE DOM now, which is what puts it at the foot of
           the Long workspace's flex column; the Reel workspace places it by name
           (`stat`), so its grid template moved it too. */}
-      {(error || notice || exporting || animating || speechRunning ||
-        reframeRunning || reblockJob || imgGenBusy || posesRun) && (
-        <div className="an-statusbar">
-          {error && <span className="an-status-error">{error}</span>}
-          {!error && notice && <span className="an-status-note">{notice}</span>}
-          {exporting && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {progress.message || "Preparing…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${progress.percent ?? 0}%` }} />
-              </span>
-              {progress.percent ?? 0}%
+      <div className="an-statusbar">
+        {error && <span className="an-status-error">{error}</span>}
+        {!error && notice && <span className="an-status-note">{notice}</span>}
+        {/* ⚠ THE RESTING HINT — see `restingHint` above. It is what keeps this
+            strip on screen from the moment a project opens instead of only after
+            the first click, and it is LAST of the three so an error or a notice
+            always takes the line off it. */}
+        {!error && !notice && (
+          <span className="an-status-hint" title={restingHint.title}>
+            {restingHint.text}
+          </span>
+        )}
+        {exporting && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            {progress.message || "Preparing…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${progress.percent ?? 0}%` }} />
             </span>
-          )}
-          {/* A Veo render takes minutes and costs money, so it says so the whole
-              time rather than leaving a button reading "Animating…" as the only
-              sign anything is happening. */}
-          {animating && !exporting && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {animateProgress?.message || "Animating with Veo…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${animateProgress?.percent ?? 0}%` }} />
-              </span>
-              {animateProgress?.percent ?? 0}%
+            {progress.percent ?? 0}%
+          </span>
+        )}
+        {/* A Veo render takes minutes and costs money, so it says so the whole
+            time rather than leaving a button reading "Animating…" as the only
+            sign anything is happening. */}
+        {animating && !exporting && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            {animateProgress?.message || "Animating with Veo…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${animateProgress?.percent ?? 0}%` }} />
             </span>
-          )}
-          {/* A captions or voiceover pass is quick but it is still the SERVER
-              writing this project, so it says so for the same reason: the
-              editor is read-only until it finishes. */}
-          {speechRunning && !exporting && !animating && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {speechProgress?.message || "Working…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${speechProgress?.percent ?? 0}%` }} />
-              </span>
-              {speechProgress?.percent ?? 0}%
+            {animateProgress?.percent ?? 0}%
+          </span>
+        )}
+        {/* A captions or voiceover pass is quick but it is still the SERVER
+            writing this project, so it says so for the same reason: the
+            editor is read-only until it finishes. */}
+        {speechRunning && !exporting && !animating && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            {speechProgress?.message || "Working…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${speechProgress?.percent ?? 0}%` }} />
             </span>
-          )}
-          {/* A reframe pass is the server writing this project's frames, so it
-              says so for exactly the reason the captions pass does. */}
-          {reframeRunning && !exporting && !animating && !speechRunning && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {reframeProgress?.message || "Framing each shot…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
-              </span>
-              {reframeProgress?.percent ?? 0}%
+            {speechProgress?.percent ?? 0}%
+          </span>
+        )}
+        {/* A reframe pass is the server writing this project's frames, so it
+            says so for exactly the reason the captions pass does. */}
+        {reframeRunning && !exporting && !animating && !speechRunning && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            {reframeProgress?.message || "Framing each shot…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${reframeProgress?.percent ?? 0}%` }} />
             </span>
-          )}
-          {/* ⚠ THE ONE ROW HERE WITH NO PERCENTAGE. Drawing a picture is a
-              SINGLE synchronous call — there are no stages to report and nothing
-              to ask how far through it is — so the bar slides rather than
-              filling (`is-waiting`) and there is no number after it. Every other
-              row above has real progress to show and shows it.
-              ⚠ AND IT IS NOT GUARDED AGAINST THE OTHERS. The rows above are
-              mutually exclusive because they are all the SERVER writing this
-              project and only one can run; a draw writes nothing to the project
-              and can honestly sit beside a Veo render that is still going. */}
-          {imgGenBusy && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              Drawing your image…
-              <span className="an-status-bar is-waiting">
-                <span />
-              </span>
+            {reframeProgress?.percent ?? 0}%
+          </span>
+        )}
+        {/* ⚠ THE ONE ROW HERE WITH NO PERCENTAGE. Drawing a picture is a
+            SINGLE synchronous call — there are no stages to report and nothing
+            to ask how far through it is — so the bar slides rather than
+            filling (`is-waiting`) and there is no number after it. Every other
+            row above has real progress to show and shows it.
+            ⚠ AND IT IS NOT GUARDED AGAINST THE OTHERS. The rows above are
+            mutually exclusive because they are all the SERVER writing this
+            project and only one can run; a draw writes nothing to the project
+            and can honestly sit beside a Veo render that is still going. */}
+        {imgGenBusy && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            Drawing your image…
+            <span className="an-status-bar is-waiting">
+              <span />
             </span>
-          )}
-          {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
-              made on the STORYBOARD, so this animatic stays fully editable
-              while it runs — which is exactly why it needs to say something,
-              or minutes pass with nothing on screen but a pane that has gone
-              quiet. */}
-          {reblockJob && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              {reblockProgress?.message || "Drawing more key poses on the storyboard…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
-              </span>
-              {reblockProgress?.percent ?? 0}%
+          </span>
+        )}
+        {/* ⚠ A RE-BLOCK IS THE ONE THAT IS NOT THIS PROJECT. The drawings are
+            made on the STORYBOARD, so this animatic stays fully editable
+            while it runs — which is exactly why it needs to say something,
+            or minutes pass with nothing on screen but a pane that has gone
+            quiet. */}
+        {reblockJob && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            {reblockProgress?.message || "Drawing more key poses on the storyboard…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${reblockProgress?.percent ?? 0}%` }} />
             </span>
-          )}
-          {/* 🖼 ANIMATIC IMAGES. Minutes long and made of many shots, so it says
-              which shot it is on and how far through the WHOLE queue it is - one
-              bar meaning one thing, rather than a bar that restarts every shot.
-              It carries its own Stop for the same reason the board's strip does:
-              a pass you can already see going wrong at shot 2 should not have to
-              be watched to the end. Like the re-block above it, the drawings are
-              the STORYBOARD's, so this animatic stays fully editable while it
-              runs. */}
-          {posesRun && (
-            <span className="an-status-export">
-              <span className="spinner-inline" />
-              Shot {Math.min(posesRun.at + 1, posesRun.total)} of {posesRun.total}
-              {" — "}
-              {posesProgress?.message || "Drawing key poses on the storyboard…"}
-              <span className="an-status-bar">
-                <span style={{ width: `${posesProgress?.percent ?? 0}%` }} />
-              </span>
-              {posesProgress?.percent ?? 0}%
-              <button
-                type="button"
-                className="btn danger-btn small"
-                disabled={!!posesStop.current}
-                title="Stop after the shot being drawn now — everything already drawn is kept"
-                onClick={stopPoses}
-              >
-                {posesStop.current ? "Stopping…" : "⏹ Stop"}
-              </button>
+            {reblockProgress?.percent ?? 0}%
+          </span>
+        )}
+        {/* 🖼 ANIMATIC IMAGES. Minutes long and made of many shots, so it says
+            which shot it is on and how far through the WHOLE queue it is - one
+            bar meaning one thing, rather than a bar that restarts every shot.
+            It carries its own Stop for the same reason the board's strip does:
+            a pass you can already see going wrong at shot 2 should not have to
+            be watched to the end. Like the re-block above it, the drawings are
+            the STORYBOARD's, so this animatic stays fully editable while it
+            runs. */}
+        {posesRun && (
+          <span className="an-status-export">
+            <span className="spinner-inline" />
+            Shot {Math.min(posesRun.at + 1, posesRun.total)} of {posesRun.total}
+            {" — "}
+            {posesProgress?.message || "Drawing key poses on the storyboard…"}
+            <span className="an-status-bar">
+              <span style={{ width: `${posesProgress?.percent ?? 0}%` }} />
             </span>
-          )}
-        </div>
-      )}
+            {posesProgress?.percent ?? 0}%
+            <button
+              type="button"
+              className="btn danger-btn small"
+              disabled={!!posesStop.current}
+              title="Stop after the shot being drawn now — everything already drawn is kept"
+              onClick={stopPoses}
+            >
+              {posesStop.current ? "Stopping…" : "⏹ Stop"}
+            </button>
+          </span>
+        )}
+      </div>
 
       {/* Export settings, confirmed before anything is encoded. */}
       {exportOpen && (

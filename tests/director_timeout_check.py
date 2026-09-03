@@ -273,6 +273,66 @@ def main():
         ms = getattr(getattr(cfg, "http_options", None), "timeout", None)
         check("...and the http timeout is set, in milliseconds",
               isinstance(ms, int) and ms > 1000, str(ms))
+    # ---------------------------------------------------------------------
+    print()
+    print("⚠ AND THE CHAT'S BUDGET IS NOT THE DIRECTOR'S — it CANNOT be, because")
+    print("  the tab waiting for a chat turn waits 90s and the Director's waits 300")
+    print()
+    os.environ.pop("DIRECTOR_BUDGET_SECONDS", None)
+    os.environ.pop("CHAT_BUDGET_SECONDS", None)
+
+    plan_budget, plan_env = llm_json.budget_seconds("")
+    chat_budget, chat_env = llm_json.budget_seconds("chat")
+    check("the Director's call still gets the shared default",
+          plan_budget == llm_json.DEFAULT_BUDGET_SECONDS, str(plan_budget))
+    check("...named as the var an operator would raise",
+          plan_env == "DIRECTOR_BUDGET_SECONDS", plan_env)
+    check("a chat turn gets its own, and a SMALLER one",
+          chat_budget < plan_budget, f"{chat_budget} vs {plan_budget}")
+
+    # THE WHOLE POINT. `CHAT_TURN_TIMEOUT_MS` in `client/src/api.js` is what the
+    # browser will sit through; a server allowed longer than that spends the
+    # money, finishes the turn, and hands the answer to a tab that stopped
+    # listening — which is the bug this section exists to keep fixed.
+    api_js = (ROOT / "client" / "src" / "api.js").read_text(encoding="utf-8")
+    m = re.search(r"const CHAT_TURN_TIMEOUT_MS = (\d+)", api_js)
+    tab_s = int(m.group(1)) / 1000 if m else 0
+    check("the browser's chat timeout is still findable in api.js", bool(m), "regex missed")
+    check("⚠ THE SERVER GIVES UP BEFORE THE BROWSER DOES, with room to spare",
+          bool(m) and chat_budget + 15 <= tab_s, f"server {chat_budget}s vs tab {tab_s}s")
+
+    m = re.search(r'CHAT_TURN_TIMEOUT_S = float\(os\.environ\.get\("API_CHAT_TURN_TIMEOUT_S", "(\d+)"\)\)',
+                  (ROOT / "server" / "config.py").read_text(encoding="utf-8"))
+    check("...and server/config.py still mirrors the same number as the tab",
+          bool(m) and float(m.group(1)) == tab_s,
+          f"config {m.group(1) if m else '?'} vs tab {tab_s}")
+
+    os.environ["DIRECTOR_BUDGET_SECONDS"] = "300"
+    check("⚠ RAISING THE DIRECTOR'S DOES NOT DRAG THE CHAT PAST THE TAB",
+          llm_json.budget_seconds("chat")[0] == chat_budget,
+          str(llm_json.budget_seconds("chat")))
+    os.environ["DIRECTOR_BUDGET_SECONDS"] = "40"
+    check("...but a SHORTER shared budget still applies — the cap is a ceiling",
+          llm_json.budget_seconds("chat")[0] == 40.0,
+          str(llm_json.budget_seconds("chat")))
+    os.environ["CHAT_BUDGET_SECONDS"] = "200"
+    check("...and CHAT_BUDGET_SECONDS is the one way to say 'let it run longer'",
+          llm_json.budget_seconds("chat") == (200.0, "CHAT_BUDGET_SECONDS"),
+          str(llm_json.budget_seconds("chat")))
+    os.environ.pop("DIRECTOR_BUDGET_SECONDS", None)
+    os.environ.pop("CHAT_BUDGET_SECONDS", None)
+
+    # ⚠ THE SENTENCE IS ONLY STAMPED WHEN THE CLOCK IS WHY WE STOPPED, so the
+    # clock has to be genuinely spent for this to say anything. Set it in the
+    # past and read what a chat turn would actually print.
+    spent = llm_json._deadline.set(time.monotonic() - 1)
+    try:
+        said = llm_json._with_clock("It failed.", 70, "CHAT_BUDGET_SECONDS")
+    finally:
+        llm_json._deadline.reset(spent)
+    check("⚠ the sentence names the var that actually set the clock",
+          "CHAT_BUDGET_SECONDS" in said and "DIRECTOR_BUDGET_SECONDS" not in said, said)
+
     print()
     if failures:
         print(f"{len(failures)} FAILED:")

@@ -57,7 +57,7 @@ import {
   entryFor,
   isKnown,
 } from "./capabilities.js";
-import { EASINGS, TEXT_BACKDROPS, TEXT_PLACES } from "../scene.js";
+import { EASINGS, TEXT_BACKDROPS, TEXT_PLACES, frameTrack } from "../scene.js";
 import { applyTextPreset } from "../text_presets.js";
 import { MAX_TRANSITION_MS, MIN_TRANSITION_MS } from "../transitions.js";
 
@@ -188,6 +188,22 @@ function cutAfter(cut, ctx) {
   const from = frames[i];
   const to = frames[i + 1];
   if (!from || !to) return { frame: null, why: `cut ${cut} is not between two shots` };
+
+  // ⚠ AND THE TWO CLIPS HAVE TO BE ON THE SAME ROW. `frames` is every picture
+  // clip on every picture row, in one list, so two entries that are neighbours
+  // in the LIST can be neighbours in nothing else — one plays on the Video row
+  // while the other plays underneath it on Images. A transition between them is
+  // not a transition, and the test below could only report it as the nonsense
+  // it looked like: "there is a 28.0s gap after shot 24".
+  //
+  // ⚠ IT IS CHECKED BEFORE THE TOUCHING TEST because it is the better message.
+  // Two clips on two rows fail the gap test as well, and being told about a gap
+  // sends the reader to look for one on a timeline that has not got one.
+  const fromTrack = frameTrack(from);
+  if (fromTrack !== frameTrack(to)) {
+    return { frame: null, why: rowMismatch(cut, from, to, ctx) };
+  }
+
   // No `starts` at all is an older caller (and every maths-only test): fall back
   // to trusting list order, which is what every one of them means by it.
   if (starts.length <= i + 1) return { frame: from, why: "" };
@@ -205,6 +221,28 @@ function cutAfter(cut, ctx) {
     };
   }
   return { frame: from, why: "" };
+}
+
+/**
+ * TWO CLIPS ON TWO ROWS, said in the row names the person can see.
+ *
+ * ⚠ NAMED, NOT NUMBERED, WHEN THE NAMES ARE THERE. "shot 21 is on Images and
+ * shot 22 is on Video" is a sentence somebody can check against their own
+ * gutter in one glance; "they are on different tracks" is a sentence about our
+ * data model. Falls back to the plain statement when no row stack was handed in
+ * — which is every maths-only caller, and is not a bug.
+ */
+function rowMismatch(cut, from, to, ctx) {
+  const rows = (ctx && ctx.laneRows) || [];
+  const nameOf = (frame) => {
+    const row = rows.find((r) => r && r.kind === "frames" && r.track === frameTrack(frame));
+    if (!row) return "";
+    return row.layer ? `“${row.name || "picture"}” (layer ${row.layer})` : `“${row.name}”`;
+  };
+  const a = nameOf(from);
+  const b = nameOf(to);
+  const where = a && b ? `shot ${cut} is on ${a} and shot ${cut + 1} is on ${b}` : `shots ${cut} and ${cut + 1} are on different picture rows`;
+  return `${where}, so there is no cut between them — a transition joins two clips on the SAME row`;
 }
 
 /**

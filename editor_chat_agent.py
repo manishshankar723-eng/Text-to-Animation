@@ -84,6 +84,76 @@ MAX_REPLY_CHARS = 1200
 # preview the client will then refuse — the honest number has to be the one on
 # screen. Deliberately looser than the client's, which stays the real limit.
 MAX_SFX_CUES = 32
+
+# ---------------------------------------------------------------------------
+# THE PAID DOORS — the four things in this editor that cost money
+# ---------------------------------------------------------------------------
+# ⚠ **THE CHAT NAMES A DOOR; IT NEVER OPENS ONE AND CANNOT.** Nothing in this
+# feature spends: `/editor-chat/{id}/turn` spends text quota and hands back a
+# proposal. What an offer buys the user is the BUTTON — the chat says a voiceover
+# would help and the panel puts a real one in front of them, wired to the very
+# same priced confirm that ✨ Animate and 🎙 Voiceover already go through.
+#
+# ⚠ **AND THAT IS WHY THERE IS NO PRICE IN HERE.** A number quoted by the chat
+# would be a second opinion about money, computed from a board the browser sent,
+# next to a door that asks the server. The first time the two disagreed the user
+# would be right to stop trusting both. The door quotes; the chat points.
+#
+# ⚠ **MIRRORED IN `PAID_DOORS` IN `client/…/agent/chat_turn.js`**, the same way
+# `ASK_REASONS` is, and `tests/editor_chat_doors_check.py` asserts the two lists
+# agree — so a door renamed on one side is a test failure, not a silent drift.
+PAID_DOORS = ("voiceover", "captions", "veo", "images")
+
+# ---------------------------------------------------------------------------
+# LOOKING — the one thing this chat could never do
+# ---------------------------------------------------------------------------
+# ⚠ **THE CHAT USED TO BE BLIND, AND SAID SO ON EVERY TURN.** It is handed
+# labels, descriptions, dialogue and durations, so *"mera video analyse karo aur
+# bekar part cut karo"* could only ever be answered halfway: it can find the
+# SILENCE off the waveform (free, already measured in the browser) and it cannot
+# find the boring shot, because it has never seen one.
+#
+# So a turn may come back as `kind: "look"` — *"let me see shots 3 to 9"* — and
+# the browser answers it by sending those shots' pictures with the SAME message
+# again. The model then answers a question about a film it has actually watched.
+#
+# ⚠ **IT IS A REQUEST, NOT A SETTING, AND THAT IS THE WHOLE COST CONTROL.** Every
+# picture on every turn would be the single biggest line on the bill for a
+# feature whose ordinary turn is "how long is this?" — so nothing is sent until
+# the model says it needs to see, and it is told to ask only when the answer
+# genuinely depends on what is in frame.
+#
+# ⚠ **ONE LOOK PER MESSAGE.** The browser honours a look exactly once and the
+# prompt tells the model it is already looking, because two models in a row each
+# asking for a slightly different set of stills is a loop that spends money.
+MAX_LOOK_SHOTS = 12
+
+# ⚠ **A LOOK SENDS THE RULES AS CONTENT, NOT AS A SYSTEM INSTRUCTION, AND THIS
+# STRING IS WHY.** Measured, not guessed: the full ~9.8KB system prompt with five
+# stills attached took **149 seconds and then failed** — twice, reproducibly —
+# while the *same* pictures, the *same* prompt and the *same* response schema
+# under a two-line system instruction answered in **7.5 seconds**. Nothing else
+# differed. Bisected in that order: images alone are fast (3–5s), the big schema
+# with images is fast (5s), a short system with images is fast; only the long
+# system instruction *together with* image parts hangs.
+#
+# ⚠ **SO NOTHING IS DROPPED — IT MOVES.** The rules travel at the top of the
+# prompt instead, which is why there is no second, trimmed copy of them anywhere:
+# a look that obeyed a shorter rulebook would quietly plan worse than a turn that
+# could not see, and the divergence would be invisible until somebody read two
+# transcripts side by side.
+LOOK_SYSTEM = (
+    "You are a film editor sitting beside someone in their video editor, looking "
+    "at stills from their own timeline. You answer only in JSON, in the shape you "
+    "are given, with no prose around it. YOUR FULL WORKING RULES ARE AT THE TOP OF "
+    "THE MESSAGE BELOW — read them and follow them exactly, as if they had been "
+    "given to you as instructions."
+)
+
+# How many offers one turn may carry. Four doors exist, and a turn that offers
+# more than two of them has stopped answering the question and started selling.
+MAX_PASSES = 2
+WHY_CHARS = 120
 SOUND_QUERY_CHARS = 60
 
 _prompt_cache: dict | None = None
@@ -151,6 +221,11 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
     shots = board.get("shots") or []
     total = len(shots)
     existing = board.get("existing") or {}
+    # ⚠ THE PICTURE ROWS, BECAUSE A STACKED TIMELINE IS NOT A LIST. Without this
+    # block the model reads N shots running one after another and proposes a
+    # transition "after shot 21" where shot 21 and shot 22 are playing at the
+    # same time on two different rows. See `boardFrom` for the whole story.
+    layers = [row for row in (board.get("layers") or []) if isinstance(row, dict)]
 
     lines = [
         "THE TIMELINE, RIGHT NOW:",
@@ -169,8 +244,30 @@ def board_digest(board: dict, detail_limit: int = 60) -> str:
         f"{existing.get('audioTracks') or 0} audio track(s)"
     )
 
+    if len(layers) > 1:
+        lines.append("")
+        lines.append(
+            f"⚠ THIS FILM IS STACKED — {len(layers)} picture rows play AT THE SAME TIME, "
+            "one over another. The shot numbers below run through all of them:"
+        )
+        for row_info in layers:
+            lines.append(
+                f"- Layer {row_info.get('layer') or '?'}: "
+                f"{_clip(row_info.get('name'), 40) or 'picture'} "
+                f"— {row_info.get('shots') or 0} clip(s)"
+            )
+        lines.append(
+            "A CUT ONLY EXISTS BETWEEN TWO CLIPS ON THE SAME ROW. Two shots that are "
+            "neighbours in the numbering but sit on different rows have no cut between "
+            "them, and a transition there cannot be made."
+        )
+
     def row(i: int, shot: dict) -> str:
         bits = [f"{i}. [{_ms(shot.get('ms'))}]"]
+        # Which row this clip is on, when the film has more than one. On a
+        # single-row film it is noise on every line.
+        if len(layers) > 1 and shot.get("layer"):
+            bits.append(f"(L{shot.get('layer')})")
         label = _clip(shot.get("label"), SHOT_LABEL_CHARS)
         if label:
             bits.append(label)
@@ -247,6 +344,19 @@ def rails_text(settings: dict) -> str:
             "- This deployment does NOT let the chat start paid work at all. You may "
             "say a render would help; do not offer to start one."
         )
+    else:
+        # ⚠ "YOU MAY OFFER IT" AND "YOU MAY START IT" ARE DIFFERENT SENTENCES, and
+        # only the first one is true. Nothing the chat returns can spend a penny —
+        # see the header of `server/editor_chat.py` — so the useful thing it can do
+        # is name the door and let the editor price it. Told it may "start" paid
+        # work, the model reports a render it has not begun.
+        out.append(
+            "- You MAY offer paid work (a Veo render, generated pictures, a spoken "
+            "voiceover) and you may not start it. Say what it would do, then name the "
+            "button: 🎬 Make Video, Voiceover, or 🖼 Animatic images. The editor shows "
+            "the price and offers an upgrade if their plan does not cover it — never "
+            "quote a price and never guess their tier."
+        )
     out.append(
         "- You never report an edit as done. A plan is a proposal until they press Apply."
     )
@@ -315,6 +425,66 @@ def reply_schema(vocabulary: dict) -> dict:
             # its sound BESIDE its steps, and the client runs the existing sound
             # pass after the steps have finished moving the shots the cues land on.
             # Same order, and for the same reason, as the Director's phases D and E.
+            # ⚠ ASKING TO SEE IS A KIND OF TURN, NOT A VERB AND NOT AN EDIT.
+            # Nothing happens on the timeline; the browser reads this, fetches
+            # those shots' pictures and asks the same question again with them
+            # attached. See `MAX_LOOK_SHOTS`.
+            "look": {
+                "type": "object",
+                "description": "Ask to SEE some shots, when the answer really depends on "
+                               "what is in frame. Costs the person money, so ask only when "
+                               "labels and descriptions genuinely cannot answer it.",
+                "properties": {
+                    "shots": {
+                        "type": "array",
+                        "description": "Shot numbers to look at. Fewest that could answer "
+                                       f"the question; at most {MAX_LOOK_SHOTS}.",
+                        "items": {"type": "integer"},
+                    },
+                    "why": {
+                        "type": "string",
+                        "description": "One short line the person will read while they wait.",
+                    },
+                },
+                "required": ["shots"],
+            },
+            # ⚠ PAID WORK IS AN OFFER, AND IT RIDES BESIDE THE PLAN FOR THE SAME
+            # REASON `sound` DOES: it is not a verb. A verb runs inside one React
+            # commit and spends nothing; these are server calls with a price on
+            # them, and the chat's part is finished when it has named the door.
+            "passes": {
+                "type": "array",
+                "description": "Paid work you are OFFERING, not starting. Use it when the "
+                               "person asks for something that costs money or quota. At "
+                               "most two, and only when it is really what they asked for.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "door": {
+                            "type": "string",
+                            "enum": list(PAID_DOORS),
+                            "description": "voiceover = read the dialogue aloud (this writes "
+                                           "the captions too). captions = write captions from "
+                                           "audio ALREADY on the timeline, without adding a "
+                                           "voice — offer this one when they have a recording "
+                                           "of their own. veo = render real footage from a "
+                                           "shot. images = draw the key poses for the "
+                                           "animatic.",
+                        },
+                        "why": {
+                            "type": "string",
+                            "description": "Half a line: what it would do for THIS film. "
+                                           "Never a price and never a guess at their plan.",
+                        },
+                        "shot": {
+                            "type": "integer",
+                            "description": "Only for `veo`, and only when they named ONE "
+                                           "shot. Leave it out for the whole film.",
+                        },
+                    },
+                    "required": ["door"],
+                },
+            },
             "sound": {
                 "type": "object",
                 "description": "Sound to fetch and lay down. Search TERMS, not prose.",
@@ -440,6 +610,7 @@ def chat(
     vocabulary: dict,
     settings: dict | None = None,
     language: str = "",
+    pictures: tuple = (),
 ) -> dict:
     """One conversational turn against a real timeline.
 
@@ -492,11 +663,41 @@ def chat(
         },
     )
 
+    # ⚠ THE PICTURES ARE ANNOUNCED IN THE PROMPT AS WELL AS ATTACHED. A model
+    # handed eight stills and no sentence about them describes them; told which
+    # shot each one is, and that it is now looking at the film it was asked
+    # about, it answers the question. The order here IS the order they were
+    # attached in — see `_coerce_look`, which sorts for exactly this reason.
+    if pictures:
+        # ⚠ THE RULES BECOME CONTENT AND THE SYSTEM BECOMES TWO LINES. See
+        # `LOOK_SYSTEM` — this is the difference between a look that answers in
+        # seven seconds and one that hangs for two and a half minutes.
+        prompt = (
+            "YOUR WORKING RULES — these are your instructions, not background:\n\n"
+            + system
+            + "\n\n---\n\nTHE JOB:\n\n"
+            + prompt
+        )
+        system = LOOK_SYSTEM
+        prompt += (
+            "\n\nYOU CAN SEE THESE SHOTS NOW. The pictures attached to this message "
+            "are, in order, shot "
+            + ", ".join(str(row.get("shot")) for row in pictures)
+            + ". Answer from what is actually in them — this is the film they asked "
+            "about. ⚠ DO NOT ASK TO LOOK AGAIN: you are already looking, and a second "
+            "request costs them money and shows you nothing new. If the pictures still "
+            "do not settle it, say what you can see and ask them a plain question."
+        )
+
     request = JsonRequest(
         system=system,
         prompt=prompt,
         schema=reply_schema(vocabulary or {}),
         purpose="editor chat",
+        images=tuple(
+            {"mime": row.get("mime") or "image/png", "data": row.get("data") or b""}
+            for row in (pictures or ())
+        ),
         # ⚠ THIS IS WHAT PUTS THE CHAT ON ITS OWN KEY. Everything else about the
         # call is shared with the Director; the one word here is what decides
         # whose credentials and whose bill answer it. See `CAPABILITIES` in
@@ -510,7 +711,13 @@ def chat(
     except LLMJsonError as e:
         raise EditorChatError(str(e)) from None
 
-    return _read_turn(raw, vocabulary or {})
+    return _read_turn(
+        raw,
+        vocabulary or {},
+        len((board or {}).get("shots") or []),
+        # Already looking? Then a second look is refused — see `_read_turn`.
+        blind=not pictures,
+    )
 
 
 def _vocabulary_for_prompt(vocabulary: dict) -> dict:
@@ -567,11 +774,78 @@ def _vocabulary_for_prompt(vocabulary: dict) -> dict:
         "text_sizes": text.get("sizes") or [],
         "text_aligns": text.get("aligns") or [],
         "transition_ms": vocabulary.get("transitionDurationMs") or {},
-        "house_caps": vocabulary.get("caps") or {},
+        # ⚠ LABELLED "DEFAULTS", BECAUSE THAT IS WHAT THEY ARE. Sent as
+        # `house_caps` the model read them as law and quoted "our system has a
+        # limit that only allows transitions on up to 35% of the cuts" back at a
+        # person who had asked twice for every clip. They are the numbers to use
+        # when NOBODY has said — see the restraint rules in `prompts.yaml`.
+        "house_defaults_when_not_asked": vocabulary.get("caps") or {},
     }
 
 
-def _read_turn(raw: dict, vocabulary: dict) -> dict:
+def _coerce_look(raw: Any, shot_count: int) -> dict | None:
+    """A request to see some shots, read into `{shots, why}` or None.
+
+    ⚠ **A SHOT THAT IS NOT THERE IS DROPPED, AND AN EMPTY LIST IS NOT A LOOK.**
+    "Show me shots 40-52" on a 27-shot film would otherwise become a look that
+    fetches nothing, sends nothing, and comes back as a second identical answer —
+    a paid round trip that cannot change anything.
+
+    ⚠ **SORTED AND DEDUPED, because the pictures travel in this order** and the
+    model is told which shot each one is. Handed 7, 3, 3, 9 it would be told
+    "these are shots 3, 7, 9" over stills in another order, which is worse than
+    not looking.
+    """
+    row = raw if isinstance(raw, dict) else None
+    if not row:
+        return None
+    seen = []
+    for value in (row.get("shots") or []) if isinstance(row.get("shots"), list) else []:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= max(0, shot_count) and n not in seen:
+            seen.append(n)
+    if not seen:
+        return None
+    return {"shots": sorted(seen)[:MAX_LOOK_SHOTS], "why": _clip(row.get("why"), WHY_CHARS)}
+
+
+def _coerce_passes(raw: Any, shot_count: int) -> list[dict]:
+    """The paid doors this turn offers, read into `[{door, why, shot}]`.
+
+    ⚠ **AN UNKNOWN DOOR IS DROPPED, NOT RENAMED.** A model that invents
+    `"door": "music"` has offered something this editor has no priced button for,
+    and guessing which of the three it meant would put a spend in front of
+    somebody for work they did not ask about. Music is free and goes in `sound`.
+
+    ⚠ **AND A SHOT NUMBER IS ONLY KEPT FOR `veo`, AND ONLY IF IT EXISTS.** The
+    other two doors are whole-film; a stray `shot` on one of them would have the
+    panel offering to render a shot through a button that never renders one. Out
+    of range it is dropped rather than clamped — "shot 61 on a 48-shot film" is a
+    misunderstanding, and shot 48 is not what was meant.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in (raw or []) if isinstance(raw, list) else []:
+        if not isinstance(row, dict):
+            continue
+        door = str(row.get("door") or "").strip().lower()
+        if door not in PAID_DOORS or door in seen:
+            continue
+        seen.add(door)
+        offer = {"door": door, "why": _clip(row.get("why"), WHY_CHARS)}
+        shot = row.get("shot")
+        if door == "veo" and isinstance(shot, int) and 1 <= shot <= max(0, shot_count):
+            offer["shot"] = shot
+        out.append(offer)
+        if len(out) >= MAX_PASSES:
+            break
+    return out
+
+
+def _read_turn(raw: dict, vocabulary: dict, shot_count: int = 0, blind: bool = True) -> dict:
     """What came back, read into a turn. Never raises on a shape problem.
 
     ⚠ **THE KIND IS DECIDED BY WHAT IS THERE.** A reply labelled `plan` with no
@@ -583,6 +857,18 @@ def _read_turn(raw: dict, vocabulary: dict) -> dict:
     from director import fold_steps
 
     row = raw if isinstance(raw, dict) else {}
+    # ⚠ THE SHOT COUNT IS NEEDED TO CHECK A `veo` OFFER'S SHOT NUMBER, and it is
+    # passed rather than inferred: this function is handed the MODEL's answer, and
+    # the only honest source for "how many shots are there" is the board the
+    # browser sent. Defaulted so every existing caller (and every test) still
+    # works — an offer simply loses its shot number rather than the whole turn.
+    passes = _coerce_passes(row.get("passes"), shot_count)
+    # ⚠ ONLY WHEN IT IS NOT ALREADY LOOKING. `blind` is False on the second call
+    # of a look — the pictures are attached — and a model that asks to see again
+    # from there is a loop that spends money on every lap. It is refused here
+    # rather than trusted to the prompt, because the prompt is a request and this
+    # is the only place that can make it a guarantee.
+    look = _coerce_look(row.get("look"), shot_count) if blind else None
     reply = _clip(row.get("reply"), MAX_REPLY_CHARS)
     ask = _coerce_ask(row.get("ask"))
 
@@ -598,7 +884,14 @@ def _read_turn(raw: dict, vocabulary: dict) -> dict:
     # down — and reading that as an `answer` would draw a chat bubble where an
     # Apply button belongs, so the user would have been told what would happen and
     # given no way to make it happen.
-    if steps or sound:
+    # ⚠ A LOOK IS TESTED FIRST AND WINS, because it means the model has said it
+    # cannot answer yet. A reply carrying both a look and a plan is a model
+    # hedging, and honouring the look is the reading that ends with a better
+    # answer — the plan it wrote blind is the one it was unsure enough about to
+    # ask for the pictures.
+    if look:
+        kind, plan = "look", None
+    elif steps or sound:
         kind = "plan"
         summary = plan_row.get("summary") if isinstance(plan_row, dict) else ""
         mood = plan_row.get("mood") if isinstance(plan_row, dict) else ""
@@ -607,13 +900,26 @@ def _read_turn(raw: dict, vocabulary: dict) -> dict:
             "summary": _clip(summary, 200),
             "mood": _clip(mood, 60),
             "steps": steps,
+            # ⚠ PASSED THROUGH, NOT DECIDED HERE. Whether the person asked for
+            # "every clip" is a reading of what they typed, which is the model's
+            # job; what it MEANS is `applyGuardrails`'s. This is the wire between
+            # them, and dropping it here was how the whole feature would quietly
+            # do nothing.
+            "asked_for_all": bool(
+                isinstance(plan_row, dict) and plan_row.get("asked_for_all") is True
+            ),
         }
     elif ask:
         kind, plan = "ask", None
     else:
         kind, plan = "answer", None
 
-    if not reply and kind == "answer" and not ask:
+    # ⚠ AN OFFER IS NOT A PLAN AND MUST NOT DRAW AN APPLY BUTTON. There is
+    # nothing on the timeline to apply — the whole point is that the spend
+    # happens behind a priced door the chat cannot open. So `passes` deliberately
+    # does NOT join the `steps or sound` test above: a turn that only offers a
+    # voiceover is an `answer` carrying a button.
+    if not reply and kind == "answer" and not ask and not passes:
         raise EditorChatError("The model returned an empty reply. Try rephrasing.")
 
     logger.info(
@@ -623,7 +929,18 @@ def _read_turn(raw: dict, vocabulary: dict) -> dict:
         f"{len(sound['sfx'])} sfx{' + music' if sound.get('music') else ''}"
         if sound else "no sound",
     )
+    if passes:
+        logger.info(
+            "[editor-chat] …offering %s", ", ".join(p["door"] for p in passes)
+        )
+    if look:
+        logger.info(
+            "[editor-chat] …asking to LOOK at shot(s) %s",
+            ", ".join(str(n) for n in look["shots"]),
+        )
     return {
+        "look": look,
+        "passes": passes,
         "kind": kind,
         "reply": reply,
         "ask": ask,

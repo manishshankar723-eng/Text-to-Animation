@@ -106,6 +106,19 @@ throughout: `google-genai`.
 | **Edit plans (🎬 Make Video)** | `DIRECTOR_PROVIDER` | falls back to the text model | `director.py`, `llm_json.py` |
 | **The ✨ AI Editor chat** | `CHAT_PROVIDER` | `gemini-3.5-flash` on the Developer API | `editor_chat_agent.py`, `llm_json.py` |
 
+⚠ **AND WHAT EITHER PLANNER IS ALLOWED TO PROPOSE IS `HOUSE_CAPS`, WHICH IS A SET
+OF DEFAULTS AND NOT A SET OF LAWS.** 35% of the cuts, 40% of the clips, one effect
+each, 8 texts and 4 shapes a minute — every one of them is the right answer when
+the app is CHOOSING, and a refusal when somebody asked. A plan carrying
+`asked_for_all` (set by the planner only when the words are there) lifts all of
+them plus the alternate-cuts rule; nothing structural ever lifts. See **RULEBOOK
+E106**, `client/src/animatic/agent/house_style.js`, and `tests/chat_layers_check.py`.
+
+⚠ **AND `ctx.frames` IS NOT A FILM.** It is every picture clip on every picture
+row in one list, so a "shot number" is a position in that list and NOT a position
+in time. A cut exists only between two clips on the SAME row — see **RULEBOOK
+E107**, which is where the phantom "28.0s gap" came from.
+
 ⚠ **AND THE CHAT CARRIES ITS OWN KEY, NOT JUST ITS OWN SWITCH, SINCE 2026-09-03.**
 `GEMINI_KEY_CHAT` is read before the shared `GEMINI_API_KEY`, and **setting it is
 what moves the chat** — `CHAT_PROVIDER` is only needed to override that. It was
@@ -295,7 +308,13 @@ second thing to upgrade, in a repo whose one AI dependency is `google-genai`.
 4. **Keep it honest** — only record what was actually done and verified. If a step
    was skipped or a test failed, say so.
 
-**Last updated:** 2026-09-03 — **EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER.** *"bahut ss hai aur voh commit ho raha hai … jab bhi tum testing karo ss ek folder mai rakho aur usko git ignore kar ke rakho."* ⚠ **THE SUITES EACH PICKED THEIR OWN FILENAME IN THE REPO ROOT** — `bin_probe_failed.png`, `restack_probe_bands.png`, `row_routing_failed.png` and nine more were sitting next to `server/` and `client/`, `git status` read **53 pending changes**, and `row_routing_failed.png` had already been committed as if it were source. ⚠ **`.gitignore` KNEW ONE SPELLING ONLY** (`*_probe_failed.png`), so a reference shot from a *passing* run, or any `_bands`/`_blend` variant, walked straight past it — a pattern that must be extended per filename is the bug, a folder dropped whole is the fix. New **`test_shots/`** (ignored except its README) and new **`tests/_shots.py`**, one `shot("name.png")` call that makes the folder for you, in the shape of `tests/_sandbox.py`. **20 suites moved onto it**, including the five that were writing into `output/` — where the app puts real renders, so a test shot buried there is indistinguishable from the user's own work — and `e2e_animatic.py`, which was writing into the OS temp dir where nobody thinks to look. `git rm --cached` untracked the committed PNG and the twelve strays were moved into the folder. New **RULEBOOK G17**. All 121 test files compile; `.gitignore` verified with `git check-ignore`. ⚠ **NO BROWSER SUITE WAS RUN** (G2) — the paths are proven by reading, not by a run that writes a screenshot. See the Work Log.
+**Last updated:** 2026-09-03 — **THE CHAT CAN OFFER PAID WORK, AND IT CAN ASK TO SEE.** *"Chat ke andar price wala button abhi nahi hai … isko karo abhi"* and *"Chat tasveer dekh nahi sakti … isko v karo"*. ⚠ **(1) PAID WORK IS AN OFFER, WITH A REAL BUTTON.** A turn may carry up to two of `voiceover` / `captions` / `veo` / `images` in `passes`, and the panel draws a button per offer that opens the confirm dialog ✨ Animate / 🎙 Voiceover / 💬 Write captions / 🖼 Animatic images already use. ⚠ **`captions` IS A SEPARATE DOOR FROM THE VOICEOVER** — it reads audio the person recorded THEMSELVES and adds no voice, which is the actual request when somebody imports their own video; it was missed on the first pass because the voiceover writes captions too. ⚠ **AND A DOOR CALLS THE FUNCTION THE HAND-DRIVEN BUTTON CALLS, NEVER THE STATE SETTER** — this shipped as `setSpeechFor("voiceover")`, which skips `openVoiceover()`'s flush and dialogue-sheet fetch, so the chat's door would have opened an empty script under a stale price. Caught by writing the check, not by seeing it. ⚠ **NO PRICE IS COMPUTED IN THE CHAT AND NONE EVER MAY BE** — a figure worked out on the client, off the board the browser happens to be holding, next to a door that asks the server for the real one, is two answers about somebody's money; the door quotes and the chat points. An offer is not an edit, draws no Apply button, and (unlike a plan) survives a refresh, because it prices the film as it is *now*. ⚠ **(2) THE CHAT COULD NOT SEE, AND NOW IT CAN ASK TO.** A turn may come back as `kind: "look"` naming the fewest shots that could settle the question; the browser re-posts the SAME message with those stills attached at 512px, through the `?w=` proxy the monitor already uses. Nothing is sent until the model says it needs to see — automatic vision would make "how long is this?" the most expensive question in the product — and **one look per message is enforced in code**, not just asked for in the prompt. ⚠ **(3) AND THE LOOK EXPOSED A REAL TRAP, MEASURED NOT GUESSED**: the full 9.8KB system instruction *with images attached* took **149s and then failed**, twice; the same pictures, prompt and schema under a two-line system answered in **7.5s**. Bisected — images alone fast, big schema + images fast, long system alone fast, long system + images dead. So on a look the rules **move into the prompt** and `LOOK_SYSTEM` takes their place; nothing is trimmed, because a shorter rulebook would quietly plan worse. New **RULEBOOK E110, E111, E112**, new `tests/editor_chat_doors_check.py` (61 checks, no model). 17 suites green + `npm run build`. ⚠ **THE LOOK'S OWN LIVE RUN IS STILL OWED** — call 1 was proved live (it asked to look, in Hinglish) and the free Gemini tier is **20 requests a day**, which ran out before call 2 could be re-run against the fix. See the Work Log.
+
+**Previously:** 2026-09-03 — **THE STATUS STRIP IS ALWAYS ON SCREEN NOW, AND IT SAYS SOMETHING USEFUL WHEN IT HAS NOTHING TO REPORT.** *"ye guide karne wala panel hamesha rakho screen pe … jab mai koi bhi new ya recent project open karta hun to ye us samay nhi dikhta, tabhi dikhta hai jab user kuchh click kare."* ⚠ **THE STRIP WAS CONDITIONAL ON HAVING A MESSAGE** — `{(error || notice || exporting || … ) && (<div className="an-statusbar">…)}` — so a project opened cold had no strip at all, and the first anybody ever saw of it was it **appearing** under their own first click, moving the foot of the editor while they were reading something else. It is unconditional now and holds a **resting hint** (`restingHint` in `AnimaticEditor.jsx`) whenever there is nothing to report, so the editor is one fixed height for the whole session. ⚠ **THE HINT ALWAYS LOSES**: it renders only under `{!error && !notice && …}` and every progress row still renders beside it, so a tip can never push a real message off the single line they all share. ⚠ **IT IS CONTEXTUAL, IN THIS ORDER** — a non-Selection tool first (a razor you cannot see is the oldest trap in an editor, and it reads *"Razor tool is on"*), then an empty project (*"Add media to begin"*), a multi-selection (*"3 clips selected"*), one selection (*"Frame selected — edit it on the right"*), playing, and otherwise the shortcut line. ⚠ **THREE OR FOUR WORDS VISIBLE, THE SENTENCE IN THE `title`**, because the strip is `nowrap` and elides — a paragraph here is cut off mid-word — and because helper prose belongs on hover everywhere else in this app. New `.an-status-hint` is **muted, not the notice's gold**: permanent furniture in message colours teaches you to stop reading the strip. ⚠ **`.an-status-note` IS DELIBERATELY UNTOUCHED** — eight browser suites read a notice through that exact class and would have gone green against the hint if the two had shared one. New **RULEBOOK E109**. `npm run build` green; declaration order re-checked against **G6** (every value `restingHint` reads is declared above it). ⚠ **NO BROWSER SUITE WAS RUN** (G2 — not asked), so per **G7** this is not yet proved on screen. See the Work Log.
+
+**Previously:** 2026-09-03 — **WHAT THE USER ASKS FOR IS WHAT HAPPENS, AND A CUT IS ON ONE ROW.** *"add transition image layer 10 every each clip"* — typed twice, then *"i want add alll clip not 9"*, then *"mai aisa chahta hun user jo kahe wo hona chahiye"*. Three faults in one report, all fixed. ⚠ **(1) THE 35% WAS REAL AND WAS BEING APPLIED IN THE WRONG PLACE.** `HOUSE_CAPS.TRANSITION_CUT_SHARE` was written for the FREE door, where the app chooses on its own and restraint is right; quoted back at somebody who asked twice it is a refusal by a default — the panel actually printed *"our system has a limit that only allows transitions on up to 35% of the cuts"*. A plan may now carry **`asked_for_all`**, set only when the words are there, and `applyGuardrails` lifts every share, every per-minute rate and the alternate-cuts rule for that plan. ⚠ **TASTE LIFTS, STRUCTURE NEVER DOES** — `MIN_CLIP_MS`, "the clips must touch" and "same row" stay, because a lifted cap that writes a record which renders as nothing is worse than the refusal. `EFFECTS_PER_CLIP` stops at `MAX_EFFECTS` (a shader array, not an opinion). ⚠ **(2) THE 28-SECOND GAP DID NOT EXIST.** `frames` is every picture clip on every picture ROW in one list, and `boardFrom` flattened 3 clips on **Video** plus 24 on **Images** into a "27-shot film laid end to end" — so *"there is a 28.0s gap after shot 24"* and *"shot 21 overlaps the shot after it"* were about two clips that play at the same moment on different rows. Every shot now carries its row and its gutter number, `boardFrom` lists the picture rows, and `cutAfter` refuses a cross-row cut **before** the gap test and names the rows the person can see. ⚠ **(3) THE CHAT WOULD NOT OFFER PAID WORK AT ALL** — `allow_paid_passes` shipped OFF and all it controlled was one sentence: a refusal. It is ON now: the chat may OFFER a render, a voiceover or generated pictures and must name the button, never a price, and still may not start one. ⚠ **PROVED BY A REAL TURN, NOT BY THE FENCE ALONE**: the same sentence from the screenshot came back as **23 transitions across cuts 4–26 — layer 10 only, layer 9 untouched, four kinds mixed, nothing dropped, and no percentage quoted**. New **RULEBOOK E106, E107, E108**, new `tests/chat_layers_check.py` (57 checks, no model). 20 suites green + `npm run build`. See the Work Log.
+
+**Previously:** 2026-09-03 — **EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER.** *"bahut ss hai aur voh commit ho raha hai … jab bhi tum testing karo ss ek folder mai rakho aur usko git ignore kar ke rakho."* ⚠ **THE SUITES EACH PICKED THEIR OWN FILENAME IN THE REPO ROOT** — `bin_probe_failed.png`, `restack_probe_bands.png`, `row_routing_failed.png` and nine more were sitting next to `server/` and `client/`, `git status` read **53 pending changes**, and `row_routing_failed.png` had already been committed as if it were source. ⚠ **`.gitignore` KNEW ONE SPELLING ONLY** (`*_probe_failed.png`), so a reference shot from a *passing* run, or any `_bands`/`_blend` variant, walked straight past it — a pattern that must be extended per filename is the bug, a folder dropped whole is the fix. New **`test_shots/`** (ignored except its README) and new **`tests/_shots.py`**, one `shot("name.png")` call that makes the folder for you, in the shape of `tests/_sandbox.py`. **20 suites moved onto it**, including the five that were writing into `output/` — where the app puts real renders, so a test shot buried there is indistinguishable from the user's own work — and `e2e_animatic.py`, which was writing into the OS temp dir where nobody thinks to look. `git rm --cached` untracked the committed PNG and the twelve strays were moved into the folder. New **RULEBOOK G17**. All 121 test files compile; `.gitignore` verified with `git check-ignore`. ⚠ **NO BROWSER SUITE WAS RUN** (G2) — the paths are proven by reading, not by a run that writes a screenshot. See the Work Log.
 
 **Previously:** 2026-09-03 — **THE CHAT GETS ITS OWN KEY, BECAUSE ONE LAPSED PROJECT SILENCED EVERYTHING.** *"dekho mai chat bot ko ek kaam bola to ye error aaya"* — the ✨ AI Editor was printing raw Google JSON at the user: **403 PERMISSION_DENIED, `CONSUMER_INVALID`**, which means the paying project is no longer valid. The user named the cause themselves: GCP billing switched off. ⚠ **NO CODE WAS WRONG** — `.env`, both clients and the ADC file all named the project correctly. ⚠ **THE FAULT WAS THAT ONE SWITCH OWNED EVERYTHING**: `TEXT_PROVIDER` pointed every text capability at one dead project, so the cheapest conversational call in the product died beside the render pipeline that actually needed it. So capabilities can now carry their own credentials — `llm_json.CAPABILITIES = {"chat": "CHAT"}` buys `CHAT_PROVIDER` / `CHAT_MODEL` / `GEMINI_KEY_CHAT`, each falling back to the shared text setting, and a capability not in that table resolves exactly as before (the Director and the breakdown are untouched, and that is asserted). ⚠ **THE KEY IS ALSO THE SWITCH** — pasting `GEMINI_KEY_CHAT` moves the chat on its own, because a key that does nothing until you remember a second line is the *"I set the key and it STILL says 403"* bug. ⚠ **AND THE CLIENT CACHE IS KEYED ON THE KEY NOW**: one client per provider meant two capabilities on `gemini` shared whichever was built first, so one would silently bill the other's key — invisible, because both keys work. ⚠ **`gemini-2.5-flash` IS CLOSED TO NEW DEVELOPER KEYS** ("no longer available to new users", as a 404); the Developer API default is `gemini-3.5-flash`, verified by a real turn that answered the exact message from the screenshot. New **RULEBOOK D5**, new `tests/chat_provider_check.py` (38 checks). ⚠ **ONLY THE CHAT MOVED** — the breakdown, the Director, images, Veo and TTS are all still on the lapsed project, and the panel still shows the raw JSON. See the Work Log.
 
@@ -3610,7 +3629,461 @@ reinvented. Plan & Script reuses **27** of these and invents **0**.
 
 ## ✅ Work Log (newest first)
 
-### 2026-09-03 (latest) — EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER
+### 2026-09-03 (latest) — THE CHAT SAT ON "THINKING…" AND THE TAB GAVE UP FIRST
+
+    "chatbot bahut time le raha hai thinking mai kay ho raha hai fix karo please"
+
+Reported with two screenshots: three identical `add transition image layer 10
+every each clip` bubbles, no reply under any of them, and — in the second shot —
+**"The server didn't respond within 90s. It may be stuck (a database it needs
+can do this)."**
+
+**THE DATABASE WAS INNOCENT. THE TWO CLOCKS DISAGREED.**
+
+`complete_json` gave every call `DIRECTOR_BUDGET_SECONDS` — **135 seconds**,
+retries and backoff included — and `client/src/api.js` gave a chat turn
+**90**. That is a guaranteed dead end for any turn slower than ninety seconds:
+the tab aborts a request the server is still correctly serving, the model call
+runs on to its own end, `usage.increment` has already been reached or is about
+to be, and the user reads a sentence about a wedged database in front of a
+backend that is fine. `llm_json.py`'s own header states the invariant that was
+being broken — *"2 × this has to stay comfortably inside the browser's
+patience"* — but it was written for the Director, whose tab waits 300s.
+
+⚠ **AND `server/config.py`'s `CHAT_TURN_TIMEOUT_S` LOOKED LIKE THE SERVER'S HALF
+AND WAS NOT.** Defined, documented, and read by **no code in the repo** — it
+mirrored the browser constant and nothing more. A documented constant is not an
+enforced one.
+
+**1 · THE CAPABILITY OWNS ITS CLOCK — `budget_seconds(capability)`.**
+
+`CAPABILITY_BUDGET_SECONDS = {"chat": 70.0}`, and the resolver is
+`<CAP>_BUDGET_SECONDS` > `DIRECTOR_BUDGET_SECONDS` > the capability's own
+number. ⚠ **The capability's number is a CEILING, not a fallback**: raising
+`DIRECTOR_BUDGET_SECONDS` on a deployment (the knob an operator reaches for when
+the Director times out) must never drag the chat past the tab waiting for it, so
+the chat takes the **smaller** of the two. `CHAT_BUDGET_SECONDS` is the one way
+to say *let this one run longer* — and you must raise the tab's two numbers with
+it. The clock's message now names **the var that actually set it**, so a chat
+timeout no longer sends the reader to the Director's line of the `.env`.
+
+Three numbers, one order, asserted by `tests/director_timeout_check.py` reading
+all three out of their own files:
+
+    llm_json 70s  <  API_CHAT_TURN_TIMEOUT_S 90s  ==  CHAT_TURN_TIMEOUT_MS 90000
+
+**2 · THE WAIT SAYS HOW LONG IT HAS BEEN, AND CAN BE ESCAPED.**
+
+A spinner says *something is happening*; only a number says *and it still is*.
+`Thinking…` was two unchanging words for ninety seconds, so a healthy 40s turn
+and a wedged one looked identical — which is why the same message went in three
+times. Now: a seconds counter after 5s (tabular figures, or the line twitches
+once a second), a **Stop waiting** button after 10s, and — because the user's
+message deliberately stays on screen after a failure — a duplicate guard, so
+retyping the same sentence **replaces** the unanswered attempt instead of
+stacking on it. That stacking was not cosmetic: all three copies were re-posted
+on every later turn, so each retry made the prompt bigger and the model slower
+at exactly the moment it was already too slow.
+
+⚠ **STOP STOPS THE WAIT, NOT THE SPEND.** The abort is real —
+`AbortController` relayed through `fetchWithRetry`, with `e.stopped` marking it
+so a Stop is never reported as *the backend isn't running* — but the server was
+already asked and the turn still counts. The line it writes says exactly that,
+because a Stop button most people would read as *cancel the charge* has to
+correct that itself.
+
+**WHAT IS NOT ESTABLISHED: WHY a turn was taking 90s+.** The prompt is not the
+suspect — measured, not guessed: system 10.1KB, vocabulary 6.0KB, schema 5.5KB,
+about 5k tokens. It is either one slow call (thinking + a long many-step plan —
+*"transition on every clip"* is one step per clip) or three attempts being made,
+and only the backend log says which: `[llm_json] editor chat … attempt N/3`.
+If the model genuinely needs more than 70s the turn now fails at 70 instead of
+90 and the user is no better off. RULEBOOK **F7**, **F8**, and a row in
+"Still open".
+
+Rules added: **F7** (the server gives up before the browser does),
+**F8** (a wait the user watches shows a number and can be stopped).
+
+---
+
+### 2026-09-03 — THE CHAT CAN OFFER PAID WORK, AND IT CAN ASK TO SEE
+
+    "Chat ke andar price wala button abhi nahi hai … isko karo abhi"
+    "Chat tasveer dekh nahi sakti … isko v karo"
+    "aisa design karo mere chatbot ko ki user jo kuchh v karwana chah raha hai
+     jo ho sakta hai mai banaya waisa function workflow"
+    "abhi mai image, veo video, voiceover etc paid wala API key baad mai
+     jarunga okay tum bas kam kar ke rakh do fir mai test karunga"
+
+Both of the two things left open by the previous entry, built.
+
+**1 · PAID WORK IS AN OFFER NOW, WITH A REAL BUTTON — `passes`.**
+
+A turn may carry up to two of `voiceover` / `captions` / `veo` / `images`, each
+with the model's own half-line about what it would do for THIS film, and the
+panel draws a button per offer.
+
+⚠ **`captions` IS ITS OWN DOOR, AND IT WAS MISSED ON THE FIRST PASS.** The
+voiceover writes captions too, so it looked covered — but that door adds a
+SPOKEN track, and somebody who imported their own recording and asked for
+subtitles does not want their narration replaced. Four doors now, and the prompt
+says outright which one is for a person who recorded themselves. With no audio on
+the timeline the door says so rather than opening a panel whose confirm is
+silently disabled.
+
+⚠ **THE BUTTON OPENS THE DOOR THAT ALREADY EXISTS.** `openPaidDoor` in
+`AnimaticEditor.jsx` routes `voiceover` → the 🎙 panel, `images` → `openPoses()`,
+`veo` with a shot → ✨ Animate on that clip, `veo` without one → the 🎬 Director.
+Every one of those was already reachable by hand and every one of them asks the
+server for a price and refuses an account whose plan does not cover it.
+
+⚠ **AND THAT IS WHY THERE IS NO PRICE IN THE CHAT, AND WHY THERE NEVER MAY BE.**
+A figure computed on the client — off the board the browser happens to be holding
+— sitting next to a door that asks the server for the real one is **two answers
+about somebody's money**, and the first time they disagree the user is right to
+distrust both. The rule is written into `chat_turn.js`, `EditorChat.jsx` and
+`editor_chat_agent.py`, and the new test asserts all three comments still say it,
+because the bug this prevents is somebody helpfully adding a price later.
+
+⚠ **AN OFFER IS NOT AN EDIT.** A turn carrying only `passes` is an `answer` with
+a button on it — there is nothing on the timeline to Apply. ⚠ **AND IT SURVIVES A
+REFRESH, WHERE A PLAN DOES NOT**: an Apply would run stale steps against a film
+the person has since edited (a trap — see `stale`), while a door button reads the
+film as it is *now*. ⚠ **ONLY `veo` KEEPS A SHOT NUMBER** — the other two doors
+are whole-film, and a stray `shot` would offer to render through a button that
+renders nothing.
+
+⚠ **AND A DOOR CALLS THE FUNCTION THE HAND-DRIVEN BUTTON CALLS, NEVER THE STATE
+SETTER.** This shipped as `setSpeechFor("voiceover")` and it was wrong:
+`openVoiceover()` also flushes the project, fetches the dialogue sheet and clears
+last run's confirm, error and lines. Opened from the chat, the user would have
+read an **empty script under a stale price**. Found by writing the check that
+asserts it, not by seeing it on screen — and the same rule is why the captions
+door calls `openCaptions()` rather than setting two pieces of state by hand.
+
+⚠ **A SHOT NUMBER IS RESOLVED THROUGH `readDirectorCtx()`, NOT `frames`.** The
+offer may be several messages old, so it is read fresh; and it indexes the SHOT
+ROW, Veo takes already filtered out, or an animated project would open ✨ Animate
+on a take nobody sees. Same bug the Director panel's header had once.
+
+**2 · THE CHAT CAN SEE — `look`, and it has to ask.**
+
+It was blind: labels, durations, dialogue and nothing else, so *"mera video
+analyse karo — konsa part bekar hai"* could only ever be half answered. Now a
+turn may come back as `kind: "look"` naming the fewest shots that could settle
+it; `useEditorChat` fetches those stills at **512px** through the same `?w=`
+proxy the monitor already asks for, base64s them and re-posts the SAME message
+with them attached. `llm_json.JsonRequest` grew an `images` field, and
+`_google_adapter` sends the pictures **before** the prompt — parts that arrive
+after "answer now" read as an afterthought.
+
+⚠ **IT IS A REQUEST AND NOT A SETTING, AND THAT IS THE WHOLE COST CONTROL.**
+Sending the film with every turn would make the cheapest question in the product
+("how long is this?") the most expensive one. The prompt lists what does NOT need
+eyes — durations, "a dissolve on every cut", "a title on shot 3" — and what does:
+"which bit is boring", "cut the bad parts", "does the logo look right".
+
+⚠ **ONE LOOK PER MESSAGE, ENFORCED IN CODE.** `_read_turn(blind=False)` — which
+is what the call carrying pictures uses — refuses a second look outright. The
+prompt asks; only this can promise, and two models each wanting a slightly
+different set of stills is a loop that bills on every lap.
+
+⚠ **A LOOK OUTRANKS A PLAN ON THE SAME REPLY.** A model that sent both hedged,
+and the plan it wrote blind is the one it was unsure enough about to ask about.
+
+⚠ **A PICTURE IS IN `fingerprint()`, BY DIGEST.** It changes the answer as surely
+as a sentence does, so "the same brief twice" has to cover it — but the bytes
+never go into the digest input, because that hashes a megabyte to compare two
+calls.
+
+**3 · AND THE LOOK FOUND A REAL TRAP THAT HAD NOTHING TO DO WITH PICTURES.**
+
+The first live look **hung for 149 seconds and then failed** with 504
+`DEADLINE_EXCEEDED`. Twice. Bisected against the real API rather than argued:
+
+| what was sent | time |
+|---|---|
+| 5 stills, tiny schema | 3–5s |
+| 5 stills, the real 3.5KB response schema | 5.0s |
+| the real 9.8KB system prompt, **no** images | 4.7s |
+| the real system prompt **with** 5 stills | **149s, dead** |
+| the same, under a two-line system instruction | **7.5s** |
+
+One variable: **a long system instruction together with image parts.** So on a
+look the whole system prompt is prepended to the user message under *"YOUR
+WORKING RULES — these are your instructions, not background"* and `LOOK_SYSTEM`
+(two lines) takes its place.
+
+⚠ **THE RULES MOVE; THEY ARE NOT TRIMMED.** A second, shorter rulebook for
+looking would quietly plan worse than a turn that could not see at all, and
+nobody would find out until they read two transcripts side by side. Verified
+offline: blind → system 9832 / prompt 1526; looking → system 335 / prompt 11817,
+with the rules provably inside it.
+
+**Files:** `editor_chat_agent.py` (`PAID_DOORS`, `MAX_LOOK_SHOTS`, `LOOK_SYSTEM`,
+`_coerce_passes`, `_coerce_look`, the schema, the prompt swap), `llm_json.py`
+(`JsonRequest.images`, the fingerprint, both adapters), `prompts.yaml`,
+`server/schemas.py` (`EditorChatPicture`, `look`, `passes`), `server/editor_chat.py`,
+`client/src/api.js` (`fetchAnimaticMediaBlob`, `look` on the turn),
+`chat_turn.js` (`PAID_DOORS`, `DOOR_LABEL`, `normaliseLook`, `normalisePasses`),
+`useEditorChat.js` (`grabPictures`, the one-shot re-post, `openPass`),
+`EditorChat.jsx` (`Offers`, the "Looking at…" line), `editor-chat.css`,
+`AnimaticEditor.jsx` (`openPaidDoor`).
+
+**Verified.** `tests/editor_chat_doors_check.py` — **new, 61 checks, all pass**,
+node + Python, no model and nothing spent: the door names match on both sides, an
+unknown door is dropped rather than guessed at, two offers is the ceiling, only
+`veo` keeps a shot, an offer alone is an `answer`, a look is sorted and ranged, a
+**second** look is refused, the pictures reach `JsonRequest` with their mime
+types, the system instruction shrinks to exactly `LOOK_SYSTEM`, the rules are
+provably in the prompt, and two different pictures are two different
+fingerprints. 17 suites re-run green, `npm run build` clean.
+
+⚠ **WHAT IS PROVED LIVE AND WHAT IS NOT, PLAINLY.** Call 1 of a look was proved
+against the real API: asked *"mera video analyse karo — konsa part bekar hai?"*
+with no pictures, the model answered `kind: look`, `shots: [1,2,3,4,5]`, in
+Hinglish, unprompted. **Call 2 has NOT been re-run since the fix** — the free
+Gemini tier is **20 requests a day** on `gemini-3.5-flash` and it ran out during
+the bisection. The fix is measured (7.5s under a short system, against the real
+schema and the real prompt) and the swap is proved offline, but the whole look
+has not yet gone end to end in one go. It needs one run once the paid key is in.
+
+⚠ **STILL OPEN.** (1) The chat points at the paid door; it cannot *open the
+priced confirm itself* — that was never the design, and the user has said the
+paid keys come later. (2) **"Analyse my video" is now possible but unproven** —
+it can see, and whether it picks the right shot to cut is a judgement no unit
+test can make. (3) Everything except the chat is still on the lapsed GCP project.
+(4) No browser suite was run (G2).
+
+---
+
+### 2026-09-03 — THE STATUS STRIP IS ALWAYS ON SCREEN, AND IT GUIDES
+
+    "ye guid karne wala panel hamesha rakho screen pe hota kya hai jab mai koi
+     v new or reccent project open karta hun to ye us samy nhi dikhta tabhi
+     dikhta hai jab user kuchh click kare. mai chahta hun ki ye hamesha dikhte
+     rahe ye nhi ki user click kare to fir dikhne lage"
+
+Two screenshots: the editor with a full project open, and — cropped out of the
+same window — the thin strip at the very foot reading *"Text 2 is back in the
+video."* That strip is the report.
+
+**What was happening.** The strip is one line at the bottom of the editor that
+carries an error, a notice, or an export/Veo/captions/re-block progress bar. It
+was wrapped in a guard listing every one of those flags, so with none of them
+set the element did not exist. Open a project — new or recent — and the foot of
+the editor was empty; the first thing anybody saw of the strip was it *appearing*
+underneath their own first click. A panel that only turns up once you have
+already worked out what to do is not a guide.
+
+**What it does now.** `<div className="an-statusbar">` is unconditional, and a
+new `restingHint` fills the line whenever there is nothing to report. It is
+contextual, in a deliberate order:
+
+| When | Visible (short) | Tooltip carries |
+|---|---|---|
+| A tool other than Selection is picked up | `Razor tool is on` | the tool's own hint + *Press V to go back to Selection* |
+| Nothing in the project at all | `Add media to begin` | drop files on Media, or press Make Video |
+| More than one clip selected | `3 clips selected` | drag together · Delete · Ctrl+G / Shift+Ctrl+G |
+| One clip selected | `Frame selected — edit it on the right` | Properties, trimming, Ctrl+K, Delete |
+| Playing | `Playing — Space stops` | Space · J K L · ← → · ↑ ↓ |
+| Otherwise | `Click a clip to edit it` | Space · ← → · ↑ ↓ · C · V · Ctrl+Z · Ctrl+S |
+
+The tool row is first on purpose: a razor you cannot see is the oldest trap in
+an editor — you pick it up, forget, and the next click splits a clip you meant
+to select.
+
+**Three things that make it safe to leave on permanently.**
+
+- ⚠ **The hint always loses.** It renders under `{!error && !notice && …}`, and
+  every progress row still renders beside it exactly as before. A tip can never
+  push a real message off the one line they all share.
+- ⚠ **Three or four words visible, the sentence in the `title`.** The strip is
+  `flex-wrap: nowrap` and elides — a paragraph would be cut off mid-word — and
+  helper prose lives on hover everywhere else in this app.
+- ⚠ **`.an-status-hint` is muted, not the notice's gold.** Permanent furniture
+  painted in message colours teaches you to stop reading the strip on the day it
+  is telling you something.
+
+⚠ **`.an-status-note` was deliberately not reused.** Eight browser suites read a
+notice back through that exact selector (`editor_razor_check`,
+`editor_lane_move_check`, `editor_media_bin_check`, `editor_board_import_check`,
+`editor_director_check`, `editor_lane_restack_check`,
+`editor_media_row_routing_check`, `editor_picture_tracks_check`) — sharing one
+class would have made every one of them go green against a hint that is not a
+notice.
+
+⚠ **Layout.** The Long workspace is a flex column and the panes take the slack,
+so a permanently-present strip simply costs its own ~24px once instead of
+twitching; the Reel workspace places the strip by grid area (`stat`), whose row
+is `auto` and now always has content. Neither template needed changing.
+
+**Files**
+
+- `client/src/components/AnimaticEditor.jsx` — new module-level `SEL_WORD`
+  (what the strip calls each kind of clip, in the words the gutter and the
+  Properties pane already use); new `restingHint` derived just above the render;
+  the status strip unwrapped from its flag guard and the hint span added after
+  the notice span; the strip's own block comment rewritten, since *"it appears
+  and disappears without moving the picture"* is no longer what it does.
+- `client/src/styles/animatic-editor.css` — new `.an-status-hint` (muted,
+  elides, `cursor: help`).
+- `RULEBOOK.md` — new **E109**.
+
+**Verified.** `npm run build` green. Declaration order re-checked against
+**G6**: `restingHint` is declared at line 10293 and read at 12030, and every
+value it reads (`tool`, `frames`, `texts`, `shapes`, `overlays`, `audioTracks`,
+`selection`, `playing`, `error`, `notice`) is declared above it — the white-page
+failure mode that rule exists for. ⚠ **No browser suite was run** (G2 — it was
+not asked for), so per **G7** the strip has not been *seen* rendering; the build
+and the order check are what stand behind it.
+
+### 2026-09-03 — WHAT THE USER ASKS FOR IS WHAT HAPPENS, AND A CUT IS ON ONE ROW
+
+    "mai bol raha hun ni tum mere 10 no image layer ke clip pe transition lagao
+     to kyun nhi laga raha hai hard code mai likha hua hai kya 35% hi lage?"
+
+    "please mai aisa chahta hun user jo kahe o hona chahiye … uske hissab se
+     mujhe production level ka bana hai"
+
+    "agar kahi aur kuchh limit tumne rakh hai to mujhe bato pahle fir mai ans
+     deta hun tumko kaise hona chaiye"
+
+Four screenshots, and the last of them is the whole report in one line: the user
+typed *"add transition image layer 10 every each clip"* **twice**, then *"i want
+add alll clip not 9"*, and was answered
+
+    "Our system has a limit that only allows transitions on up to 35% of the
+     cuts in a video to keep it clean. For your 27 shots, that means we can only
+     use a maximum of 9 transitions in total."
+
+⚠ **THE LIMITS WERE AUDITED AND HANDED OVER BEFORE ANYTHING WAS CHANGED**, because
+that is what was asked for. Nine caps, four chat limits, the tier quotas, and the
+five things the chat has no verb for at all. Three decisions came back, and all
+three are in this entry.
+
+**1 · THE 35% WAS REAL, AND IT WAS A DEFAULT BEING ENFORCED AS A LAW.**
+`HOUSE_CAPS.TRANSITION_CUT_SHARE: 0.35` is sent to the planner in the manifest
+AND enforced again by `applyGuardrails`. It was written for the FREE door, where
+the app is choosing on its own — *"a dissolve means something because most cuts
+are straight"* is true, and the caps have prevented real vandalism. It is the
+wrong answer to a person who asked twice.
+
+⚠ **AND THERE WAS A SECOND CAP NOBODY HAD BEEN TOLD ABOUT.** `applyGuardrails`
+also refuses a transition on a cut NEXT DOOR to a treated one, so even with the
+35% deleted, 26 cuts would have yielded ~13 rather than 26. Reported to the user
+alongside the share, since a fix that lifted one and not the other would have
+looked like the same bug.
+
+The fix is one boolean, `asked_for_all`, carried on the plan:
+
+* the model sets it **only when the words are there** — "all", "every", "each",
+  "sab par" — and the prompt says outright that setting it on its own initiative
+  is the vandalism the restraint rule is about;
+* `applyGuardrails` then lifts `TRANSITION_CUT_SHARE`, `EFFECT_CLIP_SHARE`,
+  `SHAPES_PER_MINUTE`, `TEXTS_PER_MINUTE` **and** the alternate-cuts rule;
+* `transitionBudget` returns every cut instead of a share — one function, read by
+  the planner and by the fence, so the preview cannot show a film the run will
+  not make.
+
+⚠ **WHAT LIFTS IS TASTE. WHAT NEVER LIFTS IS STRUCTURE.** `MIN_CLIP_MS`,
+`TEXT_OVERHANG_MS`, "the two clips must touch" and "they must be on the same row"
+all stay, because a lifted cap that writes a record which renders as nothing
+would report work it did not do — worse than the refusal it replaced.
+`EFFECTS_PER_CLIP` goes to `MAX_EFFECTS` (6) and no further: that is the length of
+a shader uniform array, so the seventh effect is not "a lot of grading", it is an
+effect that does not exist.
+
+⚠ **THE PROMPT IS HALF THE FIX AND WAS THE HALF THAT ACTUALLY REFUSED.** The fence
+cannot lift a cap the planner never proposed against, and the planner was reading
+the numbers off a manifest field called `house_caps` — so it treated them as law
+and quoted one. It is `house_defaults_when_not_asked` now, the restraint rule
+reads *"RESTRAINT IS THE CRAFT — WHEN THE CHOICE IS YOURS"*, and a new rule under
+it says what they asked for outranks what you would have chosen, **always**, with
+"do not quote a percentage at them" in as many words.
+
+**2 · THE 28-SECOND GAP DID NOT EXIST, AND THAT WAS THE BIGGER BUG.**
+
+    "add_transition: there is a 28.0s gap after shot 24, so there is no cut
+     there for a transition to happen on"
+    "add_transition: shot 21 overlaps the shot after it"
+
+There is no gap and no overlap on that timeline. `ctx.frames` is **every picture
+clip on every picture row, in one list**, and `boardFrom` flattened 3 clips on
+**Video** (layer 9) and 24 on **Images** (layer 10) — which play UNDERNEATH it —
+into a 27-shot film described as running end to end. "The cut after shot 24" was
+the boundary between two clips that are never next to each other.
+
+⚠ **A BETTER ERROR MESSAGE IS NOT THE FIX.** The planner has to know the film is
+stacked *before* it proposes anything, so:
+
+* `AnimaticEditor` hands the agent the gutter's own row stack (`laneRows`), and
+  the row number is `laneIndex + 1` **derived from the same `lanes` the gutter
+  draws** — "layer 10" is a sentence about the number the person can SEE, and a
+  second numbering would answer about a different row. It is a label; `track`
+  stays the identity;
+* every shot in `boardFrom` carries `layer` and `lane`, and the picture rows are
+  listed with their clip counts;
+* the digest opens with *"⚠ THIS FILM IS STACKED — 2 picture rows play AT THE SAME
+  TIME"* and states the rule: **a cut only exists between two clips on the same
+  row**;
+* `cutAfter` refuses a cross-row cut **before** the touching test — two clips on
+  two rows fail the gap test as well, and being told about a gap sends the reader
+  looking for one on a timeline that has not got one — and names both rows and
+  their layer numbers.
+
+⚠ **NO ROW STACK MEANS ONE ROW, NOT UNKNOWN.** Every maths-only test and every
+older caller hands a bare `{frames, starts}`, and one row laid end to end is
+exactly what those mean, so the fields simply do not appear and a one-row film is
+never told about rows — it would be noise on every line of every prompt for the
+projects that are not stacked, which is most of them.
+
+**3 · THE CHAT WOULD NOT OFFER PAID WORK, AND THE FLAG THAT STOPPED IT DESCRIBED
+A FEATURE THAT DOES NOT EXIST.** `allow_paid_passes` shipped OFF, and off it made
+`rails_text` say *"this deployment does NOT let the chat start paid work at all —
+do not offer to start one"*. The model obeyed: asked for a voiceover, the chat
+changed the subject. ON now, and the rails say it MAY offer, MAY NOT start, and
+must name the button — 🎬 Make Video, Voiceover, 🖼 Animatic images — rather than
+quote a price or guess a tier, with the upgrade left to the editor.
+
+⚠ **NOTHING IN THIS FEATURE CAN SPEND AND THAT IS UNCHANGED** — `/editor-chat/{id}/turn`
+spends text quota and returns a proposal. ⚠ **AND THE OLD COMMENT CLAIMED THE FLAG
+LET THE CHAT "OPEN THE PRICED CONFIRM"**, which is not built: no client code reads
+it at all (only `AdminChat.jsx`, which sets it). Both docstrings now say what is
+true, so the next reader does not go looking for a dialog that was never written.
+
+**Files:** `client/src/animatic/agent/capabilities.js` (unchanged defaults, new
+framing), `house_style.js` (the lift, `transitionBudget`), `plan_schema.js`
+(`askedForAll`), `actions.js` (`cutAfter`, `rowMismatch`), `useDirectorRun.js`
+(`boardFrom`), `client/src/components/AnimaticEditor.jsx` (`laneRows`),
+`director.py` (the schema field), `editor_chat_agent.py` (digest, rails, the
+relabelled manifest field, the flag passed through), `prompts.yaml`,
+`server/chat_settings.py`.
+
+**Verified.** `tests/chat_layers_check.py` — **new, 57 checks, all pass**, node +
+esbuild, no model and no dollar: the cross-row cut is refused and names both
+rows, all 7 cuts survive when asked and only 4 do not (and 2 with a render on,
+which is the 35% share itself), effects go to 8 of 8 when asked and 3 of 8 when
+not, the shipped defaults are untouched, and a gap is **still** refused with the
+flag on. ⚠ **AND ONE REAL TURN ON THE USER'S OWN SHAPE OF TIMELINE** — 3 clips on
+layer 9, 24 on layer 10, the sentence from the screenshot — came back as **23
+transitions across cuts 4–26: layer 10 only, layer 9 untouched, four kinds mixed
+(dissolve / wipe / slide / diagonal), nothing dropped, and no percentage in the
+reply.** 20 suites re-run green, `npm run build` clean.
+
+⚠ **STILL OPEN, AND SAID PLAINLY.** (1) **A priced confirm inside the chat is not
+built** — the chat now points at the paid door, it cannot open it, so "user ne
+bola to seedha ho jaye with a price button" is not done. (2) **The chat cannot
+see the pictures**, so *"mera video analyse karo aur bekar part cut karo"* is
+still only half possible: silence and dead air it can find (free, off the
+waveform), "this bit is boring" it cannot. (3) **No verb for voiceover, captions,
+image generation or Veo** — those are passes, not verbs, and the chat can only
+recommend them. (4) Everything except the chat is **still on the lapsed GCP
+project**. See the previous entry.
+
+---
+
+### 2026-09-03 — EVERY TEST SCREENSHOT NOW LANDS IN ONE GIT-IGNORED FOLDER
 
     "jo tum screen shot lete ho uska ek folder banao aur git ignore karo
      mai dekh raha hun bahut ss hai aur voh commit ho raha hai — isliye jab
@@ -26676,7 +27149,181 @@ still occasionally be safety-filtered.
 
 ## 🎯 Current State / Next Steps
 
-### 🔴 NEWEST: CHAT KI APNI KEY LAG GAYI — BAAKI SAB ABHI BAND PADA HAI (2026-09-03)
+### 🟢 NEWEST: CHAT KA "THINKING…" AB LATAKTA NAHI (2026-09-03)
+
+    "chatbot bahut time le raha hai thinking mai kay ho raha hai fix karo please"
+
+**Kya ho raha tha.** Do ghadiyan alag-alag chal rahi thi. **Server** ko ek chat
+jawab banane ke liye **135 second** mile the, lekin **browser** sirf **90
+second** ruk kar haar maan leta tha. Analogy: aapne dukaandar ko order diya, wo
+2 minute mein bana raha hai, par aap 1.5 minute mein hi dukaan se nikal gaye —
+saaman ban gaya, paisa laga, aur aapke haath kuchh nahi aaya. Screen par likha
+aata tha *"server stuck hai, database dekho"* — jabki server bilkul theek tha.
+
+**Ab kya hai.** Server ki ghadi **70 second** kar di gayi — browser ke 90 se
+kam. Ab **server pehle rukta hai** aur asli wajah likh kar bhejta hai, browser
+andhere mein request nahi kaatta. (Teen number ek line mein: 70 < 90 = 90, aur
+`tests/director_timeout_check.py` teeno file padh kar check karta hai.)
+
+**Aur intezaar ab dikhta hai.** Pehle sirf `Thinking…` likha rehta tha — 5
+second aur 90 second dono ek jaise dikhte the, isliye aapne wahi message **teen
+baar** bheja. Ab:
+
+- 5 second ke baad **ginti** chalti hai — `Thinking… 42s`
+- 10 second ke baad **Stop waiting** ka button aata hai
+- wahi sentence dobara likhne par **purana wala replace** hota hai, teen bubble
+  nahi bante (teeno bubble har agli baar dobara jaate the, isse prompt bada aur
+  model aur slow hota tha)
+
+⚠ **Stop sirf intezaar rokta hai, kharcha nahi.** AI se pooch liya gaya hai, wo
+turn gina jayega — button ke neeche yahi likha bhi aata hai.
+
+⚠ **Jo abhi confirm NAHI hua**: turn 90 second se zyada le kyun raha tha. Prompt
+bada nahi hai (naapa gaya: ~5k token). Ya to ek call slow hai, ya teen koshish
+ho rahi hain — **backend ka log** hi batayega (`[llm_json] editor chat … attempt
+N/3`). Agar model ko sach mein 70s se zyada chahiye to ab 70 par fail hoga —
+tab `CHAT_BUDGET_SECONDS` badhana padega (browser ke do number bhi saath mein).
+
+---
+
+### CHAT AB TASVEER DEKH SAKTI HAI, AUR PAID KAAM KA BUTTON DE SAKTI HAI (2026-09-03)
+
+    "Chat ke andar price wala button abhi nahi hai … isko karo abhi"
+    "Chat tasveer dekh nahi sakti … isko v karo"
+
+**1 · Paid kaam ka button aa gaya.**
+
+Chat ab keh sakti hai *"is shot par voiceover accha rahega"* — aur uske neeche ek
+**asli button** aata hai. Button dabao to wahi price wala dialog khulta hai jo
+✨ Animate / 🎙 Voiceover / 🖼 Animatic images pehle se use karte hain.
+
+⚠ **Chat khud price nahi batati, aur ye jaan-boojh kar hai.** Analogy: dukaan
+mein salesman aapko saaman dikhata hai, par bill **counter** banata hai. Agar
+salesman apna hisaab batane lage aur counter ka hisaab alag nikle, to aap dono
+par bharosa karna chhod denge. Isliye chat sirf **darwaza dikhati hai**, paisa
+counter hi ginta hai — aur plan na ho to wahi upgrade bhi dikhata hai.
+
+⚠ Aur ek baat: paid offer ka button **refresh ke baad bhi kaam karta hai**, par
+Apply wala plan nahi. Kyunki plan purane steps chala dega jabki timeline badal
+gayi hogi; button to film ko **abhi** dekh kar price lagata hai.
+
+**2 · Chat ab tasveer dekh sakti hai — par khud maang kar.**
+
+Pehle chat andhi thi: usko sirf naam, lambai aur dialogue milte the. Isliye
+*"mera video analyse karo, bekar part cut karo"* aadha hi ho pata tha.
+
+Ab chat keh sakti hai *"mujhe shot 2 se 6 dekhne do"* — browser wo shots ki
+tasveerein (chhoti, 512px) bhej deta hai, aur phir chat **asli film dekh kar**
+jawab deti hai. Panel par likha aata hai *"Looking at your shots…"* uske apne
+reason ke saath.
+
+⚠ **Har turn par tasveer nahi jaati, aur ye zaroori hai.** Agar har baar poori
+film bhejte, to *"ye video kitni lambi hai?"* jaisa sasta sawal sabse mehnga ban
+jaata. Isliye tabhi bhejti hai jab jawab asli mein tasveer par tika ho. Aur **ek
+message par ek hi baar** dekh sakti hai — code mein rok lagi hai, sirf prompt par
+bharosa nahi.
+
+**3 · Aur is kaam ne ek chhupi hui bimari pakdi.**
+
+Pehli baar tasveer bhejte hi call **149 second latak kar fail** ho gaya. Do baar.
+Ek-ek cheez hata kar test kiya:
+
+- sirf 5 tasveerein → 3-5 second, theek
+- tasveerein + poora bada schema → 5 second, theek
+- poora lamba system prompt, bina tasveer → 4.7 second, theek
+- **poora lamba system prompt + tasveerein → 149 second, dead**
+- wahi cheez, chhote system prompt ke saath → **7.5 second, theek**
+
+Matlab: **lamba system prompt aur tasveerein saath mein** — yahi problem thi.
+Fix: tasveer wale turn par saare rules system se hata kar **message ke andar**
+bhej dete hain, aur system mein do line rehti hain. ⚠ **Rules kaate nahi gaye,
+sirf jagah badli** — warna dekh kar bana plan bina dekhe wale se bhi kharab hota
+aur kisi ko pata bhi na chalta.
+
+Naya **RULEBOOK E110, E111, E112**, naya `tests/editor_chat_doors_check.py`
+(61 checks, bina model). 17 suites green + `npm run build`.
+
+⚠ **JO ABHI BAAKI HAI:**
+
+- **Look ka poora live run baaki hai.** Pehla aadha live proven hai (chat ne khud
+  Hinglish mein dekhne ko maanga). Doosra aadha fix ke baad dobara nahi chala —
+  **free Gemini tier sirf 20 request/din** deta hai aur wo khatam ho gaya. Paid
+  key aane par ek run chahiye.
+- **Chat paid door kholti hai, khud shuru nahi karti.** Design hi yahi hai —
+  paisa sirf us dialog se katega.
+- *"Video analyse karo"* ab **ho sakta hai**, par sahi shot chunna judgement hai
+  — koi test wo nahi bata sakta, aapko chala kar dekhna padega.
+- Chat ke alawa poora app abhi bhi bande hue GCP project par hai.
+
+---
+
+### 🟢 AB USER JO BOLEGA WAHI HOGA — 35% KI DEEWAR HAT GAYI (2026-09-03)
+
+    "mai bol raha hun ni tum mere 10 no image layer ke clip pe transition lagao
+     to kyun nhi laga raha hai hard code mai likha hua hai kya 35% hi lage?"
+
+    "please mai aisa chahta hun user jo kahe o hona chahiye"
+
+**Teen alag-alag galtiyan thi, ek hi report mein. Teeno theek ho gayi.**
+
+**1 · Haan, 35% hard-coded tha — aur wo galat jagah lag raha tha.** Wo limit
+"free door" ke liye banayi gayi thi, jahan **app khud decide karta hai**. Wahan
+sahi hai: har cut par dissolve laga do to film kharab lagti hai. Par **jab user
+khud maange, to wahi number ek inkaar ban jaata hai**.
+
+Ab plan ke saath ek nishaan jaata hai — `asked_for_all`. Jab aap saaf-saaf bolo
+"sab par", "har clip", "every" — to **saari limits hat jaati hain**: 35% wali,
+40% wali, per-minute wali, aur wo chhupi hui "saath wale cut par nahi" wali bhi.
+
+⚠ **Par jo cheez *taste* hai wo hatti hai, jo *structure* hai wo nahi.** Matlab
+200ms se chhota clip, ya do clip jo aapas mein jude hi nahi — wo abhi bhi mana
+hai. Kyunki agar wo bhi hata dete, to system bol deta "ho gaya" aur timeline par
+kuch nahi hota. Wo inkaar se bhi bura hai.
+
+**2 · Wo "28 second ka gap" asli mein tha hi nahi.** Aapki timeline mein Video
+layer (9) par 3 clips hain aur Images layer (10) par 24 — **dono ek hi time par
+saath chalte hain**. Hum dono ko ek hi qatar mein gin lete the, isliye system ko
+lagta tha shot 24 aur 25 ke beech 28 second ka hole hai.
+
+Ab chat ko **har shot ki layer dikhti hai** ("L10"), aur usse saaf bola jaata
+hai: *cut sirf ek hi row ke do clips ke beech hota hai*. Agar phir bhi galat cut
+maanga jaye, to message ab naam leke aata hai — "shot 21 Images (layer 10) par
+hai aur shot 22 Video (layer 9) par" — na ki koi jhootha gap.
+
+**3 · Chat paid kaam offer hi nahi karti thi.** Ek setting band padi thi jo
+model ko keh deti thi *"paid kaam ka zikr bhi na karo"*. Isliye voiceover
+maangne par chat baat badal deti thi. Ab wo **offer karti hai** aur button ka
+naam batati hai (🎬 Make Video, Voiceover, 🖼 Animatic images) — **par khud shuru
+nahi karti**, aur price kabhi khud nahi batati. Paisa tabhi katega jab aap
+button dabaoge; plan na ho to editor upgrade dikhayega.
+
+**Asli test se check kiya, sirf code padh kar nahi.** Aapki hi timeline ki shape
+banayi (layer 9 par 3 clips, layer 10 par 24) aur wahi message bheja. Jawab:
+
+    23 transitions — cut 4 se 26 tak
+    sirf layer 10 par, layer 9 ko chhua bhi nahi
+    4 tarah ke transition mix (dissolve / wipe / slide / diagonal)
+    kuch bhi drop nahi hua, aur 35% ka zikr bhi nahi
+
+Naya **RULEBOOK E106, E107, E108**, naya `tests/chat_layers_check.py` (57 checks,
+bina model, bina paisa). 20 suites green + `npm run build`.
+
+⚠ **JO ABHI BAAKI HAI — saaf-saaf:**
+
+- **Chat ke andar price wala button abhi nahi hai.** Chat paid kaam ka *raasta*
+  bata deti hai, khud shuru nahi kar sakti. Aapne kaha tha "price dikha kar ho
+  jaye" — uska aadha hissa hua hai.
+- **Chat tasveer dekh nahi sakti.** "Mera video analyse karo aur bekar part cut
+  karo" abhi **aadha** hi ho sakta hai: khaali jagah / silence pakad legi (wo
+  free hai), par "ye hissa boring hai" nahi bata sakti.
+- **Voiceover, captions, image aur Veo ke liye chat ke paas verb hi nahi hai** —
+  wo "pass" hote hain, verb nahi; chat sirf salah de sakti hai.
+- **Chat ke alawa poora app abhi bhi bande hue GCP project par hai** — niche
+  wala section dekhein.
+
+---
+
+### 🔴 CHAT KI APNI KEY LAG GAYI — BAAKI SAB ABHI BAND PADA HAI (2026-09-03)
 
     "dekho mai chat bot ko ek kaam bola to ye error aaya"
     "okay mera biiling band hai samjh mai GCP usse hi hua kay?"

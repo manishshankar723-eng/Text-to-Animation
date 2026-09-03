@@ -328,12 +328,45 @@ const PLAN_TIMEOUT_MS = 300000;
 // MINUTES: a plan is two calls over a whole board and people expect to wait for
 // it, while a chat message that has not answered inside a minute and a half
 // reads as broken however healthy the call is. Mirrors `API_CHAT_TURN_TIMEOUT_S`.
+//
+// ⚠ AND THE SERVER NOW GIVES UP FIRST, which it did not used to. The chat call
+// shared the Director's 135s budget while this line said 90, so a turn that was
+// slower than 90s ALWAYS died here — the tab aborted a request the server was
+// still correctly serving, the turn was billed and counted, and the user was
+// told a database might be stuck. The model call stops at 70s
+// (`CAPABILITY_BUDGET_SECONDS` in `llm_json.py`) and answers with a real reason;
+// this is the outer net for a connection that dies without either side noticing.
 const CHAT_TURN_TIMEOUT_MS = 90000;
 
-async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeoutMs = REQUEST_TIMEOUT_MS) {
+/**
+ * THE CALLER STOPPED WAITING. ⚠ A FLAG, NOT A STRING MATCH, for the same reason
+ * `offline` is one: this sentence is written for a person and will be reworded,
+ * and the caller has to be able to tell "I pressed Stop" apart from "it broke"
+ * without reading English. A stopped request is not an error to show in red —
+ * the user already knows, they did it.
+ */
+function stoppedError() {
+  const e = new Error("Stopped.");
+  e.stopped = true;
+  return e;
+}
+
+async function fetchWithRetry(
+  url, options, attempts = 3, delayMs = 700, timeoutMs = REQUEST_TIMEOUT_MS, outer = null
+) {
   for (let i = 1; ; i++) {
+    // ⚠ CHECKED BEFORE EACH ATTEMPT, not only inside `fetch`. Aborting during
+    // the backoff sleep below has to stop the NEXT attempt from being made —
+    // otherwise pressing Stop buys a two-second pause and then another request.
+    if (outer?.aborted) throw stoppedError();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // ⚠ TWO REASONS TO ABORT, ONE CONTROLLER. `AbortSignal.any()` would say this
+    // in one line and is too new to rely on in every browser this ships to, so
+    // the caller's signal is RELAYED onto ours — and unhooked in `finally`, or a
+    // long-lived signal would collect a listener per request.
+    const relay = () => controller.abort();
+    outer?.addEventListener("abort", relay, { once: true });
     try {
       return await fetch(url, { ...options, signal: controller.signal });
     } catch (e) {
@@ -341,6 +374,10 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeout
       // minutes for the same silent server. Only a failed connection is worth
       // retrying (in dev that is usually uvicorn's --reload restarting).
       if (e?.name === "AbortError") {
+        // ⚠ WHOSE ABORT WAS IT? Both arrive here as the same `AbortError`, and
+        // telling the user their own Stop button was a stuck database would be
+        // the worst sentence in this file.
+        if (outer?.aborted) throw stoppedError();
         throw new Error(
           `The server didn't respond within ${Math.round(timeoutMs / 1000)}s. ` +
             `It may be stuck (a database it needs can do this) — check the ` +
@@ -362,6 +399,7 @@ async function fetchWithRetry(url, options, attempts = 3, delayMs = 700, timeout
       await new Promise((r) => setTimeout(r, delayMs * 2 ** (i - 1)));
     } finally {
       clearTimeout(timer);
+      outer?.removeEventListener("abort", relay);
     }
   }
 }
@@ -385,7 +423,7 @@ function qs(params) {
   return s ? `?${s}` : "";
 }
 
-async function request(path, { method = "GET", body, isForm = false, timeoutMs } = {}) {
+async function request(path, { method = "GET", body, isForm = false, timeoutMs, signal } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -407,7 +445,8 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs }
       { method, headers, body: payload },
       5,
       700,
-      timeoutMs || REQUEST_TIMEOUT_MS
+      timeoutMs || REQUEST_TIMEOUT_MS,
+      signal || null
     );
   } catch (e) {
     // "Couldn't connect" and "connected, then silence" are different faults
@@ -415,6 +454,10 @@ async function request(path, { method = "GET", body, isForm = false, timeoutMs }
     // timeout message says the server is UP but stuck, which is the harder
     // case to diagnose and the one worth naming.
     if (e?.message?.includes("didn't respond")) throw e;
+    // ⚠ AND A STOP IS NOT A NETWORK FAULT EITHER. It reaches this catch as a
+    // plain Error, and dressing it up as "the backend isn't running" would send
+    // somebody to check uvicorn because they clicked Stop.
+    if (e?.stopped) throw e;
     // ⚠ MARKED, because "the server said no" and "the server never answered"
     // are different facts and a caller can act on the difference. The import
     // dialog uses it: a `.prproj` whose experimental read died on a dead
@@ -2179,7 +2222,10 @@ export function editorChatConfig() {
 // ⚠ THE TRANSCRIPT IS THE BROWSER'S. The route is stateless (see
 // `server/script_chat.py` for the same decision), so the whole conversation goes
 // up every turn. `wireMessages` trims it before it gets here.
-export function editorChatTurn(id, { messages, board, capabilities, language = "" } = {}) {
+export function editorChatTurn(
+  id,
+  { messages, board, capabilities, language = "", look = [], signal } = {}
+) {
   return request(`/editor-chat/${id}/turn`, {
     method: "POST",
     body: {
@@ -2187,8 +2233,23 @@ export function editorChatTurn(id, { messages, board, capabilities, language = "
       board,
       capabilities,
       language,
+      // ⚠ THE PICTURES OF A LOOK, AND ONLY EVER ON THE SECOND CALL OF ONE. Empty
+      // on every ordinary turn: a chat that posted the film with every "how long
+      // is this?" would be the biggest line on the bill for the cheapest
+      // question in the product. See `MAX_LOOK_SHOTS` in `editor_chat_agent.py`.
+      look: (look || []).map((row) => ({
+        shot: row.shot,
+        mime: row.mime || "image/png",
+        data: row.data || "",
+      })),
     },
     timeoutMs: CHAT_TURN_TIMEOUT_MS,
+    // ⚠ THE ONE CALL IN THIS FILE THE USER CAN STOP BY HAND, and it is the one
+    // they sit and watch. The abort is real — the request is dropped, not just
+    // ignored — but the TURN IS NOT: the server has already been asked and will
+    // finish and charge for it. The panel says so; see `stop` in
+    // `useEditorChat.js`.
+    signal,
   });
 }
 
@@ -2317,6 +2378,23 @@ export function downloadProjectFile(
 // server falls back to the source for any picture it can't proxy, so this is
 // only ever a size hint. Omit it and nothing changes — which is what every
 // other caller (uploads, audio, final-video stills) does.
+// THE SAME PICTURE, AS A BLOB RATHER THAN AN OBJECT URL.
+//
+// ⚠ IT EXISTS BECAUSE A LOOK HAS TO SEND THE BYTES, and the only way to get them
+// back out of an object url is to fetch the url again — a second trip through
+// the network stack for something this function already had in its hand. The
+// caller base64s it and posts it; there is nothing to revoke.
+export async function fetchAnimaticMediaBlob(path, maxEdge = 0) {
+  const token = getToken();
+  let rel = path;
+  if (maxEdge > 0) rel += `${rel.includes("?") ? "&" : "?"}w=${Math.round(maxEdge)}`;
+  const res = await fetch(`${BASE}${rel}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error("Media not available");
+  return res.blob();
+}
+
 export async function fetchAnimaticMedia(path, maxEdge = 0) {
   const token = getToken();
   let rel = path;

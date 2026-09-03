@@ -38,6 +38,7 @@ this app; shared route helpers live in `common.py`, which is where
 `get_owned_job` comes from.
 """
 
+import base64
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -150,6 +151,21 @@ def turn(
     keep = max(2, int(settings.get("transcript_keep") or 20))
     messages = messages[-keep:]
 
+    # ⚠ DECODED HERE AND HELD NOWHERE. A picture that will not decode is dropped
+    # rather than failing the turn: a look that arrives one still short still
+    # answers, and a chat that 400s because one thumbnail was truncated has lost
+    # the user's message over a picture.
+    pictures = []
+    for row in body.look or []:
+        try:
+            pictures.append({
+                "shot": row.shot,
+                "mime": row.mime or "image/png",
+                "data": base64.b64decode(row.data or "", validate=True),
+            })
+        except Exception:  # noqa: BLE001 — one bad picture is not a bad request
+            logger.warning("[editor-chat %s] a look picture would not decode.", job_id)
+
     try:
         result = chat(
             messages=messages,
@@ -157,6 +173,7 @@ def turn(
             vocabulary=body.capabilities or {},
             settings=settings,
             language=body.language or "",
+            pictures=tuple(pictures),
         )
     except EditorChatError as e:
         logger.warning("[editor-chat %s] turn failed: %s", job_id, e)
@@ -218,6 +235,14 @@ def turn(
         # Apply, through `POST /animatics/{id}/soundtrack`, which is the door the
         # Director's own sound pass already goes through.
         sound=result.get("sound"),
+        # ⚠ AND STILL NOTHING SPENT BY THESE EITHER. An offer is a door's NAME.
+        # The panel draws a button, the button opens ✨ Animate / 🎙 Voiceover /
+        # 🖼 Animatic images, and THAT is what asks the server for a price. See
+        # `PAID_DOORS` in `editor_chat_agent.py` for why no figure travels here.
+        passes=result.get("passes") or [],
+        # ⚠ NOT AN ANSWER — a request for pictures. The browser sends the same
+        # message again with them attached; see `MAX_LOOK_SHOTS`.
+        look=result.get("look"),
         dropped=result.get("dropped") or [],
         provider=provider,
         model=model,

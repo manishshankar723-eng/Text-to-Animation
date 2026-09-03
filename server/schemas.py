@@ -3675,6 +3675,21 @@ class EditorChatAsk(BaseModel):
     allow_other: bool = True
 
 
+class EditorChatPicture(BaseModel):
+    """One shot's picture, on its way to a model that can see it.
+
+    ⚠ **BASE64 IN A JSON BODY, NOT A MULTIPART UPLOAD.** These are a few hundred
+    pixels each and they are gone the moment the turn is answered — nothing is
+    written to disk, nothing is added to the project. A multipart route would be
+    a second way into this feature for the sake of a payload smaller than the
+    board that travels beside it.
+    """
+
+    shot: int = Field(..., ge=1)
+    mime: str = "image/png"
+    data: str = ""
+
+
 class EditorChatRequest(BaseModel):
     """Body for POST /editor-chat/{job_id}/turn.
 
@@ -3692,6 +3707,17 @@ class EditorChatRequest(BaseModel):
     # tables the client reads, and a server-side copy would be a second opinion.
     capabilities: dict = Field(default_factory=dict)
     language: str = ""
+    # ⚠ THE PICTURES OF A LOOK, SENT BY THE BROWSER — `[{shot, mime, data}]` with
+    # `data` base64. The browser sends them rather than the server reading them
+    # off disk for two reasons: this router deliberately does not import
+    # `animatics.py` (see its docstring), and the browser already HAS every
+    # picture, proxied down to a few hundred pixels for the monitor. Asking the
+    # disk for a 1920px PNG to shrink it again would be slower and no truer.
+    #
+    # ⚠ CAPPED IN THE MODEL, NOT IN THE HANDLER. A hand-rolled POST with 400
+    # stills on it is a bill, and a request that is refused at the door has cost
+    # nobody a model call.
+    look: list[EditorChatPicture] = Field(default_factory=list, max_length=12)
 
 
 class EditorChatResponse(BaseModel):
@@ -3718,6 +3744,19 @@ class EditorChatResponse(BaseModel):
     # lands on a moment, and the steps have just finished moving the moments.
     # `{sfx: [{shot, query}], music: {query, mood} | null}` or null.
     sound: dict | None = None
+    # ⚠ PAID WORK THE CHAT IS OFFERING — `[{door, why, shot?}]`, never a price.
+    # The chat cannot start any of it: each entry becomes a BUTTON in the panel
+    # that opens the priced door the editor already has (✨ Animate, 🎙 Voiceover,
+    # 🖼 Animatic images), and that door is what asks the server what it costs.
+    # A price computed here would be a second opinion about money sitting next to
+    # the one that charges — see `PAID_DOORS` in `editor_chat_agent.py`.
+    passes: list[dict] = Field(default_factory=list)
+    # ⚠ "I NEED TO SEE FIRST" — `{shots: [n], why}` or null. Not an edit and not
+    # an answer: the browser fetches those shots' pictures and asks the SAME
+    # question again with them attached. One look per message; see
+    # `MAX_LOOK_SHOTS` in `editor_chat_agent.py` for why it is a request rather
+    # than something sent on every turn.
+    look: dict | None = None
     # Steps the server could not read, so the panel can say "2 steps couldn't be
     # used" rather than quietly showing a shorter plan. The client adds its own.
     dropped: list[dict] = Field(default_factory=list)

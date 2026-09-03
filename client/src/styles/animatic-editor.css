@@ -898,6 +898,21 @@
 .an-status-note {
   color: var(--primary);
 }
+/* The RESTING HINT — what the strip holds when there is nothing to report, so
+   it is on screen from the moment a project opens rather than appearing under
+   the user's first click. See `restingHint` in AnimaticEditor.jsx.
+   ⚠ MUTED, ON PURPOSE. It is permanent furniture; in the notice's gold it would
+   read as a message every time you glanced down and the real notices would stop
+   standing out. `help` is the cursor because the sentence is in the tooltip —
+   the visible half is deliberately three or four words. */
+.an-status-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: help;
+}
 .an-status-export {
   display: inline-flex;
   align-items: center;

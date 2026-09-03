@@ -39,6 +39,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { describeStep } from "../animatic/agent/actions.js";
+// ⚠ THE LABELS COME FROM THE SAME MODULE THAT READS THE OFFER, so a door added
+// there cannot arrive here as a blank button with no name on it.
+import { DOOR_LABEL } from "../animatic/agent/chat_turn.js";
 import { capabilities } from "../animatic/agent/capabilities.js";
 
 /** Remembered only when the operator picked "let each person choose". */
@@ -232,8 +235,35 @@ export default function EditorChat({
         {chat.sending && (
           <div className="sc-msg is-agent">
             <div className="sc-msg-text muted">
-              <span className="spinner-inline" /> Thinking…
+              {/* ⚠ "LOOKING AT…" RATHER THAN "THINKING…" WHILE IT IS LOOKING, and
+                  it carries the model's OWN reason. A look is the slowest turn
+                  this panel has — a dozen pictures fetched, uploaded and read —
+                  and a spinner that says "Thinking" through all of it is the
+                  shape of wait people report as a hang. Saying what it is doing,
+                  and why, is the difference between a pause and a fault. */}
+              <span className="spinner-inline" />{" "}
+              {chat.looking || "Thinking…"}
+              {/* ⚠ THE SECOND HAND. A spinner says "something is happening"; only
+                  a number says "and it is still happening". Without it a healthy
+                  40s turn and a wedged one look identical, which is what made
+                  the same message get sent three times. Held back for five
+                  seconds because a counter on every quick answer is noise. */}
+              {chat.elapsed > 5 && <span className="ec-elapsed"> {chat.elapsed}s</span>}
             </div>
+            {/* ⚠ IT STOPS THE WAIT, NOT THE SPEND — and the line it writes when
+                pressed says so, because a Stop button most people would read as
+                "cancel the charge" has to correct that itself. Only offered once
+                the wait is long enough to be worth escaping. */}
+            {chat.elapsed > 10 && (
+              <button
+                type="button"
+                className="btn ghost small ec-stop"
+                onClick={chat.stop}
+                title="Stop waiting for this reply. The AI was already asked, so this turn still counts."
+              >
+                Stop waiting
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -270,7 +300,7 @@ export default function EditorChat({
             {chat.running
               ? "Making the edit…"
               : chat.sending
-                ? "Thinking…"
+                ? `Thinking… ${chat.elapsed}s`
                 : "Enter to send · I'll show you any edit before it happens"}
           </span>
           <button
@@ -330,7 +360,62 @@ function Turn({ turn, chat, readCtx, busy }) {
       {turn.kind === "plan" && (
         <Plan turn={turn} chat={chat} readCtx={readCtx} busy={busy} />
       )}
+      {(turn.passes || []).length > 0 && <Offers turn={turn} chat={chat} />}
       {(turn.drops || []).length > 0 && <Drops drops={turn.drops} />}
+    </div>
+  );
+}
+
+/**
+ * PAID WORK THE CHAT IS OFFERING — one button per door.
+ *
+ * ⚠ **THE BUTTON DOES NOT SPEND AND DOES NOT SAY A PRICE.** It opens the same
+ * dialog ✨ Animate, 🎙 Voiceover and 🖼 Animatic images already open, and that
+ * dialog is what asks the server for the cost and what refuses an account whose
+ * plan does not cover it. Both of those jobs live in ONE place in this app, and
+ * a figure printed here — computed on this side, from the board the browser is
+ * holding — would be a second answer about somebody's money sitting right next
+ * to the one that charges. So the label says what it WOULD do and where it goes.
+ *
+ * ⚠ **AND IT SAYS SO OUT LOUD**, because a button beside a paid thing is read as
+ * a button that buys it. "Opens the price first" is the whole promise, and it is
+ * on screen rather than in a tooltip nobody hovers.
+ *
+ * ⚠ **NOT DISABLED WHILE A PLAN IS RUNNING.** These are separate doors — the
+ * steps are landing on the timeline and reading the price of a voiceover does
+ * not touch them — and a button greyed out for a reason the user cannot see is
+ * the thing they report as broken.
+ */
+function Offers({ turn, chat }) {
+  return (
+    <div className="ec-offers">
+      {turn.passes.map((offer) => {
+        const door = DOOR_LABEL[offer.door] || {};
+        return (
+          <div className="ec-offer" key={offer.door}>
+            <div className="ec-offer-text">
+              <strong>
+                {door.glyph} {door.label}
+                {offer.shot ? ` — shot ${offer.shot}` : ""}
+              </strong>
+              {/* The model's own sentence about THIS film, or the door's own
+                  one-liner when it did not write one. */}
+              <span className="tiny muted">{offer.why || door.note || ""}</span>
+            </div>
+            <button
+              type="button"
+              className="btn small btn-row"
+              onClick={() => chat.openPass(offer.door, offer.shot)}
+            >
+              See the price
+            </button>
+          </div>
+        );
+      })}
+      <p className="tiny muted ec-offer-foot">
+        This costs money. Nothing is charged until you read the price and press the
+        button there.
+      </p>
     </div>
   );
 }

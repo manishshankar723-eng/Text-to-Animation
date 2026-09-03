@@ -839,10 +839,27 @@ def server_checks() -> None:
     check("nonsense falls back to the default", cs.clean({"transcript_keep": "many"})["transcript_keep"] == 20)
     check("unknown keys are ignored", "hack" not in cs.clean({"hack": 1}))
     check("the rails default ON", cs.defaults()["ask_on_spend"] and cs.defaults()["ask_on_destructive"])
-    # ⚠ THE ONE FLAG THAT MUST DEFAULT OFF. A default-on tick box is a box nobody
-    # looks at, and the first time anyone looked at this one it would be on an
-    # invoice.
-    check("paid passes default OFF", cs.defaults()["allow_paid_passes"] is False)
+    # ⚠ PAID PASSES DEFAULT **ON** SINCE 2026-09-03, AND THE REASON THE OLD
+    # ASSERTION WAS WRONG IS WORTH KEEPING. It read "a default-on tick box is a
+    # box nobody looks at, and the first time anyone looked at this one it would
+    # be on an invoice" — which would be right if the flag could spend. It
+    # cannot: nothing in this feature spends anything but text quota, and no
+    # client code reads this flag at all. All it ever controlled was one sentence
+    # in `rails_text`, and switched off that sentence was *"this deployment does
+    # NOT let the chat start paid work at all — do not offer to start one"*. So
+    # the chat went quiet about the three most valuable things the app does: ask
+    # it for a voiceover and it changed the subject. Asked for outright: *"jo
+    # free hai wo free mai hoga aur jismai paisa lagta hai usmai paisa lagega"*.
+    check("paid passes default ON", cs.defaults()["allow_paid_passes"] is True)
+    # ⚠ AND ON STILL MEANS "MAY OFFER", NEVER "MAY START". The wording is the
+    # whole safety property here, because the model does what the rails say: told
+    # it may "start" paid work it reports a render it has not begun.
+    allowed = agent.rails_text({"allow_paid_passes": True})
+    check("…and the rails say it may OFFER paid work", "MAY offer paid work" in allowed, allowed)
+    check("…and may NOT start it", "may not start it" in allowed, allowed)
+    check("…and name the door instead of a price",
+          "🎬 Make Video" in allowed and "never" in allowed and "quote a price" in allowed,
+          allowed)
     check("a stored row is re-cleaned on the way out",
           cs.get_settings(fresh=True)["transcript_keep"] == 20)
 

@@ -105,6 +105,95 @@ export const ASK_REASONS = [
 
 const isReason = (value) => ASK_REASONS.includes(String(value || "").trim());
 
+/**
+ * THE THREE PAID DOORS, and what each button says.
+ *
+ * ⚠ **A DOOR IS A BUTTON, NOT A SPEND.** The chat cannot start any of these and
+ * is not asked to: an offer becomes a button in the panel that opens the priced
+ * confirm the editor already has, and THAT door asks the server what the work
+ * costs. So there is no price in this table and no entitlement check either —
+ * both live behind the door, in the one place that charges.
+ *
+ * ⚠ **AND NO PRICE MAY EVER BE ADDED HERE.** A figure computed on this side,
+ * from the board the browser is holding, sitting next to a door that asks the
+ * server for the real one, is two answers about somebody's money. The first time
+ * they disagree the user is right to distrust both.
+ *
+ * ⚠ Mirrored in `PAID_DOORS` in `editor_chat_agent.py` — the same arrangement
+ * `ASK_REASONS` has, asserted by `tests/editor_chat_doors_check.py`.
+ */
+export const PAID_DOORS = ["voiceover", "captions", "veo", "images"];
+
+/** What the button for each door reads, and the glyph the editor already uses. */
+export const DOOR_LABEL = {
+  voiceover: { glyph: "🎙", label: "Voiceover", note: "Read the dialogue aloud" },
+  // ⚠ A DIFFERENT DOOR FROM THE VOICEOVER, THOUGH THE VOICEOVER ALSO WRITES
+  // CAPTIONS. This one reads audio the person RECORDED THEMSELVES and adds no
+  // voice — which is the whole request when somebody imports their own video.
+  // Offering the voiceover for that would propose replacing their own narration.
+  captions: { glyph: "💬", label: "Write captions", note: "From the audio already on the timeline" },
+  veo: { glyph: "🎬", label: "Render video", note: "Turn a shot into real footage" },
+  images: { glyph: "🖼", label: "Animatic images", note: "Draw the key poses" },
+};
+
+/**
+ * The paid work a turn is offering, read into `[{door, why, shot}]`.
+ *
+ * ⚠ **CHECKED AGAIN ON THIS SIDE, THOUGH THE SERVER ALREADY DID IT.** Same rule
+ * as the option ids and the shot numbers: neither side may assume the other
+ * bothered. And this side is the one holding the real shot count, so a `veo`
+ * offer naming shot 61 of a 48-shot film loses its shot number here rather than
+ * opening ✨ Animate on nothing.
+ */
+/**
+ * "LET ME SEE SHOTS 3 TO 9" — read into `{shots, why}`, or null.
+ *
+ * ⚠ **CHECKED AGAINST THE REAL SHOT COUNT, AGAIN.** The server checks it too,
+ * and this side is the one about to go and FETCH each picture: a shot number
+ * with nothing behind it would be a request for a url that does not exist,
+ * reported to the user as a chat that stopped working.
+ *
+ * ⚠ **AND AN EMPTY LIST IS NOT A LOOK.** It would spend a second call to ask the
+ * same question with nothing attached, and get the same answer.
+ */
+export function normaliseLook(raw, ctx) {
+  if (!raw || typeof raw !== "object") return null;
+  const shots = (ctx && ctx.frames) || [];
+  const want = [];
+  for (const value of Array.isArray(raw.shots) ? raw.shots : []) {
+    const n = Number(value);
+    if (Number.isInteger(n) && n >= 1 && n <= shots.length && !want.includes(n)) want.push(n);
+  }
+  if (!want.length) return null;
+  // Sorted, because the pictures travel in this order and the model is told
+  // which shot each one is — see `_coerce_look` on the server.
+  return { shots: want.sort((a, b) => a - b).slice(0, MAX_LOOK_SHOTS), why: str(raw.why, 120) };
+}
+
+/** As many stills as one look may carry. Mirrors `MAX_LOOK_SHOTS` server-side. */
+export const MAX_LOOK_SHOTS = 12;
+
+export function normalisePasses(raw, ctx) {
+  const shots = (ctx && ctx.frames) || [];
+  const out = [];
+  const seen = new Set();
+  for (const row of Array.isArray(raw) ? raw : []) {
+    if (!row || typeof row !== "object") continue;
+    const door = str(row.door).toLowerCase();
+    if (!PAID_DOORS.includes(door) || seen.has(door)) continue;
+    seen.add(door);
+    const offer = { door, why: str(row.why, 120) };
+    const shot = Number(row.shot);
+    if (door === "veo" && Number.isInteger(shot) && shot >= 1 && shot <= shots.length) {
+      offer.shot = shot;
+    }
+    out.push(offer);
+    // Four doors exist; a reply offering more than two has stopped answering.
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ readers
 // Small, boring coercions. Each returns a clean value or "" / undefined, and
 // NONE of them raise: the caller is holding a model's output, and a chat that
@@ -291,6 +380,19 @@ function normaliseSound(raw, ctx, drops) {
  * @returns {{turn: object, drops: Array<{what: string, why: string}>}}
  */
 export function normaliseTurn(raw, caps, ctx) {
+  // ⚠ WRAPPED RATHER THAN THREADED THROUGH FIVE RETURNS. An offer can ride on
+  // ANY kind of turn — an `answer` that says a voiceover would help, an `ask`
+  // that offers one of two, a `plan` that does the free half and offers the paid
+  // half — so attaching it at the five exits below would be five chances to
+  // forget one, and the one that got forgotten would be a button that silently
+  // never appears.
+  const result = readTurn(raw, caps, ctx);
+  const passes = normalisePasses(raw && raw.passes, ctx);
+  if (passes.length) result.turn = { ...result.turn, passes };
+  return result;
+}
+
+function readTurn(raw, caps, ctx) {
   const drops = [];
   const row = raw && typeof raw === "object" ? raw : {};
   const reply = prose(row.reply ?? row.text ?? row.message, MAX_REPLY_CHARS);
@@ -301,6 +403,16 @@ export function normaliseTurn(raw, caps, ctx) {
   // pass lays down — and treating that as an `answer` would draw a chat bubble
   // where an Apply button belongs.
   const sound = normaliseSound(row.sound, ctx, drops);
+
+  // ---------------------------------------------------------------- a look
+  // ⚠ TESTED BEFORE EVERYTHING ELSE, and the server orders it the same way. A
+  // look means the model has said it cannot answer yet; a reply carrying both a
+  // look and a plan is a model hedging, and the plan it wrote blind is the one
+  // it was unsure enough about to ask for the pictures.
+  const look = normaliseLook(row.look, ctx);
+  if (look) {
+    return { turn: { kind: "look", reply, look }, drops };
+  }
 
   // ----------------------------------------------------------------- an ask
   // ⚠ TESTED FIRST, BECAUSE ASKING MEANS NOTHING HAPPENS YET. A reply that

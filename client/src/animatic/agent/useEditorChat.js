@@ -56,7 +56,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../api.js";
 import { ACTIONS, describeStep } from "./actions.js";
 import { capabilities } from "./capabilities.js";
-import { answerText, normaliseTurn, wireMessages } from "./chat_turn.js";
+import { MAX_LOOK_SHOTS, answerText, normaliseTurn, wireMessages } from "./chat_turn.js";
 import { boardFrom } from "./useDirectorRun.js";
 // ⚠ THE DIRECTOR'S OWN SOUND PASS, USED AS IT IS. Cueing, budgeting,
 // placement and the ducking under speech are all decided in there; this hook
@@ -88,6 +88,39 @@ const STORE_PREFIX = "aniwala.editorChat.v1.";
 
 /** A runaway guard on what is kept in storage and in the DOM. */
 const MAX_KEPT = 60;
+
+/**
+ * HOW BIG A PICTURE A LOOK SENDS — its long edge, in pixels.
+ *
+ * ⚠ **THE SAME PROXY THE MONITOR ASKS FOR, AND FOR THE SAME REASON.** A model
+ * deciding which of twelve shots is dull does not need a 1920px PNG of each; it
+ * needs to see the shot. 512 is comfortably enough to read a face, a caption or
+ * an empty frame, and it keeps a twelve-shot look to a few hundred kilobytes of
+ * upload instead of tens of megabytes — which is the difference between a look
+ * that answers in seconds and one the user cancels.
+ */
+const LOOK_MAX_EDGE = 512;
+
+/**
+ * A blob as bare base64 — no `data:` prefix, because the wire carries the mime
+ * type in its own field and the server calls `b64decode` on this.
+ *
+ * ⚠ `FileReader` RATHER THAN A BYTE LOOP. `btoa(String.fromCharCode(...bytes))`
+ * is the obvious version and it blows the argument limit on a picture this size,
+ * which fails as a RangeError on the big stills and works on the small ones —
+ * the worst shape of bug to find later.
+ */
+function toBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the picture"));
+    reader.onload = () => {
+      const url = String(reader.result || "");
+      resolve(url.slice(url.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(blob);
+  });
+}
 
 const newId = () =>
   Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -130,6 +163,12 @@ function toStore(turns) {
     // the film rather than a button. The cues themselves are not: they are
     // part of the plan, and a stale plan is a trap (see `stale`).
     soundReport: t.soundReport,
+    // ⚠ AN OFFER SURVIVES A REFRESH, AND A PLAN DOES NOT. The difference is what
+    // the button does: an Apply would run stale steps against a timeline the
+    // person has since edited (a trap — see `stale`), while a door button only
+    // opens ✨ Animate / 🎙 Voiceover, which reads the film as it is NOW and
+    // prices it there. Nothing about it can go stale.
+    passes: t.passes,
     stale: t.kind === "plan" ? true : undefined,
   }));
 }
@@ -162,6 +201,7 @@ export default function useEditorChat({
   // same order, as the Director's phases D and E.
   buildSoundtrack,
   placeSoundtrack,
+  openPaidDoor,
 }) {
   const [turns, setTurns] = useState(() => loadStored(animaticId));
   const [sending, setSending] = useState(false);
@@ -188,6 +228,39 @@ export default function useEditorChat({
   // What the sound half of the current apply is doing, for the one line the
   // bubble shows while it happens. `""` is "not scoring".
   const [scoring, setScoring] = useState("");
+  // ⚠ DECLARED ABOVE `send`, WHICH SETS IT (RULEBOOK G6). What the panel says
+  // while the model is looking at the pictures — the model's own line about why
+  // it needed to see, so a wait nobody asked for at least explains itself.
+  const [looking, setLooking] = useState("");
+  // ⚠ HOW LONG THIS TURN HAS BEEN GOING, IN WHOLE SECONDS, and it exists because
+  // a bare "Thinking…" is indistinguishable from a hang. Paid for live: a turn
+  // that was working perfectly took longer than the tab's patience, the spinner
+  // said the same word for a minute and a half, and the user sent the SAME
+  // MESSAGE THREE TIMES before the timeout finally spoke — three turns billed
+  // for one question. A number that moves is the difference between a wait and a
+  // fault, and it is the cheapest thing on this screen.
+  const [elapsed, setElapsed] = useState(0);
+  // The in-flight turn's abort handle, or null. ⚠ A REF, NOT STATE: `stop` must
+  // reach the request that is running NOW, and a re-render's copy would be one
+  // turn behind.
+  const abortRef = useRef(null);
+
+  // ⚠ ONE INTERVAL, ONLY WHILE A TURN IS IN FLIGHT, and it is cleared on the way
+  // out — a second-hand left running behind a closed panel is a render a second
+  // for ever. It counts from zero on every send, so the number is this turn's
+  // wait and not the session's.
+  useEffect(() => {
+    if (!sending) {
+      setElapsed(0);
+      return undefined;
+    }
+    const started = Date.now();
+    setElapsed(0);
+    const tick = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [sending]);
 
   // ⚠ THUNKS, LIKE THE DIRECTOR'S. The hook holds these for the length of a run
   // and the editor rebuilds its callbacks on every render; a captured copy would
@@ -268,8 +341,53 @@ export default function useEditorChat({
     return speechDigest({ tracks, fillers: fillerLines(captions) });
   }, []);
 
+  // ⚠ A THUNK, LIKE THE TWO SOUND ONES ABOVE, and for the same reason: the
+  // editor's door openers close over state this hook has no business holding.
+  const doorRef = useRef(openPaidDoor);
+  doorRef.current = openPaidDoor;
+
+  /**
+   * Open the priced door an offer names. ⚠ SPENDS NOTHING ITSELF — it opens the
+   * dialog that ✨ Animate / 🎙 Voiceover / 🖼 Animatic images already open, and
+   * that dialog is what asks the server for a price and refuses an account whose
+   * plan does not cover it. This hook must never learn either of those jobs.
+   */
+  const openPass = useCallback((door, shot) => {
+    const open = doorRef.current;
+    if (typeof open === "function") open(door, shot);
+  }, []);
+
+  /**
+   * THE PICTURES OF A LOOK, fetched at monitor size and base64'd.
+   *
+   * ⚠ **PROXIED DOWN, NOT SENT FULL SIZE.** `?w=` is the same server-side proxy
+   * the editor already asks for to draw its own monitor, so a look posts a few
+   * hundred pixels per shot rather than a 1920px PNG each. Twelve of those would
+   * be several megabytes of upload and a token bill to match, for a question
+   * about which shot is boring.
+   *
+   * ⚠ **A PICTURE THAT WILL NOT LOAD IS SKIPPED, NOT THROWN.** One clip whose
+   * file has gone must not cost the user the whole answer — the model is told
+   * which shots it IS seeing, so a short look is still a true one.
+   */
+  const grabPictures = useCallback(async (shots) => {
+    const frames = readCtxRef.current().frames || [];
+    const out = [];
+    for (const n of (shots || []).slice(0, MAX_LOOK_SHOTS)) {
+      const frame = frames[n - 1];
+      if (!frame?.url) continue;
+      try {
+        const blob = await api.fetchAnimaticMediaBlob(frame.url, LOOK_MAX_EDGE);
+        out.push({ shot: n, mime: blob.type || "image/png", data: await toBase64(blob) });
+      } catch {
+        /* one missing still is not a failed turn — see above */
+      }
+    }
+    return out;
+  }, []);
+
   const post = useCallback(
-    async (history) => {
+    async (history, look = []) => {
       const ctx = readCtxRef.current();
       const caps = capabilities();
       const keep = config?.transcript_keep || 20;
@@ -278,6 +396,11 @@ export default function useEditorChat({
         board: { ...boardFrom(ctx), sound: soundDigest(ctx) },
         capabilities: caps,
         language,
+        look,
+        // ⚠ THE SAME CONTROLLER FOR BOTH LEGS OF A LOOK. A Stop pressed while
+        // the pictures are being read has to drop the second call too, and a
+        // fresh controller per leg would leave the slowest one running.
+        signal: abortRef.current?.signal,
       });
       // ⚠ NORMALISED AGAINST THE PROJECT, NOT JUST AGAINST ITSELF. "Shot 61" is a
       // well-formed step and a nonsense one on a 48-shot film, so any plan on the
@@ -295,13 +418,57 @@ export default function useEditorChat({
       if (!message || sending) return;
       setError("");
 
+      // ⚠ THE SAME SENTENCE TWICE IN A ROW IS ONE QUESTION, NOT TWO. When a turn
+      // fails the user's message deliberately stays on screen (see the catch
+      // below) — and what people then do is type it again, which is how the
+      // reported screenshot ended up with three identical bubbles and no answer.
+      // Every one of them was re-posted on every later turn, so a retry made the
+      // prompt bigger and the model slower at exactly the moment it was already
+      // too slow. A retry REPLACES the unanswered attempt instead of stacking on
+      // it. ⚠ ONLY WHEN NOTHING ANSWERED IT: the same request made again after a
+      // reply is a real second ask ("bigger", "again"), and must be kept.
+      const last = turns[turns.length - 1];
+      const repeat = last && last.role === "user" && last.text === message;
+      const kept = repeat ? turns.slice(0, -1) : turns;
+
       const mine = { id: newId(), role: "user", kind: "text", text: message };
-      const history = [...turns, mine];
+      const history = [...kept, mine];
       setTurns(history);
       setSending(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       try {
-        const { answer, turn, drops } = await post(history);
+        let { answer, turn, drops } = await post(history);
+
+        // ⚠ ONE LOOK, THEN THE ANSWER — never a second one. The model may say it
+        // has to SEE the shots before it can answer; the browser fetches them
+        // and asks the SAME question again with them attached. Two laps of this
+        // would be a loop that spends money on each one, so it happens exactly
+        // once and the server refuses a look on the call that carries pictures.
+        if (turn.kind === "look" && turn.look) {
+          setLooking(turn.look.why || "Looking at your shots…");
+          try {
+            const pictures = await grabPictures(turn.look.shots);
+            if (pictures.length) {
+              ({ answer, turn, drops } = await post(history, pictures));
+            } else {
+              // ⚠ SAID, NOT SWALLOWED. Nothing could be loaded, so the honest
+              // reply is that it cannot see them — not a second blind guess
+              // dressed up as an answer.
+              turn = {
+                kind: "answer",
+                reply:
+                  "I couldn't load the pictures for those shots, so I can't tell you " +
+                  "what's in them. Tell me what you're after and I'll work from the " +
+                  "labels and the timing.",
+              };
+            }
+          } finally {
+            setLooking("");
+          }
+        }
+
         setQuota({ used: answer.turns_used || 0, limit: answer.turns_limit ?? null });
         setTurns((rows) => [
           ...rows,
@@ -328,17 +495,44 @@ export default function useEditorChat({
           },
         ]);
       } catch (e) {
-        // ⚠ THE USER'S MESSAGE STAYS ON SCREEN. Rolling the transcript back to
-        // before it would lose what they typed along with the error, and a chat
-        // that eats your sentence when the network blinks is a chat people stop
-        // trusting with long ones.
-        setError(e?.message || "The AI Editor could not be reached.");
+        // ⚠ A STOP IS NOT AN ERROR. They pressed the button; telling them in red
+        // that something went wrong would be the panel arguing with them. What
+        // they are owed instead is the one fact they cannot see: the server was
+        // already asked, so this turn is spent whether or not they read it.
+        if (e?.stopped) {
+          setError(
+            "Stopped waiting. The message had already gone to the AI, so it still " +
+              "counts as one of your turns — send it again if you want the answer."
+          );
+        } else {
+          // ⚠ THE USER'S MESSAGE STAYS ON SCREEN. Rolling the transcript back to
+          // before it would lose what they typed along with the error, and a chat
+          // that eats your sentence when the network blinks is a chat people stop
+          // trusting with long ones.
+          setError(e?.message || "The AI Editor could not be reached.");
+        }
       } finally {
+        abortRef.current = null;
         setSending(false);
+        setLooking("");
       }
     },
-    [post, sending, turns]
+    [grabPictures, post, sending, turns]
   );
+
+  /**
+   * STOP WAITING FOR THE TURN THAT IS IN FLIGHT.
+   *
+   * ⚠ IT STOPS THE WAIT, NOT THE WORK. The request is genuinely aborted — the
+   * browser drops the connection and `sending` goes false at once — but the
+   * server has already been asked, and it will finish the call and count the
+   * turn. There is no cancel on the other side of that door and pretending there
+   * were would be the more expensive lie: somebody would press Stop to save
+   * money. The line `send` writes says so in as many words.
+   */
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   /**
    * An option on an `ask`, clicked.
@@ -591,12 +785,19 @@ export default function useEditorChat({
     config,
     quota,
     send,
+    stop,
+    // Whole seconds this turn has been waiting, `0` when nothing is in flight.
+    elapsed,
     choose,
     apply,
+    // Opens the priced door an offer names. Spends nothing — see `openPass`.
+    openPass,
     revert,
     clear,
     running,
     scoring,
+    // The model's own "why" while a look is in flight, or "".
+    looking,
     revertable,
     // What the composer is allowed to do right now, and why not when it is not.
     blocked: overQuota

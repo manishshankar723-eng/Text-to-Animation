@@ -38,6 +38,10 @@
 // "run it again" a thing the user can do to compare a change they made.
 
 import { HOUSE_CAPS } from "./capabilities.js";
+// ⚠ THE RENDERER'S OWN CEILING, imported rather than repeated: it is the length
+// of a shader uniform array, so it is the one effect limit that is physics
+// rather than taste. See `applyGuardrails`.
+import { MAX_EFFECTS } from "../gl/shaders/layer.js";
 import { ACTIONS } from "./actions.js";
 import { defaultInclude, governingKey } from "./plan_schema.js";
 
@@ -308,8 +312,11 @@ function isStill(frame) {
  * user asked for is alternate cuts, so the ceiling is half of them — which
  * `ceil` makes exactly the number "every other cut from cut 1" produces.
  */
-export function transitionBudget(shots, include) {
+export function transitionBudget(shots, include, askedForAll = false) {
   const cuts = Math.max(0, (Number(shots) || 0) - 1);
+  // ⚠ ASKED FOR EVERY CUT MEANS EVERY CUT. The share below is a rule about what
+  // this app does when NOBODY said — see `applyGuardrails`.
+  if (askedForAll) return cuts;
   if (include && include.veo === false) return Math.max(1, Math.ceil(cuts / 2));
   return Math.max(1, Math.floor(cuts * HOUSE_CAPS.TRANSITION_CUT_SHARE));
 }
@@ -649,6 +656,34 @@ export function applyGuardrails(plan, ctx, options = {}) {
   const trimmed = [];
   const kept = [];
 
+  // ⚠ THE HOUSE CAPS ARE A DEFAULT, NOT A LAW, AND THIS IS THE LINE THAT SAYS SO.
+  //
+  // Every share above was written to stop the app treating a film NOBODY asked
+  // it to treat: "a dissolve means something because most cuts are straight" is
+  // true, and it is the right instinct when the machine is choosing. It is the
+  // wrong answer to a person who typed *"add transition every each clip"* twice
+  // and was told, in the panel, that "our system has a limit that only allows
+  // transitions on up to 35% of the cuts". Their film, their call. Asked for
+  // outright: *"mai aisa chahta hun user jo kahe wo hona chahiye"*.
+  //
+  // ⚠ WHAT IS LIFTED IS EVERY *PREFERENCE*, AND NOTHING STRUCTURAL. The share of
+  // cuts, the share of clips, the per-minute rates and the alternate-cuts rule
+  // are all taste; `MIN_CLIP_MS`, `TEXT_OVERHANG_MS`, "the two clips must touch"
+  // and "they must be on the same row" are not — those are the difference
+  // between an edit and a record that renders as nothing. A lifted cap must
+  // never become a plan that reports work it did not do.
+  //
+  // ⚠ AND `EFFECTS_PER_CLIP` GOES TO THE RENDERER'S OWN CEILING, not to
+  // infinity: `MAX_EFFECTS` is a shader uniform array, so the seventh effect on
+  // a clip is not "a lot of grading", it is an effect that does not exist.
+  const lifted = !!(plan && plan.askedForAll);
+  if (lifted) {
+    caps.EFFECT_CLIP_SHARE = 1;
+    caps.EFFECTS_PER_CLIP = Math.max(caps.EFFECTS_PER_CLIP, MAX_EFFECTS);
+    caps.SHAPES_PER_MINUTE = Infinity;
+    caps.TEXTS_PER_MINUTE = Infinity;
+  }
+
   const effectsOn = new Map(); // shot number → how many effects it carries
   const cutsUsed = new Set();
   let effectShots = 0;
@@ -656,10 +691,11 @@ export function applyGuardrails(plan, ctx, options = {}) {
   let texts = 0;
 
   const effectShotBudget = Math.max(1, Math.floor(frames.length * caps.EFFECT_CLIP_SHARE));
+  // Only meaningful while the caps hold — see `lifted`.
   // ⚠ THE SAME FUNCTION THE PLANNER USES. See `transitionBudget`: a plan that
   // alternates its transitions is house-legal, and a fence with its own idea of
   // the ceiling would trim half of them out from under the preview.
-  const cutBudget = transitionBudget(frames.length, plan.include);
+  const cutBudget = transitionBudget(frames.length, plan.include, lifted);
   const shapeBudget = Math.max(1, Math.round(minutes * caps.SHAPES_PER_MINUTE));
   const textBudget = Math.max(1, Math.round(minutes * caps.TEXTS_PER_MINUTE));
 
@@ -711,7 +747,11 @@ export function applyGuardrails(plan, ctx, options = {}) {
       // rules planner already places them alternating (see `housePlan`); this is
       // the same rule for a plan the MODEL wrote, which is where the clustered
       // ones the user photographed came from.
-      if (cutsUsed.has(step.args.cut - 1) || cutsUsed.has(step.args.cut + 1)) {
+      // ⚠ LIFTED TOO, AND IT HAS TO BE, or "every cut" would still come back as
+      // every OTHER cut — the one thing this rule guarantees is a gap. It is a
+      // taste rule (a shot fading at both ends is never fully on screen) and
+      // taste is exactly what an explicit request overrules.
+      if (!lifted && (cutsUsed.has(step.args.cut - 1) || cutsUsed.has(step.args.cut + 1))) {
         drop(
           `the cut after shot ${step.args.cut} touches one that is already ` +
             "treated — transitions alternate, so the shot between them is not " +
